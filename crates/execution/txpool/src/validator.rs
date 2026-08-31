@@ -929,6 +929,10 @@ where
                 matches!(origin, TransactionOrigin::External | TransactionOrigin::Local);
             transaction.set_watch_set(state.watch_set.clone());
             transaction.set_watch_manifest(state.manifest.clone());
+            transaction.set_validated_funding(crate::ValidatedFunding::new(
+                state.payer,
+                state.payer_max_cost,
+            ));
             transaction.set_limit_class(LimitClass {
                 sender: state.sender,
                 payer: state.payer,
@@ -2040,11 +2044,6 @@ where
         outcome: TransactionValidationOutcome<Tx>,
         operator_fee_gas_addition: u64,
     ) -> TransactionValidationOutcome<Tx> {
-        if !self.requires_l1_data_gas_fee() {
-            // no need to check L1 gas fee
-            return outcome;
-        }
-        // ensure that the account has enough balance to cover the L1 gas cost
         if let TransactionValidationOutcome::Valid {
             balance,
             state_nonce,
@@ -2054,6 +2053,23 @@ where
             authorities,
         } = outcome
         {
+            if !self.requires_l1_data_gas_fee() {
+                if valid_tx.transaction().validated_funding().is_none() {
+                    valid_tx.transaction().set_validated_funding(crate::ValidatedFunding::new(
+                        valid_tx.transaction().sender(),
+                        *valid_tx.transaction().cost(),
+                    ));
+                }
+                return TransactionValidationOutcome::Valid {
+                    balance,
+                    state_nonce,
+                    transaction: valid_tx,
+                    propagate,
+                    bytecode_hash,
+                    authorities,
+                };
+            }
+
             let mut l1_block_info = self.block_info.l1_block_info.read().clone();
 
             // Check to ensure tx doesn't exceed the DA footprint limit
@@ -2103,6 +2119,13 @@ where
                 );
             }
 
+            if valid_tx.transaction().validated_funding().is_none() {
+                valid_tx.transaction().set_validated_funding(crate::ValidatedFunding::new(
+                    valid_tx.transaction().sender(),
+                    cost,
+                ));
+            }
+
             return TransactionValidationOutcome::Valid {
                 balance,
                 state_nonce,
@@ -2144,7 +2167,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
+    use alloy_consensus::{
+        SignableTransaction, TxEip1559,
+        transaction::{Recovered, SignerRecoverable},
+    };
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, hex::decode};
     use alloy_signer::SignerSync;
@@ -2161,8 +2187,8 @@ mod tests {
     use base_test_utils::Account;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_transaction_pool::{
-        TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,
-        validate::EthTransactionValidatorBuilder,
+        PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
+        blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
     };
 
     use super::*;
@@ -3445,6 +3471,168 @@ mod tests {
                 "expected operator-fee-underfunded tx to be rejected at admission, got {other:?}"
             ),
         }
+    }
+
+    #[tokio::test]
+    async fn ordinary_transaction_records_complete_base_funding_cost() {
+        let chain_config = ChainConfig::mainnet();
+        let chain_spec = Arc::new(BaseChainSpec::mainnet());
+        let signer = Account::Alice.signer();
+        let sender = signer.address();
+        let tx = TxEip1559 {
+            chain_id: chain_config.chain_id,
+            nonce: 0,
+            gas_limit: 50_000,
+            max_fee_per_gas: 1_000,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(Address::random()),
+            value: U256::from(17),
+            access_list: Default::default(),
+            input: bytes!("FACADE"),
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
+        let recovered = envelope.clone().try_into_recovered().unwrap();
+        let encoded = recovered.encoded_2718();
+        let isthmus_data = decode(ISTHMUS_L1_INFO_DATA_HEX).expect("valid hex fixture");
+        let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
+        let additional_cost = l1_block_info.tx_cost(
+            &encoded,
+            U256::from(envelope.gas_limit()),
+            BaseSpecId::from_timestamp(Arc::clone(&chain_spec), chain_config.isthmus_timestamp),
+        );
+        let expected_max_cost = U256::from(envelope.value())
+            .saturating_add(U256::from(
+                envelope.max_fee_per_gas().saturating_mul(envelope.gas_limit() as u128),
+            ))
+            .saturating_add(additional_cost);
+
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        client.add_account(sender, ExtendedAccount::new(0, expected_max_cost));
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build(InMemoryBlobStore::default());
+        let validator: TestValidator =
+            BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
+        let header = alloy_consensus::Header {
+            timestamp: chain_config.isthmus_timestamp,
+            ..Default::default()
+        };
+        let l1_info_tx: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 0,
+            is_system_transaction: false,
+            input: isthmus_data.into(),
+        }
+        .into();
+        validator.update_l1_block_info(&header, Some(&l1_info_tx));
+
+        let transaction: BasePooledTransaction =
+            BasePooledTransaction::new(recovered, envelope.encode_2718_len());
+        let outcome = validator.validate_one(TransactionOrigin::External, transaction).await;
+        let valid = outcome.as_valid_transaction().expect("fully funded ordinary transaction");
+        let funding = valid.transaction().validated_funding().expect("validated funding metadata");
+
+        assert_eq!(funding.payer(), sender);
+        assert_eq!(funding.max_cost(), expected_max_cost);
+    }
+
+    #[tokio::test]
+    async fn eip8130_records_self_paid_and_sponsored_funding() {
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let sender_signer = PrivateKeySigner::random();
+        let sender = sender_signer.address();
+        let payer_signer = PrivateKeySigner::random();
+        let payer = payer_signer.address();
+        let balance = U256::from(1_000_000_000_000_000_000u64);
+
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        client.add_account(sender, ExtendedAccount::new(0, balance));
+        client.add_account(payer, ExtendedAccount::new(0, balance));
+        let payer_state =
+            AccountState::from_word(U256::from(Eip8130Constants::SCOPE_SPONSOR_PAYER) << 232);
+        let payer_state_slot = AccountConfigurationStorage::account_state_slot(payer);
+        client.add_account(
+            AccountConfigurationStorage::ADDRESS,
+            ExtendedAccount::new(0, U256::ZERO)
+                .extend_storage([(payer_state_slot, payer_state.to_word())]),
+        );
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build(InMemoryBlobStore::default());
+        let validator: TestValidator =
+            BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+                .require_l1_data_gas_fee(false);
+
+        let self_paid_tx =
+            TxEip8130 { nonce_sequence: 0, gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let self_paid_signature =
+            sender_signer.sign_hash_sync(&self_paid_tx.sender_signature_hash()).unwrap();
+        let self_paid_signed = Eip8130Signed::new(
+            self_paid_tx,
+            Bytes::from(self_paid_signature.as_bytes().to_vec()),
+            Bytes::new(),
+        );
+        let expected_self = validator
+            .validate_eip8130_full(&self_paid_signed)
+            .expect("valid self-paid transaction");
+        let self_paid = BasePooledTransaction::from_pooled(Recovered::new_unchecked(
+            base_common_consensus::BasePooledTransaction::Eip8130(self_paid_signed),
+            sender,
+        ));
+        let self_outcome = validator.validate_one(TransactionOrigin::External, self_paid).await;
+        let self_funding = self_outcome
+            .as_valid_transaction()
+            .expect("valid self-paid outcome")
+            .transaction()
+            .validated_funding()
+            .expect("self-paid funding metadata");
+        assert_eq!(self_funding.payer(), sender);
+        assert_eq!(self_funding.max_cost(), expected_self.payer_max_cost);
+
+        let sponsored_tx = TxEip8130 {
+            nonce_sequence: 0,
+            gas_limit: 100_000,
+            payer: Some(payer),
+            ..minimal_valid_eoa_tx()
+        };
+        let sender_auth =
+            sender_signer.sign_hash_sync(&sponsored_tx.sender_signature_hash()).unwrap();
+        let payer_auth = k1_auth_blob(&payer_signer, sponsored_tx.payer_signature_hash(sender));
+        let sponsored_signed = Eip8130Signed::new(
+            sponsored_tx,
+            Bytes::from(sender_auth.as_bytes().to_vec()),
+            payer_auth,
+        );
+        let expected_sponsored = validator
+            .validate_eip8130_full(&sponsored_signed)
+            .expect("valid sponsored transaction");
+        let sponsored = BasePooledTransaction::from_pooled(Recovered::new_unchecked(
+            base_common_consensus::BasePooledTransaction::Eip8130(sponsored_signed),
+            sender,
+        ));
+        let sponsored_outcome =
+            validator.validate_one(TransactionOrigin::External, sponsored).await;
+        let sponsored_funding = sponsored_outcome
+            .as_valid_transaction()
+            .expect("valid sponsored outcome")
+            .transaction()
+            .validated_funding()
+            .expect("sponsored funding metadata");
+        assert_eq!(sponsored_funding.payer(), payer);
+        assert_eq!(sponsored_funding.max_cost(), expected_sponsored.payer_max_cost);
     }
 
     #[test]

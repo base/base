@@ -39,7 +39,7 @@ pub use block_expiry::BlockExpiryIndex;
 mod transaction;
 pub use transaction::{
     BasePooledTransaction, BasePooledTx, BaseTransactionIdentity, BaseTransactionLane,
-    TimestampedTransaction, unix_time_millis,
+    TimestampedTransaction, ValidatedFunding, unix_time_millis,
 };
 
 mod ordering;

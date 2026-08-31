@@ -1807,6 +1807,7 @@ mod tests {
         BaseTxEnvelope, Eip8130Constants, Eip8130Signed, TxEip8130,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_execution_eip8130::{AccountConfigurationStorage, AccountState};
     use base_execution_evm::BaseEvmConfig;
     use futures::{StreamExt, future::join_all};
     use reth_primitives_traits::SealedBlock;
@@ -1814,7 +1815,7 @@ mod tests {
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
         CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, TransactionOrigin,
-        blobstore::InMemoryBlobStore, identifier::TransactionId,
+        blobstore::InMemoryBlobStore, error::PoolErrorKind, identifier::TransactionId,
         validate::EthTransactionValidatorBuilder,
     };
 
@@ -2058,11 +2059,19 @@ mod tests {
     }
 
     fn signed_1559(signer: &PrivateKeySigner, nonce: u64) -> BasePooledTransaction {
+        signed_1559_with_fee(signer, nonce, 1_000)
+    }
+
+    fn signed_1559_with_fee(
+        signer: &PrivateKeySigner,
+        nonce: u64,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
         let tx = TxEip1559 {
             chain_id: test_chain_id(),
             nonce,
             gas_limit: 50_000,
-            max_fee_per_gas: 1_000,
+            max_fee_per_gas,
             max_priority_fee_per_gas: 0,
             to: TxKind::Call(Address::repeat_byte(0xEE)),
             value: U256::ZERO,
@@ -2085,6 +2094,58 @@ mod tests {
         signed_8130(signer, nonce_key, nonce_sequence, expiry, max_fee_per_gas, 1_000_000)
     }
 
+    fn sponsored_eoa_8130(
+        sender: &PrivateKeySigner,
+        payer: &PrivateKeySigner,
+        nonce_sequence: u64,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas,
+            gas_limit: 1_000_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: Some(payer.address()),
+        };
+        let sender_signature = sender.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let payer_signature =
+            payer.sign_hash_sync(&tx.payer_signature_hash(sender.address())).unwrap();
+        let mut payer_auth = Vec::with_capacity(85);
+        payer_auth.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+        payer_auth.extend_from_slice(&payer_signature.r().to_be_bytes::<32>());
+        payer_auth.extend_from_slice(&payer_signature.s().to_be_bytes::<32>());
+        payer_auth.push(27 + u8::from(payer_signature.v()));
+        let signed = Eip8130Signed::new(
+            tx,
+            Bytes::from(sender_signature.as_bytes().to_vec()),
+            Bytes::from(payer_auth),
+        );
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, sender.address()))
+    }
+
+    fn configure_sponsors(
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        payers: impl IntoIterator<Item = Address>,
+    ) {
+        let state =
+            AccountState::from_word(U256::from(Eip8130Constants::SCOPE_SPONSOR_PAYER) << 232);
+        client.add_account(
+            AccountConfigurationStorage::ADDRESS,
+            ExtendedAccount::new(0, U256::ZERO).extend_storage(payers.into_iter().map(|payer| {
+                (AccountConfigurationStorage::account_state_slot(payer), state.to_word())
+            })),
+        );
+    }
+
     #[tokio::test]
     async fn standard_transactions_are_not_eip8130_gated() {
         let (pool, client) = build_integration_pool();
@@ -2098,6 +2159,96 @@ mod tests {
             assert!(result.is_ok(), "standard transaction {nonce} was guard-rejected: {result:?}");
         }
         assert!(pool.guard.read().is_empty());
+    }
+
+    #[tokio::test]
+    async fn key_zero_eip8130_replaces_ordinary_transaction() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let ordinary = signed_1559_with_fee(&signer, 0, 1_000);
+        let ordinary_hash = *ordinary.hash();
+        pool.add_transaction(TransactionOrigin::Local, ordinary).await.unwrap();
+
+        let replacement = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_250);
+        let replacement_hash = *replacement.hash();
+        pool.add_transaction(TransactionOrigin::Local, replacement)
+            .await
+            .expect("key-zero EIP-8130 fee bump must replace ordinary transaction");
+
+        assert!(pool.get(&ordinary_hash).is_none());
+        assert!(pool.get(&replacement_hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn ordinary_transaction_replaces_key_zero_eip8130() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let eip8130 = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000);
+        let eip8130_hash = *eip8130.hash();
+        pool.add_transaction(TransactionOrigin::Local, eip8130).await.unwrap();
+
+        let replacement = signed_1559_with_fee(&signer, 0, 1_250);
+        let replacement_hash = *replacement.hash();
+        pool.add_transaction(TransactionOrigin::Local, replacement)
+            .await
+            .expect("ordinary fee bump must replace key-zero EIP-8130 transaction");
+
+        assert!(pool.get(&eip8130_hash).is_none());
+        assert!(pool.get(&replacement_hash).is_some());
+        assert!(!pool.guard.read().contains(&eip8130_hash));
+    }
+
+    #[tokio::test]
+    async fn underpriced_cross_type_key_zero_replacement_is_rejected() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let ordinary = signed_1559_with_fee(&signer, 0, 1_000);
+        let ordinary_hash = *ordinary.hash();
+        pool.add_transaction(TransactionOrigin::Local, ordinary).await.unwrap();
+
+        let replacement = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_050);
+        let replacement_hash = *replacement.hash();
+        let error = pool
+            .add_transaction(TransactionOrigin::Local, replacement)
+            .await
+            .expect_err("replacement below the configured bump must be rejected");
+
+        assert!(matches!(error.kind, PoolErrorKind::ReplacementUnderpriced));
+        assert!(pool.get(&ordinary_hash).is_some());
+        assert!(pool.get(&replacement_hash).is_none());
+    }
+
+    #[tokio::test]
+    async fn key_zero_replacement_reaccounts_changed_payer() {
+        let (pool, client) = build_integration_pool();
+        let sender = signer();
+        let first_payer = signer();
+        let second_payer = signer();
+        fund(&client, sender.address());
+        fund(&client, first_payer.address());
+        fund(&client, second_payer.address());
+        configure_sponsors(&client, [first_payer.address(), second_payer.address()]);
+
+        let original = sponsored_eoa_8130(&sender, &first_payer, 0, 1_000);
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+        let replacement = sponsored_eoa_8130(&sender, &second_payer, 0, 1_250);
+        let replacement_hash = *replacement.hash();
+        pool.add_transaction(TransactionOrigin::Local, replacement)
+            .await
+            .expect("fee bump with a different payer must replace the key-zero transaction");
+
+        assert!(pool.get(&original_hash).is_none());
+        let replacement = pool.get(&replacement_hash).expect("replacement transaction");
+        assert_eq!(
+            replacement.transaction.validated_funding().expect("funding metadata").payer(),
+            second_payer.address()
+        );
+        assert!(!pool.guard.read().contains(&original_hash));
+        assert!(pool.guard.read().contains(&replacement_hash));
     }
 
     #[tokio::test]
