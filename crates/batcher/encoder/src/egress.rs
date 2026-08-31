@@ -362,7 +362,7 @@ mod tests {
     fn append_accepted(channel: &mut Channel, transaction_len: usize) {
         assert_eq!(
             channel
-                .add_batch(incompressible_batch(transaction_len), transaction_len as u64)
+                .add_batch(&incompressible_batch(transaction_len), transaction_len as u64)
                 .unwrap(),
             ChannelAddOutcome::Accepted
         );

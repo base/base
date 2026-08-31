@@ -279,7 +279,7 @@ impl Channel {
     /// Append `batch` if hard limits hold; otherwise reject without mutating the stream.
     pub fn add_batch(
         &mut self,
-        batch: SingleBatch,
+        batch: &SingleBatch,
         da_backlog_bytes: u64,
     ) -> Result<ChannelAddOutcome, ChannelError> {
         let max_channel_bytes = self.rollup_config.max_rlp_bytes_per_channel(batch.timestamp);
@@ -355,9 +355,12 @@ impl Channel {
             return Ok(());
         };
 
-        self.push_output(compressor.finish()?);
-        self.candidate_scratch = Vec::new();
+        // Marked before finishing: a failed finish loses the compressed tail, and
+        // must not leave a channel reporting complete framing without a terminal frame.
         self.terminal_pending = true;
+        self.candidate_scratch = Vec::new();
+        self.push_output(compressor.finish()?);
+
         Ok(())
     }
 
@@ -509,7 +512,7 @@ mod tests {
         let mut channel = channel(config);
 
         assert_eq!(
-            channel.add_batch(batch(100_000), 100_000).unwrap(),
+            channel.add_batch(&batch(100_000), 100_000).unwrap(),
             ChannelAddOutcome::TargetReached
         );
         assert_eq!(channel.blocks_added(), 1);
@@ -523,7 +526,7 @@ mod tests {
         channel.input_bytes = maximum;
 
         assert!(matches!(
-            channel.add_batch(batch(1), 1).unwrap(),
+            channel.add_batch(&batch(1), 1).unwrap(),
             ChannelAddOutcome::Rejected(ChannelLimit::RlpBytes { .. })
         ));
         assert_eq!(channel.input_bytes, maximum);
@@ -541,7 +544,7 @@ mod tests {
         let mut channel = channel(config);
 
         assert!(matches!(
-            channel.add_batch(batch(Channel::MAX_FRAMES + 1), 1).unwrap(),
+            channel.add_batch(&batch(Channel::MAX_FRAMES + 1), 1).unwrap(),
             ChannelAddOutcome::Rejected(ChannelLimit::FrameCount { .. })
         ));
         assert!(channel.is_empty());
