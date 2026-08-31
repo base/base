@@ -11,7 +11,7 @@ use std::{
     time::Instant,
 };
 
-use alloy_primitives::{TxHash, U256, U512};
+use alloy_primitives::{TxHash, U256};
 use base_common_consensus::CoinbaseTip;
 use reth_transaction_pool::{PoolTransaction, Priority, TransactionOrdering, ValidPoolTransaction};
 
@@ -138,8 +138,10 @@ impl PartialOrd for UnifiedTipPriority {
 
 impl Ord for UnifiedTipPriority {
     fn cmp(&self, other: &Self) -> Ordering {
-        let left = U512::from(self.tip) * U512::from(other.gas);
-        let right = U512::from(other.tip) * U512::from(self.gas);
+        // `tip * gas` fits in U256: a larger product would already overflow the
+        // transaction's total fee spend.
+        let left = self.tip * U256::from(other.gas);
+        let right = other.tip * U256::from(self.gas);
         left.cmp(&right).then_with(|| self.predicates.cmp(&other.predicates))
     }
 }
