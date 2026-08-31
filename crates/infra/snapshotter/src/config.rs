@@ -102,8 +102,9 @@ pub struct SnapshotterConfig {
 
     /// Number of completed timestamped snapshot run directories to retain remotely.
     ///
-    /// Older `{prefix}/{timestamp}/` directories are deleted after a successful
-    /// upload. The append-only `{prefix}/static_files/` directory is never pruned.
+    /// Older `{prefix}/{timestamp}/` directories, including their latest static-file
+    /// chunks, are deleted after a successful upload. The append-only
+    /// `{prefix}/static_files/` directory containing finalized chunks is never pruned.
     #[arg(long, env = "SNAPSHOTTER_RETAIN_RUNS", default_value = "3")]
     pub retain_runs: NonZeroUsize,
 

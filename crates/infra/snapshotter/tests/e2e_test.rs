@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use base_snapshotter::{
     ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
     ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
-    SnapshotUploader, TipChecker, TipStatus,
+    SnapshotUploadParams, SnapshotUploader, TipChecker, TipStatus,
 };
 use bollard::{
     Docker,
@@ -30,6 +30,26 @@ use serial_test::serial;
 
 mod common;
 use common::TestHarness;
+
+/// Builds [`SnapshotUploadParams`] for e2e uploads that retain 100 runs.
+const fn upload_params<'a>(
+    output_dir: &'a Path,
+    files: &'a [PathBuf],
+    timestamp: u64,
+    local_manifest: &'a SnapshotManifest,
+    remote_manifest: Option<&'a SnapshotManifest>,
+    remote_static_files: &'a HashMap<String, u64>,
+) -> SnapshotUploadParams<'a> {
+    SnapshotUploadParams {
+        output_dir,
+        files,
+        timestamp,
+        retain_runs: 100,
+        local_manifest,
+        remote_manifest,
+        remote_static_files,
+    }
+}
 
 struct MockContainerManager {
     running: AtomicBool,
@@ -352,8 +372,16 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     let files = create_fake_snapshot(&output_dir, 1_000_000)?;
     let local_manifest = parse_local_manifest(&output_dir)?;
 
-    let upload_prefix =
-        uploader.upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None).await?;
+    let upload_prefix = uploader
+        .upload(upload_params(
+            &output_dir,
+            &files,
+            1_700_000_000,
+            &local_manifest,
+            None,
+            &HashMap::new(),
+        ))
+        .await?;
     assert_eq!(upload_prefix, "mainnet/1700000000", "run prefix should be date-based");
 
     let s3 = &harness.storage_client;
@@ -375,12 +403,12 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     assert_eq!(manifest["block"], 1_000_000, "manifest block mismatch");
     assert_eq!(manifest["chain_id"], 8453, "manifest chain_id mismatch");
     assert_eq!(
-        manifest["base_url"], "https://snapshots.example.com/mainnet/static_files",
-        "manifest should point chunk downloads at top-level static_files"
+        manifest["base_url"], "https://snapshots.example.com/mainnet",
+        "manifest base_url should point at snapshot root"
     );
     assert_eq!(
-        manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
-        "manifest should point state back to the dated run dir"
+        manifest["components"]["state"]["file"], "1700000000/state.tar.zst",
+        "manifest should point state at the timestamped run dir"
     );
     assert_eq!(
         manifest["components"]["proofs"]["file"], "proofs.tar.zst",
@@ -390,20 +418,39 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     let components = manifest["components"].as_object().expect("components should be an object");
     assert_eq!(components.len(), 9, "should have all 9 component types");
 
-    // Verify static file chunks go to {prefix}/static_files/
+    assert_eq!(
+        manifest["components"]["headers"]["chunk_files"],
+        serde_json::json!([
+            "static_files/headers-0-499999.tar.zst",
+            "1700000000/headers-500000-999999.tar.zst",
+        ]),
+        "headers chunk_files should split finalized and tip paths"
+    );
+
+    // Verify finalized chunks are shared while the latest chunk stays beside the manifest.
     for component in ["headers", "transactions", "receipts"] {
-        for chunk_idx in 0..2u64 {
-            let start = chunk_idx * 500_000;
-            let end = (chunk_idx + 1) * 500_000 - 1;
-            let key = format!("mainnet/static_files/{component}-{start}-{end}.tar.zst");
-            let body = get_object_bytes(s3, bucket, &key).await?;
-            let expected = format!("fake-{component}-chunk-{chunk_idx}");
-            assert_eq!(
-                body,
-                expected.as_bytes(),
-                "{component} chunk {chunk_idx} should be in static_files/"
-            );
-        }
+        let finalized_key = format!("mainnet/static_files/{component}-0-499999.tar.zst");
+        let finalized_body = get_object_bytes(s3, bucket, &finalized_key).await?;
+        assert_eq!(
+            finalized_body,
+            format!("fake-{component}-chunk-0").as_bytes(),
+            "{component} finalized chunk should be in static_files/"
+        );
+
+        let latest_key = format!("mainnet/1700000000/{component}-500000-999999.tar.zst");
+        let latest_body = get_object_bytes(s3, bucket, &latest_key).await?;
+        assert_eq!(
+            latest_body,
+            format!("fake-{component}-chunk-1").as_bytes(),
+            "{component} latest chunk should be in the timestamped directory"
+        );
+
+        let latest_shared_key = format!("mainnet/static_files/{component}-500000-999999.tar.zst");
+        let latest_shared = s3.head_object().bucket(bucket).key(&latest_shared_key).send().await;
+        assert!(
+            latest_shared.is_err(),
+            "{component} latest chunk must not be written to static_files/"
+        );
     }
 
     Ok(())
@@ -425,8 +472,16 @@ async fn upload_with_empty_prefix() -> Result<()> {
     let files = create_fake_snapshot(&output_dir, 100)?;
     let local_manifest = parse_local_manifest(&output_dir)?;
 
-    let upload_prefix =
-        uploader.upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None).await?;
+    let upload_prefix = uploader
+        .upload(upload_params(
+            &output_dir,
+            &files,
+            1_700_000_000,
+            &local_manifest,
+            None,
+            &HashMap::new(),
+        ))
+        .await?;
     assert_eq!(upload_prefix, "1700000000", "empty prefix should produce bare date");
 
     let s3 = &harness.storage_client;
@@ -445,21 +500,30 @@ async fn upload_with_empty_prefix() -> Result<()> {
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
     assert_eq!(manifest["block"], 100, "manifest should be in date dir");
     assert_eq!(
-        manifest["base_url"], "https://snapshots.example.com/static_files",
-        "manifest should point chunk downloads at top-level static_files"
+        manifest["base_url"], "https://snapshots.example.com",
+        "manifest base_url should point at snapshot root"
     );
     assert_eq!(
-        manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
-        "manifest should point state back to the dated run dir"
+        manifest["components"]["state"]["file"], "1700000000/state.tar.zst",
+        "manifest should point state at the timestamped run dir"
     );
     assert_eq!(
         manifest["components"]["proofs"]["file"], "proofs.tar.zst",
         "proofs must remain a sibling of manifest.json for ProofsDownloader"
     );
 
-    let headers_body =
-        get_object_bytes(s3, bucket, "static_files/headers-0-499999.tar.zst").await?;
-    assert_eq!(headers_body, b"fake-headers-chunk-0", "headers chunk 0 should be in static_files/");
+    assert_eq!(
+        manifest["components"]["headers"]["chunk_files"],
+        serde_json::json!(["1700000000/headers-0-499999.tar.zst"]),
+        "single-chunk headers should live under the timestamp directory"
+    );
+
+    let headers_body = get_object_bytes(s3, bucket, "1700000000/headers-0-499999.tar.zst").await?;
+    assert_eq!(headers_body, b"fake-headers-chunk-0", "latest headers chunk should be in date dir");
+
+    let shared_headers =
+        s3.head_object().bucket(bucket).key("static_files/headers-0-499999.tar.zst").send().await;
+    assert!(shared_headers.is_err(), "latest headers chunk must not be in static_files/");
 
     Ok(())
 }
@@ -525,8 +589,8 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
         None,
     );
 
-    // Pre-seed static_files/ with the prior run's chunks and a previous manifest.json
-    // at {prefix}/1699000000/manifest.json. Both use the same hash seed.
+    // Pre-seed shared finalized chunks and a previous manifest at
+    // {prefix}/1699000000/manifest.json. Both use the same hash seed.
     let prev_manifest = manifest_with_seeded_hashes(1_000_000, 500_000, DIFF_TEST_COMPONENTS, "v1");
     s3.put_object()
         .bucket(bucket)
@@ -536,17 +600,13 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
         .await?;
 
     for &component in DIFF_TEST_COMPONENTS {
-        for chunk_idx in 0..2u64 {
-            let start = chunk_idx * 500_000;
-            let end = start + 499_999;
-            let key = format!("diff-match/static_files/{component}-{start}-{end}.tar.zst");
-            s3.put_object()
-                .bucket(bucket)
-                .key(&key)
-                .body(aws_sdk_s3::primitives::ByteStream::from(b"old-bytes".to_vec()))
-                .send()
-                .await?;
-        }
+        let key = format!("diff-match/static_files/{component}-0-499999.tar.zst");
+        s3.put_object()
+            .bucket(bucket)
+            .key(&key)
+            .body(aws_sdk_s3::primitives::ByteStream::from(b"old-bytes".to_vec()))
+            .send()
+            .await?;
     }
 
     // Generate a new run that produces the SAME hashes (same seed) but with
@@ -560,23 +620,36 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
     let remote_manifest = uploader.fetch_previous_manifest().await?;
     assert!(remote_manifest.is_some(), "should find the pre-seeded previous manifest");
 
+    let remote_static_files = uploader.list_remote_static_files().await?;
     uploader
-        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, remote_manifest.as_ref())
+        .upload(upload_params(
+            &output_dir,
+            &files,
+            1_700_000_000,
+            &local_manifest,
+            remote_manifest.as_ref(),
+            &remote_static_files,
+        ))
         .await?;
 
-    // Verify: pre-seeded chunks were NOT overwritten (skipped due to blake3 match).
+    // Verify: matching finalized chunks were not overwritten, while the latest chunks
+    // were written to the timestamped run directory.
     for &component in DIFF_TEST_COMPONENTS {
-        for chunk_idx in 0..2u64 {
-            let start = chunk_idx * 500_000;
-            let end = start + 499_999;
-            let key = format!("diff-match/static_files/{component}-{start}-{end}.tar.zst");
-            let body = get_object_bytes(s3, bucket, &key).await?;
-            assert_eq!(
-                body.as_slice(),
-                b"old-bytes",
-                "chunk {component} {chunk_idx} should have been skipped (blake3 match)"
-            );
-        }
+        let finalized_key = format!("diff-match/static_files/{component}-0-499999.tar.zst");
+        let finalized_body = get_object_bytes(s3, bucket, &finalized_key).await?;
+        assert_eq!(
+            finalized_body.as_slice(),
+            b"old-bytes",
+            "{component} finalized chunk should be skipped when blake3 matches"
+        );
+
+        let latest_key = format!("diff-match/1700000000/{component}-500000-999999.tar.zst");
+        let latest_body = get_object_bytes(s3, bucket, &latest_key).await?;
+        assert_eq!(
+            latest_body.as_slice(),
+            b"new-bytes",
+            "{component} latest chunk should be uploaded beside the manifest"
+        );
     }
 
     let manifest_body = get_object_bytes(s3, bucket, "diff-match/1700000000/manifest.json").await?;
@@ -589,6 +662,93 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
             .iter()
             .all(|entry| entry.as_array().is_some_and(|files| !files.is_empty())),
         "download manifest should preserve output-file metadata for skipped chunks"
+    );
+
+    Ok(())
+}
+
+/// Verifies a former tip is uploaded to shared storage after the next range opens.
+#[tokio::test]
+#[serial]
+async fn finalizing_previous_latest_chunk_uploads_it_to_shared_storage() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let s3 = &harness.storage_client;
+    let bucket = &harness.bucket_name;
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "finalize-tip".to_string(),
+        None,
+    );
+
+    let first_tmp = tempfile::tempdir()?;
+    let first_output_dir = first_tmp.path().join("output");
+    let first_files = seeded_snapshot(
+        &first_output_dir,
+        500_000,
+        500_000,
+        &["headers"],
+        "v1",
+        b"first-tip-bytes",
+    )?;
+    let first_manifest = parse_local_manifest(&first_output_dir)?;
+    uploader
+        .upload(upload_params(
+            &first_output_dir,
+            &first_files,
+            1_700_000_000,
+            &first_manifest,
+            None,
+            &HashMap::new(),
+        ))
+        .await?;
+
+    let first_tip =
+        get_object_bytes(s3, bucket, "finalize-tip/1700000000/headers-0-499999.tar.zst").await?;
+    assert_eq!(
+        first_tip.as_slice(),
+        b"first-tip-bytes",
+        "first run should store its latest chunk beside the manifest"
+    );
+
+    let second_tmp = tempfile::tempdir()?;
+    let second_output_dir = second_tmp.path().join("output");
+    let second_files = seeded_snapshot(
+        &second_output_dir,
+        1_000_000,
+        500_000,
+        &["headers"],
+        "v1",
+        b"second-run-bytes",
+    )?;
+    let second_manifest = parse_local_manifest(&second_output_dir)?;
+    let remote_manifest = uploader.fetch_previous_manifest().await?;
+    uploader
+        .upload(upload_params(
+            &second_output_dir,
+            &second_files,
+            1_700_000_001,
+            &second_manifest,
+            remote_manifest.as_ref(),
+            &HashMap::new(),
+        ))
+        .await?;
+
+    let finalized =
+        get_object_bytes(s3, bucket, "finalize-tip/static_files/headers-0-499999.tar.zst").await?;
+    assert_eq!(
+        finalized.as_slice(),
+        b"second-run-bytes",
+        "the former latest chunk must be promoted to shared storage once finalized"
+    );
+
+    let second_tip =
+        get_object_bytes(s3, bucket, "finalize-tip/1700000001/headers-500000-999999.tar.zst")
+            .await?;
+    assert_eq!(
+        second_tip.as_slice(),
+        b"second-run-bytes",
+        "second run should keep its latest chunk beside its manifest"
     );
 
     Ok(())
@@ -621,17 +781,13 @@ async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Re
         .await?;
 
     for &component in DIFF_TEST_COMPONENTS {
-        for chunk_idx in 0..2u64 {
-            let start = chunk_idx * 500_000;
-            let end = start + 499_999;
-            let key = format!("diff-mismatch/static_files/{component}-{start}-{end}.tar.zst");
-            s3.put_object()
-                .bucket(bucket)
-                .key(&key)
-                .body(aws_sdk_s3::primitives::ByteStream::from(b"corrupted-bytes-x".to_vec()))
-                .send()
-                .await?;
-        }
+        let key = format!("diff-mismatch/static_files/{component}-0-499999.tar.zst");
+        s3.put_object()
+            .bucket(bucket)
+            .key(&key)
+            .body(aws_sdk_s3::primitives::ByteStream::from(b"corrupted-bytes-x".to_vec()))
+            .send()
+            .await?;
     }
 
     // New run reports DIFFERENT hashes (seed "v2") for the same chunk filenames.
@@ -656,22 +812,34 @@ async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Re
     let remote_manifest = uploader.fetch_previous_manifest().await?;
 
     uploader
-        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, remote_manifest.as_ref())
+        .upload(upload_params(
+            &output_dir,
+            &files,
+            1_700_000_000,
+            &local_manifest,
+            remote_manifest.as_ref(),
+            &HashMap::new(),
+        ))
         .await?;
 
-    // Verify every chunk was re-uploaded with the fresh bytes.
+    // Verify finalized chunks are re-uploaded on a BLAKE3 mismatch, while latest chunks
+    // are isolated in the timestamped run directory.
     for &component in DIFF_TEST_COMPONENTS {
-        for chunk_idx in 0..2u64 {
-            let start = chunk_idx * 500_000;
-            let end = start + 499_999;
-            let key = format!("diff-mismatch/static_files/{component}-{start}-{end}.tar.zst");
-            let body = get_object_bytes(s3, bucket, &key).await?;
-            assert_eq!(
-                body.as_slice(),
-                b"healthy-bytes-yyy",
-                "chunk {component} {chunk_idx} should have been re-uploaded despite size match"
-            );
-        }
+        let finalized_key = format!("diff-mismatch/static_files/{component}-0-499999.tar.zst");
+        let finalized_body = get_object_bytes(s3, bucket, &finalized_key).await?;
+        assert_eq!(
+            finalized_body.as_slice(),
+            b"healthy-bytes-yyy",
+            "{component} finalized chunk should be re-uploaded despite matching size"
+        );
+
+        let latest_key = format!("diff-mismatch/1700000000/{component}-500000-999999.tar.zst");
+        let latest_body = get_object_bytes(s3, bucket, &latest_key).await?;
+        assert_eq!(
+            latest_body.as_slice(),
+            b"healthy-bytes-yyy",
+            "{component} latest chunk should be uploaded beside the manifest"
+        );
     }
 
     Ok(())
@@ -699,12 +867,31 @@ async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
     assert!(remote_manifest.is_none(), "fresh bucket should have no previous manifest");
 
     uploader
-        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, remote_manifest.as_ref())
+        .upload(upload_params(
+            &output_dir,
+            &files,
+            1_700_000_000,
+            &local_manifest,
+            remote_manifest.as_ref(),
+            &HashMap::new(),
+        ))
         .await?;
 
     let body =
-        get_object_bytes(s3, bucket, "first-run/static_files/headers-0-499999.tar.zst").await?;
-    assert_eq!(body.as_slice(), b"fresh-chunk", "static file should be uploaded on first run");
+        get_object_bytes(s3, bucket, "first-run/1700000000/headers-0-499999.tar.zst").await?;
+    assert_eq!(
+        body.as_slice(),
+        b"fresh-chunk",
+        "latest static file should be uploaded beside manifest"
+    );
+
+    let shared_chunk = s3
+        .head_object()
+        .bucket(bucket)
+        .key("first-run/static_files/headers-0-499999.tar.zst")
+        .send()
+        .await;
+    assert!(shared_chunk.is_err(), "latest static file must not be uploaded to shared storage");
 
     Ok(())
 }
@@ -714,8 +901,8 @@ async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn selective_compression_skips_finalized_chunks() -> Result<()> {
-    // Create a real datadir with mdbx + 4 header chunk ranges
-    // block=2M, bpf=500k → 4 chunks, tip=chunk3, buffer=2 → skip chunk 0
+    // Create a real datadir with mdbx + 4 header chunk ranges.
+    // block=2M, bpf=500k → 4 chunks; only chunk 3 remains mutable.
     let source = tempfile::tempdir()?;
     let db_dir = source.path().join("db");
     std::fs::create_dir_all(&db_dir)?;
@@ -738,7 +925,7 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         }
     }
 
-    // Simulate all chunked components existing remotely for range 0-499999
+    // Simulate all chunked components existing remotely for every finalized range.
     let chunk_components = [
         "headers",
         "transactions",
@@ -749,7 +936,11 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
     ];
     let mut remote: HashMap<String, u64> = HashMap::new();
     for component in chunk_components {
-        remote.insert(format!("{component}-0-499999.tar.zst"), 0);
+        for chunk_idx in 0..3u64 {
+            let start = chunk_idx * 500_000;
+            let end = start + 499_999;
+            remote.insert(format!("{component}-{start}-{end}.tar.zst"), 0);
+        }
     }
 
     let output = tempfile::tempdir()?;
@@ -769,29 +960,33 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         .filter_map(|f| f.file_name().map(|n| n.to_string_lossy().to_string()))
         .collect();
 
-    // Skipped range: chunk 0 should NOT be compressed (all components exist remotely)
+    // Every finalized range should be skipped when its complete component set exists remotely.
+    for component in chunk_components {
+        for chunk_idx in 0..3u64 {
+            let start = chunk_idx * 500_000;
+            let end = start + 499_999;
+            assert!(
+                !filenames.contains(&format!("{component}-{start}-{end}.tar.zst")),
+                "{component} finalized range {chunk_idx} should not produce an archive"
+            );
+        }
+    }
+
+    // Only the final chunk should be compressed for every component.
     for component in chunk_components {
         assert!(
-            !filenames.contains(&format!("{component}-0-499999.tar.zst")),
-            "{component} finalized range should not produce an archive"
+            filenames.contains(&format!("{component}-1500000-1999999.tar.zst")),
+            "{component} latest chunk should produce an archive"
         );
     }
 
-    // Buffer + tip ranges: should be compressed
-    for component in chunk_components {
-        assert!(
-            filenames.contains(&format!("{component}-500000-999999.tar.zst")),
-            "{component} tip range should produce an archive"
-        );
-    }
-
-    // Always-upload: state + manifest
+    // Always-upload: state + manifest.
     assert!(filenames.contains(&"state.tar.zst".to_string()), "state should always be produced");
     assert!(filenames.contains(&"manifest.json".to_string()), "manifest should always be produced");
 
-    // Verify tip archive is a valid compressed file (not empty)
-    let tip_path = output.path().join("headers-500000-999999.tar.zst");
-    assert!(std::fs::metadata(&tip_path)?.len() > 0, "tip archive should not be empty");
+    // Verify latest archive is a valid compressed file (not empty).
+    let tip_path = output.path().join("headers-1500000-1999999.tar.zst");
+    assert!(std::fs::metadata(&tip_path)?.len() > 0, "latest archive should not be empty");
 
     Ok(())
 }
@@ -841,8 +1036,16 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
     );
 
     let local_manifest = parse_local_manifest(output.path())?;
-    let upload_prefix =
-        uploader.upload(output.path(), &files, 1_700_000_000, 100, &local_manifest, None).await?;
+    let upload_prefix = uploader
+        .upload(upload_params(
+            output.path(),
+            &files,
+            1_700_000_000,
+            &local_manifest,
+            None,
+            &HashMap::new(),
+        ))
+        .await?;
     assert_eq!(upload_prefix, "proofs-gen/1700000000");
 
     let s3 = &harness.storage_client;
@@ -858,8 +1061,8 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
         "published proofs file must be a sibling of manifest.json"
     );
     assert_eq!(
-        manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
-        "state should still use the relative run-dir path"
+        manifest["components"]["state"]["file"], "1700000000/state.tar.zst",
+        "state should use the timestamped run-dir path"
     );
     assert!(
         manifest["components"]["proofs"]["output_files"].as_array().is_some_and(|files| files
@@ -924,9 +1127,17 @@ async fn always_upload_overwrites_existing_state_rocksdb_and_proofs() -> Result<
         output_dir.join("rocksdb_indices.tar.zst"),
         output_dir.join("state.tar.zst"),
     ];
+    let empty_manifest = empty_manifest(2_000_000);
 
     let upload_prefix = uploader
-        .upload(&output_dir, &files, 1_700_000_000, 100, &empty_manifest(2_000_000), None)
+        .upload(upload_params(
+            &output_dir,
+            &files,
+            1_700_000_000,
+            &empty_manifest,
+            None,
+            &HashMap::new(),
+        ))
         .await?;
     assert_eq!(upload_prefix, "overwrite-test/1700000000");
 
@@ -1166,8 +1377,16 @@ async fn e2e_stop_upload_restart_real_container() -> Result<()> {
         "e2e-test".to_string(),
         None,
     );
-    let upload_prefix =
-        uploader.upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None).await?;
+    let upload_prefix = uploader
+        .upload(upload_params(
+            &output_dir,
+            &files,
+            1_700_000_000,
+            &local_manifest,
+            None,
+            &HashMap::new(),
+        ))
+        .await?;
 
     let manifest_body = get_object_bytes(
         &harness.storage_client,
