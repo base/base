@@ -40,7 +40,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
         syn::Error::new(
             input.ident.span(),
             "`#[precompile]` requires `storage_features = <expr>` so the wrapper is pinned to the \
-             active fork instead of falling back to a default (see Cantina finding #17).",
+             active fork instead of falling back to a default.",
         )
     })?;
     let args = config.args;

@@ -13,7 +13,7 @@ use crate::{
 ///
 /// Installation and wrapper construction are hand-rolled because the wrapper needs an observer
 /// alongside its admin config. Storage features are pinned to the active [`BaseUpgrade`] at every
-/// entry point (Cantina finding #17).
+/// entry point.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ActivationRegistry;
 

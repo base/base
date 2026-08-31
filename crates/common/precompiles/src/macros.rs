@@ -4,7 +4,7 @@
 ///
 /// `storage_features` is required: callers must pin the feature set to the currently-active fork
 /// (typically via [`crate::UpgradeGatedStorageFeatures::from_upgrade`]) rather than let the wrapper
-/// silently default to a stale variant (Cantina finding #17).
+/// silently default to a stale variant.
 macro_rules! base_precompile {
     ($id:expr, storage_features: $storage_features:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
         ::alloy_evm::precompiles::DynPrecompile::new_stateful(

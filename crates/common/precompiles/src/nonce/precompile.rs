@@ -21,8 +21,7 @@ impl NonceManager {
     /// Creates the EVM precompile wrapper with storage features pinned to `upgrade`.
     ///
     /// The wrapper reads `storage_features` from the currently-active fork instead of the macro
-    /// default, so a Cobalt-only precompile cannot silently execute under Legacy semantics
-    /// (Cantina finding #17).
+    /// default, so a Cobalt-only precompile cannot silently execute under Legacy semantics.
     pub fn precompile(upgrade: BaseUpgrade) -> DynPrecompile {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
