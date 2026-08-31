@@ -145,6 +145,8 @@ pub struct LaneInsertOutcome<T: BasePooledTx> {
     pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
     /// Reservation changes caused by this insertion.
     pub funding_transitions: Vec<FundingTransition<T>>,
+    /// Unified lifecycle transitions caused by this insertion.
+    pub transitions: LaneTransitionBatch<T>,
 }
 
 /// State changes caused by updating a lane cursor.
@@ -158,6 +160,8 @@ pub struct LaneUpdateOutcome<T: BasePooledTx> {
     pub demoted: Vec<(Arc<ValidPoolTransaction<T>>, SubPool)>,
     /// Reservation changes caused by the cursor update.
     pub funding_transitions: Vec<FundingTransition<T>>,
+    /// Unified lifecycle transitions caused by the cursor update.
+    pub transitions: LaneTransitionBatch<T>,
 }
 
 /// State changes caused by updating the store's base fee.
@@ -167,6 +171,8 @@ pub struct LaneFeeUpdateOutcome<T: BasePooledTx> {
     pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
     /// Transactions moved out of pending.
     pub demoted: Vec<(Arc<ValidPoolTransaction<T>>, SubPool)>,
+    /// Unified lifecycle transitions caused by the fee update.
+    pub transitions: LaneTransitionBatch<T>,
 }
 
 /// Result of committing canonical Base transaction identities.
@@ -178,6 +184,8 @@ pub struct LaneCommitOutcome<T: BasePooledTx> {
     pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
     /// Reservation changes among transactions retained by the commit.
     pub funding_transitions: Vec<FundingTransition<T>>,
+    /// Unified lifecycle transitions caused by the commit.
+    pub transitions: LaneTransitionBatch<T>,
 }
 
 /// State changes caused by updating or removing a payer's known balance.
@@ -195,6 +203,143 @@ pub struct PayerBalanceUpdateOutcome<T: BasePooledTx> {
     pub demoted: Vec<(Arc<ValidPoolTransaction<T>>, SubPool)>,
     /// Reservation changes caused by the balance update.
     pub funding_transitions: Vec<FundingTransition<T>>,
+    /// Unified lifecycle transitions caused by the balance update.
+    pub transitions: LaneTransitionBatch<T>,
+}
+
+/// Operation that produced a lane-store lifecycle batch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LaneTransitionCause {
+    /// A validated transaction was inserted or replaced an incumbent.
+    Insert,
+    /// A sequential lane cursor changed.
+    LaneCursor,
+    /// A payer balance changed.
+    PayerBalance,
+    /// The base fee changed.
+    BaseFee,
+    /// Transactions were explicitly removed.
+    Removal,
+    /// Canonical identities were committed without block metadata.
+    Commit,
+    /// Transactions were mined in a known block.
+    Mining,
+    /// Transactions expired.
+    Expiry,
+    /// Transactions were evicted to satisfy pool limits.
+    Eviction,
+}
+
+/// Terminal disposition of a transaction lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LaneTerminalEvent {
+    /// The transaction was replaced by another hash.
+    Replaced {
+        /// Hash of the replacement transaction.
+        by: TxHash,
+    },
+    /// The transaction was explicitly removed.
+    Removed,
+    /// The transaction became permanently invalid.
+    Invalid,
+    /// The transaction expired.
+    Expired,
+    /// The transaction was evicted to satisfy configured limits.
+    Evicted,
+    /// The transaction was committed without a known block hash.
+    Committed,
+    /// The transaction was mined in a known block.
+    Mined {
+        /// Hash of the block containing the transaction.
+        block_hash: B256,
+    },
+}
+
+/// One transaction's complete before-and-after lifecycle transition.
+#[derive(Debug)]
+pub struct LaneTransactionTransition<T: BasePooledTx> {
+    /// Transaction affected by the operation.
+    pub transaction: Arc<ValidPoolTransaction<T>>,
+    /// Executable state before the operation.
+    pub previous_state: Option<LaneTransactionState>,
+    /// Executable state after the operation.
+    pub current_state: Option<LaneTransactionState>,
+    /// Funding state before the operation.
+    pub previous_funding: Option<TransactionFundingState>,
+    /// Funding state after the operation.
+    pub current_funding: Option<TransactionFundingState>,
+    /// Terminal disposition, if this operation ended the lifecycle.
+    pub terminal: Option<LaneTerminalEvent>,
+}
+
+/// Coherent transaction lifecycle changes produced by one store operation.
+#[derive(Debug)]
+pub struct LaneTransitionBatch<T: BasePooledTx> {
+    /// Operation that produced this batch.
+    pub cause: LaneTransitionCause,
+    /// Deterministically hash-ordered transaction transitions.
+    pub transitions: Vec<LaneTransactionTransition<T>>,
+}
+
+impl<T: BasePooledTx> LaneTransitionBatch<T> {
+    /// Returns whether this operation changed no transaction lifecycle.
+    pub const fn is_empty(&self) -> bool {
+        self.transitions.is_empty()
+    }
+}
+
+/// Terminal reason used by explicit removal operations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LaneRemovalReason {
+    /// Explicit caller-requested removal.
+    Removed,
+    /// Permanent invalidation.
+    Invalid,
+    /// Deadline expiry.
+    Expired,
+    /// Capacity eviction.
+    Evicted,
+}
+
+impl LaneRemovalReason {
+    const fn terminal(self) -> LaneTerminalEvent {
+        match self {
+            Self::Removed => LaneTerminalEvent::Removed,
+            Self::Invalid => LaneTerminalEvent::Invalid,
+            Self::Expired => LaneTerminalEvent::Expired,
+            Self::Evicted => LaneTerminalEvent::Evicted,
+        }
+    }
+
+    const fn cause(self) -> LaneTransitionCause {
+        match self {
+            Self::Removed | Self::Invalid => LaneTransitionCause::Removal,
+            Self::Expired => LaneTransitionCause::Expiry,
+            Self::Evicted => LaneTransitionCause::Eviction,
+        }
+    }
+}
+
+/// Complete result of a removal, expiry, mining, or eviction operation.
+#[derive(Debug)]
+pub struct LaneRemovalOutcome<T: BasePooledTx> {
+    /// Transactions removed by the operation.
+    pub removed: Vec<Arc<ValidPoolTransaction<T>>>,
+    /// Remaining transactions newly promoted to pending.
+    pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
+    /// Remaining transactions moved out of pending.
+    pub demoted: Vec<(Arc<ValidPoolTransaction<T>>, SubPool)>,
+    /// Reservation changes among retained transactions.
+    pub funding_transitions: Vec<FundingTransition<T>>,
+    /// Unified lifecycle transitions caused by the operation.
+    pub transitions: LaneTransitionBatch<T>,
+}
+
+#[derive(Debug)]
+struct TransitionSnapshot<T: BasePooledTx> {
+    transaction: Arc<ValidPoolTransaction<T>>,
+    state: LaneTransactionState,
+    funding: TransactionFundingState,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -502,8 +647,7 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         }
         self.ensure_sender_capacity(&transaction, replaced.is_some())?;
 
-        let before = self.states_by_hash();
-        let funding_before = self.funding_states_by_hash();
+        let before = self.transition_snapshot();
         if let Some(existing) = &replaced {
             self.remove_indexed(existing.transaction.identity());
         }
@@ -529,22 +673,33 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         self.rebalance_funding();
 
         let state = self.state(&identity).expect("inserted transaction is classified");
-        let promoted = self
-            .classified_transactions()
-            .filter(|(candidate, tx)| {
-                *candidate == LaneTransactionState::Pending
-                    && *tx.hash() != hash
-                    && before
-                        .get(tx.hash())
-                        .is_some_and(|previous| *previous != LaneTransactionState::Pending)
+        let terminals = replaced
+            .as_ref()
+            .map(|transaction| {
+                B256Map::from_iter([(
+                    *transaction.hash(),
+                    LaneTerminalEvent::Replaced { by: hash },
+                )])
             })
-            .map(|(_, transaction)| Arc::clone(transaction))
+            .unwrap_or_default();
+        let transitions = self.transition_batch(LaneTransitionCause::Insert, &before, terminals);
+        let promoted = transitions
+            .transitions
+            .iter()
+            .filter(|transition| {
+                *transition.transaction.hash() != hash
+                    && transition.current_state == Some(LaneTransactionState::Pending)
+                    && transition.previous_state != Some(LaneTransactionState::Pending)
+            })
+            .map(|transition| Arc::clone(&transition.transaction))
             .collect();
+        let funding_transitions = Self::funding_transitions_from_batch(&transitions);
         Ok(LaneInsertOutcome {
             outcome: AddedTransactionOutcome { hash, state: Self::added_state(state) },
             replaced,
             promoted,
-            funding_transitions: self.funding_transitions(&funding_before),
+            funding_transitions,
+            transitions,
         })
     }
 
@@ -554,8 +709,7 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         lane: BaseTransactionLane,
         cursor: u64,
     ) -> LaneUpdateOutcome<T> {
-        let before = self.states_by_hash();
-        let funding_before = self.funding_states_by_hash();
+        let before = self.transition_snapshot();
         let stale = {
             let lane = self.lanes.entry(lane).or_default();
             lane.cursor = cursor;
@@ -564,19 +718,26 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
                 .map(|(_, transaction)| *transaction.hash())
                 .collect::<Vec<_>>()
         };
-        let removed = self.remove_exact(&stale);
+        let removed = self.remove_hashes_raw(&stale);
         self.rebalance_funding();
-        let (promoted, demoted) = self.pending_changes(&before);
-        let funding_transitions = self.funding_transitions(&funding_before);
-        LaneUpdateOutcome { removed, promoted, demoted, funding_transitions }
+        let terminals = Self::terminals_for(&removed, LaneTerminalEvent::Committed);
+        let transitions =
+            self.transition_batch(LaneTransitionCause::LaneCursor, &before, terminals);
+        let (promoted, demoted) = Self::pending_changes_from_batch(&transitions);
+        let funding_transitions = Self::funding_transitions_from_batch(&transitions);
+        LaneUpdateOutcome { removed, promoted, demoted, funding_transitions, transitions }
     }
 
     /// Updates the base fee and reports transactions entering or leaving pending.
     pub fn set_base_fee(&mut self, base_fee: u64) -> LaneFeeUpdateOutcome<T> {
-        let before = self.states_by_hash();
+        let previous_base_fee = self.base_fee;
+        let before = self.transition_snapshot();
         self.base_fee = base_fee;
-        let (promoted, demoted) = self.pending_changes(&before);
-        LaneFeeUpdateOutcome { promoted, demoted }
+        let transitions =
+            self.transition_batch(LaneTransitionCause::BaseFee, &before, B256Map::default());
+        let (promoted, demoted) = Self::pending_changes_from_batch(&transitions);
+        debug_assert!(previous_base_fee != base_fee || transitions.is_empty());
+        LaneFeeUpdateOutcome { promoted, demoted, transitions }
     }
 
     /// Sets a payer's known balance and reconciles reservations deterministically.
@@ -593,19 +754,26 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         self.update_payer_balance(payer, None)
     }
 
+    /// Removes expired hashes and returns one expiry lifecycle batch.
+    pub fn remove_expired(&mut self, hashes: &[TxHash]) -> LaneRemovalOutcome<T> {
+        self.remove_exact_with_outcome(hashes, LaneRemovalReason::Expired)
+    }
+
     /// Removes exact hashes without advancing lane cursors.
     pub fn remove_exact(&mut self, hashes: &[TxHash]) -> Vec<Arc<ValidPoolTransaction<T>>> {
-        let removed = hashes
-            .iter()
-            .filter_map(|hash| {
-                self.hashes.get(hash).map(|transaction| transaction.transaction.identity())
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|identity| self.remove_indexed(identity))
-            .collect();
+        self.remove_exact_with_outcome(hashes, LaneRemovalReason::Removed).removed
+    }
+
+    /// Removes exact hashes and returns their complete lifecycle transition batch.
+    pub fn remove_exact_with_outcome(
+        &mut self,
+        hashes: &[TxHash],
+        reason: LaneRemovalReason,
+    ) -> LaneRemovalOutcome<T> {
+        let before = self.transition_snapshot();
+        let removed = self.remove_hashes_raw(hashes);
         self.rebalance_funding();
-        removed
+        self.removal_outcome(before, removed, reason)
     }
 
     /// Removes exact hashes and every nonce descendant in the same lane.
@@ -615,6 +783,16 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         &mut self,
         hashes: &[TxHash],
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        self.remove_with_descendants_outcome(hashes, LaneRemovalReason::Removed).removed
+    }
+
+    /// Removes exact hashes and nonce descendants with a complete lifecycle batch.
+    pub fn remove_with_descendants_outcome(
+        &mut self,
+        hashes: &[TxHash],
+        reason: LaneRemovalReason,
+    ) -> LaneRemovalOutcome<T> {
+        let before = self.transition_snapshot();
         let mut identities = Vec::new();
         for hash in hashes {
             let Some(transaction) = self.hashes.get(hash) else { continue };
@@ -636,13 +814,23 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         let removed =
             identities.into_iter().filter_map(|identity| self.remove_indexed(identity)).collect();
         self.rebalance_funding();
-        removed
+        self.removal_outcome(before, removed, reason)
     }
 
     /// Prunes known mined hashes while preserving executable descendants.
     ///
     /// A sequential cursor advances only when the pruned transaction is its current head.
     pub fn prune(&mut self, hashes: &[TxHash]) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        self.prune_with_outcome(hashes, LaneRemovalReason::Removed).removed
+    }
+
+    /// Prunes hashes while preserving descendants and returns a complete lifecycle batch.
+    pub fn prune_with_outcome(
+        &mut self,
+        hashes: &[TxHash],
+        reason: LaneRemovalReason,
+    ) -> LaneRemovalOutcome<T> {
+        let before = self.transition_snapshot();
         let mut identities: Vec<_> = hashes
             .iter()
             .filter_map(|hash| self.hashes.get(hash))
@@ -661,7 +849,32 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
             }
         }
         self.rebalance_funding();
-        removed
+        self.removal_outcome(before, removed, reason)
+    }
+
+    /// Prunes transactions mined in `block_hash` and preserves executable descendants.
+    pub fn prune_mined(&mut self, hashes: &[TxHash], block_hash: B256) -> LaneRemovalOutcome<T> {
+        let before = self.transition_snapshot();
+        let mut identities: Vec<_> = hashes
+            .iter()
+            .filter_map(|hash| self.hashes.get(hash))
+            .map(|transaction| transaction.transaction.identity())
+            .collect();
+        identities.sort_unstable_by_key(|identity| Self::identity_sort_key(*identity));
+        let mut removed = Vec::new();
+        for identity in identities {
+            if let BaseTransactionIdentity::Nonce { lane, nonce } = identity
+                && self.lanes.get(&lane).is_some_and(|stored| stored.cursor == nonce)
+            {
+                self.lanes.get_mut(&lane).expect("lane exists").cursor = nonce.saturating_add(1);
+            }
+            if let Some(transaction) = self.remove_indexed(identity) {
+                removed.push(transaction);
+            }
+        }
+        self.rebalance_funding();
+        let terminals = Self::terminals_for(&removed, LaneTerminalEvent::Mined { block_hash });
+        self.removal_outcome_with_terminals(before, removed, LaneTransitionCause::Mining, terminals)
     }
 
     /// Commits canonical identities, including identities not currently present by hash.
@@ -669,8 +882,33 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
     /// Committing a nonce identity advances its exact lane and removes all entries through that
     /// nonce. Committing a replay identity removes only that replay entry.
     pub fn commit(&mut self, identities: &[BaseTransactionIdentity]) -> LaneCommitOutcome<T> {
-        let before = self.states_by_hash();
-        let funding_before = self.funding_states_by_hash();
+        self.commit_with_terminal(
+            identities,
+            LaneTransitionCause::Commit,
+            LaneTerminalEvent::Committed,
+        )
+    }
+
+    /// Commits canonical identities as mined in `block_hash`.
+    pub fn commit_mined(
+        &mut self,
+        identities: &[BaseTransactionIdentity],
+        block_hash: B256,
+    ) -> LaneCommitOutcome<T> {
+        self.commit_with_terminal(
+            identities,
+            LaneTransitionCause::Mining,
+            LaneTerminalEvent::Mined { block_hash },
+        )
+    }
+
+    fn commit_with_terminal(
+        &mut self,
+        identities: &[BaseTransactionIdentity],
+        cause: LaneTransitionCause,
+        terminal: LaneTerminalEvent,
+    ) -> LaneCommitOutcome<T> {
+        let before = self.transition_snapshot();
         let mut removed = Vec::new();
         for identity in identities {
             match *identity {
@@ -700,20 +938,37 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
             }
         }
         self.rebalance_funding();
-        let (promoted, _) = self.pending_changes(&before);
-        let funding_transitions = self.funding_transitions(&funding_before);
-        LaneCommitOutcome { removed, promoted, funding_transitions }
+        let terminals = Self::terminals_for(&removed, terminal);
+        let transitions = self.transition_batch(cause, &before, terminals);
+        let (promoted, _) = Self::pending_changes_from_batch(&transitions);
+        let funding_transitions = Self::funding_transitions_from_batch(&transitions);
+        LaneCommitOutcome { removed, promoted, funding_transitions, transitions }
     }
 
     /// Removes every transaction belonging to a physical sender.
     pub fn remove_by_sender(&mut self, sender: Address) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        self.remove_by_sender_with_outcome(sender, LaneRemovalReason::Removed).removed
+    }
+
+    /// Removes every transaction for a sender with a complete lifecycle batch.
+    pub fn remove_by_sender_with_outcome(
+        &mut self,
+        sender: Address,
+        reason: LaneRemovalReason,
+    ) -> LaneRemovalOutcome<T> {
         let hashes =
             self.senders.get(&sender).cloned().unwrap_or_default().into_iter().collect::<Vec<_>>();
-        self.remove_exact(&hashes)
+        self.remove_exact_with_outcome(&hashes, reason)
     }
 
     /// Evicts non-local transactions until all configured Reth subpool limits hold.
     pub fn enforce_limits(&mut self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        self.enforce_limits_with_outcome().removed
+    }
+
+    /// Enforces configured limits and returns one eviction lifecycle batch.
+    pub fn enforce_limits_with_outcome(&mut self) -> LaneRemovalOutcome<T> {
+        let before = self.transition_snapshot();
         let mut discarded = Vec::new();
         loop {
             let size = self.size();
@@ -760,9 +1015,10 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
                 })
                 .map(|transaction| *transaction.hash());
             let Some(victim) = victim else { break };
-            discarded.extend(self.remove_with_descendants(&[victim]));
+            discarded.extend(self.remove_descendants_raw(&[victim]));
+            self.rebalance_funding();
         }
-        discarded
+        self.removal_outcome(before, discarded, LaneRemovalReason::Evicted)
     }
 
     /// Returns one globally ordered snapshot iterator across every executable lane and replay.
@@ -832,20 +1088,58 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         Some(transaction)
     }
 
+    fn remove_hashes_raw(&mut self, hashes: &[TxHash]) -> Vec<StoredTransaction<T>> {
+        hashes
+            .iter()
+            .filter_map(|hash| {
+                self.hashes.get(hash).map(|transaction| transaction.transaction.identity())
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|identity| self.remove_indexed(identity))
+            .collect()
+    }
+
+    fn remove_descendants_raw(&mut self, hashes: &[TxHash]) -> Vec<StoredTransaction<T>> {
+        let mut identities = Vec::new();
+        for hash in hashes {
+            let Some(transaction) = self.hashes.get(hash) else { continue };
+            match transaction.transaction.identity() {
+                BaseTransactionIdentity::Replay { replay_id } => {
+                    identities.push(BaseTransactionIdentity::Replay { replay_id });
+                }
+                BaseTransactionIdentity::Nonce { lane, nonce } => {
+                    if let Some(stored) = self.lanes.get(&lane) {
+                        identities.extend(stored.transactions.range(nonce..).map(
+                            |(stored_nonce, _)| BaseTransactionIdentity::Nonce {
+                                lane,
+                                nonce: *stored_nonce,
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+        identities.sort_unstable_by_key(|identity| Self::identity_sort_key(*identity));
+        identities.dedup();
+        identities.into_iter().filter_map(|identity| self.remove_indexed(identity)).collect()
+    }
+
     fn update_payer_balance(
         &mut self,
         payer: Address,
         balance: Option<U256>,
     ) -> PayerBalanceUpdateOutcome<T> {
-        let before = self.states_by_hash();
-        let funding_before = self.funding_states_by_hash();
+        let before = self.transition_snapshot();
         let previous_balance = match balance {
             Some(balance) => self.payer_balances.insert(payer, balance),
             None => self.payer_balances.remove(&payer),
         };
         self.rebalance_funding();
-        let (promoted, demoted) = self.pending_changes(&before);
-        let funding_transitions = self.funding_transitions(&funding_before);
+        let transitions =
+            self.transition_batch(LaneTransitionCause::PayerBalance, &before, B256Map::default());
+        let (promoted, demoted) = Self::pending_changes_from_batch(&transitions);
+        let funding_transitions = Self::funding_transitions_from_batch(&transitions);
         PayerBalanceUpdateOutcome {
             payer,
             previous_balance,
@@ -853,6 +1147,7 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
             promoted,
             demoted,
             funding_transitions,
+            transitions,
         }
     }
 
@@ -1094,32 +1389,133 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         }
     }
 
-    fn funding_states_by_hash(&self) -> B256Map<TransactionFundingState> {
-        self.hashes
-            .iter()
-            .map(|(hash, transaction)| (*hash, self.funding_state_for(transaction)))
+    fn transition_snapshot(&self) -> B256Map<TransitionSnapshot<T>> {
+        self.classified_transactions()
+            .map(|(state, transaction)| {
+                (
+                    *transaction.hash(),
+                    TransitionSnapshot {
+                        transaction: Arc::clone(transaction),
+                        state,
+                        funding: self.funding_state_for(transaction),
+                    },
+                )
+            })
             .collect()
     }
 
-    fn funding_transitions(
+    fn transition_batch(
         &self,
-        before: &B256Map<TransactionFundingState>,
-    ) -> Vec<FundingTransition<T>> {
-        let mut transitions = self
-            .hashes
-            .values()
-            .filter_map(|transaction| {
-                let current = self.funding_state_for(transaction);
-                let previous = before.get(transaction.hash()).copied();
-                (previous != Some(current)).then(|| FundingTransition {
-                    transaction: Arc::clone(transaction),
-                    previous,
+        cause: LaneTransitionCause,
+        before: &B256Map<TransitionSnapshot<T>>,
+        terminals: B256Map<LaneTerminalEvent>,
+    ) -> LaneTransitionBatch<T> {
+        let after = self.transition_snapshot();
+        let mut hashes =
+            before.keys().chain(after.keys()).chain(terminals.keys()).copied().collect::<Vec<_>>();
+        hashes.sort_unstable();
+        hashes.dedup();
+        let transitions = hashes
+            .into_iter()
+            .filter_map(|hash| {
+                let previous = before.get(&hash);
+                let current = after.get(&hash);
+                let terminal = terminals.get(&hash).copied();
+                let previous_state = previous.map(|snapshot| snapshot.state);
+                let current_state = current.map(|snapshot| snapshot.state);
+                let previous_funding = previous.map(|snapshot| snapshot.funding);
+                let current_funding = current.map(|snapshot| snapshot.funding);
+                (previous_state != current_state
+                    || previous_funding != current_funding
+                    || terminal.is_some())
+                .then(|| LaneTransactionTransition {
+                    transaction: Arc::clone(
+                        current
+                            .map(|snapshot| &snapshot.transaction)
+                            .or_else(|| previous.map(|snapshot| &snapshot.transaction))
+                            .expect("transition hash exists in a snapshot"),
+                    ),
+                    previous_state,
+                    current_state,
+                    previous_funding,
+                    current_funding,
+                    terminal,
+                })
+            })
+            .collect();
+        LaneTransitionBatch { cause, transitions }
+    }
+
+    fn funding_transitions_from_batch(batch: &LaneTransitionBatch<T>) -> Vec<FundingTransition<T>> {
+        batch
+            .transitions
+            .iter()
+            .filter_map(|transition| {
+                let current = transition.current_funding?;
+                (transition.previous_funding != Some(current)).then(|| FundingTransition {
+                    transaction: Arc::clone(&transition.transaction),
+                    previous: transition.previous_funding,
                     current,
                 })
             })
-            .collect::<Vec<_>>();
-        transitions.sort_unstable_by_key(|transition| *transition.transaction.hash());
-        transitions
+            .collect()
+    }
+
+    fn pending_changes_from_batch(
+        batch: &LaneTransitionBatch<T>,
+    ) -> (Vec<StoredTransaction<T>>, Vec<DemotedTransaction<T>>) {
+        let mut promoted = Vec::new();
+        let mut demoted = Vec::new();
+        for transition in &batch.transitions {
+            match (transition.previous_state, transition.current_state) {
+                (Some(previous), Some(LaneTransactionState::Pending))
+                    if previous != LaneTransactionState::Pending =>
+                {
+                    promoted.push(Arc::clone(&transition.transaction));
+                }
+                (Some(LaneTransactionState::Pending), Some(LaneTransactionState::BaseFee)) => {
+                    demoted.push((Arc::clone(&transition.transaction), SubPool::BaseFee));
+                }
+                (
+                    Some(LaneTransactionState::Pending),
+                    Some(LaneTransactionState::Funding(_) | LaneTransactionState::Queued(_)),
+                ) => {
+                    demoted.push((Arc::clone(&transition.transaction), SubPool::Queued));
+                }
+                _ => {}
+            }
+        }
+        (promoted, demoted)
+    }
+
+    fn terminals_for(
+        transactions: &[StoredTransaction<T>],
+        terminal: LaneTerminalEvent,
+    ) -> B256Map<LaneTerminalEvent> {
+        transactions.iter().map(|transaction| (*transaction.hash(), terminal)).collect()
+    }
+
+    fn removal_outcome(
+        &self,
+        before: B256Map<TransitionSnapshot<T>>,
+        removed: Vec<StoredTransaction<T>>,
+        reason: LaneRemovalReason,
+    ) -> LaneRemovalOutcome<T> {
+        let terminals = Self::terminals_for(&removed, reason.terminal());
+        self.removal_outcome_with_terminals(before, removed, reason.cause(), terminals)
+    }
+
+    fn removal_outcome_with_terminals(
+        &self,
+        before: B256Map<TransitionSnapshot<T>>,
+        removed: Vec<StoredTransaction<T>>,
+        cause: LaneTransitionCause,
+        terminals: B256Map<LaneTerminalEvent>,
+    ) -> LaneRemovalOutcome<T> {
+        let transitions = self.transition_batch(cause, &before, terminals);
+        let (promoted, demoted) = Self::pending_changes_from_batch(&transitions);
+        let funding_transitions = Self::funding_transitions_from_batch(&transitions);
+        LaneRemovalOutcome { removed, promoted, demoted, funding_transitions, transitions }
     }
 
     fn classified_transactions(
@@ -1181,40 +1577,6 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
                 (state, transaction)
             })
             .collect()
-    }
-
-    fn states_by_hash(&self) -> B256Map<LaneTransactionState> {
-        self.classified_transactions()
-            .map(|(state, transaction)| (*transaction.hash(), state))
-            .collect()
-    }
-
-    fn pending_changes(
-        &self,
-        before: &B256Map<LaneTransactionState>,
-    ) -> (Vec<StoredTransaction<T>>, Vec<DemotedTransaction<T>>) {
-        let mut promoted = Vec::new();
-        let mut demoted = Vec::new();
-        for (state, transaction) in self.classified_transactions() {
-            match (before.get(transaction.hash()), state) {
-                (Some(previous), LaneTransactionState::Pending)
-                    if *previous != LaneTransactionState::Pending =>
-                {
-                    promoted.push(Arc::clone(transaction));
-                }
-                (Some(LaneTransactionState::Pending), LaneTransactionState::BaseFee) => {
-                    demoted.push((Arc::clone(transaction), SubPool::BaseFee));
-                }
-                (
-                    Some(LaneTransactionState::Pending),
-                    LaneTransactionState::Funding(_) | LaneTransactionState::Queued(_),
-                ) => {
-                    demoted.push((Arc::clone(transaction), SubPool::Queued));
-                }
-                _ => {}
-            }
-        }
-        (promoted, demoted)
     }
 
     fn transactions_with_state(&self, expected: LaneTransactionState) -> Vec<StoredTransaction<T>> {
@@ -1294,6 +1656,7 @@ where
     indexes: HashMap<CandidateIdentity, usize>,
     ordering: O,
     base_fee: u64,
+    skip_blobs: bool,
 }
 
 impl<T: BasePooledTx, O> BestLaneTransactions<T, O>
@@ -1351,7 +1714,7 @@ where
                 })
                 .collect::<Vec<_>>(),
         );
-        Self { lanes, candidates, indexes, ordering, base_fee }
+        Self { lanes, candidates, indexes, ordering, base_fee, skip_blobs: false }
     }
 
     fn push_head(&mut self, index: usize) {
@@ -1384,10 +1747,24 @@ where
                 continue;
             }
             let transaction = Arc::clone(&lane.transactions[lane.index]);
+            if self.skip_blobs && transaction.transaction.is_eip4844() {
+                lane.invalidated = true;
+                continue;
+            }
             lane.index += 1;
             self.push_head(index);
             return Some(transaction);
         }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self
+            .lanes
+            .iter()
+            .filter(|lane| !lane.invalidated)
+            .map(|lane| lane.transactions.len().saturating_sub(lane.index))
+            .sum();
+        (0, Some(remaining))
     }
 }
 
@@ -1409,7 +1786,13 @@ where
 
     fn allow_updates_out_of_order(&mut self) {}
 
-    fn set_skip_blobs(&mut self, _skip_blobs: bool) {}
+    fn skip_blobs(&mut self) {
+        self.set_skip_blobs(true);
+    }
+
+    fn set_skip_blobs(&mut self, skip_blobs: bool) {
+        self.skip_blobs = skip_blobs;
+    }
 }
 
 #[cfg(test)]
@@ -1427,15 +1810,17 @@ mod tests {
         Eip8130Constants, Eip8130Signed, TxEip8130,
     };
     use base_test_utils::Account;
+    use futures::StreamExt;
     use reth_transaction_pool::{
-        PoolTransaction, TransactionOrigin,
+        FullTransactionEvent, PoolTransaction, TransactionEvent, TransactionListenerKind,
+        TransactionOrigin,
         identifier::{SenderId, TransactionId},
         pool::PendingPool,
         test_utils::TransactionBuilder,
     };
 
     use super::*;
-    use crate::{BaseOrdering, BasePooledTransaction};
+    use crate::{BaseOrdering, BasePooledTransaction, LaneEventHub};
 
     fn protocol_transaction(
         account: Account,
@@ -1456,6 +1841,27 @@ mod tests {
         let transaction = BaseTransactionSigned::Eip1559(
             signed.as_eip1559().expect("EIP-1559 transaction").clone(),
         );
+        let recovered = Recovered::new_unchecked(transaction, account.address());
+        let encoded_length = recovered.encode_2718_len();
+        BasePooledTransaction::new(recovered, encoded_length)
+    }
+
+    fn legacy_protocol_transaction(
+        account: Account,
+        nonce: u64,
+        gas_price: u128,
+    ) -> BasePooledTransaction {
+        let signed = TransactionBuilder::default()
+            .signer(account.signer_b256())
+            .chain_id(ChainConfig::mainnet().chain_id)
+            .nonce(nonce)
+            .to(Account::Bob.address())
+            .value(1_000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(gas_price)
+            .into_legacy();
+        let transaction =
+            BaseTransactionSigned::Legacy(signed.as_legacy().expect("legacy transaction").clone());
         let recovered = Recovered::new_unchecked(transaction, account.address());
         let encoded_length = recovered.encode_2718_len();
         BasePooledTransaction::new(recovered, encoded_length)
@@ -2201,5 +2607,221 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn lifecycle_batches_cover_protocol_channel_and_replay_promotions() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut store = store(50);
+        let protocol_gap = validated(protocol_transaction(Account::Alice, 1, 10, 100), 1, now);
+        let protocol_gap_hash = *protocol_gap.hash();
+        let channel = validated(sidecar_transaction(&signer, U256::from(7), 0, 0, 20, 100), 1, now);
+        let replay = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 1, 20, 40),
+            1,
+            now,
+        );
+
+        for transaction in [protocol_gap, channel, replay] {
+            let outcome = store.insert_validated(transaction, 0).unwrap();
+            assert_eq!(outcome.transitions.cause, LaneTransitionCause::Insert);
+            assert_eq!(outcome.transitions.transitions.len(), 1);
+            let transition = &outcome.transitions.transitions[0];
+            assert_eq!(transition.previous_state, None);
+            assert!(transition.current_state.is_some());
+            assert_eq!(transition.terminal, None);
+        }
+
+        let head = validated(protocol_transaction(Account::Alice, 0, 30, 100), 1, now);
+        let head_hash = *head.hash();
+        let outcome = store.insert_validated(head, 0).unwrap();
+        assert_eq!(outcome.transitions.transitions.len(), 2);
+        assert!(outcome.transitions.transitions.iter().any(|transition| {
+            *transition.transaction.hash() == head_hash
+                && transition.previous_state.is_none()
+                && transition.current_state == Some(LaneTransactionState::Pending)
+        }));
+        assert!(outcome.transitions.transitions.iter().any(|transition| {
+            *transition.transaction.hash() == protocol_gap_hash
+                && matches!(transition.previous_state, Some(LaneTransactionState::Queued(_)))
+                && transition.current_state == Some(LaneTransactionState::Pending)
+        }));
+    }
+
+    #[test]
+    fn replacement_funding_and_fee_updates_are_coherent_batches() {
+        let now = Instant::now();
+        let payer = Address::repeat_byte(0xa1);
+        let mut store = store(0);
+        store.set_payer_balance(payer, U256::from(100));
+        let original = validated_with_funding(
+            protocol_transaction(Account::Alice, 0, 10, 100),
+            1,
+            now,
+            payer,
+            U256::from(40),
+        );
+        let original_hash = *original.hash();
+        store.insert_validated(original, 0).unwrap();
+        let replacement = validated_with_funding(
+            protocol_transaction(Account::Alice, 0, 12, 120),
+            1,
+            now + Duration::from_millis(1),
+            payer,
+            U256::from(80),
+        );
+        let replacement_hash = *replacement.hash();
+        let replaced = store.insert_validated(replacement, 0).unwrap();
+
+        assert!(replaced.transitions.transitions.iter().any(|transition| {
+            *transition.transaction.hash() == original_hash
+                && transition.current_state.is_none()
+                && transition.terminal == Some(LaneTerminalEvent::Replaced { by: replacement_hash })
+        }));
+        assert!(replaced.transitions.transitions.iter().any(|transition| {
+            *transition.transaction.hash() == replacement_hash
+                && transition.previous_state.is_none()
+                && transition.current_state == Some(LaneTransactionState::Pending)
+        }));
+
+        let decreased = store.set_payer_balance(payer, U256::from(50));
+        assert_eq!(decreased.transitions.cause, LaneTransitionCause::PayerBalance);
+        assert_eq!(decreased.demoted.len(), 1);
+        assert_eq!(decreased.funding_transitions.len(), 1);
+        let increased = store.set_payer_balance(payer, U256::from(100));
+        assert_eq!(increased.promoted.len(), 1);
+
+        let raised = store.set_base_fee(121);
+        assert_eq!(raised.transitions.cause, LaneTransitionCause::BaseFee);
+        assert_eq!(raised.demoted.len(), 1);
+        let lowered = store.set_base_fee(120);
+        assert_eq!(lowered.promoted.len(), 1);
+    }
+
+    #[test]
+    fn cross_envelope_replacement_has_one_terminal_and_one_admission() {
+        let now = Instant::now();
+        let mut store = store(0);
+        let legacy = validated(legacy_protocol_transaction(Account::Alice, 0, 100), 1, now);
+        let legacy_hash = *legacy.hash();
+        store.insert_validated(legacy, 0).unwrap();
+        let dynamic = validated(protocol_transaction(Account::Alice, 0, 12, 120), 1, now);
+        let dynamic_hash = *dynamic.hash();
+
+        let outcome = store.insert_validated(dynamic, 0).unwrap();
+
+        assert_eq!(outcome.transitions.transitions.len(), 2);
+        assert!(outcome.transitions.transitions.iter().any(|transition| {
+            *transition.transaction.hash() == legacy_hash
+                && transition.terminal == Some(LaneTerminalEvent::Replaced { by: dynamic_hash })
+        }));
+        assert!(outcome.transitions.transitions.iter().any(|transition| {
+            *transition.transaction.hash() == dynamic_hash
+                && transition.previous_state.is_none()
+                && transition.current_state == Some(LaneTransactionState::Pending)
+        }));
+    }
+
+    #[test]
+    fn eviction_expiry_and_mining_have_single_terminal_transitions() {
+        let now = Instant::now();
+        let mut config = PoolConfig { max_account_slots: usize::MAX, ..PoolConfig::default() };
+        config.pending_limit.max_txs = 1;
+        let mut store = LaneTransactionStore::new(config, 0);
+        store.set_payer_balance(Address::ZERO, U256::ZERO);
+        let lower = validated(protocol_transaction(Account::Alice, 0, 10, 100), 1, now);
+        let lower_hash = *lower.hash();
+        let higher = validated(protocol_transaction(Account::Bob, 0, 20, 100), 2, now);
+        let higher_hash = *higher.hash();
+        store.insert_validated(lower, 0).unwrap();
+        store.insert_validated(higher, 0).unwrap();
+
+        let evicted = store.enforce_limits_with_outcome();
+        assert_eq!(hashes(evicted.removed), vec![lower_hash]);
+        assert_eq!(evicted.transitions.transitions.len(), 1);
+        assert_eq!(evicted.transitions.transitions[0].terminal, Some(LaneTerminalEvent::Evicted));
+
+        let expired = store.remove_expired(&[higher_hash]);
+        assert_eq!(expired.transitions.transitions[0].terminal, Some(LaneTerminalEvent::Expired));
+
+        let mined = validated(protocol_transaction(Account::Alice, 1, 30, 100), 1, now);
+        let mined_hash = *mined.hash();
+        store.insert_validated(mined, 1).unwrap();
+        let block_hash = B256::repeat_byte(0xb1);
+        let mined = store.prune_mined(&[mined_hash], block_hash);
+        assert_eq!(
+            mined.transitions.transitions[0].terminal,
+            Some(LaneTerminalEvent::Mined { block_hash })
+        );
+
+        let replay = validated(
+            sidecar_transaction(
+                &PrivateKeySigner::random(),
+                Eip8130Constants::NONCE_KEY_MAX,
+                0,
+                1,
+                10,
+                100,
+            ),
+            3,
+            now,
+        );
+        let replay_identity = replay.transaction.identity();
+        store.insert_validated(replay, 0).unwrap();
+        let committed = store.commit(&[replay_identity]);
+        assert_eq!(
+            committed.transitions.transitions[0].terminal,
+            Some(LaneTerminalEvent::Committed)
+        );
+    }
+
+    #[tokio::test]
+    async fn event_hub_matches_reth_events_and_survives_backpressure() {
+        let now = Instant::now();
+        let mut store = store(0);
+        let hub = LaneEventHub::new(1);
+        let mut all = hub.all_transactions_event_listener();
+        let mut pending_all = hub.pending_transactions_listener_for(TransactionListenerKind::All);
+        let mut pending_propagate =
+            hub.pending_transactions_listener_for(TransactionListenerKind::PropagateOnly);
+        let mut new_all = hub.new_transactions_listener_for(TransactionListenerKind::All);
+        let mut transaction = validated(protocol_transaction(Account::Alice, 0, 10, 100), 1, now);
+        transaction.propagate = false;
+        let hash = *transaction.hash();
+        let mut by_hash = hub.transaction_event_listener(hash);
+
+        let inserted = store.insert_validated(transaction, 0).unwrap();
+        hub.publish(&inserted.transitions);
+        assert_eq!(by_hash.next().await, Some(TransactionEvent::Pending));
+        assert_eq!(pending_all.recv().await, Some(hash));
+        assert!(pending_propagate.try_recv().is_err());
+        assert_eq!(new_all.recv().await.unwrap().subpool, SubPool::Pending);
+
+        let demoted = store.set_base_fee(101);
+        hub.publish(&demoted.transitions);
+        assert!(
+            matches!(all.next().await, Some(FullTransactionEvent::Pending(event)) if event == hash)
+        );
+        let promoted = store.set_base_fee(100);
+        hub.publish(&promoted.transitions);
+        assert!(
+            matches!(all.next().await, Some(FullTransactionEvent::Pending(event)) if event == hash)
+        );
+
+        let block_hash = B256::repeat_byte(0xc1);
+        let mined = store.prune_mined(&[hash], block_hash);
+        hub.publish(&mined.transitions);
+        hub.publish(&mined.transitions);
+        assert!(matches!(
+            all.next().await,
+            Some(FullTransactionEvent::Mined { tx_hash, block_hash: event_block })
+                if tx_hash == hash && event_block == block_hash
+        ));
+        assert!(tokio::time::timeout(Duration::from_millis(10), all.next()).await.is_err());
+        assert_eq!(by_hash.next().await, Some(TransactionEvent::Queued));
+        assert_eq!(by_hash.next().await, Some(TransactionEvent::Pending));
+        assert_eq!(by_hash.next().await, Some(TransactionEvent::Mined(block_hash)));
+        assert_eq!(by_hash.next().await, None);
     }
 }
