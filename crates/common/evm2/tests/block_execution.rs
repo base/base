@@ -181,6 +181,50 @@ fn rejects_post_regolith_deposit_over_block_gas_limit() {
 }
 
 #[test]
+fn azul_enforces_eip7825_per_tx_gas_cap() {
+    // Azul maps to the Osaka EVM spec, which caps a transaction's gas limit at 2^24 (EIP-7825).
+    // The block has ample room, so the block-gas pre-check passes and the standard handler's cap
+    // check is what rejects the transaction.
+    const OSAKA_TX_GAS_CAP: u64 = 1 << 24;
+    let mut executor =
+        executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Azul), 60_000_000);
+    let standard = TxEnvelope::Eip1559(TxEip1559 {
+        chain_id: 1,
+        nonce: 0,
+        gas_limit: OSAKA_TX_GAS_CAP + 1,
+        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: 100,
+        to: TxKind::Call(TARGET),
+        value: U256::ZERO,
+        input: Bytes::new(),
+        access_list: Default::default(),
+    });
+    executor
+        .execute_transaction(&Recovered::new_unchecked(
+            BaseTxEnvelope::standard(standard, Bytes::from(vec![0x02u8; 120])),
+            SENDER,
+        ))
+        .expect_err("a standard tx over the Osaka per-tx gas cap is rejected at Azul");
+}
+
+#[test]
+fn azul_exempts_deposits_from_the_per_tx_gas_cap() {
+    // Deposits are funded on L1 and are never subject to the EIP-7825 per-tx gas cap.
+    const OSAKA_TX_GAS_CAP: u64 = 1 << 24;
+    let mut executor =
+        executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Azul), 60_000_000);
+    let deposit = TxDeposit {
+        from: SENDER,
+        to: TxKind::Call(TARGET),
+        gas_limit: OSAKA_TX_GAS_CAP + 1,
+        ..Default::default()
+    };
+    executor
+        .execute_transaction(&Recovered::new_unchecked(BaseTxEnvelope::Deposit(deposit), SENDER))
+        .expect("a deposit over the Osaka per-tx gas cap is exempt");
+}
+
+#[test]
 fn exempts_pre_regolith_deposit_from_block_gas_limit() {
     // Pre-Regolith (Bedrock) deposits are exempt from the block-gas check.
     let mut executor = executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Bedrock), 50_000);
