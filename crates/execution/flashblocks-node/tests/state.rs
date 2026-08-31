@@ -10,7 +10,8 @@ use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_flashblocks::{
-    FlashblocksAPI, FlashblocksReceiver, PendingBlocks, PendingBlocksAPI, PendingBlocksBuilder,
+    FlashblocksAPI, FlashblocksReceiver, MAX_FLASHBLOCKS_PER_PAYLOAD, PendingBlocks,
+    PendingBlocksAPI, PendingBlocksBuilder,
 };
 use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
 use base_test_utils::Account;
@@ -1232,6 +1233,22 @@ async fn test_pending_depth_remains_bounded_during_canonical_stall() {
         Duration::from_secs(5),
         || test.flashblocks.get_pending_blocks().is_none(),
         "pending state must clear when it exceeds the configured depth",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_live_payload_flashblock_count_is_bounded() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+    for index in 1..=MAX_FLASHBLOCKS_PER_PAYLOAD {
+        test.send_flashblock(FlashblockBuilder::new(&test, index).build()).await;
+    }
+
+    wait_until(
+        Duration::from_secs(5),
+        || test.flashblocks.get_pending_blocks().is_none(),
+        "pending state must clear when one payload exceeds the flashblock limit",
     )
     .await;
 }

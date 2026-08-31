@@ -74,9 +74,14 @@ impl BaseNodeExtension for FlashblocksExtension {
                                 Ok(notification) => {
                                     needs_resync = false;
                                     let committed = notification.committed();
+                                    let mut forwarded = false;
                                     for block in committed.blocks_iter() {
+                                        forwarded = true;
                                         state_for_canonical
                                             .on_canonical_block_received(block.as_ref().clone());
+                                    }
+                                    if !forwarded {
+                                        needs_resync = true;
                                     }
                                 }
                                 Err(BroadcastStreamRecvError::Lagged(skipped)) => {

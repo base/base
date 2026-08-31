@@ -15,7 +15,7 @@ const MAX_CACHE_AHEAD_BLOCKS: u64 = 5;
 const MAX_PAYLOADS_PER_BLOCK: usize = 8;
 
 /// Maximum flashblock indices retained for one payload attempt.
-const MAX_FLASHBLOCKS_PER_PAYLOAD: u64 = 16;
+pub const MAX_FLASHBLOCKS_PER_PAYLOAD: u64 = 16;
 
 /// Worst-case decoded bytes retained by the cache.
 const MAX_CACHE_BYTES: usize = 80 * 1024 * 1024;
@@ -94,8 +94,6 @@ impl FlashblockCache {
         if !self.is_cacheable(block_number) || flashblock.index >= MAX_FLASHBLOCKS_PER_PAYLOAD {
             return false;
         }
-        let min_block_number_to_retain = block_number.saturating_sub(MAX_CACHE_AHEAD_BLOCKS);
-        self.entries.retain(|&bn, _| bn > min_block_number_to_retain);
         let by_payload = self.entries.entry(block_number).or_default();
         if !by_payload.contains_key(&flashblock.payload_id)
             && by_payload.len() >= MAX_PAYLOADS_PER_BLOCK
@@ -256,6 +254,16 @@ mod tests {
         // Block 17 exceeds the limit
         assert!(!cache.insert(make_flashblock(17, 0)));
         assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn farther_insert_preserves_nearest_replay_candidate() {
+        let mut cache = FlashblockCache::new(10);
+        assert!(cache.insert(make_flashblock(11, 0)));
+        assert!(cache.insert(make_flashblock(16, 0)));
+
+        assert_eq!(cache.drain(11, B256::ZERO).len(), 1);
+        assert_eq!(cache.drain(16, B256::ZERO).len(), 1);
     }
 
     #[test]

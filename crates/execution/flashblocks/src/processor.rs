@@ -33,8 +33,8 @@ use tokio::{
 };
 
 use crate::{
-    AssembledBlock, BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks,
-    PendingBlocksBuilder, PendingStateBuilder, ProtocolError, ProviderError, Result,
+    AssembledBlock, BlockAssembler, ExecutionError, FlashblockCache, MAX_FLASHBLOCKS_PER_PAYLOAD,
+    PendingBlocks, PendingBlocksBuilder, PendingStateBuilder, ProtocolError, ProviderError, Result,
     StateProcessorError,
     metrics::Metrics,
     validation::{
@@ -317,6 +317,14 @@ where
             provider_retries += 1;
             sleep(Duration::from_millis(25)).await;
         };
+
+        if matches!(update, StateUpdate::Flashblock(flashblock) if flashblock.index >= MAX_FLASHBLOCKS_PER_PAYLOAD)
+        {
+            self.enter_recovery(best.number()).await;
+            *recovering = true;
+            Metrics::pending_stale_events_skipped().increment(1);
+            return None;
+        }
 
         if self.is_quarantined_flashblock(update) {
             Metrics::pending_stale_events_skipped().increment(1);
