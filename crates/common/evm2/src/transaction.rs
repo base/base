@@ -1,5 +1,6 @@
 //! Base transaction envelope for EVM2.
 
+use alloy_consensus::Transaction;
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::Bytes;
 use base_common_consensus::TxDeposit;
@@ -44,6 +45,14 @@ impl BaseTxEnvelope {
     /// Returns whether this envelope is a deposit transaction.
     pub const fn is_deposit(&self) -> bool {
         matches!(self, Self::Deposit(_))
+    }
+
+    /// Returns the transaction's gas limit.
+    pub fn gas_limit(&self) -> u64 {
+        match self {
+            Self::Standard { tx, .. } => tx.gas_limit(),
+            Self::Deposit(tx) => tx.gas_limit,
+        }
     }
 
     /// Returns the standard Ethereum transaction, if this envelope is not a deposit.

@@ -119,3 +119,78 @@ fn executes_block_of_deposit_then_standard_tx() {
     // The standard transaction's L1 data fee was collected into the vault (the deposit is exempt).
     assert!(balance(&mut evm, Predeploys::L1_FEE_VAULT) > U256::ZERO);
 }
+
+/// Builds an executor over a block whose gas limit is `block_gas_limit`, with `SENDER` funded.
+fn executor_with_block_gas_limit(
+    spec: BaseSpecId,
+    block_gas_limit: u64,
+) -> BaseBlockExecutor<'static> {
+    let mut db = InMemoryDB::default();
+    db.insert_account_info(
+        &SENDER,
+        evm2::AccountInfo { balance: U256::from(10u128.pow(18)), nonce: 0, ..Default::default() },
+    );
+    let block = BlockEnv::<BaseEvmTypes> {
+        beneficiary: COINBASE,
+        gas_limit: U256::from(block_gas_limit),
+        ..Default::default()
+    };
+    let evm =
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+    BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default())
+}
+
+#[test]
+fn rejects_standard_tx_over_block_gas_limit() {
+    // Block allows 50k gas; the transaction reserves its 100k gas limit.
+    let mut executor = executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Ecotone), 50_000);
+    let standard = TxEnvelope::Eip1559(TxEip1559 {
+        chain_id: 1,
+        nonce: 0,
+        gas_limit: 100_000,
+        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: 100,
+        to: TxKind::Call(TARGET),
+        value: U256::ZERO,
+        input: Bytes::new(),
+        access_list: Default::default(),
+    });
+    let err = executor
+        .execute_transaction(&Recovered::new_unchecked(
+            BaseTxEnvelope::standard(standard, Bytes::from(vec![0x02u8; 120])),
+            SENDER,
+        ))
+        .expect_err("tx over the block gas limit is rejected");
+    assert!(format!("{err}").contains("more than the block's available gas"), "got: {err}");
+}
+
+#[test]
+fn rejects_post_regolith_deposit_over_block_gas_limit() {
+    // Post-Regolith deposits ARE subject to the block-gas check.
+    let mut executor =
+        executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Regolith), 50_000);
+    let deposit = TxDeposit {
+        from: SENDER,
+        to: TxKind::Call(TARGET),
+        gas_limit: 100_000,
+        ..Default::default()
+    };
+    executor
+        .execute_transaction(&Recovered::new_unchecked(BaseTxEnvelope::Deposit(deposit), SENDER))
+        .expect_err("post-Regolith deposit over the block gas limit is rejected");
+}
+
+#[test]
+fn exempts_pre_regolith_deposit_from_block_gas_limit() {
+    // Pre-Regolith (Bedrock) deposits are exempt from the block-gas check.
+    let mut executor = executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Bedrock), 50_000);
+    let deposit = TxDeposit {
+        from: SENDER,
+        to: TxKind::Call(TARGET),
+        gas_limit: 100_000,
+        ..Default::default()
+    };
+    executor
+        .execute_transaction(&Recovered::new_unchecked(BaseTxEnvelope::Deposit(deposit), SENDER))
+        .expect("pre-Regolith deposit is exempt from the block gas limit");
+}

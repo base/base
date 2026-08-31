@@ -40,7 +40,7 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Block gas-limit pre-check (`reserved > available`) | ⬜ | pre-Regolith deposits exempt |
+| Block gas-limit pre-check (`reserved > available`) | ✅ | pre-Regolith deposits exempt |
 | Executor chain-spec injection (`impl Upgrades`) | ⬜ | prereq for transition hooks |
 | Irregular-state flush into `BlockStateAccumulator` | ⬜ | prereq for transition hooks |
 
