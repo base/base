@@ -2,7 +2,8 @@
 //!
 //! Provides type-only plumbing for the new transaction kind:
 //! [`TxEip8130`] (unsigned), [`Eip8130Signed`] (signed envelope), [`AccountChange`]
-//! (tagged-union account-mutation entries), and [`Call`] (per-call payload).
+//! (tagged-union account-mutation entries), and [`Call`] (per-call payload),
+//! plus [`CoinbaseTip`] for static phase-0 tip recovery.
 //!
 //! [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 
@@ -10,7 +11,7 @@ mod constants;
 pub use constants::Eip8130Constants;
 
 mod addresses;
-pub use addresses::Eip8130Contracts;
+pub use addresses::{Eip8130Contracts, IDefaultAccount};
 
 mod call;
 pub use call::Call;
@@ -23,6 +24,9 @@ pub use account_changes::{
 
 mod tx;
 pub use tx::TxEip8130;
+
+mod coinbase_tip;
+pub use coinbase_tip::CoinbaseTip;
 
 mod signed;
 pub use signed::{Eip8130Signed, Eip8130StaticError, Eip8130TimestampError};

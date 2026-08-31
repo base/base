@@ -13,7 +13,9 @@ use alloy_primitives::{BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_bundles::{MeterBundleResponse, RejectedTransaction, RejectionReason};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
+use base_common_consensus::{
+    BaseReceipt, BaseTransactionSigned, CoinbaseTip, DepositReceipt, OpTxType,
+};
 use base_common_evm::{BaseReceiptBuilder, BaseSpecId, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
@@ -782,8 +784,9 @@ impl BasePayloadBuilderCtx {
 
             let tx_hash = *tx.hash();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let has_coinbase_tip =
-                tx.as_eip8130().is_some_and(|signed| signed.tx().coinbase_tip().is_some());
+            let has_coinbase_tip = tx
+                .as_eip8130()
+                .is_some_and(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()).is_some());
 
             // Defer without evaluating once this flashblock's predicate-eval time budget is
             // exhausted, rather than spending more IO on the naive per-transaction loop. The
