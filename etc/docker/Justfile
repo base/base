@@ -24,6 +24,7 @@ up-anvil-nitro-local: down-anvil _build-setup-image (_build-rust-images "devnet"
     set -euo pipefail
     l1_rpc_url="http://l1-el:${L1_HTTP_PORT}"
     export L1_CONTAINER_BEACON_URL="$l1_rpc_url"
+    export L1_SLOT_DURATION_OVERRIDE="${L1_SLOT_DURATION_OVERRIDE:-12}"
     compose_cmd=(docker compose {{ _env }} {{ _anvil }})
 
     mkdir -p .devnet/l2/configs
@@ -31,8 +32,8 @@ up-anvil-nitro-local: down-anvil _build-setup-image (_build-rust-images "devnet"
     until cast block-number --rpc-url "$L1_RPC_URL" >/dev/null 2>&1; do
       sleep 0.25
     done
-    cast rpc --rpc-url "$L1_RPC_URL" anvil_setBlockTimestampInterval 4 >/dev/null
-    cast rpc --rpc-url "$L1_RPC_URL" anvil_setIntervalMining 4 >/dev/null
+    cast rpc --rpc-url "$L1_RPC_URL" anvil_setBlockTimestampInterval "$L1_SLOT_DURATION_OVERRIDE" >/dev/null
+    cast rpc --rpc-url "$L1_RPC_URL" anvil_setIntervalMining "$L1_SLOT_DURATION_OVERRIDE" >/dev/null
     "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l2
     setup_l2_status="$(docker wait setup-l2)"
     if [ "$setup_l2_status" != "0" ]; then
