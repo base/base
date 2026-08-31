@@ -4,19 +4,11 @@ use std::{sync::Arc, time::Duration};
 
 use base_common_flashblocks::Flashblock;
 use futures::{SinkExt as _, StreamExt};
-use tokio::{
-    sync::mpsc,
-    time::{Instant, interval_at},
-};
+use tokio::time::{Instant, interval_at};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use url::Url;
 
 use crate::{FlashblocksReceiver, metrics::Metrics};
-
-#[derive(Debug)]
-enum ActorMessage {
-    BestPayload { payload: Flashblock },
-}
 
 /// Subscribes to flashblocks via WebSocket and forwards them to the receiver.
 #[derive(Debug)]
@@ -51,8 +43,7 @@ where
 
         let ws_url = self.ws_url.clone();
         let ping_period = self.ping_interval;
-
-        let (sender, mut mailbox) = mpsc::channel(100);
+        let flashblocks_state = Arc::clone(&self.flashblocks_state);
 
         tokio::spawn(async move {
             let mut backoff = Duration::from_secs(1);
@@ -79,9 +70,7 @@ where
                                             let bytes = msg.into_data();
                                             match Flashblock::try_decode_message(bytes) {
                                                 Ok(payload) => {
-                                                    let _ = sender.send(ActorMessage::BestPayload { payload }).await.map_err(|e| {
-                                                        error!(message = "Failed to publish message to channel", error = %e);
-                                                    });
+                                                    flashblocks_state.on_flashblock_received(payload);
                                                 }
                                                 Err(e) => {
                                                     error!(
@@ -155,17 +144,6 @@ where
 
                         backoff = Self::sleep(backoff).await;
                         continue;
-                    }
-                }
-            }
-        });
-
-        let flashblocks_state = Arc::clone(&self.flashblocks_state);
-        tokio::spawn(async move {
-            while let Some(message) = mailbox.recv().await {
-                match message {
-                    ActorMessage::BestPayload { payload } => {
-                        flashblocks_state.on_flashblock_received(payload);
                     }
                 }
             }

@@ -1,7 +1,7 @@
 //! Flashblocks state management.
 
 use std::sync::{
-    Arc,
+    Arc, Mutex as StdMutex,
     atomic::{AtomicU64, Ordering},
 };
 
@@ -36,6 +36,7 @@ pub struct FlashblocksState {
     flashblock_sender: Sender<Arc<PendingBlocks>>,
     max_pending_blocks_depth: u64,
     recovery_generation: Arc<AtomicU64>,
+    recovery_fence: Arc<StdMutex<()>>,
 }
 
 impl FlashblocksState {
@@ -55,6 +56,7 @@ impl FlashblocksState {
             flashblock_sender,
             max_pending_blocks_depth,
             recovery_generation: Arc::new(AtomicU64::new(0)),
+            recovery_fence: Arc::new(StdMutex::new(())),
         }
     }
 
@@ -75,6 +77,7 @@ impl FlashblocksState {
             Arc::clone(&self.pending_blocks),
             self.max_pending_blocks_depth,
             Arc::clone(&self.recovery_generation),
+            Arc::clone(&self.recovery_fence),
             Arc::clone(&self.rx),
             self.flashblock_sender.clone(),
         );
@@ -92,6 +95,8 @@ impl FlashblocksState {
                 info!(message = "added canonical block to processing queue", block_number)
             }
             Err(e) => {
+                let _fence =
+                    self.recovery_fence.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 self.recovery_generation.fetch_add(1, Ordering::AcqRel);
                 self.pending_blocks.swap(None);
                 error!(message = "could not add canonical block to processing queue", block_number, error = %e);
@@ -112,6 +117,8 @@ impl FlashblocksReceiver for FlashblocksState {
                 );
             }
             Err(e) => {
+                let _fence =
+                    self.recovery_fence.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 self.recovery_generation.fetch_add(1, Ordering::AcqRel);
                 self.pending_blocks.swap(None);
                 error!(message = "could not add flashblock to processing queue", block_number, flashblock_index, error = %e);

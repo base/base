@@ -186,6 +186,7 @@ pub struct StateProcessor<Client> {
     quarantined_flashblocks: StdMutex<VecDeque<(BlockNumber, PayloadId)>>,
     max_pending_blocks_depth: u64,
     recovery_generation: Arc<AtomicU64>,
+    recovery_fence: Arc<StdMutex<()>>,
     deferred_canonical: StdMutex<Option<RecoveredBlock<BaseBlock>>>,
 }
 
@@ -231,6 +232,7 @@ where
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
         max_pending_blocks_depth: u64,
         recovery_generation: Arc<AtomicU64>,
+        recovery_fence: Arc<StdMutex<()>>,
         rx: Arc<Mutex<Receiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
@@ -248,6 +250,7 @@ where
             quarantined_flashblocks: StdMutex::new(VecDeque::new()),
             max_pending_blocks_depth,
             recovery_generation,
+            recovery_fence,
             deferred_canonical: StdMutex::new(None),
         }
     }
@@ -536,7 +539,18 @@ where
                                 }
                             }
 
+                            let fence = self
+                                .recovery_fence
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            if self.recovery_generation.load(Ordering::Acquire) != generation {
+                                drop(fence);
+                                self.enter_recovery(best.number()).await;
+                                recovering = true;
+                                continue;
+                            }
                             self.pending_blocks.swap(new_pending_blocks);
+                            drop(fence);
 
                             let mut cache = self.cache.lock().await;
                             let cache_rolled_back = cache
@@ -683,9 +697,19 @@ where
                         self.enter_recovery(current_best.number()).await;
                         return (false, true);
                     }
+                }
+                let fence =
+                    self.recovery_fence.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                if self.recovery_generation.load(Ordering::Acquire) != expected_generation {
+                    drop(fence);
+                    self.enter_recovery(expected_best.number()).await;
+                    return (false, true);
+                }
+                if let Some(ref pb) = new_pending_blocks {
                     _ = self.sender.send(Arc::clone(pb));
                 }
                 self.pending_blocks.swap(new_pending_blocks);
+                drop(fence);
                 Metrics::block_processing_duration().record(start_time.elapsed());
                 (applied, false)
             }
