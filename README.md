@@ -41,7 +41,7 @@ docker compose up --build
 NETWORK_ENV=.env.sepolia docker compose up --build
 
 # Pin a published image (no compile):
-NODE_TAG=v1.2.6 docker compose up
+NODE_TAG=v1.3.0 docker compose up
 ```
 
 See the [docs](https://docs.base.org/base-chain/node-operators/run-a-base-node) for hardware requirements, snapshots, Flashblocks, and historical proofs.
