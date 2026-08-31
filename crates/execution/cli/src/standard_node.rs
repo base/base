@@ -14,7 +14,7 @@ use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
 use base_proofs_extension::ProofsHistoryExtension;
-use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
+use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension, ShadowRetentionConfig};
 use base_shadow_indexer_db::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
 };
@@ -85,6 +85,10 @@ pub struct MeteringArgs {
 const DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS: u32 = 5;
 /// Default timeout when acquiring a shadow indexer database connection.
 const DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT: &str = "30s";
+/// Default age at which persisted shadow blocks are deleted.
+const DEFAULT_SHADOW_INDEXER_RETENTION: &str = "30d";
+/// Default delay between shadow block retention sweeps.
+const DEFAULT_SHADOW_INDEXER_RETENTION_INTERVAL: &str = "1h";
 
 /// CLI arguments for the shadow indexer `ExEx` that persists committed execution blocks.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -156,6 +160,26 @@ pub struct ShadowIndexerArgs {
         requires = "enable_shadow_indexer"
     )]
     pub shadow_indexer_connection_timeout: Duration,
+
+    /// Age at which persisted shadow blocks are deleted, measured from their last write.
+    #[arg(
+        long = "shadow-indexer.retention",
+        env = "SHADOW_INDEXER_RETENTION",
+        default_value = DEFAULT_SHADOW_INDEXER_RETENTION,
+        value_parser = humantime::parse_duration,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_retention: Duration,
+
+    /// Delay between shadow block retention sweeps.
+    #[arg(
+        long = "shadow-indexer.retention-interval",
+        env = "SHADOW_INDEXER_RETENTION_INTERVAL",
+        default_value = DEFAULT_SHADOW_INDEXER_RETENTION_INTERVAL,
+        value_parser = humantime::parse_duration,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_retention_interval: Duration,
 }
 
 impl Default for ShadowIndexerArgs {
@@ -172,6 +196,12 @@ impl Default for ShadowIndexerArgs {
                 DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT,
             )
             .expect("valid default shadow indexer connection timeout"),
+            shadow_indexer_retention: humantime::parse_duration(DEFAULT_SHADOW_INDEXER_RETENTION)
+                .expect("valid default shadow indexer retention"),
+            shadow_indexer_retention_interval: humantime::parse_duration(
+                DEFAULT_SHADOW_INDEXER_RETENTION_INTERVAL,
+            )
+            .expect("valid default shadow indexer retention interval"),
         }
     }
 }
@@ -383,6 +413,20 @@ impl TryFrom<&ShadowIndexerArgs> for ShadowIndexerConfig {
             PgConnectionParams::default()
         };
 
+        if args.enable_shadow_indexer {
+            if args.shadow_indexer_retention.is_zero() {
+                eyre::bail!(
+                    "--shadow-indexer.retention (env SHADOW_INDEXER_RETENTION) must be non-zero"
+                );
+            }
+            if args.shadow_indexer_retention_interval.is_zero() {
+                eyre::bail!(
+                    "--shadow-indexer.retention-interval \
+                     (env SHADOW_INDEXER_RETENTION_INTERVAL) must be non-zero"
+                );
+            }
+        }
+
         Ok(Self {
             enabled: args.enable_shadow_indexer,
             db: ShadowDbConfig {
@@ -391,6 +435,10 @@ impl TryFrom<&ShadowIndexerArgs> for ShadowIndexerConfig {
                 connection_timeout: args.shadow_indexer_connection_timeout,
             },
             builder_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: ShadowRetentionConfig {
+                period: args.shadow_indexer_retention,
+                interval: args.shadow_indexer_retention_interval,
+            },
         })
     }
 }
@@ -991,6 +1039,10 @@ mod tests {
             "9",
             "--shadow-indexer.connection-timeout",
             "45s",
+            "--shadow-indexer.retention",
+            "3d",
+            "--shadow-indexer.retention-interval",
+            "15m",
         ])
         .args;
 
@@ -1005,6 +1057,65 @@ mod tests {
         assert_eq!(args.shadow_indexer.shadow_indexer_db_user, "writer");
         assert_eq!(args.shadow_indexer.shadow_indexer_max_connections, 9);
         assert_eq!(args.shadow_indexer.shadow_indexer_connection_timeout, Duration::from_secs(45));
+        assert_eq!(
+            args.shadow_indexer.shadow_indexer_retention,
+            Duration::from_secs(3 * 24 * 60 * 60)
+        );
+        assert_eq!(
+            args.shadow_indexer.shadow_indexer_retention_interval,
+            Duration::from_secs(15 * 60)
+        );
+    }
+
+    #[test]
+    fn test_shadow_indexer_retention_defaults_to_thirty_days() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-shadow-indexer",
+            "--shadow-indexer.db-host",
+            "shadow.example.internal",
+            "--shadow-indexer.db-password",
+            "hunter2",
+        ])
+        .args;
+
+        let config = ShadowIndexerConfig::try_from(&args.shadow_indexer)
+            .expect("enabled shadow indexer config should build");
+
+        assert_eq!(config.retention.period, Duration::from_secs(30 * 24 * 60 * 60));
+        assert_eq!(config.retention.interval, Duration::from_secs(60 * 60));
+    }
+
+    #[test]
+    fn test_shadow_indexer_rejects_zero_retention() {
+        let args = ShadowIndexerArgs {
+            enable_shadow_indexer: true,
+            shadow_indexer_db_host: Some("shadow.example.internal".to_string()),
+            shadow_indexer_db_password: Some("hunter2".to_string()),
+            shadow_indexer_retention: Duration::ZERO,
+            ..ShadowIndexerArgs::default()
+        };
+
+        let error =
+            ShadowIndexerConfig::try_from(&args).expect_err("zero retention should be rejected");
+
+        assert!(error.to_string().contains("--shadow-indexer.retention"));
+    }
+
+    #[test]
+    fn test_shadow_indexer_rejects_zero_retention_interval() {
+        let args = ShadowIndexerArgs {
+            enable_shadow_indexer: true,
+            shadow_indexer_db_host: Some("shadow.example.internal".to_string()),
+            shadow_indexer_db_password: Some("hunter2".to_string()),
+            shadow_indexer_retention_interval: Duration::ZERO,
+            ..ShadowIndexerArgs::default()
+        };
+
+        let error = ShadowIndexerConfig::try_from(&args)
+            .expect_err("zero retention interval should be rejected");
+
+        assert!(error.to_string().contains("--shadow-indexer.retention-interval"));
     }
 
     #[test]
