@@ -476,8 +476,7 @@ where
                         update
                     }
                     _ = deferred_interval.tick() => {
-                        let deferred = deferred_canonical.clone();
-                        let Some((deferred, generation)) = deferred else {
+                        let Some((deferred, _)) = deferred_canonical.as_ref() else {
                             continue;
                         };
                         if self
@@ -488,7 +487,7 @@ where
                         }
                         deferred_canonical
                             .take()
-                            .map(|(block, _)| (StateUpdate::Canonical(block), generation))
+                            .map(|(block, generation)| (StateUpdate::Canonical(block), generation))
                             .expect("deferred canonical remains available")
                     }
                 }
@@ -637,7 +636,11 @@ where
         let mut provider_retries = 0;
         let result = loop {
             let result = self.process_flashblock(prev_pending_blocks.clone(), &flashblock);
-            if matches!(result, Err(StateProcessorError::Provider(_))) && provider_retries < 20 {
+            if matches!(
+                result,
+                Err(StateProcessorError::Provider(ProviderError::MissingCanonicalHeader { .. }))
+            ) && provider_retries < 20
+            {
                 provider_retries += 1;
                 sleep(Duration::from_millis(25)).await;
                 continue;
@@ -686,8 +689,8 @@ where
                         let inserted = self.lock_cache().insert(flashblock);
                         if inserted {
                             debug!(message = "cached flashblock pending canonical block", error = %e);
-                            return (false, false);
                         }
+                        return (false, false);
                     }
                     StateProcessorError::MissingFirstFlashblock => {
                         let mut cache = self.lock_cache();
@@ -817,7 +820,7 @@ where
                     Metrics::pending_clear_catchup().increment(1);
                     self.clear_live_state();
                     Ok(None)
-                } else if flashblocks.first().is_none_or(|flashblock| {
+                } else if flashblocks.first().is_some_and(|flashblock| {
                     flashblock.index != 0
                         || flashblock.metadata.block_number != block.number.saturating_add(1)
                         || flashblock

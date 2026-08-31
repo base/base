@@ -88,10 +88,12 @@ impl FlashblockCache {
 
     /// Inserts a flashblock into the cache.
     ///
-    /// Returns `true` if the flashblock was cached, `false` if it was rejected
-    /// because its block number exceeds the cache-ahead limit.
+    /// Returns `true` if the flashblock remains cached after enforcing admission
+    /// and global budget limits.
     pub fn insert(&mut self, flashblock: Flashblock) -> bool {
         let block_number = flashblock.metadata.block_number;
+        let payload_id = flashblock.payload_id;
+        let index = flashblock.index;
         if !self.is_cacheable(block_number) || flashblock.index >= MAX_FLASHBLOCKS_PER_PAYLOAD {
             return false;
         }
@@ -122,7 +124,7 @@ impl FlashblockCache {
         }
         payload.1.insert(flashblock.index, flashblock);
         while self.total_flashblocks() > MAX_TOTAL_CACHED_FLASHBLOCKS {
-            let oldest = self
+            let eviction_candidate = self
                 .entries
                 .iter()
                 .flat_map(|(block_number, by_payload)| {
@@ -133,17 +135,17 @@ impl FlashblockCache {
                 .max_by_key(|(base_sequence, block_number, _)| {
                     (*block_number, Reverse(*base_sequence))
                 });
-            let Some((_, oldest_block, oldest_payload)) = oldest else {
+            let Some((_, evicted_block, evicted_payload)) = eviction_candidate else {
                 break;
             };
-            if let Some(by_payload) = self.entries.get_mut(&oldest_block) {
-                by_payload.remove(&oldest_payload);
+            if let Some(by_payload) = self.entries.get_mut(&evicted_block) {
+                by_payload.remove(&evicted_payload);
                 if by_payload.is_empty() {
-                    self.entries.remove(&oldest_block);
+                    self.entries.remove(&evicted_block);
                 }
             }
         }
-        true
+        self.has_flashblock(block_number, payload_id, index)
     }
 
     /// Drains the newest cached payload whose base names `parent_hash`.
@@ -427,7 +429,7 @@ mod tests {
         }
         assert_eq!(cache.total_flashblocks(), MAX_TOTAL_CACHED_FLASHBLOCKS);
 
-        assert!(cache.insert(make_flashblock(16, 0)));
+        assert!(!cache.insert(make_flashblock(16, 0)));
         assert!(cache.drain(16, B256::ZERO).is_empty());
         assert_eq!(cache.total_flashblocks(), MAX_TOTAL_CACHED_FLASHBLOCKS);
     }
