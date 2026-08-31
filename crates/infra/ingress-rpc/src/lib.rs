@@ -36,7 +36,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 use url::Url;
-pub use validation::{AccountInfo, AccountInfoLookup, L1BlockInfoLookup, validate_bundle};
+pub use validation::{AccountInfo, AccountInfoLookup, L1BlockInfoLookup};
 
 /// Metering response plus the transaction hashes from the original ingress
 /// request, used to keep builder-send journal events transaction-scoped even
@@ -80,14 +80,6 @@ pub struct Config {
     /// Maximum time (ms) the first event in a batch waits before forced flush.
     #[arg(long, env = "TIPS_INGRESS_AUDIT_BATCH_MAX_WAIT_MS", default_value = "25")]
     pub audit_batch_max_wait_ms: u64,
-
-    /// Default lifetime for sent transactions in seconds (default: 3 hours)
-    #[arg(
-        long,
-        env = "TIPS_INGRESS_SEND_TRANSACTION_DEFAULT_LIFETIME_SECONDS",
-        default_value = "10800"
-    )]
-    pub send_transaction_default_lifetime_seconds: u64,
 
     /// URL of the simulation RPC service for bundle metering
     #[arg(long, env = "TIPS_INGRESS_RPC_SIMULATION")]

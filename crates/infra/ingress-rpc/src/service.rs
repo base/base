@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::sync::Arc;
 
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_eips::{BlockId, BlockNumberOrTag};
@@ -43,7 +40,6 @@ pub trait IngressApi {
 pub struct IngressService {
     simulation_provider: Arc<RootProvider<Base>>,
     audit_channel: mpsc::Sender<BundleEvent>,
-    send_transaction_default_lifetime_seconds: u64,
     block_time_milliseconds: u64,
     meter_bundle_timeout_ms: u64,
     builder_tx: broadcast::Sender<MeteringForwardMessage>,
@@ -76,8 +72,6 @@ impl IngressService {
         Self {
             simulation_provider,
             audit_channel,
-            send_transaction_default_lifetime_seconds: config
-                .send_transaction_default_lifetime_seconds,
             block_time_milliseconds: config.block_time_milliseconds,
             meter_bundle_timeout_ms: config.meter_bundle_timeout_ms,
             builder_tx,
@@ -98,16 +92,7 @@ impl IngressApiServer for IngressService {
         Metrics::transactions_received().increment(1);
         Self::emit_transaction_event(TransactionEventType::IngressReceived, tx_hash, None);
 
-        let expiry_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
-            + self.send_transaction_default_lifetime_seconds;
-
-        let bundle = Bundle {
-            txs: vec![data.clone()],
-            block_number: Some(0),
-            max_timestamp: Some(expiry_timestamp),
-            reverting_tx_hashes: vec![transaction.tx_hash()],
-            ..Default::default()
-        };
+        let bundle = Bundle { txs: vec![data.clone()] };
 
         let parsed_bundle: ParsedBundle = bundle
             .clone()
@@ -472,7 +457,6 @@ mod tests {
             address: IpAddr::from([127, 0, 0, 1]),
             port: 8080,
             deprecated_mempool_url: None,
-            send_transaction_default_lifetime_seconds: 300,
             simulation_rpc: mock_server.uri().parse().unwrap(),
             block_time_milliseconds: 1000,
             meter_bundle_timeout_ms: 5000,
@@ -615,7 +599,8 @@ mod tests {
 
         let requests = simulation_server.received_requests().await.unwrap();
         let request: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
-        assert_eq!(request["params"][0]["blockNumber"], "0x0");
+        assert!(request["params"][0]["txs"].is_array());
+        assert!(request["params"][0].get("blockNumber").is_none());
 
         let metering = timeout(Duration::from_secs(1), builder_rx.recv()).await.unwrap().unwrap();
         assert_eq!(metering.response, create_test_meter_bundle_response());

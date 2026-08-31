@@ -89,12 +89,7 @@ where
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
     async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse> {
-        debug!(
-            num_transactions = &bundle.txs.len(),
-            min_block_number = ?bundle.min_block_number,
-            max_block_number = ?bundle.max_block_number,
-            "Starting bundle metering"
-        );
+        debug!(num_transactions = &bundle.txs.len(), "Starting bundle metering");
 
         // Get pending blocks from flashblocks API
         let pending_blocks = self.flashblocks_api.get_pending_blocks();
@@ -332,12 +327,7 @@ where
             ));
         };
 
-        debug!(
-            num_transactions = &bundle.txs.len(),
-            min_block_number = ?bundle.min_block_number,
-            max_block_number = ?bundle.max_block_number,
-            "Starting metered priority fee estimation"
-        );
+        debug!(num_transactions = &bundle.txs.len(), "Starting metered priority fee estimation");
 
         // Meter the bundle to get resource consumption
         let meter_bundle_response = self.meter_bundle(bundle.clone()).await?;
@@ -498,20 +488,8 @@ mod tests {
     use super::*;
     use crate::{MeteringConfig, MeteringExtension, MeteringResourceLimits};
 
-    fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {
-        Bundle {
-            txs,
-            block_number: Some(block_number),
-            min_block_number: Some(block_number),
-            max_block_number: Some(block_number),
-            flashblock_number_min: None,
-            flashblock_number_max: None,
-            min_timestamp,
-            max_timestamp: None,
-            reverting_tx_hashes: vec![],
-            replacement_uuid: None,
-            dropping_tx_hashes: vec![],
-        }
+    fn create_bundle(txs: Vec<Bytes>) -> Bundle {
+        Bundle { txs }
     }
 
     async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
@@ -550,7 +528,7 @@ mod tests {
             .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
             .await?;
 
-        let bundle = create_bundle(vec![], 0, None);
+        let bundle = create_bundle(vec![]);
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
@@ -590,7 +568,7 @@ mod tests {
 
         let tx_bytes = Bytes::from(envelope.encoded_2718());
 
-        let bundle = create_bundle(vec![tx_bytes], 0, None);
+        let bundle = create_bundle(vec![tx_bytes]);
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
@@ -660,7 +638,7 @@ mod tests {
         let tx2_envelope: BaseTxEnvelope = tx2_signed;
         let tx2_bytes = Bytes::from(tx2_envelope.encoded_2718());
 
-        let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
+        let bundle = create_bundle(vec![tx1_bytes, tx2_bytes]);
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
@@ -689,11 +667,7 @@ mod tests {
     async fn test_meter_bundle_invalid_transaction() -> eyre::Result<()> {
         let (_harness, client) = setup().await?;
 
-        let bundle = create_bundle(
-            vec![Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef])], // Invalid transaction data
-            0,
-            None,
-        );
+        let bundle = create_bundle(vec![Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef])]);
 
         let result: Result<MeterBundleResponse, _> =
             client.request("base_meterBundle", (bundle,)).await;
@@ -710,60 +684,7 @@ mod tests {
             .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
             .await?;
 
-        let bundle = create_bundle(vec![], 1, None);
-
-        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
-
-        assert_eq!(response.state_block_number, 1);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_meter_bundle_ignores_bundle_block_number() -> eyre::Result<()> {
-        let (harness, client) = setup().await?;
-        harness
-            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
-            .await?;
-
-        let bundle1 = create_bundle(vec![], 1, None);
-        let response1: MeterBundleResponse = client.request("base_meterBundle", (bundle1,)).await?;
-
-        let bundle2 = create_bundle(vec![], 999, None);
-        let response2: MeterBundleResponse = client.request("base_meterBundle", (bundle2,)).await?;
-
-        assert_eq!(response1.state_block_number, response2.state_block_number);
-        assert_eq!(response1.state_block_number, 1);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_meter_bundle_custom_timestamp() -> eyre::Result<()> {
-        let (harness, client) = setup().await?;
-        harness
-            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
-            .await?;
-
-        let custom_timestamp = 1234567890;
-        let bundle = create_bundle(vec![], 0, Some(custom_timestamp));
-
-        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
-
-        assert_eq!(response.results.len(), 0);
-        assert_eq!(response.total_gas_used, 0);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_meter_bundle_arbitrary_block_number() -> eyre::Result<()> {
-        let (harness, client) = setup().await?;
-        harness
-            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
-            .await?;
-
-        let bundle = create_bundle(vec![], 999999, None);
+        let bundle = create_bundle(vec![]);
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
@@ -816,7 +737,7 @@ mod tests {
         let envelope2: BaseTxEnvelope = signed_tx2;
         let tx2_bytes = Bytes::from(envelope2.encoded_2718());
 
-        let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
+        let bundle = create_bundle(vec![tx1_bytes, tx2_bytes]);
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
@@ -849,7 +770,7 @@ mod tests {
     async fn test_meter_bundle_no_l1_block_info() -> eyre::Result<()> {
         let (_harness, client) = setup().await?;
 
-        let bundle = create_bundle(vec![], 1, None);
+        let bundle = create_bundle(vec![]);
         let response: Result<MeterBundleResponse, _> =
             client.request("base_meterBundle", (bundle,)).await;
 
@@ -940,7 +861,7 @@ mod tests {
         // Now call meter_bundle - this should succeed with the fix
         // Without the fix, it would fail with "Block not found: 0x0000..."
         // because get_l1_block_info would try to look up block by zero hash
-        let bundle = create_bundle(vec![], 0, None);
+        let bundle = create_bundle(vec![]);
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         // Verify we got a response and it used the flashblock state
@@ -969,7 +890,7 @@ mod tests {
     #[test]
     fn compute_resource_demand_preserves_gas_and_da_dimensions() {
         let tx = Bytes::from_static(&[0x02, 0x01, 0x02, 0x03]);
-        let bundle = create_bundle(vec![tx.clone()], 0, None);
+        let bundle = create_bundle(vec![tx.clone()]);
         let meter_result = MeterBundleResponse { total_gas_used: 21_000, ..Default::default() };
 
         let demand = compute_resource_demand(&bundle, &meter_result);
@@ -986,7 +907,7 @@ mod tests {
             .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
             .await?;
 
-        let bundle = create_bundle(vec![], 0, None);
+        let bundle = create_bundle(vec![]);
 
         let result: Result<serde_json::Value, _> =
             client.request("base_meteredPriorityFeePerGas", (bundle,)).await;
@@ -1026,7 +947,7 @@ mod tests {
         let envelope: BaseTxEnvelope = signed_tx;
         let tx_bytes = Bytes::from(envelope.encoded_2718());
 
-        let bundle = create_bundle(vec![tx_bytes], 0, None);
+        let bundle = create_bundle(vec![tx_bytes]);
 
         let result: Result<serde_json::Value, _> =
             client.request("base_meteredPriorityFeePerGas", (bundle,)).await;
@@ -1044,7 +965,7 @@ mod tests {
         // Use setup() which doesn't configure resource limits (no estimator)
         let (_harness, client) = setup().await?;
 
-        let bundle = create_bundle(vec![], 0, None);
+        let bundle = create_bundle(vec![]);
 
         let result: Result<serde_json::Value, _> =
             client.request("base_meteredPriorityFeePerGas", (bundle,)).await;

@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_eips::Encodable2718;
-use base_execution_txpool::{BundleTransaction, NoExtensions, ValidatedTransactionExtensions};
+use base_execution_txpool::{NoExtensions, ValidatedTransactionExtensions};
 use futures::{StreamExt, future::join_all, stream::FuturesUnordered};
 use jsonrpsee::http_client::HttpClientBuilder;
 use reth_tasks::TaskExecutor;
@@ -52,7 +52,7 @@ impl TxForwardingService {
     pub fn spawn<P>(self, pool: P, executor: &TaskExecutor) -> TxForwardingHandle
     where
         P: TransactionPool + Clone + Send + 'static,
-        P::Transaction: PoolTransaction + BundleTransaction,
+        P::Transaction: PoolTransaction,
         <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
     {
         self.spawn_with_extensions::<P, NoExtensions>(pool, executor)
@@ -62,7 +62,7 @@ impl TxForwardingService {
     pub fn spawn_with_extensions<P, E>(self, pool: P, executor: &TaskExecutor) -> TxForwardingHandle
     where
         P: TransactionPool + Clone + Send + 'static,
-        P::Transaction: PoolTransaction + BundleTransaction,
+        P::Transaction: PoolTransaction,
         <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
         E: ValidatedTransactionExtensions<P::Transaction>,
     {
@@ -292,10 +292,6 @@ mod tests {
             transaction: ValidatedTransaction {
                 sender: Address::repeat_byte(byte),
                 raw: Bytes::from(vec![byte]),
-                min_block_number: None,
-                max_block_number: None,
-                min_timestamp: None,
-                max_timestamp: None,
                 extensions: Default::default(),
             },
             tx_hash: B256::repeat_byte(byte),

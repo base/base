@@ -45,10 +45,6 @@ async fn recoverable_predicate_emits_builder_deferred() -> eyre::Result<()> {
             (ValidatedTransaction {
                 sender: accounts[0].address(),
                 raw: gated.encoded_2718().into(),
-                min_block_number: None,
-                max_block_number: None,
-                min_timestamp: None,
-                max_timestamp: None,
                 extensions: TransactionValidity {
                     validity: vec![ValidityPredicate::Balance {
                         address: watched,
@@ -138,10 +134,6 @@ async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> 
             (ValidatedTransaction {
                 sender: accounts[0].address(),
                 raw: expired.encoded_2718().into(),
-                min_block_number: None,
-                max_block_number: None,
-                min_timestamp: None,
-                max_timestamp: None,
                 extensions: TransactionValidity {
                     validity: vec![ValidityPredicate::BlockNumber {
                         op: ValidityOperator::LessThanOrEqual,
