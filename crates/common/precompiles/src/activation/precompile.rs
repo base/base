@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Entry point for the activation registry precompile.
-#[precompile(args(admin_config: ActivationAdminConfig))]
+#[precompile(args(admin_config: ActivationAdminConfig, upgrade: BaseUpgrade))]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ActivationRegistry;
 
@@ -75,6 +75,7 @@ impl ActivationRegistry {
                 ctx,
                 &calldata,
                 admin_config,
+                upgrade,
                 observer,
             )
             }
