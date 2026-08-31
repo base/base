@@ -42,7 +42,10 @@ pub use transaction::{
 };
 
 mod ordering;
-pub use ordering::{BaseOrdering, BestTransactionPriority, TimestampOrdering};
+pub use ordering::{
+    BaseOrdering, BasePriority, BestTransactionPriority, TimestampOrdering, UnifiedTipOrdering,
+    UnifiedTipPriority,
+};
 
 mod parking;
 pub use parking::{
