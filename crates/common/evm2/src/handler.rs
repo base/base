@@ -2,7 +2,6 @@
 
 use alloy_consensus::Transaction;
 use alloy_primitives::{Address, U256};
-use base_common_genesis::BaseUpgrade;
 use evm2::{
     Evm, TxResult,
     ethereum::{charge_upfront, default_settle_gas},
@@ -27,11 +26,12 @@ impl BaseTxHandlerHooks {
     fn l1_fee(host: &mut Evm<'_, BaseEvmTypes>, envelope: &BaseTxEnvelope) -> U256 {
         match envelope {
             // TODO: price over the full L1-posted (EIP-2718) transaction, not just
-            // the calldata, to match the revm integration. The evm2 spec schedule
-            // is also still Ecotone-only; the Base fork schedule is layered on in
-            // follow-up work.
+            // the calldata, to match the revm integration. This requires the
+            // envelope to carry the enveloped tx bytes (evm2's `TxEnvelope` does not
+            // expose them), tracked as fee-completeness follow-up work.
             BaseTxEnvelope::Standard(tx) => {
-                host.block_env().ext.calculate_tx_l1_cost(tx.input(), BaseUpgrade::Ecotone)
+                let upgrade = host.config_spec_id().upgrade();
+                host.block_env().ext.calculate_tx_l1_cost(tx.input(), upgrade)
             }
             // Deposits are funded on L1 and exempt from the L2 L1-data fee.
             BaseTxEnvelope::Deposit(_) => U256::ZERO,

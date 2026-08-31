@@ -194,13 +194,15 @@ impl BaseEvmTypes {
 mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_primitives::{Address, Bytes, TxKind, U256};
-    use evm2::{Evm, Precompiles, SpecId, env::BlockEnv, evm::InMemoryDB};
+    use base_common_genesis::BaseUpgrade;
+    use evm2::{Evm, Precompiles, env::BlockEnv, evm::InMemoryDB};
 
     use super::*;
+    use crate::BaseSpecId;
 
     const SENDER: Address = Address::repeat_byte(0x11);
     const TARGET: Address = Address::repeat_byte(0x22);
-    const SPEC: SpecId = SpecId::OSAKA;
+    const SPEC: BaseSpecId = BaseSpecId::new(BaseUpgrade::Regolith);
 
     /// Builds an in-memory EVM wired with the Base transaction registry.
     fn new_evm() -> Evm<'static, BaseEvmTypes> {
@@ -209,7 +211,7 @@ mod tests {
             BlockEnv::<BaseEvmTypes>::default(),
             BaseEvmTypes::tx_registry(),
             InMemoryDB::default(),
-            Precompiles::base(SPEC),
+            Precompiles::base(SPEC.into()),
         )
     }
 
@@ -347,7 +349,7 @@ mod tests {
             BlockEnv::<BaseEvmTypes>::default(),
             BaseEvmTypes::tx_registry(),
             db,
-            Precompiles::base(SPEC),
+            Precompiles::base(SPEC.into()),
         );
 
         let tx = deposit(TxKind::Call(TARGET), 1_000, U256::from(500), Bytes::new(), false);

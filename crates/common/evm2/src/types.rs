@@ -2,9 +2,9 @@
 
 use alloy_primitives::U256;
 use base_common_l1_fees::L1FeeParams;
-use evm2::{BaseEvmConfigSelector, Evm, EvmTypesHost, SpecId};
+use evm2::{BaseEvmConfigSelector, Evm, EvmTypesHost};
 
-use crate::transaction::BaseTxEnvelope;
+use crate::{BaseSpecId, transaction::BaseTxEnvelope};
 
 /// Transaction-result extension data for Base transactions.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -32,15 +32,15 @@ pub struct BaseEvmExt {
 /// Wires Base's transaction envelope ([`BaseTxEnvelope`], including deposits),
 /// L1 fee inputs (the shared engine-neutral [`L1FeeParams`] as the block-env
 /// extension), and L1-fee result data ([`BaseTxResultExt`]) into EVM2's
-/// [`EvmTypesHost`]. The spec schedule still uses the stock Ethereum selector;
-/// the Base fork schedule is layered on in follow-up work. Not wired into the
-/// node.
+/// [`EvmTypesHost`]. The spec schedule is driven by the Base fork schedule
+/// ([`BaseSpecId`]), which maps each Base upgrade to the governing EVM2 spec.
+/// Not wired into the node.
 #[derive(Clone, Copy, Debug)]
 pub struct BaseEvmTypes;
 
 impl EvmTypesHost for BaseEvmTypes {
     type ConfigSelector = BaseEvmConfigSelector;
-    type SpecId = SpecId;
+    type SpecId = BaseSpecId;
     type Tx = BaseTxEnvelope;
     type EvmExt = BaseEvmExt;
     type MessageExt = ();
