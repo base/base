@@ -23,6 +23,34 @@ use reth_transaction_pool::{
 
 use crate::estimated_da_size::DataAvailabilitySized;
 
+/// Funding actors and cost established by successful transaction validation.
+///
+/// This is independent of transaction identity and nonce sequencing: the payer
+/// may differ from the sender, and `max_cost` includes every fee component used
+/// by Base admission checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidatedFunding {
+    payer: Address,
+    max_cost: U256,
+}
+
+impl ValidatedFunding {
+    /// Creates validated funding metadata.
+    pub const fn new(payer: Address, max_cost: U256) -> Self {
+        Self { payer, max_cost }
+    }
+
+    /// Returns the account responsible for the complete maximum cost.
+    pub const fn payer(&self) -> Address {
+        self.payer
+    }
+
+    /// Returns the complete maximum cost checked during admission.
+    pub const fn max_cost(&self) -> U256 {
+        self.max_cost
+    }
+}
+
 /// A sequential nonce lane in the Base transaction pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BaseTransactionLane {
@@ -147,6 +175,8 @@ pub struct BasePooledTransaction<
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
     watch_manifest: OnceLock<crate::WatchManifest>,
+    /// Payer and complete maximum cost established once during validation.
+    validated_funding: OnceLock<ValidatedFunding>,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -173,6 +203,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             watch_manifest: OnceLock::new(),
+            validated_funding: OnceLock::new(),
         }
     }
 
@@ -294,6 +325,7 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             + watch_keys_size
             + core::mem::size_of::<OnceLock<crate::LimitClass>>()
             + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
+            + core::mem::size_of::<OnceLock<ValidatedFunding>>()
             + manifest_slots_size
             + validity_predicates_size
     }
@@ -469,6 +501,20 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     ///
     /// Defaults to a no-op for transaction types that do not carry a manifest.
     fn set_watch_manifest(&self, _watch_manifest: crate::WatchManifest) {}
+
+    /// Returns the payer and complete maximum cost established during validation.
+    ///
+    /// Defaults to `None` for transaction types that do not retain validation
+    /// metadata.
+    fn validated_funding(&self) -> Option<&ValidatedFunding> {
+        None
+    }
+
+    /// Records the payer and complete maximum cost established during validation.
+    ///
+    /// Defaults to a no-op for transaction types that do not retain validation
+    /// metadata.
+    fn set_validated_funding(&self, _funding: ValidatedFunding) {}
 }
 
 impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
@@ -511,6 +557,14 @@ where
 
     fn set_limit_class(&self, limit_class: crate::LimitClass) {
         let _ = self.limit_class.set(limit_class);
+    }
+
+    fn validated_funding(&self) -> Option<&ValidatedFunding> {
+        self.validated_funding.get()
+    }
+
+    fn set_validated_funding(&self, funding: ValidatedFunding) {
+        let _ = self.validated_funding.set(funding);
     }
 }
 
@@ -557,8 +611,8 @@ mod tests {
 
     use crate::{
         BasePooledTransaction, BasePooledTx, BaseTransactionIdentity, BaseTransactionLane,
-        BaseTransactionValidator, ConfigSlot, InvalidationKey, ValidityOperator, ValidityPredicate,
-        WatchManifest, WatchSet,
+        BaseTransactionValidator, ConfigSlot, InvalidationKey, ValidatedFunding, ValidityOperator,
+        ValidityPredicate, WatchManifest, WatchSet,
     };
 
     fn signer() -> PrivateKeySigner {
@@ -727,6 +781,17 @@ mod tests {
         transaction.set_watch_manifest(manifest);
 
         assert_eq!(transaction.size(), size_without_slots + slots_size);
+    }
+
+    #[test]
+    fn validated_funding_is_recorded_once() {
+        let transaction = ordinary_pooled(0);
+        let initial = ValidatedFunding::new(Address::repeat_byte(1), U256::from(2));
+        transaction.set_validated_funding(initial);
+        transaction
+            .set_validated_funding(ValidatedFunding::new(Address::repeat_byte(3), U256::from(4)));
+
+        assert_eq!(transaction.validated_funding(), Some(&initial));
     }
 
     #[test]
