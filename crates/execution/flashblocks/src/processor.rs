@@ -177,7 +177,7 @@ impl StateUpdate {
 /// Processes flashblocks and canonical blocks to keep pending state updated.
 #[derive(Debug)]
 pub struct StateProcessor<Client> {
-    rx: Arc<Mutex<Receiver<StateUpdate>>>,
+    rx: Arc<Mutex<Receiver<(StateUpdate, u64)>>>,
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     client: Client,
     sender: Sender<Arc<PendingBlocks>>,
@@ -187,7 +187,8 @@ pub struct StateProcessor<Client> {
     max_pending_blocks_depth: u64,
     recovery_generation: Arc<AtomicU64>,
     recovery_fence: Arc<StdMutex<()>>,
-    deferred_canonical: StdMutex<Option<RecoveredBlock<BaseBlock>>>,
+    observed_generation: AtomicU64,
+    deferred_canonical: StdMutex<Option<(RecoveredBlock<BaseBlock>, u64)>>,
 }
 
 impl<Client> StateProcessor<Client>
@@ -233,13 +234,14 @@ where
         max_pending_blocks_depth: u64,
         recovery_generation: Arc<AtomicU64>,
         recovery_fence: Arc<StdMutex<()>>,
-        rx: Arc<Mutex<Receiver<StateUpdate>>>,
+        rx: Arc<Mutex<Receiver<(StateUpdate, u64)>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
         let cache = client
             .best_block_number()
             .map_or_else(|_| FlashblockCache::new(0), FlashblockCache::new);
 
+        let observed_generation = recovery_generation.load(Ordering::Acquire);
         Self {
             pending_blocks,
             client,
@@ -251,6 +253,7 @@ where
             max_pending_blocks_depth,
             recovery_generation,
             recovery_fence,
+            observed_generation: AtomicU64::new(observed_generation),
             deferred_canonical: StdMutex::new(None),
         }
     }
@@ -298,6 +301,15 @@ where
 
     fn quarantine_flashblock(&self, flashblock: &Flashblock) {
         let identity = (flashblock.metadata.block_number, flashblock.payload_id);
+        if self
+            .pending_blocks
+            .load_full()
+            .as_ref()
+            .and_then(|pending| pending.payload_id_for_block(identity.0))
+            == Some(identity.1)
+        {
+            return;
+        }
         let mut quarantined =
             self.quarantined_flashblocks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         quarantined.retain(|candidate| *candidate != identity);
@@ -310,6 +322,7 @@ where
     async fn preflight_update(
         &self,
         update: &StateUpdate,
+        enqueued_generation: u64,
         recovering: &mut bool,
     ) -> Option<(SealedHeader, bool, u64)> {
         let mut provider_retries = 0;
@@ -329,6 +342,14 @@ where
             sleep(Duration::from_millis(25)).await;
         };
         let generation = self.recovery_generation.load(Ordering::Acquire);
+        if self.observed_generation.swap(generation, Ordering::AcqRel) != generation {
+            self.enter_recovery(best.number()).await;
+            *recovering = true;
+        }
+        if enqueued_generation != generation {
+            Metrics::pending_stale_events_skipped().increment(1);
+            return None;
+        }
 
         if self.is_quarantined_flashblock(update) {
             Metrics::pending_stale_events_skipped().increment(1);
@@ -457,7 +478,8 @@ where
                     *self
                         .deferred_canonical
                         .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(block.clone());
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                        Some((block.clone(), enqueued_generation));
                 }
                 self.enter_recovery(best.number()).await;
                 *recovering = true;
@@ -473,7 +495,7 @@ where
         let mut deferred_interval = interval(Duration::from_millis(100));
         deferred_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
-            let update = tokio::select! {
+            let (update, enqueued_generation) = tokio::select! {
                 update = async { self.rx.lock().await.recv().await } => {
                     let Some(update) = update else {
                         break;
@@ -486,7 +508,7 @@ where
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .clone();
-                    let Some(deferred) = deferred else {
+                    let Some((deferred, generation)) = deferred else {
                         continue;
                     };
                     if self
@@ -499,12 +521,12 @@ where
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .take()
-                        .map(StateUpdate::Canonical)
+                        .map(|(block, _)| (StateUpdate::Canonical(block), generation))
                         .expect("deferred canonical remains available")
                 }
             };
             let Some((best, resuming_recovery, generation)) =
-                self.preflight_update(&update, &mut recovering).await
+                self.preflight_update(&update, enqueued_generation, &mut recovering).await
             else {
                 continue;
             };
@@ -587,12 +609,18 @@ where
                                     );
                                     for flashblock in cached {
                                         let cached_update = StateUpdate::Flashblock(flashblock);
+                                        let cached_enqueued_generation =
+                                            self.recovery_generation.load(Ordering::Acquire);
                                         let Some((
                                             cached_best,
                                             cached_resuming_recovery,
                                             cached_generation,
                                         )) = self
-                                            .preflight_update(&cached_update, &mut recovering)
+                                            .preflight_update(
+                                                &cached_update,
+                                                cached_enqueued_generation,
+                                                &mut recovering,
+                                            )
                                             .await
                                         else {
                                             if recovering {

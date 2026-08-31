@@ -1105,11 +1105,15 @@ async fn test_same_payload_base_retry_does_not_clear_deltas() {
     )
     .await;
 
+    let mut malformed_retry = base.clone();
+    malformed_retry.base.as_mut().expect("base flashblock has a base payload").parent_hash =
+        B256::repeat_byte(0x42);
+    test.flashblocks.on_flashblock_received(malformed_retry);
     test.flashblocks.on_flashblock_received(base);
-    sleep(Duration::from_millis(100)).await;
+    test.send_flashblock(FlashblockBuilder::new(&test, 2).build()).await;
     let pending = test.flashblocks.get_pending_blocks();
     let pending = pending.as_ref().expect("pending state remains published");
-    assert_eq!(pending.latest_flashblock_index(), 1);
+    assert_eq!(pending.latest_flashblock_index(), 2);
     assert_eq!(pending.pending_transaction_count(), 2);
 }
 

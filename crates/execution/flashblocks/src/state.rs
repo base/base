@@ -31,8 +31,8 @@ const BUFFER_SIZE: usize = 20;
 #[derive(Debug)]
 pub struct FlashblocksState {
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
-    queue: mpsc::Sender<StateUpdate>,
-    rx: Arc<Mutex<mpsc::Receiver<StateUpdate>>>,
+    queue: mpsc::Sender<(StateUpdate, u64)>,
+    rx: Arc<Mutex<mpsc::Receiver<(StateUpdate, u64)>>>,
     flashblock_sender: Sender<Arc<PendingBlocks>>,
     max_pending_blocks_depth: u64,
     recovery_generation: Arc<AtomicU64>,
@@ -45,7 +45,7 @@ impl FlashblocksState {
     /// The state is created without a client. Call [`start`](Self::start) with a client
     /// to spawn the state processor after the node is launched.
     pub fn new(max_pending_blocks_depth: u64) -> Self {
-        let (tx, rx) = mpsc::channel::<StateUpdate>(BUFFER_SIZE);
+        let (tx, rx) = mpsc::channel::<(StateUpdate, u64)>(BUFFER_SIZE);
         let pending_blocks: Arc<ArcSwapOption<PendingBlocks>> = Arc::new(ArcSwapOption::new(None));
         let (flashblock_sender, _) = broadcast::channel(BUFFER_SIZE);
 
@@ -90,7 +90,8 @@ impl FlashblocksState {
     /// Handles a canonical block being received.
     pub fn on_canonical_block_received(&self, block: RecoveredBlock<BaseBlock>) {
         let block_number = block.number;
-        match self.queue.try_send(StateUpdate::Canonical(block)) {
+        let generation = self.recovery_generation.load(Ordering::Acquire);
+        match self.queue.try_send((StateUpdate::Canonical(block), generation)) {
             Ok(_) => {
                 info!(message = "added canonical block to processing queue", block_number)
             }
@@ -109,7 +110,8 @@ impl FlashblocksReceiver for FlashblocksState {
     fn on_flashblock_received(&self, flashblock: Flashblock) {
         let flashblock_index = flashblock.index;
         let block_number = flashblock.metadata.block_number;
-        match self.queue.try_send(StateUpdate::Flashblock(flashblock)) {
+        let generation = self.recovery_generation.load(Ordering::Acquire);
+        match self.queue.try_send((StateUpdate::Flashblock(flashblock), generation)) {
             Ok(_) => {
                 debug!(
                     message = "added flashblock to processing queue",
