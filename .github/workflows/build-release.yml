@@ -69,6 +69,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libclang-dev pkg-config protobuf-compiler
 
+      - name: Install system dependencies (macOS)
+        if: matrix.target.os == 'macos' && matrix.binary == 'basectl'
+        run: brew install protobuf
+
       - name: Install Go for basectl
         if: matrix.binary == 'basectl'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
