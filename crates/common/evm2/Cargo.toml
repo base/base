@@ -33,6 +33,11 @@ alloy-primitives.workspace = true
 base-common-evm = { workspace = true, features = ["blst", "c-kzg", "portable", "secp256k1", "std"] }
 # base — the revm precompile set, as the source of truth for the precompile-cap parity test.
 base-common-precompiles.workspace = true
+# base — the revm transition hooks + fork schedule, for the transition-parity harness.
+base-common-chains.workspace = true
+
+# alloy — ForkCondition, to build the revm-side fork schedule in the transition-parity harness.
+alloy-hardforks.workspace = true
 
 # revm
 revm = { workspace = true, features = ["std"] }
