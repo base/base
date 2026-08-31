@@ -3619,6 +3619,7 @@ dependencies = [
  "base-common-evm",
  "base-common-genesis",
  "base-common-l1-fees",
+ "base-common-precompiles",
  "evm2",
  "revm",
 ]
