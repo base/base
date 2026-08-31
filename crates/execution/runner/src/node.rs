@@ -100,6 +100,7 @@ impl BaseNode {
                     .with_guard_limits(GuardLimits {
                         signature_limit: mempool_sender_limit,
                         payment_limit: mempool_payer_limit,
+                        ..Default::default()
                     })
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
