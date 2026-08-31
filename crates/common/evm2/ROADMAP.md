@@ -90,8 +90,8 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Envelope variant + registry handler | ⬜ | receipt arm already exists |
-| Verified vs simulate modes | ⬜ | |
+| Envelope variant (`BaseTxEnvelope::Eip8130`) | ✅ | carries `Eip8130Signed`; type byte + gas limit |
+| Registry handler + verified/simulate execution | ⬜ | needs the EIP-8130 execution engine |
 | 2D nonce-manager **storage layout** (slot derivation + read) | ✅ | `NonceManager`; slot parity vs revm reference |
 | 2D nonce increment + events + replay ring + validity window | ⬜ | needs the EIP-8130 execution context |
 | Authorizer / policy gate, sender/payer split | ⬜ | |
