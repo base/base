@@ -34,6 +34,26 @@ pub struct ValidatedFunding {
     max_cost: U256,
 }
 
+/// A revalidation attempted to overwrite immutable funding metadata with different values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("validated funding mismatch: existing {existing:?}, replacement {replacement:?}")]
+pub struct ValidatedFundingMismatch {
+    /// Funding already attached to the transaction.
+    pub existing: ValidatedFunding,
+    /// Funding produced by the later validation pass.
+    pub replacement: ValidatedFunding,
+}
+
+impl reth_transaction_pool::error::PoolTransactionError for ValidatedFundingMismatch {
+    fn is_bad_transaction(&self) -> bool {
+        false
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 impl ValidatedFunding {
     /// Creates validated funding metadata.
     pub const fn new(payer: Address, max_cost: U256) -> Self {
@@ -514,7 +534,12 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     ///
     /// Defaults to a no-op for transaction types that do not retain validation
     /// metadata.
-    fn set_validated_funding(&self, _funding: ValidatedFunding) {}
+    fn set_validated_funding(
+        &self,
+        _funding: ValidatedFunding,
+    ) -> Result<(), ValidatedFundingMismatch> {
+        Ok(())
+    }
 }
 
 impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
@@ -563,8 +588,21 @@ where
         self.validated_funding.get()
     }
 
-    fn set_validated_funding(&self, funding: ValidatedFunding) {
-        let _ = self.validated_funding.set(funding);
+    fn set_validated_funding(
+        &self,
+        funding: ValidatedFunding,
+    ) -> Result<(), ValidatedFundingMismatch> {
+        if let Some(existing) = self.validated_funding.get().copied() {
+            return if existing == funding {
+                Ok(())
+            } else {
+                Err(ValidatedFundingMismatch { existing, replacement: funding })
+            };
+        }
+        self.validated_funding.set(funding).map_err(|replacement| ValidatedFundingMismatch {
+            existing: *self.validated_funding.get().expect("funding was concurrently set"),
+            replacement,
+        })
     }
 }
 
@@ -787,9 +825,11 @@ mod tests {
     fn validated_funding_is_recorded_once() {
         let transaction = ordinary_pooled(0);
         let initial = ValidatedFunding::new(Address::repeat_byte(1), U256::from(2));
-        transaction.set_validated_funding(initial);
-        transaction
-            .set_validated_funding(ValidatedFunding::new(Address::repeat_byte(3), U256::from(4)));
+        transaction.set_validated_funding(initial).unwrap();
+        let mismatch = transaction
+            .set_validated_funding(ValidatedFunding::new(Address::repeat_byte(3), U256::from(4)))
+            .unwrap_err();
+        assert_eq!(mismatch.existing, initial);
 
         assert_eq!(transaction.validated_funding(), Some(&initial));
     }

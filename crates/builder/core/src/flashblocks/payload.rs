@@ -361,7 +361,11 @@ where
                 .publish(&fb_payload, ctx.block_number(), 0)
                 .map_err(PayloadBuilderError::other)?;
             self.record_emitted_flashblock(ctx.block_number(), 0);
-            let invalidated = self.pool.invalidate_from_state_diff(&state_diff);
+            let invalidated = self.pool.invalidate_from_state_diff(
+                &state_diff,
+                &[],
+                base_execution_txpool::StateDiffOrigin::IntraBlock,
+            );
             if invalidated > 0 {
                 debug!(
                     target: "payload_builder",
@@ -441,6 +445,7 @@ where
         ctx = ctx.with_cancel(fb_cancel.clone()).with_extra_ctx(extra);
 
         // Create best_transaction iterator
+        self.pool.begin_speculative_generation();
         let best_txs_attributes = ctx.best_transaction_attributes();
         let mut best_txs = BestFlashblocksTxs::new(
             ParkableBestPayloadTransactions::new(
@@ -802,7 +807,11 @@ where
                 // Invalidate only after the synchronized publish check accepts
                 // this flashblock. An abandoned build must not evict transactions
                 // based on state that never became visible.
-                let invalidated = self.pool.invalidate_from_state_diff(&state_diff);
+                let invalidated = self.pool.invalidate_from_state_diff(
+                    &state_diff,
+                    &[],
+                    base_execution_txpool::StateDiffOrigin::IntraBlock,
+                );
                 if invalidated > 0 {
                     debug!(
                         target: "payload_builder",

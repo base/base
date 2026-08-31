@@ -56,6 +56,9 @@ pub trait ParkableTransactionPool: TransactionPool
 where
     Self::Transaction: BasePooledTx,
 {
+    /// Starts a speculative build generation, restoring transactions abandoned by an older one.
+    fn begin_speculative_generation(&self) {}
+
     /// Returns a parkable best iterator using the supplied fee attributes.
     fn best_transactions_with_attributes_and_parking(
         &self,

@@ -4,9 +4,11 @@
 //! drops committed storage diffs. This task feeds complete canonical account
 //! deltas into the EIP-8130 invalidation index.
 
-use alloy_primitives::{B256, U256};
+use alloy_consensus::transaction::TxHashRef;
+use alloy_primitives::{B256, TxHash, U256};
 use base_common_precompiles::NonceManagerStorage;
 use futures::StreamExt;
+use reth_primitives_traits::BlockBody;
 use reth_provider::CanonStateNotification;
 use revm::database::BundleState;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
@@ -31,6 +33,15 @@ pub enum InvalidationCause {
     FeedGap,
 }
 
+/// Source of a state diff, which controls speculative-prune reconciliation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateDiffOrigin {
+    /// Diff from a sealed canonical block range.
+    Canonical,
+    /// Diff between unsealed flashblocks in the active speculative generation.
+    IntraBlock,
+}
+
 impl InvalidationCause {
     /// Low-cardinality static metric label.
     #[must_use]
@@ -45,10 +56,24 @@ impl InvalidationCause {
 /// Applies canonical state diffs to a pool's EIP-8130 invalidation guard.
 pub trait StateDiffInvalidation: Clone + Send + Sync + 'static {
     /// Invalidates guarded transactions affected by an executed state diff.
-    fn invalidate_from_state_diff(&self, diffs: &[AccountStateDiff]) -> usize;
+    fn invalidate_from_state_diff(
+        &self,
+        diffs: &[AccountStateDiff],
+        mined_hashes: &[TxHash],
+        origin: StateDiffOrigin,
+    ) -> usize;
 
     /// Invalidates every guarded transaction, attributing the flush to `cause`.
-    fn invalidate_all_tracked(&self, cause: InvalidationCause) -> usize;
+    fn invalidate_all_tracked(&self, cause: InvalidationCause) -> usize {
+        self.invalidate_all_tracked_excluding(cause, &[])
+    }
+
+    /// Invalidates guarded transactions except hashes mined on the new canonical branch.
+    fn invalidate_all_tracked_excluding(
+        &self,
+        cause: InvalidationCause,
+        mined_hashes: &[TxHash],
+    ) -> usize;
 }
 
 /// Feeds each canonical block's account and storage diff into the pool.
@@ -74,11 +99,20 @@ pub async fn maintain_state_diff_invalidation<P, N>(
             None => break,
         };
 
+        let committed = notification.committed();
+        let mined_hashes = committed
+            .blocks_iter()
+            .flat_map(|block| {
+                block.body().transactions().iter().map(|transaction| *transaction.tx_hash())
+            })
+            .collect::<Vec<_>>();
+
         if matches!(&notification, CanonStateNotification::Reorg { .. }) {
             // The committed segment omits state changes caused solely by rolling
             // back the reverted segment. Correct targeted handling would need
             // both key sets, so conservatively flush this exceptional path.
-            let removed = pool.invalidate_all_tracked(InvalidationCause::Reorg);
+            let removed =
+                pool.invalidate_all_tracked_excluding(InvalidationCause::Reorg, &mined_hashes);
             warn!(
                 removed = removed,
                 "canonical chain reorged; invalidated all guarded transactions"
@@ -86,12 +120,12 @@ pub async fn maintain_state_diff_invalidation<P, N>(
             continue;
         }
 
-        let committed = notification.committed();
         let diffs = AccountStateDiff::collect(&committed.execution_outcome().bundle);
         if diffs.is_empty() {
             continue;
         }
-        let removed = pool.invalidate_from_state_diff(&diffs);
+        let removed =
+            pool.invalidate_from_state_diff(&diffs, &mined_hashes, StateDiffOrigin::Canonical);
         if removed > 0 {
             debug!(
                 removed = removed,
