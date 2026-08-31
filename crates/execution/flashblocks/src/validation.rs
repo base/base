@@ -154,10 +154,8 @@ pub enum ReconciliationStrategy {
     /// Canonical `N` is represented in pending and is still behind latest. Discard flashblocks at
     /// or below `N` and rebuild the future suffix from canonical `N`.
     Rebase,
-    /// Canonical `N` is the pending snapshot's anchor. Hash already verified; keep the snapshot.
-    VerifyAnchor,
-    /// Canonical `N` is older than the pending anchor. Do not treat an empty tx vector as a reorg.
-    IgnoreUntracked,
+    /// Canonical `N` does not require changing the pending snapshot.
+    Keep,
     /// No pending state exists (startup or after clear).
     NoPendingState,
 }
@@ -185,7 +183,7 @@ impl CanonicalBlockReconciler {
 
         let anchor = earliest.saturating_sub(1);
         if canonical_block_number < anchor {
-            return ReconciliationStrategy::IgnoreUntracked;
+            return ReconciliationStrategy::Keep;
         }
 
         if canonical_block_number > latest {
@@ -201,7 +199,7 @@ impl CanonicalBlockReconciler {
         }
 
         if canonical_block_number == anchor {
-            return ReconciliationStrategy::VerifyAnchor;
+            return ReconciliationStrategy::Keep;
         }
 
         ReconciliationStrategy::Rebase
@@ -331,10 +329,10 @@ mod tests {
     #[case(Some(100), Some(105), 105, true, ReconciliationStrategy::HandleReorg)]
     #[case(Some(100), Some(101), 100, false, ReconciliationStrategy::Rebase)]
     #[case(Some(100), Some(110), 105, false, ReconciliationStrategy::Rebase)]
-    #[case(Some(100), Some(105), 50, false, ReconciliationStrategy::IgnoreUntracked)]
-    #[case(Some(100), Some(105), 50, true, ReconciliationStrategy::IgnoreUntracked)]
-    #[case(Some(100), Some(105), 99, false, ReconciliationStrategy::VerifyAnchor)]
-    #[case(Some(100), Some(100), 99, false, ReconciliationStrategy::VerifyAnchor)]
+    #[case(Some(100), Some(105), 50, false, ReconciliationStrategy::Keep)]
+    #[case(Some(100), Some(105), 50, true, ReconciliationStrategy::Keep)]
+    #[case(Some(100), Some(105), 99, false, ReconciliationStrategy::Keep)]
+    #[case(Some(100), Some(100), 99, false, ReconciliationStrategy::Keep)]
     #[case(Some(100), Some(105), 99, true, ReconciliationStrategy::HandleReorg)]
     #[case(Some(100), Some(110), 102, true, ReconciliationStrategy::HandleReorg)]
     #[case(Some(100), Some(101), 100, true, ReconciliationStrategy::HandleReorg)]

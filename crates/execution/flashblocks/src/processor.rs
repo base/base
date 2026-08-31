@@ -1,7 +1,7 @@
 //! Flashblocks state processor.
 
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::BTreeMap,
     sync::{
         Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard,
         atomic::{AtomicU64, Ordering},
@@ -16,7 +16,6 @@ use alloy_consensus::{
 use alloy_eips::{BlockNumberOrTag, Decodable2718};
 use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, B256, BlockNumber};
-use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_common_chains::Upgrades;
@@ -47,7 +46,6 @@ use crate::{
 };
 
 type PendingExecutionDb = State<StateProviderDatabase<StateProviderBox>>;
-const MAX_QUARANTINED_PAYLOADS: usize = 8;
 
 #[derive(Debug)]
 struct LivePendingState {
@@ -183,7 +181,6 @@ pub struct StateProcessor<Client> {
     sender: Sender<Arc<PendingBlocks>>,
     cache: Arc<Mutex<FlashblockCache>>,
     live_state: StdMutex<Option<LivePendingState>>,
-    quarantined_flashblocks: StdMutex<VecDeque<(BlockNumber, PayloadId)>>,
     max_pending_blocks_depth: u64,
     recovery_generation: Arc<AtomicU64>,
     recovery_fence: Arc<StdMutex<()>>,
@@ -249,7 +246,6 @@ where
             sender,
             cache: Arc::new(Mutex::new(cache)),
             live_state: StdMutex::new(None),
-            quarantined_flashblocks: StdMutex::new(VecDeque::new()),
             max_pending_blocks_depth,
             recovery_generation,
             recovery_fence,
@@ -273,50 +269,7 @@ where
         Metrics::pending_queue_recovery().increment(1);
         self.pending_blocks.swap(None);
         self.clear_live_state();
-        self.quarantined_flashblocks
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clear();
         *self.cache.lock().await = FlashblockCache::new(best_number);
-    }
-
-    fn is_quarantined_flashblock(&self, update: &StateUpdate) -> bool {
-        let StateUpdate::Flashblock(flashblock) = update else {
-            return false;
-        };
-        let identity = (flashblock.metadata.block_number, flashblock.payload_id);
-        let mut quarantined =
-            self.quarantined_flashblocks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(position) = quarantined.iter().position(|candidate| *candidate == identity) else {
-            return false;
-        };
-
-        if flashblock.index == 0 {
-            quarantined.remove(position);
-            false
-        } else {
-            true
-        }
-    }
-
-    fn quarantine_flashblock(&self, flashblock: &Flashblock) {
-        let identity = (flashblock.metadata.block_number, flashblock.payload_id);
-        if self
-            .pending_blocks
-            .load_full()
-            .as_ref()
-            .and_then(|pending| pending.payload_id_for_block(identity.0))
-            == Some(identity.1)
-        {
-            return;
-        }
-        let mut quarantined =
-            self.quarantined_flashblocks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        quarantined.retain(|candidate| *candidate != identity);
-        quarantined.push_back(identity);
-        while quarantined.len() > MAX_QUARANTINED_PAYLOADS {
-            quarantined.pop_front();
-        }
     }
 
     async fn preflight_update(
@@ -351,11 +304,6 @@ where
             return None;
         }
 
-        if self.is_quarantined_flashblock(update) {
-            Metrics::pending_stale_events_skipped().increment(1);
-            return None;
-        }
-
         let pending_blocks = self.pending_blocks.load_full();
         let pending_is_based_on_best = pending_blocks
             .as_ref()
@@ -364,7 +312,6 @@ where
             && (flashblock.metadata.block_number == 0
                 || flashblock.base.as_ref().is_some_and(|base| base.block_number == 0))
         {
-            self.quarantine_flashblock(flashblock);
             Metrics::pending_stale_events_skipped().increment(1);
             return None;
         }
@@ -389,7 +336,6 @@ where
                 .as_ref()
                 .is_none_or(|base| base.block_number != flashblock.metadata.block_number)
         {
-            self.quarantine_flashblock(flashblock);
             Metrics::pending_stale_events_skipped().increment(1);
             return None;
         }
@@ -413,7 +359,6 @@ where
                         pending.expected_parent_hash(flashblock.metadata.block_number)
                             != Some(base.parent_hash)
                     }) {
-                        self.quarantine_flashblock(flashblock);
                         Metrics::pending_stale_events_skipped().increment(1);
                         return None;
                     }
@@ -436,7 +381,6 @@ where
                     .as_ref()
                     .is_none_or(|base| base.parent_hash != pending.latest_block_hash())
             {
-                self.quarantine_flashblock(flashblock);
                 Metrics::pending_stale_events_skipped().increment(1);
                 return None;
             }
@@ -459,15 +403,6 @@ where
                 Some((best, true, generation))
             }
             UpdatePreflight::Skip => {
-                if let StateUpdate::Flashblock(flashblock) = update
-                    && StateUpdate::flashblock_has_wrong_parent_at_tip(
-                        flashblock,
-                        best.number(),
-                        best.hash(),
-                    )
-                {
-                    self.quarantine_flashblock(flashblock);
-                }
                 Metrics::pending_stale_events_skipped().increment(1);
                 None
             }
@@ -908,7 +843,7 @@ where
                     self.build_pending_state(None, &flashblocks)
                 }
             }
-            ReconciliationStrategy::VerifyAnchor | ReconciliationStrategy::IgnoreUntracked => {
+            ReconciliationStrategy::Keep => {
                 debug!(
                     message = "canonical block does not require pending rebuild",
                     latest_pending_block = latest,

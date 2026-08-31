@@ -987,7 +987,7 @@ async fn test_untracked_older_canonical_does_not_false_reorg() {
 }
 
 #[tokio::test]
-async fn test_wrong_parent_quarantine_is_scoped_to_payload() {
+async fn test_wrong_parent_payload_does_not_contaminate_accepted_payload() {
     let test = FlashblocksBuilderTestHarness::new().await;
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
@@ -999,18 +999,18 @@ async fn test_wrong_parent_quarantine_is_scoped_to_payload() {
     second_wrong_parent.payload_id = PayloadId::new([2; 8]);
     second_wrong_parent.base.as_mut().expect("base flashblock has a base payload").parent_hash =
         B256::repeat_byte(0x43);
-    let mut quarantined_delta = FlashblockBuilder::new(&test, 1)
+    let mut rejected_delta = FlashblockBuilder::new(&test, 1)
         .with_transactions(vec![test.build_transaction_to_send_eth(
             Account::Alice,
             Account::Bob,
             50_000,
         )])
         .build();
-    quarantined_delta.payload_id = PayloadId::new([1; 8]);
+    rejected_delta.payload_id = PayloadId::new([1; 8]);
 
     test.flashblocks.on_flashblock_received(wrong_parent);
     test.flashblocks.on_flashblock_received(second_wrong_parent);
-    test.flashblocks.on_flashblock_received(quarantined_delta);
+    test.flashblocks.on_flashblock_received(rejected_delta);
     sleep(Duration::from_millis(100)).await;
     assert_eq!(
         test.flashblocks
