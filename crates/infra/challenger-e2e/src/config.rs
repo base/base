@@ -11,7 +11,7 @@ use alloy_primitives::Address;
 use clap::Parser;
 use url::Url;
 
-/// Runtime configuration for [`crate::ChallengerE2e`].
+/// Runtime configuration for the challenger E2E driver.
 #[derive(Debug, Parser)]
 #[command(name = "challenger-e2e", version, about, long_about = None)]
 pub struct Config {
