@@ -94,8 +94,8 @@ jobs:
           if [ "${{ matrix.target.triple }}" = "aarch64-unknown-linux-gnu" ]; then
             case "${{ matrix.binary }}" in
               base|base-consensus|basectl)
-                export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-lblst"
-                ;;
+                cargo rustc --locked --profile maxperf -p "${{ matrix.binary }}" --bin "${{ matrix.binary }}" -- -C link-arg=-lblst
+                exit
             esac
           fi
           cargo build --locked --profile maxperf --bin "${{ matrix.binary }}"
