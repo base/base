@@ -485,10 +485,13 @@ where
                         {
                             continue;
                         }
-                        deferred_canonical
+                        let Some(update) = deferred_canonical
                             .take()
                             .map(|(block, generation)| (StateUpdate::Canonical(block), generation))
-                            .expect("deferred canonical remains available")
+                        else {
+                            continue;
+                        };
+                        update
                     }
                 }
             };
