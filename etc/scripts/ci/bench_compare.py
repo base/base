@@ -164,7 +164,6 @@ class BenchCompare:
         base_baseline: str,
         head_baseline: str,
         run_url: str,
-        marker: str = MARKER,
     ) -> tuple[str, bool]:
         """Render the comment body, returning it and whether it warrants a comment."""
         base = self.collect(criterion_dir, base_baseline)
@@ -176,7 +175,7 @@ class BenchCompare:
         # the PR, which is itself a regression in coverage worth surfacing.
         dropped = [b for b in bench_ids if b in base and b not in head]
 
-        lines = [marker, ""]
+        lines = [MARKER, ""]
         # A dropped bench (lost coverage) and a regression are both actionable, so
         # show each block that applies; an improvement is only highlighted when
         # nothing regressed or dropped.
@@ -252,7 +251,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--threshold-pct", type=float, default=10.0)
     parser.add_argument("--improvement-pct", type=float, default=10.0)
-    parser.add_argument("--marker", default=MARKER)
     parser.add_argument("--github-output", type=Path)
     return parser.parse_args()
 
@@ -265,7 +263,6 @@ def main() -> int:
         args.base_baseline,
         args.head_baseline,
         args.run_url,
-        args.marker,
     )
     args.output.write_text(body, encoding="utf-8")
     if args.github_output is not None:
