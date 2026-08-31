@@ -1,0 +1,138 @@
+name: Storage provider benchmarks (advisory)
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/execution/node/**"
+      - "etc/scripts/ci/bench_compare.py"
+      - "etc/scripts/ci/run_storage_bench.sh"
+      - ".depot/workflows/bench-storage.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  historical-reads:
+    name: Historical state reads
+    if: >
+      github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: depot-ubuntu-24.04-8
+    timeout-minutes: 90
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - uses: ./.depot/actions/setup
+        with:
+          native-deps: "true"
+          just: "false"
+
+      - name: Prepare comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$BASE_SHA" ]; then
+            git fetch --no-tags --depth 1 origin main
+            BASE_SHA="$(git rev-parse FETCH_HEAD)"
+          fi
+          git fetch --no-tags --depth 1 origin "$BASE_SHA"
+          cp etc/scripts/ci/run_storage_bench.sh "$RUNNER_TEMP/run_storage_bench.sh"
+          cp etc/scripts/ci/bench_compare.py "$RUNNER_TEMP/bench_compare.py"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+
+      - name: Switch tree to base commit
+        shell: bash
+        run: git checkout --force --detach "$BASE_SHA"
+
+      - name: Run historical reads (base)
+        continue-on-error: true
+        shell: bash
+        run: bash "$RUNNER_TEMP/run_storage_bench.sh" storage-base
+
+      - name: Switch tree to head commit
+        shell: bash
+        run: git checkout --force --detach "$HEAD_SHA"
+
+      - name: Run historical reads (head)
+        continue-on-error: true
+        shell: bash
+        run: bash "$RUNNER_TEMP/run_storage_bench.sh" storage-head
+
+      - name: Render comparison
+        id: render
+        shell: bash
+        env:
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 "$RUNNER_TEMP/bench_compare.py" \
+            --criterion-dir target/criterion \
+            --base-baseline storage-base \
+            --head-baseline storage-head \
+            --output "$RUNNER_TEMP/storage-bench-comment.md" \
+            --run-url "$WORKFLOW_RUN_URL" \
+            --threshold-pct 15 \
+            --improvement-pct 15 \
+            --marker '<!-- storage-bench-results -->' \
+            --github-output "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/storage-bench-comment.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment or clear results on PR
+        if: >
+          always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          SHOULD_COMMENT: ${{ steps.render.outputs.should_comment }}
+        run: |
+          set -euo pipefail
+          marker='<!-- storage-bench-results -->'
+          existing_id=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" \
+            | head -1)
+
+          if [ "$SHOULD_COMMENT" = "true" ]; then
+            if [ -n "$existing_id" ]; then
+              gh api "repos/${REPO}/issues/comments/${existing_id}" \
+                -X PATCH -F body=@"$RUNNER_TEMP/storage-bench-comment.md" > /dev/null
+            else
+              gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+                -F body=@"$RUNNER_TEMP/storage-bench-comment.md" > /dev/null
+            fi
+          elif [ "$SHOULD_COMMENT" = "false" ] && [ -n "$existing_id" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing_id}" -X DELETE > /dev/null
+          fi
+
+      - name: Upload Criterion estimates
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: storage-provider-benchmark
+          path: target/criterion/**/storage-*/estimates.json
+          if-no-files-found: ignore
+          retention-days: 14
