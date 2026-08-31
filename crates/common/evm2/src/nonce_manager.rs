@@ -17,6 +17,18 @@ use evm2::{
 
 use crate::BaseEvmTypes;
 
+/// Error returned when a 2D channel nonce would overflow `u64`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NonceOverflow;
+
+impl core::fmt::Display for NonceOverflow {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("EIP-8130 2D channel nonce overflowed u64")
+    }
+}
+
+impl core::error::Error for NonceOverflow {}
+
 /// EIP-8130 2D nonce-manager storage primitive.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NonceManager;
@@ -98,6 +110,28 @@ impl NonceManager {
             .map_err(HandlerError::Fatal)?
             .saturating_to::<u64>();
         Ok(expiry != 0 && expiry > now)
+    }
+
+    /// Increments the 2D channel nonce for `account` at `nonce_key`, returning the new value, or
+    /// `None` for the reserved protocol nonce key (`0`). Writes to the transaction state overlay
+    /// (the increment commits with the transaction), mirroring the reference's in-execution write.
+    pub fn increment_nonce(
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        account: Address,
+        nonce_key: U256,
+    ) -> HandlerResult<Option<u64>> {
+        let Some(slot) = Self::nonce_slot(account, nonce_key) else {
+            return Ok(None);
+        };
+        let mut handle = evm
+            .state_mut()
+            .storage_slot(&Self::ADDRESS, slot, false)
+            .map_err(HandlerError::Fatal)?;
+        let current = handle.current().saturating_to::<u64>();
+        let new_nonce =
+            current.checked_add(1).ok_or_else(|| HandlerError::external(NonceOverflow))?;
+        handle.set(U256::from(new_nonce));
+        Ok(Some(new_nonce))
     }
 
     /// The Solidity slot for `mapping[address_key]` at base `slot`: `keccak256(pad32(key) ++ slot)`.
@@ -220,6 +254,28 @@ mod tests {
         let mut evm = evm(InMemoryDB::default());
         assert_eq!(
             NonceManager::get_nonce(&mut evm, ACCOUNT, NonceManager::PROTOCOL_NONCE_KEY).unwrap(),
+            None,
+        );
+    }
+
+    #[test]
+    fn increment_nonce_advances_the_channel() {
+        let slot = NonceManager::nonce_slot(ACCOUNT, KEY).expect("channel key has a slot");
+        let mut evm = evm(InMemoryDB::default());
+        // Two increments from zero advance the channel to 1 then 2, each reflected in storage.
+        assert_eq!(NonceManager::increment_nonce(&mut evm, ACCOUNT, KEY).unwrap(), Some(1));
+        assert_eq!(NonceManager::increment_nonce(&mut evm, ACCOUNT, KEY).unwrap(), Some(2));
+        let stored =
+            evm.state_mut().storage_slot(&NonceManager::ADDRESS, slot, false).unwrap().current();
+        assert_eq!(stored, U256::from(2u64));
+    }
+
+    #[test]
+    fn increment_nonce_returns_none_for_protocol_key() {
+        let mut evm = evm(InMemoryDB::default());
+        assert_eq!(
+            NonceManager::increment_nonce(&mut evm, ACCOUNT, NonceManager::PROTOCOL_NONCE_KEY)
+                .unwrap(),
             None,
         );
     }
