@@ -272,6 +272,38 @@ impl SystemTestStack {
             l2_client_consensus_rpc: self.l2_stack().client_consensus_rpc_url().to_string(),
         })
     }
+
+    /// Stops in-process services before container-backed L1 resources are dropped.
+    pub async fn shutdown(self) -> Result<()> {
+        let Self {
+            _temp_dir,
+            #[cfg(feature = "upgrade-signal")]
+                l2_chain_id: _,
+            l1_genesis,
+            l2_deployment,
+            l1_stack,
+            l2_stack,
+            l1_rpc_proxy,
+            #[cfg(feature = "upgrade-signal")]
+            upgrade_signal,
+            #[cfg(feature = "upgrade-signal")]
+            _runtime_upgrade_signal_guard,
+        } = self;
+
+        let result = l2_stack.shutdown().await.wrap_err("Failed to shut down L2 stack");
+
+        #[cfg(feature = "upgrade-signal")]
+        drop(upgrade_signal);
+        drop(l1_rpc_proxy);
+        drop(l1_stack);
+        drop(l2_deployment);
+        drop(l1_genesis);
+        drop(_temp_dir);
+        #[cfg(feature = "upgrade-signal")]
+        drop(_runtime_upgrade_signal_guard);
+
+        result
+    }
 }
 
 /// Builder for creating a new `SystemTestStack`.

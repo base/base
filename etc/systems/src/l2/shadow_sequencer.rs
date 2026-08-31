@@ -151,4 +151,11 @@ impl ShadowSequencer {
     pub fn rpc_url(&self) -> Result<Url> {
         self.builder.rpc_url()
     }
+
+    /// Stops the shadow consensus task and gracefully shuts down its execution node.
+    pub async fn shutdown(self) -> Result<()> {
+        let Self { builder, consensus } = self;
+        drop(consensus);
+        builder.shutdown().await.wrap_err("Failed to shut down shadow builder")
+    }
 }

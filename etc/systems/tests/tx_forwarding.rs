@@ -210,6 +210,8 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
     assert_eq!(receipt.inner.from, sender);
     assert_eq!(receipt.inner.to, Some(recipient));
 
+    system.shutdown().await?;
+
     Ok(())
 }
 
@@ -311,6 +313,8 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     assert_eq!(receipt.inner.from, sender);
     assert_eq!(receipt.inner.to, Some(recipient));
 
+    system.shutdown().await?;
+
     Ok(())
 }
 
@@ -373,6 +377,8 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
         "the validity metadata must not alter the signed transaction's state transition"
     );
 
+    system.shutdown().await?;
+
     Ok(())
 }
 
@@ -409,6 +415,8 @@ async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Re
     let receipt = builder_provider.wait_for_receipt(tx_hash, TX_RECEIPT_TIMEOUT).await?;
     assert_eq!(receipt.inner.transaction_hash, tx_hash);
     assert!(receipt.inner.inner.status());
+
+    system.shutdown().await?;
 
     Ok(())
 }
@@ -475,6 +483,8 @@ async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() 
         "validity transaction landed before the state change that satisfied it"
     );
     assert!(builder_provider.get_balance(watched).await? >= U256::from(1));
+
+    system.shutdown().await?;
 
     Ok(())
 }
@@ -596,6 +606,8 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
         "recoverable storage predicate mismatch should remain pending"
     );
 
+    system.shutdown().await?;
+
     Ok(())
 }
 
@@ -651,6 +663,8 @@ async fn test_invalid_validity_batches_are_rejected_at_mempool_ingress() -> Resu
 
     assert!(client_provider.get_transaction_by_hash(tx_hash).await?.is_none());
     assert!(builder_provider.get_transaction_by_hash(tx_hash).await?.is_none());
+
+    system.shutdown().await?;
 
     Ok(())
 }
@@ -789,6 +803,8 @@ async fn test_tx_forwarding_pipeline_system_high_load() -> Result<()> {
         included_count, total_txs,
         "Expected all {total_txs} transactions to be included, got {included_count}"
     );
+
+    system.shutdown().await?;
 
     Ok(())
 }

@@ -138,6 +138,14 @@ impl L2ClientConsensus {
             Self::Follow(consensus) => Some(consensus.rollup_config()),
         }
     }
+
+    /// Stops the client consensus task.
+    pub async fn shutdown(self) {
+        match self {
+            Self::Validator(consensus) => drop(consensus),
+            Self::Follow(consensus) => consensus.shutdown().await,
+        }
+    }
 }
 
 /// A complete L2 network stack composed of Builder + Consensus + Batcher.
@@ -593,5 +601,30 @@ impl L2Stack {
     /// Returns the follow-mode client consensus rollup configuration, when enabled.
     pub fn client_follow_rollup_config(&self) -> Option<&RollupConfig> {
         self.client_consensus.follow_rollup_config()
+    }
+
+    /// Stops the in-process L2 services and gracefully shuts down execution runtimes.
+    pub async fn shutdown(self) -> Result<()> {
+        let Self {
+            builder,
+            builder_consensus,
+            batcher,
+            client,
+            client_consensus,
+            shadow_sequencers,
+        } = self;
+
+        for shadow in shadow_sequencers {
+            shadow.shutdown().await.wrap_err("Failed to shut down shadow sequencer")?;
+        }
+
+        client_consensus.shutdown().await;
+        drop(batcher);
+        drop(builder_consensus);
+
+        client.shutdown().await.wrap_err("Failed to shut down L2 client")?;
+        builder.shutdown().await.wrap_err("Failed to shut down L2 builder")?;
+
+        Ok(())
     }
 }
