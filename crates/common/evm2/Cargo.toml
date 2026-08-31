@@ -38,6 +38,10 @@ base-common-chains.workspace = true
 
 # alloy — ForkCondition, to build the revm-side fork schedule in the transition-parity harness.
 alloy-hardforks.workspace = true
+# base — the revm EIP-8130 intrinsic-gas reference, for the intrinsic-gas parity test.
+base-execution-eip8130.workspace = true
+# alloy — ABI encoding for constructing EIP-8130 config-change payloads in tests.
+alloy-sol-types.workspace = true
 
 # revm
 revm = { workspace = true, features = ["std"] }
