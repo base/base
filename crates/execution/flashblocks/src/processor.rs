@@ -475,7 +475,7 @@ where
                         };
                         update
                     }
-                    _ = deferred_interval.tick() => {
+                    _ = deferred_interval.tick(), if deferred_canonical.is_some() => {
                         let Some((deferred, _)) = deferred_canonical.as_ref() else {
                             continue;
                         };
