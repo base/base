@@ -463,6 +463,21 @@ impl PendingBlocks {
             .map(|flashblock| flashblock.payload_id)
     }
 
+    /// Returns the flashblock with the requested block, payload, and sequence identity.
+    #[inline]
+    pub fn flashblock_for_identity(
+        &self,
+        block_number: BlockNumber,
+        payload_id: PayloadId,
+        index: u64,
+    ) -> Option<&Flashblock> {
+        self.flashblocks.iter().find(|flashblock| {
+            flashblock.metadata.block_number == block_number
+                && flashblock.payload_id == payload_id
+                && flashblock.index == index
+        })
+    }
+
     /// Returns the block hash reported by the latest flashblock.
     #[inline]
     pub fn latest_block_hash(&self) -> B256 {

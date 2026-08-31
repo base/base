@@ -1071,16 +1071,32 @@ async fn test_same_payload_base_retry_does_not_clear_deltas() {
     )
     .await;
 
-    let mut malformed_retry = base.clone();
-    malformed_retry.base.as_mut().expect("base flashblock has a base payload").parent_hash =
-        B256::repeat_byte(0x42);
-    test.flashblocks.on_flashblock_received(malformed_retry);
     test.flashblocks.on_flashblock_received(base);
     test.send_flashblock(FlashblockBuilder::new(&test, 2).build()).await;
     let pending = test.flashblocks.get_pending_blocks();
     let pending = pending.as_ref().expect("pending state remains published");
     assert_eq!(pending.latest_flashblock_index(), 2);
     assert_eq!(pending.pending_transaction_count(), 2);
+}
+
+#[tokio::test]
+async fn test_conflicting_live_retransmissions_clear_pending() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+    let base = FlashblockBuilder::new_base(&test).build();
+    test.send_flashblock(base.clone()).await;
+
+    let mut conflicting_base = base.clone();
+    conflicting_base.diff.state_root = B256::repeat_byte(0x11);
+    test.send_flashblock(conflicting_base).await;
+    assert!(test.flashblocks.get_pending_blocks().is_none());
+
+    test.send_flashblock(base).await;
+    let delta = FlashblockBuilder::new(&test, 1).build();
+    test.send_flashblock(delta.clone()).await;
+    let mut conflicting_delta = delta;
+    conflicting_delta.diff.state_root = B256::repeat_byte(0x22);
+    test.send_flashblock(conflicting_delta).await;
+    assert!(test.flashblocks.get_pending_blocks().is_none());
 }
 
 #[tokio::test]

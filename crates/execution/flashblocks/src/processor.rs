@@ -351,6 +351,20 @@ where
                 && let Some(payload_id) =
                     pending.payload_id_for_block(flashblock.metadata.block_number)
             {
+                if flashblock.payload_id == payload_id
+                    && let Some(existing) = pending.flashblock_for_identity(
+                        flashblock.metadata.block_number,
+                        flashblock.payload_id,
+                        flashblock.index,
+                    )
+                {
+                    if existing != flashblock {
+                        self.enter_recovery(best.number());
+                        *recovering = true;
+                    }
+                    Metrics::pending_stale_events_skipped().increment(1);
+                    return None;
+                }
                 if flashblock.index == 0 {
                     if flashblock.base.as_ref().is_none_or(|base| {
                         pending.expected_parent_hash(flashblock.metadata.block_number)
