@@ -403,10 +403,11 @@ where
         // Determine the reconciliation strategy. Reorg detection compares against the block
         // we were notified about, but reconciliation must use the node's real canonical height
         // so a lagging queue cannot hide that pending has drifted away from the tip.
+        let canonical_number = self.effective_canonical_number(block.number);
         let strategy = CanonicalBlockReconciler::reconcile(
             Some(pending_blocks.earliest_block_number()),
             Some(pending_blocks.latest_block_number()),
-            self.effective_canonical_number(block.number),
+            canonical_number,
             self.max_depth,
             reorg_detected,
         );
@@ -416,7 +417,8 @@ where
                 debug!(
                     message = "pending snapshot cleared because canonical caught up",
                     latest_pending_block = pending_blocks.latest_block_number(),
-                    canonical_block = block.number,
+                    notified_block = block.number,
+                    canonical_block = canonical_number,
                 );
                 Metrics::pending_clear_catchup().increment(1);
                 Metrics::pending_snapshot_fb_index()
@@ -432,8 +434,10 @@ where
                 );
                 Metrics::pending_clear_reorg().increment(1);
 
-                // If there is a reorg, we re-process all future flashblocks without reusing the existing pending state
-                flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
+                // Rebuild from the real tip, not the notified height: under queue lag those
+                // two differ, and re-executing the already-canonical range cannot publish.
+                flashblocks
+                    .retain(|flashblock| flashblock.metadata.block_number > canonical_number);
                 self.build_pending_state(None, &flashblocks)
             }
             ReconciliationStrategy::DepthLimitExceeded { depth, max_depth } => {
@@ -443,7 +447,8 @@ where
                     max_depth = max_depth,
                 );
 
-                flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
+                flashblocks
+                    .retain(|flashblock| flashblock.metadata.block_number > canonical_number);
                 self.build_pending_state(None, &flashblocks)
             }
             ReconciliationStrategy::Continue => {
