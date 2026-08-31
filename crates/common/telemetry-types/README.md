@@ -16,8 +16,8 @@ endpoint accepts. Both sides depend on this crate so the schema cannot drift.
 - **`NodeConfigReport`**: an allowlisted, normalized view of node config.
 - **`NetHealth`**: peer counts, churn, and gossip/request error rates.
 - **`NodeReportEvent`**: the flattened record the ingest service writes, which
-  is a `NodeReport` plus the server-side `received_at`, `reported_ip`, and
-  `ip_source`.
+  is a `NodeReport` plus the server-side `received_at`, `reported_ip`,
+  `ip_source`, and `observed_ip`.
 
 ## Contract notes
 

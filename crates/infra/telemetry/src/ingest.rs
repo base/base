@@ -257,6 +257,12 @@ mod tests {
         let events = recorder.events();
         assert_eq!(events[0].reported_ip, advertised);
         assert_eq!(events[0].ip_source, IpSource::NodeProvided);
+        assert_eq!(
+            events[0].observed_ip,
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "the advertised address must not overwrite the one the request came from"
+        );
+        assert!(events[0].addresses_disagree());
 
         handle.abort();
     }

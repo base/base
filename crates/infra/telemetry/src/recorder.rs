@@ -147,6 +147,7 @@ impl ReportRecorder for JsonlRecorder {
             hardware_platform = event.report.hardware.platform.as_str(),
             reported_ip = %event.reported_ip,
             ip_source = event.ip_source.as_str(),
+            observed_ip = %event.observed_ip,
             "node report accepted"
         );
 
@@ -204,6 +205,7 @@ mod tests {
         assert_eq!(decoded.report.heads.unsafe_block, 42);
         assert_eq!(decoded.ip_source, IpSource::ServerObserved);
         assert_eq!(decoded.reported_ip, IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)));
+        assert_eq!(decoded.observed_ip, IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)));
     }
 
     #[test]

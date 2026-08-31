@@ -49,9 +49,18 @@ rejects, and tightening that is a backend decision, not a client one.
 Accepted reports are emitted as a structured log event and, when
 `--node-report-path` (or `BASE_TELEMETRY_NODE_REPORT_PATH`) is set, appended as
 JSONL through a non-blocking background writer. Each recorded line is the report
-plus the three fields only the server can supply: `received_at`, `reported_ip`,
-and `ip_source`. `reported_ip` is the node's advertised address when it sent
-one and the observed edge IP otherwise.
+plus the four fields only the server can supply: `received_at`, `reported_ip`,
+`ip_source`, and `observed_ip`. `reported_ip` is the node's advertised address
+when it sent one and the observed edge IP otherwise; `observed_ip` is always the
+address the connection arrived from.
+
+Both are kept because they answer different questions. A node behind a load
+balancer, or one reporting to a collector inside its own network, is observed at
+an address that locates the reporting path rather than the node, so
+`reported_ip` is the one worth geolocating. It is also the one a node controls,
+so `observed_ip` is what makes a spoofed or simply misconfigured advertisement
+visible instead of silently authoritative. Rate limiting keys on the observed
+edge IP and never on anything in the payload.
 
 Ingest has its own rate limit, separate from the probe quota: 60 reports per
 hour per client IP by default, configurable with

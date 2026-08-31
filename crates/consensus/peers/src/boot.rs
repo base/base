@@ -64,6 +64,23 @@ impl BootNode {
         }
     }
 
+    /// Returns the routable address this record advertises, when it carries one.
+    ///
+    /// This is the address the node tells the network to reach it on, which is not necessarily
+    /// the address a given connection arrives from: a node behind NAT, a load balancer, or a
+    /// private subnet is observed at one address and reachable at another. `IPv4` is preferred
+    /// because a record carrying both is reached over `IPv4` by the majority of the network.
+    pub fn advertised_ip(&self) -> Option<IpAddr> {
+        match self {
+            Self::Enr(enr) => enr.ip4().map(IpAddr::V4).or_else(|| enr.ip6().map(IpAddr::V6)),
+            Self::Enode(addr) => addr.iter().find_map(|protocol| match protocol {
+                Protocol::Ip4(ip) => Some(IpAddr::V4(ip)),
+                Protocol::Ip6(ip) => Some(IpAddr::V6(ip)),
+                _ => None,
+            }),
+        }
+    }
+
     /// Helper method to parse a bootnode from a string.
     pub fn parse_bootnode(raw: &str) -> Result<Self, BootNodeParseError> {
         // If the string starts with "enr:" it is an ENR record.
@@ -90,6 +107,24 @@ mod tests {
 
     use super::*;
     use crate::PeerUtils;
+
+    /// A real Base ENR, reused across the tree as the canonical parseable record.
+    const SAMPLE_ENR: &str = "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg";
+
+    #[test]
+    fn test_signed_record_advertises_its_ip() {
+        let boot_node = BootNode::parse_bootnode(SAMPLE_ENR).unwrap();
+
+        assert_eq!(boot_node.advertised_ip(), Some(IpAddr::V4(Ipv4Addr::new(54, 145, 88, 85))));
+    }
+
+    #[test]
+    fn test_unsigned_record_advertises_its_ip() {
+        let enode = "enode://2bd2e657bb3c8efffb8ff6db9071d9eb7be70d7c6d7d980ff80fc93b2629675c5f750bc0a5ef27cd788c2e491b8795a7e9a4a6e72178c14acc6753c0e5d77ae4@34.65.205.244:30305";
+        let boot_node = BootNode::parse_bootnode(enode).unwrap();
+
+        assert_eq!(boot_node.advertised_ip(), Some(IpAddr::V4(Ipv4Addr::new(34, 65, 205, 244))));
+    }
 
     #[test]
     fn test_derive_bootnode_enode_multiaddr() {

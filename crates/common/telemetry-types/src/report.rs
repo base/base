@@ -223,6 +223,11 @@ impl NodeReport {
 /// dropped after enrichment so geography can be re-derived as enrichment datasets improve, and
 /// so it can serve as the correlation key when joining standalone execution and consensus
 /// deployments.
+///
+/// Both addresses are kept. `reported_ip` is the better one to geolocate, because a node behind
+/// a load balancer or inside the reporting VPC is observed at an address that says nothing about
+/// where it runs. `observed_ip` is the one that cannot be forged, so keeping it is what makes a
+/// spoofed or misconfigured advertisement detectable rather than invisible.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NodeReportEvent {
     /// When ingest accepted the report.
@@ -231,6 +236,10 @@ pub struct NodeReportEvent {
     pub reported_ip: IpAddr,
     /// Whether `reported_ip` came from the node or from the connection.
     pub ip_source: IpSource,
+    /// The address the connection actually arrived from.
+    ///
+    /// Equal to `reported_ip` whenever the node advertised nothing.
+    pub observed_ip: IpAddr,
     /// The report as the node sent it.
     #[serde(flatten)]
     pub report: NodeReport,
@@ -246,7 +255,16 @@ impl NodeReportEvent {
             .map_or((observed_ip, IpSource::ServerObserved), |advertised| {
                 (advertised, IpSource::NodeProvided)
             });
-        Self { received_at, reported_ip, ip_source, report }
+        Self { received_at, reported_ip, ip_source, observed_ip, report }
+    }
+
+    /// Returns whether the node advertised an address other than the one it connected from.
+    ///
+    /// True is not by itself a fault: a node behind NAT or a proxy legitimately advertises a
+    /// different address than the edge sees. It is the signal that the two need reconciling
+    /// before either is trusted as the node's location.
+    pub fn addresses_disagree(&self) -> bool {
+        self.reported_ip != self.observed_ip
     }
 }
 
@@ -317,6 +335,11 @@ mod tests {
         let event = NodeReportEvent::new(report, Utc::now(), observed);
         assert_eq!(event.reported_ip, advertised);
         assert_eq!(event.ip_source, IpSource::NodeProvided);
+        assert_eq!(
+            event.observed_ip, observed,
+            "preferring the advertised address must not discard the unforgeable one"
+        );
+        assert!(event.addresses_disagree());
     }
 
     #[test]
@@ -325,6 +348,11 @@ mod tests {
         let event = NodeReportEvent::new(sample_report(), Utc::now(), observed);
         assert_eq!(event.reported_ip, observed);
         assert_eq!(event.ip_source, IpSource::ServerObserved);
+        assert_eq!(event.observed_ip, observed);
+        assert!(
+            !event.addresses_disagree(),
+            "a node that advertised nothing cannot be in disagreement with itself"
+        );
     }
 
     #[test]
@@ -399,6 +427,7 @@ mod tests {
                 "layer",
                 "net_health",
                 "network",
+                "observed_ip",
                 "received_at",
                 "reported_at",
                 "reported_ip",
@@ -407,7 +436,7 @@ mod tests {
                 "telemetry_id",
                 "uptime_secs",
             ],
-            "the archived event is the report's keys plus exactly the three the server adds"
+            "the archived event is the report's keys plus exactly the four the server adds"
         );
     }
 
@@ -418,9 +447,15 @@ mod tests {
         // with a field the server never set. The destructure below is an exhaustiveness
         // tripwire, not a read - adding a field to `NodeReportEvent` stops compiling here until
         // the name is listed, and the assertion then proves it does not collide.
-        let NodeReportEvent { received_at: _, reported_ip: _, ip_source: _, report: _ } =
-            NodeReportEvent::new(sample_report(), Utc::now(), IpAddr::V4(Ipv4Addr::LOCALHOST));
-        const SERVER_OWNED_FIELDS: [&str; 3] = ["received_at", "reported_ip", "ip_source"];
+        let NodeReportEvent {
+            received_at: _,
+            reported_ip: _,
+            ip_source: _,
+            observed_ip: _,
+            report: _,
+        } = NodeReportEvent::new(sample_report(), Utc::now(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        const SERVER_OWNED_FIELDS: [&str; 4] =
+            ["received_at", "reported_ip", "ip_source", "observed_ip"];
 
         let observed = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 4));
         let report = serde_json::to_value(sample_report()).expect("report should serialize");
