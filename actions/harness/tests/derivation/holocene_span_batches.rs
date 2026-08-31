@@ -39,7 +39,9 @@ fn submit_span_fixture(
     blocks: &[BaseBlock],
     nonce: u64,
 ) {
-    harness.submit_span_batch_calldata(config, blocks, nonce).expect("span fixture submission");
+    harness
+        .submit_span_batch_brotli_calldata(config, blocks, nonce)
+        .expect("span fixture submission");
     chain.push(harness.l1.tip().clone());
 }
 

@@ -176,7 +176,7 @@ impl Channel {
         Ok(Self {
             id,
             rollup_config,
-            compressor: Some(CompressionStream::new(config.compression_algo)),
+            compressor: Some(CompressionStream::new(config.brotli_level)),
             output: VecDeque::new(),
             available_output: 0,
             compressed_bytes: 0,
@@ -465,7 +465,7 @@ mod tests {
     use alloy_primitives::B256;
 
     use super::*;
-    use crate::CompressionAlgo;
+    use crate::BrotliLevel;
 
     fn batch(transaction_len: usize) -> SingleBatch {
         let mut state = 1u64;
@@ -505,14 +505,14 @@ mod tests {
     #[test]
     fn soft_target_accepts_complete_batch_before_closing() {
         let config = EncoderConfig {
-            compression_algo: CompressionAlgo::Zlib,
             compressed_size_target: Some(1),
+            brotli_level: BrotliLevel::Brotli0,
             ..EncoderConfig::default()
         };
         let mut channel = channel(config);
 
         assert_eq!(
-            channel.add_batch(&batch(100_000), 100_000).unwrap(),
+            channel.add_batch(&batch(10_000), 10_000).unwrap(),
             ChannelAddOutcome::TargetReached
         );
         assert_eq!(channel.blocks_added(), 1);

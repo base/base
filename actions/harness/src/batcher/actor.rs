@@ -85,8 +85,8 @@ pub enum BatcherError {
 /// Each call to [`advance`] drives one complete batch cycle:
 /// 1. Drain the L2 source and forward each block to the driver via the channel.
 /// 2. Send a [`L2BlockEvent::Flush`] (with an ack) to close and release the current channel.
-/// 3. Wait for the ack, confirming the driver has encoded every resulting frame and
-///    handed it to the tx manager (not just the first).
+/// 3. Wait for the ack, confirming the driver has handed every resulting submission
+///    to the tx manager (not just the first).
 /// 4. Mine one L1 block via the shared [`L1MinerTxManager`], firing all
 ///    receipt oneshots and delivering an [`L1HeadEvent::NewHead`] to the driver.
 /// 5. Yield to let the driver confirm receipts and advance its L1 head.

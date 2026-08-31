@@ -9,10 +9,6 @@ use crate::brotli::BrotliCompressor;
 /// A channel compression failure.
 #[derive(Debug, thiserror::Error)]
 pub enum CompressionError {
-    /// Zlib rejected an incremental compression operation.
-    #[cfg(feature = "std")]
-    #[error("zlib compression failed")]
-    Zlib,
     /// Brotli compression is unavailable without the standard library.
     #[cfg(not(feature = "std"))]
     #[error("brotli compression is not supported without the standard library")]
@@ -21,76 +17,90 @@ pub enum CompressionError {
     #[cfg(feature = "std")]
     #[error("brotli compression failed: {0}")]
     Brotli(#[from] std::io::Error),
-    /// Brotli quality is outside the encoder's accepted range.
-    #[error("brotli quality {quality} is outside 0..=11")]
-    InvalidBrotliQuality {
-        /// The configured Brotli quality.
-        quality: u8,
-    },
 }
 
-/// The compression algorithm type.
+/// Brotli encoder quality.
+#[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompressionAlgo {
-    /// Brotli with quality `0..=11`.
-    Brotli(u8),
-    /// The zlib compression.
-    Zlib,
+pub enum BrotliLevel {
+    /// Quality level 0.
+    Brotli0 = 0,
+    /// Quality level 1.
+    Brotli1 = 1,
+    /// Quality level 2.
+    Brotli2 = 2,
+    /// Quality level 3.
+    Brotli3 = 3,
+    /// Quality level 4.
+    Brotli4 = 4,
+    /// Quality level 5.
+    Brotli5 = 5,
+    /// Quality level 6.
+    Brotli6 = 6,
+    /// Quality level 7.
+    Brotli7 = 7,
+    /// Quality level 8.
+    Brotli8 = 8,
+    /// Quality level 9.
+    Brotli9 = 9,
+    /// Quality level 10.
+    Brotli10 = 10,
+    /// Quality level 11.
+    Brotli11 = 11,
 }
 
-impl CompressionAlgo {
-    /// Inclusive minimum Brotli quality accepted by the encoder.
-    pub const BROTLI_MIN_QUALITY: u8 = 0;
-    /// Inclusive maximum Brotli quality accepted by the encoder.
-    pub const BROTLI_MAX_QUALITY: u8 = 11;
-    /// Default Brotli quality used by the batcher.
-    pub const BROTLI_DEFAULT_QUALITY: u8 = 10;
+impl BrotliLevel {
+    /// Default quality used by the batcher.
+    pub const DEFAULT: Self = Self::Brotli10;
 
-    /// Channel-version byte prepended to Brotli-compressed channels.
-    pub const BROTLI_CHANNEL_VERSION: u8 = 0x01;
+    /// Prepended to Brotli channels so `BatchReader` selects Brotli decompression.
+    pub const CHANNEL_VERSION: u8 = 0x01;
 
-    /// Brotli at `quality`, or `None` when it is outside `0..=11`.
-    pub const fn brotli(quality: u8) -> Option<Self> {
-        if quality <= Self::BROTLI_MAX_QUALITY { Some(Self::Brotli(quality)) } else { None }
+    /// Returns the numeric quality expected by Brotli encoders.
+    pub const fn as_u32(self) -> u32 {
+        self as u32
     }
 
-    /// Compresses one complete derivation channel.
-    ///
-    /// Brotli output starts with [`BROTLI_CHANNEL_VERSION`](Self::BROTLI_CHANNEL_VERSION);
-    /// zlib is self-identifying.
-    pub fn compress_channel(self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
-        let quality = match self {
-            Self::Zlib => return Ok(miniz_oxide::deflate::compress_to_vec_zlib(input, 9)),
-            Self::Brotli(quality) => {
-                if quality > Self::BROTLI_MAX_QUALITY {
-                    return Err(CompressionError::InvalidBrotliQuality { quality });
-                }
-                i32::from(quality)
-            }
-        };
+    /// Converts a numeric Brotli quality to its named level.
+    pub const fn from_u8(quality: u8) -> Option<Self> {
+        Some(match quality {
+            0 => Self::Brotli0,
+            1 => Self::Brotli1,
+            2 => Self::Brotli2,
+            3 => Self::Brotli3,
+            4 => Self::Brotli4,
+            5 => Self::Brotli5,
+            6 => Self::Brotli6,
+            7 => Self::Brotli7,
+            8 => Self::Brotli8,
+            9 => Self::Brotli9,
+            10 => Self::Brotli10,
+            11 => Self::Brotli11,
+            _ => return None,
+        })
+    }
 
+    /// Compresses one complete Brotli derivation channel.
+    pub fn compress_channel(self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
         #[cfg(feature = "std")]
         {
-            let compressed = BrotliCompressor::compress(input, quality)?;
+            let compressed = BrotliCompressor::compress(input, self)?;
             let mut channel = Vec::with_capacity(compressed.len() + 1);
-            channel.push(Self::BROTLI_CHANNEL_VERSION);
+            channel.push(Self::CHANNEL_VERSION);
             channel.extend_from_slice(&compressed);
             Ok(channel)
         }
         #[cfg(not(feature = "std"))]
         {
-            let _ = (input, quality);
+            let _ = (input, self);
             Err(CompressionError::BrotliUnavailable)
         }
     }
 }
 
-impl fmt::Display for CompressionAlgo {
+impl fmt::Display for BrotliLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Zlib => f.write_str("zlib"),
-            Self::Brotli(quality) => write!(f, "brotli-{quality}"),
-        }
+        write!(f, "{}", self.as_u32())
     }
 }
 
@@ -100,48 +110,51 @@ mod tests {
     use base_common_genesis::RollupConfig;
     #[cfg(feature = "std")]
     use base_protocol::Brotli;
-    use miniz_oxide::inflate::decompress_to_vec_zlib;
 
     use super::*;
-
-    #[test]
-    fn zlib_channel_is_self_identifying() {
-        let input = b"batch channel data";
-        let channel = CompressionAlgo::Zlib.compress_channel(input).unwrap();
-
-        assert_eq!(decompress_to_vec_zlib(&channel).unwrap(), input);
-    }
 
     #[cfg(feature = "std")]
     #[test]
     fn brotli_channel_has_version_prefix() {
-        let channel = CompressionAlgo::Brotli(10).compress_channel(b"batch channel data").unwrap();
+        let channel = BrotliLevel::Brotli10.compress_channel(b"batch channel data").unwrap();
 
-        assert_eq!(channel.first(), Some(&CompressionAlgo::BROTLI_CHANNEL_VERSION));
+        assert_eq!(channel.first(), Some(&BrotliLevel::CHANNEL_VERSION));
     }
 
     #[cfg(feature = "std")]
     #[test]
-    fn brotli_channel_roundtrips() {
+    fn brotli_channel_roundtrips_at_quality_bounds() {
         let input = b"batch channel data";
-        let channel = CompressionAlgo::Brotli(10).compress_channel(input).unwrap();
-        let decompressed = Brotli
-            .decompress(&channel[1..], RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
-            .unwrap();
-        assert_eq!(decompressed, input);
+        for level in [BrotliLevel::Brotli0, BrotliLevel::Brotli11] {
+            let channel = level.compress_channel(input).unwrap();
+            let decompressed = Brotli
+                .decompress(&channel[1..], RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
+                .unwrap();
+            assert_eq!(decompressed, input);
+        }
     }
 
     #[test]
-    fn brotli_rejects_quality_above_max() {
-        let err = CompressionAlgo::Brotli(12).compress_channel(b"batch channel data").unwrap_err();
+    fn brotli_levels_cover_the_full_encoder_range() {
+        let levels = [
+            BrotliLevel::Brotli0,
+            BrotliLevel::Brotli1,
+            BrotliLevel::Brotli2,
+            BrotliLevel::Brotli3,
+            BrotliLevel::Brotli4,
+            BrotliLevel::Brotli5,
+            BrotliLevel::Brotli6,
+            BrotliLevel::Brotli7,
+            BrotliLevel::Brotli8,
+            BrotliLevel::Brotli9,
+            BrotliLevel::Brotli10,
+            BrotliLevel::Brotli11,
+        ];
 
-        assert!(matches!(err, CompressionError::InvalidBrotliQuality { quality: 12 }));
-    }
-
-    #[test]
-    fn brotli_constructor_accepts_inclusive_range() {
-        assert_eq!(CompressionAlgo::brotli(0), Some(CompressionAlgo::Brotli(0)));
-        assert_eq!(CompressionAlgo::brotli(11), Some(CompressionAlgo::Brotli(11)));
-        assert_eq!(CompressionAlgo::brotli(12), None);
+        for (quality, level) in (0u8..=11).zip(levels) {
+            assert_eq!(BrotliLevel::from_u8(quality), Some(level));
+            assert_eq!(level.as_u32(), u32::from(quality));
+        }
+        assert_eq!(BrotliLevel::from_u8(12), None);
     }
 }

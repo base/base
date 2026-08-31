@@ -18,8 +18,8 @@ use crate::{
 
 /// The batcher encoding pipeline state machine.
 ///
-/// Transforms L2 blocks into L1 submission frames. No async, no I/O. The caller
-/// drives the encoder synchronously via the [`BatchPipeline`] trait.
+/// Transforms L2 blocks into calldata or blob L1 submissions. No async, no I/O.
+/// The caller drives the encoder synchronously via the [`BatchPipeline`] trait.
 pub struct BatchEncoder {
     /// The rollup configuration.
     rollup_config: Arc<RollupConfig>,
@@ -29,7 +29,7 @@ pub struct BatchEncoder {
     l1_head: u64,
     /// Buffered L2 blocks above the latest observed safe head.
     blocks: VecDeque<BaseBlock>,
-    /// Index into `blocks`: next block not yet fed into the current channel.
+    /// Index into `blocks`: next block not yet appended to the writable channel tail.
     block_cursor: usize,
     /// Hash of the last accepted block or safe-head anchor.
     tip: Option<B256>,
@@ -41,7 +41,8 @@ pub struct BatchEncoder {
     next_id: u64,
     /// Per-instance RNG for generating unique channel IDs.
     rng: SmallRng,
-    /// When set, emit blobs even if `da_type` is calldata.
+    /// When throttling requests it, emit blobs even if `da_type` is calldata.
+    /// No-op when blob DA is already configured.
     blob_override: bool,
     /// Fatal error observed from trait methods that cannot return [`StepError`].
     deferred_step_error: Option<StepError>,
@@ -100,7 +101,12 @@ impl BatchEncoder {
             .sum()
     }
 
-    /// Step until idle, flush, and drain submissions. Test/one-shot helper.
+    /// Steps until idle, flushes the writable channel, and drains all ready submissions.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`StepError`]. Submissions prepared before the error remain
+    /// available through [`BatchPipeline::next_submission`].
     pub fn encode_and_drain(&mut self) -> Result<Vec<BatchSubmission>, StepError> {
         loop {
             match self.step()? {
@@ -186,6 +192,9 @@ impl BatchEncoder {
     }
 
     /// Opens a channel for the next queued block.
+    ///
+    /// `block_start` anchors its buffered block range; the current L1 head starts
+    /// its close deadline.
     fn open_new_channel(&mut self, block_start: usize) {
         let mut id = ChannelId::default();
         self.rng.fill_bytes(&mut id);
@@ -207,7 +216,10 @@ impl BatchEncoder {
         self.channels.push_back(channel);
     }
 
-    /// Close the writable channel if its duration has elapsed.
+    /// Closes the writable channel if its duration has elapsed.
+    ///
+    /// Called from both [`BatchPipeline::step`] and [`BatchPipeline::advance_l1_head`],
+    /// so closure does not depend on another L2 block arriving.
     fn check_channel_timeout(&mut self) -> Result<bool, StepError> {
         // Same deadline for closing an open channel and releasing a closed partial tail.
         let should_close = self
@@ -419,7 +431,7 @@ impl BatchEncoder {
         })
     }
 
-    /// Closes the writable tail and releases every retained partial artifact.
+    /// Closes the writable tail and makes retained partial channel output eligible for framing.
     fn flush_channels(&mut self) -> Result<(), StepError> {
         self.close_current_channel(ChannelCloseReason::Flush)?;
         for channel in &mut self.channels {
@@ -683,7 +695,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{BatchComposeError, ChannelLimit, CompressionAlgo, SubmissionPayload};
+    use crate::{BatchComposeError, ChannelLimit, SubmissionPayload};
 
     fn make_deposit_tx() -> BaseTxEnvelope {
         let calldata = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default()).encode_calldata();
@@ -832,10 +844,9 @@ mod tests {
         assert_eq!(result, StepResult::Idle);
     }
 
-    fn tiny_frame_zlib_encoder() -> BatchEncoder {
+    fn tiny_frame_encoder() -> BatchEncoder {
         let config = EncoderConfig {
             max_frame_size: Frame::ENCODED_OVERHEAD + 1,
-            compression_algo: CompressionAlgo::Zlib,
             ..EncoderConfig::default()
         };
         BatchEncoder::new(Arc::new(RollupConfig::default()), config)
@@ -844,7 +855,7 @@ mod tests {
 
     #[test]
     fn test_step_retries_rejected_block_after_protocol_limit_close() {
-        let mut encoder = tiny_frame_zlib_encoder();
+        let mut encoder = tiny_frame_encoder();
         let first = make_block_with_user_tx_bytes(B256::ZERO, 30_000, 1);
         let second = make_block_with_user_tx_bytes(first.header.hash_slow(), 30_000, 2);
         encoder.add_block(first).unwrap();
@@ -870,7 +881,7 @@ mod tests {
 
     #[test]
     fn test_step_discards_block_that_exceeds_empty_channel() {
-        let mut encoder = tiny_frame_zlib_encoder();
+        let mut encoder = tiny_frame_encoder();
         encoder.add_block(make_block_with_user_tx_bytes(B256::ZERO, 100_000, 1)).unwrap();
 
         let err = encoder.step().unwrap_err();
@@ -1276,52 +1287,49 @@ mod tests {
 
     #[test]
     fn test_open_channel_emits_full_blob_without_closing() {
-        for compression_algo in [CompressionAlgo::Zlib, CompressionAlgo::Brotli(10)] {
-            let config = EncoderConfig {
-                compressed_size_target: None,
-                max_channel_duration: 100,
-                compression_algo,
-                ..EncoderConfig::default()
-            };
-            let mut encoder =
-                BatchEncoder::new(Arc::new(RollupConfig::default()), config).expect("valid config");
+        let config = EncoderConfig {
+            compressed_size_target: None,
+            max_channel_duration: 100,
+            ..EncoderConfig::default()
+        };
+        let mut encoder =
+            BatchEncoder::new(Arc::new(RollupConfig::default()), config).expect("valid config");
 
-            let mut parent_hash = B256::ZERO;
-            // Brotli may retain one 4 MiB window before exposing output. Feed
-            // enough incompressible input to exercise emission without flushes.
-            for seed in 1..=32 {
-                let block = make_block_with_large_user_tx(parent_hash, seed);
-                parent_hash = block.header.hash_slow();
-                encoder.add_block(block).unwrap();
-                assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-                if encoder.has_ready_submission() {
-                    break;
-                }
+        let mut parent_hash = B256::ZERO;
+        // Brotli may retain one 4 MiB window before exposing output. Feed
+        // enough incompressible input to exercise emission without flushes.
+        for seed in 1..=32 {
+            let block = make_block_with_large_user_tx(parent_hash, seed);
+            parent_hash = block.header.hash_slow();
+            encoder.add_block(block).unwrap();
+            assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+            if encoder.has_ready_submission() {
+                break;
             }
-            assert!(has_open_channel(&encoder), "full blob emission must not close the channel");
-            assert!(
-                encoder.has_ready_submission(),
-                "{compression_algo:?} emitted {} compressed bytes with {} bytes available",
-                encoder.channels[0].compressed_bytes(),
-                encoder.channels[0].available_output()
+        }
+        assert!(has_open_channel(&encoder), "full blob emission must not close the channel");
+        assert!(
+            encoder.has_ready_submission(),
+            "Brotli emitted {} compressed bytes with {} bytes available",
+            encoder.channels[0].compressed_bytes(),
+            encoder.channels[0].available_output()
+        );
+
+        let submission = encoder.next_submission().expect("open channel produced a full blob");
+        let SubmissionPayload::Blobs(blobs) = submission.payload() else {
+            panic!("expected blob submission");
+        };
+        assert!(!blobs.is_empty());
+        for blob in blobs {
+            assert!(blob.frames().iter().all(|frame| !frame.is_last));
+            assert_eq!(
+                blob.frames()
+                    .iter()
+                    .map(|frame| Frame::ENCODED_OVERHEAD + frame.data.len())
+                    .sum::<usize>()
+                    + EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE,
+                EncoderConfig::BLOB_MAX_DATA_SIZE
             );
-
-            let submission = encoder.next_submission().expect("open channel produced a full blob");
-            let SubmissionPayload::Blobs(blobs) = submission.payload() else {
-                panic!("expected blob submission");
-            };
-            assert!(!blobs.is_empty());
-            for blob in blobs {
-                assert!(blob.frames().iter().all(|frame| !frame.is_last));
-                assert_eq!(
-                    blob.frames()
-                        .iter()
-                        .map(|frame| Frame::ENCODED_OVERHEAD + frame.data.len())
-                        .sum::<usize>()
-                        + EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE,
-                    EncoderConfig::BLOB_MAX_DATA_SIZE
-                );
-            }
         }
     }
 

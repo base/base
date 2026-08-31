@@ -9,7 +9,7 @@ use crate::{BatchComposeError, BatchSubmission, ChannelError, ChannelLimit, Subm
 /// Result of a [`BatchPipeline::step`] call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepResult {
-    /// One block was encoded into the current channel.
+    /// One block was encoded into the writable channel tail.
     BlockEncoded,
     /// The writable channel reached a close trigger.
     ChannelClosed,
@@ -20,7 +20,7 @@ pub enum StepResult {
 /// Encoding failed. Fatal: do not continue.
 #[derive(Debug, thiserror::Error)]
 pub enum StepError {
-    /// The block could not be converted to a [`SingleBatch`].
+    /// The block could not be converted to a [`base_protocol::SingleBatch`].
     #[error("batch composition failed for block at cursor {cursor}: {source}")]
     CompositionFailed {
         /// Index of the block in the encoder's input queue.
@@ -83,6 +83,8 @@ pub trait BatchPipeline: Send {
     fn has_ready_submission(&self) -> bool;
 
     /// Record L1 inclusion. Does not prune; [`reconcile_derivation`](Self::reconcile_derivation) does.
+    ///
+    /// Confirmed channels remain buffered so reconciliation can detect stalled derivation.
     fn confirm(&mut self, id: SubmissionId, l1_block: u64);
 
     /// Return the submission's artifacts to ready.
@@ -91,7 +93,9 @@ pub trait BatchPipeline: Send {
     /// Close duration-expired channels and replay confirmation timeouts.
     fn advance_l1_head(&mut self, l1_block: u64);
 
-    /// Close the writable channel and release retained partial artifacts.
+    /// Close the writable channel and make retained partial output eligible for submission.
+    ///
+    /// Does not advance the tracked L1 head.
     fn flush(&mut self) -> Result<(), StepError>;
 
     /// Drop buffered encoding state. Discard in-flight tracking first.

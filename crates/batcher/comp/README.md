@@ -7,10 +7,11 @@ Channel compression for Base.
 `CompressionStream::append` incrementally compresses input and returns the new
 stable output without flushing or recompressing earlier input. `finish` returns
 the remaining suffix. Concatenating those bytes produces one protocol-compatible
-channel. Brotli output includes its channel-version byte; zlib is self-identifying.
+channel, including Brotli's channel-version byte.
 
-`CompressionAlgo::compress_channel` remains the one-shot API used by `no_std`
-consumers and fixtures. `BrotliCompressor` exposes raw stateless Brotli output.
+`BrotliLevel::compress_channel` is the one-shot API used by fixtures.
+`BrotliCompressor` exposes raw stateless Brotli output.
+Without the `std` feature, compression returns `BrotliUnavailable`.
 
 Batch encoding, sizing, and framing belong to `base-batcher-encoder`; this crate
 only transforms uncompressed channel bytes into their protocol compression

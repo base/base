@@ -110,7 +110,7 @@ impl BatchSubmission {
         }
     }
 
-    /// Returns the first frame in this submission.
+    /// Returns the first frame in this submission, if it contains one.
     #[cfg(test)]
     pub fn first_frame(&self) -> Option<&Arc<Frame>> {
         match &self.payload {

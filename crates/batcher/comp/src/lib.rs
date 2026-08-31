@@ -11,7 +11,7 @@
 extern crate alloc;
 
 mod types;
-pub use types::{CompressionAlgo, CompressionError};
+pub use types::{BrotliLevel, CompressionError};
 
 #[cfg(feature = "std")]
 mod brotli;
@@ -21,4 +21,4 @@ pub use brotli::BrotliCompressor;
 #[cfg(feature = "std")]
 mod stream;
 #[cfg(feature = "std")]
-pub use stream::{CompressionBackend, CompressionStream};
+pub use stream::CompressionStream;

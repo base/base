@@ -5,14 +5,16 @@ The Base Batcher binary.
 Submits L2 batch data to the L1 DA layer. Wraps `base-batcher-service` with
 CLI argument parsing and signal handling.
 
-## Configuration migration
+## Configuration
 
-Streaming channels no longer use `--target-frame-size` or
-`BATCHER_TARGET_FRAME_SIZE`; blob frames use the protocol capacity directly.
-Replace `--target-num-frames` with `--max-blobs-per-tx`, and replace
-`--max-l1-tx-size-bytes` with `--max-calldata-size-bytes` for calldata DA.
-`--brotli-quality` selects Brotli quality `0..=11` (default 10).
-The corresponding environment variables use the new option names.
+`--compressed-size-target` optionally closes a channel after an accepted batch
+reaches the target. `--max-blobs-per-tx` caps blob packing per L1 transaction,
+while `--max-calldata-size-bytes` caps calldata transactions. `--brotli-quality`
+selects Brotli quality `0..=11` (default 10). `--data-availability-type`
+selects blobs or calldata; `--max-channel-duration` and `--sub-safety-margin`
+control channel lifetime. For calldata configurations,
+`--no-force-blobs-when-throttling` disables the throttle-driven blob override.
+The corresponding environment variables use the `BATCHER_` prefix.
 
 ## Shadow mode
 

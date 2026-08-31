@@ -741,7 +741,7 @@ mod tests {
             (0..frame_count)
                 .map(|number| {
                     BlobPayload::new(vec![Arc::new(Frame {
-                        number: number.try_into().unwrap(),
+                        number: number.try_into().expect("frame number fits in u16"),
                         data: vec![0u8; data_len],
                         ..Frame::default()
                     })])

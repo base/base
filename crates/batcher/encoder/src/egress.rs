@@ -328,19 +328,15 @@ mod tests {
     use base_protocol::SingleBatch;
 
     use super::*;
-    use crate::{ChannelAddOutcome, CompressionAlgo, EncoderConfig};
+    use crate::{ChannelAddOutcome, EncoderConfig};
 
     fn channel(id: ChannelId, opened_l1_block: u64, duration: u64) -> Channel {
-        let config = EncoderConfig {
-            compression_algo: CompressionAlgo::Zlib,
-            max_channel_duration: duration,
-            ..EncoderConfig::default()
-        };
+        let config = EncoderConfig { max_channel_duration: duration, ..EncoderConfig::default() };
         Channel::new(id, Arc::new(RollupConfig::default()), &config, 0, opened_l1_block).unwrap()
     }
 
-    fn incompressible_batch(transaction_len: usize) -> SingleBatch {
-        let mut state = 1u64;
+    fn incompressible_batch(transaction_len: usize, seed: u64) -> SingleBatch {
+        let mut state = seed;
         let transaction = (0..transaction_len)
             .map(|_| {
                 state ^= state << 13;
@@ -359,9 +355,10 @@ mod tests {
     }
 
     fn append_accepted(channel: &mut Channel, transaction_len: usize) {
+        let seed = channel.blocks_added() as u64 + 1;
         assert_eq!(
             channel
-                .add_batch(&incompressible_batch(transaction_len), transaction_len as u64)
+                .add_batch(&incompressible_batch(transaction_len, seed), transaction_len as u64)
                 .unwrap(),
             ChannelAddOutcome::Accepted
         );

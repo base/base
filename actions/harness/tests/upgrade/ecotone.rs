@@ -1,10 +1,9 @@
 //! Action tests for the Ecotone upgrade activation boundary.
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder,
+    ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{CompressionAlgo, DaType, EncoderConfig};
+use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_genesis::UpgradeConfig;
 use base_protocol::L1BlockInfoTx;
 
@@ -105,11 +104,7 @@ async fn ecotone_l1_info_format_transitions_at_activation() {
 #[tokio::test]
 async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig {
-            da_type: DaType::Calldata,
-            compression_algo: CompressionAlgo::Zlib,
-            ..EncoderConfig::default()
-        },
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
 
@@ -128,12 +123,11 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
-
     // Blocks 1 and 2: pre-Ecotone, user txs OK.
-    for _ in 1..=2u64 {
-        batcher.push_block(builder.build_next_block_with_single_transaction().await);
-        batcher.advance(&mut h.l1).await;
+    for nonce in 0..2 {
+        let block = builder.build_next_block_with_single_transaction().await;
+        h.submit_single_batch_zlib_calldata(&batcher_cfg, &block, nonce)
+            .expect("valid pre-Ecotone zlib batch");
     }
 
     // Block 3 at ts=6 (first Ecotone): build WITH a user tx. Unlike Jovian,
@@ -144,12 +138,13 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
         block3_with_user_tx.header.timestamp, ecotone_time,
         "block 3 must land exactly at ecotone_time"
     );
-    batcher.push_block(block3_with_user_tx);
-    batcher.advance(&mut h.l1).await;
+    h.submit_single_batch_zlib_calldata(&batcher_cfg, &block3_with_user_tx, 2)
+        .expect("valid Ecotone activation zlib batch");
 
     // Block 4: post-Ecotone, user txs OK.
-    batcher.push_block(builder.build_next_block_with_single_transaction().await);
-    batcher.advance(&mut h.l1).await;
+    let block4 = builder.build_next_block_with_single_transaction().await;
+    h.submit_single_batch_zlib_calldata(&batcher_cfg, &block4, 3)
+        .expect("valid post-Ecotone zlib batch");
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,
@@ -191,11 +186,7 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
 #[tokio::test]
 async fn ecotone_derivation_crosses_activation_boundary() {
     let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig {
-            da_type: DaType::Calldata,
-            compression_algo: CompressionAlgo::Zlib,
-            ..EncoderConfig::default()
-        },
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
 
@@ -215,7 +206,6 @@ async fn ecotone_derivation_crosses_activation_boundary() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Build and submit 4 L2 blocks individually (one batch per L1 block).
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for i in 1..=4u64 {
         let block = if i == 3 {
             // First Ecotone block: must be deposit-only (no user txs) because
@@ -224,8 +214,8 @@ async fn ecotone_derivation_crosses_activation_boundary() {
         } else {
             builder.build_next_block_with_single_transaction().await
         };
-        batcher.push_block(block);
-        batcher.advance(&mut h.l1).await;
+        h.submit_single_batch_zlib_calldata(&batcher_cfg, &block, i - 1)
+            .expect("valid zlib batch across Ecotone activation");
     }
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(

@@ -7,7 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-pub use base_comp::{CompressionAlgo, CompressionError};
+pub use base_comp::{BrotliLevel, CompressionError};
 
 mod submission;
 pub use submission::{

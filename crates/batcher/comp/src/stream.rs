@@ -4,149 +4,43 @@ use alloc::{boxed::Box, vec::Vec};
 use std::io::Write;
 
 use brotli::{CompressorWriter, enc::BrotliEncoderMaxCompressedSize};
-use miniz_oxide::{
-    DataFormat,
-    deflate::{
-        CompressionLevel,
-        core::{CompressorOxide, TDEFLFlush, TDEFLStatus, compress_to_output},
-    },
-};
 
-use crate::{CompressionAlgo, CompressionError};
+use crate::{BrotliLevel, CompressionError};
 
-/// Concrete state owned by one [`CompressionStream`].
+/// A single incremental compressor for one derivation channel.
 #[derive(derive_more::Debug)]
-pub enum CompressionBackend {
-    /// Streaming zlib encoder and bytes emitted since the last transfer.
-    Zlib {
-        /// Miniz encoder state.
-        #[debug(skip)]
-        compressor: Box<CompressorOxide>,
-        /// Bytes emitted since the last transfer.
-        #[debug(skip)]
-        output: Vec<u8>,
-    },
+pub struct CompressionStream {
     /// Streaming Brotli encoder writing into its transferable output buffer.
-    Brotli(#[debug(skip)] Box<CompressorWriter<Vec<u8>>>),
+    #[debug(skip)]
+    compressor: Box<CompressorWriter<Vec<u8>>>,
+    /// Total bytes returned by prior appends.
+    output_size: usize,
 }
 
-impl CompressionBackend {
+impl CompressionStream {
     /// Buffer size used by the Brotli writer.
     const BROTLI_BUFFER_SIZE: usize = 4096;
 
     /// Brotli sliding-window exponent (`2^22` bytes).
     const BROTLI_LGWIN: u32 = 22;
 
-    /// Appends input and returns newly emitted compressed bytes.
-    pub fn append(&mut self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
-        match self {
-            Self::Zlib { compressor, output } => {
-                // miniz reports consumed input; treat the append as committed only
-                // when every byte was accepted.
-                let (status, consumed) =
-                    compress_to_output(compressor, input, TDEFLFlush::None, |bytes| {
-                        output.extend_from_slice(bytes);
-                        true
-                    });
-                if status != TDEFLStatus::Okay || consumed != input.len() {
-                    return Err(CompressionError::Zlib);
-                }
-                Ok(core::mem::take(output))
-            }
-            Self::Brotli(compressor) => {
-                compressor.write_all(input)?;
-                Ok(core::mem::take(compressor.get_mut()))
-            }
-        }
-    }
-
-    /// Returns a conservative upper bound for a finished stream of `input_size`.
-    pub fn max_output_size(&self, input_size: usize) -> usize {
-        match self {
-            Self::Zlib { .. } => {
-                // miniz `mz_compressBound`.
-                input_size.saturating_add(input_size / 16).saturating_add(67)
-            }
-            Self::Brotli(_) => {
-                // Channel-version prefix byte.
-                BrotliEncoderMaxCompressedSize(input_size).saturating_add(1)
-            }
-        }
-    }
-
-    /// Finishes the stream and returns compressed bytes not previously transferred.
-    pub fn finish(self) -> Result<Vec<u8>, CompressionError> {
-        match self {
-            Self::Zlib { mut compressor, mut output } => {
-                let (status, consumed) =
-                    compress_to_output(&mut compressor, &[], TDEFLFlush::Finish, |bytes| {
-                        output.extend_from_slice(bytes);
-                        true
-                    });
-                if status != TDEFLStatus::Done || consumed != 0 {
-                    return Err(CompressionError::Zlib);
-                }
-                Ok(output)
-            }
-            // Consuming the writer emits Brotli's stream trailer.
-            Self::Brotli(compressor) => Ok((*compressor).into_inner()),
-        }
-    }
-}
-
-impl From<CompressionAlgo> for CompressionBackend {
-    fn from(algorithm: CompressionAlgo) -> Self {
-        let brotli = |quality| {
-            let mut output = Vec::with_capacity(Self::BROTLI_BUFFER_SIZE);
-            output.push(CompressionAlgo::BROTLI_CHANNEL_VERSION);
-            Self::Brotli(Box::new(CompressorWriter::new(
-                output,
-                Self::BROTLI_BUFFER_SIZE,
-                quality,
-                Self::BROTLI_LGWIN,
-            )))
-        };
-
-        match algorithm {
-            CompressionAlgo::Zlib => Self::Zlib {
-                compressor: Box::new(CompressorOxide::with_format_and_level(
-                    DataFormat::Zlib,
-                    CompressionLevel::BestCompression,
-                )),
-                output: Vec::new(),
-            },
-            CompressionAlgo::Brotli(quality) => {
-                debug_assert!(quality <= CompressionAlgo::BROTLI_MAX_QUALITY);
-                brotli(u32::from(quality))
-            }
-        }
-    }
-}
-
-/// A single incremental compressor for one derivation channel.
-#[derive(derive_more::Debug)]
-pub struct CompressionStream {
-    /// Selected streaming backend.
-    backend: CompressionBackend,
-    /// Total bytes returned by prior appends.
-    output_size: usize,
-}
-
-impl From<CompressionAlgo> for CompressionStream {
-    fn from(algorithm: CompressionAlgo) -> Self {
-        Self { backend: algorithm.into(), output_size: 0 }
-    }
-}
-
-impl CompressionStream {
-    /// Creates an empty compressor for `algorithm`.
-    pub fn new(algorithm: CompressionAlgo) -> Self {
-        algorithm.into()
+    /// Creates an empty compressor at `level`.
+    pub fn new(level: BrotliLevel) -> Self {
+        let mut output = Vec::with_capacity(Self::BROTLI_BUFFER_SIZE);
+        output.push(BrotliLevel::CHANNEL_VERSION);
+        let compressor = CompressorWriter::new(
+            output,
+            Self::BROTLI_BUFFER_SIZE,
+            level.as_u32(),
+            Self::BROTLI_LGWIN,
+        );
+        Self { compressor: Box::new(compressor), output_size: 0 }
     }
 
     /// Append input and return newly emitted compressed bytes.
     pub fn append(&mut self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
-        let output = self.backend.append(input)?;
+        self.compressor.write_all(input)?;
+        let output = core::mem::take(self.compressor.get_mut());
         self.output_size += output.len();
         Ok(output)
     }
@@ -158,12 +52,14 @@ impl CompressionStream {
 
     /// Returns a conservative upper bound for a finished stream of `input_size`.
     pub fn max_output_size(&self, input_size: usize) -> usize {
-        self.backend.max_output_size(input_size)
+        // Channel-version prefix byte.
+        BrotliEncoderMaxCompressedSize(input_size).saturating_add(1)
     }
 
     /// Finishes the stream and returns compressed bytes not previously transferred.
     pub fn finish(self) -> Result<Vec<u8>, CompressionError> {
-        self.backend.finish()
+        // Consuming the writer emits Brotli's stream trailer.
+        Ok((*self.compressor).into_inner())
     }
 }
 
@@ -171,30 +67,15 @@ impl CompressionStream {
 mod tests {
     use base_common_genesis::RollupConfig;
     use base_protocol::Brotli;
-    use miniz_oxide::inflate::decompress_to_vec_zlib;
 
     use super::*;
 
     const CHUNKS: [&[u8]; 3] = [b"first batch", b"second batch", b"third batch"];
 
     #[test]
-    fn zlib_roundtrip_across_appends() {
-        let expected = CHUNKS.concat();
-        let mut compressor = CompressionStream::new(CompressionAlgo::Zlib);
-        let mut compressed = Vec::new();
-
-        for chunk in CHUNKS {
-            compressed.extend(compressor.append(chunk).unwrap());
-        }
-        compressed.extend(compressor.finish().unwrap());
-
-        assert_eq!(decompress_to_vec_zlib(&compressed).unwrap(), expected);
-    }
-
-    #[test]
     fn brotli_roundtrip_across_appends() {
         let expected = CHUNKS.concat();
-        let mut compressor = CompressionStream::new(CompressionAlgo::Brotli(10));
+        let mut compressor = CompressionStream::new(BrotliLevel::Brotli10);
         let mut compressed = Vec::new();
 
         for chunk in CHUNKS {
@@ -202,7 +83,7 @@ mod tests {
         }
         compressed.extend(compressor.finish().unwrap());
 
-        assert_eq!(compressed.first(), Some(&CompressionAlgo::BROTLI_CHANNEL_VERSION));
+        assert_eq!(compressed.first(), Some(&BrotliLevel::CHANNEL_VERSION));
         let decompressed = Brotli
             .decompress(&compressed[1..], RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
             .unwrap();
@@ -212,21 +93,19 @@ mod tests {
     #[test]
     fn chunking_does_not_change_the_compressed_stream() {
         let input = CHUNKS.concat();
-
-        for algorithm in [CompressionAlgo::Zlib, CompressionAlgo::Brotli(10)] {
-            let mut chunked = CompressionStream::new(algorithm);
-            let mut chunked_output = Vec::new();
-            for chunk in CHUNKS {
-                chunked_output.extend(chunked.append(chunk).unwrap());
-            }
-            chunked_output.extend(chunked.finish().unwrap());
-
-            let mut single = CompressionStream::new(algorithm);
-            let mut single_output = single.append(&input).unwrap();
-            single_output.extend(single.finish().unwrap());
-
-            assert_eq!(chunked_output, single_output);
+        let level = BrotliLevel::Brotli10;
+        let mut chunked = CompressionStream::new(level);
+        let mut chunked_output = Vec::new();
+        for chunk in CHUNKS {
+            chunked_output.extend(chunked.append(chunk).unwrap());
         }
+        chunked_output.extend(chunked.finish().unwrap());
+
+        let mut single = CompressionStream::new(level);
+        let mut single_output = single.append(&input).unwrap();
+        single_output.extend(single.finish().unwrap());
+
+        assert_eq!(chunked_output, single_output);
     }
 
     #[test]
@@ -241,15 +120,13 @@ mod tests {
             })
             .collect();
 
-        for algorithm in [CompressionAlgo::Zlib, CompressionAlgo::Brotli(10)] {
-            let mut compressor = CompressionStream::new(algorithm);
-            let bound = compressor.max_output_size(input.len());
-            let mut output_size = 0usize;
-            for chunk in input.chunks(7919) {
-                output_size += compressor.append(chunk).unwrap().len();
-            }
-            output_size += compressor.finish().unwrap().len();
-            assert!(output_size <= bound);
+        let mut compressor = CompressionStream::new(BrotliLevel::Brotli10);
+        let bound = compressor.max_output_size(input.len());
+        let mut output_size = 0usize;
+        for chunk in input.chunks(7919) {
+            output_size += compressor.append(chunk).unwrap().len();
         }
+        output_size += compressor.finish().unwrap().len();
+        assert!(output_size <= bound);
     }
 }

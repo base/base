@@ -7,39 +7,65 @@ use base_protocol::{
     MAX_BLOB_FRAME_SIZE as PROTOCOL_MAX_BLOB_FRAME_SIZE,
 };
 
-use crate::{CompressionAlgo, DaType};
+use crate::{BrotliLevel, DaType};
 
 /// Configuration for the [`BatchEncoder`](crate::BatchEncoder).
 #[derive(Debug, Clone)]
 pub struct EncoderConfig {
-    /// Optional soft compressed-byte target. The reaching batch stays, then the
-    /// channel closes. `None` closes on duration, flush, or protocol limits.
+    /// Optional soft target for stable bytes emitted by the compression stream.
+    /// The reaching batch stays, then the channel closes. `None` closes on
+    /// duration, flush, or protocol limits.
+    ///
     /// Default: `None`.
     pub compressed_size_target: Option<usize>,
 
     /// Maximum serialized derivation frame size.
+    ///
+    /// Smaller values force channel output across more frames. Every frame must
+    /// still fit in a blob because calldata submissions may temporarily switch
+    /// to blob DA while throttling.
+    ///
+    /// Default: [`Self::MAX_BLOB_FRAME_SIZE`].
     pub max_frame_size: usize,
 
     /// Maximum L1 blocks a channel may stay open.
+    ///
+    /// Its effective duration before closing is
+    /// `max_channel_duration - sub_safety_margin`.
+    ///
     /// Default: 2.
     pub max_channel_duration: u64,
 
     /// Subtracted from `max_channel_duration` for the close deadline.
+    ///
+    /// This leaves time for in-flight frames to land before the derivation
+    /// channel timeout. It must be smaller than `max_channel_duration`.
+    ///
     /// Default: 0.
     pub sub_safety_margin: u64,
 
-    /// Max blobs per L1 transaction. Does not close channels.
+    /// Maximum blobs packed into one L1 transaction.
+    ///
+    /// This controls transaction packing and does not close channels. It cannot
+    /// exceed [`Self::MAX_BLOBS_PER_TX`].
+    ///
     /// Default: 6.
     pub max_blobs_per_tx: usize,
 
     /// How frames are encoded for L1 submission.
+    ///
+    /// Calldata submissions carry one frame per transaction. Blob submissions
+    /// may pack frames from multiple channels.
+    ///
     /// Default: [`DaType::Blob`].
     pub da_type: DaType,
 
-    /// Compression for newly opened channels. Brotli requires Fjord.
-    /// Default: [`CompressionAlgo::Brotli`] at
-    /// [`CompressionAlgo::BROTLI_DEFAULT_QUALITY`].
-    pub compression_algo: CompressionAlgo,
+    /// Brotli quality used for newly opened channels.
+    ///
+    /// Brotli channels require Fjord.
+    ///
+    /// Default: [`BrotliLevel::Brotli10`].
+    pub brotli_level: BrotliLevel,
 }
 
 impl Default for EncoderConfig {
@@ -51,7 +77,7 @@ impl Default for EncoderConfig {
             sub_safety_margin: 0,
             max_blobs_per_tx: 6,
             da_type: DaType::Blob,
-            compression_algo: CompressionAlgo::Brotli(CompressionAlgo::BROTLI_DEFAULT_QUALITY),
+            brotli_level: BrotliLevel::DEFAULT,
         }
     }
 }
@@ -125,12 +151,6 @@ impl EncoderConfig {
             });
         }
 
-        if let CompressionAlgo::Brotli(quality) = self.compression_algo
-            && quality > CompressionAlgo::BROTLI_MAX_QUALITY
-        {
-            return Err(EncoderConfigError::BrotliQualityOutOfRange { quality });
-        }
-
         Ok(())
     }
 
@@ -156,9 +176,7 @@ impl EncoderConfig {
     ) -> Result<(), EncoderConfigError> {
         self.validate()?;
 
-        if !matches!(self.compression_algo, CompressionAlgo::Zlib)
-            && !rollup_config.is_fjord_active(next_l2_timestamp)
-        {
+        if !rollup_config.is_fjord_active(next_l2_timestamp) {
             return Err(EncoderConfigError::BrotliRequiresFjord { next_l2_timestamp });
         }
 
@@ -239,12 +257,6 @@ pub enum EncoderConfigError {
         /// The maximum frame size that leaves room for the derivation-version prefix.
         max_blob_frame_size: usize,
     },
-    /// Brotli quality is outside the encoder's accepted range.
-    #[error("brotli quality {quality} is outside 0..=11")]
-    BrotliQualityOutOfRange {
-        /// The configured Brotli quality.
-        quality: u8,
-    },
     /// Brotli compression is configured before Fjord activates.
     #[error(
         "brotli compression requires Fjord to be active for the next L2 block; \
@@ -285,10 +297,7 @@ mod tests {
         assert_eq!(cfg.max_frame_size, EncoderConfig::MAX_BLOB_FRAME_SIZE);
         assert_eq!(cfg.compressed_size_target, None);
         assert_eq!(cfg.max_blobs_per_tx, 6);
-        assert_eq!(
-            cfg.compression_algo,
-            CompressionAlgo::Brotli(CompressionAlgo::BROTLI_DEFAULT_QUALITY)
-        );
+        assert_eq!(cfg.brotli_level, BrotliLevel::DEFAULT);
         assert_eq!(
             cfg.max_frame_size + EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE,
             EncoderConfig::BLOB_MAX_DATA_SIZE
@@ -322,13 +331,11 @@ mod tests {
         assert!(msg.contains(&max_channel_duration.to_string()));
     }
 
-    #[rstest]
-    #[case(CompressionAlgo::Zlib)]
-    #[case(CompressionAlgo::Brotli(10))]
-    fn validate_rejects_frame_without_payload_capacity(#[case] compression_algo: CompressionAlgo) {
+    #[test]
+    fn validate_rejects_frame_without_payload_capacity() {
         let max_frame_size = Frame::ENCODED_OVERHEAD;
         let min_frame_size = Frame::ENCODED_OVERHEAD + 1;
-        let cfg = EncoderConfig { compression_algo, max_frame_size, ..EncoderConfig::default() };
+        let cfg = EncoderConfig { max_frame_size, ..EncoderConfig::default() };
 
         let err = cfg.validate().unwrap_err();
 
@@ -341,12 +348,10 @@ mod tests {
         ));
     }
 
-    #[rstest]
-    #[case(CompressionAlgo::Zlib)]
-    #[case(CompressionAlgo::Brotli(10))]
-    fn validate_accepts_frame_with_payload_capacity(#[case] compression_algo: CompressionAlgo) {
+    #[test]
+    fn validate_accepts_frame_with_payload_capacity() {
         let max_frame_size = Frame::ENCODED_OVERHEAD + 1;
-        let cfg = EncoderConfig { compression_algo, max_frame_size, ..EncoderConfig::default() };
+        let cfg = EncoderConfig { max_frame_size, ..EncoderConfig::default() };
 
         assert!(cfg.validate().is_ok());
     }
@@ -431,39 +436,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_brotli_quality_above_max() {
-        let cfg = EncoderConfig {
-            compression_algo: CompressionAlgo::Brotli(12),
-            ..EncoderConfig::default()
-        };
-
-        assert!(matches!(
-            cfg.validate().unwrap_err(),
-            EncoderConfigError::BrotliQualityOutOfRange { quality: 12 }
-        ));
-    }
-
-    #[test]
-    fn validate_accepts_brotli_quality_bounds() {
-        for quality in [CompressionAlgo::BROTLI_MIN_QUALITY, CompressionAlgo::BROTLI_MAX_QUALITY] {
-            let cfg = EncoderConfig {
-                compression_algo: CompressionAlgo::Brotli(quality),
-                ..EncoderConfig::default()
-            };
-            assert!(cfg.validate().is_ok());
-        }
-    }
-
-    #[test]
-    fn validate_for_rollup_config_allows_single_before_fjord() {
-        let cfg =
-            EncoderConfig { compression_algo: CompressionAlgo::Zlib, ..EncoderConfig::default() };
-        let rollup_config = rollup_config_with(2, Some(100));
-
-        assert!(cfg.validate_for_rollup_config(&rollup_config, 98).is_ok());
-    }
-
-    #[test]
     fn validate_for_rollup_config_rejects_brotli_before_fjord() {
         let cfg = EncoderConfig::default();
         let rollup_config = rollup_config_with(2, Some(100));
@@ -480,7 +452,11 @@ mod tests {
         RollupConfig {
             channel_timeout: pre_granite,
             granite_channel_timeout: post_granite,
-            upgrades: UpgradeConfig { granite_time, ..UpgradeConfig::default() },
+            upgrades: UpgradeConfig {
+                fjord_time: Some(0),
+                granite_time,
+                ..UpgradeConfig::default()
+            },
             ..RollupConfig::default()
         }
     }
@@ -499,11 +475,7 @@ mod tests {
 
     #[test]
     fn validate_for_rollup_config_rejects_duration_at_channel_timeout() {
-        let cfg = EncoderConfig {
-            compression_algo: CompressionAlgo::Zlib,
-            max_channel_duration: 50,
-            ..EncoderConfig::default()
-        };
+        let cfg = EncoderConfig { max_channel_duration: 50, ..EncoderConfig::default() };
         let rollup_config = rollup_config_with_channel_timeouts(300, 50, Some(10));
 
         let err = cfg.validate_for_rollup_config(&rollup_config, 0).unwrap_err();
@@ -518,11 +490,7 @@ mod tests {
 
     #[test]
     fn validate_for_rollup_config_allows_duration_below_channel_timeout() {
-        let cfg = EncoderConfig {
-            compression_algo: CompressionAlgo::Zlib,
-            max_channel_duration: 49,
-            ..EncoderConfig::default()
-        };
+        let cfg = EncoderConfig { max_channel_duration: 49, ..EncoderConfig::default() };
         let rollup_config = rollup_config_with_channel_timeouts(300, 50, Some(10));
 
         assert!(cfg.validate_for_rollup_config(&rollup_config, 0).is_ok());
@@ -530,12 +498,9 @@ mod tests {
 
     #[test]
     fn validate_for_rollup_config_skips_when_channel_timeout_is_unset() {
-        let cfg = EncoderConfig {
-            compression_algo: CompressionAlgo::Zlib,
-            max_channel_duration: 1000,
-            ..EncoderConfig::default()
-        };
+        let cfg = EncoderConfig { max_channel_duration: 1000, ..EncoderConfig::default() };
+        let rollup_config = rollup_config_with_channel_timeouts(0, 0, None);
 
-        assert!(cfg.validate_for_rollup_config(&RollupConfig::default(), 0).is_ok());
+        assert!(cfg.validate_for_rollup_config(&rollup_config, 0).is_ok());
     }
 }

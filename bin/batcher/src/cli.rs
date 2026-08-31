@@ -123,11 +123,15 @@ pub(crate) struct BatcherArgs {
     )]
     pub max_channel_duration: u64,
 
-    /// Safety margin for channel timeout.
+    /// L1 blocks subtracted from `max-channel-duration` for the close deadline.
+    ///
+    /// Must be smaller than `max-channel-duration`.
     #[arg(long = "sub-safety-margin", default_value = "0", env = "BATCHER_SUB_SAFETY_MARGIN")]
     pub sub_safety_margin: u64,
 
-    /// Optional soft compressed-byte target.
+    /// Optional soft target for stable bytes emitted by the compression stream.
+    ///
+    /// The reaching batch stays in the channel, then the channel closes.
     #[arg(long = "compressed-size-target", env = "BATCHER_COMPRESSED_SIZE_TARGET")]
     pub compressed_size_target: Option<usize>,
 
@@ -138,7 +142,7 @@ pub(crate) struct BatcherArgs {
     /// Brotli quality (`0..=11`).
     #[arg(
         long = "brotli-quality",
-        default_value_t = base_batcher_encoder::CompressionAlgo::BROTLI_DEFAULT_QUALITY,
+        default_value_t = base_batcher_encoder::BrotliLevel::DEFAULT.as_u32() as u8,
         env = "BATCHER_BROTLI_QUALITY",
         value_parser = clap::value_parser!(u8).range(0..=11)
     )]
@@ -267,7 +271,10 @@ pub(crate) struct BatcherArgs {
     )]
     pub wait_node_sync_timeout_secs: u64,
 
-    /// Keep the configured DA type when throttling. Default forces blobs.
+    /// Keep the configured DA type when throttling.
+    ///
+    /// By default, throttling forces blob submissions even for calldata-configured
+    /// batchers. This flag is a no-op when blob DA is already configured.
     #[arg(long = "no-force-blobs-when-throttling", env = "BATCHER_NO_FORCE_BLOBS_WHEN_THROTTLING")]
     pub no_force_blobs_when_throttling: bool,
 
@@ -305,6 +312,8 @@ impl BatcherArgs {
                 }),
         };
 
+        let brotli_level = base_batcher_encoder::BrotliLevel::from_u8(self.brotli_quality)
+            .expect("clap restricts Brotli quality to 0..=11");
         let encoder_config = base_batcher_encoder::EncoderConfig {
             compressed_size_target: self.compressed_size_target,
             max_frame_size,
@@ -312,8 +321,7 @@ impl BatcherArgs {
             sub_safety_margin: self.sub_safety_margin,
             max_blobs_per_tx: self.max_blobs_per_tx,
             da_type: self.da_type,
-            // The batcher binary only targets post-Fjord chains, so it always uses Brotli.
-            compression_algo: base_batcher_encoder::CompressionAlgo::Brotli(self.brotli_quality),
+            brotli_level,
         };
 
         // Fail at startup, before constructing the service or accepting blocks.
@@ -488,10 +496,7 @@ mod tests {
         );
         assert_eq!(config.encoder_config.compressed_size_target, None);
         assert_eq!(config.encoder_config.max_blobs_per_tx, 6);
-        assert_eq!(
-            config.encoder_config.compression_algo,
-            base_batcher_encoder::CompressionAlgo::Brotli(10)
-        );
+        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli10);
     }
 
     #[test]
@@ -508,10 +513,7 @@ mod tests {
         let cli = parse_cli(&["--brotli-quality", "9"]);
         let config = cli.args.into_config().expect("config should build");
 
-        assert_eq!(
-            config.encoder_config.compression_algo,
-            base_batcher_encoder::CompressionAlgo::Brotli(9)
-        );
+        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli9);
     }
 
     #[test]
