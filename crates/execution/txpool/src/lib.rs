@@ -22,6 +22,12 @@ pub use manifest::{ConfigSlot, ManifestStale, WatchManifest};
 mod limits;
 pub use limits::{InflightCounters, PayerBook};
 
+mod lane_store;
+pub use lane_store::{
+    BestLaneTransactions, LaneCommitOutcome, LaneFeeUpdateOutcome, LaneGap, LaneInsertOutcome,
+    LaneStoreSize, LaneTransactionState, LaneTransactionStore, LaneUpdateOutcome,
+};
+
 mod validator;
 pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, LimitClassCache};
 
