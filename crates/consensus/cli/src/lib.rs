@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod app;
-pub use app::{ConsensusCli, ConsensusCommands, LogArgs, MetricsArgs};
+pub use app::{ConsensusCli, ConsensusCommands, LogArgs, MetricsArgs, TelemetryArgs};
 
 mod bootnode;
 pub use bootnode::{Bootnode, BootnodeEnr, BootnodeP2PArgs, resolve_host};
