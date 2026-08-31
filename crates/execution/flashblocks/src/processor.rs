@@ -179,7 +179,7 @@ where
     /// two differ during the window between a notification and the block becoming visible.
     /// Snapshots that merely stopped extending the tip are left for
     /// [`Self::process_canonical_block`] to reconcile, so its catch-up path keeps reporting.
-    fn take_tip_anchored_pending(&self) -> Option<Arc<PendingBlocks>> {
+    fn load_pending_or_drop_stale(&self) -> Option<Arc<PendingBlocks>> {
         let pending_blocks = self.pending_blocks.load_full()?;
 
         let Some(best) = self.canonical_tip() else { return Some(pending_blocks) };
@@ -256,7 +256,7 @@ where
     /// Processes updates from the queue until the channel closes.
     pub async fn start(&self) {
         while let Some(update) = self.rx.lock().await.recv().await {
-            let prev_pending_blocks = self.take_tip_anchored_pending();
+            let prev_pending_blocks = self.load_pending_or_drop_stale();
             match update {
                 StateUpdate::Canonical(block) => {
                     debug!(message = "processing canonical block", block_number = block.number);
@@ -276,7 +276,7 @@ where
                                     cached_count = cached.len(),
                                 );
                                 for flashblock in cached {
-                                    let fb_prev = self.take_tip_anchored_pending();
+                                    let fb_prev = self.load_pending_or_drop_stale();
                                     self.apply_flashblock(fb_prev, flashblock).await;
                                 }
                             }
