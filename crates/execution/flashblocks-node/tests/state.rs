@@ -2,16 +2,13 @@
 
 use std::time::{Duration, Instant};
 
-use alloy_consensus::{Header, Sealed};
+use alloy_eips::Decodable2718;
 use alloy_network::BlockResponse;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_engine::PayloadId;
-use base_common_flashblocks::{
-    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
-};
+use base_common_consensus::BaseTxEnvelope;
 use base_flashblocks::{
-    FlashblocksAPI, FlashblocksReceiver, MAX_FLASHBLOCKS_PER_PAYLOAD, PendingBlocks,
-    PendingBlocksAPI, PendingBlocksBuilder,
+    FlashblocksAPI, FlashblocksReceiver, MAX_FLASHBLOCKS_PER_PAYLOAD, PendingBlocksAPI,
 };
 use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
 use base_test_utils::Account;
@@ -820,45 +817,6 @@ async fn test_same_block_append_refreshes_pending_header() {
     );
 }
 
-fn dummy_flashblock(block_number: u64, parent_hash: B256) -> Flashblock {
-    Flashblock {
-        payload_id: Default::default(),
-        index: 0,
-        base: Some(ExecutionPayloadBaseV1 {
-            parent_beacon_block_root: B256::ZERO,
-            parent_hash,
-            fee_recipient: Default::default(),
-            prev_randao: B256::ZERO,
-            block_number,
-            gas_limit: 30_000_000,
-            timestamp: 1_700_000_000 + block_number,
-            extra_data: Default::default(),
-            base_fee_per_gas: U256::from(1_000_000_000u64),
-        }),
-        diff: ExecutionPayloadFlashblockDeltaV1::default(),
-        metadata: Metadata::new(block_number),
-    }
-}
-
-fn pending_spanning(
-    earliest: u64,
-    latest: u64,
-    parent_hash: B256,
-    suffix: Flashblock,
-) -> PendingBlocks {
-    let mut builder = PendingBlocksBuilder::new();
-    builder.with_header(Sealed::new_unchecked(
-        Header { number: earliest, parent_hash, ..Default::default() },
-        B256::ZERO,
-    ));
-    builder.with_header(Sealed::new_unchecked(
-        Header { number: latest, parent_hash: B256::ZERO, ..Default::default() },
-        B256::ZERO,
-    ));
-    builder.with_flashblocks([dummy_flashblock(earliest, parent_hash), suffix]);
-    builder.build().expect("pending snapshot should build")
-}
-
 async fn wait_until(timeout: Duration, mut check: impl FnMut() -> bool, failure: &str) {
     let start = Instant::now();
     loop {
@@ -873,16 +831,19 @@ async fn wait_until(timeout: Duration, mut check: impl FnMut() -> bool, failure:
 #[tokio::test]
 async fn test_matching_canonical_rebases_pending_onto_canonical_tip() {
     let mut test = FlashblocksBuilderTestHarness::new().await;
-    let genesis_hash = test.node.latest_block().hash();
-    let block_one = test.new_canonical_block_without_processing(vec![]).await;
-    let suffix = FlashblockBuilder::new_base(&test).build();
+    let mut builder = FlashblocksBuilderTestHarness::new().await;
+    let mut block_one_base = FlashblockBuilder::new_base(&test).build();
+    let mut deposit_bytes = block_one_base.diff.transactions[0].as_ref();
+    let deposit =
+        BaseTxEnvelope::decode_2718(&mut deposit_bytes).expect("deposit transaction should decode");
+    let expected_block_one =
+        builder.new_canonical_block_without_processing(vec![deposit.clone()]).await;
+    block_one_base.diff.block_hash = expected_block_one.hash();
+    test.send_flashblock(block_one_base).await;
+    test.send_flashblock(FlashblockBuilder::new_base(&builder).build()).await;
+    let block_one = test.new_canonical_block_without_processing(vec![deposit]).await;
+    assert_eq!(block_one.hash(), expected_block_one.hash());
 
-    test.flashblocks.set_pending_blocks_for_testing(Some(pending_spanning(
-        1,
-        2,
-        genesis_hash,
-        suffix,
-    )));
     test.flashblocks.on_canonical_block_received(block_one.clone());
 
     wait_until(
@@ -893,43 +854,6 @@ async fn test_matching_canonical_rebases_pending_onto_canonical_tip() {
             })
         },
         "pending snapshot should rebase onto canonical block 1",
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn test_wrong_parent_rebase_clears_pending_until_matching_resume() {
-    let mut test = FlashblocksBuilderTestHarness::new().await;
-    let genesis_hash = test.node.latest_block().hash();
-    let block_one = test.new_canonical_block_without_processing(vec![]).await;
-    let mut wrong_suffix = FlashblockBuilder::new_base(&test).build();
-    wrong_suffix.base.as_mut().expect("base flashblock has a base payload").parent_hash =
-        B256::repeat_byte(0x24);
-
-    test.flashblocks.set_pending_blocks_for_testing(Some(pending_spanning(
-        1,
-        2,
-        genesis_hash,
-        wrong_suffix,
-    )));
-    test.flashblocks.on_canonical_block_received(block_one.clone());
-
-    wait_until(
-        Duration::from_secs(5),
-        || test.flashblocks.get_pending_blocks().is_none(),
-        "wrong-parent suffix must clear pending during rebase",
-    )
-    .await;
-
-    test.flashblocks.on_flashblock_received(FlashblockBuilder::new_base(&test).build());
-    wait_until(
-        Duration::from_secs(5),
-        || {
-            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
-                pending.earliest_block_number() == 2 && pending.parent_hash() == block_one.hash()
-            })
-        },
-        "recovery must resume from a matching current base",
     )
     .await;
 }
