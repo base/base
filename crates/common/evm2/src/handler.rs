@@ -1,6 +1,5 @@
 //! Base transaction handler hooks.
 
-use alloy_consensus::Transaction;
 use alloy_primitives::{Address, U256};
 use base_common_consensus::Predeploys;
 use base_common_genesis::BaseUpgrade;
@@ -53,14 +52,6 @@ impl BaseTxHandlerHooks {
         host.block_env().ext.operator_fee_charge(enveloped, U256::from(gas), upgrade)
     }
 
-    /// Returns the transaction's gas limit.
-    fn gas_limit(envelope: &BaseTxEnvelope) -> u64 {
-        match envelope {
-            BaseTxEnvelope::Standard { tx, .. } => tx.gas_limit(),
-            BaseTxEnvelope::Deposit(tx) => tx.gas_limit,
-        }
-    }
-
     /// Credits `amount` to `recipient`'s balance.
     fn credit(
         host: &mut Evm<'_, BaseEvmTypes>,
@@ -86,7 +77,7 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         // from the caller. Both fees are stashed for settlement so it charges/refunds against the
         // exact amounts collected here, without recomputing them.
         let l1_fee = Self::l1_fee(host, envelope);
-        let operator_fee = Self::operator_fee(host, envelope, Self::gas_limit(envelope));
+        let operator_fee = Self::operator_fee(host, envelope, envelope.gas_limit());
         let ext = host.ext_mut();
         ext.l1_fee = l1_fee;
         ext.operator_fee = operator_fee;

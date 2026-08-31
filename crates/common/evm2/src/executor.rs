@@ -25,6 +25,32 @@ impl core::fmt::Display for CumulativeGasOverflow {
 
 impl core::error::Error for CumulativeGasOverflow {}
 
+/// Error returned when a transaction's reserved gas exceeds the block's remaining gas.
+///
+/// Mirrors the reference `BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas`: a
+/// transaction whose gas limit is larger than the block's unused gas cannot be included. The
+/// reserved gas is the transaction's gas limit (EIP-8130's additional payer-auth reservation does
+/// not apply here, as that transaction type is not yet supported).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockGasLimitExceeded {
+    /// The transaction's reserved gas (its gas limit).
+    pub transaction_gas_limit: u64,
+    /// The block's remaining available gas (block gas limit minus cumulative gas used).
+    pub block_available_gas: u64,
+}
+
+impl core::fmt::Display for BlockGasLimitExceeded {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "transaction gas limit {} is more than the block's available gas {}",
+            self.transaction_gas_limit, self.block_available_gas
+        )
+    }
+}
+
+impl core::error::Error for BlockGasLimitExceeded {}
+
 /// Block-boundary context for pre-execution system calls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BaseBlockExecutionCtx {
@@ -112,6 +138,21 @@ impl<'a> BaseBlockExecutor<'a> {
         let ty = tx.ty();
         let is_deposit = tx.is_deposit();
         let signer = tx.signer();
+
+        // Reject a transaction whose gas limit exceeds the block's remaining gas, before executing
+        // it. Pre-Regolith deposits are exempt (matching the reference's `is_regolith || !is_deposit`
+        // guard); every other transaction — including post-Regolith deposits — is checked.
+        let gas_limit = tx.gas_limit();
+        let block_gas_limit = self.evm.block().gas_limit.saturating_to::<u64>();
+        let block_available_gas = block_gas_limit.saturating_sub(self.gas_used);
+        let is_regolith =
+            (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Regolith as u8);
+        if gas_limit > block_available_gas && (is_regolith || !is_deposit) {
+            return Err(HandlerError::external(BlockGasLimitExceeded {
+                transaction_gas_limit: gas_limit,
+                block_available_gas,
+            }));
+        }
 
         // The deposit receipt records the depositor's nonce *before* the deposit executes (and
         // bumps it), read untracked so it does not perturb execution. Matches the reference.
