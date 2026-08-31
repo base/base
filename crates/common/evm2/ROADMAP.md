@@ -75,8 +75,8 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 | Item | Status | Notes |
 | --- | --- | --- |
 | `BaseEvmTypes::precompiles()` + Fjord P256VERIFY | ✅ | RIP-7212 at Fjord (ahead of upstream Osaka) |
-| Base bn254 pairing caps (Granite/Jovian) + BLS variants (Isthmus/Jovian) | ⬜ | Base-specific precompile impls not in evm2 |
-| Dynamic installs (B20, registries, TxContext, NonceManager) | ⬜ | Beryl/Cobalt |
+| Base bn254 pairing caps (Granite/Jovian) + BLS caps (Isthmus/Jovian) | ✅ | input-capped variants delegating to evm2's precompiles |
+| Dynamic installs (B20, registries, TxContext, NonceManager) | ⬜ | Beryl/Cobalt custom contracts (revm-typed reference) |
 | Precompile metrics observer + storage-feature gating | ⬜ | |
 
 ### Phase 6 — EIP-8130 enshrined account abstraction (type `0x79`)
@@ -126,9 +126,11 @@ Landed and tested in this spike (revm-free non-test build preserved throughout):
 
 Remaining, in rough size order, with the reason each is out of scope for this spike:
 
-- **Phase 5** — Base bn254/BLS precompile variants and Beryl/Cobalt dynamic precompiles. evm2's
-  `PrecompileFn` is evm2-specific and `base-common-precompiles` is revm-typed, so these need an
-  evm2-native reimplementation (with their own differential validation), not a plug-in.
+- **Phase 5** — Beryl/Cobalt **dynamic** precompiles (B20 factory, registries, `TxContext`,
+  `NonceManager`) only. The static bn254/BLS input caps and Fjord P256 are done (evm2-native
+  variants delegating to evm2's precompiles). The dynamic ones are custom stateful contracts whose
+  reference lives in the revm-typed `base-common-precompiles`, so they need an evm2-native
+  reimplementation with their own differential validation.
 - **Phase 6 — EIP-8130 (XL).** ~3,400 lines in the revm reference, deeply coupled to revm's `Evm`;
   its own multi-PR track.
 - **Phase 7 — node wiring.** Blocked on the upstream `alloy-evm`/`reth` EVM2 bridge, which does not
