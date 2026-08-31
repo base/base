@@ -246,8 +246,7 @@ where
 
         let next_timestamp =
             self.cfg.l2_block_timestamp(parent.block_info.number.saturating_add(1));
-        let denim_active = self.cfg.is_denim_active(next_timestamp);
-        let needs_ancestry_check = denim_active
+        let needs_ancestry_check = self.cfg.is_denim_active(next_timestamp)
             && next_batch.timestamp == next_timestamp
             && next_batch.parent_hash != parent.block_info.hash;
         if needs_ancestry_check {
