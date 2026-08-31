@@ -280,6 +280,12 @@ where
         deferred_canonical: &mut Option<(RecoveredBlock<BaseBlock>, u64)>,
         recovering: &mut bool,
     ) -> Option<(SealedHeader, bool, u64)> {
+        let generation =
+            *self.recovery_epoch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if enqueued_generation != generation {
+            Metrics::pending_stale_events_skipped().increment(1);
+            return None;
+        }
         let mut provider_retries = 0;
         let best = loop {
             if let Some(best) = self.best_canonical_header() {
@@ -295,16 +301,10 @@ where
             provider_retries += 1;
             sleep(Duration::from_millis(25)).await;
         };
-        let generation =
-            *self.recovery_epoch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if *observed_generation != generation {
             *observed_generation = generation;
             self.enter_recovery(best.number());
             *recovering = true;
-        }
-        if enqueued_generation != generation {
-            Metrics::pending_stale_events_skipped().increment(1);
-            return None;
         }
         if let StateUpdate::Flashblock(flashblock) = update
             && let Some((block, _)) = deferred_canonical.as_ref()
