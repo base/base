@@ -43,15 +43,25 @@ tonic-prost-build.workspace = true
 alloy-eips.workspace = true
 alloy-network.workspace = true
 alloy-signer.workspace = true
+alloy-provider.workspace = true
 alloy-consensus.workspace = true
+alloy-signer-local.workspace = true
+alloy-genesis = { workspace = true, features = ["std"] }
 
 # workspace
 base-test-utils.workspace = true
+base-common-network.workspace = true
+base-execution-chainspec.workspace = true
 base-common-rpc-types.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # async
+futures.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[[bench]]
+name = "transaction_ingress"
+harness = false
 
 [lints]
 workspace = true
