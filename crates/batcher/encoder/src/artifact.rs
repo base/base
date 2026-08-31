@@ -303,3 +303,151 @@ impl<'a> IntoIterator for &'a DaArtifacts {
         self.artifacts.iter()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DaType;
+
+    const FIRST: ChannelId = [1; 16];
+    const SECOND: ChannelId = [2; 16];
+
+    fn frame(channel_id: ChannelId) -> Arc<Frame> {
+        Arc::new(Frame { id: channel_id, number: 0, data: Vec::new(), is_last: true })
+    }
+
+    fn blob(channel_id: ChannelId, frames: usize) -> DaArtifactPayload {
+        DaArtifactPayload::Blob(BlobPayload::new((0..frames).map(|_| frame(channel_id)).collect()))
+    }
+
+    fn calldata(channel_id: ChannelId) -> DaArtifactPayload {
+        DaArtifactPayload::Calldata(frame(channel_id))
+    }
+
+    #[test]
+    fn push_appends_ready_artifacts_in_creation_order() {
+        let mut artifacts = DaArtifacts::new();
+
+        let first = artifacts.push(blob(FIRST, 1), vec![FIRST]);
+        let second = artifacts.push(calldata(SECOND), vec![SECOND]);
+
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts.iter().map(DaArtifact::id).collect::<Vec<_>>(), [first, second]);
+        assert!(artifacts.iter().all(|artifact| artifact.state() == ArtifactState::Ready));
+    }
+
+    #[test]
+    fn clear_preserves_monotonic_identifiers() {
+        let mut artifacts = DaArtifacts::new();
+        let first = artifacts.push(calldata(FIRST), vec![FIRST]);
+
+        artifacts.clear();
+        let second = artifacts.push(calldata(FIRST), vec![FIRST]);
+
+        assert_eq!(artifacts.len(), 1);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn lease_packs_consecutive_ready_blobs_up_to_the_maximum() {
+        let mut artifacts = DaArtifacts::new();
+        for _ in 0..3 {
+            artifacts.push(blob(FIRST, 2), vec![FIRST]);
+        }
+
+        let (submission, leased) = artifacts.lease(SubmissionId(0), 2).expect("blob lease");
+
+        assert_eq!(leased.len(), 2);
+        assert_eq!(submission.blob_count(), 2);
+        assert_eq!(submission.frame_count(), 4);
+        assert!(artifacts.all_pending(&leased));
+        assert_eq!(artifacts.ready_blob_count(), 1);
+    }
+
+    #[test]
+    fn lease_stops_at_the_first_calldata_artifact() {
+        let mut artifacts = DaArtifacts::new();
+        artifacts.push(blob(FIRST, 1), vec![FIRST]);
+        artifacts.push(calldata(FIRST), vec![FIRST]);
+        artifacts.push(blob(FIRST, 1), vec![FIRST]);
+
+        let (blobs, _) = artifacts.lease(SubmissionId(0), 6).expect("blob lease");
+        let (frame, leased) = artifacts.lease(SubmissionId(1), 6).expect("calldata lease");
+
+        assert_eq!(blobs.blob_count(), 1);
+        assert_eq!(frame.da_type(), DaType::Calldata);
+        assert_eq!(leased.len(), 1);
+    }
+
+    #[test]
+    fn lease_requires_a_ready_artifact() {
+        let mut artifacts = DaArtifacts::new();
+        assert!(artifacts.lease(SubmissionId(0), 6).is_none());
+
+        artifacts.push(calldata(FIRST), vec![FIRST]);
+        artifacts.lease(SubmissionId(0), 6).expect("calldata lease");
+
+        assert!(artifacts.lease(SubmissionId(1), 6).is_none());
+    }
+
+    #[test]
+    fn confirm_reports_each_contributing_channel_once() {
+        let mut artifacts = DaArtifacts::new();
+        artifacts.push(blob(FIRST, 2), vec![FIRST, SECOND]);
+        artifacts.push(blob(SECOND, 1), vec![SECOND]);
+        let (_, leased) = artifacts.lease(SubmissionId(0), 6).expect("blob lease");
+
+        assert_eq!(artifacts.confirm(&leased), [FIRST, SECOND]);
+        assert!(!artifacts.all_pending(&leased));
+    }
+
+    #[test]
+    fn requeue_returns_leased_frames_to_ready() {
+        let mut artifacts = DaArtifacts::new();
+        artifacts.push(blob(FIRST, 3), vec![FIRST]);
+        let (_, leased) = artifacts.lease(SubmissionId(0), 6).expect("blob lease");
+        assert_eq!(artifacts.ready_frame_count(), 0);
+
+        assert_eq!(artifacts.requeue(&leased), 3);
+        assert_eq!(artifacts.ready_frame_count(), 3);
+    }
+
+    #[test]
+    fn a_channel_without_artifacts_is_never_fully_confirmed() {
+        let mut artifacts = DaArtifacts::new();
+        assert!(!artifacts.all_confirmed_for(FIRST));
+
+        artifacts.push(blob(FIRST, 1), vec![FIRST]);
+        assert!(!artifacts.all_confirmed_for(FIRST));
+
+        let (_, leased) = artifacts.lease(SubmissionId(0), 6).expect("blob lease");
+        artifacts.confirm(&leased);
+
+        assert!(artifacts.all_confirmed_for(FIRST));
+    }
+
+    #[test]
+    fn prune_channels_drops_artifacts_left_without_a_channel() {
+        let mut artifacts = DaArtifacts::new();
+        let shared = artifacts.push(blob(FIRST, 1), vec![FIRST, SECOND]);
+        let single = artifacts.push(blob(FIRST, 1), vec![FIRST]);
+
+        artifacts.prune_channels(&[FIRST]);
+
+        assert!(artifacts.contains(shared));
+        assert!(!artifacts.contains(single));
+        assert_eq!(artifacts.iter().next().expect("retained artifact").channel_ids(), [SECOND]);
+    }
+
+    #[test]
+    fn invalidate_removes_only_the_listed_artifacts() {
+        let mut artifacts = DaArtifacts::new();
+        let first = artifacts.push(calldata(FIRST), vec![FIRST]);
+        let second = artifacts.push(calldata(SECOND), vec![SECOND]);
+
+        artifacts.invalidate(&[first]);
+
+        assert!(!artifacts.contains(first));
+        assert!(artifacts.contains(second));
+    }
+}

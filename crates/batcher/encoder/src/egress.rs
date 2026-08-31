@@ -416,6 +416,40 @@ mod tests {
     }
 
     #[test]
+    fn calldata_plan_emits_a_full_frame_before_close() {
+        let mut channel = channel([1; 16], 0, 10);
+        let max_frame_data = channel.max_frame_data();
+        fill_open_channel(&mut channel, max_frame_data);
+        let channels = VecDeque::from([channel]);
+
+        assert_eq!(DaEgress::plan_calldata(&channels), Some(([1; 16], max_frame_data, false)));
+    }
+
+    #[test]
+    fn calldata_plan_buffers_partial_open_output() {
+        let mut channel = channel([1; 16], 0, 10);
+        append_accepted(&mut channel, 50_000);
+        let buffered = channel.available_output();
+        assert!(buffered > 0 && buffered < channel.max_frame_data());
+        let channels = VecDeque::from([channel]);
+
+        assert!(DaEgress::plan_calldata(&channels).is_none());
+        assert_eq!(channels[0].available_output(), buffered);
+    }
+
+    #[test]
+    fn calldata_plan_releases_the_closed_tail() {
+        let mut channel = channel([1; 16], 0, 10);
+        append_accepted(&mut channel, 50_000);
+        channel.close().unwrap();
+        let tail = channel.available_output();
+        assert!(tail > 0 && tail < channel.max_frame_data());
+        let channels = VecDeque::from([channel]);
+
+        assert_eq!(DaEgress::plan_calldata(&channels), Some(([1; 16], tail, true)));
+    }
+
+    #[test]
     fn plan_crosses_closed_channel_boundary_without_mutation() {
         let mut first = channel([1; 16], 0, 10);
         append_accepted(&mut first, 50_000);
@@ -439,5 +473,131 @@ mod tests {
         assert!(!second_is_last);
         assert_eq!(channels[0].available_output(), first_bytes);
         assert_eq!(channels[1].available_output(), second_bytes);
+    }
+
+    /// Returns an egress and one channel holding `blobs` worth of output.
+    fn egress_with_output(blobs: usize) -> (DaEgress, VecDeque<Channel>) {
+        let mut channel = channel([1; 16], 0, 10);
+        fill_open_channel(&mut channel, DaEgress::BLOB_CAPACITY * blobs);
+
+        (DaEgress::new(), VecDeque::from([channel]))
+    }
+
+    #[test]
+    fn submission_confirms_the_contributing_channel() {
+        let (mut egress, mut channels) = egress_with_output(1);
+
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 6, SubmissionId(0))
+            .expect("blob submission");
+
+        assert_eq!(egress.pending_submission_count(), 1);
+        assert!(!egress.channel_fully_confirmed(&channels[0]));
+
+        assert_eq!(egress.confirm(submission.id), Some(vec![[1; 16]]));
+        assert_eq!(egress.pending_submission_count(), 0);
+        assert!(egress.confirm(submission.id).is_none());
+
+        // The channel keeps producing frames, so confirmed artifacts are not enough.
+        assert!(!egress.channel_fully_confirmed(&channels[0]));
+    }
+
+    #[test]
+    fn a_requeued_submission_is_leased_again_before_new_output() {
+        let (mut egress, mut channels) = egress_with_output(2);
+        let first = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 1, SubmissionId(0))
+            .expect("blob submission");
+        let leased = egress.pending_artifacts(first.id).expect("in-flight submission").to_vec();
+
+        assert_eq!(egress.requeue(first.id), Some(first.frame_count()));
+        assert_eq!(egress.artifacts().ready_frame_count(), first.frame_count());
+        assert_eq!(egress.pending_submission_count(), 0);
+        assert!(egress.requeue(first.id).is_none());
+
+        // The channel still holds output, but a retry takes priority over new blobs.
+        let retry = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 2, SubmissionId(1))
+            .expect("retry submission");
+
+        assert_eq!(egress.pending_artifacts(retry.id), Some(leased.as_slice()));
+        assert_eq!(egress.artifacts().len(), 1);
+    }
+
+    #[test]
+    fn blob_submissions_are_capped_by_max_blobs_per_tx() {
+        let (mut egress, mut channels) = egress_with_output(3);
+
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 2, SubmissionId(0))
+            .expect("blob submission");
+
+        assert_eq!(submission.blob_count(), 2);
+        assert_eq!(egress.artifacts().len(), 2);
+    }
+
+    #[test]
+    fn co_submitted_artifacts_extend_the_replay_closure() {
+        let (mut egress, mut channels) = egress_with_output(2);
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 2, SubmissionId(0))
+            .expect("blob submission");
+        let leased =
+            egress.pending_artifacts(submission.id).expect("in-flight submission").to_vec();
+        assert_eq!(leased.len(), 2);
+
+        let mut affected = vec![leased[0]];
+        egress.extend_with_submission_artifacts(&mut affected);
+
+        assert_eq!(affected, leased);
+    }
+
+    #[test]
+    fn invalidating_a_leased_artifact_drops_its_submission() {
+        let (mut egress, mut channels) = egress_with_output(1);
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 6, SubmissionId(0))
+            .expect("blob submission");
+        let leased =
+            egress.pending_artifacts(submission.id).expect("in-flight submission").to_vec();
+
+        egress.invalidate_artifacts(&leased);
+
+        assert!(egress.artifacts().is_empty());
+        assert_eq!(egress.pending_submission_count(), 0);
+        assert!(egress.pending_artifacts(submission.id).is_none());
+    }
+
+    #[test]
+    fn pruning_a_safe_channel_drops_its_confirmed_artifacts() {
+        let (mut egress, mut channels) = egress_with_output(1);
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 6, SubmissionId(0))
+            .expect("blob submission");
+        egress.confirm(submission.id).expect("confirmed submission");
+
+        egress.prune_channels(&[[1; 16]]);
+
+        assert!(egress.artifacts().is_empty());
+    }
+
+    #[test]
+    fn reset_clears_artifacts_without_reusing_identifiers() {
+        let (mut egress, mut channels) = egress_with_output(2);
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 1, SubmissionId(0))
+            .expect("blob submission");
+        let leased =
+            egress.pending_artifacts(submission.id).expect("in-flight submission").to_vec();
+
+        egress.reset();
+        assert!(egress.artifacts().is_empty());
+        assert_eq!(egress.pending_submission_count(), 0);
+
+        let rebuilt = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 1, SubmissionId(1))
+            .expect("submission after reset");
+
+        assert_ne!(egress.pending_artifacts(rebuilt.id), Some(leased.as_slice()));
     }
 }
