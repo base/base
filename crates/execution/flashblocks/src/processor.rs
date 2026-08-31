@@ -172,11 +172,13 @@ where
     /// Returns the published snapshot, dropping it first if it is stranded too far behind the
     /// canonical tip to become usable again.
     ///
-    /// Calling this once per update is what bounds staleness. However far the queue has fallen
-    /// behind, a stranded overlay survives only until the next update arrives, and canonical
-    /// notifications keep arriving even when the flashblocks stream stalls. Snapshots that
-    /// merely stopped extending the tip are left for [`Self::process_canonical_block`] to
-    /// reconcile, so its catch-up path keeps reporting.
+    /// `FlashblocksState` drops stranded overlays as canonical notifications arrive, which is
+    /// what keeps staleness bounded by chain progress rather than by how long a single update
+    /// takes to apply. This check covers the advances that path did not report: notifications
+    /// carry the committed height, while the provider may already be further along, and the
+    /// two differ during the window between a notification and the block becoming visible.
+    /// Snapshots that merely stopped extending the tip are left for
+    /// [`Self::process_canonical_block`] to reconcile, so its catch-up path keeps reporting.
     fn take_tip_anchored_pending(&self) -> Option<Arc<PendingBlocks>> {
         let pending_blocks = self.pending_blocks.load_full()?;
 
@@ -301,6 +303,9 @@ where
     /// Executing a flashblock for an already-canonical block cannot produce a publishable
     /// snapshot, and doing it anyway is what let the queue lag sustain itself: the backlog
     /// of superseded payloads consumed the processor while fresh payloads waited behind them.
+    /// `FlashblocksState` rejects payloads that are already superseded when they arrive, so
+    /// what reaches here is a payload that was fresh when queued and went stale while waiting,
+    /// or one replayed from the cache after its canonical block landed.
     async fn apply_flashblock(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,

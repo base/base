@@ -48,17 +48,34 @@ not need to track which updates raced with which.
 
 ### Enforcement
 
-Three checks maintain the invariant. Each reads the tip from the provider rather than trusting the
-height of the queued update, because a lagging queue reports a stale height and makes every guard
-evaluate against a chain position the node left long ago.
+Guards run in two places, and that split is what bounds staleness.
+
+**On the receiving tasks.** `on_canonical_block_received` and `on_flashblock_received` run on the
+subscription tasks rather than on the processor, so they keep working while the processor is inside
+a single expensive update. They use the notified block height directly instead of reading the
+provider.
+
+- A canonical notification records the new height and immediately drops the published snapshot if
+  it is anchored more than `max_pending_blocks_depth` behind it. Because this runs at chain speed,
+  a snapshot cannot stay readable through a long apply. The drop is a compare-and-swap against the
+  snapshot that was judged, so a snapshot the processor published concurrently, which is
+  necessarily anchored on a later tip, is left alone.
+- A flashblock for a block at or below the last notified canonical height is dropped before it is
+  queued, so the queue never accumulates work that could not produce a publishable snapshot.
+
+The recorded height is the one most recently notified rather than the highest ever seen, so a reorg
+that lowers the tip does not suppress flashblocks built on the replacement chain.
+
+**In the processor.** These read the tip from the provider rather than trusting the height of the
+queued update, because a lagging queue reports a stale height and makes a guard evaluate against a
+chain position the node left long ago.
 
 - Before an update is dispatched, a snapshot anchored more than `max_pending_blocks_depth` blocks
-  behind the tip is dropped. This bounds staleness to a single update interval no matter how large
-  the queue has grown. Canonical notifications keep arriving even when the flashblock stream
-  stalls, and if both stall the node is not advancing, so the snapshot is not stale.
-- Flashblocks whose block the node has already canonicalized are skipped before execution. They
-  cannot produce a publishable snapshot, and executing them anyway lets a backlog starve the fresh
-  payloads queued behind it.
+  behind the tip is dropped. This covers advances the notification path did not report, such as the
+  gap between a canonical notification and the block becoming visible through the provider.
+- Flashblocks whose block the node has already canonicalized are skipped before execution. This
+  catches payloads that were fresh when queued and went stale while waiting, and cached payloads
+  replayed after a canonical block arrives.
 - Every build path publishes through `publish_pending_blocks`, which re-reads the tip and refuses
   to publish a snapshot that is anchored too far back or no longer extends past the tip. Because it
   is the single funnel, this holds for the reorg and depth-limit rebuilds as well as for ordinary
@@ -69,21 +86,20 @@ the current tip rebuilds a snapshot through the ordinary build path.
 
 ### Limits
 
-These checks run when an update is applied, so they bound how stale a snapshot can be by the
-duration of one unit of work rather than by the depth of the queue. A snapshot published while the
-tip was current stays readable while the processor is inside a long apply, and the tip may advance
-underneath it during that time. Consumers that cannot tolerate this must check freshness themselves
-at the point of use, comparing their own view of the tip against `canonical_block_number` and
-`parent_hash`; the processor cannot do it for them, because it is not running at the moment they
-read.
+Freshness is bounded by canonical notification delivery rather than by processor progress, but it
+is still not evaluated at the moment a consumer reads. A consumer that cannot tolerate a snapshot
+going stale between the last notification and its own read must compare its view of the tip against
+`canonical_block_number` and `parent_hash` itself.
 
-For the same reason, the height comparison does not detect that the anchor block itself was reorged
-out, since the replacement sits at the same height. That is caught when `ReorgDetector` sees the
-replaced block's transactions, or by a consumer comparing `parent_hash`.
+The height comparison does not detect that the anchor block was reorged out, because the
+replacement sits at the same height. That is caught when `ReorgDetector` sees the replaced block's
+transactions, or by a consumer comparing `parent_hash`. Detecting it here would mean checking the
+anchor's hash against canonical history, which is a statement about whether a payload's declared
+parent is real and belongs in payload validation.
 
-The update queue is unbounded. Skipping superseded flashblocks makes it drain far faster than the
-work it replaced, so lag tends to correct itself rather than compound, but sustained overload still
-grows memory. A hard bound on the queue is separate work.
+The update queue is unbounded. Dropping superseded flashblocks before they are queued removes the
+backlog shape that let lag compound, but a sustained burst of payloads that are all ahead of the
+tip still grows memory. A hard bound on the queue is separate work.
 
 ### Canonical reconciliation
 
