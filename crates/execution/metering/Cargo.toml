@@ -47,6 +47,10 @@ base-common-consensus.workspace = true
 # DA calculation
 base-common-flz.workspace = true
 
+# metrics
+base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
+
 # misc
 eyre.workspace = true
 tokio.workspace = true
@@ -88,3 +92,7 @@ base-common-rpc-types.workspace = true
 url.workspace = true
 rand.workspace = true
 serde_json.workspace = true
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

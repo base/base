@@ -26,7 +26,7 @@ use revm::primitives::hardfork::SpecId;
 use revm_bytecode::opcode::OpCode;
 use revm_database::states::{BundleState, CacheState};
 
-use crate::{inspector::MeteringInspector, transaction::validate_tx};
+use crate::{inspector::MeteringInspector, metrics::Metrics, transaction::validate_tx};
 
 /// Converts a pending [`BundleState`] into a [`CacheState`] for use with
 /// `with_cached_prestate()`.
@@ -602,6 +602,7 @@ pub fn meter_bundle<SP>(input: MeterBundleInput<SP>) -> EyreResult<MeterBundleOu
 where
     SP: reth_provider::StateProvider,
 {
+    let _timer = base_metrics::timed!(Metrics::meter_bundle_duration());
     let MeterBundleInput {
         state_provider,
         chain_spec,
