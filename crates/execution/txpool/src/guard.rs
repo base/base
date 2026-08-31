@@ -663,19 +663,31 @@ mod tests {
         // A locked sender is exempt from the signature dimension but NOT from the
         // config-change dimension: the first config change is admitted, a second
         // for the same account is rejected even though the sender is "unlimited".
-        let first =
-            Admission { sender_locked: true, account_change: Some(account), payer: addr(100), ..self_pay(1, account, 10) };
+        let first = Admission {
+            sender_locked: true,
+            account_change: Some(account),
+            payer: addr(100),
+            ..self_pay(1, account, 10)
+        };
         assert!(guard.try_admit(first).is_ok());
 
-        let second =
-            Admission { sender_locked: true, account_change: Some(account), payer: addr(101), ..self_pay(2, account, 10) };
+        let second = Admission {
+            sender_locked: true,
+            account_change: Some(account),
+            payer: addr(101),
+            ..self_pay(2, account, 10)
+        };
         assert_eq!(guard.try_admit(second), Err(LimitRejection::AccountChangeLimit));
         assert_eq!(guard.len(), 1);
 
         // A config change for a *different* account is unaffected.
         let other = addr(2);
-        let other_change =
-            Admission { sender_locked: true, account_change: Some(other), payer: addr(102), ..self_pay(3, other, 10) };
+        let other_change = Admission {
+            sender_locked: true,
+            account_change: Some(other),
+            payer: addr(102),
+            ..self_pay(3, other, 10)
+        };
         assert!(guard.try_admit(other_change).is_ok());
     }
 
@@ -684,16 +696,25 @@ mod tests {
         let mut guard = MempoolGuard::new(GuardLimits::default());
         let account = addr(1);
 
-        let first =
-            Admission { account_change: Some(account), payer: addr(100), ..self_pay(1, account, 10) };
+        let first = Admission {
+            account_change: Some(account),
+            payer: addr(100),
+            ..self_pay(1, account, 10)
+        };
         assert!(guard.try_admit(first).is_ok());
-        let blocked =
-            Admission { account_change: Some(account), payer: addr(101), ..self_pay(2, account, 10) };
+        let blocked = Admission {
+            account_change: Some(account),
+            payer: addr(101),
+            ..self_pay(2, account, 10)
+        };
         assert_eq!(guard.try_admit(blocked), Err(LimitRejection::AccountChangeLimit));
 
         assert!(guard.release(&hash(1)));
-        let after =
-            Admission { account_change: Some(account), payer: addr(102), ..self_pay(3, account, 10) };
+        let after = Admission {
+            account_change: Some(account),
+            payer: addr(102),
+            ..self_pay(3, account, 10)
+        };
         assert!(guard.try_admit(after).is_ok());
     }
 
@@ -737,18 +758,27 @@ mod tests {
         let mut guard = MempoolGuard::new(GuardLimits::default());
         let account = addr(1);
 
-        let first =
-            Admission { account_change: Some(account), payer: addr(100), ..self_pay(1, account, 10) };
+        let first = Admission {
+            account_change: Some(account),
+            payer: addr(100),
+            ..self_pay(1, account, 10)
+        };
         assert!(guard.try_admit(first).is_ok());
-        let new =
-            Admission { account_change: Some(account), payer: addr(101), ..self_pay(2, account, 10) };
+        let new = Admission {
+            account_change: Some(account),
+            payer: addr(101),
+            ..self_pay(2, account, 10)
+        };
         assert_eq!(guard.try_admit(new), Err(LimitRejection::AccountChangeLimit));
 
         // A replacement releases the old hash first, then force-inserts the
         // fee-bumped one; the swap stays at the cap and is never rejected.
         assert!(guard.release(&hash(1)));
-        let replacement =
-            Admission { account_change: Some(account), payer: addr(102), ..self_pay(3, account, 10) };
+        let replacement = Admission {
+            account_change: Some(account),
+            payer: addr(102),
+            ..self_pay(3, account, 10)
+        };
         guard.insert_forced(replacement);
         assert!(guard.contains(&hash(3)));
         assert!(!guard.contains(&hash(1)));
