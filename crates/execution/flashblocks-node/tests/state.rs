@@ -1315,3 +1315,53 @@ async fn test_deferred_canonical_rejects_resume_against_stale_provider_tip() {
         "deferred canonical watermark must reject resume against the stale provider tip"
     );
 }
+
+#[tokio::test]
+async fn test_deferred_canonical_replays_base_received_after_notification() {
+    let mut client = FlashblocksBuilderTestHarness::new().await;
+    let mut builder = FlashblocksBuilderTestHarness::new().await;
+    let canonical = builder.new_canonical_block_without_processing(vec![]).await;
+    let canonical_hash = canonical.hash();
+    let next_base = FlashblockBuilder::new_base(&builder).build();
+
+    client.flashblocks.on_canonical_block_received(canonical);
+    client.send_flashblock(next_base).await;
+    let client_canonical = client.new_canonical_block_without_processing(vec![]).await;
+    assert_eq!(client_canonical.hash(), canonical_hash);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            client.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == 2 && pending.parent_hash() == canonical_hash
+            })
+        },
+        "base received after an ahead canonical should replay when it becomes visible",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_deferred_canonical_preserves_base_received_before_notification() {
+    let mut client = FlashblocksBuilderTestHarness::new().await;
+    let mut builder = FlashblocksBuilderTestHarness::new().await;
+    let canonical = builder.new_canonical_block_without_processing(vec![]).await;
+    let canonical_hash = canonical.hash();
+    let next_base = FlashblockBuilder::new_base(&builder).build();
+
+    client.send_flashblock(next_base).await;
+    client.flashblocks.on_canonical_block_received(canonical);
+    let client_canonical = client.new_canonical_block_without_processing(vec![]).await;
+    assert_eq!(client_canonical.hash(), canonical_hash);
+
+    wait_until(
+        Duration::from_secs(5),
+        || {
+            client.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
+                pending.earliest_block_number() == 2 && pending.parent_hash() == canonical_hash
+            })
+        },
+        "base received before an ahead canonical should survive until provider visibility",
+    )
+    .await;
+}

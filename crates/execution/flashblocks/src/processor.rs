@@ -257,12 +257,21 @@ where
                 <= self.max_pending_blocks_depth
     }
 
-    fn enter_recovery(&self, best_number: u64) {
+    fn invalidate_pending_for_recovery(&self, best_number: u64) {
         warn!(best = best_number, "flashblock processor entering recovery");
         Metrics::pending_queue_recovery().increment(1);
         self.pending_blocks.swap(None);
         self.clear_live_state();
+    }
+
+    fn enter_recovery(&self, best_number: u64) {
+        self.invalidate_pending_for_recovery(best_number);
         *self.lock_cache() = FlashblockCache::new(best_number);
+    }
+
+    fn enter_recovery_preserving_cache(&self, best_number: u64) {
+        self.invalidate_pending_for_recovery(best_number);
+        self.lock_cache().update_canonical(best_number);
     }
 
     async fn preflight_update(
@@ -300,11 +309,13 @@ where
             Metrics::pending_stale_events_skipped().increment(1);
             return None;
         }
-        if matches!(update, StateUpdate::Flashblock(_))
-            && deferred_canonical
-                .as_ref()
-                .is_some_and(|(block, _)| update.pending_anchor_number() <= block.number)
+        if let StateUpdate::Flashblock(flashblock) = update
+            && let Some((block, _)) = deferred_canonical.as_ref()
+            && update.pending_anchor_number() <= block.number
         {
+            if update.pending_anchor_number() == block.number {
+                self.lock_cache().insert(flashblock.clone());
+            }
             Metrics::pending_stale_events_skipped().increment(1);
             return None;
         }
@@ -426,12 +437,20 @@ where
                 None
             }
             UpdatePreflight::EnterRecovery => {
+                let canonical_ahead = matches!(
+                    update,
+                    StateUpdate::Canonical(block) if block.number > best.number()
+                );
                 if let StateUpdate::Canonical(block) = update
-                    && block.number > best.number()
+                    && canonical_ahead
                 {
                     *deferred_canonical = Some((block.clone(), enqueued_generation));
                 }
-                self.enter_recovery(best.number());
+                if canonical_ahead {
+                    self.enter_recovery_preserving_cache(best.number());
+                } else {
+                    self.enter_recovery(best.number());
+                }
                 *recovering = true;
                 Metrics::pending_stale_events_skipped().increment(1);
                 None
