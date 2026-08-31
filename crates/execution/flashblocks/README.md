@@ -15,6 +15,59 @@ Flashblocks state management for Base nodes. Subscribes to flashblocks and combi
 - **`CanonicalBlockReconciler`**: Reconciles flashblock state with canonical chain updates.
 - **`ReorgDetector`**: Detects chain reorganizations affecting pending state.
 
+## Pending state
+
+Published pending state either tracks flashblocks built on the node's current
+canonical tip, or it is absent until it can. After a delay, overload, or
+restart, the processor does not keep a lagged overlay live for RPC.
+
+`max_pending_blocks_depth` is the maximum number of **blocks** the pending
+snapshot may extend beyond the provider's canonical tip. The node CLI default
+is `3` (canonical `N` may have pending `N+1` through `N+3`). If pending is not
+rooted at the current tip hash, or that depth is exceeded, the processor
+clears the snapshot and resumes only from an index-0 flashblock whose parent
+is the current tip.
+
+This depth is not a count of flashblock messages, and it is not the cache
+window. `FlashblockCache` may retain unpublished payloads a few blocks further
+ahead so they can be replayed after the matching canonical block arrives.
+
+## Recovery
+
+Canonical blocks and flashblocks share one bounded processor queue. Each update
+is stamped with a recovery epoch. If the queue is full, the epoch advances and
+pending is cleared; in-flight work from the previous epoch is not published.
+
+Every update is preflighted against the provider's current canonical header:
+
+- **EnterRecovery** clears pending when it cannot safely track the tip.
+- **ResumeRecovery** accepts an index-0 flashblock whose parent hash is the
+  current tip and rebuilds pending from there.
+- **Skip** drops a stale update when pending is already tip-aligned.
+- **Process** applies the update when pending already tracks the tip.
+
+A canonical notification can arrive before the provider exposes that block.
+The processor stores it as a deferred canonical, keeps nearby cache entries,
+and does not resume against the stale provider tip. A short retry reapplies
+the deferred block once it is visible.
+
+When a canonical block is applied, [`CanonicalBlockReconciler`] chooses:
+
+- **Keep** for untracked older canonicals so they are not treated as reorgs.
+- **Rebase** if canonical sits inside the pending chain and is still behind
+  latest: drop flashblocks at or below that height and rebuild the suffix.
+- **CatchUp** if canonical has reached or passed pending latest.
+- **HandleReorg** on a real transaction-set or pending-anchor hash mismatch.
+
+Live and cached payloads stay scoped to one payload ID. Identical
+retransmissions are ignored; conflicting content for the same identity fails
+closed into recovery. A height that saw conflicting fragments is tombstoned
+until canonical advances.
+
+If the canonical subscription lags or delivers an empty commit, the extension
+resyncs from the provider's latest recovered block instead of waiting for the
+next subscription event.
+
 ## RPC Extensions
 
 This crate provides pending-state-aware Ethereum RPC implementations used by

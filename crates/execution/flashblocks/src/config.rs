@@ -10,6 +10,11 @@ pub struct FlashblocksConfig {
     /// The websocket endpoint that streams flashblock updates.
     pub websocket_url: Url,
     /// Maximum number of pending blocks retained ahead of the canonical tip.
+    ///
+    /// Counts canonical block numbers, not flashblock indices. When pending is
+    /// not based on the provider tip, or `latest - canonical` exceeds this
+    /// depth, the processor clears the snapshot until an index-0 flashblock
+    /// rooted at that tip arrives. The node CLI default is `3`.
     pub max_pending_blocks_depth: u64,
     /// Interval between upstream websocket ping frames.
     pub subscriber_ping_interval: Duration,

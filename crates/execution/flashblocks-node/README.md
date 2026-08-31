@@ -36,7 +36,7 @@ If Flashblocks should be disabled, install the extension with `None` or skip ins
 When running the node binary, Flashblocks can be configured with the following CLI arguments:
 
 - `--flashblocks-url <WEBSOCKET_URL>`: The WebSocket URL to stream flashblock updates from (required to enable Flashblocks; `--websocket-url` is accepted as an alias)
-- `--max-pending-blocks-depth <MAX_PENDING_BLOCKS_DEPTH>`: Maximum number of pending flashblocks to retain in memory (default: 3)
+- `--max-pending-blocks-depth <MAX_PENDING_BLOCKS_DEPTH>`: Maximum number of pending **blocks** retained ahead of the canonical tip (default: `3`). This is not a flashblock-message count. If pending is not based on the current tip, or that depth is exceeded, the snapshot is cleared until an index-0 flashblock rooted at the tip arrives.
 - `--flashblocks.cached-execution`: Enable cached execution through the flashblocks-aware engine validator
 
 ### Example

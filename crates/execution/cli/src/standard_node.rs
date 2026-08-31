@@ -174,7 +174,12 @@ pub struct RpcStandardNodeArgs {
     #[arg(long, alias = "websocket-url")]
     pub flashblocks_url: Option<Url>,
 
-    /// The max pending blocks depth.
+    /// Maximum number of pending blocks retained ahead of the canonical tip.
+    ///
+    /// Counts canonical block numbers, not flashblock messages. Pending that
+    /// is not based on the current tip, or that extends more than this many
+    /// blocks beyond it, is cleared until a matching index-0 flashblock
+    /// arrives.
     #[arg(
         long = "max-pending-blocks-depth",
         value_name = "MAX_PENDING_BLOCKS_DEPTH",
