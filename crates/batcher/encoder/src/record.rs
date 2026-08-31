@@ -1,9 +1,9 @@
 //! One derivation channel and its admission / close types.
 
-use std::{collections::VecDeque, fmt, sync::Arc};
+use std::{collections::VecDeque, sync::Arc};
 
 use alloy_primitives::Bytes;
-use alloy_rlp::{Encodable, Header};
+use alloy_rlp::Encodable;
 use base_common_genesis::RollupConfig;
 use base_comp::{CompressionError, CompressionStream};
 use base_protocol::{
@@ -30,9 +30,9 @@ pub enum ChannelLimit {
     #[error("channel RLP requires {required} bytes, maximum is {maximum}")]
     RlpBytes {
         /// Required bytes after appending the candidate batch.
-        required: usize,
+        required: u64,
         /// Fork-specific maximum.
-        maximum: usize,
+        maximum: u64,
     },
     /// The finished channel cannot be represented by sequential `u16` frame numbers.
     #[error("channel requires {required} frames, maximum is {maximum}")]
@@ -46,9 +46,9 @@ pub enum ChannelLimit {
     #[error("assembled channel may require {required} bytes, maximum is {maximum}")]
     AssembledBytes {
         /// Conservative assembled size.
-        required: usize,
+        required: u64,
         /// Fork-specific maximum.
-        maximum: usize,
+        maximum: u64,
     },
 }
 
@@ -108,26 +108,31 @@ pub enum ChannelError {
 }
 
 /// One encoding channel, from first batch until the safe head covers it.
+#[derive(derive_more::Debug)]
 pub struct Channel {
     /// Unique derivation channel identifier.
     id: ChannelId,
     /// Rollup rules used for timestamp-dependent protocol limits.
+    #[debug(skip)]
     rollup_config: Arc<RollupConfig>,
     /// Compressor present only while the channel accepts batches.
+    #[debug(skip)]
     compressor: Option<CompressionStream>,
     /// Compressed bytes emitted but not yet assigned to immutable DA artifacts.
+    #[debug(skip)]
     output: VecDeque<Bytes>,
     /// Number of bytes currently available in `output`.
     available_output: usize,
     /// Total compressed bytes emitted by this channel.
-    compressed_bytes: usize,
+    compressed_bytes: u64,
     /// Maximum serialized frame size.
     max_frame_size: usize,
     /// Optional soft compressed-size target.
     compressed_size_target: Option<usize>,
     /// Number of accepted uncompressed RLP bytes.
-    input_bytes: usize,
+    input_bytes: u64,
     /// Reused buffer for one encoded `SingleBatch` wire value.
+    #[debug(skip)]
     candidate_scratch: Vec<u8>,
     /// Index of the first buffered L2 block encoded into the channel.
     block_start: usize,
@@ -149,22 +154,6 @@ pub struct Channel {
     last_confirmed_l1_block: Option<u64>,
 }
 
-impl fmt::Debug for Channel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Channel")
-            .field("id", &self.id)
-            .field("block_start", &self.block_start)
-            .field("blocks_added", &self.blocks_added)
-            .field("available_output", &self.available_output)
-            .field("compressed_bytes", &self.compressed_bytes)
-            .field("opened_l1_block", &self.opened_l1_block)
-            .field("deadline_l1_block", &self.deadline_l1_block)
-            .field("next_frame_number", &self.next_frame_number)
-            .field("terminal_pending", &self.terminal_pending)
-            .finish()
-    }
-}
-
 impl Channel {
     /// Max frames per channel. Derivation cannot reassemble frame number `u16::MAX`.
     pub const MAX_FRAMES: usize = u16::MAX as usize;
@@ -183,7 +172,7 @@ impl Channel {
     ) -> Result<Self, EncoderConfigError> {
         config.validate()?;
 
-        let duration_blocks = config.max_channel_duration - config.sub_safety_margin;
+        let duration_blocks = config.max_channel_duration.saturating_sub(config.sub_safety_margin);
         Ok(Self {
             id,
             rollup_config,
@@ -199,7 +188,7 @@ impl Channel {
             blocks_added: 0,
             da_backlog_bytes: 0,
             opened_l1_block,
-            deadline_l1_block: opened_l1_block + duration_blocks,
+            deadline_l1_block: opened_l1_block.saturating_add(duration_blocks),
             next_frame_number: 0,
             terminal_pending: false,
             first_confirmed_l1_block: None,
@@ -223,13 +212,13 @@ impl Channel {
     }
 
     /// Returns the number of accepted uncompressed RLP bytes.
-    pub fn input_bytes(&self) -> u64 {
-        u64::try_from(self.input_bytes).unwrap_or(u64::MAX)
+    pub const fn input_bytes(&self) -> u64 {
+        self.input_bytes
     }
 
     /// Returns the total compressed stream bytes emitted so far.
-    pub fn compressed_bytes(&self) -> u64 {
-        u64::try_from(self.compressed_bytes).unwrap_or(u64::MAX)
+    pub const fn compressed_bytes(&self) -> u64 {
+        self.compressed_bytes
     }
 
     /// Returns compressed bytes not yet assigned to a DA artifact.
@@ -293,26 +282,30 @@ impl Channel {
         batch: SingleBatch,
         da_backlog_bytes: u64,
     ) -> Result<ChannelAddOutcome, ChannelError> {
-        let timestamp = batch.timestamp;
-
-        // Wire form of one Single batch: RLP string header, type byte, payload.
-        self.candidate_scratch.clear();
-        Header { list: false, payload_length: 1 + batch.length() }
-            .encode(&mut self.candidate_scratch);
-        self.candidate_scratch.push(BatchType::Single as u8);
-        batch.encode(&mut self.candidate_scratch);
-
-        let next_input_bytes = self.input_bytes.saturating_add(self.candidate_scratch.len());
-        let max_channel_bytes =
-            usize::try_from(self.rollup_config.max_rlp_bytes_per_channel(timestamp))
-                .unwrap_or(usize::MAX);
+        let max_channel_bytes = self.rollup_config.max_rlp_bytes_per_channel(batch.timestamp);
         let max_frame_data = self.max_frame_data();
         let Some(compressor) = self.compressor.as_mut() else {
             return Err(ChannelError::Closed);
         };
 
+        // Wire form of one Single batch: RLP string header, type byte, payload.
+        self.candidate_scratch.clear();
+        batch.rlp_header().encode(&mut self.candidate_scratch);
+        self.candidate_scratch.push(BatchType::Single as u8);
+        batch.encode(&mut self.candidate_scratch);
+
+        // Reject on the cumulative RLP limit first. Every projection below then
+        // starts from an input size the protocol bounds well inside memory.
+        let next_input_bytes = self.input_bytes.saturating_add(self.candidate_scratch.len() as u64);
+        if next_input_bytes > max_channel_bytes {
+            return Ok(ChannelAddOutcome::Rejected(ChannelLimit::RlpBytes {
+                required: next_input_bytes,
+                maximum: max_channel_bytes,
+            }));
+        }
+
         // Worst-case compressed size of the finished channel, including this batch.
-        let max_compressed_bytes = compressor.max_output_size(next_input_bytes);
+        let max_compressed_bytes = compressor.max_output_size(next_input_bytes as usize);
         let max_frame_count = max_compressed_bytes.div_ceil(max_frame_data);
 
         // Blob packing can split output at blob boundaries, so a channel may
@@ -322,16 +315,11 @@ impl Channel {
             .div_ceil(blob_payload_capacity - Frame::ENCODED_OVERHEAD)
             .saturating_add(1);
         let max_total_frames = max_frame_count.saturating_add(max_blob_boundary_frames);
-        let max_assembled_bytes =
-            max_compressed_bytes.saturating_add(max_total_frames.saturating_mul(Frame::OVERHEAD));
+        let max_assembled_bytes = max_compressed_bytes
+            .saturating_add(max_total_frames.saturating_mul(Frame::OVERHEAD))
+            as u64;
 
         // Reject against projected limits before mutating the stream.
-        if next_input_bytes > max_channel_bytes {
-            return Ok(ChannelAddOutcome::Rejected(ChannelLimit::RlpBytes {
-                required: next_input_bytes,
-                maximum: max_channel_bytes,
-            }));
-        }
         if max_total_frames > Self::MAX_FRAMES {
             return Ok(ChannelAddOutcome::Rejected(ChannelLimit::FrameCount {
                 required: max_total_frames,
@@ -464,7 +452,7 @@ impl Channel {
             return;
         }
         self.available_output += output.len();
-        self.compressed_bytes += output.len();
+        self.compressed_bytes += output.len() as u64;
         self.output.push_back(Bytes::from(output));
     }
 }
@@ -531,7 +519,7 @@ mod tests {
     #[test]
     fn cumulative_rlp_limit_rejects_without_mutating_stream() {
         let mut channel = channel(EncoderConfig::default());
-        let maximum = channel.rollup_config.max_rlp_bytes_per_channel(0) as usize;
+        let maximum = channel.rollup_config.max_rlp_bytes_per_channel(0);
         channel.input_bytes = maximum;
 
         assert!(matches!(

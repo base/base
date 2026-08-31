@@ -3083,6 +3083,7 @@ dependencies = [
  "base-metrics",
  "base-protocol",
  "clap",
+ "derive_more 2.1.1",
  "metrics",
  "rand 0.9.5",
  "rstest",
