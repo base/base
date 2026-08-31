@@ -1557,7 +1557,7 @@ where
             ApplyError::MalformedRevokeData => "actor change revoke data is malformed",
             ApplyError::InvalidChangePayload => "account-change op payload must be empty",
             ApplyError::EpochSaturated => "local epoch is saturated",
-            ApplyError::UnsupportedChangeType => "unsupported account-change op",
+            ApplyError::UnknownChangeType => "unknown account-change op",
             ApplyError::AccountIsLocked => "account is locked",
             ApplyError::ExpiryDoesNotOutliveUnlock => {
                 "authorize expiry does not outlive the unlock floor"
@@ -1580,7 +1580,7 @@ where
             ApplyError::MultipleDelegations => "at most one delegation is allowed",
             ApplyError::CreateAndDelegation => "create and delegation may not coexist",
             ApplyError::NonDelegatableCode { .. } => "delegation sender has non-delegation code",
-            ApplyError::SequenceOverflow => "config change sequence overflow",
+            ApplyError::SequenceSaturated => "config change sequence is saturated",
             ApplyError::EmptyChangeSet => "signed account-change batch is empty",
         }
     }

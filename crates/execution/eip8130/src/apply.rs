@@ -78,12 +78,12 @@ pub enum ApplyError {
     #[error("local epoch is saturated and cannot be incremented")]
     EpochSaturated,
 
-    /// A signed batch carried an environment op (`Lock` or `Unlock`) whose apply
-    /// handler is not yet enshrined. These ops are wired into the apply path by a
-    /// subsequent change; until then a batch carrying one is rejected rather than
-    /// silently ignored.
-    #[error("unsupported account-change op in the enshrined apply path")]
-    UnsupportedChangeType,
+    /// A signed batch carried an unrecognized or not-yet-enshrined change type
+    /// (currently `Lock` / `Unlock`, whose apply handlers are wired by a
+    /// subsequent change). Mirrors `Keystore.UnknownChangeType`: rejected rather
+    /// than silently ignored.
+    #[error("unknown account-change op in the enshrined apply path")]
+    UnknownChangeType,
 
     /// The operation is not permitted while the account is locked. Mirrors
     /// `Keystore.AccountIsLocked`.
@@ -215,9 +215,10 @@ pub enum ApplyError {
         account: Address,
     },
 
-    /// A channel sequence would overflow `u64`.
-    #[error("account-change sequence overflow")]
-    SequenceOverflow,
+    /// A channel's sequence counter is at its terminal value and cannot advance.
+    /// Mirrors `Keystore.SequenceSaturated`.
+    #[error("account-change channel sequence is saturated")]
+    SequenceSaturated,
 }
 
 /// A created account's deferred code write: its counterfactual address and the
@@ -459,7 +460,7 @@ impl AccountChangeApplier {
                 }
                 // Lock / Unlock apply handlers are not yet enshrined.
                 ChangeType::Lock | ChangeType::Unlock => {
-                    return Err(ApplyError::UnsupportedChangeType);
+                    return Err(ApplyError::UnknownChangeType);
                 }
             }
         }
@@ -497,7 +498,7 @@ impl AccountChangeApplier {
                 let seq = sequence as u32;
                 if seq != Eip8130Constants::UNSEQUENCED {
                     state.local_sequence =
-                        u64::from(seq).checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
+                        u64::from(seq).checked_add(1).ok_or(ApplyError::SequenceSaturated)?;
                 } else if !state.is_initialized() {
                     state.local_sequence = 1;
                 }
@@ -513,7 +514,7 @@ impl AccountChangeApplier {
                     "multichain sequence must match the account's current multichain sequence",
                 );
                 state.multichain_sequence =
-                    state.multichain_sequence.checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
+                    state.multichain_sequence.checked_add(1).ok_or(ApplyError::SequenceSaturated)?;
             }
         }
         Ok(())
