@@ -2,6 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
+use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
@@ -18,8 +19,15 @@ impl ActivationRegistryStorage<'_> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
         admin_config: ActivationAdminConfig,
+        upgrade: BaseUpgrade,
     ) -> PrecompileResult {
-        self.dispatch_with_observer(ctx, calldata, admin_config, NoopPrecompileCallObserver)
+        self.dispatch_with_observer(
+            ctx,
+            calldata,
+            admin_config,
+            upgrade,
+            NoopPrecompileCallObserver,
+        )
     }
 
     /// ABI-dispatches activation registry calldata with an observer.
@@ -28,6 +36,7 @@ impl ActivationRegistryStorage<'_> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
         admin_config: ActivationAdminConfig,
+        upgrade: BaseUpgrade,
         observer: O,
     ) -> PrecompileResult
     where
@@ -35,6 +44,15 @@ impl ActivationRegistryStorage<'_> {
     {
         let mut recorder =
             BerylCallRecorder::start(observer, BerylMetricLabels::activation_call(calldata));
+        // Activation-registry selectors are all nonpayable; reject attached ETH from Cobalt
+        // onward. Pre-Cobalt (Beryl) preserves the historical accept-and-strand behavior so
+        // replay of live-installed activation calls remains byte-identical.
+        if upgrade >= BaseUpgrade::Cobalt && !ctx.call_value().is_zero() {
+            return recorder.record_base_error_result(
+                ctx,
+                BasePrecompileError::revert(IActivationRegistry::NonPayable {}),
+            );
+        }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
@@ -82,8 +100,9 @@ impl ActivationRegistryStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, Bytes, address};
-    use alloy_sol_types::SolCall;
+    use alloy_primitives::{Address, B256, Bytes, U256, address};
+    use alloy_sol_types::{SolCall, SolError};
+    use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{ActivationAdminConfig, ActivationRegistryStorage, IActivationRegistry};
@@ -106,7 +125,12 @@ mod tests {
             storage.set_caller(ADMIN);
 
             let output = StorageCtx::enter(&mut storage, |ctx| {
-                ActivationRegistryStorage::new(ctx).dispatch(ctx, &calldata, STATIC_ADMIN_CONFIG)
+                ActivationRegistryStorage::new(ctx).dispatch(
+                    ctx,
+                    &calldata,
+                    STATIC_ADMIN_CONFIG,
+                    BaseUpgrade::Beryl,
+                )
             })
             .expect("unknown selector must be returned as a revert");
 
@@ -128,10 +152,71 @@ mod tests {
             Bytes::from(IActivationRegistry::setAdminCall { newAdmin: NEW_ADMIN }.abi_encode());
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).dispatch(ctx, &calldata, STATE_ADMIN_CONFIG)
+            ActivationRegistryStorage::new(ctx).dispatch(
+                ctx,
+                &calldata,
+                STATE_ADMIN_CONFIG,
+                BaseUpgrade::Cobalt,
+            )
         })
         .expect("setAdmin must not fatally error");
 
         assert!(output.is_success(), "setAdmin must succeed once state-backed admin is enabled");
+    }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value_at_cobalt() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+        storage.set_call_value(U256::from(1u64));
+
+        // A read-only, unauthenticated selector — the exact path an attacker uses to strand ETH.
+        let calldata =
+            IActivationRegistry::isActivatedCall { feature: B256::ZERO }.abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).dispatch(
+                ctx,
+                &calldata,
+                STATE_ADMIN_CONFIG,
+                BaseUpgrade::Cobalt,
+            )
+        })
+        .expect("nonzero value must revert, not fatally error");
+
+        assert!(output.is_revert());
+        assert_eq!(
+            output.bytes,
+            Bytes::from(IActivationRegistry::NonPayable {}.abi_encode()),
+        );
+    }
+
+    #[test]
+    fn dispatch_accepts_nonzero_value_before_cobalt() {
+        // Consensus safety: pre-Cobalt (Beryl) must NOT emit the new NonPayable revert, otherwise
+        // replay of live-installed activation calls that carried ETH would diverge.
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+        storage.set_call_value(U256::from(1u64));
+
+        let calldata =
+            IActivationRegistry::isActivatedCall { feature: B256::ZERO }.abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).dispatch(
+                ctx,
+                &calldata,
+                STATIC_ADMIN_CONFIG,
+                BaseUpgrade::Beryl,
+            )
+        })
+        .expect("Beryl replay must not fatally error on nonzero value");
+
+        assert!(output.is_success(), "pre-Cobalt must accept nonzero value (legacy behavior)");
+        assert_ne!(
+            output.bytes,
+            Bytes::from(IActivationRegistry::NonPayable {}.abi_encode()),
+            "pre-Cobalt must never emit NonPayable",
+        );
     }
 }
