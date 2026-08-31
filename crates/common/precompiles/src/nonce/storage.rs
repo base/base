@@ -122,7 +122,9 @@ impl NonceManagerStorage<'_> {
     }
 
     /// Increments the 2D nonce for `account` at `nonce_key`, returning the new
-    /// value and emitting [`INonceManager::NonceIncremented`].
+    /// value and emitting [`INonceManager::NonceIncremented`]. The pre-write
+    /// value is loaded from storage inside this call, so the value written is
+    /// always `storage + 1` — callers cannot supply a stale `current`.
     ///
     /// Intended for the EIP-8130 execution layer; not reachable through ABI
     /// dispatch.
@@ -131,38 +133,11 @@ impl NonceManagerStorage<'_> {
     /// - [`INonceManager::InvalidNonceKey`] — `nonce_key` is `0` (the protocol nonce).
     /// - [`INonceManager::NonceOverflow`] — the channel nonce is already `u64::MAX`.
     pub fn increment_nonce(&mut self, account: Address, nonce_key: U256) -> Result<u64> {
-        let read = self.read_sequence_nonce(account, nonce_key)?;
-        self.increment_from_read(read)
-    }
-
-    /// Reads the 2D channel nonce for `(account, nonce_key)` and returns a
-    /// [`SequenceNonceRead`] receipt binding the value to the slot it came
-    /// from. The receipt is the only way to reach [`Self::increment_from_read`].
-    ///
-    /// # Errors
-    /// - [`INonceManager::InvalidNonceKey`] — `nonce_key` is `0` (the protocol nonce).
-    pub fn read_sequence_nonce(
-        &self,
-        account: Address,
-        nonce_key: U256,
-    ) -> Result<SequenceNonceRead> {
         if nonce_key == Self::PROTOCOL_NONCE_KEY {
             return Err(BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
         }
-        let current = self.nonces.at(&account).at(&nonce_key).read()?;
-        Ok(SequenceNonceRead { account, nonce_key, current })
-    }
 
-    /// Advances the 2D nonce whose fresh read is captured in `read`, consuming
-    /// the receipt so it cannot be replayed against a later state. The
-    /// `(account, nonce_key, current)` triple is taken from the receipt rather
-    /// than the caller, so the increment writes `current + 1` to the exact
-    /// slot the read observed.
-    ///
-    /// # Errors
-    /// - [`INonceManager::NonceOverflow`] — the read observed `u64::MAX`.
-    pub fn increment_from_read(&mut self, read: SequenceNonceRead) -> Result<u64> {
-        let SequenceNonceRead { account, nonce_key, current } = read;
+        let current = self.nonces.at(&account).at(&nonce_key).read()?;
 
         // The nonce write and its NonceIncremented event must commit together;
         // guard them with a checkpoint so a failure after the write (e.g. during
@@ -287,36 +262,6 @@ impl NonceManagerStorage<'_> {
     }
 }
 
-/// Single-use receipt of a fresh sequence-channel nonce read.
-///
-/// Produced by [`NonceManagerStorage::read_sequence_nonce`] and consumed by
-/// [`NonceManagerStorage::increment_from_read`]. Fields are module-private and
-/// the type is neither `Copy` nor `Clone`, so a receipt can only be obtained
-/// by actually reading storage and cannot be replayed against later state.
-#[derive(Debug)]
-pub struct SequenceNonceRead {
-    account: Address,
-    nonce_key: U256,
-    current: u64,
-}
-
-impl SequenceNonceRead {
-    /// The nonce value observed by the read.
-    pub const fn current(&self) -> u64 {
-        self.current
-    }
-
-    /// The account the read was taken for.
-    pub const fn account(&self) -> Address {
-        self.account
-    }
-
-    /// The channel key the read was taken for.
-    pub const fn nonce_key(&self) -> U256 {
-        self.nonce_key
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
@@ -366,68 +311,21 @@ mod tests {
     }
 
     #[test]
-    fn loaded_increment_uses_one_sload_and_one_sstore() {
+    fn increment_nonce_uses_one_sload_and_one_sstore() {
         let mut storage = HashMapStorageProvider::new(1);
         let nonce_key = U256::from(5);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
 
             ctx.reset_counters();
-            let read = mgr.read_sequence_nonce(ACCOUNT_A, nonce_key).unwrap();
-            assert_eq!(mgr.increment_from_read(read).unwrap(), 1);
+            assert_eq!(mgr.increment_nonce(ACCOUNT_A, nonce_key).unwrap(), 1);
             assert_eq!(ctx.counter_sload(), 1);
             assert_eq!(ctx.counter_sstore(), 1);
 
             ctx.reset_counters();
-            let read = mgr.read_sequence_nonce(ACCOUNT_A, nonce_key).unwrap();
-            assert_eq!(mgr.increment_from_read(read).unwrap(), 2);
+            assert_eq!(mgr.increment_nonce(ACCOUNT_A, nonce_key).unwrap(), 2);
             assert_eq!(ctx.counter_sload(), 1);
             assert_eq!(ctx.counter_sstore(), 1);
-        });
-    }
-
-    #[test]
-    fn stale_read_receipt_cannot_overwrite_newer_nonce() {
-        let mut storage = HashMapStorageProvider::new(1);
-        let nonce_key = U256::from(5);
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut mgr = NonceManagerStorage::new(ctx);
-
-            let stale = mgr.read_sequence_nonce(ACCOUNT_A, nonce_key).unwrap();
-            assert_eq!(stale.current(), 0);
-            mgr.nonces.at_mut(&ACCOUNT_A).at_mut(&nonce_key).write(5).unwrap();
-
-            let _ = stale;
-            let fresh = mgr.read_sequence_nonce(ACCOUNT_A, nonce_key).unwrap();
-            assert_eq!(fresh.current(), 5);
-            assert_eq!(mgr.increment_from_read(fresh).unwrap(), 6);
-            assert_eq!(mgr.get_nonce(ACCOUNT_A, nonce_key).unwrap(), 6);
-        });
-    }
-
-    #[test]
-    fn read_receipt_is_bound_to_its_account_and_key() {
-        let mut storage = HashMapStorageProvider::new(1);
-        let nonce_key = U256::from(9);
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut mgr = NonceManagerStorage::new(ctx);
-            let read = mgr.read_sequence_nonce(ACCOUNT_A, nonce_key).unwrap();
-            assert_eq!(read.account(), ACCOUNT_A);
-            assert_eq!(read.nonce_key(), nonce_key);
-            mgr.increment_from_read(read).unwrap();
-            assert_eq!(mgr.get_nonce(ACCOUNT_A, nonce_key).unwrap(), 1);
-            assert_eq!(mgr.get_nonce(ACCOUNT_B, nonce_key).unwrap(), 0);
-        });
-    }
-
-    #[test]
-    fn read_sequence_nonce_rejects_protocol_nonce() {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| {
-            let err = NonceManagerStorage::new(ctx)
-                .read_sequence_nonce(ACCOUNT_A, U256::ZERO)
-                .unwrap_err();
-            assert_eq!(err, BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
         });
     }
 

@@ -4,7 +4,7 @@ mod abi;
 pub use abi::INonceManager;
 
 mod storage;
-pub use storage::{NonceManagerStorage, SequenceNonceRead};
+pub use storage::NonceManagerStorage;
 
 mod dispatch;
 
