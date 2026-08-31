@@ -1,7 +1,26 @@
 //! Minimal Prometheus text-exposition scraper for the challenger under test.
 
+use std::{sync::LazyLock, time::Duration};
+
 use eyre::{Context, Result};
+use reqwest::Client;
 use url::Url;
+
+/// Client for every scrape, built once so the connection pool is reused across
+/// the several hundred polls a run makes.
+///
+/// The timeout is the point of it. Every caller is either inside a poll loop
+/// that retries, or is annotating a failure that has already happened, so a
+/// stalled endpoint must surface as an error rather than parking the run —
+/// and `reqwest`'s default client has no timeout at all.
+static CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    // Not `unwrap_or_default`: the default client has no timeout, so a silent
+    // fallback would reintroduce exactly the hang this exists to prevent.
+    Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("the reqwest TLS backend failed to initialise")
+});
 
 /// One scrape of a Prometheus `/metrics` endpoint.
 ///
@@ -15,7 +34,9 @@ pub struct Scrape {
 impl Scrape {
     /// Fetches and parses the endpoint.
     pub async fn fetch(url: &Url) -> Result<Self> {
-        let body = reqwest::get(url.clone())
+        let body = CLIENT
+            .get(url.clone())
+            .send()
             .await
             .with_context(|| format!("failed to scrape {url}"))?
             .error_for_status()
