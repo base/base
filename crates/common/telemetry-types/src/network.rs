@@ -13,6 +13,8 @@ impl NetworkName {
     pub const MAINNET_CHAIN_ID: u64 = 8453;
     /// Base Sepolia.
     pub const SEPOLIA_CHAIN_ID: u64 = 84532;
+    /// The internal zeronet test network.
+    pub const ZERONET_CHAIN_ID: u64 = 763360;
     /// The local devnet the `etc/docker` stack brings up.
     pub const DEVNET_CHAIN_ID: u64 = 84538453;
 
@@ -24,6 +26,7 @@ impl NetworkName {
         match l2_chain_id {
             Self::MAINNET_CHAIN_ID => "mainnet".to_string(),
             Self::SEPOLIA_CHAIN_ID => "sepolia".to_string(),
+            Self::ZERONET_CHAIN_ID => "zeronet".to_string(),
             Self::DEVNET_CHAIN_ID => "devnet".to_string(),
             other => format!("chain-{other}"),
         }
@@ -38,6 +41,7 @@ mod tests {
     fn test_known_chains_resolve_to_names() {
         assert_eq!(NetworkName::for_chain_id(8453), "mainnet");
         assert_eq!(NetworkName::for_chain_id(84532), "sepolia");
+        assert_eq!(NetworkName::for_chain_id(763360), "zeronet");
         assert_eq!(NetworkName::for_chain_id(84538453), "devnet");
     }
 
