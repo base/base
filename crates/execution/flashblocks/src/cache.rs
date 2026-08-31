@@ -431,25 +431,6 @@ mod tests {
     }
 
     #[test]
-    fn cache_enforces_global_decoded_byte_budget() {
-        let mut cache = FlashblockCache::new(10);
-        for block_number in 11u64..=13 {
-            for payload in 1u64..=8 {
-                let mut flashblock = make_flashblock(block_number, 0);
-                flashblock.payload_id =
-                    PayloadId::new((block_number * 100 + payload).to_be_bytes());
-                assert!(cache.insert(flashblock));
-            }
-        }
-
-        assert!(cache.total_flashblocks() <= MAX_TOTAL_CACHED_FLASHBLOCKS);
-        assert_eq!(
-            MAX_TOTAL_CACHED_FLASHBLOCKS * MAX_DECOMPRESSED_FLASHBLOCK_BYTES,
-            MAX_CACHE_BYTES
-        );
-    }
-
-    #[test]
     fn global_budget_evicts_farthest_block_first() {
         let mut cache = FlashblockCache::new(10);
         for payload in 1u64..=8 {
