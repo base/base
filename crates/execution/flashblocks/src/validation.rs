@@ -129,10 +129,18 @@ impl ReorgDetector {
     /// Compares tracked vs canonical transaction hashes to detect reorgs.
     ///
     /// Returns `ReorgDetected` if counts differ, hashes differ, or order differs.
+    ///
+    /// An empty tracked set means pending held no flashblocks for the canonical block, so
+    /// there is nothing to compare against and no reorg is reported. Every L2 block carries
+    /// an L1 attributes deposit, so a tracked block is never legitimately empty.
     pub fn detect(
         tracked_tx_hashes: &[B256],
         canonical_tx_hashes: &[B256],
     ) -> ReorgDetectionResult {
+        if tracked_tx_hashes.is_empty() {
+            return ReorgDetectionResult::NoReorg;
+        }
+
         if tracked_tx_hashes != canonical_tx_hashes {
             ReorgDetectionResult::ReorgDetected {
                 tracked_count: tracked_tx_hashes.len(),
@@ -170,6 +178,12 @@ pub struct CanonicalBlockReconciler;
 
 impl CanonicalBlockReconciler {
     /// Returns the appropriate [`ReconciliationStrategy`] based on pending vs canonical state.
+    ///
+    /// `canonical_block_number` must be the node's effective canonical height, not just the
+    /// height of the block being reconciled. Callers that pass a queued notification height
+    /// evaluate every guard here in whatever frame of reference the queue has fallen behind
+    /// to, so neither `CatchUp` nor `DepthLimitExceeded` fires while pending drifts away
+    /// from the real tip.
     ///
     /// Priority: `NoPendingState` → `CatchUp` → `HandleReorg` → `DepthLimitExceeded` → `Continue`
     pub const fn reconcile(
@@ -295,8 +309,10 @@ mod tests {
     // Reorg cases - different counts
     #[case(&[0x01, 0x02, 0x03], &[0x01, 0x02], ReorgDetectionResult::ReorgDetected { tracked_count: 3, canonical_count: 2 })]
     #[case(&[0x01], &[0x01, 0x02, 0x03], ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 3 })]
-    #[case(&[], &[0x01], ReorgDetectionResult::ReorgDetected { tracked_count: 0, canonical_count: 1 })]
     #[case(&[0x01], &[], ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 0 })]
+    // An untracked canonical block is not a reorg: pending simply held no flashblocks for it.
+    #[case(&[], &[0x01], ReorgDetectionResult::NoReorg)]
+    #[case(&[], &[0x01, 0x02, 0x03], ReorgDetectionResult::NoReorg)]
     #[case(&[0x01, 0x01, 0x02], &[0x01, 0x02], ReorgDetectionResult::ReorgDetected { tracked_count: 3, canonical_count: 2 })]
     // Reorg cases - same count, different hashes
     #[case(&[0x01, 0x02], &[0x03, 0x04], ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 2 })]

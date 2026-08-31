@@ -88,6 +88,108 @@ where
         *self.lock_live_state() = Some(LivePendingState { db, state_overrides });
     }
 
+    /// Returns `true` when the node has already canonicalized the flashblock's block.
+    fn is_superseded(&self, flashblock: &Flashblock) -> bool {
+        self.client.best_block_number().is_ok_and(|best| flashblock.metadata.block_number <= best)
+    }
+
+    /// Returns the canonical height to reconcile against.
+    ///
+    /// Canonical and flashblock updates share one unbounded queue applied FIFO, so the height
+    /// of a queued notification can be far behind the height the node has actually reached.
+    /// Taking the greater of the two keeps reconciliation anchored to the real chain.
+    fn effective_canonical_number(&self, notified: BlockNumber) -> BlockNumber {
+        match self.client.best_block_number() {
+            Ok(best) => notified.max(best),
+            Err(e) => {
+                warn!(
+                    message = "could not read canonical tip, reconciling against notified block",
+                    notified_block = notified,
+                    error = %e,
+                );
+                notified
+            }
+        }
+    }
+
+    /// Returns `true` when `pending_blocks` is anchored within `max_depth` of the node's
+    /// canonical tip.
+    ///
+    /// Consumers execute against [`PendingBlocks::canonical_block_number`], so an overlay
+    /// anchored far behind the tip makes them walk a historical trie. The `max_depth`
+    /// allowance is the same bound [`CanonicalBlockReconciler`] applies, and it absorbs the
+    /// normal delay between a canonical notification and provider visibility.
+    fn is_anchored_near_tip(&self, pending_blocks: &PendingBlocks) -> bool {
+        let best = match self.client.best_block_number() {
+            Ok(best) => best,
+            Err(e) => {
+                warn!(message = "could not read canonical tip, keeping pending state", error = %e);
+                return true;
+            }
+        };
+
+        let blocks_behind_tip = best.saturating_sub(pending_blocks.earliest_block_number());
+        if blocks_behind_tip > self.max_depth {
+            debug!(
+                message = "pending snapshot anchored too far behind canonical tip, dropping",
+                canonical_tip = best,
+                earliest_pending_block = pending_blocks.earliest_block_number(),
+                latest_pending_block = pending_blocks.latest_block_number(),
+                max_depth = self.max_depth,
+            );
+            return false;
+        }
+
+        true
+    }
+
+    /// Returns `true` when `pending_blocks` is usable as live pending state, meaning it is
+    /// anchored near the tip and still extends past it.
+    fn extends_canonical_tip(&self, pending_blocks: &PendingBlocks) -> bool {
+        if !self.is_anchored_near_tip(pending_blocks) {
+            return false;
+        }
+
+        self.client.best_block_number().is_ok_and(|best| {
+            if pending_blocks.latest_block_number() > best {
+                return true;
+            }
+            debug!(
+                message = "pending snapshot no longer extends canonical tip, dropping",
+                canonical_tip = best,
+                latest_pending_block = pending_blocks.latest_block_number(),
+            );
+            false
+        })
+    }
+
+    /// Returns the published snapshot, dropping it first if it is anchored too far behind the
+    /// canonical tip to ever be usable again.
+    ///
+    /// Calling this once per update is what bounds staleness. However far the queue has fallen
+    /// behind, an overlay stranded on an old anchor survives only until the next update
+    /// arrives, and canonical notifications keep arriving even when the flashblocks stream
+    /// stalls. Snapshots that merely stopped extending the tip are left for
+    /// [`Self::process_canonical_block`] to reconcile, so its catch-up path keeps reporting.
+    fn take_tip_anchored_pending(&self) -> Option<Arc<PendingBlocks>> {
+        let pending_blocks = self.pending_blocks.load_full()?;
+        if self.is_anchored_near_tip(&pending_blocks) {
+            return Some(pending_blocks);
+        }
+
+        Metrics::pending_drop_stale().increment(1);
+        self.clear_live_state();
+        self.pending_blocks.store(None);
+
+        None
+    }
+
+    /// Publishes a freshly built snapshot, unless it no longer extends the canonical tip.
+    ///
+    /// Every build path funnels through here, so this is the one place that has to enforce
+    /// the invariant: pending state either tracks flashblocks on the node's current canonical
+    /// tip or is absent. That holds no matter which path produced the snapshot, and it makes
+    /// recovery automatic, because the next tip-rooted flashblock rebuilds from `None`.
     fn publish_pending_blocks(
         &self,
         mut pending_blocks_builder: PendingBlocksBuilder,
@@ -99,6 +201,13 @@ where
         pending_blocks_builder.with_state_overrides(state_overrides.clone());
 
         let pending_blocks = Arc::new(pending_blocks_builder.build()?);
+
+        if !self.extends_canonical_tip(&pending_blocks) {
+            Metrics::pending_drop_stale().increment(1);
+            self.clear_live_state();
+            return Ok(None);
+        }
+
         self.set_live_state(db, state_overrides);
 
         Ok(Some(pending_blocks))
@@ -130,7 +239,7 @@ where
     /// Processes updates from the queue until the channel closes.
     pub async fn start(&self) {
         while let Some(update) = self.rx.lock().await.recv().await {
-            let prev_pending_blocks = self.pending_blocks.load_full();
+            let prev_pending_blocks = self.take_tip_anchored_pending();
             match update {
                 StateUpdate::Canonical(block) => {
                     debug!(message = "processing canonical block", block_number = block.number);
@@ -150,7 +259,7 @@ where
                                     cached_count = cached.len(),
                                 );
                                 for flashblock in cached {
-                                    let fb_prev = self.pending_blocks.load_full();
+                                    let fb_prev = self.take_tip_anchored_pending();
                                     self.apply_flashblock(fb_prev, flashblock).await;
                                 }
                             }
@@ -172,11 +281,26 @@ where
         }
     }
 
+    /// Applies a flashblock, unless the node has already canonicalized its block.
+    ///
+    /// Executing a flashblock for an already-canonical block cannot produce a publishable
+    /// snapshot, and doing it anyway is what let the queue lag sustain itself: the backlog
+    /// of superseded payloads consumed the processor while fresh payloads waited behind them.
     async fn apply_flashblock(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: Flashblock,
     ) {
+        if self.is_superseded(&flashblock) {
+            debug!(
+                message = "skipping flashblock for already canonical block",
+                block_number = flashblock.metadata.block_number,
+                flashblock_index = flashblock.index,
+            );
+            Metrics::flashblock_superseded().increment(1);
+            return;
+        }
+
         let start_time = Instant::now();
         match self.process_flashblock(prev_pending_blocks, &flashblock) {
             Ok(new_pending_blocks) => {
@@ -256,11 +380,13 @@ where
         let reorg_result = ReorgDetector::detect(&tracked_txn_hashes, &block_txn_hashes);
         let reorg_detected = reorg_result.is_reorg();
 
-        // Determine the reconciliation strategy
+        // Determine the reconciliation strategy. Reorg detection compares against the block
+        // we were notified about, but reconciliation must use the node's real canonical height
+        // so a lagging queue cannot hide that pending has drifted away from the tip.
         let strategy = CanonicalBlockReconciler::reconcile(
             Some(pending_blocks.earliest_block_number()),
             Some(pending_blocks.latest_block_number()),
-            block.number,
+            self.effective_canonical_number(block.number),
             self.max_depth,
             reorg_detected,
         );
