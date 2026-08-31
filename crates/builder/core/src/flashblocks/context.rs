@@ -48,7 +48,7 @@ use tracing::{Level, debug, span, trace, warn};
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ParkedPredicateIndex, PayloadTxsBounds,
     PredicateReadRecorder, ResourceLimits, StateChangeEffects, TxResources, TxnExecutionError,
-    TxnOutcome, ValidityPredicateEvaluation, ValidityPredicateKey,
+    TxnOutcome, ValidityPredicateEvaluation,
     transaction_events::{
         BuilderAcceptedEventData, BuilderConsideredEventData, BuilderDeferredEventData,
         BuilderExpiredEventData, BuilderRejectedEventData, BuilderTransactionEventContext,
