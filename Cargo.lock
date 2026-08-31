@@ -4940,7 +4940,6 @@ dependencies = [
  "reth-transaction-pool",
  "revm",
  "revm-bytecode",
- "revm-database",
  "serde",
  "serde_json",
  "thiserror 2.0.19",

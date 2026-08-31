@@ -29,7 +29,6 @@ base-execution-chainspec.workspace = true
 
 # revm
 revm.workspace = true
-revm-database.workspace = true
 revm-bytecode.workspace = true
 
 # alloy

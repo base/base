@@ -121,7 +121,6 @@ where
             )
         })?;
 
-        let parent_beacon_block_root = header.parent_beacon_block_root();
         let l1_block_info = self.get_l1_block_info(header.hash())?;
         let state_block_number = header.number;
 
@@ -130,8 +129,6 @@ where
             chain_spec: self.provider.chain_spec(),
             bundle: parsed_bundle,
             header,
-            parent_beacon_block_root,
-            pending_state: None,
             l1_block_info,
             metered_opcodes: Arc::clone(&self.metered_opcodes),
         })
