@@ -275,12 +275,11 @@ mod tests {
     #[test]
     fn sstore_then_sload_roundtrips_without_gas() {
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
-        let mut provider =
-            JournalStorageProvider::new(
-                EvmInternals::from_context(&mut ctx),
-                Address::ZERO,
-                StorageFeatures::Cobalt,
-            );
+        let mut provider = JournalStorageProvider::new(
+            EvmInternals::from_context(&mut ctx),
+            Address::ZERO,
+            StorageFeatures::Cobalt,
+        );
 
         let key = U256::from(7);
         let value = U256::from(99);
@@ -297,12 +296,11 @@ mod tests {
     #[test]
     fn tstore_then_tload_roundtrips_without_gas() {
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
-        let mut provider =
-            JournalStorageProvider::new(
-                EvmInternals::from_context(&mut ctx),
-                Address::ZERO,
-                StorageFeatures::Cobalt,
-            );
+        let mut provider = JournalStorageProvider::new(
+            EvmInternals::from_context(&mut ctx),
+            Address::ZERO,
+            StorageFeatures::Cobalt,
+        );
         let key = U256::from(7);
         let value = U256::from(99);
 
@@ -316,12 +314,11 @@ mod tests {
     #[test]
     fn set_code_persists_without_gas() {
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
-        let mut provider =
-            JournalStorageProvider::new(
-                EvmInternals::from_context(&mut ctx),
-                Address::ZERO,
-                StorageFeatures::Cobalt,
-            );
+        let mut provider = JournalStorageProvider::new(
+            EvmInternals::from_context(&mut ctx),
+            Address::ZERO,
+            StorageFeatures::Cobalt,
+        );
 
         let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
         let expected_hash = code.hash_slow();
@@ -338,12 +335,11 @@ mod tests {
     #[test]
     fn gas_deduction_is_a_noop() {
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
-        let mut provider =
-            JournalStorageProvider::new(
-                EvmInternals::from_context(&mut ctx),
-                Address::ZERO,
-                StorageFeatures::Cobalt,
-            );
+        let mut provider = JournalStorageProvider::new(
+            EvmInternals::from_context(&mut ctx),
+            Address::ZERO,
+            StorageFeatures::Cobalt,
+        );
 
         provider.deduct_gas(1_000_000).unwrap();
         provider.deduct_state_gas(1_000_000).unwrap();
