@@ -294,6 +294,31 @@ fn azul_exempts_deposits_from_the_per_tx_gas_cap() {
 }
 
 #[test]
+fn eip8130_block_gas_reservation_includes_payer_auth() {
+    use base_common_consensus::{Eip8130Constants, Eip8130Signed, TxEip8130};
+
+    // A payer auth blob (`K1 authenticator || data`) so the payer-auth reservation is non-zero.
+    let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+    payer_auth.extend_from_slice(&[0xab; 65]);
+    let signed = Eip8130Signed::new(
+        TxEip8130 {
+            gas_limit: 100_000,
+            payer: Some(TARGET),
+            sender: Some(SENDER),
+            ..Default::default()
+        },
+        Bytes::from(Eip8130Constants::K1_AUTHENTICATOR.to_vec()),
+        Bytes::from(payer_auth),
+    );
+    // The block admits the 100k gas limit alone, but not once the payer-auth reservation is added.
+    let mut executor = executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Cobalt), 105_000);
+    let err = executor
+        .execute_transaction(&Recovered::new_unchecked(BaseTxEnvelope::Eip8130(signed), SENDER))
+        .expect_err("payer-auth reservation pushes the 8130 tx over the block gas limit");
+    assert!(format!("{err}").contains("more than the block's available gas"), "got: {err}");
+}
+
+#[test]
 fn exempts_pre_regolith_deposit_from_block_gas_limit() {
     // Pre-Regolith (Bedrock) deposits are exempt from the block-gas check.
     let mut executor = executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Bedrock), 50_000);
