@@ -31,8 +31,13 @@ This matters because consumers execute against `PendingBlocks::canonical_block_n
 canonical block the overlay is layered on. While that block stays close to the tip, callers read
 the node's in-memory canonical state. An overlay stranded on an old anchor forces them onto
 historical state instead, which is slow enough to starve the processor that produced the overlay
-and keep it stranded. `max_pending_blocks_depth` (CLI `--max-pending-blocks-depth`, default 3)
-bounds how far behind the tip the anchor may sit.
+and keep it stranded.
+
+`max_pending_blocks_depth` (CLI `--max-pending-blocks-depth`, default 3) sets the bound. It is
+measured from the earliest pending block, matching the depth `CanonicalBlockReconciler` already
+uses, so the reconciler never builds a snapshot that the tip checks then discard. The anchor is
+the block below the earliest pending block, so it may sit up to `max_pending_blocks_depth + 1`
+blocks behind the tip.
 
 Bounding the distance rather than requiring the anchor to equal the tip is deliberate. When
 flashblocks for the next block arrive before the processor has applied the current canonical
@@ -61,6 +66,24 @@ evaluate against a chain position the node left long ago.
 
 Recovery needs no separate mechanism. Once pending is absent, the next index-0 flashblock rooted at
 the current tip rebuilds a snapshot through the ordinary build path.
+
+### Limits
+
+These checks run when an update is applied, so they bound how stale a snapshot can be by the
+duration of one unit of work rather than by the depth of the queue. A snapshot published while the
+tip was current stays readable while the processor is inside a long apply, and the tip may advance
+underneath it during that time. Consumers that cannot tolerate this must check freshness themselves
+at the point of use, comparing their own view of the tip against `canonical_block_number` and
+`parent_hash`; the processor cannot do it for them, because it is not running at the moment they
+read.
+
+For the same reason, the height comparison does not detect that the anchor block itself was reorged
+out, since the replacement sits at the same height. That is caught when `ReorgDetector` sees the
+replaced block's transactions, or by a consumer comparing `parent_hash`.
+
+The update queue is unbounded. Skipping superseded flashblocks makes it drain far faster than the
+work it replaced, so lag tends to correct itself rather than compound, but sustained overload still
+grows memory. A hard bound on the queue is separate work.
 
 ### Canonical reconciliation
 

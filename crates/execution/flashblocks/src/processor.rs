@@ -88,9 +88,28 @@ where
         *self.lock_live_state() = Some(LivePendingState { db, state_overrides });
     }
 
+    /// Returns the node's canonical tip, or `None` when the provider cannot report it.
+    ///
+    /// Every tip check treats `None` as unknown and leaves pending state as it is, so a
+    /// provider hiccup degrades to the behaviour from before tip anchoring instead of
+    /// dropping a snapshot that may well be current. This is the only place that decides that
+    /// policy, so the checks below cannot disagree about it.
+    fn canonical_tip(&self) -> Option<BlockNumber> {
+        match self.client.best_block_number() {
+            Ok(best) => Some(best),
+            Err(e) => {
+                warn!(
+                    message = "could not read canonical tip, leaving pending state unchanged",
+                    error = %e,
+                );
+                None
+            }
+        }
+    }
+
     /// Returns `true` when the node has already canonicalized the flashblock's block.
     fn is_superseded(&self, flashblock: &Flashblock) -> bool {
-        self.client.best_block_number().is_ok_and(|best| flashblock.metadata.block_number <= best)
+        self.canonical_tip().is_some_and(|best| flashblock.metadata.block_number <= best)
     }
 
     /// Returns the canonical height to reconcile against.
@@ -99,43 +118,50 @@ where
     /// of a queued notification can be far behind the height the node has actually reached.
     /// Taking the greater of the two keeps reconciliation anchored to the real chain.
     fn effective_canonical_number(&self, notified: BlockNumber) -> BlockNumber {
-        match self.client.best_block_number() {
-            Ok(best) => notified.max(best),
-            Err(e) => {
-                warn!(
-                    message = "could not read canonical tip, reconciling against notified block",
-                    notified_block = notified,
-                    error = %e,
-                );
-                notified
-            }
-        }
+        self.canonical_tip().map_or(notified, |best| notified.max(best))
     }
 
-    /// Returns `true` when `pending_blocks` is anchored within `max_depth` of the node's
-    /// canonical tip.
+    /// Returns `true` when `pending_blocks` is anchored within `max_depth` blocks of canonical
+    /// height `best`.
     ///
     /// Consumers execute against [`PendingBlocks::canonical_block_number`], so an overlay
-    /// anchored far behind the tip makes them walk a historical trie. The `max_depth`
-    /// allowance is the same bound [`CanonicalBlockReconciler`] applies, and it absorbs the
-    /// normal delay between a canonical notification and provider visibility.
-    fn is_anchored_near_tip(&self, pending_blocks: &PendingBlocks) -> bool {
-        let best = match self.client.best_block_number() {
-            Ok(best) => best,
-            Err(e) => {
-                warn!(message = "could not read canonical tip, keeping pending state", error = %e);
-                return true;
-            }
-        };
+    /// anchored far behind the tip makes them walk historical state. The distance is measured
+    /// from the earliest pending block so that this bound is the one
+    /// [`CanonicalBlockReconciler`] already applies, which means the reconciler never builds a
+    /// snapshot that this check then throws away. The anchor itself is the block below that, so
+    /// it may sit up to `max_depth + 1` blocks behind `best`.
+    fn is_anchored_near(&self, pending_blocks: &PendingBlocks, best: BlockNumber) -> bool {
+        best.saturating_sub(pending_blocks.earliest_block_number()) <= self.max_depth
+    }
 
-        let blocks_behind_tip = best.saturating_sub(pending_blocks.earliest_block_number());
-        if blocks_behind_tip > self.max_depth {
+    /// Returns `true` when `pending_blocks` is usable as live pending state, meaning it is
+    /// anchored near the tip and still extends past it.
+    ///
+    /// This deliberately compares heights only. Detecting that the anchor itself was reorged
+    /// out means comparing its hash against canonical history, which is a statement about
+    /// whether an incoming payload's declared parent is real, so it belongs in payload
+    /// validation rather than in a staleness check on already-published state. Fork-stranded
+    /// pending is caught here when [`ReorgDetector`] sees the replaced block's transactions,
+    /// and by consumers, which must compare their parent hash against
+    /// [`PendingBlocks::parent_hash`] before reusing cached execution results.
+    fn extends_canonical_tip(&self, pending_blocks: &PendingBlocks) -> bool {
+        let Some(best) = self.canonical_tip() else { return true };
+
+        if !self.is_anchored_near(pending_blocks, best) {
             debug!(
                 message = "pending snapshot anchored too far behind canonical tip, dropping",
                 canonical_tip = best,
                 earliest_pending_block = pending_blocks.earliest_block_number(),
-                latest_pending_block = pending_blocks.latest_block_number(),
                 max_depth = self.max_depth,
+            );
+            return false;
+        }
+
+        if pending_blocks.latest_block_number() <= best {
+            debug!(
+                message = "pending snapshot no longer extends canonical tip, dropping",
+                canonical_tip = best,
+                latest_pending_block = pending_blocks.latest_block_number(),
             );
             return false;
         }
@@ -143,40 +169,29 @@ where
         true
     }
 
-    /// Returns `true` when `pending_blocks` is usable as live pending state, meaning it is
-    /// anchored near the tip and still extends past it.
-    fn extends_canonical_tip(&self, pending_blocks: &PendingBlocks) -> bool {
-        if !self.is_anchored_near_tip(pending_blocks) {
-            return false;
-        }
-
-        self.client.best_block_number().is_ok_and(|best| {
-            if pending_blocks.latest_block_number() > best {
-                return true;
-            }
-            debug!(
-                message = "pending snapshot no longer extends canonical tip, dropping",
-                canonical_tip = best,
-                latest_pending_block = pending_blocks.latest_block_number(),
-            );
-            false
-        })
-    }
-
-    /// Returns the published snapshot, dropping it first if it is anchored too far behind the
-    /// canonical tip to ever be usable again.
+    /// Returns the published snapshot, dropping it first if it is stranded too far behind the
+    /// canonical tip to become usable again.
     ///
     /// Calling this once per update is what bounds staleness. However far the queue has fallen
-    /// behind, an overlay stranded on an old anchor survives only until the next update
-    /// arrives, and canonical notifications keep arriving even when the flashblocks stream
-    /// stalls. Snapshots that merely stopped extending the tip are left for
-    /// [`Self::process_canonical_block`] to reconcile, so its catch-up path keeps reporting.
+    /// behind, a stranded overlay survives only until the next update arrives, and canonical
+    /// notifications keep arriving even when the flashblocks stream stalls. Snapshots that
+    /// merely stopped extending the tip are left for [`Self::process_canonical_block`] to
+    /// reconcile, so its catch-up path keeps reporting.
     fn take_tip_anchored_pending(&self) -> Option<Arc<PendingBlocks>> {
         let pending_blocks = self.pending_blocks.load_full()?;
-        if self.is_anchored_near_tip(&pending_blocks) {
+
+        let Some(best) = self.canonical_tip() else { return Some(pending_blocks) };
+        if self.is_anchored_near(&pending_blocks, best) {
             return Some(pending_blocks);
         }
 
+        debug!(
+            message = "pending snapshot anchored too far behind canonical tip, dropping",
+            canonical_tip = best,
+            earliest_pending_block = pending_blocks.earliest_block_number(),
+            latest_pending_block = pending_blocks.latest_block_number(),
+            max_depth = self.max_depth,
+        );
         Metrics::pending_drop_stale().increment(1);
         self.clear_live_state();
         self.pending_blocks.store(None);
