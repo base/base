@@ -51,7 +51,7 @@ pub struct FlashblockCache {
 
     /// The latest canonical block number we have observed, used to decide
     /// whether a flashblock is close enough to cache.
-    latest_canonical: Option<BlockNumber>,
+    latest_canonical: BlockNumber,
 }
 
 impl FlashblockCache {
@@ -61,7 +61,7 @@ impl FlashblockCache {
             entries: HashMap::new(),
             next_payload_sequence: 0,
             conflicted_blocks: HashSet::new(),
-            latest_canonical: Some(latest_canonical),
+            latest_canonical,
         }
     }
 
@@ -83,10 +83,7 @@ impl FlashblockCache {
     /// [`MAX_CACHE_AHEAD_BLOCKS`] of the latest known canonical block and is
     /// therefore eligible for caching.
     pub const fn is_cacheable(&self, block_number: BlockNumber) -> bool {
-        match self.latest_canonical {
-            Some(canonical) => block_number <= canonical + MAX_CACHE_AHEAD_BLOCKS + 1,
-            None => false,
-        }
+        block_number <= self.latest_canonical + MAX_CACHE_AHEAD_BLOCKS + 1
     }
 
     /// Inserts a flashblock into the cache.
@@ -185,13 +182,13 @@ impl FlashblockCache {
     /// Updates the latest canonical block number and evicts any cached entries
     /// at or below it (they can no longer be useful).
     pub fn update_canonical(&mut self, block_number: BlockNumber) {
-        self.latest_canonical = Some(block_number);
+        self.latest_canonical = block_number;
         self.entries.retain(|&bn, _| bn > block_number);
         self.conflicted_blocks.retain(|bn| *bn > block_number);
     }
 
     /// Returns the latest canonical block number observed by this cache.
-    pub const fn latest_canonical_number(&self) -> Option<BlockNumber> {
+    pub const fn latest_canonical_number(&self) -> BlockNumber {
         self.latest_canonical
     }
 
@@ -295,18 +292,6 @@ mod tests {
         assert!(cache.drain(11, B256::ZERO).is_empty());
         assert!(cache.drain(12, B256::ZERO).is_empty());
         assert_eq!(cache.drain(13, B256::ZERO).len(), 1);
-    }
-
-    #[test]
-    fn not_cacheable_without_canonical() {
-        let mut cache = FlashblockCache {
-            entries: HashMap::new(),
-            next_payload_sequence: 0,
-            conflicted_blocks: HashSet::new(),
-            latest_canonical: None,
-        };
-        assert!(!cache.is_cacheable(1));
-        assert!(!cache.insert(make_flashblock(1, 0)));
     }
 
     #[test]

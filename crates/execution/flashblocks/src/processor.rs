@@ -114,14 +114,12 @@ impl StateUpdate {
 
     fn preflight(
         &self,
-        best: Option<(u64, B256)>,
+        best: (u64, B256),
         has_pending: bool,
         pending_is_based_on_best: bool,
         recovering: bool,
     ) -> UpdatePreflight {
-        let Some((best_number, best_hash)) = best else {
-            return UpdatePreflight::Skip;
-        };
+        let (best_number, best_hash) = best;
 
         if recovering {
             if self.is_recovery_resume(best_number, best_hash) {
@@ -288,8 +286,7 @@ where
                 break best;
             }
             if provider_retries >= 20 {
-                let last_canonical =
-                    self.lock_cache().latest_canonical_number().unwrap_or_default();
+                let last_canonical = self.lock_cache().latest_canonical_number();
                 self.enter_recovery(last_canonical);
                 *recovering = true;
                 Metrics::pending_stale_events_skipped().increment(1);
@@ -417,7 +414,7 @@ where
         }
 
         let preflight = update.preflight(
-            Some((best.number(), best.hash())),
+            (best.number(), best.hash()),
             pending_blocks.is_some(),
             pending_is_based_on_best,
             *recovering,
@@ -554,17 +551,15 @@ where
 
                             let cached = {
                                 let mut cache = self.lock_cache();
-                                let cache_rolled_back = cache
-                                    .latest_canonical_number()
-                                    .is_some_and(|canonical| canonical > block.number)
+                                let cache_rolled_back = cache.latest_canonical_number()
+                                    > block.number
                                     && block.number == best.number()
                                     && block.hash() == best.hash();
                                 if cache_rolled_back {
                                     *cache = FlashblockCache::new(block.number);
                                 }
-                                let should_advance = cache
-                                    .latest_canonical_number()
-                                    .is_none_or(|canonical| block.number >= canonical);
+                                let should_advance =
+                                    block.number >= cache.latest_canonical_number();
                                 should_advance.then(|| {
                                     cache.update_canonical(block.number);
                                     let cached_block_number = block.number.saturating_add(1);
@@ -1490,7 +1485,7 @@ mod tests {
         let update = StateUpdate::Flashblock(flashblock(101, 0, best_hash));
 
         assert_eq!(
-            update.preflight(Some((best, best_hash)), true, false, false),
+            update.preflight((best, best_hash), true, false, false),
             UpdatePreflight::ResumeRecovery
         );
     }
@@ -1503,11 +1498,11 @@ mod tests {
         let resume = StateUpdate::Flashblock(flashblock(101, 0, best_hash));
 
         assert_eq!(
-            wrong_parent.preflight(Some((best, best_hash)), false, false, true),
+            wrong_parent.preflight((best, best_hash), false, false, true),
             UpdatePreflight::Skip
         );
         assert_eq!(
-            resume.preflight(Some((best, best_hash)), false, false, true),
+            resume.preflight((best, best_hash), false, false, true),
             UpdatePreflight::ResumeRecovery
         );
     }
@@ -1519,7 +1514,7 @@ mod tests {
         let future = StateUpdate::Flashblock(flashblock(102, 0, B256::repeat_byte(0xCD)));
 
         assert_eq!(
-            future.preflight(Some((best, best_hash)), false, false, true),
+            future.preflight((best, best_hash), false, false, true),
             UpdatePreflight::Process
         );
     }
@@ -1535,7 +1530,7 @@ mod tests {
         let best_hash = block.hash();
 
         assert_eq!(
-            StateUpdate::Canonical(block).preflight(Some((best, best_hash)), false, false, true),
+            StateUpdate::Canonical(block).preflight((best, best_hash), false, false, true),
             UpdatePreflight::Process
         );
     }
@@ -1551,7 +1546,7 @@ mod tests {
         let block = RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), Vec::new());
 
         assert_eq!(
-            StateUpdate::Canonical(block).preflight(Some((best, best_hash)), true, true, false),
+            StateUpdate::Canonical(block).preflight((best, best_hash), true, true, false),
             UpdatePreflight::EnterRecovery
         );
     }
@@ -1562,9 +1557,6 @@ mod tests {
         let best_hash = B256::repeat_byte(0xAB);
         let stale = StateUpdate::Flashblock(flashblock(100, 0, B256::repeat_byte(0xCD)));
 
-        assert_eq!(
-            stale.preflight(Some((best, best_hash)), true, true, false),
-            UpdatePreflight::Skip
-        );
+        assert_eq!(stale.preflight((best, best_hash), true, true, false), UpdatePreflight::Skip);
     }
 }
