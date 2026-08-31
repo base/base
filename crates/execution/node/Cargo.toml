@@ -93,11 +93,13 @@ reth-rpc.workspace = true
 reth-db-common.workspace = true
 reth-codecs = { workspace = true, features = ["test-utils"] }
 reth-prune-types.workspace = true
+reth-trie.workspace = true
 reth-trie-db.workspace = true
 reth-payload-util.workspace = true
 reth-stages-types.workspace = true
 reth-rpc-eth-types.workspace = true
 reth-ethereum-forks.workspace = true
+reth-ethereum-primitives.workspace = true
 reth-revm = { workspace = true, features = ["std"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
