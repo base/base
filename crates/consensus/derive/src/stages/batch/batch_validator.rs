@@ -225,7 +225,7 @@ where
 
         // Pull the next batch from the previous stage unless a provider error interrupted its
         // canonical ancestry lookup.
-        let (mut next_batch, inclusion_block) = match self.pending_batch.take() {
+        let (next_batch, inclusion_block) = match self.pending_batch.take() {
             Some(pending_batch) => pending_batch,
             None => {
                 let next_batch = match self.prev.next_batch(parent, self.l1_blocks.as_ref()).await {
@@ -246,12 +246,7 @@ where
 
         let next_timestamp =
             self.cfg.l2_block_timestamp(parent.block_info.number.saturating_add(1));
-        let denim_active = self.cfg.is_denim_active(next_timestamp);
-        if !denim_active {
-            next_batch.parent_hash = parent.block_info.hash;
-        }
-
-        let needs_ancestry_check = denim_active
+        let needs_ancestry_check = self.cfg.is_denim_active(next_timestamp)
             && next_batch.timestamp == next_timestamp
             && next_batch.parent_hash != parent.block_info.hash;
         if needs_ancestry_check {
@@ -541,7 +536,7 @@ mod tests {
         });
         assert!(cfg.is_holocene_active(0));
         let batch = SingleBatch {
-            parent_hash: B256::default(),
+            parent_hash: B256::repeat_byte(1),
             epoch_num: 2,
             epoch_hash: B256::default(),
             timestamp: 4,
@@ -574,8 +569,7 @@ mod tests {
 
         // Grab the next batch.
         let produced_batch = bv.next_batch(parent).await.unwrap();
-        assert_eq!(produced_batch.parent_hash, parent.block_info.hash);
-        assert_eq!(produced_batch, SingleBatch { parent_hash: parent.block_info.hash, ..batch });
+        assert_eq!(produced_batch, batch);
     }
 
     #[tokio::test]
@@ -641,6 +635,57 @@ mod tests {
         assert_eq!(trace_lock.iter().filter(|(l, _)| matches!(l, &Level::DEBUG)).count(), 2);
         assert!(trace_lock[0].1.contains("Advancing batch validator origin"));
         assert!(trace_lock[1].1.contains("Advancing batch validator epoch"));
+    }
+
+    #[tokio::test]
+    async fn test_pre_denim_validator_rejects_stale_parent_after_past_prefix() {
+        let epoch = BlockInfo {
+            number: 10,
+            hash: B256::repeat_byte(0x10),
+            timestamp: 590,
+            ..Default::default()
+        };
+        let inclusion_block = BlockInfo { number: 11, timestamp: 591, ..Default::default() };
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 600,
+                hash: B256::repeat_byte(0x60),
+                timestamp: 600,
+                ..Default::default()
+            },
+            l1_origin: epoch.id(),
+            ..Default::default()
+        };
+        let next_batch = SingleBatch {
+            parent_hash: B256::repeat_byte(0xaa),
+            epoch_num: epoch.number,
+            epoch_hash: epoch.hash,
+            timestamp: 601,
+            ..Default::default()
+        };
+        let past_batch = SingleBatch { timestamp: 600, ..next_batch.clone() };
+        let mut prev = TestNextBatchProvider::new(vec![
+            Ok(Batch::Single(next_batch)),
+            Ok(Batch::Single(past_batch)),
+        ]);
+        prev.origin = Some(inclusion_block);
+        let cfg = Arc::new(RollupConfig {
+            block_time: 1,
+            max_sequencer_drift: 700,
+            seq_window_size: 3_600,
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
+            ..Default::default()
+        });
+        assert!(!cfg.is_denim_active(601));
+        let mut bv = BatchValidator::new(cfg, prev, TestL2ChainProvider::default());
+        bv.origin = Some(inclusion_block);
+        bv.l1_blocks = vec![epoch, inclusion_block];
+
+        assert_eq!(bv.next_batch(parent).await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert!(!bv.prev.flushed);
+
+        assert_eq!(bv.next_batch(parent).await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert!(bv.prev.flushed);
     }
 
     #[tokio::test]

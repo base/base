@@ -14,8 +14,8 @@ use crate::{BatchDropReason, BatchValidity, BlockInfo, L2BlockInfo};
 /// Represents a single batch: a single encoded L2 block
 #[derive(Debug, Default, RlpDecodable, RlpEncodable, Clone, PartialEq, Eq)]
 pub struct SingleBatch {
-    /// Block hash of the previous L2 block. `B256::ZERO` if it has not been set by the Batch
-    /// Queue.
+    /// Block hash of the previous L2 block. `B256::ZERO` if a span-derived batch has not yet been
+    /// assigned its parent by the derivation pipeline.
     pub parent_hash: BlockHash,
     /// The batch epoch number. Same as the first L1 block number in the epoch.
     pub epoch_num: u64,
