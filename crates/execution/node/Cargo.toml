@@ -90,13 +90,16 @@ reth-e2e-test-utils = { workspace = true, optional = true }
 [dev-dependencies]
 rstest.workspace = true
 reth-rpc.workspace = true
+reth-db-common.workspace = true
 reth-codecs = { workspace = true, features = ["test-utils"] }
 reth-prune-types.workspace = true
+reth-trie.workspace = true
 reth-trie-db.workspace = true
 reth-payload-util.workspace = true
 reth-stages-types.workspace = true
 reth-rpc-eth-types.workspace = true
 reth-ethereum-forks.workspace = true
+reth-ethereum-primitives.workspace = true
 reth-revm = { workspace = true, features = ["std"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
@@ -105,8 +108,13 @@ reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 alloy-eips.workspace = true
 alloy-network.workspace = true
+criterion = { workspace = true, features = ["html_reports"] }
 base-common-evm.workspace = true
 base-common-network.workspace = true
+
+[[bench]]
+name = "provider"
+harness = false
 
 [features]
 default = [ "reth-codec" ]
