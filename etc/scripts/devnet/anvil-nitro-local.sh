@@ -27,6 +27,7 @@ L2_ETH_RPC="$L2_BASE_RPC_URL"
 L2_NODE_RPC="$L2_BASE_RPC_OP_RPC_URL"
 L1_CHAIN_ID_VALUE="$L1_CHAIN_ID"
 L2_CHAIN_ID_VALUE="$L2_CHAIN_ID"
+L1_SLOT_DURATION="${L1_SLOT_DURATION_OVERRIDE:-12}"
 CONTAINER_L1_RPC="${UPGRADE_SIGNAL_CONTAINER_L1_RPC:-http://l1-el:$L1_HTTP_PORT}"
 MIN_PROTOCOL_VERSION="${UPGRADE_SIGNAL_MIN_PROTOCOL_VERSION:-4294967296}"
 
@@ -143,8 +144,8 @@ preflight_l1() {
   fi
 
   seconds_per_slot=$(curl -fsS "$L1_BEACON_RPC/eth/v1/config/spec" | jq -r '.data.SECONDS_PER_SLOT')
-  if [ "$seconds_per_slot" != "4" ]; then
-    echo "ERROR: Base-Anvil reports SECONDS_PER_SLOT=$seconds_per_slot, expected 4" >&2
+  if [ "$seconds_per_slot" != "$L1_SLOT_DURATION" ]; then
+    echo "ERROR: Base-Anvil reports SECONDS_PER_SLOT=$seconds_per_slot, expected $L1_SLOT_DURATION" >&2
     exit 1
   fi
 

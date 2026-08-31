@@ -26,7 +26,7 @@ services:
       - ../../.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
       - CHAIN_ID=${L1_CHAIN_ID}
-      - SLOT_DURATION=4
+      - SLOT_DURATION=${L1_SLOT_DURATION_OVERRIDE:-12}
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
       - L1_DATA_DIR=/data
@@ -332,7 +332,7 @@ services:
       - --l1-config-file
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
-      - "4"
+      - "${L1_SLOT_DURATION_OVERRIDE:-12}"
       - --rpc.port
       - "${L2_BUILDER_CL_RPC_PORT}"
       - --rpc.enable-admin
@@ -494,7 +494,7 @@ services:
       - --l1-config-file
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
-      - "4"
+      - "${L1_SLOT_DURATION_OVERRIDE:-12}"
       - --rpc.port
       - "${L2_CLIENT_CL_RPC_PORT}"
       - --p2p.listen.tcp
@@ -597,7 +597,7 @@ services:
       - --l1-config-file
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
-      - "4"
+      - "${L1_SLOT_DURATION_OVERRIDE:-12}"
       - --rpc.port
       - "${L2_BASE_RPC_CL_RPC_PORT}"
       - --rpc.enable-admin
