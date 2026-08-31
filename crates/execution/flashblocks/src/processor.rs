@@ -28,7 +28,7 @@ use reth_provider::{BlockReaderIdExt, StateProviderBox, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::{
-    sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver},
+    sync::{Mutex, broadcast::Sender, mpsc::Receiver},
     time::sleep,
 };
 
@@ -174,7 +174,7 @@ impl StateUpdate {
 /// Processes flashblocks and canonical blocks to keep pending state updated.
 #[derive(Debug)]
 pub struct StateProcessor<Client> {
-    rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
+    rx: Arc<Mutex<Receiver<StateUpdate>>>,
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     client: Client,
     sender: Sender<Arc<PendingBlocks>>,
@@ -225,7 +225,7 @@ where
         client: Client,
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
         max_pending_blocks_depth: u64,
-        rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
+        rx: Arc<Mutex<Receiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
         let cache = client
@@ -318,14 +318,6 @@ where
             sleep(Duration::from_millis(25)).await;
         };
 
-        if matches!(update, StateUpdate::Flashblock(flashblock) if flashblock.index >= MAX_FLASHBLOCKS_PER_PAYLOAD)
-        {
-            self.enter_recovery(best.number()).await;
-            *recovering = true;
-            Metrics::pending_stale_events_skipped().increment(1);
-            return None;
-        }
-
         if self.is_quarantined_flashblock(update) {
             Metrics::pending_stale_events_skipped().increment(1);
             return None;
@@ -335,9 +327,42 @@ where
         let pending_is_based_on_best = pending_blocks
             .as_ref()
             .is_some_and(|pending| self.pending_tracks_canonical_tip(pending, &best));
+        if let StateUpdate::Flashblock(flashblock) = update
+            && flashblock.index >= MAX_FLASHBLOCKS_PER_PAYLOAD
+        {
+            let extends_accepted_payload = pending_blocks.as_ref().is_some_and(|pending| {
+                flashblock.metadata.block_number == pending.latest_block_number()
+                    && flashblock.payload_id == pending.latest_payload_id()
+            });
+            if extends_accepted_payload {
+                self.enter_recovery(best.number()).await;
+                *recovering = true;
+            }
+            Metrics::pending_stale_events_skipped().increment(1);
+            return None;
+        }
+        if let StateUpdate::Flashblock(flashblock) = update
+            && flashblock.index == 0
+            && flashblock
+                .base
+                .as_ref()
+                .is_none_or(|base| base.block_number != flashblock.metadata.block_number)
+        {
+            self.quarantine_flashblock(flashblock);
+            Metrics::pending_stale_events_skipped().increment(1);
+            return None;
+        }
         if let (StateUpdate::Flashblock(flashblock), Some(pending)) =
             (update, pending_blocks.as_ref())
         {
+            if pending_is_based_on_best
+                && flashblock.index > 0
+                && pending.payload_id_for_block(flashblock.metadata.block_number).is_none()
+            {
+                Metrics::pending_stale_events_skipped().increment(1);
+                return None;
+            }
+
             if pending_is_based_on_best
                 && let Some(payload_id) =
                     pending.payload_id_for_block(flashblock.metadata.block_number)
@@ -452,6 +477,14 @@ where
                             self.pending_blocks.swap(new_pending_blocks);
 
                             let mut cache = self.cache.lock().await;
+                            let cache_rolled_back = cache
+                                .latest_canonical_number()
+                                .is_some_and(|canonical| canonical > block.number)
+                                && block.number == best.number()
+                                && block.hash() == best.hash();
+                            if cache_rolled_back {
+                                *cache = FlashblockCache::new(block.number);
+                            }
                             let should_advance = cache
                                 .latest_canonical_number()
                                 .is_none_or(|canonical| block.number >= canonical);

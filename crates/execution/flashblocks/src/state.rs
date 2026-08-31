@@ -28,8 +28,8 @@ const BUFFER_SIZE: usize = 20;
 #[derive(Debug)]
 pub struct FlashblocksState {
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
-    queue: mpsc::UnboundedSender<StateUpdate>,
-    rx: Arc<Mutex<mpsc::UnboundedReceiver<StateUpdate>>>,
+    queue: mpsc::Sender<StateUpdate>,
+    rx: Arc<Mutex<mpsc::Receiver<StateUpdate>>>,
     flashblock_sender: Sender<Arc<PendingBlocks>>,
     max_pending_blocks_depth: u64,
 }
@@ -40,7 +40,7 @@ impl FlashblocksState {
     /// The state is created without a client. Call [`start`](Self::start) with a client
     /// to spawn the state processor after the node is launched.
     pub fn new(max_pending_blocks_depth: u64) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel::<StateUpdate>();
+        let (tx, rx) = mpsc::channel::<StateUpdate>(BUFFER_SIZE);
         let pending_blocks: Arc<ArcSwapOption<PendingBlocks>> = Arc::new(ArcSwapOption::new(None));
         let (flashblock_sender, _) = broadcast::channel(BUFFER_SIZE);
 
@@ -81,11 +81,12 @@ impl FlashblocksState {
     /// Handles a canonical block being received.
     pub fn on_canonical_block_received(&self, block: RecoveredBlock<BaseBlock>) {
         let block_number = block.number;
-        match self.queue.send(StateUpdate::Canonical(block)) {
+        match self.queue.try_send(StateUpdate::Canonical(block)) {
             Ok(_) => {
                 info!(message = "added canonical block to processing queue", block_number)
             }
             Err(e) => {
+                self.pending_blocks.swap(None);
                 error!(message = "could not add canonical block to processing queue", block_number, error = %e);
             }
         }
@@ -96,7 +97,7 @@ impl FlashblocksReceiver for FlashblocksState {
     fn on_flashblock_received(&self, flashblock: Flashblock) {
         let flashblock_index = flashblock.index;
         let block_number = flashblock.metadata.block_number;
-        match self.queue.send(StateUpdate::Flashblock(flashblock)) {
+        match self.queue.try_send(StateUpdate::Flashblock(flashblock)) {
             Ok(_) => {
                 debug!(
                     message = "added flashblock to processing queue",
@@ -104,6 +105,7 @@ impl FlashblocksReceiver for FlashblocksState {
                 );
             }
             Err(e) => {
+                self.pending_blocks.swap(None);
                 error!(message = "could not add flashblock to processing queue", block_number, flashblock_index, error = %e);
             }
         }

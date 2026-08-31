@@ -421,7 +421,7 @@ async fn test_metadata_receipts_are_optional() {
 }
 
 #[tokio::test]
-async fn test_flashblock_for_new_canonical_block_clears_older_flashblocks_if_non_zero_index() {
+async fn test_nonzero_unrepresented_block_does_not_clear_pending() {
     let test = FlashblocksBuilderTestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
@@ -435,8 +435,10 @@ async fn test_flashblock_for_new_canonical_block_clears_older_flashblocks_if_non
     test.send_flashblock(FlashblockBuilder::new(&test, 1).with_canonical_block_number(100).build())
         .await;
 
-    let current_block = test.flashblocks.get_pending_blocks().get_block(true);
-    assert!(current_block.is_none());
+    let current_block =
+        test.flashblocks.get_pending_blocks().get_block(true).expect("pending remains published");
+    assert_eq!(current_block.header().number, 1);
+    assert_eq!(current_block.transactions.len(), 1);
 }
 
 #[tokio::test]

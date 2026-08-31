@@ -27,6 +27,15 @@ pub enum ProtocolError {
         /// Parent block hash declared by the flashblock base.
         actual: B256,
     },
+
+    /// Base and metadata disagree on the block number.
+    #[error("flashblock block number mismatch: base {base}, metadata {metadata}")]
+    BlockNumberMismatch {
+        /// Block number declared by the base payload.
+        base: u64,
+        /// Block number declared by metadata.
+        metadata: u64,
+    },
 }
 
 /// Errors related to state provider and infrastructure operations.
@@ -201,6 +210,10 @@ mod tests {
             actual: B256::repeat_byte(0x22),
         },
         "invalid pending parent hash: expected 0x1111111111111111111111111111111111111111111111111111111111111111, got 0x2222222222222222222222222222222222222222222222222222222222222222"
+    )]
+    #[case::block_number_mismatch(
+        ProtocolError::BlockNumberMismatch { base: 11, metadata: 12 },
+        "flashblock block number mismatch: base 11, metadata 12"
     )]
     fn test_protocol_error_display(#[case] error: ProtocolError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);

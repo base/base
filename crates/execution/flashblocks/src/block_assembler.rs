@@ -73,6 +73,13 @@ impl BlockAssembler {
     pub fn assemble(flashblocks: &[Flashblock]) -> Result<AssembledBlock> {
         let first = flashblocks.first().ok_or(ProtocolError::EmptyFlashblocks)?;
         let base = first.base.clone().ok_or(ProtocolError::MissingBase)?;
+        if base.block_number != first.metadata.block_number {
+            return Err(ProtocolError::BlockNumberMismatch {
+                base: base.block_number,
+                metadata: first.metadata.block_number,
+            }
+            .into());
+        }
         let latest_flashblock = flashblocks.last().ok_or(ProtocolError::EmptyFlashblocks)?;
 
         let transactions: Vec<Bytes> = flashblocks
@@ -299,6 +306,21 @@ mod tests {
         assert!(matches!(
             result,
             Err(crate::StateProcessorError::Protocol(ProtocolError::MissingBase))
+        ));
+    }
+
+    #[test]
+    fn test_assemble_rejects_mismatched_block_numbers() {
+        let mut flashblock = create_test_flashblock(0, true);
+        flashblock.metadata = Metadata::new(101);
+
+        let result = BlockAssembler::assemble(&[flashblock]);
+        assert!(matches!(
+            result,
+            Err(crate::StateProcessorError::Protocol(ProtocolError::BlockNumberMismatch {
+                base: 100,
+                metadata: 101
+            }))
         ));
     }
 }

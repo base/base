@@ -1,6 +1,6 @@
 //! Cache for flashblocks that arrive before their canonical block.
 
-use std::collections::HashMap;
+use std::{cmp::Reverse, collections::HashMap};
 
 use alloy_primitives::{B256, BlockNumber};
 use alloy_rpc_types_engine::PayloadId;
@@ -122,7 +122,9 @@ impl FlashblockCache {
                         (*base_sequence, *block_number, *payload_id)
                     })
                 })
-                .min_by_key(|(base_sequence, _, _)| *base_sequence);
+                .max_by_key(|(base_sequence, block_number, _)| {
+                    (*block_number, Reverse(*base_sequence))
+                });
             let Some((_, oldest_block, oldest_payload)) = oldest else {
                 break;
             };
@@ -407,5 +409,22 @@ mod tests {
             MAX_TOTAL_CACHED_FLASHBLOCKS * MAX_DECOMPRESSED_FLASHBLOCK_BYTES,
             MAX_CACHE_BYTES
         );
+    }
+
+    #[test]
+    fn global_budget_evicts_farthest_block_first() {
+        let mut cache = FlashblockCache::new(10);
+        for payload in 1u64..=8 {
+            for index in 0..=1 {
+                let mut flashblock = make_flashblock(11, index);
+                flashblock.payload_id = PayloadId::new(payload.to_be_bytes());
+                assert!(cache.insert(flashblock));
+            }
+        }
+        assert_eq!(cache.total_flashblocks(), MAX_TOTAL_CACHED_FLASHBLOCKS);
+
+        assert!(cache.insert(make_flashblock(16, 0)));
+        assert!(cache.drain(16, B256::ZERO).is_empty());
+        assert_eq!(cache.total_flashblocks(), MAX_TOTAL_CACHED_FLASHBLOCKS);
     }
 }
