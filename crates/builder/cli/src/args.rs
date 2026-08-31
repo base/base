@@ -185,8 +185,10 @@ pub struct Args {
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,
 
-    /// Accept experimental validity-bearing transactions from forwarding nodes.
+    /// Enable experimental validity-bearing transactions on this builder.
     ///
+    /// Registers `base_sendRawTransactionValidity` for direct ingress and accepts
+    /// validity metadata on `base_insertValidatedTransaction` from forwarding nodes.
     /// Predicates are preserved and enforced during block construction.
     #[arg(long = "builder.enable-experimental-validity-transactions", default_value = "false")]
     pub enable_experimental_validity_transactions: bool,

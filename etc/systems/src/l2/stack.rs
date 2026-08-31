@@ -79,7 +79,8 @@ pub struct L2StackConfig {
     /// Optional transaction forwarding configuration for the client node.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
-    /// Whether both L2 nodes enable experimental validity transaction transport.
+    /// Whether both L2 nodes enable experimental validity transaction transport,
+    /// including `base_sendRawTransactionValidity` on the builder.
     pub enable_experimental_validity_transactions: bool,
     /// Whether the active builder cuts over from flashblocks to basic at Denim.
     pub payload_builder_cutover: bool,

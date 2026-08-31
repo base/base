@@ -16,7 +16,8 @@ use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
-use base_node_runner::{BaseNode, BaseNodeExtension, NodeHooks};
+use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use base_txpool_rpc::SendRawTransactionValidityExtension;
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -56,7 +57,8 @@ pub struct InProcessBuilderConfig {
     pub flashblocks_port: Option<u16>,
     /// Optional fixed Prometheus metrics port (uses random if None).
     pub metrics_port: Option<u16>,
-    /// Whether to accept experimental validity-bearing transactions.
+    /// Whether to accept experimental validity-bearing transactions and expose
+    /// `base_sendRawTransactionValidity`.
     pub enable_experimental_validity_transactions: bool,
     /// Whether to run both payload builders and cut over to basic at Denim.
     pub payload_builder_cutover: bool,
@@ -184,15 +186,22 @@ impl InProcessBuilder {
         let p2p_port = node_config.network.port;
 
         let accept_validity_transactions = config.enable_experimental_validity_transactions;
+        let extra_extensions = config.extra_extensions;
+        let mut hooks = NodeHooks::new();
+        if accept_validity_transactions {
+            hooks = Box::new(SendRawTransactionValidityExtension::from_config(
+                DEFAULT_MAX_VALIDITY_PREDICATES,
+            ))
+            .apply(hooks);
+        }
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
             .with_types::<BaseNode>();
 
-        let launched = config
-            .extra_extensions
+        let launched = extra_extensions
             .into_iter()
-            .fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks))
+            .fold(hooks, |hooks, ext| ext.apply(hooks))
             .apply_to(
                 node_builder
                     .with_components(

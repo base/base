@@ -422,10 +422,11 @@ that:
    otherwise. Only with this flag set is the `base_sendRawTransactionValidity`
    endpoint registered.
 2. The builder is started with
-   `--builder.enable-experimental-validity-transactions`. If it is not, forwarded
-   transactions that carry predicates are **rejected** ("transaction extensions
-   are disabled"), so a misconfiguration fails loudly rather than silently
-   dropping predicates.
+   `--builder.enable-experimental-validity-transactions`. That flag both
+   registers `base_sendRawTransactionValidity` on the builder and accepts
+   forwarded validity metadata. If it is not set, forwarded transactions that
+   carry predicates are **rejected** ("transaction extensions are disabled"), so
+   a misconfiguration fails loudly rather than silently dropping predicates.
 3. The builder runs the flashblocks build path (the only builder path wired in
    the shipped binaries), which is where predicates are evaluated against state.
 
