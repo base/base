@@ -12,6 +12,7 @@ pub use rpc::{
     AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
     SendRawTransactionValidityApiServer, SendRawTransactionValidityRequest, Status,
     TransactionStatusApiImpl, TransactionStatusApiServer, TransactionStatusResponse,
+    VALIDITY_TX_PRE_COBALT_RPC_ERROR,
 };
 
 mod extension;

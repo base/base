@@ -61,6 +61,7 @@ impl BaseNodeExtension for SendRawTransactionValidityExtension {
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
             let api = SendRawTransactionValidityApiImpl::with_max_validity_predicates(
                 ctx.pool().clone(),
+                ctx.provider().clone(),
                 max_validity_predicates,
             );
             ctx.modules.merge_configured(api.into_rpc())?;

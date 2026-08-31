@@ -1,6 +1,8 @@
 //! RPC implementation for transaction submission, status queries, and pool management.
 
+use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, Bytes, TxHash};
+use base_common_chains::Upgrades;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, ValidityPredicate,
 };
@@ -14,10 +16,20 @@ use jsonrpsee::{
     rpc_params,
     types::{ErrorCode, ErrorObjectOwned},
 };
+use reth_chainspec::ChainSpecProvider;
 use reth_rpc_eth_types::error::RpcPoolError;
+use reth_storage_api::BlockReaderIdExt;
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+
+/// Rejection message returned when `base_sendRawTransactionValidity` is called before the Cobalt
+/// hard fork is active at the latest block.
+///
+/// Validity transactions carry EIP-8130 semantics, which are gated behind Cobalt, so the RPC method
+/// is unavailable until the fork activates.
+pub const VALIDITY_TX_PRE_COBALT_RPC_ERROR: &str = "base_sendRawTransactionValidity is gated behind \
+     the Cobalt hard fork; validity transactions are not accepted before Cobalt is active";
 
 /// The status of a transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -87,20 +99,52 @@ pub struct TransactionStatusApiImpl<Pool: TransactionPool> {
 
 /// Local mempool-ingress implementation for validity-bearing transactions.
 #[derive(Debug, Clone)]
-pub struct SendRawTransactionValidityApiImpl<Pool> {
+pub struct SendRawTransactionValidityApiImpl<Pool, Provider> {
     pool: Pool,
+    provider: Provider,
     max_validity_predicates: usize,
 }
 
-impl<Pool> SendRawTransactionValidityApiImpl<Pool> {
+impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
     /// Creates a validity transaction ingress backed by the given pool and default predicate limit.
-    pub const fn new(pool: Pool) -> Self {
-        Self { pool, max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES }
+    ///
+    /// The provider fork-gates the RPC method on the Cobalt hard fork.
+    pub const fn new(pool: Pool, provider: Provider) -> Self {
+        Self { pool, provider, max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES }
     }
 
     /// Creates a validity transaction ingress with a predicate limit.
-    pub const fn with_max_validity_predicates(pool: Pool, max_validity_predicates: usize) -> Self {
-        Self { pool, max_validity_predicates }
+    ///
+    /// The provider fork-gates the RPC method on the Cobalt hard fork.
+    pub const fn with_max_validity_predicates(
+        pool: Pool,
+        provider: Provider,
+        max_validity_predicates: usize,
+    ) -> Self {
+        Self { pool, provider, max_validity_predicates }
+    }
+}
+
+impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider>
+where
+    Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
+{
+    /// Returns whether the Cobalt hard fork is active at the latest block's timestamp.
+    ///
+    /// Returns `false` when no latest header is available (e.g. before genesis is committed), which
+    /// keeps the fork-gated RPC method closed until a canonical head exists.
+    fn is_cobalt_active_at_latest(&self) -> RpcResult<bool> {
+        let Some(header) = self.provider.latest_header().map_err(|error| {
+            ErrorObjectOwned::owned(
+                ErrorCode::InternalError.code(),
+                format!("failed to resolve latest header: {error}"),
+                None::<()>,
+            )
+        })?
+        else {
+            return Ok(false);
+        };
+        Ok(self.provider.chain_spec().is_cobalt_active_at_timestamp(header.timestamp()))
     }
 }
 
@@ -155,14 +199,24 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
 }
 
 #[async_trait]
-impl<Pool> SendRawTransactionValidityApiServer for SendRawTransactionValidityApiImpl<Pool>
+impl<Pool, Provider> SendRawTransactionValidityApiServer
+    for SendRawTransactionValidityApiImpl<Pool, Provider>
 where
     Pool: TransactionPool<Transaction = BasePooledTransaction> + 'static,
+    Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades> + 'static,
 {
     async fn send_raw_transaction_validity(
         &self,
         request: SendRawTransactionValidityRequest,
     ) -> RpcResult<TxHash> {
+        if !self.is_cobalt_active_at_latest()? {
+            return Err(ErrorObjectOwned::owned(
+                ErrorCode::InvalidParams.code(),
+                VALIDITY_TX_PRE_COBALT_RPC_ERROR,
+                None::<()>,
+            ));
+        }
+
         ValidityPredicate::validate_batch(&request.validity, self.max_validity_predicates)
             .map_err(|error| {
                 ErrorObjectOwned::owned(
@@ -236,16 +290,21 @@ impl<Pool: TransactionPool + 'static> AdminTxPoolApiServer for AdminTxPoolApiImp
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
+    use base_common_consensus::BasePrimitives;
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_observability_events::{
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
         TransactionEventType,
     };
     use httpmock::prelude::*;
+    use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin,
         noop::NoopTransactionPool,
@@ -254,6 +313,26 @@ mod tests {
     use serde_json::{self, json};
 
     use super::*;
+
+    /// Provider whose latest header sits after Cobalt activation, so the fork gate is open.
+    fn cobalt_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
+        MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::new(
+                BaseChainSpecBuilder::base_mainnet().cobalt_activated().build(),
+            ))
+            .with_genesis_block()
+    }
+
+    /// Provider whose latest header predates Cobalt activation, so the fork gate is closed.
+    fn pre_cobalt_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
+        MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::new(BaseChainSpec::mainnet()))
+            .with_genesis_block()
+    }
+
+    fn validity_pool() -> NoopTransactionPool<BasePooledTransaction> {
+        NoopTransactionPool::<BasePooledTransaction>::new()
+    }
 
     fn validity_request(tx: Bytes) -> SendRawTransactionValidityRequest {
         SendRawTransactionValidityRequest {
@@ -383,9 +462,7 @@ mod tests {
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
-        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
-            BasePooledTransaction,
-        >::new());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
         let request =
             SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
 
@@ -413,19 +490,32 @@ mod tests {
 
     #[test]
     fn send_raw_transaction_validity_method_is_registered() {
-        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
-            BasePooledTransaction,
-        >::new());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
         let module = SendRawTransactionValidityApiServer::into_rpc(rpc);
 
         assert!(module.method_names().any(|name| name == "base_sendRawTransactionValidity"));
     }
 
     #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_before_cobalt() {
+        let signer = PrivateKeySigner::random();
+        let raw = signed_eip1559(&signer, 0, 1);
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_cobalt_provider());
+        let request =
+            SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
+
+        let error = rpc
+            .send_raw_transaction_validity(request)
+            .await
+            .expect_err("validity transactions should be rejected before Cobalt activation");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert_eq!(error.message(), VALIDITY_TX_PRE_COBALT_RPC_ERROR);
+    }
+
+    #[tokio::test]
     async fn send_raw_transaction_validity_rejects_malformed_transaction() {
-        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
-            BasePooledTransaction,
-        >::new());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
 
         let error = rpc
             .send_raw_transaction_validity(validity_request(Bytes::from_static(&[0xff])))
@@ -439,7 +529,8 @@ mod tests {
     #[tokio::test]
     async fn send_raw_transaction_validity_enforces_configured_predicate_limit() {
         let rpc = SendRawTransactionValidityApiImpl::with_max_validity_predicates(
-            NoopTransactionPool::<BasePooledTransaction>::new(),
+            validity_pool(),
+            cobalt_provider(),
             2,
         );
         let mut request = validity_request(Bytes::from_static(&[0x02]));
@@ -457,9 +548,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_empty_predicates() {
-        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
-            BasePooledTransaction,
-        >::new());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
         let mut request = validity_request(Bytes::from_static(&[0x02]));
         request.validity.clear();
 
@@ -474,9 +563,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_storage_value_outside_mask() {
-        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
-            BasePooledTransaction,
-        >::new());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
         let mut request = validity_request(Bytes::from_static(&[0x02]));
         request.validity = vec![ValidityPredicate::Storage {
             address: Address::repeat_byte(0xab),
@@ -497,9 +584,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_unsatisfiable_flashblock_index() {
-        let rpc = SendRawTransactionValidityApiImpl::new(NoopTransactionPool::<
-            BasePooledTransaction,
-        >::new());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
         let mut request = validity_request(Bytes::from_static(&[0x02]));
         // A flashblock-index predicate that only holds at index 0, which pooled
         // transactions never reach, would park forever if admitted.
