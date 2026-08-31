@@ -259,7 +259,7 @@ where
             let first = parent.block_info.number.saturating_sub(same_second_blocks);
             for number in (first..parent.block_info.number).rev() {
                 if self.cfg.l2_block_timestamp(number.saturating_add(1)) != next_batch.timestamp {
-                    continue;
+                    break;
                 }
                 let ancestor = match self.provider.l2_block_info_by_number(number).await {
                     Ok(ancestor) => ancestor,
