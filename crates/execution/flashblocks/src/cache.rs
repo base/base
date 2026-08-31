@@ -1,6 +1,9 @@
 //! Cache for flashblocks that arrive before their canonical block.
 
-use std::{cmp::Reverse, collections::HashMap};
+use std::{
+    cmp::Reverse,
+    collections::{HashMap, HashSet},
+};
 
 use alloy_primitives::{B256, BlockNumber};
 use alloy_rpc_types_engine::PayloadId;
@@ -46,6 +49,9 @@ pub struct FlashblockCache {
     /// Monotonic sequence assigned to newly observed payload bases.
     next_payload_sequence: u64,
 
+    /// Block numbers rejected after conflicting fragments were observed.
+    conflicted_blocks: HashSet<BlockNumber>,
+
     /// The latest canonical block number we have observed, used to decide
     /// whether a flashblock is close enough to cache.
     latest_canonical: Option<BlockNumber>,
@@ -57,6 +63,7 @@ impl FlashblockCache {
         Self {
             entries: HashMap::new(),
             next_payload_sequence: 0,
+            conflicted_blocks: HashSet::new(),
             latest_canonical: Some(latest_canonical),
         }
     }
@@ -94,19 +101,23 @@ impl FlashblockCache {
         if !self.is_cacheable(block_number) || flashblock.index >= MAX_FLASHBLOCKS_PER_PAYLOAD {
             return false;
         }
-        let by_payload = self.entries.entry(block_number).or_default();
-        if let Some(existing) = by_payload
-            .get(&flashblock.payload_id)
-            .and_then(|(_, by_index)| by_index.get(&flashblock.index))
-        {
-            if existing == &flashblock {
-                return true;
-            }
-            by_payload.remove(&flashblock.payload_id);
-            if flashblock.index != 0 {
-                return false;
-            }
+        if self.conflicted_blocks.contains(&block_number) {
+            return false;
         }
+        let existing = self
+            .entries
+            .get(&block_number)
+            .and_then(|by_payload| by_payload.get(&flashblock.payload_id))
+            .and_then(|(_, by_index)| by_index.get(&flashblock.index));
+        if existing == Some(&flashblock) {
+            return true;
+        }
+        if existing.is_some() {
+            self.entries.remove(&block_number);
+            self.conflicted_blocks.insert(block_number);
+            return false;
+        }
+        let by_payload = self.entries.entry(block_number).or_default();
         if !by_payload.contains_key(&flashblock.payload_id)
             && by_payload.len() >= MAX_PAYLOADS_PER_BLOCK
             && let Some(oldest) = by_payload
@@ -188,6 +199,7 @@ impl FlashblockCache {
     pub fn update_canonical(&mut self, block_number: BlockNumber) {
         self.latest_canonical = Some(block_number);
         self.entries.retain(|&bn, _| bn > block_number);
+        self.conflicted_blocks.retain(|bn| *bn > block_number);
     }
 
     /// Returns the latest canonical block number observed by this cache.
@@ -302,6 +314,7 @@ mod tests {
         let mut cache = FlashblockCache {
             entries: HashMap::new(),
             next_payload_sequence: 0,
+            conflicted_blocks: HashSet::new(),
             latest_canonical: None,
         };
         assert!(!cache.is_cacheable(1));
@@ -309,25 +322,19 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_index_keeps_latest() {
+    fn exact_duplicate_is_ignored() {
         let mut cache = FlashblockCache::new(10);
-
-        let mut fb_old = make_flashblock(11, 0);
-        fb_old.diff.state_root = alloy_primitives::B256::ZERO;
-        let mut fb_new = make_flashblock(11, 0);
-        fb_new.diff.state_root = alloy_primitives::B256::with_last_byte(1);
-
-        assert!(cache.insert(fb_old));
-        assert!(cache.insert(fb_new.clone()));
+        let flashblock = make_flashblock(11, 0);
+        assert!(cache.insert(flashblock.clone()));
+        assert!(cache.insert(flashblock.clone()));
         assert_eq!(cache.total_flashblocks(), 1);
 
         let drained = cache.drain(11, B256::ZERO);
-        assert_eq!(drained.len(), 1);
-        assert_eq!(drained[0].diff.state_root, fb_new.diff.state_root);
+        assert_eq!(drained, vec![flashblock]);
     }
 
     #[test]
-    fn conflicting_base_retry_discards_cached_suffix() {
+    fn conflicting_base_tombstones_block_cache() {
         let mut cache = FlashblockCache::new(10);
         let base = make_flashblock(11, 0);
         assert!(cache.insert(base.clone()));
@@ -335,10 +342,13 @@ mod tests {
 
         let mut replacement = base;
         replacement.diff.state_root = B256::repeat_byte(0x11);
-        assert!(cache.insert(replacement.clone()));
+        assert!(!cache.insert(replacement));
+        assert!(!cache.insert(make_flashblock(11, 2)));
+        let mut new_payload = make_flashblock(11, 0);
+        new_payload.payload_id = PayloadId::new([9; 8]);
+        assert!(!cache.insert(new_payload));
 
-        let drained = cache.drain(11, B256::ZERO);
-        assert_eq!(drained, vec![replacement]);
+        assert!(cache.drain(11, B256::ZERO).is_empty());
     }
 
     #[test]
