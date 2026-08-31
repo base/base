@@ -17,8 +17,8 @@ base-flashblocks.workspace = true
 base-node-runner.workspace = true
 
 # reth
+reth-provider.workspace = true
 reth-chain-state.workspace = true
-reth-provider = { workspace = true, optional = true }
 reth-chainspec = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true, optional = true }
@@ -114,7 +114,6 @@ test-utils = [
 	"dep:eyre",
 	"dep:reth-chainspec",
 	"dep:reth-primitives-traits",
-	"dep:reth-provider",
 	"dep:reth-transaction-pool",
 	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
