@@ -156,8 +156,6 @@ pub enum ReconciliationStrategy {
     Rebase,
     /// Canonical `N` does not require changing the pending snapshot.
     Keep,
-    /// No pending state exists (startup or after clear).
-    NoPendingState,
 }
 
 /// Determines reconciliation strategy for canonical block updates.
@@ -171,22 +169,17 @@ impl CanonicalBlockReconciler {
     /// the snapshot. A reorg is honored only when canonical is the pending anchor or overlaps the
     /// pending interval. Untracked older canonicals are ignored.
     pub const fn reconcile(
-        pending_earliest_block: Option<u64>,
-        pending_latest_block: Option<u64>,
+        pending_earliest_block: u64,
+        pending_latest_block: u64,
         canonical_block_number: u64,
         reorg_detected: bool,
     ) -> ReconciliationStrategy {
-        let (earliest, latest) = match (pending_earliest_block, pending_latest_block) {
-            (Some(e), Some(l)) => (e, l),
-            _ => return ReconciliationStrategy::NoPendingState,
-        };
-
-        let anchor = earliest.saturating_sub(1);
+        let anchor = pending_earliest_block.saturating_sub(1);
         if canonical_block_number < anchor {
             return ReconciliationStrategy::Keep;
         }
 
-        if canonical_block_number > latest {
+        if canonical_block_number > pending_latest_block {
             return ReconciliationStrategy::CatchUp;
         }
 
@@ -194,7 +187,7 @@ impl CanonicalBlockReconciler {
             return ReconciliationStrategy::HandleReorg;
         }
 
-        if canonical_block_number == latest {
+        if canonical_block_number == pending_latest_block {
             return ReconciliationStrategy::CatchUp;
         }
 
@@ -320,25 +313,22 @@ mod tests {
     // ==================== CanonicalBlockReconciler Tests ====================
 
     #[rstest]
-    #[case(None, None, 100, false, ReconciliationStrategy::NoPendingState)]
-    #[case(Some(100), None, 100, false, ReconciliationStrategy::NoPendingState)]
-    #[case(None, Some(100), 100, false, ReconciliationStrategy::NoPendingState)]
-    #[case(Some(100), Some(105), 105, false, ReconciliationStrategy::CatchUp)]
-    #[case(Some(100), Some(105), 110, false, ReconciliationStrategy::CatchUp)]
-    #[case(Some(100), Some(100), 100, false, ReconciliationStrategy::CatchUp)]
-    #[case(Some(100), Some(105), 105, true, ReconciliationStrategy::HandleReorg)]
-    #[case(Some(100), Some(101), 100, false, ReconciliationStrategy::Rebase)]
-    #[case(Some(100), Some(110), 105, false, ReconciliationStrategy::Rebase)]
-    #[case(Some(100), Some(105), 50, false, ReconciliationStrategy::Keep)]
-    #[case(Some(100), Some(105), 50, true, ReconciliationStrategy::Keep)]
-    #[case(Some(100), Some(105), 99, false, ReconciliationStrategy::Keep)]
-    #[case(Some(100), Some(100), 99, false, ReconciliationStrategy::Keep)]
-    #[case(Some(100), Some(105), 99, true, ReconciliationStrategy::HandleReorg)]
-    #[case(Some(100), Some(110), 102, true, ReconciliationStrategy::HandleReorg)]
-    #[case(Some(100), Some(101), 100, true, ReconciliationStrategy::HandleReorg)]
+    #[case(100, 105, 105, false, ReconciliationStrategy::CatchUp)]
+    #[case(100, 105, 110, false, ReconciliationStrategy::CatchUp)]
+    #[case(100, 100, 100, false, ReconciliationStrategy::CatchUp)]
+    #[case(100, 105, 105, true, ReconciliationStrategy::HandleReorg)]
+    #[case(100, 101, 100, false, ReconciliationStrategy::Rebase)]
+    #[case(100, 110, 105, false, ReconciliationStrategy::Rebase)]
+    #[case(100, 105, 50, false, ReconciliationStrategy::Keep)]
+    #[case(100, 105, 50, true, ReconciliationStrategy::Keep)]
+    #[case(100, 105, 99, false, ReconciliationStrategy::Keep)]
+    #[case(100, 100, 99, false, ReconciliationStrategy::Keep)]
+    #[case(100, 105, 99, true, ReconciliationStrategy::HandleReorg)]
+    #[case(100, 110, 102, true, ReconciliationStrategy::HandleReorg)]
+    #[case(100, 101, 100, true, ReconciliationStrategy::HandleReorg)]
     fn test_reconciler(
-        #[case] earliest: Option<u64>,
-        #[case] latest: Option<u64>,
+        #[case] earliest: u64,
+        #[case] latest: u64,
         #[case] canonical: u64,
         #[case] reorg: bool,
         #[case] expected: ReconciliationStrategy,

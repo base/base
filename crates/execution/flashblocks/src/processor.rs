@@ -180,7 +180,6 @@ pub struct StateProcessor<Client> {
     live_state: StdMutex<Option<LivePendingState>>,
     max_pending_blocks_depth: u64,
     recovery_epoch: Arc<StdMutex<u64>>,
-    deferred_canonical: StdMutex<Option<(RecoveredBlock<BaseBlock>, u64)>>,
 }
 
 impl<Client> StateProcessor<Client>
@@ -245,7 +244,6 @@ where
             live_state: StdMutex::new(None),
             max_pending_blocks_depth,
             recovery_epoch,
-            deferred_canonical: StdMutex::new(None),
         }
     }
 
@@ -272,6 +270,7 @@ where
         update: &StateUpdate,
         enqueued_generation: u64,
         observed_generation: &mut u64,
+        deferred_canonical: &mut Option<(RecoveredBlock<BaseBlock>, u64)>,
         recovering: &mut bool,
     ) -> Option<(SealedHeader, bool, u64)> {
         let mut provider_retries = 0;
@@ -408,11 +407,7 @@ where
                 if let StateUpdate::Canonical(block) = update
                     && block.number > best.number()
                 {
-                    *self
-                        .deferred_canonical
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                        Some((block.clone(), enqueued_generation));
+                    *deferred_canonical = Some((block.clone(), enqueued_generation));
                 }
                 self.enter_recovery(best.number());
                 *recovering = true;
@@ -427,6 +422,7 @@ where
         let mut recovering = false;
         let mut observed_generation =
             *self.recovery_epoch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut deferred_canonical: Option<(RecoveredBlock<BaseBlock>, u64)> = None;
         let mut deferred_interval = interval(Duration::from_millis(100));
         deferred_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
@@ -438,11 +434,7 @@ where
                     update
                 }
                 _ = deferred_interval.tick() => {
-                    let deferred = self
-                        .deferred_canonical
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .clone();
+                    let deferred = deferred_canonical.clone();
                     let Some((deferred, generation)) = deferred else {
                         continue;
                     };
@@ -452,9 +444,7 @@ where
                     {
                         continue;
                     }
-                    self.deferred_canonical
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    deferred_canonical
                         .take()
                         .map(|(block, _)| (StateUpdate::Canonical(block), generation))
                         .expect("deferred canonical remains available")
@@ -465,6 +455,7 @@ where
                     &update,
                     enqueued_generation,
                     &mut observed_generation,
+                    &mut deferred_canonical,
                     &mut recovering,
                 )
                 .await
@@ -566,6 +557,7 @@ where
                                                 &cached_update,
                                                 cached_enqueued_generation,
                                                 &mut observed_generation,
+                                                &mut deferred_canonical,
                                                 &mut recovering,
                                             )
                                             .await
@@ -800,12 +792,8 @@ where
             false
         };
 
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(earliest),
-            Some(latest),
-            block.number,
-            reorg_detected,
-        );
+        let strategy =
+            CanonicalBlockReconciler::reconcile(earliest, latest, block.number, reorg_detected);
 
         let requires_recovery = matches!(strategy, ReconciliationStrategy::HandleReorg);
         let pending_blocks = match strategy {
@@ -865,11 +853,6 @@ where
                     strategy = ?strategy,
                 );
                 Ok(prev_pending_blocks)
-            }
-            ReconciliationStrategy::NoPendingState => {
-                debug!(message = "no pending state to update with canonical block, skipping");
-                self.clear_live_state();
-                Ok(None)
             }
         }?;
 
