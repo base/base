@@ -19,7 +19,6 @@ jobs:
     uses: ./.depot/workflows/ci-core.yml
     with:
       allow_registry_login: true
-      base_ref: ""
       build_command: just build::ci
       clippy_command: just check::clippy-ci
       run_system_tests: true
