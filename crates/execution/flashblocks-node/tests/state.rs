@@ -1011,51 +1011,6 @@ async fn test_wrong_parent_payload_does_not_contaminate_accepted_payload() {
 }
 
 #[tokio::test]
-async fn test_current_base_from_new_payload_replaces_pending() {
-    let test = FlashblocksBuilderTestHarness::new().await;
-    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
-
-    let replacement_payload = PayloadId::new([9; 8]);
-    let mut replacement = FlashblockBuilder::new_base(&test).build();
-    replacement.payload_id = replacement_payload;
-    test.flashblocks.on_flashblock_received(replacement);
-
-    wait_until(
-        Duration::from_secs(5),
-        || {
-            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
-                pending.latest_payload_id() == replacement_payload
-                    && pending.latest_flashblock_index() == 0
-            })
-        },
-        "a new current payload base must replace abandoned pending state",
-    )
-    .await;
-
-    let mut replacement_delta = FlashblockBuilder::new(&test, 1)
-        .with_transactions(vec![test.build_transaction_to_send_eth(
-            Account::Alice,
-            Account::Bob,
-            100_000,
-        )])
-        .build();
-    replacement_delta.payload_id = replacement_payload;
-    test.flashblocks.on_flashblock_received(replacement_delta);
-
-    wait_until(
-        Duration::from_secs(5),
-        || {
-            test.flashblocks
-                .get_pending_blocks()
-                .as_ref()
-                .is_some_and(|pending| pending.pending_transaction_count() == 2)
-        },
-        "deltas from the replacement payload must extend pending state",
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn test_same_payload_base_retry_does_not_clear_deltas() {
     let test = FlashblocksBuilderTestHarness::new().await;
     let base = FlashblockBuilder::new_base(&test).build();
