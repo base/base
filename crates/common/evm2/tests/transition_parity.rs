@@ -143,7 +143,7 @@ fn base_time_predeploy_matches_revm() {
 
     // revm side: seed the equivalent proxy, then run the reference.
     let mut db = RevmDb::default();
-    let revm_proxy = RevmBytecode::new_raw(proxy_code.clone());
+    let revm_proxy = RevmBytecode::new_raw(proxy_code);
     db.insert_account_info(
         Predeploys::BASE_TIME,
         RevmAccountInfo {
