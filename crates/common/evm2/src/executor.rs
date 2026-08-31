@@ -11,7 +11,9 @@ use evm2::{
     registry::{HandlerError, HandlerResult},
 };
 
-use crate::{BaseEvmTypes, transaction::BaseTxEnvelope};
+use crate::{
+    BaseEvmTypes, BaseForkActivations, BaseTime, Canyon, Cobalt, transaction::BaseTxEnvelope,
+};
 
 /// Error returned when a block's cumulative gas used would overflow `u64`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,11 +108,11 @@ pub struct BlockExecutionResult {
 /// the block's state delta.
 ///
 /// The flow is [`apply_pre_execution`](Self::apply_pre_execution) (block-boundary system calls),
-/// then [`execute_transaction`](Self::execute_transaction) per transaction (running it through
-/// the registry, building its receipt with running cumulative gas, and committing its state into
-/// a [`BlockStateAccumulator`]), then [`finish`](Self::finish). The Canyon create2-deployer and
-/// Cobalt system-account transition hooks, the EIP-8130 path, and the Jovian DA-footprint checks
-/// are layered on in follow-up work.
+/// then [`apply_transition_hooks`](Self::apply_transition_hooks) (the Canyon/Denim/Cobalt
+/// irregular state transitions), then [`execute_transaction`](Self::execute_transaction) per
+/// transaction (running it through the registry, building its receipt with running cumulative gas,
+/// and committing its state into a [`BlockStateAccumulator`]), then [`finish`](Self::finish). The
+/// EIP-8130 path and the Jovian DA-footprint checks are layered on in follow-up work.
 #[derive(Debug)]
 pub struct BaseBlockExecutor<'a> {
     evm: Evm<'a, BaseEvmTypes>,
@@ -173,6 +175,32 @@ impl<'a> BaseBlockExecutor<'a> {
                 let _ = executed.commit_to(&mut self.block_state);
             }
         }
+        Ok(())
+    }
+
+    /// Applies the Base transition-block irregular state changes, in the reference order: the
+    /// Canyon create2-deployer force-deploy, the Denim `BaseTime` predeploy install, then the
+    /// Cobalt EIP-8130 system-account stub. Each is fork-gated on `chain_spec` at this block's
+    /// timestamp and commits its state into the block state. Must run after
+    /// [`apply_pre_execution`](Self::apply_pre_execution) and before any transactions.
+    pub fn apply_transition_hooks(
+        &mut self,
+        chain_spec: &impl BaseForkActivations,
+    ) -> HandlerResult<()> {
+        let timestamp = self.evm.block().timestamp.saturating_to::<u64>();
+        Canyon::ensure_create2_deployer(
+            chain_spec,
+            timestamp,
+            &mut self.evm,
+            &mut self.block_state,
+        )?;
+        BaseTime::ensure_predeploy(chain_spec, timestamp, &mut self.evm, &mut self.block_state)?;
+        Cobalt::ensure_eip8130_system_accounts(
+            chain_spec,
+            timestamp,
+            &mut self.evm,
+            &mut self.block_state,
+        )?;
         Ok(())
     }
 
