@@ -36,6 +36,7 @@ pub fn api_router(store: Option<ShadowMetricsStore>) -> Router {
     let repo = store.map(|store| ShadowBlockRepo::new(store.pool().clone()));
     Router::new()
         .route("/shadow-candidates", get(get_shadow_candidates_batch))
+        .route("/shadow-blocks", get(get_recent_shadow_blocks))
         .route("/blocks/{id}", get(get_block))
         .route("/blocks/{id}/shadow-candidates", get(get_shadow_candidates))
         .route("/shadow-blocks/{id}", get(get_shadow_block))
@@ -212,6 +213,42 @@ async fn get_shadow_candidates_batch(
         "served batch shadow candidates"
     );
     Ok(Json(result))
+}
+
+#[derive(Debug, Deserialize)]
+struct RecentShadowBlocksQuery {
+    limit: Option<i64>,
+    before: Option<i64>,
+}
+
+const DEFAULT_RECENT_LIMIT: i64 = 25;
+const MAX_RECENT_LIMIT: i64 = 1000;
+
+/// Absent falls back to the default; the result is clamped to [1, MAX] so a
+/// malformed low value cannot make Postgres reject the query and an oversized
+/// value cannot force an unbounded scan.
+fn resolve_recent_limit(limit: Option<i64>) -> i64 {
+    limit.unwrap_or(DEFAULT_RECENT_LIMIT).clamp(1, MAX_RECENT_LIMIT)
+}
+
+/// The most recent resolved shadow blocks, newest first, paged backwards by `before`.
+async fn get_recent_shadow_blocks(
+    State(state): State<ApiState>,
+    Query(query): Query<RecentShadowBlocksQuery>,
+) -> Result<Json<Vec<ShadowBlockSummary>>, ApiError> {
+    let limit = resolve_recent_limit(query.limit);
+
+    let repo = state.repo()?;
+    let shadows = repo.list_recent(limit, query.before).await?;
+    tracing::info!(
+        target: "shadow_metrics::api",
+        endpoint = "recent-shadow-blocks",
+        limit,
+        before = query.before,
+        count = shadows.len(),
+        "served recent shadow blocks"
+    );
+    Ok(Json(shadows.iter().map(shadow_block_summary).collect::<Vec<_>>()))
 }
 
 /// A single reorged-out shadow block summary addressed by shadow block hash.
@@ -486,6 +523,15 @@ mod tests {
             header: Json(row.payload.block.header().clone()),
             transactions: Json(row.payload.block.body().transactions.clone()),
         }
+    }
+
+    #[test]
+    fn resolve_recent_limit_defaults_and_clamps() {
+        assert_eq!(resolve_recent_limit(None), DEFAULT_RECENT_LIMIT);
+        assert_eq!(resolve_recent_limit(Some(50)), 50);
+        assert_eq!(resolve_recent_limit(Some(0)), 1);
+        assert_eq!(resolve_recent_limit(Some(-5)), 1);
+        assert_eq!(resolve_recent_limit(Some(MAX_RECENT_LIMIT + 1)), MAX_RECENT_LIMIT);
     }
 
     #[test]

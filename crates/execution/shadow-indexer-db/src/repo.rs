@@ -298,6 +298,40 @@ impl ShadowBlockRepo {
         Ok(row.map(|(updated_at, number)| ShadowBlockCursor { updated_at, number }))
     }
 
+    /// Lists the most recent resolved shadow blocks, newest first.
+    ///
+    /// Only rows that have gained a canonical hash are returned, matching the
+    /// single-block summary endpoint: an unresolved row is not yet a confirmed
+    /// shadow replacement. `before` excludes rows at or above that block number,
+    /// so the caller pages backwards by passing the last number it saw.
+    ///
+    /// # Errors
+    /// Returns an error when the query fails.
+    pub async fn list_recent(
+        &self,
+        limit: i64,
+        before: Option<i64>,
+    ) -> Result<Vec<ShadowSummaryRow>> {
+        let rows = query_as::<_, ShadowSummaryRow>(
+            "SELECT number, hash, canonical_hash, \
+             payload->>'builder_version' AS builder_version, \
+             payload#>'{block,block,header,header}' AS header, \
+             payload#>'{block,block,body,transactions}' AS transactions \
+             FROM shadow_blocks \
+             WHERE canonical_hash IS NOT NULL \
+               AND ($1::BIGINT IS NULL OR number < $1) \
+             ORDER BY number DESC \
+             LIMIT $2",
+        )
+        .bind(before)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .context("failed to list recent shadow blocks")?;
+
+        Ok(rows)
+    }
+
     /// Lists reorged-out shadow candidates replaced by the canonical block with `canonical_hash`.
     ///
     /// # Errors
