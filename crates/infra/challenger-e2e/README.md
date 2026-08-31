@@ -10,8 +10,9 @@ This crate currently covers the positive case: the challenger comes up against
 the fork, scans it, and disputes nothing. The dispute paths are staged on top
 of the same harness.
 
-Key **A** (driver) signs setup only. Key **B** (challenger) is the only key
-that may ever dispute. Both are generated per run and never leave the pod.
+The challenger key is generated per run and never leaves the pod. It is the
+only key on the fork that may dispute; the dispute paths add a second key that
+signs their setup and nothing else.
 
 ## What it asserts
 

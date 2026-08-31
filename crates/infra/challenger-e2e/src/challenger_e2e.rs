@@ -63,16 +63,15 @@ impl ChallengerE2e {
     pub async fn run() -> Result<()> {
         let config = Config::parse();
 
-        // Two distinct accounts: A (driver) signs setup only, B is the
-        // challenger. Both are generated per run and never leave the pod.
-        let driver = PrivateKeySigner::random();
+        // Generated per run and never leaves the pod. The dispute paths add a
+        // second account that signs their setup; this one only ever disputes.
         let challenger = PrivateKeySigner::random();
 
         // Held until the end of run(); the fork dies with this binding.
         let anvil = Self::spawn_fork(&config)?;
         let fork_url = anvil.endpoint_url();
         let provider: RootProvider = RootProvider::new_http(fork_url.clone());
-        Self::fund(&provider, &[driver.address(), challenger.address()]).await?;
+        Self::fund(&provider, &[challenger.address()]).await?;
 
         let factory = DisputeGameFactoryContractClient::new(
             config.dispute_game_factory_addr,
