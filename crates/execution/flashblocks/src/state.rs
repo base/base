@@ -1,9 +1,6 @@
 //! Flashblocks state management.
 
-use std::sync::{
-    Arc, Mutex as StdMutex,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::{Arc, Mutex as StdMutex};
 
 use alloy_consensus::Header;
 use arc_swap::{ArcSwapOption, Guard};
@@ -35,8 +32,7 @@ pub struct FlashblocksState {
     rx: Arc<Mutex<mpsc::Receiver<(StateUpdate, u64)>>>,
     flashblock_sender: Sender<Arc<PendingBlocks>>,
     max_pending_blocks_depth: u64,
-    recovery_generation: Arc<AtomicU64>,
-    recovery_fence: Arc<StdMutex<()>>,
+    recovery_epoch: Arc<StdMutex<u64>>,
 }
 
 impl FlashblocksState {
@@ -55,8 +51,7 @@ impl FlashblocksState {
             rx: Arc::new(Mutex::new(rx)),
             flashblock_sender,
             max_pending_blocks_depth,
-            recovery_generation: Arc::new(AtomicU64::new(0)),
-            recovery_fence: Arc::new(StdMutex::new(())),
+            recovery_epoch: Arc::new(StdMutex::new(0)),
         }
     }
 
@@ -76,8 +71,7 @@ impl FlashblocksState {
             client,
             Arc::clone(&self.pending_blocks),
             self.max_pending_blocks_depth,
-            Arc::clone(&self.recovery_generation),
-            Arc::clone(&self.recovery_fence),
+            Arc::clone(&self.recovery_epoch),
             Arc::clone(&self.rx),
             self.flashblock_sender.clone(),
         );
@@ -90,15 +84,13 @@ impl FlashblocksState {
     /// Handles a canonical block being received.
     pub fn on_canonical_block_received(&self, block: RecoveredBlock<BaseBlock>) {
         let block_number = block.number;
-        let generation = self.recovery_generation.load(Ordering::Acquire);
-        match self.queue.try_send((StateUpdate::Canonical(block), generation)) {
+        let mut epoch = self.recovery_epoch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        match self.queue.try_send((StateUpdate::Canonical(block), *epoch)) {
             Ok(_) => {
                 info!(message = "added canonical block to processing queue", block_number)
             }
             Err(e) => {
-                let _fence =
-                    self.recovery_fence.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                self.recovery_generation.fetch_add(1, Ordering::AcqRel);
+                *epoch = epoch.saturating_add(1);
                 self.pending_blocks.swap(None);
                 error!(message = "could not add canonical block to processing queue", block_number, error = %e);
             }
@@ -110,8 +102,8 @@ impl FlashblocksReceiver for FlashblocksState {
     fn on_flashblock_received(&self, flashblock: Flashblock) {
         let flashblock_index = flashblock.index;
         let block_number = flashblock.metadata.block_number;
-        let generation = self.recovery_generation.load(Ordering::Acquire);
-        match self.queue.try_send((StateUpdate::Flashblock(flashblock), generation)) {
+        let mut epoch = self.recovery_epoch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        match self.queue.try_send((StateUpdate::Flashblock(flashblock), *epoch)) {
             Ok(_) => {
                 debug!(
                     message = "added flashblock to processing queue",
@@ -119,9 +111,7 @@ impl FlashblocksReceiver for FlashblocksState {
                 );
             }
             Err(e) => {
-                let _fence =
-                    self.recovery_fence.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                self.recovery_generation.fetch_add(1, Ordering::AcqRel);
+                *epoch = epoch.saturating_add(1);
                 self.pending_blocks.swap(None);
                 error!(message = "could not add flashblock to processing queue", block_number, flashblock_index, error = %e);
             }

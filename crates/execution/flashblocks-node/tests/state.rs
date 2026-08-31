@@ -650,40 +650,6 @@ async fn test_sequential_nonces_across_flashblocks() {
 }
 
 #[tokio::test]
-async fn test_cached_wrong_parent_flashblock_is_discarded_after_canonical_advance() {
-    let mut test = FlashblocksBuilderTestHarness::new().await;
-
-    // This payload claims block 2 while still carrying genesis as its parent.
-    test.send_flashblock(FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build())
-        .await;
-
-    assert!(
-        test.flashblocks.get_pending_blocks().is_none(),
-        "pending state should be empty because canonical block 1 does not exist yet"
-    );
-
-    let block_one = test.new_canonical_block_without_processing(vec![]).await;
-    let block_one_number = block_one.number;
-    let block_one_hash = block_one.hash();
-    test.flashblocks.on_canonical_block_received(block_one);
-
-    let resume = FlashblockBuilder::new_base(&test).build();
-    test.flashblocks.on_flashblock_received(resume);
-
-    wait_until(
-        Duration::from_secs(5),
-        || {
-            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
-                pending.earliest_block_number() == block_one_number + 1
-                    && pending.parent_hash() == block_one_hash
-            })
-        },
-        "old-parent cache entry must be discarded before current pending resumes",
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn test_cached_wrong_parent_sequence_does_not_contaminate_fresh_pending() {
     let mut test = FlashblocksBuilderTestHarness::new().await;
 

@@ -2,10 +2,7 @@
 
 use std::{
     collections::BTreeMap,
-    sync::{
-        Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard},
     time::{Duration, Instant},
 };
 
@@ -182,9 +179,7 @@ pub struct StateProcessor<Client> {
     cache: Arc<Mutex<FlashblockCache>>,
     live_state: StdMutex<Option<LivePendingState>>,
     max_pending_blocks_depth: u64,
-    recovery_generation: Arc<AtomicU64>,
-    recovery_fence: Arc<StdMutex<()>>,
-    observed_generation: AtomicU64,
+    recovery_epoch: Arc<StdMutex<u64>>,
     deferred_canonical: StdMutex<Option<(RecoveredBlock<BaseBlock>, u64)>>,
 }
 
@@ -229,8 +224,7 @@ where
         client: Client,
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
         max_pending_blocks_depth: u64,
-        recovery_generation: Arc<AtomicU64>,
-        recovery_fence: Arc<StdMutex<()>>,
+        recovery_epoch: Arc<StdMutex<u64>>,
         rx: Arc<Mutex<Receiver<(StateUpdate, u64)>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
@@ -238,7 +232,6 @@ where
             .best_block_number()
             .map_or_else(|_| FlashblockCache::new(0), FlashblockCache::new);
 
-        let observed_generation = recovery_generation.load(Ordering::Acquire);
         Self {
             pending_blocks,
             client,
@@ -247,9 +240,7 @@ where
             cache: Arc::new(Mutex::new(cache)),
             live_state: StdMutex::new(None),
             max_pending_blocks_depth,
-            recovery_generation,
-            recovery_fence,
-            observed_generation: AtomicU64::new(observed_generation),
+            recovery_epoch,
             deferred_canonical: StdMutex::new(None),
         }
     }
@@ -276,6 +267,7 @@ where
         &self,
         update: &StateUpdate,
         enqueued_generation: u64,
+        observed_generation: &mut u64,
         recovering: &mut bool,
     ) -> Option<(SealedHeader, bool, u64)> {
         let mut provider_retries = 0;
@@ -294,8 +286,10 @@ where
             provider_retries += 1;
             sleep(Duration::from_millis(25)).await;
         };
-        let generation = self.recovery_generation.load(Ordering::Acquire);
-        if self.observed_generation.swap(generation, Ordering::AcqRel) != generation {
+        let generation =
+            *self.recovery_epoch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *observed_generation != generation {
+            *observed_generation = generation;
             self.enter_recovery(best.number()).await;
             *recovering = true;
         }
@@ -427,6 +421,8 @@ where
     /// Processes updates from the queue until the channel closes.
     pub async fn start(&self) {
         let mut recovering = false;
+        let mut observed_generation =
+            *self.recovery_epoch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut deferred_interval = interval(Duration::from_millis(100));
         deferred_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
@@ -460,8 +456,14 @@ where
                         .expect("deferred canonical remains available")
                 }
             };
-            let Some((best, resuming_recovery, generation)) =
-                self.preflight_update(&update, enqueued_generation, &mut recovering).await
+            let Some((best, resuming_recovery, generation)) = self
+                .preflight_update(
+                    &update,
+                    enqueued_generation,
+                    &mut observed_generation,
+                    &mut recovering,
+                )
+                .await
             else {
                 continue;
             };
@@ -472,11 +474,6 @@ where
                     debug!(message = "processing canonical block", block_number = block.number);
                     match self.process_canonical_block(prev_pending_blocks, &block) {
                         Ok((new_pending_blocks, requires_recovery)) => {
-                            if self.recovery_generation.load(Ordering::Acquire) != generation {
-                                self.enter_recovery(best.number()).await;
-                                recovering = true;
-                                continue;
-                            }
                             if requires_recovery {
                                 self.enter_recovery(best.number()).await;
                                 recovering = true;
@@ -496,18 +493,23 @@ where
                                 }
                             }
 
-                            let fence = self
-                                .recovery_fence
-                                .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner());
-                            if self.recovery_generation.load(Ordering::Acquire) != generation {
-                                drop(fence);
+                            let stale_generation = {
+                                let epoch = self
+                                    .recovery_epoch
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                if *epoch != generation {
+                                    true
+                                } else {
+                                    self.pending_blocks.swap(new_pending_blocks);
+                                    false
+                                }
+                            };
+                            if stale_generation {
                                 self.enter_recovery(best.number()).await;
                                 recovering = true;
                                 continue;
                             }
-                            self.pending_blocks.swap(new_pending_blocks);
-                            drop(fence);
 
                             let mut cache = self.cache.lock().await;
                             let cache_rolled_back = cache
@@ -544,8 +546,10 @@ where
                                     );
                                     for flashblock in cached {
                                         let cached_update = StateUpdate::Flashblock(flashblock);
-                                        let cached_enqueued_generation =
-                                            self.recovery_generation.load(Ordering::Acquire);
+                                        let cached_enqueued_generation = *self
+                                            .recovery_epoch
+                                            .lock()
+                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
                                         let Some((
                                             cached_best,
                                             cached_resuming_recovery,
@@ -554,6 +558,7 @@ where
                                             .preflight_update(
                                                 &cached_update,
                                                 cached_enqueued_generation,
+                                                &mut observed_generation,
                                                 &mut recovering,
                                             )
                                             .await
@@ -646,10 +651,6 @@ where
 
         match result {
             Ok(new_pending_blocks) => {
-                if self.recovery_generation.load(Ordering::Acquire) != expected_generation {
-                    self.enter_recovery(expected_best.number()).await;
-                    return (false, true);
-                }
                 let applied = new_pending_blocks.is_some();
                 if let Some(ref pb) = new_pending_blocks {
                     let Some(current_best) = self.best_canonical_header() else {
@@ -661,18 +662,23 @@ where
                         return (false, true);
                     }
                 }
-                let fence =
-                    self.recovery_fence.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                if self.recovery_generation.load(Ordering::Acquire) != expected_generation {
-                    drop(fence);
+                let stale_generation = {
+                    let epoch =
+                        self.recovery_epoch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    if *epoch != expected_generation {
+                        true
+                    } else {
+                        if let Some(ref pb) = new_pending_blocks {
+                            _ = self.sender.send(Arc::clone(pb));
+                        }
+                        self.pending_blocks.swap(new_pending_blocks);
+                        false
+                    }
+                };
+                if stale_generation {
                     self.enter_recovery(expected_best.number()).await;
                     return (false, true);
                 }
-                if let Some(ref pb) = new_pending_blocks {
-                    _ = self.sender.send(Arc::clone(pb));
-                }
-                self.pending_blocks.swap(new_pending_blocks);
-                drop(fence);
                 Metrics::block_processing_duration().record(start_time.elapsed());
                 (applied, false)
             }
