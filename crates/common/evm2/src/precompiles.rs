@@ -244,6 +244,23 @@ mod tests {
     }
 
     #[test]
+    fn cap_constants_match_the_revm_reference() {
+        // Pin every input cap to the revm `base-common-precompiles` source of truth so the two
+        // engines can never silently diverge on the OP-stack calldata-size bounds.
+        assert_eq!(BN254_PAIR_GRANITE_MAX, base_common_precompiles::GRANITE_MAX_INPUT_SIZE);
+        assert_eq!(BN254_PAIR_JOVIAN_MAX, base_common_precompiles::JOVIAN_MAX_INPUT_SIZE);
+        assert_eq!(BLS_G1_MSM_ISTHMUS_MAX, base_common_precompiles::ISTHMUS_G1_MSM_MAX_INPUT_SIZE);
+        assert_eq!(BLS_G1_MSM_JOVIAN_MAX, base_common_precompiles::JOVIAN_G1_MSM_MAX_INPUT_SIZE);
+        assert_eq!(BLS_G2_MSM_ISTHMUS_MAX, base_common_precompiles::ISTHMUS_G2_MSM_MAX_INPUT_SIZE);
+        assert_eq!(BLS_G2_MSM_JOVIAN_MAX, base_common_precompiles::JOVIAN_G2_MSM_MAX_INPUT_SIZE);
+        assert_eq!(
+            BLS_PAIRING_ISTHMUS_MAX,
+            base_common_precompiles::ISTHMUS_PAIRING_MAX_INPUT_SIZE
+        );
+        assert_eq!(BLS_PAIRING_JOVIAN_MAX, base_common_precompiles::JOVIAN_PAIRING_MAX_INPUT_SIZE);
+    }
+
+    #[test]
     fn base_precompiles_install_bn254_and_bls_caps() {
         // Granite installs the bn254 pairing cap; Isthmus additionally installs the BLS caps.
         let mut isthmus = BaseEvmTypes::precompiles(BaseSpecId::new(BaseUpgrade::Isthmus));
