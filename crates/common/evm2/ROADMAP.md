@@ -91,8 +91,9 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Envelope variant (`BaseTxEnvelope::Eip8130`) | ✅ | carries `Eip8130Signed`; type byte + gas limit |
-| Registry handler + verified/simulate execution | ⬜ | needs the EIP-8130 execution engine |
+| Intrinsic-gas schedule + computation | ✅ | `IntrinsicGas`; full compute parity vs revm reference |
 | 2D nonce-manager **storage layout** (slot derivation + read) | ✅ | `NonceManager`; slot parity vs revm reference |
+| Registry handler + dispatch/authorizer/policy + phased execution + fees + simulate | ⬜ | the coupled execution engine |
 | 2D nonce increment + events + replay ring + validity window | ⬜ | needs the EIP-8130 execution context |
 | Authorizer / policy gate, sender/payer split | ⬜ | |
 | Phased calls, custom intrinsic gas, fee settlement | ⬜ | |
@@ -126,9 +127,10 @@ Landed and tested in this spike (revm-free non-test build preserved throughout):
   post-block balance increments are a no-op (no block reward, no in-body withdrawals).
 - **Phase 5 (partial)** — `BaseEvmTypes::precompiles()` with Fjord `P256VERIFY` and the bn254/BLS
   input caps (cap constants pinned to the revm reference).
-- **Phase 6 (started)** — EIP-8130 transaction envelope variant (`BaseTxEnvelope::Eip8130`) and the
-  `NonceManager` storage layout (2D channel nonces + nonce-free replay protection), slot-parity
-  tested against the revm reference.
+- **Phase 6 (started)** — EIP-8130 transaction envelope variant (`BaseTxEnvelope::Eip8130`), the
+  `NonceManager` storage layout (2D channel nonces + nonce-free replay protection), and the
+  intrinsic-gas schedule + computation (`IntrinsicGas`) — all differentially parity-tested against
+  the revm reference.
 
 Remaining, in rough size order, with the reason each is out of scope for this spike:
 
