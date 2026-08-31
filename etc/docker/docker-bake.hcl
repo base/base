@@ -196,6 +196,16 @@ target "prover-service" {
   tags = ["base-prover-service:local"]
 }
 
+target "nitro-host-local" {
+  context = "."
+  dockerfile = "etc/docker/Dockerfile.nitro-host"
+  args = {
+    PROFILE        = "${PROFILE}"
+    CARGO_FEATURES = "--features local"
+  }
+  tags = ["base-prover-nitro-host:local"]
+}
+
 target "zk-host" {
   inherits = ["_rust-service-common"]
   target = "zk-host"

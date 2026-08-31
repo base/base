@@ -15,10 +15,11 @@ RUN apt-get update && \
 COPY . .
 
 ARG PROFILE=maxperf
+ARG CARGO_FEATURES=""
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/app/target,id=prover-nitro-host-target,sharing=locked \
-    cargo build --profile $PROFILE --locked --package base-prover-nitro-host --bin base-prover-nitro-host && \
+    cargo build --profile $PROFILE --locked --package base-prover-nitro-host --bin base-prover-nitro-host $CARGO_FEATURES && \
     cp target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-prover-nitro-host ./base-prover-nitro-host
 
 # --- Runtime ---
