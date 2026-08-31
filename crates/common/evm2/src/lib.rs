@@ -7,7 +7,6 @@ mod handler;
 pub use handler::BaseTxHandlerHooks;
 
 mod registry;
-pub use registry::CreateDepositUnsupported;
 
 mod types;
 pub use types::{BaseEvmExt, BaseEvmTypes, BaseTxResultExt};

@@ -26,5 +26,16 @@ alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
-# misc
-thiserror.workspace = true
+[dev-dependencies]
+# base — the revm execution path, for the differential deposit-parity harness
+base-common-genesis.workspace = true
+base-common-evm = { workspace = true, features = ["blst", "c-kzg", "portable", "secp256k1", "std"] }
+
+# evm2
+evm2 = { workspace = true, features = ["std"] }
+
+# revm
+revm = { workspace = true, features = ["std"] }
+
+# alloy
+alloy-primitives.workspace = true
