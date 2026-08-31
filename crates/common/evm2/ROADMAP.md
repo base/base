@@ -41,16 +41,16 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Block gas-limit pre-check (`reserved > available`) | ✅ | pre-Regolith deposits exempt |
-| Executor chain-spec injection (`impl Upgrades`) | ⬜ | prereq for transition hooks |
-| Irregular-state flush into `BlockStateAccumulator` | ⬜ | prereq for transition hooks |
+| Executor chain-spec injection (`BaseForkActivations`) | ✅ | revm-free fork schedule (genesis `UpgradeConfig`) |
+| Irregular-state flush into `BlockStateAccumulator` | ✅ | `IrregularStateChange` (commit_source + visit) |
 
 ### Phase 2 — Transition-block system hooks
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Canyon create2-deployer force-deploy | ⬜ | one-shot on first Canyon block |
-| Denim BaseTime predeploy install | ⬜ | EIP-1967 proxy linkage + admin validation |
-| Cobalt EIP-8130 system-account stub | ⬜ | `0xEF` reap-protection stub |
+| Canyon create2-deployer force-deploy | ✅ | one-shot on first Canyon block |
+| Denim BaseTime predeploy install | ✅ | EIP-1967 proxy linkage + admin validation |
+| Cobalt EIP-8130 system-account stub | ✅ | `0xEF` reap-protection stub |
 
 ### Phase 3 — Jovian / Azul metering
 
