@@ -3481,6 +3481,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-challenger-e2e"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "clap",
+ "eyre",
+ "humantime",
+ "reqwest 0.13.4",
+ "url",
+]
+
+[[package]]
 name = "base-cli-utils"
 version = "0.0.0"
 dependencies = [

@@ -225,6 +225,7 @@ base-snapshotter = { path = "crates/infra/snapshotter" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
 base-telemetry-service = { path = "crates/infra/telemetry" }
 base-shadow-metrics = { path = "crates/infra/shadow-metrics" }
+base-challenger-e2e = { path = "crates/infra/challenger-e2e" }
 base-zk-benchmarks = { path = "crates/infra/zk-benchmarks" }
 base-zk-fork-dispute = { path = "crates/infra/zk-fork-dispute" }
 

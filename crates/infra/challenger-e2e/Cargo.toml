@@ -1,0 +1,20 @@
+[package]
+name = "base-challenger-e2e"
+description = "Behavioural end-to-end test of the challenger against an ephemeral L1 fork"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+url.workspace = true
+reqwest.workspace = true
+humantime.workspace = true
+alloy-primitives.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
