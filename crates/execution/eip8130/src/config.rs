@@ -62,13 +62,15 @@ impl ConfigChangeAuthorizer {
     /// Authorizes a batch using an already-loaded packed account state for its
     /// lock, channel epoch/sequence gate, and inline-self authentication.
     ///
-    /// Enforces (in order): the account lock; the channel's epoch/sequence gate
+    /// Enforces (in order): the channel's epoch/sequence gate
     /// ([`AccountChangeChannel::Local`] splits `sequence` into
     /// `localEpoch(high) || localSequence(low)` with the
     /// [`Eip8130Constants::UNSEQUENCED`] JIT sentinel, while
     /// [`AccountChangeChannel::Multichain`] is a plain monotonic counter); the
     /// digest reconstruction and signature authentication; and the flat admin
-    /// (`scope == 0`) gate that governs every signed account change.
+    /// (`scope == 0`) gate that governs every signed account change. Per-op lock
+    /// policy (`AuthorizeActor` add/re-lease above the unlock floor;
+    /// `RevokeActor` rejected) is enforced in [`crate::AccountChangeApplier`].
     pub fn authorize_with_account_state(
         storage: &AccountConfigurationStorage<'_>,
         account: Address,
@@ -77,12 +79,6 @@ impl ConfigChangeAuthorizer {
         now: u64,
         state: &AccountState,
     ) -> Result<ResolvedActor, TxAuthError> {
-        // Locked accounts reject authority ops (`AccountIsLocked`). Lock/Unlock
-        // themselves are standalone and handled by their own apply preconditions.
-        if state.is_locked(now) {
-            return Err(TxAuthError::AccountLocked);
-        }
-
         Self::check_channel_sequence(change, state)?;
 
         // Reconstruct the digest, authenticate the signature, and require admin scope.
@@ -368,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn locked_account_is_rejected() {
+    fn locked_account_batch_still_authorizes_signature() {
         let k = key(0x11);
         let account = addr(&k);
         let change =
@@ -379,10 +375,9 @@ mod tests {
                 .at_mut(&account)
                 .write(pack_state(0, 0, Eip8130Constants::FLAG_LOCKED, 0))
                 .unwrap();
-            assert_eq!(
-                ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
-                Err(TxAuthError::AccountLocked),
-            );
+            let resolved =
+                ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
+            assert!(resolved.is_admin());
         });
     }
 

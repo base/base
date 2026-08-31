@@ -4,6 +4,7 @@ use std::{
     marker::PhantomData,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
+    time::Duration,
 };
 
 use alloy_consensus::BlockHeader;
@@ -250,7 +251,6 @@ impl BaseNode {
         Node: FullNodeTypes<Types: BaseNodeTypes>,
     {
         let RollupArgs {
-            disable_txpool_gossip,
             discovery_v4,
             txpool_ordering,
             max_inflight_delegated_slots,
@@ -282,7 +282,7 @@ impl BaseNode {
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
-            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
+            .network(BaseNetworkBuilder::new(!discovery_v4))
             .consensus(BaseConsensusBuilder::default())
     }
 
@@ -1044,6 +1044,8 @@ pub struct BasePayloadBuilder<Txs = ()> {
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
+    /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
+    pub predicate_eval_hard_cutoff: Duration,
 }
 
 impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
@@ -1053,6 +1055,7 @@ impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
+            predicate_eval_hard_cutoff: Duration::from_millis(10),
         }
     }
 }
@@ -1065,6 +1068,7 @@ impl BasePayloadBuilder {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
+            predicate_eval_hard_cutoff: Duration::from_millis(10),
         }
     }
 
@@ -1085,6 +1089,12 @@ impl BasePayloadBuilder {
         self.manifest_precheck_enabled = enabled;
         self
     }
+
+    /// Configure the cumulative validity-predicate evaluation time limit per payload build.
+    pub const fn with_predicate_eval_hard_cutoff(mut self, cutoff: Duration) -> Self {
+        self.predicate_eval_hard_cutoff = cutoff;
+        self
+    }
 }
 
 impl<Txs> BasePayloadBuilder<Txs> {
@@ -1096,6 +1106,7 @@ impl<Txs> BasePayloadBuilder<Txs> {
             da_config: self.da_config,
             gas_limit_config: self.gas_limit_config,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
+            predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
         }
     }
 }
@@ -1122,7 +1133,7 @@ where
         > + 'static,
     Pool:
         TransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool::Transaction>,
+    Txs: BasePayloadTransactions<Pool>,
     Attrs: Attributes<Transaction = TxTy<Node::Types>> + Unpin,
 {
     type PayloadBuilder =
@@ -1143,6 +1154,7 @@ where
                     da_config: self.da_config,
                     gas_limit_config: self.gas_limit_config,
                     manifest_precheck_enabled: self.manifest_precheck_enabled,
+                    predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
                 },
             )
             .with_transactions(self.best_transactions);
@@ -1153,16 +1165,14 @@ where
 /// A basic Base network builder.
 #[derive(Debug, Clone, Default)]
 pub struct BaseNetworkBuilder {
-    /// Disable transaction pool gossip
-    pub disable_txpool_gossip: bool,
     /// Disable discovery v4
     pub disable_discovery_v4: bool,
 }
 
 impl BaseNetworkBuilder {
     /// Creates a new `BaseNetworkBuilder`.
-    pub const fn new(disable_txpool_gossip: bool, disable_discovery_v4: bool) -> Self {
-        Self { disable_txpool_gossip, disable_discovery_v4 }
+    pub const fn new(disable_discovery_v4: bool) -> Self {
+        Self { disable_discovery_v4 }
     }
 
     /// Runs a future on the current runtime, or creates one when needed.
@@ -1322,7 +1332,6 @@ impl BaseNetworkBuilder {
         Node: FullNodeTypes<Types: NodeTypes<ChainSpec: Hardforks>>,
         NetworkP: NetworkPrimitives,
     {
-        let disable_txpool_gossip = self.disable_txpool_gossip;
         let discovery_config = BaseDiscoveryConfig::new(self.disable_discovery_v4);
         let args = &ctx.config().network;
         let network_builder = ctx
@@ -1348,10 +1357,7 @@ impl BaseNetworkBuilder {
 
         let mut network_config = ctx.build_network_config(network_builder);
 
-        // When `sequencer_endpoint` is configured, the node will forward all transactions to a
-        // Sequencer node for execution and inclusion on L1, and disable its own txpool
-        // gossip to prevent other parties in the network from learning about them.
-        network_config.tx_gossip_disabled = disable_txpool_gossip;
+        network_config.tx_gossip_disabled = true;
 
         Ok(network_config)
     }

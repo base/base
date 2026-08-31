@@ -67,7 +67,13 @@ jobs:
         if: matrix.target.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev pkg-config
+          sudo apt-get install -y libclang-dev pkg-config protobuf-compiler
+
+      - name: Install Go for basectl
+        if: matrix.binary == 'basectl'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.24.x'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
@@ -85,6 +91,13 @@ jobs:
 
       - name: Build binary
         run: |
+          if [ "${{ matrix.target.triple }}" = "aarch64-unknown-linux-gnu" ]; then
+            case "${{ matrix.binary }}" in
+              base|base-consensus|basectl)
+                export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-lblst"
+                ;;
+            esac
+          fi
           cargo build --locked --profile maxperf --bin "${{ matrix.binary }}"
 
       - name: Package binary
@@ -177,8 +190,8 @@ jobs:
           echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
           echo "version=${{ inputs.tag }}" >> $GITHUB_OUTPUT
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Set up Depot CLI
+        uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1
 
       - name: Login to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
@@ -193,12 +206,10 @@ jobs:
           TARGET: ${{ matrix.image.target }}
           PROFILE: maxperf
         run: |
-          docker buildx bake -f etc/docker/docker-bake.hcl "$TARGET" \
+          depot bake --project "${{ vars.DEPOT_PROJECT_ID }}" -f etc/docker/docker-bake.hcl "$TARGET" \
             --set "${TARGET}.tags=${IMAGE}" \
             --set "${TARGET}.platform=${{ matrix.settings.arch }}" \
             --set "${TARGET}.output=type=image,push-by-digest=true,name-canonical=true,push=true" \
-            --set "${TARGET}.cache-from=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-maxperf-${{ env.PLATFORM_PAIR }}" \
-            --set "${TARGET}.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-maxperf-${{ env.PLATFORM_PAIR }},mode=max" \
             --set "${TARGET}.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }}" \
             --set "${TARGET}.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }}" \
             --set "${TARGET}.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }}" \

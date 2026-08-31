@@ -47,6 +47,7 @@ pub use standard_node::{
 mod upgrade_signal;
 pub use upgrade_signal::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
+    RuntimeForkFilterNetwork,
 };
 
 /// The main base-reth cli interface.

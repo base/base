@@ -49,7 +49,7 @@ pub struct EncoderConfig {
     /// Target number of frames per channel and per L1 transaction.
     ///
     /// Each frame maps to one EIP-4844 blob, so setting this to N submits N blobs
-    /// per transaction. Cancun supports up to 6; Isthmus (EIP-7892) up to 21.
+    /// per transaction. Blob DA rejects values above [`Self::MAX_BLOBS_PER_TX`].
     ///
     /// Default: 1 (one blob per transaction).
     pub target_num_frames: usize,
@@ -88,6 +88,19 @@ pub struct EncoderConfig {
     /// [`max_frame_size`]: EncoderConfig::max_frame_size
     /// [`da_type`]: EncoderConfig::da_type
     pub max_l1_tx_size_bytes: Option<usize>,
+
+    /// Optional soft compressed-byte target. The reaching batch stays, then the
+    /// channel closes. `None` closes on duration, flush, or protocol limits.
+    ///
+    /// Default: `None`.
+    pub compressed_size_target: Option<usize>,
+
+    /// Maximum number of blobs packed into one L1 transaction.
+    ///
+    /// Blob DA rejects values above [`Self::MAX_BLOBS_PER_TX`].
+    ///
+    /// Default: 6.
+    pub max_blobs_per_tx: usize,
 }
 
 impl Default for EncoderConfig {
@@ -101,6 +114,8 @@ impl Default for EncoderConfig {
             da_type: DaType::Blob,
             compression_algo: CompressionAlgo::Brotli10,
             max_l1_tx_size_bytes: None,
+            compressed_size_target: None,
+            max_blobs_per_tx: Self::MAX_BLOBS_PER_TX,
         }
     }
 }
@@ -115,6 +130,9 @@ impl EncoderConfig {
     /// Largest serialized frame that can fit in one blob after reserving the
     /// derivation-version prefix.
     pub const MAX_BLOB_FRAME_SIZE: usize = PROTOCOL_MAX_BLOB_FRAME_SIZE;
+
+    /// Fusaka hard limit for blobs carried by one transaction.
+    pub const MAX_BLOBS_PER_TX: usize = 6;
 
     /// Validate the configuration, returning an error if any constraint is violated.
     ///
@@ -157,6 +175,28 @@ impl EncoderConfig {
         if matches!(self.da_type, DaType::Calldata) && self.target_num_frames != 1 {
             return Err(EncoderConfigError::CalldataRequiresSingleFrame {
                 target_num_frames: self.target_num_frames,
+            });
+        }
+
+        if matches!(self.da_type, DaType::Blob) && self.target_num_frames > Self::MAX_BLOBS_PER_TX {
+            return Err(EncoderConfigError::TooManyBlobFramesPerTx {
+                target_num_frames: self.target_num_frames,
+                maximum: Self::MAX_BLOBS_PER_TX,
+            });
+        }
+
+        if matches!(self.compressed_size_target, Some(0)) {
+            return Err(EncoderConfigError::CompressedTargetZero);
+        }
+
+        if self.max_blobs_per_tx == 0 {
+            return Err(EncoderConfigError::MaxBlobsPerTxZero);
+        }
+
+        if self.max_blobs_per_tx > Self::MAX_BLOBS_PER_TX {
+            return Err(EncoderConfigError::TooManyBlobsPerTx {
+                configured: self.max_blobs_per_tx,
+                maximum: Self::MAX_BLOBS_PER_TX,
             });
         }
 
@@ -253,6 +293,28 @@ pub enum EncoderConfigError {
         /// The configured target number of frames.
         target_num_frames: usize,
     },
+    /// Blob DA `target_num_frames` exceeds the protocol transaction blob limit.
+    #[error("blob DA target_num_frames ({target_num_frames}) must be at most {maximum}")]
+    TooManyBlobFramesPerTx {
+        /// The configured target number of frames.
+        target_num_frames: usize,
+        /// Protocol maximum blobs per transaction.
+        maximum: usize,
+    },
+    /// `compressed_size_target == Some(0)`.
+    #[error("compressed_size_target must be greater than zero when configured")]
+    CompressedTargetZero,
+    /// `max_blobs_per_tx == 0`.
+    #[error("max_blobs_per_tx must be greater than zero")]
+    MaxBlobsPerTxZero,
+    /// `max_blobs_per_tx` exceeds the protocol transaction limit.
+    #[error("max_blobs_per_tx ({configured}) must be at most {maximum}")]
+    TooManyBlobsPerTx {
+        /// Configured blob count.
+        configured: usize,
+        /// Protocol maximum blob count.
+        maximum: usize,
+    },
     /// `da_type == DaType::Blob` but `max_frame_size` leaves no room for the
     /// derivation-version prefix.
     #[error(
@@ -305,6 +367,8 @@ mod tests {
 
         assert_eq!(cfg.target_frame_size, EncoderConfig::MAX_BLOB_FRAME_SIZE);
         assert_eq!(cfg.max_frame_size, EncoderConfig::MAX_BLOB_FRAME_SIZE);
+        assert_eq!(cfg.compressed_size_target, None);
+        assert_eq!(cfg.max_blobs_per_tx, EncoderConfig::MAX_BLOBS_PER_TX);
         assert_eq!(
             cfg.max_frame_size + EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE,
             EncoderConfig::BLOB_MAX_DATA_SIZE
@@ -395,6 +459,54 @@ mod tests {
         let cfg = EncoderConfig { target_num_frames: 0, ..EncoderConfig::default() };
 
         assert!(matches!(cfg.validate().unwrap_err(), EncoderConfigError::TargetNumFramesZero));
+    }
+
+    #[test]
+    fn validate_rejects_blob_target_num_frames_above_tx_limit() {
+        let cfg = EncoderConfig {
+            target_num_frames: EncoderConfig::MAX_BLOBS_PER_TX + 1,
+            ..EncoderConfig::default()
+        };
+
+        assert!(matches!(
+            cfg.validate().unwrap_err(),
+            EncoderConfigError::TooManyBlobFramesPerTx {
+                target_num_frames,
+                maximum,
+            } if target_num_frames == EncoderConfig::MAX_BLOBS_PER_TX + 1
+                && maximum == EncoderConfig::MAX_BLOBS_PER_TX
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_zero_compressed_size_target() {
+        let cfg = EncoderConfig { compressed_size_target: Some(0), ..EncoderConfig::default() };
+
+        assert!(matches!(cfg.validate().unwrap_err(), EncoderConfigError::CompressedTargetZero));
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_blobs_per_tx() {
+        let cfg = EncoderConfig { max_blobs_per_tx: 0, ..EncoderConfig::default() };
+
+        assert!(matches!(cfg.validate().unwrap_err(), EncoderConfigError::MaxBlobsPerTxZero));
+    }
+
+    #[test]
+    fn validate_rejects_max_blobs_per_tx_above_limit() {
+        let cfg = EncoderConfig {
+            max_blobs_per_tx: EncoderConfig::MAX_BLOBS_PER_TX + 1,
+            ..EncoderConfig::default()
+        };
+
+        assert!(matches!(
+            cfg.validate().unwrap_err(),
+            EncoderConfigError::TooManyBlobsPerTx {
+                configured,
+                maximum,
+            } if configured == EncoderConfig::MAX_BLOBS_PER_TX + 1
+                && maximum == EncoderConfig::MAX_BLOBS_PER_TX
+        ));
     }
 
     #[test]

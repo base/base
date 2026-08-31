@@ -31,6 +31,7 @@ async fn sequencer_recovers_from_l1_outage_and_deep_reorg() -> Result<()> {
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
+        .with_slot_duration(L1_BLOCK_TIME)
         .with_l1_fault_injection()
         .build()
         .await?;
@@ -169,10 +170,10 @@ async fn wait_for_reorgable_origin(
     timeout(ORIGIN_TIMEOUT, async {
         loop {
             let status = rpc.l2_builder_sync_status().await?;
-            let safe = l1_provider
-                .get_block_by_number(BlockNumberOrTag::Safe)
-                .await?
-                .ok_or_eyre("L1 safe block is missing")?;
+            let Some(safe) = l1_provider.get_block_by_number(BlockNumberOrTag::Safe).await? else {
+                sleep(POLL_INTERVAL).await;
+                continue;
+            };
             let protected_origin = safe.header.number.max(status.finalized_l2.l1_origin.number);
             if status.unsafe_l2.l1_origin.number > protected_origin + REORG_DEPTH {
                 return Ok::<_, eyre::Error>(status);

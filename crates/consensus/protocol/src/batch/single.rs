@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{BlockHash, Bytes};
-use alloy_rlp::{RlpDecodable, RlpEncodable};
+use alloy_rlp::{Encodable, Header, RlpDecodable, RlpEncodable};
 use base_common_consensus::OpTxType;
 use base_common_genesis::RollupConfig;
 use tracing::warn;
@@ -28,6 +28,14 @@ pub struct SingleBatch {
 }
 
 impl SingleBatch {
+    /// Returns the RLP string header wrapping this batch inside a channel.
+    ///
+    /// A channel entry is an RLP byte string holding the batch type byte
+    /// followed by the encoded batch.
+    pub fn rlp_header(&self) -> Header {
+        Header { list: false, payload_length: 1 + self.length() }
+    }
+
     /// Returns the [`BlockNumHash`] of the batch.
     pub const fn epoch(&self) -> BlockNumHash {
         BlockNumHash { number: self.epoch_num, hash: self.epoch_hash }

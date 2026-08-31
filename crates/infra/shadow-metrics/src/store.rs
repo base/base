@@ -1,6 +1,7 @@
 //! Postgres access for shadow metrics.
 
 use anyhow::Result;
+use base_shadow_indexer_db::PgConnectionParams;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
 /// Schema readiness failure.
@@ -47,14 +48,14 @@ impl ShadowMetricsStore {
     ///
     /// # Errors
     /// Returns an error when the pool cannot connect.
-    pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
+    pub async fn connect(connection: &PgConnectionParams, max_connections: u32) -> Result<Self> {
         let max_connections = max_connections.max(1);
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
             .min_connections(max_connections)
             .max_lifetime(None)
             .idle_timeout(None)
-            .connect(database_url)
+            .connect_with(connection.connect_options())
             .await?;
         Ok(Self { pool })
     }

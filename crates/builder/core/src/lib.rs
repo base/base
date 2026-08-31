@@ -23,10 +23,11 @@ mod execution_metering_mode;
 pub use execution_metering_mode::ExecutionMeteringMode;
 
 mod traits;
+pub use base_execution_payload_builder::{
+    MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
+    SharedMeteringProvider,
+};
 pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
-
-mod metering;
-pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
 
 mod rejected_tx_forwarder;
 pub use rejected_tx_forwarder::RejectedTxForwarder;
@@ -36,9 +37,6 @@ pub use rejected_tx_forwarder::RejectedTxForwarder;
 // builder-specific payload construction private to the builder crate.
 mod transaction_events;
 
-mod rejection_cache;
-pub use rejection_cache::RejectionCache;
-
 mod flashblocks;
 pub use flashblocks::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockPayloadJob, BlockPayloadJobGenerator,
@@ -47,7 +45,7 @@ pub use flashblocks::{
     InclusionTracker, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
     ParkedPredicateIndex, PayloadBuilder, PayloadHandler, PayloadJobDeadline,
     PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, ResolvePayload,
-    StateChangeEffects, ValidityPredicateKey,
+    StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
 };
 
 mod extension;

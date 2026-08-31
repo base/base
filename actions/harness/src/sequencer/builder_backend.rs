@@ -3,7 +3,7 @@
 //! [`ActionEngineClient`](crate::ActionEngineClient) assembles blocks with reth's execution-side
 //! `BasePayloadBuilder` and a `NoopTransactionPool`, forcing `no_tx_pool = true` — so it never
 //! exercises the production Base builder's block-construction policy (pool tx selection/ordering,
-//! bundles, DA/gas limits, metering, revert/rejection semantics).
+//! DA/gas limits, metering, revert/rejection semantics).
 //!
 //! [`BuilderBackedEngineClient`] instead launches an in-process
 //! [`LocalInstance`](base_builder_core::test_utils::LocalInstance) running the production
@@ -109,35 +109,6 @@ impl BuilderBackedEngineClient {
     /// An Engine API client for the in-process builder node's authenticated IPC endpoint.
     fn engine(&self) -> EngineApi<Ipc> {
         EngineApi::<Ipc>::with_ipc(&self.auth_ipc)
-    }
-
-    /// Inject a transaction carrying bundle validity-window metadata into the builder's pool.
-    ///
-    /// Lets action tests exercise the production builder's bundle-window enforcement (which checks
-    /// each bundle tx against the block being built) end-to-end through the harness sequencer.
-    pub async fn inject_bundle_transaction(
-        &self,
-        tx: BaseTxEnvelope,
-        min_block: Option<u64>,
-        max_block: Option<u64>,
-        min_timestamp_millis: Option<u64>,
-        max_timestamp_millis: Option<u64>,
-    ) -> EngineClientResult<()> {
-        let pool = self.instance.lock().expect("instance lock").pool_handle();
-        let recovered = tx
-            .try_into_recovered()
-            .map_err(|e| EngineClientError::RequestError(format!("recover signer: {e}")))?;
-        let encoded_length = recovered.encode_2718_len();
-        let pooled = BasePooledTransaction::new(recovered, encoded_length).with_bundle_metadata(
-            min_block,
-            max_block,
-            min_timestamp_millis,
-            max_timestamp_millis,
-        );
-        pool.add_external_transaction(pooled)
-            .await
-            .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
-        Ok(())
     }
 
     /// A [`ChainDriver`] for driving block production over the builder's engine API directly

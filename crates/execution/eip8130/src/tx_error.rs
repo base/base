@@ -34,9 +34,10 @@ pub enum TxAuthError {
         scope: u16,
     },
 
-    /// A config change or delegation targets a locked account. Both operations
-    /// are rejected while locked. Mirrors `AccountConfiguration`'s
-    /// `onlyUnlocked` modifier.
+    /// A config change or delegation targets a locked account in a way the
+    /// keystore rejects (`RevokeActor`, delegation). `AuthorizeActor` while locked
+    /// is permitted when the grant outlives the unlock floor; see
+    /// [`crate::AccountChangeApplier`]. Mirrors `Keystore.AccountIsLocked`.
     #[error("account is locked")]
     AccountLocked,
 

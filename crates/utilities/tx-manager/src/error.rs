@@ -209,7 +209,8 @@ impl TxManagerError {
     pub const fn is_retryable(&self) -> bool {
         matches!(
             self,
-            Self::Underpriced
+            Self::NonceTooHigh
+                | Self::Underpriced
                 | Self::ReplacementUnderpriced
                 | Self::FeeTooLow
                 | Self::MaxFeePerGasTooLow
@@ -437,7 +438,7 @@ mod tests {
 
     #[rstest]
     #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
-    #[case::nonce_too_high(TxManagerError::NonceTooHigh, false)]
+    #[case::nonce_too_high(TxManagerError::NonceTooHigh, true)]
     #[case::insufficient_funds(TxManagerError::InsufficientFunds, false)]
     #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow, false)]
     #[case::execution_reverted(TxManagerError::ExecutionReverted { reason: None, data: None }, false)]

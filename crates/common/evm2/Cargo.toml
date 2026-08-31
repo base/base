@@ -1,0 +1,41 @@
+[package]
+name = "base-common-evm2"
+description = "Base EVM2 execution type family (scaffold)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-common-genesis.workspace = true
+base-common-l1-fees.workspace = true
+base-common-consensus.workspace = true
+
+# evm2
+evm2 = { workspace = true, features = ["std"] }
+
+# alloy
+alloy-eips.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+
+[dev-dependencies]
+# base — the revm execution path, for the differential deposit-parity harness
+base-common-genesis.workspace = true
+base-common-evm = { workspace = true, features = ["blst", "c-kzg", "portable", "secp256k1", "std"] }
+
+# evm2
+evm2 = { workspace = true, features = ["std"] }
+
+# revm
+revm = { workspace = true, features = ["std"] }
+
+# alloy
+alloy-primitives.workspace = true

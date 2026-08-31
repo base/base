@@ -88,6 +88,7 @@ where
                     da_config: self.builder_config.da_config.clone(),
                     gas_limit_config: self.builder_config.gas_limit_config.clone(),
                     manifest_precheck_enabled: self.builder_config.manifest_precheck_enabled,
+                    predicate_eval_hard_cutoff: self.builder_config.predicate_eval_hard_cutoff,
                 },
             );
 

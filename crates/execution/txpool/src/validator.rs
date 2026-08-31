@@ -1554,6 +1554,10 @@ where
             ApplyError::InvalidChangePayload => "account-change op payload must be empty",
             ApplyError::EpochSaturated => "local epoch is saturated",
             ApplyError::UnsupportedChangeType => "unsupported account-change op",
+            ApplyError::AccountIsLocked => "account is locked",
+            ApplyError::ExpiryDoesNotOutliveUnlock => {
+                "authorize expiry does not outlive the unlock floor"
+            }
             ApplyError::InvalidActorId => "actor id bytes32(0) is reserved",
             ApplyError::InvalidAuthenticator => "actor authenticator is not canonical",
             ApplyError::MalformedPolicyData => "actor policy data is malformed",
@@ -1572,9 +1576,6 @@ where
             ApplyError::MultipleDelegations => "at most one delegation is allowed",
             ApplyError::CreateAndDelegation => "create and delegation may not coexist",
             ApplyError::NonDelegatableCode { .. } => "delegation sender has non-delegation code",
-            ApplyError::ContractEstablishedCodeless { .. } => {
-                "delegation target is an empty-code keystore-established account"
-            }
             ApplyError::SequenceOverflow => "config change sequence overflow",
             ApplyError::EmptyChangeSet => "signed account-change batch is empty",
         }

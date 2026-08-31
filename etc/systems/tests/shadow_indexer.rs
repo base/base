@@ -8,29 +8,42 @@
 use std::time::Duration;
 
 use base_node_runner::FromExtensionConfig;
-use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
-use base_shadow_indexer_db::{ShadowBlockRepo, ShadowDbConfig};
+use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension, ShadowRetentionConfig};
+use base_shadow_indexer_db::{PgConnectionParams, ShadowBlockRepo, ShadowDbConfig};
 use base_system_tests::{SystemTestProviderExt, SystemTestStackBuilder};
 use eyre::{Result, WrapErr, ensure};
 use sqlx::postgres::PgPoolOptions;
-use testcontainers::runners::AsyncRunner;
+use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use tokio::time::{Instant, sleep};
+
+/// `testcontainers-modules` still defaults to Postgres 11, which predates the
+/// `jsonb_path_query_array` used by migration 0004.
+const POSTGRES_TAG: &str = "16-alpine";
 
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
 const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(60);
 const DB_POLL_TIMEOUT: Duration = Duration::from_secs(20);
 const DB_POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// Long enough that no block this test produces can expire while it runs.
+const RETENTION_PERIOD: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const RETENTION_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 #[tokio::test]
 async fn shadow_indexer_persists_no_canonical_blocks() -> Result<()> {
-    let container = Postgres::default().start().await?;
+    let container = Postgres::default().with_tag(POSTGRES_TAG).start().await?;
     let port = container.get_host_port_ipv4(5432).await?;
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    let connection = PgConnectionParams {
+        host: "127.0.0.1".to_string(),
+        port,
+        database: "postgres".to_string(),
+        username: "postgres".to_string(),
+        password: "postgres".to_string(),
+    };
 
     let db_config = ShadowDbConfig {
-        url: url.clone(),
+        connection: connection.clone(),
         max_connections: 5,
         connection_timeout: Duration::from_secs(5),
     };
@@ -38,6 +51,7 @@ async fn shadow_indexer_persists_no_canonical_blocks() -> Result<()> {
         enabled: true,
         db: db_config.clone(),
         builder_version: "e2e-test".to_string(),
+        retention: ShadowRetentionConfig { period: RETENTION_PERIOD, interval: RETENTION_INTERVAL },
     }));
 
     let system = SystemTestStackBuilder::new()
@@ -58,7 +72,7 @@ async fn shadow_indexer_persists_no_canonical_blocks() -> Result<()> {
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .acquire_timeout(Duration::from_secs(5))
-        .connect(&url)
+        .connect_with(connection.connect_options())
         .await?;
 
     let shadow_blocks: Option<String> =

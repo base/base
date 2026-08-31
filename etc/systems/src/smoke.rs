@@ -680,6 +680,8 @@ impl SystemTestStackBuilder {
 
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
+            builder_datadir: None,
+            client_datadir: None,
             rollup_config: rollup_config_bytes,
             l1_genesis: l1_genesis_bytes,
             jwt_secret,

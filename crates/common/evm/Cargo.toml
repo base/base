@@ -21,6 +21,7 @@ alloy-primitives.workspace = true
 
 # base
 base-common-flz.workspace = true
+base-common-l1-fees.workspace = true
 base-common-chains.workspace = true
 base-common-genesis.workspace = true
 base-common-precompiles.workspace = true
@@ -66,6 +67,7 @@ std = [
 	"base-common-consensus/std",
 	"base-common-flz/std",
 	"base-common-genesis/std",
+	"base-common-l1-fees/std",
 	"base-common-precompiles/std",
 	"base-metrics?/std",
 	"base-precompile-storage/std",

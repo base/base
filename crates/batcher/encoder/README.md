@@ -15,7 +15,7 @@ protocol and consensus crates so nodes can continue deriving existing Span data.
 ```rust,ignore
 use base_batcher_encoder::{
     BatchEncoder, BatchPipeline, DerivationReconciliation, EncoderConfig, FrameEncoder,
-    StepResult,
+    StepResult, SubmissionPayload,
 };
 
 let mut encoder = BatchEncoder::new(rollup_config, EncoderConfig::default());
@@ -33,10 +33,15 @@ loop {
 
 // Drain ready submissions.
 while let Some(sub) = encoder.next_submission() {
-    for frame in &sub.frames {
-        // Encode as L1 calldata:
-        let calldata = FrameEncoder::to_calldata(frame);
-        // Or pack into EIP-4844 blobs via base-blobs::BlobEncoder.
+    match sub.payload() {
+        SubmissionPayload::Blobs(blobs) => {
+            for blob in blobs {
+                let _ = base_blobs::BlobEncoder::encode_packed(blob.frames());
+            }
+        }
+        SubmissionPayload::Calldata(frame) => {
+            let _ = FrameEncoder::to_calldata(frame);
+        }
     }
     encoder.confirm(sub.id, l1_block_number);
     encoder.advance_l1_head(l1_block_number);

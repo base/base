@@ -525,8 +525,7 @@ mod tests {
             BundleHistoryEvent::Received { key, timestamp, bundle: b } => {
                 assert_eq!(key, "test-key");
                 assert_eq!(*timestamp, 1234567890);
-                assert_eq!(b.min_block_number, bundle.min_block_number);
-                assert_eq!(b.max_block_number, bundle.max_block_number);
+                assert_eq!(b.txs.len(), bundle.txs.len());
             }
             _ => panic!("expected Received event"),
         }

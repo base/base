@@ -353,7 +353,17 @@ impl LocalInstance {
 impl Drop for LocalInstance {
     fn drop(&mut self) {
         if let Some(runtime) = self.runtime.take() {
-            runtime.graceful_shutdown_with_timeout(Duration::from_secs(10));
+            // Tokio runtimes cannot perform their blocking shutdown while they are being dropped
+            // from another runtime's async context. `LocalInstance` is commonly owned directly by
+            // async tests, so shut down and drop its runtime on a plain thread before cleaning up
+            // the resources it owns.
+            let shutdown = std::thread::spawn(move || {
+                runtime.graceful_shutdown_with_timeout(Duration::from_secs(10));
+                drop(runtime);
+            });
+            if let Err(panic) = shutdown.join() {
+                std::panic::resume_unwind(panic);
+            }
             // Drop the node and the pool handle (both hold open database handles via the node's
             // provider / the pool's transaction validator) before removing the backing files.
             drop(self.node_handle.take());

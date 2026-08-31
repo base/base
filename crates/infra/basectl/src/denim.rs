@@ -435,9 +435,9 @@ fn check_wire_logs(
             if logs.is_empty() {
                 report.add_check(
                     name,
-                    DenimCheckStatus::Indeterminate,
+                    DenimCheckStatus::Fail,
                     "at least one pinned log",
-                    "no logs in pinned block",
+                    "no logs in evidence block",
                 );
                 return;
             }
@@ -612,11 +612,70 @@ async fn append_wire_checks<P: Provider<Base>>(
 ) {
     let transactions =
         block.transactions.txns().take(2).map(|tx| tx.as_ref().clone()).collect::<Vec<_>>();
-    let Some(timestamp_ms) =
+    let timestamp_ms =
         BaseTimeUpdateTx::extract_from_transactions(&transactions, report.block_number)
             .ok()
-            .map(|metadata| report.timestamp * 1_000 + u64::from(metadata.timestamp_millis_part()))
-    else {
+            .map(|metadata| report.timestamp * 1_000 + u64::from(metadata.timestamp_millis_part()));
+    if let Some(timestamp_ms) = timestamp_ms {
+        let hash = report.block_hash.to_string();
+        let number = format!("0x{:x}", report.block_number);
+        for (name, method, params) in [
+            ("rpc_eth_getBlockByHash_timestampMs", "eth_getBlockByHash", json!([hash, false])),
+            (
+                "rpc_eth_getBlockByNumber_timestampMs",
+                "eth_getBlockByNumber",
+                json!([number, false]),
+            ),
+            ("rpc_eth_getHeaderByHash_timestampMs", "eth_getHeaderByHash", json!([hash])),
+            ("rpc_eth_getHeaderByNumber_timestampMs", "eth_getHeaderByNumber", json!([number])),
+        ] {
+            let identity = [("hash", hash.clone()), ("number", number.clone())];
+            check_wire_object(
+                report,
+                name,
+                raw_call(provider, method, params).await,
+                "timestampMs",
+                timestamp_ms,
+                &identity,
+            );
+        }
+        if let Some(tx) = block.transactions.txns().nth(1) {
+            let tx_hash = tx.tx_hash().to_string();
+            let tx_index = "0x1".to_string();
+            for (name, method, params) in [
+                (
+                    "rpc_eth_getTransactionByHash_blockTimestampMs",
+                    "eth_getTransactionByHash",
+                    json!([tx_hash]),
+                ),
+                (
+                    "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs",
+                    "eth_getTransactionByBlockHashAndIndex",
+                    json!([hash, tx_index]),
+                ),
+                (
+                    "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs",
+                    "eth_getTransactionByBlockNumberAndIndex",
+                    json!([number, tx_index]),
+                ),
+            ] {
+                let identity = [
+                    ("hash", tx_hash.clone()),
+                    ("blockHash", hash.clone()),
+                    ("blockNumber", number.clone()),
+                    ("transactionIndex", tx_index.clone()),
+                ];
+                check_wire_object(
+                    report,
+                    name,
+                    raw_call(provider, method, params).await,
+                    "blockTimestampMs",
+                    timestamp_ms,
+                    &identity,
+                );
+            }
+        }
+    } else {
         for name in [
             "rpc_eth_getBlockByHash_timestampMs",
             "rpc_eth_getBlockByNumber_timestampMs",
@@ -625,11 +684,6 @@ async fn append_wire_checks<P: Provider<Base>>(
             "rpc_eth_getTransactionByHash_blockTimestampMs",
             "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs",
             "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs",
-            "rpc_eth_getLogs_blockTimestampMs",
-            "rpc_eth_getFilterChanges_blockTimestampMs",
-            "rpc_eth_getFilterLogs_blockTimestampMs",
-            "rpc_eth_getTransactionReceipt_logs_blockTimestampMs",
-            "rpc_eth_getBlockReceipts_logs_blockTimestampMs",
         ] {
             report.add_check(
                 name,
@@ -638,96 +692,181 @@ async fn append_wire_checks<P: Provider<Base>>(
                 "canonical BaseTime metadata unavailable",
             );
         }
-        for name in [
-            "rpc_eth_subscribe_newHeads_timestampMs",
-            "rpc_eth_subscribe_logs_blockTimestampMs",
-            "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs",
-        ] {
+    }
+
+    const LOG_CHECKS: [&str; 5] = [
+        "rpc_eth_getLogs_blockTimestampMs",
+        "rpc_eth_getFilterChanges_blockTimestampMs",
+        "rpc_eth_getFilterLogs_blockTimestampMs",
+        "rpc_eth_getTransactionReceipt_logs_blockTimestampMs",
+        "rpc_eth_getBlockReceipts_logs_blockTimestampMs",
+    ];
+    const LOG_LOOKBACK_BLOCKS: u64 = 200_000;
+    const LOG_DISCOVERY_CALLS: usize = 16;
+    const INITIAL_LOG_WINDOW: u64 = 32;
+    const MAX_LOG_WINDOW: u64 = 32_768;
+    let add_indeterminate_log_checks = |report: &mut DenimReport, reason: &str| {
+        for name in LOG_CHECKS {
             report.add_check(
                 name,
                 DenimCheckStatus::Indeterminate,
-                "live event",
-                "canonical BaseTime metadata unavailable",
+                "post-Denim log evidence",
+                reason,
             );
         }
+    };
+    if report.schedule != DenimSchedule::Active {
+        add_indeterminate_log_checks(report, "Denim is not active at the snapshot");
+        append_subscription_checks(provider, report, el_ws_rpc, target).await;
+        return;
+    }
+
+    let floor = report.block_number.saturating_sub(LOG_LOOKBACK_BLOCKS);
+    let mut upper = report.block_number;
+    let mut window = INITIAL_LOG_WINDOW;
+    let mut max_window = MAX_LOG_WINDOW;
+    let mut evidence = None;
+    let mut discovery_reason = "no post-Denim log found within scan bounds".to_string();
+    for _ in 0..LOG_DISCOVERY_CALLS {
+        let width = window.min(upper - floor + 1);
+        let lower = upper - (width - 1);
+        let filter = json!({
+            "fromBlock": format!("0x{lower:x}"),
+            "toBlock": format!("0x{upper:x}"),
+        });
+        match raw_call(provider, "eth_getLogs", json!([filter])).await {
+            RawOutcome::Value(value) => {
+                let Some(logs) = value.as_array() else {
+                    discovery_reason = "eth_getLogs returned an invalid log array".into();
+                    break;
+                };
+                evidence = logs
+                    .iter()
+                    .filter_map(|log| {
+                        let block_number =
+                            log.get("blockNumber")?.as_str().and_then(parse_quantity)?;
+                        let transaction_index =
+                            log.get("transactionIndex")?.as_str().and_then(parse_quantity)?;
+                        let block_hash = log.get("blockHash")?.as_str()?.parse::<B256>().ok()?;
+                        let transaction_hash =
+                            log.get("transactionHash")?.as_str()?.parse::<B256>().ok()?;
+                        (block_number >= lower && block_number <= upper).then_some((
+                            block_number,
+                            transaction_index,
+                            block_hash,
+                            transaction_hash,
+                        ))
+                    })
+                    .max_by_key(|(block_number, transaction_index, _, _)| {
+                        (*block_number, *transaction_index)
+                    });
+                if evidence.is_some() {
+                    break;
+                }
+                if !logs.is_empty() {
+                    discovery_reason = "eth_getLogs returned malformed log identity".into();
+                    break;
+                }
+                discovery_reason = "no post-Denim log found within scan bounds".into();
+                if lower == floor {
+                    break;
+                }
+                upper = lower - 1;
+                window = window.saturating_mul(4).min(max_window);
+            }
+            RawOutcome::MethodError(error) if width > 1 => {
+                discovery_reason = error;
+                max_window = (width / 4).max(1);
+                window = max_window;
+            }
+            RawOutcome::MethodError(error) | RawOutcome::Unavailable(error) => {
+                discovery_reason = error;
+                break;
+            }
+        }
+    }
+    let Some((evidence_number, evidence_tx_index, evidence_hash, evidence_tx_hash)) = evidence
+    else {
+        add_indeterminate_log_checks(report, &discovery_reason);
+        append_subscription_checks(provider, report, el_ws_rpc, target).await;
         return;
     };
-    let hash = report.block_hash.to_string();
-    let number = format!("0x{:x}", report.block_number);
-    for (name, method, params) in [
-        ("rpc_eth_getBlockByHash_timestampMs", "eth_getBlockByHash", json!([hash, false])),
-        ("rpc_eth_getBlockByNumber_timestampMs", "eth_getBlockByNumber", json!([number, false])),
-        ("rpc_eth_getHeaderByHash_timestampMs", "eth_getHeaderByHash", json!([hash])),
-        ("rpc_eth_getHeaderByNumber_timestampMs", "eth_getHeaderByNumber", json!([number])),
-    ] {
-        let identity = [("hash", hash.clone()), ("number", number.clone())];
-        check_wire_object(
-            report,
-            name,
-            raw_call(provider, method, params).await,
-            "timestampMs",
-            timestamp_ms,
-            &identity,
-        );
-    }
-    let Some(tx) = block.transactions.txns().nth(1) else { return };
-    let tx_hash = tx.tx_hash().to_string();
-    let tx_index = "0x1".to_string();
-    for (name, method, params) in [
-        (
-            "rpc_eth_getTransactionByHash_blockTimestampMs",
-            "eth_getTransactionByHash",
-            json!([tx_hash]),
-        ),
-        (
-            "rpc_eth_getTransactionByBlockHashAndIndex_blockTimestampMs",
-            "eth_getTransactionByBlockHashAndIndex",
-            json!([hash, tx_index]),
-        ),
-        (
-            "rpc_eth_getTransactionByBlockNumberAndIndex_blockTimestampMs",
-            "eth_getTransactionByBlockNumberAndIndex",
-            json!([number, tx_index]),
-        ),
-    ] {
-        let identity = [
-            ("hash", tx_hash.clone()),
-            ("blockHash", hash.clone()),
-            ("blockNumber", number.clone()),
-            ("transactionIndex", tx_index.clone()),
-        ];
-        check_wire_object(
-            report,
-            name,
-            raw_call(provider, method, params).await,
-            "blockTimestampMs",
-            timestamp_ms,
-            &identity,
-        );
-    }
+    let evidence_block = match provider.get_block(BlockId::Hash(evidence_hash.into())).full().await
+    {
+        Ok(Some(block)) => block,
+        Ok(None) => {
+            add_indeterminate_log_checks(report, "log evidence block unavailable");
+            append_subscription_checks(provider, report, el_ws_rpc, target).await;
+            return;
+        }
+        Err(error) => {
+            add_indeterminate_log_checks(report, &error.to_string());
+            append_subscription_checks(provider, report, el_ws_rpc, target).await;
+            return;
+        }
+    };
+    let evidence_active =
+        report.activation.is_some_and(|activation| evidence_block.header.timestamp >= activation);
+    let evidence_identity_matches = evidence_block.header.hash == evidence_hash
+        && evidence_block.header.number == evidence_number
+        && usize::try_from(evidence_tx_index)
+            .ok()
+            .and_then(|index| evidence_block.transactions.txns().nth(index))
+            .is_some_and(|transaction| transaction.tx_hash() == evidence_tx_hash);
+    let evidence_transactions = evidence_block
+        .transactions
+        .txns()
+        .take(2)
+        .map(|tx| tx.as_ref().clone())
+        .collect::<Vec<_>>();
+    let evidence_timestamp_ms = BaseTimeUpdateTx::extract_from_transactions(
+        &evidence_transactions,
+        evidence_block.header.number,
+    )
+    .ok()
+    .map(|metadata| {
+        evidence_block.header.timestamp * 1_000 + u64::from(metadata.timestamp_millis_part())
+    });
+    let Some(evidence_timestamp_ms) =
+        (evidence_active && evidence_identity_matches).then_some(evidence_timestamp_ms).flatten()
+    else {
+        let reason = if !evidence_active {
+            "newest log predates Denim activation"
+        } else if !evidence_identity_matches {
+            "log evidence no longer matches its canonical transaction"
+        } else {
+            "log evidence block has invalid BaseTime metadata"
+        };
+        add_indeterminate_log_checks(report, reason);
+        append_subscription_checks(provider, report, el_ws_rpc, target).await;
+        return;
+    };
+
+    let hash = evidence_hash.to_string();
+    let tx_hash = evidence_tx_hash.to_string();
     let filter = json!({"blockHash": hash});
     check_wire_logs(
         report,
         "rpc_eth_getLogs_blockTimestampMs",
         raw_call(provider, "eth_getLogs", json!([filter])).await,
-        timestamp_ms,
+        evidence_timestamp_ms,
         &hash,
     );
     let filter_id = raw_call(provider, "eth_newFilter", json!([filter])).await;
     match filter_id {
-        RawOutcome::Value(id) if id.as_str().and_then(parse_quantity).is_some() => {
+        RawOutcome::Value(id) if id.as_str().is_some_and(|id| !id.is_empty()) => {
             check_wire_logs(
                 report,
                 "rpc_eth_getFilterChanges_blockTimestampMs",
                 raw_call(provider, "eth_getFilterChanges", json!([id])).await,
-                timestamp_ms,
+                evidence_timestamp_ms,
                 &hash,
             );
             check_wire_logs(
                 report,
                 "rpc_eth_getFilterLogs_blockTimestampMs",
                 raw_call(provider, "eth_getFilterLogs", json!([id])).await,
-                timestamp_ms,
+                evidence_timestamp_ms,
                 &hash,
             );
             let cleanup = raw_call(provider, "eth_uninstallFilter", json!([id])).await;
@@ -767,7 +906,7 @@ async fn append_wire_checks<P: Provider<Base>>(
             if value.get("transactionHash").and_then(Value::as_str) == Some(tx_hash.as_str())
                 && value.get("blockHash").and_then(Value::as_str) == Some(hash.as_str())
                 && value.get("blockNumber").and_then(Value::as_str).and_then(parse_quantity)
-                    == Some(report.block_number) =>
+                    == Some(evidence_number) =>
         {
             RawOutcome::Value(value.get("logs").cloned().unwrap_or(Value::Null))
         }
@@ -778,7 +917,7 @@ async fn append_wire_checks<P: Provider<Base>>(
         report,
         "rpc_eth_getTransactionReceipt_logs_blockTimestampMs",
         receipt_logs,
-        timestamp_ms,
+        evidence_timestamp_ms,
         &hash,
     );
     let receipts = raw_call(provider, "eth_getBlockReceipts", json!([hash])).await;
@@ -787,6 +926,11 @@ async fn append_wire_checks<P: Provider<Base>>(
             Some(receipts)
                 if receipts.iter().all(|receipt| {
                     receipt.get("blockHash").and_then(Value::as_str) == Some(hash.as_str())
+                        && receipt
+                            .get("blockNumber")
+                            .and_then(Value::as_str)
+                            .and_then(parse_quantity)
+                            == Some(evidence_number)
                         && receipt.get("logs").is_some_and(Value::is_array)
                 }) =>
             {
@@ -807,7 +951,7 @@ async fn append_wire_checks<P: Provider<Base>>(
         report,
         "rpc_eth_getBlockReceipts_logs_blockTimestampMs",
         nested,
-        timestamp_ms,
+        evidence_timestamp_ms,
         &hash,
     );
     append_subscription_checks(provider, report, el_ws_rpc, target).await;
@@ -974,10 +1118,9 @@ async fn append_subscription_checks<P: Provider<Base>>(
     }
     let mut subscriptions: HashMap<String, (&str, &str)> = HashMap::new();
     let mut completed = HashSet::new();
-    let mut queued = HashSet::new();
-    let mut notifications = Vec::new();
+    let mut indeterminate = HashMap::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
-    while completed.len() + queued.len() < SUBSCRIPTIONS.len() {
+    while completed.len() < SUBSCRIPTIONS.len() {
         let message = match tokio::time::timeout_at(deadline, socket.next()).await {
             Ok(Some(Ok(message))) => message,
             _ => break,
@@ -1019,14 +1162,14 @@ async fn append_subscription_checks<P: Provider<Base>>(
             continue;
         };
         let Some(&(name, kind)) = subscriptions.get(subscription) else { continue };
-        if completed.contains(name) || queued.contains(name) {
+        if completed.contains(name) {
             continue;
         }
-        queued.insert(name);
-        notifications.push((name, kind, value));
-    }
-    for (name, kind, value) in notifications {
         let (status, observed) = subscription_event_result(provider, kind, &value).await;
+        if status == DenimCheckStatus::Indeterminate {
+            indeterminate.insert(name, observed);
+            continue;
+        }
         report.add_check(name, status, "matching timestamped WebSocket event", observed);
         completed.insert(name);
     }
@@ -1038,6 +1181,8 @@ async fn append_subscription_checks<P: Provider<Base>>(
                 "matching timestamped WebSocket event",
                 if pending.values().any(|(pending_name, _)| *pending_name == name) {
                     "subscription response unavailable"
+                } else if let Some(observed) = indeterminate.get(name) {
+                    observed
                 } else {
                     "subscription accepted; no correlated event observed"
                 },
@@ -1218,9 +1363,10 @@ impl DenimReport {
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use alloy_consensus::Sealable;
     use alloy_primitives::{B256, U256};
     use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
-    use base_common_consensus::Predeploys;
+    use base_common_consensus::{BaseTxEnvelope, Predeploys, TxDeposit};
     use base_common_evm::BaseTime;
     use base_common_genesis::RollupConfig;
     use serde_json::{Value, json};
@@ -1290,6 +1436,203 @@ mod tests {
                 "error": {"code": -32601, "message": "method not found"}
             })),
         )
+    }
+
+    fn rpc_deposit(
+        transaction: BaseTxEnvelope,
+        block_hash: B256,
+        block_number: u64,
+        transaction_index: u64,
+    ) -> Value {
+        let transaction_hash = transaction.tx_hash().to_string();
+        let mut value = serde_json::to_value(transaction).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.insert("hash".into(), Value::String(transaction_hash));
+        object.insert("blockHash".into(), json!(block_hash));
+        object.insert("blockNumber".into(), json!(format!("0x{block_number:x}")));
+        object.insert("transactionIndex".into(), json!(format!("0x{transaction_index:x}")));
+        object.insert("blockTimestamp".into(), json!("0xa"));
+        object.insert("blockTimestampMs".into(), json!("0x27d8"));
+        object.insert("depositReceiptVersion".into(), json!("0x1"));
+        object.insert("gasPrice".into(), json!("0x0"));
+        object.insert("nonce".into(), json!(format!("0x{transaction_index:x}")));
+        value
+    }
+
+    fn rpc_block(block_hash: B256, block_number: u64, log_transaction: bool) -> Value {
+        let l1_info: BaseTxEnvelope = TxDeposit::default().seal_slow().into();
+        let base_time: BaseTxEnvelope =
+            BaseTimeUpdateTx::new(200).unwrap().into_deposit_tx(block_number).into();
+        let mut transactions = vec![
+            rpc_deposit(l1_info, block_hash, block_number, 0),
+            rpc_deposit(base_time, block_hash, block_number, 1),
+        ];
+        if log_transaction {
+            let transaction: BaseTxEnvelope =
+                TxDeposit { source_hash: B256::repeat_byte(0x33), ..Default::default() }
+                    .seal_slow()
+                    .into();
+            transactions.push(rpc_deposit(transaction, block_hash, block_number, 2));
+        }
+        json!({
+            "hash": block_hash,
+            "parentHash": B256::ZERO,
+            "sha3Uncles": B256::ZERO,
+            "miner": Address::ZERO,
+            "stateRoot": B256::ZERO,
+            "transactionsRoot": B256::ZERO,
+            "receiptsRoot": B256::ZERO,
+            "logsBloom": format!("0x{}", "00".repeat(256)),
+            "difficulty": "0x0",
+            "number": format!("0x{block_number:x}"),
+            "gasLimit": "0x1c9c380",
+            "gasUsed": "0x0",
+            "timestamp": "0xa",
+            "timestampMs": "0x27d8",
+            "extraData": "0x",
+            "mixHash": B256::ZERO,
+            "nonce": "0x0000000000000000",
+            "baseFeePerGas": "0x1",
+            "size": "0x0",
+            "totalDifficulty": "0x0",
+            "uncles": [],
+            "transactions": transactions
+        })
+    }
+
+    async fn denim_log_rpc_fixture(
+        State(requests): State<Arc<Mutex<Vec<Value>>>>,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        const LATEST_NUMBER: u64 = 65_000;
+        const LOG_NUMBER: u64 = 40;
+        let latest_hash = B256::repeat_byte(0x42);
+        let log_hash = B256::repeat_byte(0x24);
+        let latest_block = rpc_block(latest_hash, LATEST_NUMBER, false);
+        let log_block = rpc_block(log_hash, LOG_NUMBER, true);
+        let latest_transaction = latest_block["transactions"][1].clone();
+        let log_transaction = log_block["transactions"][2].clone();
+        let log = json!({
+            "address": Address::ZERO,
+            "topics": [],
+            "data": "0x",
+            "blockHash": log_hash,
+            "blockNumber": "0x28",
+            "blockTimestampMs": "0x27d8",
+            "transactionHash": log_transaction["hash"],
+            "transactionIndex": "0x2",
+            "logIndex": "0x0",
+            "removed": false
+        });
+        requests.lock().unwrap().push(request.clone());
+        let params = &request["params"];
+        if request["method"] == "eth_getLogs" {
+            let from = params[0]["fromBlock"].as_str().and_then(parse_quantity);
+            let to = params[0]["toBlock"].as_str().and_then(parse_quantity);
+            if matches!((from, to), (Some(from), Some(to)) if to - from + 1 > 8_192) {
+                return Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "error": {"code": -32005, "message": "block range too large"}
+                }));
+            }
+        }
+        let result = match request["method"].as_str().unwrap() {
+            "eth_getBlockByHash" if params[0] == json!(log_hash) => log_block,
+            "eth_getBlockByHash"
+            | "eth_getBlockByNumber"
+            | "eth_getHeaderByHash"
+            | "eth_getHeaderByNumber" => latest_block,
+            "eth_getTransactionByHash"
+            | "eth_getTransactionByBlockHashAndIndex"
+            | "eth_getTransactionByBlockNumberAndIndex" => latest_transaction,
+            "eth_getLogs" if params[0].get("blockHash") == Some(&json!(log_hash)) => {
+                json!([log])
+            }
+            "eth_getLogs" if params[0].get("fromBlock").is_some() => {
+                if params[0]["fromBlock"] == "0x0" { json!([log]) } else { json!([]) }
+            }
+            "eth_getLogs" => json!([]),
+            "eth_newFilter" => json!("0xf56a19202c3fde509c9b1f806c0b12af"),
+            "eth_getFilterChanges" | "eth_getFilterLogs" => json!([log]),
+            "eth_uninstallFilter" => json!(true),
+            "eth_getTransactionReceipt" => json!({
+                "transactionHash": log_transaction["hash"],
+                "blockHash": log_hash,
+                "blockNumber": "0x28",
+                "logs": [log]
+            }),
+            "eth_getBlockReceipts" => json!([{
+                "blockHash": log_hash,
+                "blockNumber": "0x28",
+                "logs": [log]
+            }]),
+            method => panic!("unexpected RPC method {method}"),
+        };
+        Json(json!({ "jsonrpc": "2.0", "id": request["id"], "result": result }))
+    }
+
+    async fn denim_log_ws_fixture(listener: TcpListener) {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        for _ in 0..3 {
+            let request = socket.next().await.unwrap().unwrap();
+            let request: Value = serde_json::from_str(request.to_text().unwrap()).unwrap();
+            let id = request["id"].as_u64().unwrap();
+            socket
+                .send(Message::Text(
+                    json!({"jsonrpc":"2.0","id":id,"result":format!("0x{id:x}")})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+        }
+        let block_hash = B256::repeat_byte(0x24);
+        let log = json!({
+            "blockHash": block_hash,
+            "blockTimestampMs": "0x27d8"
+        });
+        for notification in [
+            json!({
+                "jsonrpc": "2.0",
+                "method": "eth_subscription",
+                "params": {"subscription":"0x3","result":[{
+                    "blockHash": block_hash,
+                    "blockNumber": "0x28",
+                    "logs": []
+                }]}
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "eth_subscription",
+                "params": {"subscription":"0x1","result":{
+                    "hash": block_hash,
+                    "timestampMs": "0x27d8"
+                }}
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "eth_subscription",
+                "params": {"subscription":"0x2","result":log}
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "eth_subscription",
+                "params": {"subscription":"0x3","result":[{
+                    "blockHash": block_hash,
+                    "blockNumber": "0x28",
+                    "logs": [log]
+                }]}
+            }),
+        ] {
+            socket.send(Message::Text(notification.to_string().into())).await.unwrap();
+        }
+        while let Some(Ok(message)) = socket.next().await {
+            if message.is_close() {
+                break;
+            }
+        }
     }
 
     fn observations(activation: Option<u64>, timestamp: u64) -> DenimObservations {
@@ -1523,7 +1866,7 @@ mod tests {
         assert_eq!(
             statuses,
             vec![
-                DenimCheckStatus::Indeterminate,
+                DenimCheckStatus::Fail,
                 DenimCheckStatus::Fail,
                 DenimCheckStatus::Fail,
                 DenimCheckStatus::Pass,
@@ -1547,5 +1890,96 @@ mod tests {
 
         assert!(matches!(outcome, RawOutcome::MethodError(error) if error == "method not found"));
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn log_checks_use_a_historical_log_transaction() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let router =
+            Router::new().route("/", post(denim_log_rpc_fixture)).with_state(Arc::clone(&requests));
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect_http(Url::parse(&format!("http://{address}")).unwrap());
+        let latest_hash = B256::repeat_byte(0x42);
+        let latest_block = rpc_block(latest_hash, 65_000, false);
+        let block: <Base as Network>::BlockResponse = serde_json::from_value(latest_block).unwrap();
+        let mut report = DenimReport::evaluate(DenimObservations {
+            block_number: 65_000,
+            block_hash: latest_hash,
+            ..observations(Some(0), 10)
+        });
+
+        append_wire_checks(&provider, &mut report, &block, None, DenimCheckTarget::Latest).await;
+
+        for name in [
+            "rpc_eth_getLogs_blockTimestampMs",
+            "rpc_eth_getFilterChanges_blockTimestampMs",
+            "rpc_eth_getFilterLogs_blockTimestampMs",
+            "rpc_eth_getTransactionReceipt_logs_blockTimestampMs",
+            "rpc_eth_getBlockReceipts_logs_blockTimestampMs",
+        ] {
+            let check = report.checks.iter().find(|check| check.name == name).unwrap();
+            assert_eq!(check.status, DenimCheckStatus::Pass, "{check:?}");
+        }
+        let log_hash = B256::repeat_byte(0x24);
+        let log_transaction = rpc_block(log_hash, 40, true)["transactions"][2]["hash"].clone();
+        let requests = requests.lock().unwrap();
+        assert!(requests.iter().any(|request| {
+            request["method"] == "eth_getTransactionReceipt"
+                && request["params"] == json!([log_transaction])
+        }));
+        assert!(requests.iter().any(|request| {
+            request["method"] == "eth_getLogs"
+                && request["params"][0]["blockHash"] == json!(log_hash)
+        }));
+        assert!(
+            requests
+                .iter()
+                .filter(|request| {
+                    request["method"] == "eth_getLogs"
+                        && request["params"][0].get("fromBlock").is_some()
+                })
+                .count()
+                > 1
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn receipt_subscription_waits_for_a_log_bearing_event() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let http_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let http_address = http_listener.local_addr().unwrap();
+        let router =
+            Router::new().route("/", post(denim_log_rpc_fixture)).with_state(Arc::clone(&requests));
+        let http_server =
+            tokio::spawn(async move { axum::serve(http_listener, router).await.unwrap() });
+        let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws_address = ws_listener.local_addr().unwrap();
+        let ws_server = tokio::spawn(denim_log_ws_fixture(ws_listener));
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect_http(Url::parse(&format!("http://{http_address}")).unwrap());
+        let ws_url = Url::parse(&format!("ws://{ws_address}")).unwrap();
+        let mut report = DenimReport::evaluate(observations(Some(0), 10));
+
+        append_subscription_checks(&provider, &mut report, Some(&ws_url), DenimCheckTarget::Latest)
+            .await;
+
+        for name in [
+            "rpc_eth_subscribe_newHeads_timestampMs",
+            "rpc_eth_subscribe_logs_blockTimestampMs",
+            "rpc_eth_subscribe_transactionReceipts_logs_blockTimestampMs",
+        ] {
+            let check = report.checks.iter().find(|check| check.name == name).unwrap();
+            assert_eq!(check.status, DenimCheckStatus::Pass, "{check:?}");
+        }
+        http_server.abort();
+        ws_server.await.unwrap();
     }
 }

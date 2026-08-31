@@ -956,8 +956,13 @@ where
     /// When `send_tx` exits with an error, the nonce manager may be reset
     /// to prevent stale-counter gaps on the next call:
     ///
-    /// * **Pre-publish errors** (no tx was ever sent): the nonce is always
-    ///   reset so the next attempt re-fetches from the chain.
+    /// * **Pre-publish errors** before signing reset the cache. After a nonce
+    ///   is signed, it is returned to the reuse pool instead so concurrent
+    ///   `send()` calls cannot rewind past an in-flight higher nonce.
+    ///   `send_async` recycles its pre-reserved nonce so concurrent
+    ///   reservations remain valid.
+    /// * **`NonceTooHigh`** is retried with the same signed transaction before
+    ///   reaching cleanup.
     /// * **`SendTimeout`**: the nonce is always reset — even after a
     ///   successful publish — because the timeout may have cancelled
     ///   `prepare()` mid-flight during a fee bump, leaking a nonce from
@@ -1016,23 +1021,19 @@ where
         }
 
         if Self::should_reset_nonce_on_send_error(&result, &send_state, nonce_override) {
-            // Three policies (see should_reset_nonce_on_send_error):
-            // • NonceTooHigh — always reset, even with nonce_override.
-            //   No tx entered the mempool; reserved_high_water protects
-            //   concurrent reservations from collision after reset.
+            // Two policies (see should_reset_nonce_on_send_error):
             // • SendTimeout — always reset. The timeout may have cancelled
             //   prepare() after it reserved a nonce but before the tx reached
             //   the mempool, leaking the nonce manager's internal counter.
-            // • Other errors — reset only when no tx was ever published.
-            //   Once a tx may be pending, re-fetching the latest nonce could
-            //   conflict with the in-flight transaction.
+            // • Other errors — reset only when no nonce was ever signed, so
+            //   the cache cannot rewind past a nonce another task is using.
             self.nonce_manager.reset().await;
         }
 
-        // Return pre-reserved nonces that were never published so they can
-        // be reissued by subsequent send/send_async calls, preventing
-        // irrecoverable nonce gaps.
-        if let Some(n) = nonce_override
+        // Return nonces that never reached the mempool so they can be
+        // reissued. `send_async` reserves its nonce up front, `send` records
+        // the one it signed with.
+        if let Some(n) = nonce_override.or_else(|| send_state.assigned_nonce())
             && Self::should_return_reserved_nonce(&result, &send_state)
         {
             self.nonce_manager.return_reserved_nonce(n).await;
@@ -1048,10 +1049,6 @@ where
     ) -> bool {
         match result {
             Ok(_) => false,
-            // Always reset on NonceTooHigh — the publish failed, no tx
-            // entered the mempool, and reserved_high_water protects
-            // concurrent reservations from collision after reset.
-            Err(TxManagerError::NonceTooHigh) => true,
             // When a nonce_override was used, the nonce was irrevocably
             // consumed at reserve_nonce() time. Resetting the nonce manager
             // would corrupt concurrent send_async reservations.
@@ -1060,14 +1057,15 @@ where
             // prepare() mid-flight during a fee bump, leaking a nonce
             // from the nonce manager's internal counter.
             Err(TxManagerError::SendTimeout) => true,
-            // For other errors, reset only if nothing was ever published.
-            // Once a transaction is pending, the next send_tx will re-sync
-            // via the chain's pending nonce anyway.
-            Err(_) => !send_state.has_published(),
+            // Reset only when this send never signed a nonce. A signed nonce
+            // goes back to the reuse pool instead, so a concurrent `send()`
+            // cannot rewind the cache past an in-flight higher nonce while a
+            // `NonceTooHigh` retry is still sleeping.
+            Err(_) => send_state.assigned_nonce().is_none(),
         }
     }
 
-    /// Returns `true` when a pre-reserved nonce should be returned to the
+    /// Returns `true` when an unpublished nonce should be returned to the
     /// nonce manager's reuse pool.
     ///
     /// A nonce is eligible for return when BOTH of these hold:
@@ -1075,20 +1073,13 @@ where
     /// 2. No transaction was ever successfully published — if a tx was
     ///    published, the nonce may be in the mempool and must not be
     ///    reused.
-    ///
-    /// The caller is responsible for checking that a nonce override exists
-    /// (i.e. the send came from `send_async`, not `send`).
     fn should_return_reserved_nonce<T>(
         result: &TxManagerResult<T>,
         send_state: &SendState,
     ) -> bool {
         match result {
-            // Nonce errors indicate the nonce is genuinely invalid, not a
-            // transient failure.  Returning it to the reuse pool would
-            // cause an infinite retry loop: after a reset() the chain
-            // nonce is re-fetched, but advance_nonce() pops
-            // returned_nonces first, reissuing the same invalid value.
-            Ok(_) | Err(TxManagerError::NonceTooHigh | TxManagerError::NonceTooLow) => false,
+            // A too-low nonce was already consumed and must not be reused.
+            Ok(_) | Err(TxManagerError::NonceTooLow) => false,
             Err(_) => !send_state.has_published(),
         }
     }
@@ -1112,7 +1103,8 @@ where
         // the need for a separate suggest_gas_price_caps() call.
         let prepared =
             self.prepare_with_initial_caps(candidate, None, None, nonce_override, None).await?;
-        let tx_hash = self.publish_tx(send_state, &prepared.raw_tx, None).await?;
+        send_state.record_assigned_nonce(prepared.nonce);
+        let tx_hash = self.publish_tx_with_nonce_retry(send_state, &prepared.raw_tx).await?;
         let mut bump = BumpState::from_prepared(prepared, tx_hash);
 
         // Receipt delivery channel — mpsc because fee bumps may spawn
@@ -1361,6 +1353,47 @@ where
             Err(e) => {
                 warn!(error = %e, "fee bump failed, will retry next tick");
                 None
+            }
+        }
+    }
+
+    /// Publishes the initial transaction, retrying a transient nonce gap.
+    ///
+    /// Concurrent sends reserve nonces in order but may reach different RPC
+    /// backends out of order. Retrying the same signed transaction lets the
+    /// lower nonce propagate without serializing receipt confirmation or fee
+    /// bumping.
+    async fn publish_tx_with_nonce_retry(
+        &self,
+        send_state: &SendState,
+        raw_tx: &Bytes,
+    ) -> TxManagerResult<B256> {
+        let mut remaining_retries = self.config.publish_max_retries;
+        let mut is_retry = false;
+        loop {
+            if self.is_closed() {
+                return Err(TxManagerError::ChannelClosed);
+            }
+            if is_retry && let Some(err) = send_state.critical_error_at(self.runtime.now()) {
+                return Err(err);
+            }
+
+            match self.publish_tx(send_state, raw_tx, None).await {
+                Ok(tx_hash) => return Ok(tx_hash),
+                Err(TxManagerError::NonceTooHigh) if remaining_retries > 0 => {
+                    remaining_retries -= 1;
+                    if let Some(err) = send_state.critical_error_at(self.runtime.now()) {
+                        return Err(err);
+                    }
+                    warn!(
+                        error = %TxManagerError::NonceTooHigh,
+                        delay = ?self.config.publish_retry_delay,
+                        "retrying initial transaction publication"
+                    );
+                    self.runtime.sleep(self.config.publish_retry_delay).await;
+                    is_retry = true;
+                }
+                Err(error) => return Err(error),
             }
         }
     }
@@ -1801,7 +1834,7 @@ mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
-    use alloy_primitives::{Address, B256, TxKind, U256};
+    use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
     use alloy_provider::{ProviderBuilder, RootProvider};
     use alloy_signer_local::PrivateKeySigner;
     use alloy_transport::mock::Asserter;
@@ -1834,6 +1867,148 @@ mod tests {
         .await
         .expect("should create manager");
         (manager, anvil)
+    }
+
+    #[tokio::test]
+    async fn publish_tx_retries_nonce_too_high() {
+        let asserter = Asserter::new();
+        let expected_hash = B256::with_last_byte(0x42);
+        asserter.push_success(&1u64);
+        asserter.push_failure_msg("nonce too high");
+        asserter.push_success(&expected_hash);
+
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        let wallet = EthereumWallet::from(PrivateKeySigner::random());
+        let config = TxManagerConfig {
+            publish_max_retries: 2,
+            publish_retry_delay: Duration::from_millis(1),
+            ..TxManagerConfig::default()
+        };
+        let manager =
+            SimpleTxManager::from_wallet(provider, wallet, config, 1, Arc::new(NoopTxMetrics))
+                .await
+                .expect("should construct manager");
+        let send_state = SendState::new(3).expect("should construct send state");
+
+        let hash = manager
+            .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+            .await
+            .expect("nonce-too-high publication should be retried");
+
+        assert_eq!(hash, expected_hash);
+        assert!(send_state.has_published());
+        assert!(send_state.critical_error().is_none());
+    }
+
+    #[tokio::test]
+    async fn publish_retry_stops_after_close() {
+        let asserter = Asserter::new();
+        asserter.push_success(&1u64);
+        asserter.push_failure_msg("nonce too high");
+        asserter.push_success(&B256::with_last_byte(0x42));
+
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        let wallet = EthereumWallet::from(PrivateKeySigner::random());
+        let config = TxManagerConfig {
+            publish_max_retries: 2,
+            publish_retry_delay: Duration::from_millis(20),
+            ..TxManagerConfig::default()
+        };
+        let manager =
+            SimpleTxManager::from_wallet(provider, wallet, config, 1, Arc::new(NoopTxMetrics))
+                .await
+                .expect("should construct manager");
+        let send_state = SendState::new(3).expect("should construct send state");
+
+        let closing = manager.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            closing.close();
+        });
+
+        let err = manager
+            .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+            .await
+            .expect_err("closed manager must not retry publication");
+        assert_eq!(err, TxManagerError::ChannelClosed);
+        assert!(!send_state.has_published());
+    }
+
+    #[test]
+    fn publish_retry_uses_injected_runtime_sleep() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let asserter = Asserter::new();
+            let expected_hash = B256::with_last_byte(0x42);
+            asserter.push_success(&1u64);
+            asserter.push_failure_msg("nonce too high");
+            asserter.push_success(&expected_hash);
+
+            let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+            let wallet = EthereumWallet::from(PrivateKeySigner::random());
+            let config = TxManagerConfig {
+                publish_max_retries: 2,
+                publish_retry_delay: Duration::from_secs(1),
+                ..TxManagerConfig::default()
+            };
+            let manager = SimpleTxManager::from_wallet_with_runtime(
+                ctx.clone(),
+                provider,
+                wallet,
+                config,
+                1,
+                Arc::new(NoopTxMetrics),
+            )
+            .await
+            .expect("should construct manager");
+            let send_state = SendState::new(3).expect("should construct send state");
+
+            let hash = manager
+                .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+                .await
+                .expect("injected runtime should drive the nonce-too-high retry");
+
+            assert_eq!(hash, expected_hash);
+            assert_eq!(ctx.now(), Duration::from_secs(1));
+            assert!(send_state.has_published());
+        });
+    }
+
+    #[test]
+    fn publish_retry_honors_mempool_deadline() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let asserter = Asserter::new();
+            asserter.push_success(&1u64);
+            asserter.push_failure_msg("nonce too high");
+            asserter.push_success(&B256::with_last_byte(0x42));
+
+            let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+            let wallet = EthereumWallet::from(PrivateKeySigner::random());
+            let config = TxManagerConfig {
+                publish_max_retries: 2,
+                publish_retry_delay: Duration::from_secs(2),
+                ..TxManagerConfig::default()
+            };
+            let manager = SimpleTxManager::from_wallet_with_runtime(
+                ctx.clone(),
+                provider,
+                wallet,
+                config,
+                1,
+                Arc::new(NoopTxMetrics),
+            )
+            .await
+            .expect("should construct manager");
+            let send_state = SendState::new(3).expect("should construct send state");
+            send_state.set_runtime_mempool_deadline(ctx.now() + Duration::from_secs(1));
+
+            let err = manager
+                .publish_tx_with_nonce_retry(&send_state, &Bytes::from_static(&[0x02]))
+                .await
+                .expect_err("retry must not publish after the mempool deadline");
+
+            assert_eq!(err, TxManagerError::MempoolDeadlineExpired);
+            assert!(!send_state.has_published());
+        });
     }
 
     fn decode_eip1559(prepared: &PreparedTx) -> TxEip1559 {
@@ -2094,7 +2269,7 @@ mod tests {
     #[case::timeout_after_publish(true, Err(TxManagerError::SendTimeout), None, true)]
     #[case::success(false, Ok(()), None, false)]
     #[case::nonce_too_high_no_override(false, Err(TxManagerError::NonceTooHigh), None, true)]
-    #[case::nonce_too_high_with_override(false, Err(TxManagerError::NonceTooHigh), Some(42), true)]
+    #[case::nonce_too_high_with_override(false, Err(TxManagerError::NonceTooHigh), Some(42), false)]
     #[case::nonce_override_timeout(false, Err(TxManagerError::SendTimeout), Some(42), false)]
     #[case::nonce_override_pre_publish_error(
         false,
@@ -2110,6 +2285,8 @@ mod tests {
     ) {
         let send_state = crate::SendState::new(3).expect("should create send state");
         if has_publish {
+            // Publishing is only reachable once a nonce has been signed.
+            send_state.record_assigned_nonce(0);
             send_state.record_successful_publish();
         }
         assert_eq!(
@@ -2122,13 +2299,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn signed_send_nonce_is_recycled_instead_of_resetting_the_cache() {
+        let send_state = crate::SendState::new(3).expect("should create send state");
+        send_state.record_assigned_nonce(4);
+        let result = Err::<(), _>(TxManagerError::NonceTooHigh);
+
+        assert!(
+            !SimpleTxManager::<RootProvider>::should_reset_nonce_on_send_error(
+                &result,
+                &send_state,
+                None,
+            ),
+            "resetting would rewind the cache past a concurrent in-flight send nonce",
+        );
+        assert!(
+            SimpleTxManager::<RootProvider>::should_return_reserved_nonce(&result, &send_state),
+            "the signed but unpublished nonce must go back to the reuse pool",
+        );
+    }
+
     #[rstest]
     #[case::pre_publish_error(false, Err(TxManagerError::Sign("fail".into())), true)]
     #[case::after_publish(true, Err(TxManagerError::Sign("fail".into())), false)]
     #[case::success(false, Ok(()), false)]
     #[case::timeout_no_publish(false, Err(TxManagerError::SendTimeout), true)]
     #[case::timeout_after_publish(true, Err(TxManagerError::SendTimeout), false)]
-    #[case::nonce_too_high(false, Err(TxManagerError::NonceTooHigh), false)]
+    #[case::nonce_too_high(false, Err(TxManagerError::NonceTooHigh), true)]
     #[case::nonce_too_low(false, Err(TxManagerError::NonceTooLow), false)]
     fn should_return_reserved_nonce(
         #[case] has_publish: bool,

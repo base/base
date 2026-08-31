@@ -92,6 +92,41 @@ impl AccountConfigurationStorage<'_> {
         Ok(ActorConfig::EMPTY)
     }
 
+    /// Resolves the *live* effective [`ActorConfig`] for `(account, actor_id)`,
+    /// mirroring `Keystore._resolveActorConfig`: expired actors read as
+    /// [`ActorConfig::EMPTY`], so an expired slot is treated as a new add.
+    ///
+    /// The inline self is resolved against the supplied in-memory `state` rather
+    /// than persisted storage. A batch applier threads an evolving [`AccountState`]
+    /// whose inline self fields (`default_eoa_scope`/`default_eoa_expiry`/
+    /// `DEFAULT_EOA_REVOKED`) are flushed only at the end of the batch, so an
+    /// earlier op's inline-self rewrite is not yet in storage; resolving self from
+    /// storage would miss it and let a second self identity/scope rewrite slip past
+    /// a live-entry guard. The explicit `actor_config` slot (including a non-k1
+    /// self) is written eagerly, so it is still read from storage. Mirrors
+    /// `Keystore._resolveActorConfig`, whose reads see prior in-batch writes.
+    pub fn resolve_live_actor_config_with_state(
+        &self,
+        account: Address,
+        actor_id: B256,
+        state: &AccountState,
+        now: u64,
+    ) -> Result<ActorConfig> {
+        let stored = self.actor_config_slot(account, actor_id)?;
+        let config = if !stored.is_empty() {
+            stored
+        } else if actor_id == Self::self_actor_id(account) && !state.default_eoa_revoked() {
+            ActorConfig {
+                authenticator: Eip8130Constants::K1_AUTHENTICATOR,
+                scope: state.default_eoa_scope,
+                expiry: state.default_eoa_expiry,
+            }
+        } else {
+            ActorConfig::EMPTY
+        };
+        Ok(if config.is_expired(now) { ActorConfig::EMPTY } else { config })
+    }
+
     /// Mirrors `AccountConfiguration.isActor`: `true` for any live actor — an
     /// explicit `actor_config` entry, or the inline secp256k1 self while its
     /// `DEFAULT_EOA_REVOKED` flag is unset. Both cases collapse to "the resolved
@@ -181,13 +216,6 @@ impl AccountConfigurationStorage<'_> {
     /// in the pool), since the reader has no block context.
     pub fn is_locked(&self, account: Address, now: u64) -> Result<bool> {
         Ok(self.get_account_state(account)?.is_locked(now))
-    }
-
-    /// Mirrors `AccountConfiguration.isContractEstablished`: `true` once the
-    /// account has been keystore-established (create/import). Used to gate code
-    /// delegation onto an empty-code account (see [`crate::DelegationEffect`]).
-    pub fn is_contract_established(&self, account: Address) -> Result<bool> {
-        Ok(self.get_account_state(account)?.contract_established())
     }
 
     /// Mirrors `AccountConfiguration.getLockStatus`.
@@ -298,6 +326,15 @@ impl ActorConfig {
         self.authenticator == Address::ZERO
     }
 
+    /// `true` when this config carries a bounded expiry (`expiry != 0`) that has
+    /// already lapsed at `now`. Mirrors `Keystore._isExpired`: the boundary is
+    /// strict (`now > expiry`), so a grant with `expiry == now` is still live for
+    /// that second. A zero expiry (no expiry) is never expired.
+    #[must_use]
+    pub const fn is_expired(&self, now: u64) -> bool {
+        self.expiry != 0 && now > self.expiry
+    }
+
     /// Packs this config into its raw storage word — the exact inverse of
     /// [`Self::from_word`].
     ///
@@ -364,12 +401,9 @@ pub struct AccountState {
     /// value also marks the account initialized.
     pub local_epoch: u64,
     /// Account flags bitfield: bit 0
-    /// ([`Eip8130Constants::FLAG_CONTRACT_ESTABLISHED`]) marks a
-    /// keystore-established account (create/import) that must not be treated as a
-    /// proven-key EOA even when its code is empty; bit 1
     /// ([`Eip8130Constants::DEFAULT_EOA_REVOKED`]) disables the inline secp256k1
-    /// self key; bit 2 ([`Eip8130Constants::FLAG_LOCKED`]) freezes actor
-    /// configuration; bit 3 ([`Eip8130Constants::FLAG_UNLOCK_INITIATED`]) selects
+    /// self key; bit 1 ([`Eip8130Constants::FLAG_LOCKED`]) freezes actor
+    /// configuration; bit 2 ([`Eip8130Constants::FLAG_UNLOCK_INITIATED`]) selects
     /// the `lock_union` interpretation.
     pub flags: u8,
     /// `uint48` lock union: `unlock_delay` (seconds) while `FLAG_UNLOCK_INITIATED`
@@ -422,18 +456,10 @@ impl AccountState {
         self.flags & Eip8130Constants::DEFAULT_EOA_REVOKED != 0
     }
 
-    /// `true` when this account was keystore-established (create/import) and so
-    /// must not be treated as a proven-key EOA — even with empty code. Mirrors
-    /// `Keystore.isContractEstablished` (the `FLAG_CONTRACT_ESTABLISHED` bit).
-    #[must_use]
-    pub const fn contract_established(&self) -> bool {
-        self.flags & Eip8130Constants::FLAG_CONTRACT_ESTABLISHED != 0
-    }
-
-    /// Mirrors `AccountConfiguration._isLocked`: configuration is frozen while
-    /// `FLAG_LOCKED` is set, except once an unlock has been initiated
-    /// (`FLAG_UNLOCK_INITIATED`), when it stays frozen only until `now` reaches
-    /// the stored `unlocks_at` (`lock_union`).
+    /// Mirrors `AccountConfiguration._isLocked`: revoke and lock-delay changes are
+    /// frozen unless an initiated unlock's timestamp has elapsed; `AuthorizeActor`
+    /// may still add a new actor or re-lease a live one (expiry only) when the
+    /// granted expiry outlives the unlock floor.
     #[must_use]
     pub const fn is_locked(&self, now: u64) -> bool {
         if self.flags & Eip8130Constants::FLAG_LOCKED == 0 {
@@ -443,6 +469,19 @@ impl AccountState {
             return true; // hard-locked, no pending unlock
         }
         now < self.lock_union // pending unlock: frozen until the timestamp elapses
+    }
+
+    /// The soonest timestamp the account can be unlocked. Mirrors
+    /// `Keystore._unlockFloor`. Only meaningful while [`Self::is_locked`] is
+    /// `true`: hard-locked accounts use `now + delay`; pending unlock uses
+    /// `unlocks_at` (`lock_union`).
+    #[must_use]
+    pub const fn unlock_floor(&self, now: u64) -> u64 {
+        if self.flags & Eip8130Constants::FLAG_UNLOCK_INITIATED != 0 {
+            self.lock_union
+        } else {
+            now.saturating_add(self.lock_union & 0xFFFF)
+        }
     }
 
     /// Mirrors `AccountConfiguration.getLockStatus`, deriving the human-readable

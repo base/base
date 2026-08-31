@@ -25,7 +25,6 @@ base-txpool-tracing.workspace = true
 base-upgrade-signal.workspace = true
 base-batcher-encoder.workspace = true
 base-batcher-service.workspace = true
-base-bundle-extension.workspace = true
 base-flashblocks-node.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
@@ -67,9 +66,17 @@ alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base-alloy
-base-common-precompiles.workspace = true
-base-common-rpc-types.workspace = true
 base-common-network.workspace = true
+base-common-rpc-types.workspace = true
+base-common-precompiles.workspace = true
+
+# proof
+base-proof-zk-host.workspace = true
+base-prover-service.workspace = true
+base-proof-zk-backend.workspace = true
+base-prover-service-db.workspace = true
+base-prover-service-client.workspace = true
+base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
 
 # tokio
 tokio-util.workspace = true
@@ -77,7 +84,7 @@ tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
 
 # rpc
 axum = { workspace = true, features = ["http1", "tokio"] }
-jsonrpsee = { workspace = true, features = ["http-client"] }
+jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 reth-rpc-layer.workspace = true
 tower.workspace = true
 
@@ -97,7 +104,9 @@ async-trait.workspace = true
 tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
+testcontainers-modules = { workspace = true, features = ["postgres"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
 
 [features]
 default = [ "upgrade-signal" ]
@@ -124,12 +133,11 @@ alloy-json-rpc.workspace = true
 
 # base-alloy
 base-common-consensus.workspace = true
+base-common-flashblocks.workspace = true
 base-common-rpc-types-engine.workspace = true
 
 # proof
 base-optimism-rpc.workspace = true
-base-prover-service-client.workspace = true
-base-prover-service-protocol.workspace = true
 
 # execution
 base-shadow-indexer.workspace = true
@@ -145,8 +153,10 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 # misc
 chrono.workspace = true
 anyhow.workspace = true
+futures.workspace = true
 indicatif.workspace = true
-testcontainers-modules = { workspace = true, features = ["postgres"] }
+tokio-tungstenite.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [[bench]]
 name = "b20_zk_proving"

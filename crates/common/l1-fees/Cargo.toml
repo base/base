@@ -1,0 +1,29 @@
+[package]
+name = "base-common-l1-fees"
+description = "Engine-neutral OP-stack L1 fee schedule"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-common-flz.workspace = true
+base-common-genesis.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+
+[features]
+default = [ "std" ]
+std = [
+	"alloy-primitives/std",
+	"base-common-flz/std",
+	"base-common-genesis/std",
+]

@@ -87,7 +87,7 @@ mod tests {
         let tx = create_transaction(alice, 1, bob.address(), U256::from(10_000));
         let tx_bytes = tx.encoded_2718();
 
-        let bundle = Bundle { txs: vec![tx_bytes.clone().into()], ..Default::default() };
+        let bundle = Bundle { txs: vec![tx_bytes.clone().into()] };
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();
 
@@ -110,10 +110,7 @@ mod tests {
         let tx1_bytes = tx1.encoded_2718();
         let tx2_bytes = tx2.encoded_2718();
 
-        let bundle = Bundle {
-            txs: vec![tx1_bytes.clone().into(), tx2_bytes.clone().into()],
-            ..Default::default()
-        };
+        let bundle = Bundle { txs: vec![tx1_bytes.clone().into(), tx2_bytes.clone().into()] };
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();
 
@@ -139,7 +136,7 @@ mod tests {
         let tx1_bytes = tx1.encoded_2718();
         let tx2_bytes = tx2.encoded_2718();
 
-        let bundle = Bundle { txs: vec![tx1_bytes.into(), tx2_bytes.into()], ..Default::default() };
+        let bundle = Bundle { txs: vec![tx1_bytes.into(), tx2_bytes.into()] };
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();
         let hashes = parsed.txn_hashes();
@@ -157,7 +154,7 @@ mod tests {
         let tx = create_transaction(alice.clone(), 1, bob.address(), U256::from(10_000));
         let tx_bytes = tx.encoded_2718();
 
-        let bundle = Bundle { txs: vec![tx_bytes.into()], ..Default::default() };
+        let bundle = Bundle { txs: vec![tx_bytes.into()] };
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();
         let senders = parsed.senders();
@@ -176,7 +173,7 @@ mod tests {
         let tx1_bytes = tx1.encoded_2718();
         let tx2_bytes = tx2.encoded_2718();
 
-        let bundle = Bundle { txs: vec![tx1_bytes.into(), tx2_bytes.into()], ..Default::default() };
+        let bundle = Bundle { txs: vec![tx1_bytes.into(), tx2_bytes.into()] };
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();
 
@@ -192,7 +189,7 @@ mod tests {
         let tx = create_transaction(alice, 1, bob.address(), U256::from(10_000));
         let tx_bytes = tx.encoded_2718();
 
-        let bundle = Bundle { txs: vec![tx_bytes.into()], ..Default::default() };
+        let bundle = Bundle { txs: vec![tx_bytes.into()] };
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();
 
@@ -209,7 +206,7 @@ mod tests {
         let tx_hash = tx.tx_hash();
         let tx_bytes = tx.encoded_2718();
 
-        let bundle = Bundle { txs: vec![tx_bytes.into()], ..Default::default() };
+        let bundle = Bundle { txs: vec![tx_bytes.into()] };
 
         let parsed: ParsedBundle = bundle.try_into().unwrap();
         let accepted = AcceptedBundle::new(parsed.clone(), create_test_meter_bundle_response());

@@ -211,14 +211,9 @@ impl TransactionAuthorizer {
     /// [`DelegationEffect::can_replace_code`], enforced when
     /// [`DelegationEffect::install`] runs in both the mempool overlay and block
     /// execution (ordinary contract code is rejected with
-    /// [`ApplyError::NonDelegatableCode`]). `install` additionally rejects a
-    /// delegation onto an **empty-code, keystore-established** account
-    /// (`FLAG_CONTRACT_ESTABLISHED`) with
-    /// [`ApplyError::ContractEstablishedCodeless`]: empty code there is a
-    /// self-destructed CREATE2 account, not a proven-key EOA, so it must not be
-    /// re-delegated. Allowing any admin actor here is therefore safe: an admin key
-    /// can only (re)delegate a genuinely EOA-shaped account, never repoint a
-    /// deployed smart account's code nor resurrect a keystore-established one.
+    /// [`ApplyError::NonDelegatableCode`]). Allowing any admin actor here is
+    /// therefore safe: an admin key can only (re)delegate a genuinely EOA-shaped
+    /// account, never repoint a deployed smart account's code.
     ///
     /// [`DelegationEffect::can_replace_code`]: crate::DelegationEffect::can_replace_code
     /// [`DelegationEffect::install`]: crate::DelegationEffect::install

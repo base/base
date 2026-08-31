@@ -6,6 +6,8 @@
 //!     slot via `updatePolicy`.
 //!   - Exercises the full transfer-gate cycle: blocked → allowed (or vice versa).
 
+#[path = "common/beryl.rs"]
+mod beryl;
 mod common;
 
 use alloy_primitives::{Address, B256, U256};
@@ -34,7 +36,7 @@ async fn activated_client<'a>(
     admin: &'a PrivateKeySigner,
 ) -> Result<B20PrecompileClient<'a>> {
     let client = B20PrecompileClient::new(provider, admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+        .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     client.activate_feature(ActivationFeature::B20Asset.id()).await?;
     client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
     Ok(client)
@@ -88,7 +90,7 @@ async fn create_token(
         B20PrecompileClient::token_params(name, symbol, admin, U256::from(INITIAL_SUPPLY), admin);
     let token = client.create_token(B20Variant::Asset, params, salt).await?;
     client
-        .wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL)
+        .wait_for_token_code(token, beryl::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL)
         .await?;
     Ok(token)
 }
@@ -121,15 +123,15 @@ async fn set_transfer_sender_policy(
 ///   5. Assert the transfer now succeeds.
 #[tokio::test]
 async fn test_allowlist_gates_transfer() -> Result<()> {
-    let (_system, provider) = common::start_beryl_system().await?;
+    let (_system, provider) = beryl::start_beryl_system().await?;
 
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
     let non_member =
         PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_7.private_key).wrap_err("non-member key")?;
     let recipient = ANVIL_ACCOUNT_6.address;
 
-    common::wait_for_balance(&provider, admin.address()).await?;
-    common::wait_for_balance(&provider, non_member.address()).await?;
+    beryl::wait_for_balance(&provider, admin.address()).await?;
+    beryl::wait_for_balance(&provider, non_member.address()).await?;
 
     let client = activated_client(&provider, &admin).await?;
 
@@ -176,7 +178,7 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
 
     // Non-member is not on the allowlist: transfer must revert.
     let non_member_client = B20PrecompileClient::new(&provider, &non_member, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+        .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     let blocked = non_member_client
         .try_send_call(
             token,
@@ -231,15 +233,15 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
 ///   5. Assert their transfer now reverts.
 #[tokio::test]
 async fn test_blocklist_gates_transfer() -> Result<()> {
-    let (_system, provider) = common::start_beryl_system().await?;
+    let (_system, provider) = beryl::start_beryl_system().await?;
 
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
     let blocked_sender =
         PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_7.private_key).wrap_err("blocked key")?;
     let recipient = ANVIL_ACCOUNT_6.address;
 
-    common::wait_for_balance(&provider, admin.address()).await?;
-    common::wait_for_balance(&provider, blocked_sender.address()).await?;
+    beryl::wait_for_balance(&provider, admin.address()).await?;
+    beryl::wait_for_balance(&provider, blocked_sender.address()).await?;
 
     let client = activated_client(&provider, &admin).await?;
 
@@ -272,7 +274,7 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
 
     // Transfer from the (not-yet-blocked) sender must succeed.
     let sender_client = B20PrecompileClient::new(&provider, &blocked_sender, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+        .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     let first_transfer = sender_client
         .try_send_call(
             token,
@@ -321,12 +323,12 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
 /// slot makes ALL transfers revert unconditionally.
 #[tokio::test]
 async fn test_always_block_policy_blocks_transfer() -> Result<()> {
-    let (_system, provider) = common::start_beryl_system().await?;
+    let (_system, provider) = beryl::start_beryl_system().await?;
 
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
     let anyone = ANVIL_ACCOUNT_6.address;
 
-    common::wait_for_balance(&provider, admin.address()).await?;
+    beryl::wait_for_balance(&provider, admin.address()).await?;
 
     let client = activated_client(&provider, &admin).await?;
 

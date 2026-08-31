@@ -10,7 +10,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use audit_archiver_lib::{
-    MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink,
+    MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
     TransactionEventRetentionConfig, TransactionEventSchemaReadinessError, TransactionEventSink,
 };
 use base_observability_events::TransactionEvent;
@@ -420,4 +420,87 @@ async fn postgres_sink_persists_and_dedupes_by_event_id() {
     assert_eq!(count.0, 1);
 
     cleanup(&pool, &event_id).await;
+}
+
+#[tokio::test]
+async fn postgres_query_finds_events_by_normalized_tx_hash() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let event_id = unique_event_id();
+    sink.insert_events(&[event(&event_id)]).await?;
+
+    let lowercase = sink
+        .events_by_transaction_hash(
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+            10,
+        )
+        .await?;
+    assert_eq!(lowercase.len(), 1);
+    assert_eq!(lowercase[0].event.event_id, event_id);
+
+    let mixed_case_hash =
+        "0x1111111111111111111111111111111111111111111111111111111111111111".to_ascii_uppercase();
+    let mixed_case = sink.events_by_transaction_hash(&mixed_case_hash, 10).await?;
+    assert_eq!(mixed_case.len(), 1);
+    assert_eq!(mixed_case[0].event.event_id, event_id);
+
+    let block_events = sink.events_by_block_number(123, 10).await?;
+    assert_eq!(block_events.len(), 1);
+    assert_eq!(block_events[0].event.event_id, event_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_query_finds_legacy_uppercase_tx_hash_rows() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let event_id = unique_event_id();
+    sink.insert_events(&[event(&event_id)]).await?;
+    sqlx::query("UPDATE transaction_events SET tx_hash = $1 WHERE event_id = $2")
+        .bind("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        .bind(&event_id)
+        .execute(&pool)
+        .await?;
+
+    let records = sink
+        .events_by_transaction_hash(
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            10,
+        )
+        .await?;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].event.event_id, event_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_rejected_query_returns_bounded_newest_first() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let event_prefix = unique_event_id();
+
+    let mut older = event_with_type(&format!("{event_prefix}-old"), "SIMULATION_FAILED");
+    older.event_time = Utc::now() - chrono::Duration::seconds(30);
+    let mut newer = event_with_type(&format!("{event_prefix}-new"), "BUILDER_REJECTED");
+    newer.event_time = Utc::now();
+    let accepted = event_with_type(&format!("{event_prefix}-ok"), "BUILDER_ACCEPTED");
+    sink.insert_events(&[older, newer, accepted]).await?;
+
+    let records = sink
+        .rejected_transaction_events(RejectedTransactionEventQuery {
+            limit: Some(1),
+            ..Default::default()
+        })
+        .await?;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].event.event_id, format!("{event_prefix}-new"));
+    assert_eq!(records[0].event.event_type.to_string(), "BUILDER_REJECTED");
+
+    Ok(())
 }

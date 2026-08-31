@@ -223,8 +223,8 @@ pub struct Args {
     pub metering_wait_duration_ms: Option<u64>,
 
     /// Hard cutoff, in milliseconds, on cumulative validity-predicate evaluation time per
-    /// flashblock build. Once exceeded, further validity-gated transactions are deferred to a
-    /// later flashblock rather than evaluated.
+    /// builder iteration. Once exceeded, further validity-gated transactions are deferred to a
+    /// later iteration rather than evaluated.
     #[arg(long = "builder.predicate-eval-hard-cutoff-ms", default_value = "10")]
     pub predicate_eval_hard_cutoff_ms: u64,
 

@@ -1,0 +1,86 @@
+# Depot CI Migration
+# Source: .github/workflows/fuzz-nightly.yml
+#
+# Changes made:
+# - Rewrote .github/ path references to .depot/
+
+# Nightly fuzz: runs the build/validate sync-parity fuzz test with a fresh random
+# seed each run (several shards in parallel) so every run explores a different
+# transaction stream. The chosen seed is logged; a failing run can be replayed by
+# dispatching this workflow with that seed.
+name: Fuzz Nightly
+on:
+  schedule:
+    # 07:00 UTC daily (after most merges have settled).
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Seed to replay (hex or decimal). Leave blank to generate a fresh random seed."
+        required: false
+        type: string
+concurrency:
+  group: fuzz-nightly-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  fuzz-sync-parity:
+    name: Fuzz sync parity
+    runs-on: depot-ubuntu-24.04-8
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Parallel shards. On scheduled runs each shard is its own job and generates
+        # its own random seed, so the shards fan out for more coverage per night. On
+        # a workflow_dispatch replay, every shard uses the supplied seed to reproduce
+        # it (parallelism adds no coverage there, which is fine for replay).
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - uses: ./.depot/actions/setup
+        with:
+          native-deps: "true"
+          foundry: "true"
+          tools: cargo-nextest
+      - name: Pick fuzz seed
+        # Replay a specific seed via the workflow_dispatch input; otherwise generate
+        # a fresh random seed so each run fuzzes a different transaction stream. The
+        # seed is logged (and echoed below) so a failing run can be replayed.
+        # The dispatch input is passed via env (not interpolated into the script) to
+        # avoid shell injection.
+        env:
+          SEED_INPUT: ${{ github.event.inputs.seed }}
+        run: |
+          if [ -n "$SEED_INPUT" ]; then
+            SEED="$SEED_INPUT"
+          else
+            SEED="0x$(openssl rand -hex 8)"
+          fi
+          echo "FUZZ_SEED=$SEED" >> "$GITHUB_ENV"
+          echo "::notice::Fuzzing with seed $SEED (replay via workflow_dispatch input seed=$SEED)"
+      - name: Pre-pull docker images
+        run: just devnet pull-images
+      - name: Build test contracts
+        # base-test-utils embeds Foundry artifacts (contracts/out/*.json) at compile
+        # time; they are gitignored build output, so generate them before building.
+        run: cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
+      - name: Run fuzz sync-parity test
+        # FUZZ_SEED is exported by the "Pick fuzz seed" step above.
+        run: |
+          cargo nextest run -P ci --locked -p base-system-tests \
+            --cargo-profile ci --no-capture -E 'test(fuzz_sync_parity)'
+      - name: Upload run log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-log-shard-${{ matrix.shard }}-${{ github.run_id }}
+          path: target/nextest/ci/*.xml
+          if-no-files-found: ignore

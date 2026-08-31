@@ -38,9 +38,7 @@ pub use block_expiry::BlockExpiryIndex;
 
 mod transaction;
 pub use transaction::{
-    BLOCK_TIME_SECS, BasePooledTransaction, BasePooledTx, BundleTransaction,
-    MAX_BUNDLE_ADVANCE_BLOCKS, MAX_BUNDLE_ADVANCE_MILLIS, MAX_BUNDLE_ADVANCE_SECS,
-    TimestampedTransaction, unix_time_millis,
+    BasePooledTransaction, BasePooledTx, TimestampedTransaction, unix_time_millis,
 };
 
 mod ordering;
@@ -65,12 +63,6 @@ pub use pool_error_label::PoolRejectionLabel;
 
 mod builder;
 pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer};
-
-mod bundle;
-pub use bundle::{
-    BundleApiMetrics, SendBundleApiImpl, SendBundleApiServer, SendBundleRequest,
-    maintain_bundle_transactions,
-};
 
 mod wire;
 pub use wire::{

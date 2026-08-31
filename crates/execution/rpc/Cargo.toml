@@ -101,8 +101,10 @@ client = [
 ]
 metrics = [
 	"base-common-evm/metrics",
+	"base-execution-payload-builder/metrics",
 	"base-execution-trie/metrics",
 	"base-metrics/metrics",
+	"base-observability-events/metrics",
 	"dep:metrics",
 	"reth-evm/metrics",
 ]

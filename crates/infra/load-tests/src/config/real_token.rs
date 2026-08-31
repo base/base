@@ -1,10 +1,7 @@
 use alloy_primitives::{Address, U256};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-use super::{
-    parsing::{parse_address, parse_amount},
-    test_config::{TxTypeConfig, WeightedTxType},
-};
+use super::test_config::{TxTypeConfig, WeightedTxType};
 use crate::{
     utils::{BaselineError, Result},
     workload::{RealTokenAcquisition, RealTokenPairTokenSetup, RealTokenSetup},
@@ -19,23 +16,43 @@ pub struct RealTokenSetupConfig {
     #[serde(default)]
     pub allow_chain_id_8453: bool,
     /// WETH contract address.
-    pub weth: String,
+    pub weth: Address,
     /// Target WETH balance to leave each sender with after setup.
-    pub weth_amount_per_sender: String,
+    pub weth_amount_per_sender: U256,
     /// Non-WETH token setup.
     pub pair_token: RealTokenPairTokenConfig,
-    /// Router allowance amount. Defaults to `max`.
-    #[serde(default)]
-    pub approval_amount: Option<String>,
+    /// Router allowance amount. Defaults to the maximum `U256` when omitted.
+    ///
+    /// Accepts a numeric literal (decimal or `0x`-hex) or the string `max`,
+    /// which maps to [`U256::MAX`] for backwards compatibility.
+    #[serde(default, deserialize_with = "deserialize_approval_amount")]
+    pub approval_amount: Option<U256>,
+}
+
+/// Deserializes [`RealTokenSetupConfig::approval_amount`], preserving the legacy
+/// `approval_amount: "max"` sentinel (mapped to [`U256::MAX`]) alongside numeric
+/// literals now that the field is typed as [`U256`].
+fn deserialize_approval_amount<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<U256>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_yaml::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_yaml::Value::Null) => Ok(None),
+        Some(serde_yaml::Value::String(s)) if s == "max" => Ok(Some(U256::MAX)),
+        Some(other) => U256::deserialize(other).map(Some).map_err(serde::de::Error::custom),
+    }
 }
 
 /// Non-WETH side of the real-token pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealTokenPairTokenConfig {
     /// Token contract address.
-    pub token: String,
+    pub token: Address,
     /// Target pair-token balance per sender.
-    pub amount_per_sender: String,
+    pub amount_per_sender: U256,
     /// Explicit setup route for acquiring the pair token.
     pub acquisition: RealTokenAcquisitionConfig,
 }
@@ -47,28 +64,28 @@ pub enum RealTokenAcquisitionConfig {
     /// Uniswap V3 `exactInputSingle` route.
     UniswapV3ExactInput {
         /// Router contract address.
-        router: String,
+        router: Address,
         /// Fee tier.
         #[serde(default = "default_uniswap_v3_fee")]
         fee: u32,
         /// WETH input amount per sender.
-        amount_in: String,
+        amount_in: U256,
         /// Minimum pair-token output amount.
         #[serde(default = "default_zero_amount")]
-        min_amount_out: String,
+        min_amount_out: U256,
     },
     /// Aerodrome Slipstream `exactInputSingle` route.
     AerodromeClExactInput {
         /// Router contract address.
-        router: String,
+        router: Address,
         /// Tick spacing.
         #[serde(default = "default_aerodrome_tick_spacing")]
         tick_spacing: i32,
         /// WETH input amount per sender.
-        amount_in: String,
+        amount_in: U256,
         /// Minimum pair-token output amount.
         #[serde(default = "default_zero_amount")]
-        min_amount_out: String,
+        min_amount_out: U256,
     },
 }
 
@@ -89,25 +106,21 @@ pub(super) fn parse_real_token_setup(
         ));
     }
 
-    let weth = parse_address(&setup.weth, "real_token_setup weth")?;
-    let weth_amount_per_sender =
-        parse_amount(&setup.weth_amount_per_sender, "real_token_setup weth_amount_per_sender")?;
+    let weth = setup.weth;
+    let weth_amount_per_sender = setup.weth_amount_per_sender;
     if weth_amount_per_sender == U256::ZERO {
         return Err(BaselineError::Config(
             "real_token_setup weth_amount_per_sender must be > 0".into(),
         ));
     }
 
-    let pair_token = parse_address(&setup.pair_token.token, "real_token_setup pair_token")?;
+    let pair_token = setup.pair_token.token;
     if pair_token == weth {
         return Err(BaselineError::Config(
             "real_token_setup pair_token must differ from weth".into(),
         ));
     }
-    let pair_amount_per_sender = parse_amount(
-        &setup.pair_token.amount_per_sender,
-        "real_token_setup pair_token amount_per_sender",
-    )?;
+    let pair_amount_per_sender = setup.pair_token.amount_per_sender;
     if pair_amount_per_sender == U256::ZERO {
         return Err(BaselineError::Config(
             "real_token_setup pair_token amount_per_sender must be > 0".into(),
@@ -117,10 +130,7 @@ pub(super) fn parse_real_token_setup(
     validate_real_token_pair_matches_swaps(transactions, weth, pair_token)?;
 
     let acquisition = parse_real_token_acquisition(&setup.pair_token.acquisition)?;
-    let approval_amount = match setup.approval_amount.as_deref() {
-        None | Some("max") => U256::MAX,
-        Some(amount) => parse_amount(amount, "real_token_setup approval_amount")?,
-    };
+    let approval_amount = setup.approval_amount.unwrap_or(U256::MAX);
     if approval_amount == U256::ZERO {
         return Err(BaselineError::Config("real_token_setup approval_amount must be > 0".into()));
     }
@@ -147,10 +157,7 @@ fn validate_real_token_pair_matches_swaps(
     for tx in transactions {
         let (token_in, token_out) = match &tx.tx_type {
             TxTypeConfig::UniswapV3 { token_in, token_out, .. }
-            | TxTypeConfig::AerodromeCl { token_in, token_out, .. } => (
-                parse_address(token_in, "real_token_setup swap token_in")?,
-                parse_address(token_out, "real_token_setup swap token_out")?,
-            ),
+            | TxTypeConfig::AerodromeCl { token_in, token_out, .. } => (*token_in, *token_out),
             TxTypeConfig::Transfer
             | TxTypeConfig::Calldata { .. }
             | TxTypeConfig::Erc20 { .. }
@@ -194,20 +201,16 @@ fn parse_real_token_acquisition(
                     "real_token_setup acquisition fee {fee} exceeds u24 max ({max_u24})"
                 )));
             }
-            let amount_in = parse_amount(amount_in, "real_token_setup acquisition amount_in")?;
-            if amount_in == U256::ZERO {
+            if *amount_in == U256::ZERO {
                 return Err(BaselineError::Config(
                     "real_token_setup acquisition amount_in must be > 0".into(),
                 ));
             }
             Ok(RealTokenAcquisition::UniswapV3ExactInput {
-                router: parse_address(router, "real_token_setup acquisition router")?,
+                router: *router,
                 fee: *fee,
-                amount_in,
-                min_amount_out: parse_amount(
-                    min_amount_out,
-                    "real_token_setup acquisition min_amount_out",
-                )?,
+                amount_in: *amount_in,
+                min_amount_out: *min_amount_out,
             })
         }
         RealTokenAcquisitionConfig::AerodromeClExactInput {
@@ -221,27 +224,23 @@ fn parse_real_token_acquisition(
                     "real_token_setup acquisition tick_spacing {tick_spacing} exceeds i24 range"
                 )));
             }
-            let amount_in = parse_amount(amount_in, "real_token_setup acquisition amount_in")?;
-            if amount_in == U256::ZERO {
+            if *amount_in == U256::ZERO {
                 return Err(BaselineError::Config(
                     "real_token_setup acquisition amount_in must be > 0".into(),
                 ));
             }
             Ok(RealTokenAcquisition::AerodromeClExactInput {
-                router: parse_address(router, "real_token_setup acquisition router")?,
+                router: *router,
                 tick_spacing: *tick_spacing,
-                amount_in,
-                min_amount_out: parse_amount(
-                    min_amount_out,
-                    "real_token_setup acquisition min_amount_out",
-                )?,
+                amount_in: *amount_in,
+                min_amount_out: *min_amount_out,
             })
         }
     }
 }
 
-fn default_zero_amount() -> String {
-    "0".to_string()
+const fn default_zero_amount() -> U256 {
+    U256::ZERO
 }
 
 const fn default_uniswap_v3_fee() -> u32 {
@@ -307,6 +306,72 @@ transactions:
             setup.pair_token.acquisition,
             RealTokenAcquisition::UniswapV3ExactInput { fee: 500, .. }
         ));
+    }
+
+    #[test]
+    fn real_token_setup_approval_amount_max_sentinel() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+chain_id: 8453
+real_token_setup:
+  enabled: true
+  allow_chain_id_8453: true
+  weth: "0x4200000000000000000000000000000000000006"
+  weth_amount_per_sender: "800000000000000000"
+  approval_amount: "max"
+  pair_token:
+    token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    amount_per_sender: "1000000000"
+    acquisition:
+      type: uniswap_v3_exact_input
+      router: "0x2626664c2603336E57B271c5C0b26F421741e481"
+      fee: 500
+      amount_in: "10000000000000000"
+transactions:
+  - weight: 100
+    type: uniswap_v3
+    router: "0x2626664c2603336E57B271c5C0b26F421741e481"
+    token_in: "0x4200000000000000000000000000000000000006"
+    token_out: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    fee: 500
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let setup = config.parse_real_token_setup(8453).unwrap().unwrap();
+        assert_eq!(setup.approval_amount, U256::MAX);
+    }
+
+    #[test]
+    fn real_token_setup_approval_amount_numeric_literal() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+chain_id: 8453
+real_token_setup:
+  enabled: true
+  allow_chain_id_8453: true
+  weth: "0x4200000000000000000000000000000000000006"
+  weth_amount_per_sender: "800000000000000000"
+  approval_amount: "12345"
+  pair_token:
+    token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    amount_per_sender: "1000000000"
+    acquisition:
+      type: uniswap_v3_exact_input
+      router: "0x2626664c2603336E57B271c5C0b26F421741e481"
+      fee: 500
+      amount_in: "10000000000000000"
+transactions:
+  - weight: 100
+    type: uniswap_v3
+    router: "0x2626664c2603336E57B271c5C0b26F421741e481"
+    token_in: "0x4200000000000000000000000000000000000006"
+    token_out: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    fee: 500
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let setup = config.parse_real_token_setup(8453).unwrap().unwrap();
+        assert_eq!(setup.approval_amount, U256::from(12345u64));
     }
 
     #[test]

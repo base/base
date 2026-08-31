@@ -7,7 +7,9 @@ use alloy_genesis::Genesis;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, ChainId, TxKind};
 use base_execution_chainspec::BaseChainSpecBuilder;
-use base_execution_payload_builder::builder::BasePayloadTransactions;
+use base_execution_payload_builder::{
+    NonParkablePayloadTransactions, ParkablePayloadTransactions, builder::BasePayloadTransactions,
+};
 use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{
     BaseNode,
@@ -29,8 +31,7 @@ use reth_node_builder::{
 };
 use reth_node_core::args::DatadirArgs;
 use reth_payload_util::{
-    BestPayloadTransactions, PayloadTransactions, PayloadTransactionsChain,
-    PayloadTransactionsFixed,
+    BestPayloadTransactions, PayloadTransactionsChain, PayloadTransactionsFixed,
 };
 use reth_provider::providers::BlockchainProvider;
 use reth_tasks::Runtime;
@@ -42,15 +43,15 @@ struct CustomTxPriority {
     chain_id: ChainId,
 }
 
-impl BasePayloadTransactions<BasePooledTransaction> for CustomTxPriority {
-    fn best_transactions<Pool>(
+impl<Pool> BasePayloadTransactions<Pool> for CustomTxPriority
+where
+    Pool: base_execution_txpool::ParkableTransactionPool<Transaction = BasePooledTransaction>,
+{
+    fn best_transactions(
         &self,
         pool: Pool,
         attr: reth_transaction_pool::BestTransactionsAttributes,
-    ) -> impl PayloadTransactions<Transaction = BasePooledTransaction>
-    where
-        Pool: reth_transaction_pool::TransactionPool<Transaction = BasePooledTransaction>,
-    {
+    ) -> impl ParkablePayloadTransactions<Transaction = BasePooledTransaction> {
         // Block composition:
         // 1. Best transactions from the pool (up to 250k gas)
         // 2. End-of-block transaction created by the node (up to 100k gas)
@@ -74,14 +75,14 @@ impl BasePayloadTransactions<BasePooledTransaction> for CustomTxPriority {
             sender.address(),
         ));
 
-        PayloadTransactionsChain::new(
+        NonParkablePayloadTransactions::new(PayloadTransactionsChain::new(
             BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr)),
             // Allow 250k gas for the transactions from the pool
             Some(250_000),
             PayloadTransactionsFixed::single(end_of_block_tx),
             // Allow 100k gas for the end-of-block transaction
             Some(100_000),
-        )
+        ))
     }
 }
 
@@ -92,7 +93,7 @@ fn build_components<Node>(
 where
     Node: FullNodeTypes<Types: BaseNodeTypes>,
 {
-    let RollupArgs { disable_txpool_gossip, discovery_v4, .. } = RollupArgs::default();
+    let RollupArgs { discovery_v4, .. } = RollupArgs::default();
     ComponentsBuilder::default()
         .node_types::<Node>()
         .pool(BasePoolBuilder::default())
@@ -100,7 +101,7 @@ where
         .payload(BasePayloadServiceBuilder::new(
             BasePayloadBuilder::new().with_transactions(CustomTxPriority { chain_id }),
         ))
-        .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
+        .network(BaseNetworkBuilder::new(!discovery_v4))
         .consensus(BaseConsensusBuilder::default())
 }
 

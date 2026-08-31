@@ -1,0 +1,94 @@
+# Depot CI Migration
+# Source: .github/workflows/docker.yml
+
+name: Docker
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node
+permissions:
+  contents: read
+jobs:
+  build-and-push:
+    name: Build and push node
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - name: Prepare image labels
+        id: image-labels
+        run: |
+          echo "source=https://github.com/${{ github.repository }}" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - name: Extract metadata for the Docker image
+        id: meta
+        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
+        with:
+          images: ${{ env.REGISTRY_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,format=long
+      - name: Set up Depot CLI
+        uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ vars.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
+      - name: Build and push Docker image
+        env:
+          PROFILE: maxperf
+          TARGET: base
+        run: |
+          tag_args=()
+          while IFS= read -r tag; do
+            tag_args+=(--set "${TARGET}.tags=$tag")
+          done < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+
+          depot bake --project "${{ vars.DEPOT_PROJECT_ID }}" -f etc/docker/docker-bake.hcl "$TARGET" \
+            "${tag_args[@]}" \
+            --set "${TARGET}.platform=linux/amd64" \
+            --set "${TARGET}.platform=linux/arm64" \
+            --set "${TARGET}.output=type=image,push=true" \
+            --set "${TARGET}.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }}" \
+            --set "${TARGET}.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }}" \
+            --set "${TARGET}.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }}"
+  warm-devnet-cache:
+    needs: build-and-push
+    runs-on: depot-ubuntu-24.04
+    env:
+      PROFILE: dev
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - name: Set up Depot CLI
+        uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1
+      - name: Warm devnet image cache
+        run: |
+          targets=(base execution consensus builder batcher)
+          set_args=()
+          for target in "${targets[@]}"; do
+            set_args+=(--set "$target.platform=linux/amd64")
+            set_args+=(--set "$target.output=type=cacheonly")
+          done
+
+          depot bake --project "${{ vars.DEPOT_PROJECT_ID }}" -f etc/docker/docker-bake.hcl \
+            "${targets[@]}" "${set_args[@]}"

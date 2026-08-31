@@ -691,8 +691,8 @@ impl PgTransactionEventSink {
         query_builder.push_values(
             events.iter().zip(block_numbers),
             |mut row, (event, block_number)| {
-                let tx_hash = event.tx_hash.map(|hash| hash.to_string());
-                let block_hash = event.block_hash.map(|hash| hash.to_string());
+                let tx_hash = event.tx_hash.map(|hash| format!("{hash:#x}"));
+                let block_hash = event.block_hash.map(|hash| format!("{hash:#x}"));
                 let producer = event.producer.to_string();
                 let event_type = event.event_type.to_string();
                 let data = Value::Object(event.data.clone());
@@ -730,15 +730,16 @@ impl PgTransactionEventSink {
         limit: i64,
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
+        let lookup_keys = hex_lookup_keys(tx_hash);
         let rows = sqlx::query(
             "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
-             WHERE tx_hash = $1 \
+             WHERE tx_hash = ANY($1) \
              ORDER BY event_time ASC, ingested_at ASC, event_id ASC \
              LIMIT $2",
         )
-        .bind(tx_hash)
+        .bind(&lookup_keys)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
@@ -775,15 +776,16 @@ impl PgTransactionEventSink {
         limit: i64,
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
+        let lookup_keys = hex_lookup_keys(block_hash);
         let rows = sqlx::query(
             "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
-             WHERE block_hash = $1 \
+             WHERE block_hash = ANY($1) \
              ORDER BY event_time ASC, ingested_at ASC, event_id ASC \
              LIMIT $2",
         )
-        .bind(block_hash)
+        .bind(&lookup_keys)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
@@ -826,6 +828,13 @@ impl PgTransactionEventSink {
     }
 
     /// Returns rejected transaction events sorted newest first for list views.
+    ///
+    /// Optional filters are omitted from SQL when unset so Postgres can use
+    /// `transaction_events_rejected_event_time_idx` for a bounded `LIMIT`
+    /// list. The previous `($1 IS NULL OR ...)` shape forced a heap scan on
+    /// large journals and missed the Internal Explorer 3s timeout. `event_id`
+    /// is a tie-break only; `ingested_at` is not in `ORDER BY` so the planner
+    /// can keep the partial index.
     pub async fn rejected_transaction_events(
         &self,
         query: RejectedTransactionEventQuery,
@@ -834,31 +843,72 @@ impl PgTransactionEventSink {
         let from_block = query.from_block.map(i64::try_from).transpose()?;
         let to_block = query.to_block.map(i64::try_from).transpose()?;
 
-        let rows = sqlx::query(
+        let mut query_builder = QueryBuilder::new(
             "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
-             WHERE event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED', 'BUILDER_EXPIRED') \
-               AND ($1::BIGINT IS NULL OR block_number >= $1) \
-               AND ($2::BIGINT IS NULL OR block_number <= $2) \
-               AND ($3::TIMESTAMPTZ IS NULL OR event_time >= $3) \
-               AND ($4::TIMESTAMPTZ IS NULL OR event_time < $4) \
-             ORDER BY event_time DESC, ingested_at DESC, event_id DESC \
-             LIMIT $5",
-        )
-        .bind(from_block)
-        .bind(to_block)
-        .bind(query.from_time)
-        .bind(query.to_time)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+             WHERE event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED', 'BUILDER_EXPIRED')",
+        );
+        if let Some(from_block) = from_block {
+            query_builder.push(" AND block_number >= ").push_bind(from_block);
+        }
+        if let Some(to_block) = to_block {
+            query_builder.push(" AND block_number <= ").push_bind(to_block);
+        }
+        if let Some(from_time) = query.from_time {
+            query_builder.push(" AND event_time >= ").push_bind(from_time);
+        }
+        if let Some(to_time) = query.to_time {
+            query_builder.push(" AND event_time < ").push_bind(to_time);
+        }
+        // event_id is a tie-break only. The partial index is (event_type, event_time DESC);
+        // LIMIT lists still use that leading column. ingested_at is omitted so the
+        // planner does not drop the index for a three-column sort.
+        query_builder.push(" ORDER BY event_time DESC, event_id DESC LIMIT ").push_bind(limit);
+
+        let rows = query_builder.build().fetch_all(&self.pool).await?;
         rows.into_iter().map(record_from_row).collect()
     }
 }
 
 fn normalize_limit(limit: i64) -> i64 {
     limit.clamp(1, MAX_TRANSACTION_EVENT_QUERY_LIMIT)
+}
+
+/// Lookup keys for hex join columns stored as text.
+///
+/// Ingest writes `0x` + lowercase via `{hash:#x}`. Readers may send mixed
+/// case, missing `0x`, or the original string; exact `ANY()` matches keep
+/// the btree index while covering those variants.
+fn hex_lookup_keys(value: &str) -> Vec<String> {
+    let trimmed = value.trim();
+    let mut keys = Vec::with_capacity(5);
+    if !trimmed.is_empty() {
+        keys.push(trimmed.to_string());
+    }
+
+    let hex = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")).unwrap_or(trimmed);
+    if hex.is_empty() || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return keys;
+    }
+
+    let prefixed = format!("0x{}", hex.to_ascii_lowercase());
+    if !keys.iter().any(|key| key == &prefixed) {
+        keys.push(prefixed);
+    }
+    let prefixed_upper = format!("0x{}", hex.to_ascii_uppercase());
+    if !keys.iter().any(|key| key == &prefixed_upper) {
+        keys.push(prefixed_upper);
+    }
+    let bare = hex.to_ascii_lowercase();
+    if !keys.iter().any(|key| key == &bare) {
+        keys.push(bare);
+    }
+    let bare_upper = hex.to_ascii_uppercase();
+    if !keys.iter().any(|key| key == &bare_upper) {
+        keys.push(bare_upper);
+    }
+    keys
 }
 
 fn record_from_row(row: sqlx::postgres::PgRow) -> Result<TransactionEventRecord> {
@@ -1575,5 +1625,26 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(response.status, TransactionEventBatchStatus::Rejected);
         assert!(response.results[0].reason.as_deref().unwrap().contains("batch size"));
+    }
+
+    #[test]
+    fn hex_lookup_keys_cover_prefixed_mixed_case_and_bare() {
+        let keys = hex_lookup_keys("0xAa");
+        assert_eq!(
+            keys,
+            vec![
+                "0xAa".to_string(),
+                "0xaa".to_string(),
+                "0xAA".to_string(),
+                "aa".to_string(),
+                "AA".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn hex_lookup_keys_keep_non_hex_input_as_exact_match() {
+        assert_eq!(hex_lookup_keys("not-a-hash"), vec!["not-a-hash".to_string()]);
+        assert!(hex_lookup_keys("   ").is_empty());
     }
 }

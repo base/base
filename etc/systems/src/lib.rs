@@ -47,15 +47,18 @@ pub use l1::{
 
 mod l2;
 pub use l2::{
-    InProcessBatcher, InProcessBatcherConfig, InProcessBuilder, InProcessBuilderConfig,
-    InProcessClient, InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig,
-    InProcessFollowConsensus, InProcessFollowConsensusConfig, L2ClientConsensus,
-    L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer,
-    ShadowSequencerConfig, ShadowSequencersConfig,
+    ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
+    InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
+    InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
+    L2ClientConsensus, L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig,
+    ShadowSequencer, ShadowSequencerConfig, ShadowSequencersConfig,
 };
 
 mod network;
 pub use network::{ensure_network_exists, ensure_network_exists_with_name, network_name};
+
+mod prover_service;
+pub use prover_service::InProcessProverService;
 
 mod rpc;
 pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
@@ -82,3 +85,6 @@ pub use upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 
 mod urls;
 pub use urls::SystemTestUrls;
+
+mod zk_host;
+pub use zk_host::InProcessZkHost;

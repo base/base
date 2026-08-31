@@ -92,18 +92,6 @@ pub struct ValidatedTransaction<E = NoExtensions> {
     pub sender: Address,
     /// EIP-2718 encoded transaction bytes.
     pub raw: Bytes,
-    /// Minimum block number for bundle inclusion.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub min_block_number: Option<u64>,
-    /// Maximum block number for bundle inclusion.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub max_block_number: Option<u64>,
-    /// Milliseconds since Unix epoch.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub min_timestamp: Option<u64>,
-    /// Milliseconds since Unix epoch.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub max_timestamp: Option<u64>,
     /// Extension fields, inlined into the top-level JSON object.
     ///
     /// Deliberately not `#[serde(default)]`: that would force an `E: Default`
@@ -126,14 +114,6 @@ mod tests {
     struct LegacyValidatedTransaction {
         sender: Address,
         raw: Bytes,
-        #[serde(skip_serializing_if = "Option::is_none", default)]
-        min_block_number: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none", default)]
-        max_block_number: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none", default)]
-        min_timestamp: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none", default)]
-        max_timestamp: Option<u64>,
     }
 
     #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -152,23 +132,9 @@ mod tests {
 
     #[test]
     fn no_extensions_encoding_matches_legacy_layout() {
-        let legacy = LegacyValidatedTransaction {
-            sender: sender(),
-            raw: raw(),
-            min_block_number: Some(u64::MAX),
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: Some(7),
-        };
-        let current = ValidatedTransaction {
-            sender: sender(),
-            raw: raw(),
-            min_block_number: Some(u64::MAX),
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: Some(7),
-            extensions: NoExtensions {},
-        };
+        let legacy = LegacyValidatedTransaction { sender: sender(), raw: raw() };
+        let current =
+            ValidatedTransaction { sender: sender(), raw: raw(), extensions: NoExtensions {} };
 
         assert_eq!(
             serde_json::to_string(&legacy).unwrap(),
@@ -179,21 +145,10 @@ mod tests {
 
     #[test]
     fn empty_validity_encoding_matches_legacy_layout() {
-        let legacy = LegacyValidatedTransaction {
-            sender: sender(),
-            raw: raw(),
-            min_block_number: Some(3),
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: Some(7),
-        };
+        let legacy = LegacyValidatedTransaction { sender: sender(), raw: raw() };
         let current = ValidatedTransaction {
             sender: sender(),
             raw: raw(),
-            min_block_number: Some(3),
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: Some(7),
             extensions: TransactionValidity::default(),
         };
 
@@ -212,10 +167,6 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: sender(),
             raw: raw(),
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
             extensions: TransactionValidity { validity: vec![predicate.clone()] },
         };
 
@@ -231,15 +182,7 @@ mod tests {
 
     #[test]
     fn no_extensions_adds_no_json_fields() {
-        let tx = ValidatedTransaction {
-            sender: sender(),
-            raw: raw(),
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions: NoExtensions {},
-        };
+        let tx = ValidatedTransaction { sender: sender(), raw: raw(), extensions: NoExtensions {} };
 
         let json = serde_json::to_string(&tx).unwrap();
         assert!(!json.contains("extensions"), "flattened marker must not emit a key: {json}");
@@ -254,10 +197,6 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: sender(),
             raw: raw(),
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
             extensions: TestExtensions { extra: Some(9) },
         };
 
@@ -270,30 +209,18 @@ mod tests {
         let extended = ValidatedTransaction {
             sender: sender(),
             raw: raw(),
-            min_block_number: Some(3),
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
             extensions: TestExtensions { extra: Some(9) },
         };
         let json = serde_json::to_string(&extended).unwrap();
 
         let decoded: ValidatedTransaction = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.sender, sender());
-        assert_eq!(decoded.min_block_number, Some(3));
         assert_eq!(decoded.extensions, NoExtensions {});
     }
 
     #[test]
     fn extension_reader_accepts_payload_without_extensions() {
-        let legacy = LegacyValidatedTransaction {
-            sender: sender(),
-            raw: raw(),
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-        };
+        let legacy = LegacyValidatedTransaction { sender: sender(), raw: raw() };
         let json = serde_json::to_string(&legacy).unwrap();
 
         let decoded: ValidatedTransaction<TestExtensions> = serde_json::from_str(&json).unwrap();
@@ -306,15 +233,11 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: sender(),
             raw: raw(),
-            min_block_number: Some(u64::MAX),
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions: NoExtensions {},
+            extensions: TestExtensions { extra: Some(u64::MAX) },
         };
         let json = serde_json::to_string(&tx).unwrap();
 
-        let decoded: ValidatedTransaction = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded.min_block_number, Some(u64::MAX));
+        let decoded: ValidatedTransaction<TestExtensions> = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.extensions.extra, Some(u64::MAX));
     }
 }

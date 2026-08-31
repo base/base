@@ -13,9 +13,6 @@ pub use accepted::AcceptedBundle;
 mod bundle;
 pub use bundle::Bundle;
 
-mod cancel;
-pub use cancel::{BundleHash, CancelBundle};
-
 mod meter;
 pub use meter::{MeterBundleResponse, OpcodeGas, TransactionResult};
 

@@ -648,7 +648,7 @@ let network_builder = ctx
     });
 
 let mut network_config = ctx.build_network_config(network_builder);
-network_config.tx_gossip_disabled = disable_txpool_gossip;
+network_config.tx_gossip_disabled = true;
 ```
 
 Notice that discv4 is disabled by default for Base (`--rollup.discovery.v4` defaults to false) while
@@ -712,11 +712,9 @@ rollup flags defined in
 are:
 
 `--rollup.sequencer` sets the sequencer endpoint for transaction forwarding.
-`--rollup.disable-tx-pool-gossip` disables transaction gossip on the DevP2P network (this is a
-separate flag — setting the sequencer endpoint does not automatically disable gossip, so operators
-typically set both). `--rollup.discovery.v4` enables the legacy discv4 discovery protocol (disabled
-by default since Base uses discv5). `--rollup.txpool-ordering` selects between `coinbase-tip` and
-`timestamp` ordering strategies.
+Transaction gossip on the DevP2P network is disabled. `--rollup.discovery.v4` enables the legacy
+discv4 discovery protocol (disabled by default since Base uses discv5).
+`--rollup.txpool-ordering` selects between `coinbase-tip` and `timestamp` ordering strategies.
 
 The standard reth network flags still apply: `--network.addr` and `--network.port` control the RLPx
 bind address (default port 30303), `--network.discovery.disable-discovery` turns off all peer

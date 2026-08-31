@@ -68,13 +68,6 @@ impl ShadowValidityConfig {
         if !tx.extensions.validity.is_empty() {
             return InjectionOutcome::ExistingValidity;
         }
-        if tx.min_block_number.is_some()
-            || tx.max_block_number.is_some()
-            || tx.min_timestamp.is_some()
-            || tx.max_timestamp.is_some()
-        {
-            return InjectionOutcome::BundleValidity;
-        }
         // EIP-1559 transactions use the 0x02 EIP-2718 type byte. The inner RPC handler performs
         // full decoding and rejects malformed transactions after this inexpensive eligibility
         // check.
@@ -156,7 +149,6 @@ where
 enum InjectionOutcome {
     Disabled,
     ExistingValidity,
-    BundleValidity,
     UnsupportedType,
     NotSampled,
     Injected,
@@ -167,7 +159,6 @@ impl InjectionOutcome {
         match self {
             Self::Disabled => "disabled",
             Self::ExistingValidity => "existing_validity",
-            Self::BundleValidity => "bundle_validity",
             Self::UnsupportedType => "unsupported_type",
             Self::NotSampled => "not_sampled",
             Self::Injected => "injected",
@@ -185,10 +176,6 @@ mod tests {
         ValidatedTransaction {
             sender: Address::repeat_byte(0x11),
             raw,
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
             extensions: TransactionValidity::default(),
         }
     }
@@ -202,10 +189,6 @@ mod tests {
         assert_eq!(config.inject(&mut tx), InjectionOutcome::Injected);
         assert_eq!(tx.sender, original.sender);
         assert_eq!(tx.raw, original.raw);
-        assert_eq!(tx.min_block_number, original.min_block_number);
-        assert_eq!(tx.max_block_number, original.max_block_number);
-        assert_eq!(tx.min_timestamp, original.min_timestamp);
-        assert_eq!(tx.max_timestamp, original.max_timestamp);
         assert_eq!(
             tx.extensions.validity,
             vec![ValidityPredicate::Balance {
@@ -217,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_existing_validity_and_bundle_bounds() {
+    fn preserves_existing_validity() {
         let config = ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).unwrap();
         let predicate =
             ValidityPredicate::BlockNumber { op: ValidityOperator::GreaterThan, value: U256::ZERO };
@@ -225,11 +208,6 @@ mod tests {
         existing.extensions.validity.push(predicate.clone());
         assert_eq!(config.inject(&mut existing), InjectionOutcome::ExistingValidity);
         assert_eq!(existing.extensions.validity, vec![predicate]);
-
-        let mut bounded = transaction(Bytes::from_static(&[0x02, 0x01]));
-        bounded.max_block_number = Some(10);
-        assert_eq!(config.inject(&mut bounded), InjectionOutcome::BundleValidity);
-        assert!(bounded.extensions.validity.is_empty());
     }
 
     #[test]

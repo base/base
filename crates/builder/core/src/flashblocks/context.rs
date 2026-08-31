@@ -19,11 +19,12 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
-    BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
+    BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, ValidityMetrics,
+    error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
-    BasePooledTx, BundleTransaction, GuardMetrics, PredicateContext, TimestampedTransaction,
-    ValidityPredicate, estimated_da_size::DataAvailabilitySized,
+    BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
+    estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::TransactionEventType;
 use reth_basic_payload_builder::PayloadConfig;
@@ -46,7 +47,7 @@ use tracing::{Level, debug, span, trace, warn};
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
     ParkedPredicateIndex, PayloadTxsBounds, PredicateReadRecorder, ResourceLimits,
-    StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome, ValidityPredicateKey,
+    StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome, ValidityPredicateEvaluation,
     transaction_events::{
         BuilderAcceptedEventData, BuilderConsideredEventData, BuilderDeferredEventData,
         BuilderExpiredEventData, BuilderRejectedEventData, BuilderTransactionEventContext,
@@ -771,92 +772,12 @@ impl BasePayloadBuilderCtx {
         let mut predicate_eval_total: Option<Duration> = None;
 
         while let Some(tx) = best_txs.next(()) {
-            if tx.is_bundle_expired(block_number, block_timestamp) {
-                let tx_hash = *tx.hash();
-                let min_block_number = tx.min_block_number();
-                let max_block_number = tx.max_block_number();
-                num_txs_considered += 1;
-                let ordering_position = num_txs_considered;
-                trace!(
-                    target: "payload_builder",
-                    tx_hash = ?tx_hash,
-                    block = block_number,
-                    timestamp = block_timestamp,
-                    "skipping bundle tx: expired"
-                );
-                self.emit_builder_decision_event(
-                    &payload_id,
-                    TransactionEventType::BuilderConsidered,
-                    tx_hash,
-                    Some(ordering_position),
-                    || {
-                        BuilderConsideredEventData::new(info, limits, None)
-                            .with_bundle_block_window(min_block_number, max_block_number)
-                    },
-                );
-                self.emit_builder_decision_event(
-                    &payload_id,
-                    TransactionEventType::BuilderExpired,
-                    tx_hash,
-                    Some(ordering_position),
-                    || {
-                        BuilderExpiredEventData::new(
-                            "bundle_expired",
-                            "bundle validity window expired",
-                            info,
-                            limits,
-                            None,
-                        )
-                    },
-                );
-                best_txs.mark_invalid(tx.sender(), tx.nonce());
-                continue;
-            }
-
-            if tx.is_bundle_not_yet_valid(block_number, block_timestamp) {
-                let tx_hash = *tx.hash();
-                let min_block_number = tx.min_block_number();
-                let max_block_number = tx.max_block_number();
-                num_txs_considered += 1;
-                let ordering_position = num_txs_considered;
-                trace!(
-                    target: "payload_builder",
-                    tx_hash = ?tx_hash,
-                    block = block_number,
-                    timestamp = block_timestamp,
-                    "skipping bundle tx: not yet valid"
-                );
-                self.emit_builder_decision_event(
-                    &payload_id,
-                    TransactionEventType::BuilderConsidered,
-                    tx_hash,
-                    Some(ordering_position),
-                    || {
-                        BuilderConsideredEventData::new(info, limits, None)
-                            .with_bundle_block_window(min_block_number, max_block_number)
-                    },
-                );
-                self.emit_builder_decision_event(
-                    &payload_id,
-                    TransactionEventType::BuilderRejected,
-                    tx_hash,
-                    Some(ordering_position),
-                    || {
-                        BuilderRejectedEventData::new(
-                            "bundle_not_yet_valid",
-                            "bundle validity window has not started",
-                            false,
-                            info,
-                            limits,
-                            None,
-                        )
-                        .with_bundle_block_window(min_block_number, max_block_number)
-                        .with_current_block(block_number)
-                        .with_block_timestamp(block_timestamp)
-                    },
-                );
-                best_txs.mark_invalid(tx.sender(), tx.nonce());
-                continue;
+            if self.cancel.is_cancelled() {
+                diag.cancelled = true;
+                diag.txs_considered = num_txs_considered;
+                diag.txs_included =
+                    (info.executed_transactions.len() as u64).saturating_sub(min_tx_index);
+                return Ok(diag);
             }
 
             let tx_hash = *tx.hash();
@@ -886,7 +807,7 @@ impl BasePayloadBuilderCtx {
                     Some(ordering_position),
                     || BuilderConsideredEventData::new(info, limits, None),
                 );
-                BuilderMetrics::validity_predicate_evaluations_total("budget_exhausted")
+                ValidityMetrics::validity_predicate_evaluations_total("budget_exhausted")
                     .increment(1);
                 self.defer_or_reject_current(
                     best_txs,
@@ -905,17 +826,22 @@ impl BasePayloadBuilderCtx {
             }
 
             let mut predicate_read_failed = false;
+            let mut predicate_expired = false;
             let blocking_predicate = if has_validity_predicates {
                 match Self::accumulate_elapsed(&mut predicate_eval_total, || {
                     let mut recorder =
                         PredicateReadRecorder::new(&mut **evm.db_mut(), &mut info.predicate_loads);
-                    ValidityPredicateKey::first_unsatisfied(
+                    ValidityPredicateEvaluation::evaluate(
                         tx.validity_predicates(),
                         &mut recorder,
                         &predicate_context,
                     )
                 }) {
-                    Ok(blocking_predicate) => blocking_predicate,
+                    Ok(ValidityPredicateEvaluation::Matched) => None,
+                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, expired }) => {
+                        predicate_expired = expired;
+                        Some(blocker)
+                    }
                     Err(error) => {
                         warn!(
                             target: "payload_builder",
@@ -938,19 +864,11 @@ impl BasePayloadBuilderCtx {
                 } else {
                     "matched"
                 };
-                BuilderMetrics::validity_predicate_evaluations_total(outcome).increment(1);
+                ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
             }
             if predicate_read_failed || blocking_predicate.is_some() {
                 num_txs_considered += 1;
                 let ordering_position = num_txs_considered;
-                // A position predicate (block_number / flashblock_index) whose
-                // upper bound the build has passed can never be satisfied again,
-                // so the transaction is expired rather than merely unsatisfied.
-                let predicate_expired = !predicate_read_failed
-                    && ValidityPredicate::is_batch_expired(
-                        tx.validity_predicates(),
-                        &predicate_context,
-                    );
                 let (decision_reason, decision_detail) = if predicate_read_failed {
                     (
                         "validity_predicate_read_failed",
@@ -1341,15 +1259,6 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
-            // check if the job was cancelled, if so we can exit early
-            if self.cancel.is_cancelled() {
-                diag.cancelled = true;
-                diag.txs_considered = num_txs_considered;
-                diag.txs_included =
-                    (info.executed_transactions.len() as u64).saturating_sub(min_tx_index);
-                return Ok(diag);
-            }
-
             let tx_span = span!(
                 Level::TRACE,
                 "execute_transaction",
@@ -1549,8 +1458,10 @@ impl BasePayloadBuilderCtx {
                 {
                     let remaining =
                         (state_change_effects.affected_transactions.len() - rescanned) as u64;
-                    BuilderMetrics::validity_predicate_evaluations_total("rescan_budget_exhausted")
-                        .increment(remaining);
+                    ValidityMetrics::validity_predicate_evaluations_total(
+                        "rescan_budget_exhausted",
+                    )
+                    .increment(remaining);
                     break;
                 }
                 let mut predicate_read_failed = false;
@@ -1568,13 +1479,16 @@ impl BasePayloadBuilderCtx {
                             &mut **evm.db_mut(),
                             &mut info.predicate_loads,
                         );
-                        ValidityPredicateKey::first_unsatisfied(
+                        ValidityPredicateEvaluation::evaluate(
                             parked_transaction.validity_predicates(),
                             &mut recorder,
                             &predicate_context,
                         )
                     }) {
-                        Ok(blocking_predicate) => blocking_predicate,
+                        Ok(ValidityPredicateEvaluation::Matched) => None,
+                        Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, .. }) => {
+                            Some(blocker)
+                        }
                         Err(error) => {
                             warn!(
                                 target: "payload_builder",
@@ -1593,7 +1507,7 @@ impl BasePayloadBuilderCtx {
                 } else {
                     "rescan_matched"
                 };
-                BuilderMetrics::validity_predicate_evaluations_total(outcome).increment(1);
+                ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
@@ -1605,7 +1519,7 @@ impl BasePayloadBuilderCtx {
                 }
             }
             if !state_change_effects.affected_transactions.is_empty() {
-                BuilderMetrics::validity_predicate_rescan_duration()
+                ValidityMetrics::validity_predicate_rescan_duration()
                     .record(predicate_rescan_start.elapsed().as_secs_f64());
             }
 
@@ -1619,7 +1533,7 @@ impl BasePayloadBuilderCtx {
             // Per-tx tip-per-gas distribution (builder priority score), tagged
             // by flow cohort and bid mechanism. `X` for top-X-percentile share is
             // left to Datadog percentile aggregations — do not bake it in here.
-            BuilderMetrics::record_tip_per_gas(
+            SharedBuilderMetrics::record_tip_per_gas(
                 has_validity_predicates,
                 has_coinbase_tip,
                 miner_fee as f64,
@@ -1649,7 +1563,7 @@ impl BasePayloadBuilderCtx {
         // `None` means no validity transactions were evaluated, so nothing is emitted and
         // the histogram is not flooded with zero observations.
         if let Some(predicate_eval_total) = predicate_eval_total {
-            BuilderMetrics::record_predicate_eval_duration(predicate_eval_total);
+            ValidityMetrics::record_predicate_eval_duration(predicate_eval_total);
         }
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
@@ -1661,7 +1575,7 @@ impl BasePayloadBuilderCtx {
             num_txs_simulated_fail as f64,
             reverted_gas_used as f64,
         );
-        BuilderMetrics::record_predicate_index_diagnostics(
+        ValidityMetrics::record_predicate_index_diagnostics(
             predicate_bucket_wakeups,
             &predicate_index,
         );
@@ -1771,17 +1685,178 @@ impl BasePayloadBuilderCtx {
 mod tests {
     use alloy_consensus::{Header, TxEip1559};
     use alloy_eips::Encodable2718;
-    use alloy_primitives::{TxKind, U256};
+    use alloy_primitives::{Address, TxKind, U256};
     use alloy_signer_local::PrivateKeySigner;
-    use base_common_consensus::BaseTypedTransaction;
+    use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use base_execution_chainspec::BaseChainSpec;
+    use base_execution_txpool::BasePooledTransaction;
     use reth_chainspec::ChainSpec;
-    use reth_primitives_traits::{SealedHeader, WithEncoded};
+    use reth_payload_util::PayloadTransactions;
+    use reth_primitives_traits::{Recovered, SealedHeader, WithEncoded};
     use reth_provider::noop::NoopProvider;
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::*;
-    use crate::test_utils::sign_base_tx;
+    use crate::{ParkablePayloadTransactions, test_utils::sign_base_tx};
+
+    fn test_builder_context() -> BasePayloadBuilderCtx {
+        let genesis: serde_json::Value = serde_json::json!({
+            "config": { "chainId": 901 },
+            "gasLimit": "0x1C9C380",
+            "timestamp": "0x0"
+        });
+        let genesis = serde_json::from_value(genesis).expect("valid genesis");
+        let inner =
+            ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
+        let chain_spec = Arc::new(BaseChainSpec::from(inner));
+        let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
+        let parent = Arc::new(SealedHeader::seal_slow(parent_header));
+        BasePayloadBuilderCtx::for_test(chain_spec, parent)
+    }
+
+    fn pooled_test_transaction() -> BasePooledTransaction {
+        let signer = PrivateKeySigner::random();
+        let transaction = TxEip1559 {
+            chain_id: 901,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(signer.address()),
+            ..Default::default()
+        };
+        let recovered = sign_base_tx(&signer, BaseTypedTransaction::Eip1559(transaction))
+            .expect("sign test transaction");
+        let encoded_len = recovered.encode_2718_len();
+        BasePooledTransaction::new(recovered, encoded_len)
+    }
+
+    fn pooled_deposit_test_transaction() -> BasePooledTransaction {
+        let sender = Address::ZERO;
+        let transaction = TxDeposit {
+            source_hash: B256::ZERO,
+            from: sender,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 0,
+            is_system_transaction: false,
+            input: Default::default(),
+        };
+        let signed: BaseTransactionSigned = transaction.into();
+        let recovered = Recovered::new_unchecked(signed, sender);
+        let encoded_len = recovered.encode_2718_len();
+        BasePooledTransaction::new(recovered, encoded_len)
+    }
+
+    #[derive(Debug)]
+    struct LimitRejectionTransactions {
+        within_limit_transaction: BasePooledTransaction,
+        over_limit_transaction: BasePooledTransaction,
+        within_limit_remaining: usize,
+        over_limit_remaining: usize,
+        current_is_over_limit: bool,
+        over_limit_rejections: usize,
+        cancel: CancellationToken,
+    }
+
+    impl LimitRejectionTransactions {
+        fn new(within_limit: usize, over_limit: usize, cancel: CancellationToken) -> Self {
+            Self {
+                within_limit_transaction: pooled_deposit_test_transaction(),
+                over_limit_transaction: pooled_test_transaction(),
+                within_limit_remaining: within_limit,
+                over_limit_remaining: over_limit,
+                current_is_over_limit: false,
+                over_limit_rejections: 0,
+                cancel,
+            }
+        }
+    }
+
+    impl PayloadTransactions for LimitRejectionTransactions {
+        type Transaction = BasePooledTransaction;
+
+        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            if self.within_limit_remaining > 0 {
+                self.within_limit_remaining -= 1;
+                self.current_is_over_limit = false;
+                return Some(self.within_limit_transaction.clone());
+            }
+            if self.over_limit_remaining > 0 {
+                self.over_limit_remaining -= 1;
+                self.current_is_over_limit = true;
+                return Some(self.over_limit_transaction.clone());
+            }
+            None
+        }
+
+        fn mark_invalid(&mut self, _sender: alloy_primitives::Address, _nonce: u64) {
+            if self.current_is_over_limit {
+                self.over_limit_rejections += 1;
+                self.cancel.cancel();
+            }
+        }
+    }
+
+    impl ParkablePayloadTransactions for LimitRejectionTransactions {
+        fn park_current(&mut self) -> bool {
+            false
+        }
+
+        fn mark_current_committed(&mut self) {}
+
+        fn promote(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+
+        fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn cancellation_is_checked_after_each_limit_rejection() {
+        let ctx = test_builder_context();
+        let mut best_txs = LimitRejectionTransactions::new(0, 2, ctx.cancel.clone());
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+        let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
+
+        let diagnostics = ctx
+            .execute_best_transactions(&mut info, &mut state, &mut best_txs, &limits)
+            .expect("cancelled selection should succeed");
+
+        assert!(diagnostics.cancelled);
+        assert_eq!(diagnostics.txs_considered, 1);
+        assert_eq!(diagnostics.txs_rejected_gas, 1);
+        assert_eq!(best_txs.over_limit_rejections, 1);
+    }
+
+    #[test]
+    fn cancellation_stops_twenty_thousand_transaction_limit_rejection_tail() {
+        const WITHIN_LIMIT: usize = 10_000;
+        const OVER_LIMIT: usize = 20_000;
+
+        let ctx = test_builder_context();
+        let mut best_txs =
+            LimitRejectionTransactions::new(WITHIN_LIMIT, OVER_LIMIT, ctx.cancel.clone());
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+        let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
+
+        let diagnostics = ctx
+            .execute_best_transactions(&mut info, &mut state, &mut best_txs, &limits)
+            .expect("cancelled selection should succeed");
+
+        assert!(diagnostics.cancelled);
+        assert_eq!(diagnostics.txs_considered, WITHIN_LIMIT as u64 + 1);
+        assert_eq!(diagnostics.txs_rejected_gas, 1);
+        assert_eq!(best_txs.over_limit_rejections, 1);
+        assert!(best_txs.over_limit_remaining > OVER_LIMIT - 10);
+    }
 
     #[test]
     fn diagnostics_report_selection_outcome() {
@@ -1913,21 +1988,6 @@ mod tests {
     /// safe-head whose state cannot be reproduced by an honest proof client.
     #[test]
     fn execute_sequencer_transactions_propagates_invalid_tx_when_no_tx_pool() {
-        // Minimal Base chainspec: chain id 901 with all L1 forks through Cancun active at
-        // genesis. No inherited rollup forks, so block construction stays on the simplest
-        // path. (Mirrors the helper used by the `build_block` tests in `payload.rs`.)
-        let genesis: serde_json::Value = serde_json::json!({
-            "config": { "chainId": 901 },
-            "gasLimit": "0x1C9C380",
-            "timestamp": "0x0"
-        });
-        let genesis = serde_json::from_value(genesis).expect("valid genesis");
-        let inner =
-            ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
-        let chain_spec = Arc::new(BaseChainSpec::from(inner));
-        let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
-        let parent = Arc::new(SealedHeader::seal_slow(parent_header));
-
         // A randomly-generated signer with no balance in the (empty) NoopProvider state.
         // Any non-deposit transfer attempt will fail validation with
         // `InvalidTransaction::LackOfFundForMaxFee` — an `is_invalid_tx_err()` outcome.
@@ -1949,7 +2009,7 @@ mod tests {
         let with_encoded = WithEncoded::new(encoded, signed);
 
         // Strict mode: derived attributes (`no_tx_pool=true`) — the invalid tx must be fatal.
-        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, parent);
+        let mut ctx = test_builder_context();
         ctx.config.attributes.no_tx_pool = true;
         ctx.config.attributes.transactions = vec![with_encoded];
 

@@ -8,6 +8,12 @@ extern crate self as base_precompile_storage;
 mod error;
 pub use error::{BasePrecompileError, DelegateCallNotAllowed, IntoPrecompileResult, Result};
 
+mod neutral;
+pub use neutral::{
+    AccountInfo, IntoEnginePrecompileResult, PrecompileError, PrecompileHalt, PrecompileOutput,
+    PrecompileResult, PrecompileStatus,
+};
+
 mod packing;
 pub use packing::{
     FieldLocation, PackedSlot, Word, calc_element_loc, calc_element_offset, calc_element_slot,

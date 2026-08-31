@@ -2,7 +2,6 @@
 
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
-use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -14,8 +13,10 @@ use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
 use base_proofs_extension::ProofsHistoryExtension;
-use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
-use base_shadow_indexer_db::ShadowDbConfig;
+use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension, ShadowRetentionConfig};
+use base_shadow_indexer_db::{
+    DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
+};
 use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
     TxForwardingExtension,
@@ -83,6 +84,10 @@ pub struct MeteringArgs {
 const DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS: u32 = 5;
 /// Default timeout when acquiring a shadow indexer database connection.
 const DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT: &str = "30s";
+/// Default age at which persisted shadow blocks are deleted.
+const DEFAULT_SHADOW_INDEXER_RETENTION: &str = "30d";
+/// Default delay between shadow block retention sweeps.
+const DEFAULT_SHADOW_INDEXER_RETENTION_INTERVAL: &str = "1h";
 
 /// CLI arguments for the shadow indexer `ExEx` that persists committed execution blocks.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -91,14 +96,50 @@ pub struct ShadowIndexerArgs {
     #[arg(long = "enable-shadow-indexer", env = "ENABLE_SHADOW_INDEXER")]
     pub enable_shadow_indexer: bool,
 
-    /// `PostgreSQL` connection URL for the shadow indexer database.
+    /// Host of the shadow indexer database.
     #[arg(
-        long = "shadow-indexer.database-url",
-        env = "SHADOW_INDEXER_DATABASE_URL",
-        value_name = "SHADOW_INDEXER_DATABASE_URL",
+        long = "shadow-indexer.db-host",
+        env = "SHADOW_INDEXER_DB_HOST",
+        value_name = "SHADOW_INDEXER_DB_HOST",
         requires = "enable_shadow_indexer"
     )]
-    pub shadow_indexer_database_url: Option<String>,
+    pub shadow_indexer_db_host: Option<String>,
+
+    /// Password for the shadow indexer database role.
+    #[arg(
+        long = "shadow-indexer.db-password",
+        env = "SHADOW_INDEXER_DB_PASSWORD",
+        value_name = "SHADOW_INDEXER_DB_PASSWORD",
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_db_password: Option<String>,
+
+    /// Port of the shadow indexer database.
+    #[arg(
+        long = "shadow-indexer.db-port",
+        env = "SHADOW_INDEXER_DB_PORT",
+        default_value_t = DEFAULT_PORT,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_db_port: u16,
+
+    /// Name of the shadow indexer database.
+    #[arg(
+        long = "shadow-indexer.db-name",
+        env = "SHADOW_INDEXER_DB_NAME",
+        default_value = DEFAULT_DATABASE,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_db_name: String,
+
+    /// Role to authenticate to the shadow indexer database as.
+    #[arg(
+        long = "shadow-indexer.db-user",
+        env = "SHADOW_INDEXER_DB_USER",
+        default_value = DEFAULT_USERNAME,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_db_user: String,
 
     /// Maximum number of open shadow indexer database connections.
     #[arg(
@@ -118,18 +159,48 @@ pub struct ShadowIndexerArgs {
         requires = "enable_shadow_indexer"
     )]
     pub shadow_indexer_connection_timeout: Duration,
+
+    /// Age at which persisted shadow blocks are deleted, measured from their last write.
+    #[arg(
+        long = "shadow-indexer.retention",
+        env = "SHADOW_INDEXER_RETENTION",
+        default_value = DEFAULT_SHADOW_INDEXER_RETENTION,
+        value_parser = humantime::parse_duration,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_retention: Duration,
+
+    /// Delay between shadow block retention sweeps.
+    #[arg(
+        long = "shadow-indexer.retention-interval",
+        env = "SHADOW_INDEXER_RETENTION_INTERVAL",
+        default_value = DEFAULT_SHADOW_INDEXER_RETENTION_INTERVAL,
+        value_parser = humantime::parse_duration,
+        requires = "enable_shadow_indexer"
+    )]
+    pub shadow_indexer_retention_interval: Duration,
 }
 
 impl Default for ShadowIndexerArgs {
     fn default() -> Self {
         Self {
             enable_shadow_indexer: false,
-            shadow_indexer_database_url: None,
+            shadow_indexer_db_host: None,
+            shadow_indexer_db_password: None,
+            shadow_indexer_db_port: DEFAULT_PORT,
+            shadow_indexer_db_name: DEFAULT_DATABASE.to_string(),
+            shadow_indexer_db_user: DEFAULT_USERNAME.to_string(),
             shadow_indexer_max_connections: DEFAULT_SHADOW_INDEXER_MAX_CONNECTIONS,
             shadow_indexer_connection_timeout: humantime::parse_duration(
                 DEFAULT_SHADOW_INDEXER_CONNECTION_TIMEOUT,
             )
             .expect("valid default shadow indexer connection timeout"),
+            shadow_indexer_retention: humantime::parse_duration(DEFAULT_SHADOW_INDEXER_RETENTION)
+                .expect("valid default shadow indexer retention"),
+            shadow_indexer_retention_interval: humantime::parse_duration(
+                DEFAULT_SHADOW_INDEXER_RETENTION_INTERVAL,
+            )
+            .expect("valid default shadow indexer retention interval"),
         }
     }
 }
@@ -312,25 +383,61 @@ impl TryFrom<&ShadowIndexerArgs> for ShadowIndexerConfig {
     type Error = eyre::Error;
 
     fn try_from(args: &ShadowIndexerArgs) -> eyre::Result<Self> {
-        let url = if args.enable_shadow_indexer {
-            args.shadow_indexer_database_url.clone().ok_or_else(|| {
-                eyre::eyre!(
-                    "--enable-shadow-indexer (env ENABLE_SHADOW_INDEXER) requires \
-                     --shadow-indexer.database-url (env SHADOW_INDEXER_DATABASE_URL)"
-                )
-            })?
+        let connection = if args.enable_shadow_indexer {
+            let require = |value: &Option<String>, flag: &str, env: &str| {
+                value.clone().ok_or_else(|| {
+                    eyre::eyre!(
+                        "--enable-shadow-indexer (env ENABLE_SHADOW_INDEXER) requires {flag} (env \
+                         {env})"
+                    )
+                })
+            };
+
+            PgConnectionParams {
+                host: require(
+                    &args.shadow_indexer_db_host,
+                    "--shadow-indexer.db-host",
+                    "SHADOW_INDEXER_DB_HOST",
+                )?,
+                port: args.shadow_indexer_db_port,
+                database: args.shadow_indexer_db_name.clone(),
+                username: args.shadow_indexer_db_user.clone(),
+                password: require(
+                    &args.shadow_indexer_db_password,
+                    "--shadow-indexer.db-password",
+                    "SHADOW_INDEXER_DB_PASSWORD",
+                )?,
+            }
         } else {
-            String::new()
+            PgConnectionParams::default()
         };
+
+        if args.enable_shadow_indexer {
+            if args.shadow_indexer_retention.is_zero() {
+                eyre::bail!(
+                    "--shadow-indexer.retention (env SHADOW_INDEXER_RETENTION) must be non-zero"
+                );
+            }
+            if args.shadow_indexer_retention_interval.is_zero() {
+                eyre::bail!(
+                    "--shadow-indexer.retention-interval \
+                     (env SHADOW_INDEXER_RETENTION_INTERVAL) must be non-zero"
+                );
+            }
+        }
 
         Ok(Self {
             enabled: args.enable_shadow_indexer,
             db: ShadowDbConfig {
-                url,
+                connection,
                 max_connections: args.shadow_indexer_max_connections,
                 connection_timeout: args.shadow_indexer_connection_timeout,
             },
             builder_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: ShadowRetentionConfig {
+                period: args.shadow_indexer_retention,
+                interval: args.shadow_indexer_retention_interval,
+            },
         })
     }
 }
@@ -534,7 +641,6 @@ impl StandardBaseRethNode {
         };
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
-        runner.install_ext::<BundleExtension>(());
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {
             runner.install_ext::<SendRawTransactionValidityExtension>(
@@ -917,50 +1023,158 @@ mod tests {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "reth",
             "--enable-shadow-indexer",
-            "--shadow-indexer.database-url",
-            "postgres://localhost/shadow",
+            "--shadow-indexer.db-host",
+            "shadow.example.internal",
+            "--shadow-indexer.db-password",
+            "hunter2",
+            "--shadow-indexer.db-port",
+            "6543",
+            "--shadow-indexer.db-name",
+            "shadow",
+            "--shadow-indexer.db-user",
+            "writer",
             "--shadow-indexer.max-connections",
             "9",
             "--shadow-indexer.connection-timeout",
             "45s",
+            "--shadow-indexer.retention",
+            "3d",
+            "--shadow-indexer.retention-interval",
+            "15m",
         ])
         .args;
 
         assert!(args.shadow_indexer.enable_shadow_indexer);
         assert_eq!(
-            args.shadow_indexer.shadow_indexer_database_url.as_deref(),
-            Some("postgres://localhost/shadow")
+            args.shadow_indexer.shadow_indexer_db_host.as_deref(),
+            Some("shadow.example.internal")
         );
+        assert_eq!(args.shadow_indexer.shadow_indexer_db_password.as_deref(), Some("hunter2"));
+        assert_eq!(args.shadow_indexer.shadow_indexer_db_port, 6543);
+        assert_eq!(args.shadow_indexer.shadow_indexer_db_name, "shadow");
+        assert_eq!(args.shadow_indexer.shadow_indexer_db_user, "writer");
         assert_eq!(args.shadow_indexer.shadow_indexer_max_connections, 9);
         assert_eq!(args.shadow_indexer.shadow_indexer_connection_timeout, Duration::from_secs(45));
+        assert_eq!(
+            args.shadow_indexer.shadow_indexer_retention,
+            Duration::from_secs(3 * 24 * 60 * 60)
+        );
+        assert_eq!(
+            args.shadow_indexer.shadow_indexer_retention_interval,
+            Duration::from_secs(15 * 60)
+        );
     }
 
     #[test]
-    fn test_shadow_indexer_database_url_requires_enable_flag() {
+    fn test_shadow_indexer_retention_defaults_to_thirty_days() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-shadow-indexer",
+            "--shadow-indexer.db-host",
+            "shadow.example.internal",
+            "--shadow-indexer.db-password",
+            "hunter2",
+        ])
+        .args;
+
+        let config = ShadowIndexerConfig::try_from(&args.shadow_indexer)
+            .expect("enabled shadow indexer config should build");
+
+        assert_eq!(config.retention.period, Duration::from_secs(30 * 24 * 60 * 60));
+        assert_eq!(config.retention.interval, Duration::from_secs(60 * 60));
+    }
+
+    #[test]
+    fn test_shadow_indexer_rejects_zero_retention() {
+        let args = ShadowIndexerArgs {
+            enable_shadow_indexer: true,
+            shadow_indexer_db_host: Some("shadow.example.internal".to_string()),
+            shadow_indexer_db_password: Some("hunter2".to_string()),
+            shadow_indexer_retention: Duration::ZERO,
+            ..ShadowIndexerArgs::default()
+        };
+
+        let error =
+            ShadowIndexerConfig::try_from(&args).expect_err("zero retention should be rejected");
+
+        assert!(error.to_string().contains("--shadow-indexer.retention"));
+    }
+
+    #[test]
+    fn test_shadow_indexer_rejects_zero_retention_interval() {
+        let args = ShadowIndexerArgs {
+            enable_shadow_indexer: true,
+            shadow_indexer_db_host: Some("shadow.example.internal".to_string()),
+            shadow_indexer_db_password: Some("hunter2".to_string()),
+            shadow_indexer_retention_interval: Duration::ZERO,
+            ..ShadowIndexerArgs::default()
+        };
+
+        let error = ShadowIndexerConfig::try_from(&args)
+            .expect_err("zero retention interval should be rejected");
+
+        assert!(error.to_string().contains("--shadow-indexer.retention-interval"));
+    }
+
+    #[test]
+    fn test_standard_node_args_defaults_shadow_indexer_connection_fields() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-shadow-indexer",
+            "--shadow-indexer.db-host",
+            "shadow.example.internal",
+            "--shadow-indexer.db-password",
+            "hunter2",
+        ])
+        .args;
+
+        let config = ShadowIndexerConfig::try_from(&args.shadow_indexer)
+            .expect("host and password are enough to build the config");
+
+        assert_eq!(config.db.connection.port, DEFAULT_PORT);
+        assert_eq!(config.db.connection.database, DEFAULT_DATABASE);
+        assert_eq!(config.db.connection.username, DEFAULT_USERNAME);
+    }
+
+    #[test]
+    fn test_shadow_indexer_db_host_requires_enable_flag() {
         let error = CommandParser::<StandardNodeArgs>::try_parse_from([
             "reth",
-            "--shadow-indexer.database-url",
-            "postgres://localhost/shadow",
+            "--shadow-indexer.db-host",
+            "shadow.example.internal",
         ])
-        .expect_err("shadow indexer database url should require the enable flag");
+        .expect_err("shadow indexer db host should require the enable flag");
 
         assert!(error.to_string().contains("--enable-shadow-indexer"));
     }
 
     #[test]
-    fn test_shadow_indexer_config_requires_database_url_when_enabled() {
+    fn test_shadow_indexer_config_requires_db_host_when_enabled() {
         let args =
             ShadowIndexerArgs { enable_shadow_indexer: true, ..ShadowIndexerArgs::default() };
         let error = ShadowIndexerConfig::try_from(&args)
-            .expect_err("enabled shadow indexer should require a database url");
+            .expect_err("enabled shadow indexer should require a db host");
 
-        assert!(error.to_string().contains("--shadow-indexer.database-url"));
+        assert!(error.to_string().contains("--shadow-indexer.db-host"));
+    }
+
+    #[test]
+    fn test_shadow_indexer_config_requires_db_password_when_enabled() {
+        let args = ShadowIndexerArgs {
+            enable_shadow_indexer: true,
+            shadow_indexer_db_host: Some("shadow.example.internal".to_string()),
+            ..ShadowIndexerArgs::default()
+        };
+        let error = ShadowIndexerConfig::try_from(&args)
+            .expect_err("enabled shadow indexer should require a db password");
+
+        assert!(error.to_string().contains("--shadow-indexer.db-password"));
     }
 
     #[test]
     fn test_shadow_indexer_config_disabled_by_default() {
         let config = ShadowIndexerConfig::try_from(&ShadowIndexerArgs::default())
-            .expect("disabled shadow indexer config should build without a url");
+            .expect("disabled shadow indexer config should build without connection details");
 
         assert!(!config.enabled);
         assert_eq!(config.builder_version, env!("CARGO_PKG_VERSION"));

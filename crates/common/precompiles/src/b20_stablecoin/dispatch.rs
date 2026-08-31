@@ -11,8 +11,7 @@ use alloc::string::ToString;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, StorageCtx};
-use revm::precompile::PrecompileResult;
+use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
     B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant, BerylCallRecorder,
