@@ -36,6 +36,7 @@ pub fn api_router(store: Option<ShadowMetricsStore>) -> Router {
     let repo = store.map(|store| ShadowBlockRepo::new(store.pool().clone()));
     Router::new()
         .route("/shadow-candidates", get(get_shadow_candidates_batch))
+        .route("/shadow-blocks", get(get_recent_shadow_blocks))
         .route("/blocks/{id}", get(get_block))
         .route("/blocks/{id}/shadow-candidates", get(get_shadow_candidates))
         .route("/shadow-blocks/{id}", get(get_shadow_block))
@@ -212,6 +213,37 @@ async fn get_shadow_candidates_batch(
         "served batch shadow candidates"
     );
     Ok(Json(result))
+}
+
+#[derive(Debug, Deserialize)]
+struct RecentShadowBlocksQuery {
+    limit: Option<i64>,
+    before: Option<i64>,
+}
+
+const DEFAULT_RECENT_LIMIT: i64 = 25;
+
+/// The most recent resolved shadow blocks, newest first, paged backwards by `before`.
+///
+/// No upper bound on `limit`: this endpoint is consumed server-to-server. `limit`
+/// only floors at 1 so a malformed value cannot make Postgres reject the query.
+async fn get_recent_shadow_blocks(
+    State(state): State<ApiState>,
+    Query(query): Query<RecentShadowBlocksQuery>,
+) -> Result<Json<Vec<ShadowBlockSummary>>, ApiError> {
+    let limit = query.limit.unwrap_or(DEFAULT_RECENT_LIMIT).max(1);
+
+    let repo = state.repo()?;
+    let shadows = repo.list_recent(limit, query.before).await?;
+    tracing::info!(
+        target: "shadow_metrics::api",
+        endpoint = "recent-shadow-blocks",
+        limit,
+        before = query.before,
+        count = shadows.len(),
+        "served recent shadow blocks"
+    );
+    Ok(Json(shadows.iter().map(shadow_block_summary).collect::<Vec<_>>()))
 }
 
 /// A single reorged-out shadow block summary addressed by shadow block hash.
