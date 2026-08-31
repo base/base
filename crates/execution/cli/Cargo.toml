@@ -42,6 +42,7 @@ base-node-runner.workspace = true
 base-observability-events.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
+base-tx-ingress.workspace = true
 base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true
 base-flashblocks-node.workspace = true

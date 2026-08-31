@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package base.tx_ingress.v1;
+
+// Accepts raw transactions over a persistent bidirectional stream.
+service TransactionIngressService {
+  // Submits transactions independently and returns results as they complete.
+  rpc Submit(stream SubmitRequest) returns (stream SubmitResponse);
+}
+
+// One raw transaction submission.
+message SubmitRequest {
+  // Stream-local identifier echoed in the result.
+  uint64 request_id = 1;
+  // EIP-2718 encoded signed transaction.
+  bytes raw_transaction = 2;
+}
+
+// Admission result for one submission.
+message SubmitResponse {
+  // Identifier from the corresponding submission.
+  uint64 request_id = 1;
+  // Admission success or rejection.
+  oneof outcome {
+    // Hash of a transaction accepted by the mempool node.
+    bytes transaction_hash = 2;
+    // JSON-RPC-compatible transaction rejection.
+    SubmitError error = 3;
+  }
+}
+
+// JSON-RPC-compatible error returned for a rejected transaction.
+message SubmitError {
+  // JSON-RPC error code.
+  int32 code = 1;
+  // JSON-RPC error message.
+  string message = 2;
+  // Raw JSON-RPC error data, when present.
+  optional bytes json_data = 3;
+}
