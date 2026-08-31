@@ -147,3 +147,47 @@ Remaining, in rough size order, with the reason each is out of scope for this sp
   track, only end-to-end validatable as a whole.
 - **Phase 7 — node wiring.** Blocked on the upstream `alloy-evm`/`reth` EVM2 bridge, which does not
   exist yet.
+
+## Appendix A — EIP-8130 execution engine implementation plan
+
+The execution engine is validatable only end-to-end (the reference exposes it solely through
+`BaseEvm::transact_raw`), so it must be developed in its own PR against a `transact_raw` differential
+harness rather than as incremental commits here. The building blocks already landed on this spike —
+[`IntrinsicGas`], the [`NonceManager`] storage layer, the [`BaseTxEnvelope::Eip8130`] variant, and
+the `gas_limit + payer_auth` block-gas reservation — are its inputs. Suggested sub-PR sequence:
+
+1. **Differential harness.** A test that signs an `Eip8130Signed` (secp256k1 for the EOA path),
+   runs it through both the revm reference `transact_raw` and the evm2 handler, and compares
+   post-state (balances, nonce, code), gas used, status, and phase statuses. This gates every
+   subsequent PR.
+2. **Registry handler + EOA self-pay, single-phase, single-call path.** Recover the sender
+   (`Eip8130Signed::recover_sender`), validate chain-id/timestamp, charge the upfront fee, execute
+   the call via `Host::execute_message`, auto-delegate the code-less sender to `DEFAULT_ACCOUNT`,
+   increment the nonce, settle fees. Reject unsupported shapes explicitly. Validate against (1).
+3. **Fee settlement parity.** The 8130 fee model (effective gas price, L1 data fee, operator fee,
+   EIP-3529 refund cap, vault distribution) matched to the reference `settle_fees`.
+4. **Phased calls.** `Vec<Vec<Call>>` with per-phase atomic commit/revert and the `phaseStatuses`
+   surfaced to the receipt.
+5. **Account changes + authorization.** `Create`/`ConfigChange`/`Delegation` application, the
+   dispatch/authorizer, and the `SCOPE_POLICY` gate (configured-sender and payer paths).
+6. **Payer split + nonce-free replay.** Payer authorization and prepay; the expiring-nonce ring
+   buffer recording and validity-window checks (using [`NonceManager`] slots).
+7. **Simulate mode.** RPC estimate with the gas-limit bisection search, no signature verify / no
+   fee settle / state reverted.
+
+Each PR adds cases to the harness and must keep every prior case green.
+
+## Appendix B — node wiring
+
+Blocked on the upstream `alloy-evm`/`reth` EVM2 bridge. Once it lands, wiring is: implement the
+bridge's block-executor/EVM traits for [`BaseBlockExecutor`] and `BaseEvmTypes`, select
+[`BaseEvmTypes::precompiles`] per spec, and drive `apply_pre_execution` + `apply_transition_hooks` +
+per-tx `execute_transaction` + `finish` from the node's block-import path, then add an end-to-end
+block-import differential test against the revm engine. Until the bridge exists there is no trait
+surface to implement against.
+
+[`IntrinsicGas`]: crate::IntrinsicGas
+[`NonceManager`]: crate::NonceManager
+[`BaseTxEnvelope::Eip8130`]: crate::BaseTxEnvelope
+[`BaseBlockExecutor`]: crate::BaseBlockExecutor
+[`BaseEvmTypes::precompiles`]: crate::BaseEvmTypes::precompiles
