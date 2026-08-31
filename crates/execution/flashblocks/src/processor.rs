@@ -1,7 +1,7 @@
 //! Flashblocks state processor.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard},
     time::{Duration, Instant},
 };
@@ -437,31 +437,36 @@ where
         let mut observed_generation =
             *self.recovery_epoch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut deferred_canonical: Option<(RecoveredBlock<BaseBlock>, u64)> = None;
+        let mut replay_updates = VecDeque::new();
         let mut deferred_interval = interval(Duration::from_millis(100));
         deferred_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
-            let (update, enqueued_generation) = tokio::select! {
-                update = async { self.rx.lock().await.recv().await } => {
-                    let Some(update) = update else {
-                        break;
-                    };
-                    update
-                }
-                _ = deferred_interval.tick() => {
-                    let deferred = deferred_canonical.clone();
-                    let Some((deferred, generation)) = deferred else {
-                        continue;
-                    };
-                    if self
-                        .best_canonical_header()
-                        .is_none_or(|best| best.number() < deferred.number)
-                    {
-                        continue;
+            let (update, enqueued_generation) = if let Some(replay) = replay_updates.pop_front() {
+                replay
+            } else {
+                tokio::select! {
+                    update = async { self.rx.lock().await.recv().await } => {
+                        let Some(update) = update else {
+                            break;
+                        };
+                        update
                     }
-                    deferred_canonical
-                        .take()
-                        .map(|(block, _)| (StateUpdate::Canonical(block), generation))
-                        .expect("deferred canonical remains available")
+                    _ = deferred_interval.tick() => {
+                        let deferred = deferred_canonical.clone();
+                        let Some((deferred, generation)) = deferred else {
+                            continue;
+                        };
+                        if self
+                            .best_canonical_header()
+                            .is_none_or(|best| best.number() < deferred.number)
+                        {
+                            continue;
+                        }
+                        deferred_canonical
+                            .take()
+                            .map(|(block, _)| (StateUpdate::Canonical(block), generation))
+                            .expect("deferred canonical remains available")
+                    }
                 }
             };
             let Some((best, resuming_recovery, generation)) = self
@@ -556,57 +561,13 @@ where
                                         canonical_block = block.number,
                                         cached_count = cached.len(),
                                     );
-                                    for flashblock in cached {
-                                        let cached_update = StateUpdate::Flashblock(flashblock);
-                                        let cached_enqueued_generation = *self
-                                            .recovery_epoch
-                                            .lock()
-                                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                        let Some((
-                                            cached_best,
-                                            cached_resuming_recovery,
-                                            cached_generation,
-                                        )) = self
-                                            .preflight_update(
-                                                &cached_update,
-                                                cached_enqueued_generation,
-                                                &mut observed_generation,
-                                                &mut deferred_canonical,
-                                                &mut recovering,
-                                            )
-                                            .await
-                                        else {
-                                            if recovering {
-                                                break;
-                                            }
-                                            continue;
-                                        };
-                                        let StateUpdate::Flashblock(flashblock) = cached_update
-                                        else {
-                                            unreachable!("cached update is always a flashblock");
-                                        };
-
-                                        let fb_prev = self.pending_blocks.load_full();
-                                        let (applied, requires_recovery) = self
-                                            .apply_flashblock(
-                                                fb_prev,
-                                                flashblock,
-                                                !cached_resuming_recovery,
-                                                &cached_best,
-                                                cached_generation,
-                                            )
-                                            .await;
-                                        if requires_recovery {
-                                            recovering = true;
-                                            break;
-                                        }
-                                        if applied {
-                                            recovering = false;
-                                        }
-                                        if recovering {
-                                            break;
-                                        }
-                                    }
+                                    let replay_generation = *self
+                                        .recovery_epoch
+                                        .lock()
+                                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                    replay_updates.extend(cached.into_iter().map(|flashblock| {
+                                        (StateUpdate::Flashblock(flashblock), replay_generation)
+                                    }));
                                 }
                             }
                         }

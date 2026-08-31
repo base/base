@@ -14,9 +14,6 @@ use base_common_flashblocks::{Flashblock, MAX_DECOMPRESSED_FLASHBLOCK_BYTES};
 /// to avoid unbounded memory growth during syncing.
 const MAX_CACHE_AHEAD_BLOCKS: u64 = 5;
 
-/// Maximum payload attempts retained for one block number.
-const MAX_PAYLOADS_PER_BLOCK: usize = 8;
-
 /// Maximum flashblock indices retained for one payload attempt.
 pub const MAX_FLASHBLOCKS_PER_PAYLOAD: u64 = 16;
 
@@ -118,15 +115,6 @@ impl FlashblockCache {
             return false;
         }
         let by_payload = self.entries.entry(block_number).or_default();
-        if !by_payload.contains_key(&flashblock.payload_id)
-            && by_payload.len() >= MAX_PAYLOADS_PER_BLOCK
-            && let Some(oldest) = by_payload
-                .iter()
-                .min_by_key(|(_, (base_sequence, _))| *base_sequence)
-                .map(|(payload_id, _)| *payload_id)
-        {
-            by_payload.remove(&oldest);
-        }
         let payload = by_payload.entry(flashblock.payload_id).or_insert_with(|| {
             self.next_payload_sequence = self.next_payload_sequence.saturating_add(1);
             (self.next_payload_sequence, HashMap::new())
@@ -422,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn cache_bounds_payload_attempts_and_indices() {
+    fn cache_bounds_payload_indices() {
         let mut cache = FlashblockCache::new(10);
         for payload in 1u64..=9 {
             let mut flashblock = make_flashblock(11, 0);
@@ -430,12 +418,12 @@ mod tests {
             assert!(cache.insert(flashblock));
         }
 
-        assert_eq!(cache.total_flashblocks(), MAX_PAYLOADS_PER_BLOCK);
+        assert_eq!(cache.total_flashblocks(), 9);
         let mut excessive_index = make_flashblock(11, MAX_FLASHBLOCKS_PER_PAYLOAD);
         excessive_index.payload_id = PayloadId::new(9u64.to_be_bytes());
         assert!(!cache.insert(excessive_index));
 
-        for expected in (2u64..=9).rev() {
+        for expected in (1u64..=9).rev() {
             let drained = cache.drain(11, B256::ZERO);
             assert_eq!(drained[0].payload_id, PayloadId::new(expected.to_be_bytes()));
         }
