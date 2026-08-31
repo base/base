@@ -7,79 +7,19 @@ use std::{
 
 use base_protocol::{BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, ChannelId, Frame};
 
-use crate::{BatchSubmission, BlobPayload, DaType, SubmissionId, record::Channel};
+use crate::{
+    BatchSubmission, BlobPayload, DaType, SubmissionId,
+    artifact::{ArtifactId, DaArtifactPayload, DaArtifacts},
+    record::Channel,
+};
 
-/// Stable identifier for one immutable DA artifact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ArtifactId(u64);
-
-/// Submission state of one immutable DA artifact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArtifactState {
-    /// Available for a new L1 submission.
-    Ready,
-    /// Leased to one in-flight submission.
-    Pending,
-    /// Confirmed on L1.
-    Confirmed,
-}
-
-/// Immutable payload carried by one DA artifact.
-#[derive(Debug)]
-pub enum DaArtifactPayload {
-    /// One complete EIP-4844 blob payload.
-    Blob(BlobPayload),
-    /// One derivation frame carried by calldata.
-    Calldata(Arc<Frame>),
-}
-
-/// One immutable artifact retained through submission retries and confirmation.
-#[derive(Debug)]
-pub struct DaArtifact {
-    /// Stable artifact identifier.
-    id: ArtifactId,
-    /// Artifact payload.
-    payload: DaArtifactPayload,
-    /// Channels contributing frames to this artifact.
-    channel_ids: Vec<ChannelId>,
-    /// Current submission state.
-    state: ArtifactState,
-}
-
-impl DaArtifact {
-    /// Returns the artifact identifier.
-    pub const fn id(&self) -> ArtifactId {
-        self.id
-    }
-
-    /// Returns contributing channel identifiers.
-    pub fn channel_ids(&self) -> &[ChannelId] {
-        &self.channel_ids
-    }
-
-    /// Returns the current submission state.
-    pub const fn state(&self) -> ArtifactState {
-        self.state
-    }
-
-    /// Returns the number of frames carried by this artifact.
-    pub fn frame_count(&self) -> usize {
-        match &self.payload {
-            DaArtifactPayload::Blob(payload) => payload.frames().len(),
-            DaArtifactPayload::Calldata(_) => 1,
-        }
-    }
-}
-
-/// Stateful DA egress and immutable artifact ledger.
+/// Stateful DA egress over an immutable artifact ledger.
 #[derive(Debug, Default)]
 pub struct DaEgress {
-    /// Artifacts in creation order.
-    artifacts: VecDeque<DaArtifact>,
+    /// Immutable artifacts and their submission state.
+    artifacts: DaArtifacts,
     /// In-flight submissions and their immutable artifacts.
     pending: HashMap<SubmissionId, Vec<ArtifactId>>,
-    /// Next stable artifact identifier.
-    next_artifact_id: u64,
 }
 
 impl DaEgress {
@@ -88,11 +28,11 @@ impl DaEgress {
 
     /// Creates an empty DA egress.
     pub fn new() -> Self {
-        Self { artifacts: VecDeque::new(), pending: HashMap::new(), next_artifact_id: 0 }
+        Self { artifacts: DaArtifacts::new(), pending: HashMap::new() }
     }
 
-    /// Returns all retained artifacts in creation order.
-    pub const fn artifacts(&self) -> &VecDeque<DaArtifact> {
+    /// Returns the immutable artifact ledger.
+    pub const fn artifacts(&self) -> &DaArtifacts {
         &self.artifacts
     }
 
@@ -177,7 +117,7 @@ impl DaEgress {
         da_type: DaType,
         l1_head: u64,
     ) -> bool {
-        if self.artifacts.iter().any(|artifact| artifact.state == ArtifactState::Ready) {
+        if self.artifacts.has_ready() {
             return true;
         }
 
@@ -196,17 +136,11 @@ impl DaEgress {
         max_blobs_per_tx: usize,
         id: SubmissionId,
     ) -> Option<BatchSubmission> {
-        if !self.artifacts.iter().any(|artifact| artifact.state == ArtifactState::Ready) {
+        if !self.artifacts.has_ready() {
             self.build_ready_artifacts(channels, da_type, l1_head, max_blobs_per_tx);
         }
 
-        let first_ready =
-            self.artifacts.iter().position(|artifact| artifact.state == ArtifactState::Ready)?;
-
-        let (submission, artifact_ids) = match &self.artifacts[first_ready].payload {
-            DaArtifactPayload::Blob(_) => self.lease_blobs(first_ready, max_blobs_per_tx, id),
-            DaArtifactPayload::Calldata(_) => self.lease_calldata(first_ready, id),
-        };
+        let (submission, artifact_ids) = self.artifacts.lease(id, max_blobs_per_tx)?;
         self.pending.insert(id, artifact_ids);
 
         Some(submission)
@@ -222,16 +156,7 @@ impl DaEgress {
     ) {
         match da_type {
             DaType::Blob => {
-                while self
-                    .artifacts
-                    .iter()
-                    .filter(|artifact| {
-                        artifact.state == ArtifactState::Ready
-                            && matches!(artifact.payload, DaArtifactPayload::Blob(_))
-                    })
-                    .count()
-                    < max_blobs
-                {
+                while self.artifacts.ready_blob_count() < max_blobs {
                     let Some(plan) = Self::plan_blob(channels, l1_head) else {
                         break;
                     };
@@ -246,133 +171,40 @@ impl DaEgress {
         }
     }
 
-    /// Leases consecutive ready blobs as one transaction.
-    fn lease_blobs(
-        &mut self,
-        first_ready: usize,
-        maximum: usize,
-        submission_id: SubmissionId,
-    ) -> (BatchSubmission, Vec<ArtifactId>) {
-        let indexes: Vec<_> = self
-            .artifacts
-            .iter()
-            .enumerate()
-            .skip(first_ready)
-            .filter(|(_, artifact)| artifact.state == ArtifactState::Ready)
-            .take_while(|(_, artifact)| matches!(artifact.payload, DaArtifactPayload::Blob(_)))
-            .take(maximum)
-            .map(|(index, _)| index)
-            .collect();
-
-        let payloads = indexes
-            .iter()
-            .map(|index| match &self.artifacts[*index].payload {
-                DaArtifactPayload::Blob(payload) => payload.clone(),
-                DaArtifactPayload::Calldata(_) => {
-                    unreachable!("blob lease contains only blob artifacts")
-                }
-            })
-            .collect();
-        let artifact_ids = indexes.iter().map(|index| self.artifacts[*index].id).collect();
-
-        for index in indexes {
-            self.artifacts[index].state = ArtifactState::Pending;
-        }
-
-        (BatchSubmission::blobs(submission_id, payloads), artifact_ids)
-    }
-
-    /// Leases one ready calldata frame as one transaction.
-    fn lease_calldata(
-        &mut self,
-        index: usize,
-        submission_id: SubmissionId,
-    ) -> (BatchSubmission, Vec<ArtifactId>) {
-        let DaArtifactPayload::Calldata(frame) = &self.artifacts[index].payload else {
-            unreachable!("calldata lease requires a calldata artifact");
-        };
-        let frame = Arc::clone(frame);
-        let artifact_id = self.artifacts[index].id;
-
-        self.artifacts[index].state = ArtifactState::Pending;
-
-        (BatchSubmission::calldata(submission_id, frame), vec![artifact_id])
-    }
-
     /// Confirms every artifact leased to `submission_id`.
     pub fn confirm(&mut self, submission_id: SubmissionId) -> Option<Vec<ChannelId>> {
         let artifact_ids = self.pending.remove(&submission_id)?;
-        if !self.lease_matches(&artifact_ids) {
+        if !self.artifacts.all_pending(&artifact_ids) {
             return None;
         }
 
-        let mut channel_ids = Vec::new();
-
-        for artifact in &mut self.artifacts {
-            if !artifact_ids.contains(&artifact.id) {
-                continue;
-            }
-
-            artifact.state = ArtifactState::Confirmed;
-            for channel_id in &artifact.channel_ids {
-                if !channel_ids.contains(channel_id) {
-                    channel_ids.push(*channel_id);
-                }
-            }
-        }
-
-        Some(channel_ids)
+        Some(self.artifacts.confirm(&artifact_ids))
     }
 
     /// Returns every artifact leased to `submission_id` to ready state.
     pub fn requeue(&mut self, submission_id: SubmissionId) -> Option<usize> {
         let artifact_ids = self.pending.remove(&submission_id)?;
-        if !self.lease_matches(&artifact_ids) {
+        if !self.artifacts.all_pending(&artifact_ids) {
             return None;
         }
 
-        let mut frame_count = 0;
-        for artifact in &mut self.artifacts {
-            if artifact_ids.contains(&artifact.id) {
-                frame_count += artifact.frame_count();
-                artifact.state = ArtifactState::Ready;
-            }
-        }
-
-        Some(frame_count)
+        Some(self.artifacts.requeue(&artifact_ids))
     }
 
     /// Returns whether all artifacts from a fully framed channel are confirmed.
     pub fn channel_fully_confirmed(&self, channel: &Channel) -> bool {
-        if !channel.framing_complete() {
-            return false;
-        }
-
-        let mut found = false;
-        for artifact in &self.artifacts {
-            if !artifact.channel_ids.contains(&channel.id()) {
-                continue;
-            }
-            found = true;
-            if artifact.state != ArtifactState::Confirmed {
-                return false;
-            }
-        }
-        found
+        channel.framing_complete() && self.artifacts.all_confirmed_for(channel.id())
     }
 
     /// Removes safe channel references and artifacts no longer tracking any channel.
     pub fn prune_channels(&mut self, channel_ids: &[ChannelId]) {
-        for artifact in &mut self.artifacts {
-            artifact.channel_ids.retain(|id| !channel_ids.contains(id));
-        }
-        self.artifacts.retain(|artifact| !artifact.channel_ids.is_empty());
+        self.artifacts.prune_channels(channel_ids);
         self.retain_existing_pending_artifacts();
     }
 
     /// Removes artifacts invalidated by deterministic replay closure.
     pub fn invalidate_artifacts(&mut self, artifact_ids: &[ArtifactId]) {
-        self.artifacts.retain(|artifact| !artifact_ids.contains(&artifact.id));
+        self.artifacts.invalidate(artifact_ids);
         self.pending.retain(|_, pending| !pending.iter().any(|id| artifact_ids.contains(id)));
     }
 
@@ -387,15 +219,6 @@ impl DaEgress {
                 }
             }
         }
-    }
-
-    /// Returns the number of frames currently available for submission.
-    pub fn ready_frame_count(&self) -> usize {
-        self.artifacts
-            .iter()
-            .filter(|artifact| artifact.state == ArtifactState::Ready)
-            .map(DaArtifact::frame_count)
-            .sum()
     }
 
     /// Clears every artifact while preserving monotonic artifact identifiers.
@@ -458,7 +281,7 @@ impl DaEgress {
         }
 
         let payload = BlobPayload::new(frames);
-        self.push_artifact(DaArtifactPayload::Blob(payload), channel_ids)
+        self.artifacts.push(DaArtifactPayload::Blob(payload), channel_ids)
     }
 
     /// Commits one calldata frame into an immutable ready artifact.
@@ -476,40 +299,14 @@ impl DaEgress {
             channel.take_frame(data_len, is_last).expect("calldata plan satisfies channel limits"),
         );
 
-        self.push_artifact(DaArtifactPayload::Calldata(frame), vec![channel_id])
-    }
-
-    /// Appends one immutable ready artifact.
-    fn push_artifact(
-        &mut self,
-        payload: DaArtifactPayload,
-        channel_ids: Vec<ChannelId>,
-    ) -> ArtifactId {
-        let id = ArtifactId(self.next_artifact_id);
-        self.next_artifact_id += 1;
-        self.artifacts.push_back(DaArtifact {
-            id,
-            payload,
-            channel_ids,
-            state: ArtifactState::Ready,
-        });
-        id
-    }
-
-    /// Returns whether every artifact in a lease remains pending.
-    fn lease_matches(&self, artifact_ids: &[ArtifactId]) -> bool {
-        artifact_ids.iter().all(|id| {
-            self.artifacts
-                .iter()
-                .any(|artifact| artifact.id == *id && artifact.state == ArtifactState::Pending)
-        })
+        self.artifacts.push(DaArtifactPayload::Calldata(frame), vec![channel_id])
     }
 
     /// Removes pruned artifact identifiers from pending submissions.
     fn retain_existing_pending_artifacts(&mut self) {
         let artifacts = &self.artifacts;
         self.pending.retain(|_, pending| {
-            pending.retain(|id| artifacts.iter().any(|artifact| artifact.id == *id));
+            pending.retain(|id| artifacts.contains(*id));
             !pending.is_empty()
         });
     }

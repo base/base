@@ -25,6 +25,8 @@ pub use channel::{
 };
 
 #[allow(dead_code, unreachable_pub, unnameable_types)]
+mod artifact;
+#[allow(dead_code, unreachable_pub, unnameable_types)]
 mod egress;
 #[allow(dead_code, unreachable_pub, unnameable_types)]
 mod record;
