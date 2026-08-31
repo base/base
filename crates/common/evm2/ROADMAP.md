@@ -92,6 +92,7 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 | --- | --- | --- |
 | Envelope variant (`BaseTxEnvelope::Eip8130`) | ✅ | carries `Eip8130Signed`; type byte + gas limit |
 | Intrinsic-gas schedule + computation | ✅ | `IntrinsicGas`; full compute parity vs revm reference |
+| Block-gas reservation incl. payer-auth | ✅ | executor reserves `gas_limit + max_payer_auth_cost` |
 | 2D nonce-manager storage (slot derivation + read + increment) | ✅ | `NonceManager`; slot parity + increment vs revm reference |
 | Registry handler + dispatch/authorizer/policy + phased execution + fees + simulate | ⬜ | the coupled execution engine |
 | Nonce increment events + replay ring buffer + validity window | ⬜ | needs the EIP-8130 execution context |
