@@ -73,6 +73,7 @@ impl HistoricalReadFixture {
             })
             .collect::<Vec<_>>();
 
+        // Validate every timed query against its deterministic expected state before measuring.
         let provider = factory.provider().expect("sample provider should open");
         for &(address, block) in &account_queries {
             let account = provider
