@@ -28,6 +28,9 @@ pub use executor::{
 
 mod registry;
 
+mod nonce_manager;
+pub use nonce_manager::NonceManager;
+
 mod transition;
 pub use transition::{BaseForkActivations, IrregularStateChange};
 
