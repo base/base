@@ -4,7 +4,7 @@ FROM public.ecr.aws/docker/library/rust:${RUST_VERSION}-trixie AS rust-builder-b
 WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      git libclang-dev libssl-dev pkg-config curl build-essential cmake \
+      git libclang-dev libssl-dev pkg-config curl build-essential cmake lld \
       protobuf-compiler libprotobuf-dev && \
     rm -rf /var/lib/apt/lists/*
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
@@ -13,6 +13,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 ENV RUSTC_WRAPPER=sccache
 ENV SCCACHE_DIR=/sccache
 ENV CARGO_INCREMENTAL=0
+ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 
 FROM rust-builder-base AS zk-builder-base
 RUN apt-get update && \
