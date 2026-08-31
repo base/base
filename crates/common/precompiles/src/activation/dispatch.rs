@@ -171,8 +171,7 @@ mod tests {
         storage.set_call_value(U256::from(1u64));
 
         // A read-only, unauthenticated selector — the exact path an attacker uses to strand ETH.
-        let calldata =
-            IActivationRegistry::isActivatedCall { feature: B256::ZERO }.abi_encode();
+        let calldata = IActivationRegistry::isActivatedCall { feature: B256::ZERO }.abi_encode();
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
             ActivationRegistryStorage::new(ctx).dispatch(
@@ -185,10 +184,7 @@ mod tests {
         .expect("nonzero value must revert, not fatally error");
 
         assert!(output.is_revert());
-        assert_eq!(
-            output.bytes,
-            Bytes::from(IActivationRegistry::NonPayable {}.abi_encode()),
-        );
+        assert_eq!(output.bytes, Bytes::from(IActivationRegistry::NonPayable {}.abi_encode()));
     }
 
     #[test]
@@ -199,8 +195,7 @@ mod tests {
         storage.set_caller(ADMIN);
         storage.set_call_value(U256::from(1u64));
 
-        let calldata =
-            IActivationRegistry::isActivatedCall { feature: B256::ZERO }.abi_encode();
+        let calldata = IActivationRegistry::isActivatedCall { feature: B256::ZERO }.abi_encode();
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
             ActivationRegistryStorage::new(ctx).dispatch(
