@@ -60,6 +60,9 @@ base_metrics::define_metrics! {
     #[describe("Expired transaction observability rows deleted from Postgres")]
     #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
     transaction_events_expired: counter,
+    #[describe("Transaction observability expire batches canceled by statement timeout")]
+    #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
+    transaction_events_expire_statement_timeouts: counter,
     #[describe("Transaction observability retention delete failures")]
     transaction_event_retention_failures: counter,
 }

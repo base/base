@@ -9,9 +9,11 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES, DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS,
-    Metrics, PgTransactionEventSink, RpcEventReader, S3EventReaderWriter,
-    TransactionEventIngestConfig, TransactionEventRetentionConfig,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_CONNECTIONS,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
+    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
+    S3EventReaderWriter, TransactionEventIngestConfig, TransactionEventRetentionConfig,
 };
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
@@ -128,6 +130,17 @@ struct Args {
     #[arg(long, env = "TIPS_AUDIT_POSTGRES_MAX_CONNECTIONS", default_value = "10")]
     postgres_max_connections: u32,
 
+    /// Maximum Postgres connections used by transaction-event retention.
+    ///
+    /// Keep this at 1 so lock losers wait on this small pool instead of taking
+    /// ingest connections used by persist, RPC reads, and `/readyz`.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_POSTGRES_RETENTION_MAX_CONNECTIONS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_CONNECTIONS
+    )]
+    postgres_retention_max_connections: u32,
+
     /// Seconds between transaction-event retention delete passes. The first
     /// pass runs immediately at startup; later passes wait this interval.
     #[arg(
@@ -178,6 +191,17 @@ struct Args {
         default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES
     )]
     transaction_event_retention_max_batches: u32,
+
+    /// Postgres statement timeout for one retention delete, in milliseconds.
+    ///
+    /// Bounds a sparse expire scan so it cannot hold the advisory lock for
+    /// hours. On timeout the pass advances to the next retention class.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS
+    )]
+    transaction_event_retention_statement_timeout_ms: u64,
 
     /// HTTP path for Vector transaction-event batch ingest.
     #[arg(
@@ -270,11 +294,17 @@ async fn run_server(args: Args) -> Result<()> {
         cold_days: args.transaction_event_cold_retention_days,
         delete_batch_size: args.transaction_event_retention_batch_size,
         max_batches: args.transaction_event_retention_max_batches,
+        statement_timeout_ms: args.transaction_event_retention_statement_timeout_ms,
+        test_hot_sleep_ms: None,
     }
     .validate()?;
     if args.transaction_event_retention_interval_secs == 0 {
         anyhow::bail!("transaction event retention interval must be greater than zero");
     }
+    anyhow::ensure!(
+        (1..=2).contains(&args.postgres_retention_max_connections),
+        "transaction event retention max connections must be 1 or 2"
+    );
     let retention_interval = Duration::from_secs(args.transaction_event_retention_interval_secs);
 
     info!(
@@ -289,7 +319,9 @@ async fn run_server(args: Args) -> Result<()> {
         transaction_event_cold_retention_days = retention_config.cold_days,
         transaction_event_retention_batch_size = retention_config.delete_batch_size,
         transaction_event_retention_max_batches = retention_config.max_batches,
+        transaction_event_retention_statement_timeout_ms = retention_config.statement_timeout_ms,
         transaction_event_retention_interval_secs = retention_interval.as_secs(),
+        postgres_retention_max_connections = args.postgres_retention_max_connections,
         rpc_cache_capacity = args.rpc_cache_capacity,
         rpc_cache_ttl_secs = args.rpc_cache_ttl_secs,
         channel_buffer_size = args.channel_buffer_size,
@@ -310,7 +342,14 @@ async fn run_server(args: Args) -> Result<()> {
 
     let rpc_addr = SocketAddr::from(([0, 0, 0, 0], args.rpc_port));
     let transaction_event_sink = if let Some(postgres_url) = &args.postgres_url {
-        Some(PgTransactionEventSink::connect(postgres_url, args.postgres_max_connections).await?)
+        Some(
+            PgTransactionEventSink::connect_with_retention_pool(
+                postgres_url,
+                args.postgres_max_connections,
+                args.postgres_retention_max_connections,
+            )
+            .await?,
+        )
     } else {
         None
     };

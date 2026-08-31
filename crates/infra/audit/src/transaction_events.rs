@@ -1,6 +1,10 @@
 //! HTTP ingest path for transaction observability events.
 
-use std::{collections::HashSet, sync::Arc, time::Instant};
+use std::{
+    collections::HashSet,
+    sync::Arc,
+    time::{Duration as StdDuration, Instant},
+};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -22,7 +26,7 @@ use serde::{
     },
 };
 use serde_json::Value;
-use sqlx::{PgPool, QueryBuilder, Row, migrate::Migrator, postgres::PgPoolOptions};
+use sqlx::{Connection, PgPool, QueryBuilder, Row, migrate::Migrator, postgres::PgPoolOptions};
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, warn};
 
@@ -68,6 +72,14 @@ pub const DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE: u32 = 10_000;
 /// Shared across hot, then warm, then cold. A large hot backlog can consume
 /// the whole budget and defer warmer expiry until a later pass.
 pub const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES: u32 = 1_000;
+/// Default Postgres statement timeout for one retention delete.
+///
+/// Bounds a sparse `doomed` scan so it cannot hold the advisory lock for hours.
+pub const DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS: u64 = 30_000;
+/// Default connections in the retention pool. Keep this at 1 so lock losers
+/// do not compete with ingest for Postgres connections.
+pub const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_CONNECTIONS: u32 = 1;
+const TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT: StdDuration = StdDuration::from_secs(1);
 const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
 
 /// Session advisory lock held on one pooled connection for a retention pass.
@@ -82,7 +94,11 @@ struct RetentionAdvisoryLock {
 
 impl RetentionAdvisoryLock {
     async fn try_acquire(pool: &PgPool) -> Result<Option<Self>> {
-        let mut conn = pool.acquire().await?;
+        let mut conn = match pool.acquire().await {
+            Ok(conn) => conn,
+            Err(sqlx::Error::PoolTimedOut) => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
         let locked = match sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
             .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
             .fetch_one(&mut *conn)
@@ -229,6 +245,15 @@ pub struct TransactionEventRetentionConfig {
     /// consume the whole budget and defer warmer expiry until a later pass.
     /// Raise this if warm or cold expiry stalls behind hot deletes.
     pub max_batches: u32,
+    /// Postgres `statement_timeout` applied to each expire DELETE, in
+    /// milliseconds.
+    pub statement_timeout_ms: u64,
+    /// Test-only sleep injected into hot expire statements so a short
+    /// `statement_timeout_ms` can cancel the class without failing the pass.
+    ///
+    /// Leave this `None` in production. The serve binary never sets it.
+    #[doc(hidden)]
+    pub test_hot_sleep_ms: Option<u64>,
 }
 
 impl Default for TransactionEventRetentionConfig {
@@ -239,6 +264,8 @@ impl Default for TransactionEventRetentionConfig {
             cold_days: DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS,
             delete_batch_size: DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
             max_batches: DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
+            statement_timeout_ms: DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
+            test_hot_sleep_ms: None,
         }
     }
 }
@@ -262,7 +289,15 @@ impl TransactionEventRetentionConfig {
             (1..=1_000).contains(&self.max_batches),
             "transaction event retention max batches must be between 1 and 1000"
         );
+        anyhow::ensure!(
+            (1..=300_000).contains(&self.statement_timeout_ms),
+            "transaction event retention statement timeout must be between 1ms and 300000ms"
+        );
         Ok(self)
+    }
+
+    fn statement_timeout_sql(self) -> String {
+        format!("SET LOCAL statement_timeout = '{}ms'", self.statement_timeout_ms)
     }
 
     const fn class_days(self, class: TransactionEventRetentionClass) -> u32 {
@@ -487,6 +522,7 @@ pub trait TransactionEventSink: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct PgTransactionEventSink {
     pool: PgPool,
+    retention_pool: PgPool,
 }
 
 impl PgTransactionEventSink {
@@ -497,6 +533,24 @@ impl PgTransactionEventSink {
 
     /// Connects to Postgres without running migrations.
     pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
+        Self::connect_with_retention_pool(
+            database_url,
+            max_connections,
+            DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_CONNECTIONS,
+        )
+        .await
+    }
+
+    /// Connects ingest and retention pools.
+    ///
+    /// The ingest pool keeps long-lived connections for persist, RPC reads, and
+    /// `/readyz`. Retention uses a separate small pool with a short acquire
+    /// timeout so lock losers do not occupy ingest connections.
+    pub async fn connect_with_retention_pool(
+        database_url: &str,
+        max_connections: u32,
+        retention_max_connections: u32,
+    ) -> Result<Self> {
         let max_connections = max_connections.max(1);
         // RDS IAM auth tokens are only validated when a connection opens; open
         // connections remain usable after token expiry. sqlx does not expose a
@@ -512,7 +566,12 @@ impl PgTransactionEventSink {
             .idle_timeout(None)
             .connect(database_url)
             .await?;
-        Ok(Self { pool })
+        let retention_pool = PgPoolOptions::new()
+            .max_connections(retention_max_connections.max(1))
+            .acquire_timeout(TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT)
+            .connect(database_url)
+            .await?;
+        Ok(Self { pool, retention_pool })
     }
 
     /// Runs pending Postgres migrations.
@@ -522,9 +581,14 @@ impl PgTransactionEventSink {
         Ok(())
     }
 
-    /// Creates a sink from an existing pool.
-    pub const fn new(pool: PgPool) -> Self {
-        Self { pool }
+    /// Creates a sink from an existing ingest pool. Retention uses the same pool.
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool: pool.clone(), retention_pool: pool }
+    }
+
+    /// Creates a sink with a dedicated retention pool.
+    pub const fn new_with_retention_pool(pool: PgPool, retention_pool: PgPool) -> Self {
+        Self { pool, retention_pool }
     }
 
     /// Checks whether transaction event Postgres storage is ready for runtime use.
@@ -577,10 +641,13 @@ impl PgTransactionEventSink {
     /// Deletes expired `transaction_events` rows in bounded batches.
     ///
     /// Uses a session advisory lock so only one replica expires rows at a time.
-    /// Returns a zeroed outcome when another replica already holds the lock.
+    /// Returns a zeroed outcome when another replica already holds the lock, or
+    /// when the retention pool times out waiting for a connection.
     /// The lock is released after the pass, including when a batch fails. If
     /// unlock itself fails, the connection is detached so the session lock
     /// cannot leak onto a reused pool connection.
+    /// A statement timeout on one class stops that class and continues the
+    /// pass with the next class instead of aborting expire.
     /// Hot rows are expired first so high-churn types free space before colder
     /// types consume the shared batch budget. That can starve warm and cold
     /// deletes in one pass; raise `max_batches` if they stall.
@@ -597,7 +664,7 @@ impl PgTransactionEventSink {
             TransactionEventRetentionClass::Cold,
         ];
 
-        let Some(mut lock) = RetentionAdvisoryLock::try_acquire(&self.pool).await? else {
+        let Some(mut lock) = RetentionAdvisoryLock::try_acquire(&self.retention_pool).await? else {
             return Ok(TransactionEventRetentionOutcome {
                 rows_deleted: 0,
                 batches: 0,
@@ -617,9 +684,22 @@ impl PgTransactionEventSink {
                 let cutoff = Utc::now() - Duration::days(i64::from(config.class_days(class)));
                 let event_types = class.event_type_labels();
                 while batches < u64::from(config.max_batches) {
-                    let deleted =
-                        delete_expired_event_batch(lock.conn(), &event_types, cutoff, batch_size)
-                            .await?;
+                    let deleted = match delete_expired_event_batch(
+                        lock.conn(),
+                        &event_types,
+                        cutoff,
+                        batch_size,
+                        class,
+                        &config,
+                    )
+                    .await?
+                    {
+                        ExpireBatchOutcome::Deleted(deleted) => deleted,
+                        ExpireBatchOutcome::StatementTimeout => {
+                            batches += 1;
+                            break;
+                        }
+                    };
                     batches += 1;
                     if deleted == 0 {
                         break;
@@ -731,8 +811,7 @@ impl PgTransactionEventSink {
                         "retrying transaction event persist"
                     );
                     Metrics::transaction_events_persist_retries(reason).increment(1);
-                    tokio::time::sleep(std::time::Duration::from_millis(25 * u64::from(attempt)))
-                        .await;
+                    tokio::time::sleep(StdDuration::from_millis(25 * u64::from(attempt))).await;
                     attempt += 1;
                 }
             }
@@ -992,14 +1071,52 @@ fn persist_retry_sqlstate(code: &str) -> Option<&'static str> {
     }
 }
 
+fn is_statement_timeout(err: &sqlx::Error) -> bool {
+    matches!(err, sqlx::Error::Database(database) if database.code().as_deref() == Some("57014"))
+}
+
+fn record_expire_statement_timeout(err: &sqlx::Error, class: TransactionEventRetentionClass) {
+    warn!(
+        error = %err,
+        retention_class = class.as_str(),
+        "transaction event expire statement timed out; advancing class"
+    );
+    Metrics::transaction_events_expire_statement_timeouts(class.as_str()).increment(1);
+}
+
+enum ExpireBatchOutcome {
+    Deleted(u64),
+    StatementTimeout,
+}
+
 async fn delete_expired_event_batch(
     conn: &mut sqlx::PgConnection,
     event_types: &[String],
     cutoff: DateTime<Utc>,
     batch_size: i64,
-) -> Result<u64> {
+    class: TransactionEventRetentionClass,
+    config: &TransactionEventRetentionConfig,
+) -> Result<ExpireBatchOutcome> {
+    let timeout_sql = config.statement_timeout_sql();
     let mut attempt = 1u32;
     loop {
+        let mut tx = conn.begin().await?;
+        sqlx::query(&timeout_sql).execute(&mut *tx).await?;
+        if class == TransactionEventRetentionClass::Hot
+            && let Some(sleep_ms) = config.test_hot_sleep_ms
+        {
+            let sleep_secs = sleep_ms as f64 / 1_000.0;
+            if let Err(err) =
+                sqlx::query("SELECT pg_sleep($1)").bind(sleep_secs).execute(&mut *tx).await
+            {
+                let _ = tx.rollback().await;
+                if is_statement_timeout(&err) {
+                    record_expire_statement_timeout(&err, class);
+                    return Ok(ExpireBatchOutcome::StatementTimeout);
+                }
+                return Err(err.into());
+            }
+        }
         // Delete by ctid via Tid Scan so the batch is not a second primary-key
         // lookup. ANY(ARRAY(ctid)) keeps that plan as catch-up shrinks the heap;
         // USING ctid can seq-scan. FOR UPDATE SKIP LOCKED skips rows held by a
@@ -1018,11 +1135,19 @@ async fn delete_expired_event_batch(
         .bind(event_types)
         .bind(cutoff)
         .bind(batch_size)
-        .execute(&mut *conn)
+        .execute(&mut *tx)
         .await;
         match result {
-            Ok(completed) => return Ok(completed.rows_affected()),
+            Ok(completed) => {
+                tx.commit().await?;
+                return Ok(ExpireBatchOutcome::Deleted(completed.rows_affected()));
+            }
             Err(err) => {
+                let _ = tx.rollback().await;
+                if is_statement_timeout(&err) {
+                    record_expire_statement_timeout(&err, class);
+                    return Ok(ExpireBatchOutcome::StatementTimeout);
+                }
                 let Some(reason) = persist_retry_reason(&err) else {
                     return Err(err.into());
                 };
@@ -1036,7 +1161,7 @@ async fn delete_expired_event_batch(
                     "retrying transaction event expire"
                 );
                 Metrics::transaction_events_persist_retries(reason).increment(1);
-                tokio::time::sleep(std::time::Duration::from_millis(25 * u64::from(attempt))).await;
+                tokio::time::sleep(StdDuration::from_millis(25 * u64::from(attempt))).await;
                 attempt += 1;
             }
         }
@@ -1544,6 +1669,16 @@ mod tests {
                 .validate()
                 .is_err()
         );
+        assert!(
+            TransactionEventRetentionConfig { statement_timeout_ms: 0, ..Default::default() }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            TransactionEventRetentionConfig { statement_timeout_ms: 300_001, ..Default::default() }
+                .validate()
+                .is_err()
+        );
     }
 
     #[test]
@@ -1552,6 +1687,7 @@ mod tests {
         assert_eq!(persist_retry_sqlstate("40001"), Some("serialization"));
         assert_eq!(persist_retry_sqlstate("55P03"), Some("lock_timeout"));
         assert_eq!(persist_retry_sqlstate("23505"), None);
+        assert_eq!(persist_retry_sqlstate("57014"), None);
         assert_eq!(persist_retry_reason(&sqlx::Error::PoolTimedOut), None);
     }
 
