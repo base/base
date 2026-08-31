@@ -2,12 +2,12 @@
 //!
 //! The nonce manager is a code-less EIP-8130 system account (given the `0xEF` reap-protection stub
 //! by the [`Cobalt`](crate::Cobalt) transition) that persists per-`(account, nonce_key)` 2D
-//! sequence nonces in the state trie. This module provides the **storage layout** for those nonces
-//! — the ERC-7201 slot derivation and the read path — so the eventual EIP-8130 execution layer (and
-//! off-chain readers) can address channel nonces in a way that is byte-for-byte storage-compatible
-//! with the revm reference (`base-common-precompiles`' `NonceManagerStorage`). The full precompile
-//! (ABI dispatch, nonce increment + events, and the nonce-free replay ring buffer) is layered on
-//! with the EIP-8130 track.
+//! sequence nonces in the state trie. This module provides the **storage layer** for those nonces
+//! — the ERC-7201 slot derivation, the read path, and the channel-nonce increment — so the eventual
+//! EIP-8130 execution layer (and off-chain readers) can address channel nonces in a way that is
+//! byte-for-byte storage-compatible with the revm reference (`base-common-precompiles`'
+//! `NonceManagerStorage`). The remaining precompile surface (ABI dispatch, the `NonceIncremented`
+//! events, and the nonce-free replay ring buffer) is layered on with the EIP-8130 track.
 
 use alloy_primitives::{Address, B256, U256, keccak256};
 use evm2::{
