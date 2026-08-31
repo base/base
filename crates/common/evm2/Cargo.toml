@@ -27,18 +27,10 @@ alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
 [dev-dependencies]
-# base — the revm execution path, for the differential parity harnesses
-base-common-genesis.workspace = true
-base-common-l1-fees.workspace = true
-base-common-consensus.workspace = true
+# base — the revm execution path, for the differential parity harnesses. The other base, evm2,
+# and alloy crates the tests use are already in [dependencies]; Cargo unifies features across both
+# sections, so only the dev-only crates are listed here.
 base-common-evm = { workspace = true, features = ["blst", "c-kzg", "portable", "secp256k1", "std"] }
-
-# evm2
-evm2 = { workspace = true, features = ["std"] }
 
 # revm
 revm = { workspace = true, features = ["std"] }
-
-# alloy
-alloy-primitives.workspace = true
-alloy-consensus.workspace = true

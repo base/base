@@ -28,9 +28,10 @@ impl BaseTxEnvelope {
     /// encoded bytes.
     pub fn standard(tx: TxEnvelope, enveloped: Bytes) -> Self {
         // Empty enveloped bytes would make L1FeeParams::is_fee_exempt treat the transaction as
-        // fee-exempt, silently zeroing the L1 data fee and operator fee. Catch that misuse at
-        // construction rather than producing incorrect fees downstream.
-        debug_assert!(!enveloped.is_empty(), "standard tx must carry non-empty enveloped bytes");
+        // fee-exempt, silently zeroing the L1 data fee and operator fee — a consensus-level fee
+        // miscalculation once this crate is wired into the node. This is an internal invariant that
+        // must always hold, so enforce it in every build (not just debug) with a runtime assert.
+        assert!(!enveloped.is_empty(), "standard tx must carry non-empty enveloped bytes");
         Self::Standard { tx, enveloped }
     }
 
