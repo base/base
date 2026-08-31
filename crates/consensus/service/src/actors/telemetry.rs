@@ -266,10 +266,16 @@ impl TelemetryActor {
 
     /// Returns seconds elapsed since a block timestamp, clamped at zero.
     ///
+    /// The elapsed side is read at sub-second resolution on purpose. Block timestamps step in whole
+    /// seconds, so truncating the current time as well would quantize the result twice: a node
+    /// keeping up with two-second blocks would report 0 or 1 depending only on where in the second
+    /// the sample happened to land, and the difference between healthy and half a block behind
+    /// would be invisible.
+    ///
     /// A head timestamp in the future is clock skew, not negative lag.
     pub fn seconds_since(block_timestamp: u64) -> f64 {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        now.saturating_sub(block_timestamp) as f64
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64();
+        (now - block_timestamp as f64).max(0.0)
     }
 
     /// Accumulates joins and departures against the previously observed peer set.
@@ -621,6 +627,20 @@ mod tests {
     fn test_a_head_timestamp_in_the_future_reads_as_zero_lag() {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         assert_eq!(TelemetryActor::seconds_since(now + 600), 0.0);
+    }
+
+    #[test]
+    fn test_lag_resolves_below_a_whole_second() {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let first = TelemetryActor::seconds_since(now);
+        std::thread::sleep(Duration::from_millis(50));
+        let second = TelemetryActor::seconds_since(now);
+
+        assert!(
+            second > first,
+            "lag must grow within a single second, otherwise a node keeping pace with 2s blocks \
+             reads as 0 or 1 depending only on when the sample was taken"
+        );
     }
 
     #[tokio::test]
