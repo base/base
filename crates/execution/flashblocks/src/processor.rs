@@ -300,6 +300,14 @@ where
             Metrics::pending_stale_events_skipped().increment(1);
             return None;
         }
+        if matches!(update, StateUpdate::Flashblock(_))
+            && deferred_canonical
+                .as_ref()
+                .is_some_and(|(block, _)| update.pending_anchor_number() <= block.number)
+        {
+            Metrics::pending_stale_events_skipped().increment(1);
+            return None;
+        }
 
         let pending_blocks = self.pending_blocks.load_full();
         let pending_is_based_on_best = pending_blocks

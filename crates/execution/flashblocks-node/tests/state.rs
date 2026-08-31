@@ -1292,3 +1292,26 @@ async fn test_stale_queue_clears_pending_and_resumes_at_current_tip() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn test_deferred_canonical_rejects_resume_against_stale_provider_tip() {
+    let client = FlashblocksBuilderTestHarness::new().await;
+    let mut builder = FlashblocksBuilderTestHarness::new().await;
+    let old_base = FlashblockBuilder::new_base(&client).build();
+    client.send_flashblock(old_base.clone()).await;
+
+    let canonical = builder.new_canonical_block_without_processing(vec![]).await;
+    client.flashblocks.on_canonical_block_received(canonical);
+    wait_until(
+        Duration::from_secs(5),
+        || client.flashblocks.get_pending_blocks().is_none(),
+        "canonical ahead of provider visibility must clear pending state",
+    )
+    .await;
+
+    client.send_flashblock(old_base).await;
+    assert!(
+        client.flashblocks.get_pending_blocks().is_none(),
+        "deferred canonical watermark must reject resume against the stale provider tip"
+    );
+}
