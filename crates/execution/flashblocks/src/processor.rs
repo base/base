@@ -257,7 +257,7 @@ where
 
     fn invalidate_pending_for_recovery(&self, best_number: u64) {
         warn!(best = best_number, "flashblock processor entering recovery");
-        Metrics::pending_queue_recovery().increment(1);
+        Metrics::pending_recovery_transitions().increment(1);
         self.pending_blocks.swap(None);
         self.clear_live_state();
     }
