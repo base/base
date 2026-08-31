@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::{
-    Address, TxHash, U256,
+    TxHash,
     map::{HashMap, hash_map::Entry},
 };
 use reth_transaction_pool::{
@@ -14,16 +14,7 @@ use reth_transaction_pool::{
     TransactionPool, ValidPoolTransaction, error::InvalidPoolTransactionError,
 };
 
-use crate::{BasePooledTx, BestTransactionPriority};
-
-/// A sequential transaction lane whose members must execute in nonce order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BestTransactionLane {
-    /// Transaction sender whose nonces define the lane.
-    pub sender: Address,
-    /// Nonce channel key, with zero representing the protocol nonce lane.
-    pub nonce_key: U256,
-}
+use crate::{BasePooledTx, BaseTransactionLane, BestTransactionPriority};
 
 /// Iteration-local state for a sequential transaction lane.
 #[derive(Debug)]
@@ -35,21 +26,6 @@ where
     Occupied(VecDeque<Arc<ValidPoolTransaction<T>>>),
     /// The lane was terminally invalidated and is excluded for the remainder of the iterator.
     Invalid,
-}
-
-impl BestTransactionLane {
-    /// Returns the sequential lane for a transaction, or `None` for an independent nonce-free
-    /// EIP-8130 transaction.
-    pub fn for_transaction<T>(transaction: &Arc<ValidPoolTransaction<T>>) -> Option<Self>
-    where
-        T: BasePooledTx,
-    {
-        let nonce_key = transaction.transaction.eip8130_nonce_channel_key();
-        if nonce_key.is_none() && transaction.transaction.eip8130_replay_id().is_some() {
-            return None;
-        }
-        Some(Self { sender: transaction.sender(), nonce_key: nonce_key.unwrap_or_default() })
-    }
 }
 
 /// Extra lifecycle operations required to temporarily park best transactions.
@@ -102,7 +78,7 @@ where
     ordering: O,
     base_fee: u64,
     source_head: Option<Arc<ValidPoolTransaction<T>>>,
-    lanes: HashMap<BestTransactionLane, BestTransactionLaneState<T>>,
+    lanes: HashMap<BaseTransactionLane, BestTransactionLaneState<T>>,
     parked: HashMap<TxHash, Arc<ValidPoolTransaction<T>>>,
     ready: HashMap<TxHash, Arc<ValidPoolTransaction<T>>>,
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
@@ -163,7 +139,7 @@ where
     }
 
     /// Releases the next buffered transaction in a committed lane.
-    pub fn release_lane(&mut self, lane: BestTransactionLane) {
+    pub fn release_lane(&mut self, lane: BaseTransactionLane) {
         let next = match self.lanes.entry(lane) {
             Entry::Occupied(mut entry) => match entry.get_mut() {
                 BestTransactionLaneState::Occupied(buffered) => {
@@ -186,22 +162,19 @@ where
     ///
     /// Buffered descendants have already been consumed from `inner`. Invalidating the yielded lane
     /// head notifies `inner`, whose lane bookkeeping excludes its remaining descendants.
-    pub fn invalidate_lane(&mut self, lane: BestTransactionLane) {
+    pub fn invalidate_lane(&mut self, lane: BaseTransactionLane) {
         self.lanes.insert(lane, BestTransactionLaneState::Invalid);
         if self
             .source_head
             .as_ref()
-            .and_then(BestTransactionLane::for_transaction)
+            .and_then(|transaction| transaction.transaction.identity().lane())
             .is_some_and(|head_lane| head_lane == lane)
         {
             self.source_head = None;
         }
-        self.parked.retain(|_, transaction| {
-            BestTransactionLane::for_transaction(transaction) != Some(lane)
-        });
-        self.ready.retain(|_, transaction| {
-            BestTransactionLane::for_transaction(transaction) != Some(lane)
-        });
+        self.parked
+            .retain(|_, transaction| transaction.transaction.identity().lane() != Some(lane));
+        self.ready.retain(|_, transaction| transaction.transaction.identity().lane() != Some(lane));
         self.ready_heap.retain(|(_, hash)| self.ready.contains_key(hash));
     }
 
@@ -216,7 +189,7 @@ where
             let Some(transaction) = self.inner.next() else {
                 return;
             };
-            let Some(lane) = BestTransactionLane::for_transaction(&transaction) else {
+            let Some(lane) = transaction.transaction.identity().lane() else {
                 self.source_head = Some(transaction);
                 return;
             };
@@ -255,7 +228,7 @@ where
         &mut self,
         transaction: Arc<ValidPoolTransaction<T>>,
     ) -> Arc<ValidPoolTransaction<T>> {
-        if let Some(lane) = BestTransactionLane::for_transaction(&transaction) {
+        if let Some(lane) = transaction.transaction.identity().lane() {
             self.lanes
                 .entry(lane)
                 .or_insert_with(|| BestTransactionLaneState::Occupied(VecDeque::new()));
@@ -300,7 +273,7 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
-        if let Some(lane) = BestTransactionLane::for_transaction(transaction) {
+        if let Some(lane) = transaction.transaction.identity().lane() {
             self.invalidate_lane(lane);
         }
         self.inner.mark_invalid(transaction, kind);
@@ -308,6 +281,10 @@ where
 
     fn no_updates(&mut self) {
         self.inner.no_updates();
+    }
+
+    fn allow_updates_out_of_order(&mut self) {
+        self.inner.allow_updates_out_of_order();
     }
 
     fn set_skip_blobs(&mut self, skip_blobs: bool) {
@@ -342,7 +319,7 @@ where
         let Some(transaction) = self.parked.remove(&transaction_hash) else {
             return false;
         };
-        if let Some(lane) = BestTransactionLane::for_transaction(&transaction) {
+        if let Some(lane) = transaction.transaction.identity().lane() {
             self.invalidate_lane(lane);
         }
         self.inner.mark_invalid(&transaction, kind);
@@ -350,7 +327,7 @@ where
     }
 
     fn mark_committed(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
-        if let Some(lane) = BestTransactionLane::for_transaction(transaction) {
+        if let Some(lane) = transaction.transaction.identity().lane() {
             self.release_lane(lane);
         }
     }
@@ -361,7 +338,7 @@ mod tests {
     use std::{collections::VecDeque, time::Instant};
 
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::Bytes;
+    use alloy_primitives::{Bytes, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -396,9 +373,9 @@ mod tests {
 
     impl BestTransactions for StaticBestTransactions {
         fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
-            let lane = BestTransactionLane::for_transaction(transaction);
+            let lane = transaction.transaction.identity().lane();
             self.transactions.retain(|candidate| {
-                BestTransactionLane::for_transaction(candidate) != lane || lane.is_none()
+                candidate.transaction.identity().lane() != lane || lane.is_none()
             });
         }
 
@@ -531,7 +508,7 @@ mod tests {
     fn invalidating_lane_removes_its_ready_heap_entries() {
         let signer = PrivateKeySigner::random();
         let transaction = transaction(&signer, U256::from(1), 0, 100);
-        let lane = BestTransactionLane::for_transaction(&transaction).unwrap();
+        let lane = transaction.transaction.identity().lane().unwrap();
         let inner = StaticBestTransactions::new(Vec::new());
         let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0);
 

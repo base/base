@@ -898,7 +898,7 @@ where
                     tx_hash = ?tx_hash,
                     "skipping transaction with unsupported flashblock-index predicate"
                 );
-                if tx.eip8130_replay_id().is_none() {
+                if !tx.identity().is_replay() {
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
                 } else {
                     best_txs.mark_current_committed();
@@ -941,7 +941,7 @@ where
                             "permanent" => false,
                         }
                     );
-                    if tx.eip8130_replay_id().is_none() {
+                    if !tx.identity().is_replay() {
                         best_txs.mark_invalid(tx.sender(), tx.nonce());
                     } else {
                         best_txs.mark_current_committed();
@@ -988,7 +988,7 @@ where
                             tx_hash = ?tx_hash,
                             "skipping transaction with expired validity predicate"
                         );
-                        if tx.eip8130_replay_id().is_none() {
+                        if !tx.identity().is_replay() {
                             best_txs.mark_invalid(tx.sender(), tx.nonce());
                         } else {
                             best_txs.mark_current_committed();
@@ -1028,7 +1028,7 @@ where
                                     "permanent" => false,
                                 }
                             );
-                            if tx.eip8130_replay_id().is_none() {
+                            if !tx.identity().is_replay() {
                                 best_txs.mark_invalid(tx.sender(), tx.nonce());
                             } else {
                                 best_txs.mark_current_committed();
@@ -1056,7 +1056,7 @@ where
                             error = ?error,
                             "failed to read validity predicate state"
                         );
-                        if tx.eip8130_replay_id().is_none() {
+                        if !tx.identity().is_replay() {
                             best_txs.mark_invalid(tx.sender(), tx.nonce());
                         } else {
                             best_txs.mark_current_committed();
@@ -1081,7 +1081,7 @@ where
                 // payload adapter invalidates by sender (not by replay ID), so
                 // marking one would suppress unrelated entries from this sender.
                 // This transaction has already been consumed from the iterator.
-                if tx.eip8130_replay_id().is_none() {
+                if !tx.identity().is_replay() {
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
                 } else {
                     best_txs.mark_current_committed();
@@ -1107,7 +1107,7 @@ where
                         );
                         // Mirror the manifest pre-check above: a nonce-free replay-ID entry is
                         // independent, so invalidating by sender would suppress unrelated entries.
-                        if tx.eip8130_replay_id().is_none() {
+                        if !tx.identity().is_replay() {
                             best_txs.mark_invalid(tx.sender(), tx.nonce());
                         } else {
                             best_txs.mark_current_committed();

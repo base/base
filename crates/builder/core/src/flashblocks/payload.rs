@@ -29,7 +29,7 @@ use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
     ValidityMetrics,
 };
-use base_execution_txpool::AccountStateDiff;
+use base_execution_txpool::{AccountStateDiff, BaseTransactionIdentity};
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
@@ -682,6 +682,9 @@ where
             .iter()
             .zip(info.executed_senders[info.extra.last_flashblock_index..].iter())
         {
+            if !BaseTransactionIdentity::new(*sender, tx.nonce(), tx.as_eip8130()).is_protocol() {
+                continue;
+            }
             executed_sender_nonces
                 .entry(*sender)
                 .and_modify(|n| *n = (*n).max(tx.nonce()))

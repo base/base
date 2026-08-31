@@ -4,7 +4,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use alloy_consensus::{BlobTransactionValidationError, Typed2718, transaction::Recovered};
+use alloy_consensus::{
+    BlobTransactionValidationError, Transaction as _, Typed2718, transaction::Recovered,
+};
 use alloy_eips::{
     eip2718::{Encodable2718, WithEncoded},
     eip2930::AccessList,
@@ -20,6 +22,83 @@ use reth_transaction_pool::{
 };
 
 use crate::estimated_da_size::DataAvailabilitySized;
+
+/// A sequential nonce lane in the Base transaction pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BaseTransactionLane {
+    /// The sender's protocol account-nonce lane.
+    Protocol {
+        /// Transaction sender.
+        sender: Address,
+    },
+    /// A finite non-zero EIP-8130 nonce-key lane.
+    Channel {
+        /// Transaction sender.
+        sender: Address,
+        /// EIP-8130 nonce key.
+        nonce_key: U256,
+    },
+}
+
+/// Canonical transaction identity used for lane-aware routing and sequencing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BaseTransactionIdentity {
+    /// A nonce-bearing transaction identified within a sequential lane.
+    Nonce {
+        /// Sequential lane containing the transaction.
+        lane: BaseTransactionLane,
+        /// Nonce or nonce sequence within the lane.
+        nonce: u64,
+    },
+    /// An independent nonce-free EIP-8130 transaction.
+    Replay {
+        /// Replay identifier committed to by the transaction.
+        replay_id: B256,
+    },
+}
+
+impl BaseTransactionIdentity {
+    /// Derives the canonical identity from consensus transaction properties.
+    pub fn new(sender: Address, nonce: u64, eip8130: Option<&Eip8130Signed>) -> Self {
+        let Some(signed) = eip8130 else {
+            return Self::Nonce { lane: BaseTransactionLane::Protocol { sender }, nonce };
+        };
+        let nonce_key = signed.tx().nonce_key;
+        if nonce_key.is_zero() {
+            Self::Nonce { lane: BaseTransactionLane::Protocol { sender }, nonce }
+        } else if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            Self::Replay { replay_id: signed.tx().replay_id(sender) }
+        } else {
+            Self::Nonce { lane: BaseTransactionLane::Channel { sender, nonce_key }, nonce }
+        }
+    }
+
+    /// Returns the sequential lane, or `None` for an independent replay identity.
+    pub const fn lane(self) -> Option<BaseTransactionLane> {
+        match self {
+            Self::Nonce { lane, .. } => Some(lane),
+            Self::Replay { .. } => None,
+        }
+    }
+
+    /// Returns whether this identity is stored in the EIP-8130 sidecar.
+    pub const fn is_sidecar(self) -> bool {
+        matches!(
+            self,
+            Self::Nonce { lane: BaseTransactionLane::Channel { .. }, .. } | Self::Replay { .. }
+        )
+    }
+
+    /// Returns whether this is an independent nonce-free replay identity.
+    pub const fn is_replay(self) -> bool {
+        matches!(self, Self::Replay { .. })
+    }
+
+    /// Returns whether this identity advances a protocol account nonce.
+    pub const fn is_protocol(self) -> bool {
+        matches!(self, Self::Nonce { lane: BaseTransactionLane::Protocol { .. }, .. })
+    }
+}
 
 /// Returns current time as milliseconds since Unix epoch.
 pub fn unix_time_millis() -> u128 {
@@ -189,7 +268,7 @@ where
     }
 
     fn requires_nonce_check(&self) -> bool {
-        self.as_eip8130().is_none_or(|signed| signed.tx().nonce_key.is_zero())
+        BaseTransactionIdentity::new(self.sender(), self.nonce(), self.as_eip8130()).is_protocol()
     }
 }
 
@@ -350,15 +429,9 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         None
     }
 
-    /// Returns the EIP-8130 `nonce_key` when this transaction belongs to a
-    /// finite non-zero nonce channel handled by the 2D nonce pool.
-    fn eip8130_nonce_channel_key(&self) -> Option<U256> {
-        None
-    }
-
-    /// Returns the EIP-8130 replay identifier, if applicable.
-    fn eip8130_replay_id(&self) -> Option<B256> {
-        None
+    /// Returns the canonical lane-aware identity for this transaction.
+    fn identity(&self) -> BaseTransactionIdentity {
+        BaseTransactionIdentity::new(self.sender(), self.nonce(), self.as_eip8130())
     }
 
     /// Returns the invalidation watch set computed during validation, if set.
@@ -396,11 +469,6 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     ///
     /// Defaults to a no-op for transaction types that do not carry a manifest.
     fn set_watch_manifest(&self, _watch_manifest: crate::WatchManifest) {}
-
-    /// Returns whether this transaction belongs in the EIP-8130 sidecar.
-    fn is_eip8130_sidecar_transaction(&self) -> bool {
-        self.eip8130_nonce_channel_key().is_some() || self.eip8130_replay_id().is_some()
-    }
 }
 
 impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
@@ -419,26 +487,6 @@ where
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         self.inner.transaction().inner().as_eip8130()
-    }
-
-    fn eip8130_nonce_channel_key(&self) -> Option<U256> {
-        let signed = self.as_eip8130()?;
-        let nonce_key = signed.tx().nonce_key;
-        (!nonce_key.is_zero() && nonce_key != Eip8130Constants::NONCE_KEY_MAX).then_some(nonce_key)
-    }
-
-    fn eip8130_replay_id(&self) -> Option<B256> {
-        let signed = self.as_eip8130()?;
-        // `replay_id` keys mempool dedup/replacement only for nonce-free
-        // (`nonce_key == NONCE_KEY_MAX`) transactions, which have no nonce slot.
-        // Standard and 2D transactions dedupe/replace on
-        // `(sender, nonce_key, nonce_sequence)` under the standard nonce rules,
-        // so they must not be tracked by `replay_id` (which excludes fees and
-        // would otherwise block legitimate replace-by-fee at the same sequence).
-        if signed.tx().nonce_key != Eip8130Constants::NONCE_KEY_MAX {
-            return None;
-        }
-        Some(signed.tx().replay_id(self.sender()))
     }
 
     fn watch_set(&self) -> Option<&crate::WatchSet> {
@@ -498,16 +546,19 @@ mod tests {
     };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
+    use base_test_utils::Account;
     use reth_primitives_traits::InMemorySize;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
-        blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
+        blobstore::InMemoryBlobStore, test_utils::TransactionBuilder,
+        validate::EthTransactionValidatorBuilder,
     };
 
     use crate::{
-        BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
-        ValidityOperator, ValidityPredicate, WatchManifest, WatchSet,
+        BasePooledTransaction, BasePooledTx, BaseTransactionIdentity, BaseTransactionLane,
+        BaseTransactionValidator, ConfigSlot, InvalidationKey, ValidityOperator, ValidityPredicate,
+        WatchManifest, WatchSet,
     };
 
     fn signer() -> PrivateKeySigner {
@@ -516,11 +567,19 @@ mod tests {
 
     fn eip8130_pooled(nonce_key: U256) -> BasePooledTransaction {
         let signer = signer();
+        eip8130_pooled_for(&signer, nonce_key, 0)
+    }
+
+    fn eip8130_pooled_for(
+        signer: &PrivateKeySigner,
+        nonce_key: U256,
+        nonce_sequence: u64,
+    ) -> BasePooledTransaction {
         let tx = TxEip8130 {
             chain_id: ChainConfig::mainnet().chain_id,
             sender: None,
             nonce_key,
-            nonce_sequence: 0,
+            nonce_sequence,
             valid_after: 0,
             valid_before: if nonce_key == Eip8130Constants::NONCE_KEY_MAX { 5 } else { 0 },
             max_priority_fee_per_gas: 0,
@@ -536,6 +595,26 @@ mod tests {
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
         let pooled = ConsensusPooledTransaction::Eip8130(signed);
         BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
+    fn ordinary_pooled(nonce: u64) -> BasePooledTransaction {
+        let account = Account::Alice;
+        let signed = TransactionBuilder::default()
+            .signer(account.signer_b256())
+            .chain_id(ChainConfig::mainnet().chain_id)
+            .nonce(nonce)
+            .to(Account::Bob.address())
+            .value(1_000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(1)
+            .into_eip1559();
+        let transaction = BaseTransactionSigned::Eip1559(
+            signed.as_eip1559().expect("EIP-1559 transaction").clone(),
+        );
+        let recovered = Recovered::new_unchecked(transaction, account.address());
+        let encoded_length = recovered.encode_2718_len();
+        BasePooledTransaction::new(recovered, encoded_length)
     }
 
     #[tokio::test]
@@ -581,6 +660,35 @@ mod tests {
         assert!(eip8130_pooled(U256::ZERO).requires_nonce_check());
         assert!(!eip8130_pooled(U256::from(1)).requires_nonce_check());
         assert!(!eip8130_pooled(Eip8130Constants::NONCE_KEY_MAX).requires_nonce_check());
+    }
+
+    #[test]
+    fn identity_distinguishes_protocol_channels_and_replays() {
+        let signer = PrivateKeySigner::from_bytes(&Account::Alice.signer_b256()).unwrap();
+        let ordinary = ordinary_pooled(7).identity();
+        let key_zero = eip8130_pooled_for(&signer, U256::ZERO, 7).identity();
+        let channel_one = eip8130_pooled_for(&signer, U256::from(1), 7).identity();
+        let channel_two = eip8130_pooled_for(&signer, U256::from(2), 7).identity();
+        let replay = eip8130_pooled_for(&signer, Eip8130Constants::NONCE_KEY_MAX, 7).identity();
+
+        assert!(matches!(
+            ordinary,
+            BaseTransactionIdentity::Nonce { lane: BaseTransactionLane::Protocol { .. }, nonce: 7 }
+        ));
+        assert!(matches!(
+            key_zero,
+            BaseTransactionIdentity::Nonce { lane: BaseTransactionLane::Protocol { .. }, nonce: 7 }
+        ));
+        assert_eq!(ordinary, key_zero);
+        assert!(ordinary.is_protocol());
+        assert!(key_zero.is_protocol());
+        assert_ne!(channel_one, channel_two);
+        assert!(channel_one.is_sidecar());
+        assert!(!channel_one.is_protocol());
+        assert!(replay.is_sidecar());
+        assert!(replay.is_replay());
+        assert!(!replay.is_protocol());
+        assert_eq!(replay.lane(), None);
     }
 
     #[test]
