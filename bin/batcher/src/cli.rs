@@ -302,6 +302,8 @@ impl BatcherArgs {
             // The batcher binary only targets post-Fjord chains, so it always uses Brotli.
             compression_algo: base_batcher_encoder::CompressionAlgo::Brotli10,
             max_l1_tx_size_bytes: self.max_l1_tx_size_bytes,
+            compressed_size_target: None,
+            max_blobs_per_tx: base_batcher_encoder::EncoderConfig::MAX_BLOBS_PER_TX,
         };
         encoder_config.validate()?;
         let tx_manager = TxManagerConfig {
@@ -461,6 +463,11 @@ mod tests {
         let config = cli.args.into_config().expect("config should build");
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
+        assert_eq!(config.encoder_config.compressed_size_target, None);
+        assert_eq!(
+            config.encoder_config.max_blobs_per_tx,
+            base_batcher_encoder::EncoderConfig::MAX_BLOBS_PER_TX
+        );
     }
 
     #[test]
