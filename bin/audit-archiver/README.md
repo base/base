@@ -36,7 +36,7 @@ When `TIPS_AUDIT_POSTGRES_URL` is set, a background worker deletes expired
 `transaction_events` rows. Retention uses a dedicated Postgres pool so lock
 losers do not occupy ingest connections.
 
-- `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS` (default `3600`): seconds between retention passes
+- `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS` (default `3600`): seconds between retention passes, and the maximum age of one expire scan cycle
 - `TIPS_AUDIT_TRANSACTION_EVENT_HOT_RETENTION_DAYS` (default `3`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS` (default `7`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS` (default `30`)

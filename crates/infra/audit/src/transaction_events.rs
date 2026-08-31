@@ -72,6 +72,9 @@ pub const DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE: u32 = 10_000;
 /// Shared across hot, then warm, then cold. A large hot backlog can consume
 /// the whole budget and defer warmer expiry until a later pass.
 pub const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES: u32 = 1_000;
+/// Default seconds between retention passes. Also the maximum wall-clock age
+/// of one expire scan cycle before it is restarted at the configured LIMIT.
+pub const DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS: u64 = 3_600;
 /// Default Postgres statement timeout for one retention delete.
 ///
 /// Bounds a sparse `doomed` scan so it cannot hold the advisory lock for hours.
@@ -248,12 +251,21 @@ pub struct TransactionEventRetentionConfig {
     /// Postgres `statement_timeout` applied to each expire DELETE, in
     /// milliseconds.
     pub statement_timeout_ms: u64,
+    /// Seconds between retention passes. A scan cycle older than this is
+    /// restarted so a bisected LIMIT cannot crawl forever. The first batch of
+    /// a cycle always runs, even when this interval is shorter than one
+    /// statement.
+    pub interval_secs: u64,
     /// Test-only sleep injected into hot expire statements so a short
-    /// `statement_timeout_ms` can cancel the class without failing the pass.
+    /// `statement_timeout_ms` can cancel a statement without failing the pass.
     ///
     /// Leave this `None` in production. The serve binary never sets it.
     #[doc(hidden)]
     pub test_hot_sleep_ms: Option<u64>,
+    /// When set with `test_hot_sleep_ms`, sleep only if the batch LIMIT is at
+    /// least this value. `None` sleeps on every hot statement.
+    #[doc(hidden)]
+    pub test_hot_sleep_min_limit: Option<u32>,
 }
 
 impl Default for TransactionEventRetentionConfig {
@@ -265,7 +277,9 @@ impl Default for TransactionEventRetentionConfig {
             delete_batch_size: DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
             max_batches: DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
             statement_timeout_ms: DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
+            interval_secs: DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
             test_hot_sleep_ms: None,
+            test_hot_sleep_min_limit: None,
         }
     }
 }
@@ -292,6 +306,10 @@ impl TransactionEventRetentionConfig {
         anyhow::ensure!(
             (1..=300_000).contains(&self.statement_timeout_ms),
             "transaction event retention statement timeout must be between 1ms and 300000ms"
+        );
+        anyhow::ensure!(
+            (1..=604_800).contains(&self.interval_secs),
+            "transaction event retention interval must be between 1 and 604800 seconds"
         );
         Ok(self)
     }
@@ -646,8 +664,13 @@ impl PgTransactionEventSink {
     /// The lock is released after the pass, including when a batch fails. If
     /// unlock itself fails, the connection is detached so the session lock
     /// cannot leak onto a reused pool connection.
-    /// A statement timeout on one class stops that class and continues the
-    /// pass with the next class instead of aborting expire.
+    /// Each class resumes a descending keyset on this lock holder. A statement
+    /// timeout commits a `LIMIT 1` progress step when possible, then bisects
+    /// the batch LIMIT. A cycle older than `interval_secs` restarts at the
+    /// configured LIMIT after at least one returned attempt. A `LIMIT 1`
+    /// timeout stops that class and continues the pass with the next class.
+    /// Scan progress is in memory for this pass; the next pass starts new
+    /// cycles.
     /// Hot rows are expired first so high-churn types free space before colder
     /// types consume the shared batch budget. That can starve warm and cold
     /// deletes in one pass; raise `max_batches` if they stall.
@@ -657,7 +680,6 @@ impl PgTransactionEventSink {
     ) -> Result<TransactionEventRetentionOutcome> {
         // Public API: validate here so tests and other callers cannot skip it.
         let config = config.validate()?;
-        let batch_size = i64::from(config.delete_batch_size);
         let classes = [
             TransactionEventRetentionClass::Hot,
             TransactionEventRetentionClass::Warm,
@@ -681,36 +703,87 @@ impl PgTransactionEventSink {
             let mut warm_rows_deleted = 0u64;
             let mut cold_rows_deleted = 0u64;
             for class in classes {
-                let cutoff = Utc::now() - Duration::days(i64::from(config.class_days(class)));
                 let event_types = class.event_type_labels();
+                let mut progress = RetentionClassProgress::empty();
                 while batches < u64::from(config.max_batches) {
-                    let deleted = match delete_expired_event_batch(
+                    let now = Utc::now();
+                    if progress.should_end_cycle(now, config.interval_secs) {
+                        warn!(
+                            retention_class = class.as_str(),
+                            cycle_age_secs = progress.cycle_age_secs(now),
+                            batches_this_cycle = progress.batches_this_cycle,
+                            "ending transaction event expire cycle after retention interval"
+                        );
+                        Metrics::transaction_event_retention_cycles_ended(
+                            class.as_str(),
+                            "interval",
+                        )
+                        .increment(1);
+                        progress = RetentionClassProgress::new_cycle(now, &config, class);
+                    } else if !progress.has_open_cycle() {
+                        progress = RetentionClassProgress::new_cycle(now, &config, class);
+                    }
+                    let batch_limit = expire_batch_limit(
+                        config.delete_batch_size,
+                        progress.limit_lo,
+                        progress.limit_hi,
+                        progress.needs_limit_one,
+                    );
+                    Metrics::transaction_event_retention_effective_batch_limit(class.as_str())
+                        .set(f64::from(batch_limit));
+                    let outcome = delete_expired_event_batch(
                         lock.conn(),
                         &event_types,
-                        cutoff,
-                        batch_size,
+                        &progress,
+                        batch_limit,
                         class,
                         &config,
                     )
-                    .await?
-                    {
-                        ExpireBatchOutcome::Deleted(deleted) => deleted,
-                        ExpireBatchOutcome::StatementTimeout => {
-                            batches += 1;
-                            break;
-                        }
-                    };
+                    .await?;
+                    progress.batches_this_cycle = progress.batches_this_cycle.saturating_add(1);
                     batches += 1;
-                    if deleted == 0 {
-                        break;
+                    match outcome {
+                        ExpireBatchOutcome::StatementTimeout => {
+                            if batch_limit <= 1 {
+                                progress.needs_limit_one = true;
+                                break;
+                            }
+                            progress.needs_limit_one = true;
+                            progress.limit_hi = Some(batch_limit);
+                        }
+                        ExpireBatchOutcome::Deleted { selected, cursor } => {
+                            if selected == 0 {
+                                Metrics::transaction_event_retention_cycles_ended(
+                                    class.as_str(),
+                                    "exhausted",
+                                )
+                                .increment(1);
+                                break;
+                            }
+                            rows_deleted += selected;
+                            match class {
+                                TransactionEventRetentionClass::Hot => hot_rows_deleted += selected,
+                                TransactionEventRetentionClass::Warm => {
+                                    warm_rows_deleted += selected
+                                }
+                                TransactionEventRetentionClass::Cold => {
+                                    cold_rows_deleted += selected
+                                }
+                            }
+                            Metrics::transaction_events_expired(class.as_str()).increment(selected);
+                            if selected < u64::from(batch_limit) {
+                                Metrics::transaction_event_retention_cycles_ended(
+                                    class.as_str(),
+                                    "exhausted",
+                                )
+                                .increment(1);
+                                break;
+                            }
+                            progress.needs_limit_one = false;
+                            progress.limit_lo = batch_limit;
+                            progress.cursor = cursor;
+                        }
                     }
-                    rows_deleted += deleted;
-                    match class {
-                        TransactionEventRetentionClass::Hot => hot_rows_deleted += deleted,
-                        TransactionEventRetentionClass::Warm => warm_rows_deleted += deleted,
-                        TransactionEventRetentionClass::Cold => cold_rows_deleted += deleted,
-                    }
-                    Metrics::transaction_events_expired(class.as_str()).increment(deleted);
                 }
             }
             Ok(TransactionEventRetentionOutcome {
@@ -1075,43 +1148,139 @@ fn is_statement_timeout(err: &sqlx::Error) -> bool {
     matches!(err, sqlx::Error::Database(database) if database.code().as_deref() == Some("57014"))
 }
 
-fn record_expire_statement_timeout(err: &sqlx::Error, class: TransactionEventRetentionClass) {
+fn record_expire_statement_timeout(
+    err: &sqlx::Error,
+    class: TransactionEventRetentionClass,
+    attempted_batch_limit: u32,
+) {
     warn!(
         error = %err,
         retention_class = class.as_str(),
-        "transaction event expire statement timed out; advancing class"
+        attempted_batch_limit,
+        "transaction event expire statement timed out"
     );
     Metrics::transaction_events_expire_statement_timeouts(class.as_str()).increment(1);
 }
 
+/// Next DELETE LIMIT after timeouts (`hi`) and full successes (`lo`).
+fn expire_batch_limit(configured: u32, lo: u32, hi: Option<u32>, needs_limit_one: bool) -> u32 {
+    if needs_limit_one {
+        return 1;
+    }
+    let configured = configured.max(1);
+    let Some(hi) = hi else {
+        return configured;
+    };
+    let lo = lo.max(1).min(configured);
+    let hi = hi.max(1);
+    if lo.saturating_mul(2) >= hi {
+        return lo;
+    }
+    let mid = lo.saturating_add(hi) / 2;
+    mid.clamp(lo, configured).min(hi.saturating_sub(1)).max(1)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RetentionScanCursor {
+    event_type: String,
+    ingested_at: DateTime<Utc>,
+    event_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RetentionClassProgress {
+    scan_cutoff: Option<DateTime<Utc>>,
+    cursor: Option<RetentionScanCursor>,
+    limit_lo: u32,
+    limit_hi: Option<u32>,
+    needs_limit_one: bool,
+    cycle_started_at: Option<DateTime<Utc>>,
+    batches_this_cycle: u32,
+}
+
+impl RetentionClassProgress {
+    const fn empty() -> Self {
+        Self {
+            scan_cutoff: None,
+            cursor: None,
+            limit_lo: 0,
+            limit_hi: None,
+            needs_limit_one: false,
+            cycle_started_at: None,
+            batches_this_cycle: 0,
+        }
+    }
+
+    fn new_cycle(
+        now: DateTime<Utc>,
+        config: &TransactionEventRetentionConfig,
+        class: TransactionEventRetentionClass,
+    ) -> Self {
+        Self {
+            scan_cutoff: Some(now - Duration::days(i64::from(config.class_days(class)))),
+            cursor: None,
+            limit_lo: 0,
+            limit_hi: None,
+            needs_limit_one: false,
+            cycle_started_at: Some(now),
+            batches_this_cycle: 0,
+        }
+    }
+
+    const fn has_open_cycle(&self) -> bool {
+        self.cycle_started_at.is_some() && self.scan_cutoff.is_some()
+    }
+
+    fn cycle_age_secs(&self, now: DateTime<Utc>) -> i64 {
+        self.cycle_started_at.map(|started| (now - started).num_seconds()).unwrap_or(0)
+    }
+
+    fn should_end_cycle(&self, now: DateTime<Utc>, interval_secs: u64) -> bool {
+        let Some(started) = self.cycle_started_at else {
+            return false;
+        };
+        if self.batches_this_cycle == 0 {
+            return false;
+        }
+        let Ok(interval_secs) = i64::try_from(interval_secs) else {
+            return false;
+        };
+        (now - started) >= Duration::seconds(interval_secs)
+    }
+}
+
 enum ExpireBatchOutcome {
-    Deleted(u64),
+    Deleted { selected: u64, cursor: Option<RetentionScanCursor> },
     StatementTimeout,
 }
 
 async fn delete_expired_event_batch(
     conn: &mut sqlx::PgConnection,
     event_types: &[String],
-    cutoff: DateTime<Utc>,
-    batch_size: i64,
+    progress: &RetentionClassProgress,
+    batch_limit: u32,
     class: TransactionEventRetentionClass,
     config: &TransactionEventRetentionConfig,
 ) -> Result<ExpireBatchOutcome> {
+    let cutoff = progress.scan_cutoff.ok_or_else(|| {
+        anyhow::anyhow!("transaction event expire cycle is missing a scan cutoff")
+    })?;
     let timeout_sql = config.statement_timeout_sql();
     let mut attempt = 1u32;
     loop {
         let mut tx = conn.begin().await?;
         sqlx::query(&timeout_sql).execute(&mut *tx).await?;
-        if class == TransactionEventRetentionClass::Hot
-            && let Some(sleep_ms) = config.test_hot_sleep_ms
-        {
+        let should_sleep = class == TransactionEventRetentionClass::Hot
+            && config.test_hot_sleep_ms.is_some()
+            && config.test_hot_sleep_min_limit.is_none_or(|min_limit| batch_limit >= min_limit);
+        if should_sleep && let Some(sleep_ms) = config.test_hot_sleep_ms {
             let sleep_secs = sleep_ms as f64 / 1_000.0;
             if let Err(err) =
                 sqlx::query("SELECT pg_sleep($1)").bind(sleep_secs).execute(&mut *tx).await
             {
                 let _ = tx.rollback().await;
                 if is_statement_timeout(&err) {
-                    record_expire_statement_timeout(&err, class);
+                    record_expire_statement_timeout(&err, class, batch_limit);
                     return Ok(ExpireBatchOutcome::StatementTimeout);
                 }
                 return Err(err.into());
@@ -1120,32 +1289,75 @@ async fn delete_expired_event_batch(
         // Delete by ctid via Tid Scan so the batch is not a second primary-key
         // lookup. ANY(ARRAY(ctid)) keeps that plan as catch-up shrinks the heap;
         // USING ctid can seq-scan. FOR UPDATE SKIP LOCKED skips rows held by a
-        // concurrent writer instead of waiting.
+        // concurrent writer instead of waiting. MATERIALIZED so the keyset
+        // cursor is read from the selected set, not a rewritten join.
         let result = sqlx::query(
-            "WITH doomed AS ( \
-                SELECT ctid \
+            "WITH doomed AS MATERIALIZED ( \
+                SELECT ctid, event_type, ingested_at, event_id \
                 FROM transaction_events \
-                WHERE event_type = ANY($1) AND ingested_at < $2 \
+                WHERE event_type = ANY($1) \
+                  AND ingested_at < $2 \
+                  AND ( \
+                    $3::text IS NULL \
+                    OR (event_type, ingested_at, event_id) < ($3, $4, $5) \
+                  ) \
+                ORDER BY event_type DESC, ingested_at DESC, event_id DESC \
                 FOR UPDATE SKIP LOCKED \
-                LIMIT $3 \
+                LIMIT $6 \
+             ), \
+             deleted AS ( \
+                DELETE FROM transaction_events \
+                WHERE ctid = ANY (ARRAY(SELECT ctid FROM doomed)::tid[]) \
+                RETURNING ctid \
              ) \
-             DELETE FROM transaction_events \
-             WHERE ctid = ANY (ARRAY(SELECT ctid FROM doomed)::tid[])",
+             SELECT \
+                (SELECT COUNT(*) FROM doomed)::bigint, \
+                (SELECT COUNT(*) FROM deleted)::bigint, \
+                (SELECT event_type FROM doomed \
+                 ORDER BY event_type DESC, ingested_at DESC, event_id DESC LIMIT 1), \
+                (SELECT ingested_at FROM doomed \
+                 ORDER BY event_type DESC, ingested_at DESC, event_id DESC LIMIT 1), \
+                (SELECT event_id FROM doomed \
+                 ORDER BY event_type DESC, ingested_at DESC, event_id DESC LIMIT 1)",
         )
         .bind(event_types)
         .bind(cutoff)
-        .bind(batch_size)
-        .execute(&mut *tx)
+        .bind(progress.cursor.as_ref().map(|cursor| cursor.event_type.as_str()))
+        .bind(progress.cursor.as_ref().map(|cursor| cursor.ingested_at))
+        .bind(progress.cursor.as_ref().map(|cursor| cursor.event_id.as_str()))
+        .bind(i64::from(batch_limit))
+        .fetch_one(&mut *tx)
         .await;
         match result {
-            Ok(completed) => {
+            Ok(row) => {
+                let selected: i64 = row.try_get(0)?;
+                let deleted: i64 = row.try_get(1)?;
+                if selected != deleted {
+                    let _ = tx.rollback().await;
+                    anyhow::bail!(
+                        "transaction event expire selected {selected} rows but deleted {deleted}"
+                    );
+                }
+                let cursor = match (
+                    row.try_get::<Option<String>, _>(2)?,
+                    row.try_get::<Option<DateTime<Utc>>, _>(3)?,
+                    row.try_get::<Option<String>, _>(4)?,
+                ) {
+                    (Some(event_type), Some(ingested_at), Some(event_id)) => {
+                        Some(RetentionScanCursor { event_type, ingested_at, event_id })
+                    }
+                    _ => None,
+                };
                 tx.commit().await?;
-                return Ok(ExpireBatchOutcome::Deleted(completed.rows_affected()));
+                return Ok(ExpireBatchOutcome::Deleted {
+                    selected: u64::try_from(selected).unwrap_or(0),
+                    cursor,
+                });
             }
             Err(err) => {
                 let _ = tx.rollback().await;
                 if is_statement_timeout(&err) {
-                    record_expire_statement_timeout(&err, class);
+                    record_expire_statement_timeout(&err, class, batch_limit);
                     return Ok(ExpireBatchOutcome::StatementTimeout);
                 }
                 let Some(reason) = persist_retry_reason(&err) else {
@@ -1679,6 +1891,39 @@ mod tests {
                 .validate()
                 .is_err()
         );
+        assert!(
+            TransactionEventRetentionConfig { interval_secs: 0, ..Default::default() }
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn bisects_expire_batch_limit_below_the_timed_out_size() {
+        assert_eq!(expire_batch_limit(10_000, 0, None, false), 10_000);
+        assert_eq!(expire_batch_limit(10_000, 1, Some(10_000), true), 1);
+        assert_eq!(expire_batch_limit(10_000, 1, Some(10_000), false), 5_000);
+        assert_eq!(expire_batch_limit(10_000, 5_000, Some(10_000), false), 5_000);
+        assert_eq!(expire_batch_limit(10_000, 1, Some(5_000), false), 2_500);
+        assert_eq!(expire_batch_limit(10_000, 2_500, Some(5_000), false), 2_500);
+        assert_eq!(expire_batch_limit(10_000, 1, Some(2), false), 1);
+    }
+
+    #[test]
+    fn time_boxes_expire_cycle_after_the_first_returned_batch() {
+        let now = Utc::now();
+        let mut progress = RetentionClassProgress::new_cycle(
+            now - Duration::seconds(10),
+            &TransactionEventRetentionConfig::default(),
+            TransactionEventRetentionClass::Hot,
+        );
+        assert!(
+            !progress.should_end_cycle(now, 1),
+            "a cycle with no returned batch must still run once"
+        );
+        progress.batches_this_cycle = 1;
+        assert!(progress.should_end_cycle(now, 1));
+        assert!(!progress.should_end_cycle(now, 3_600));
     }
 
     #[test]

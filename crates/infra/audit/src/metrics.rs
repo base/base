@@ -63,6 +63,13 @@ base_metrics::define_metrics! {
     #[describe("Transaction observability expire batches canceled by statement timeout")]
     #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
     transaction_events_expire_statement_timeouts: counter,
+    #[describe("Effective transaction observability expire DELETE LIMIT")]
+    #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
+    transaction_event_retention_effective_batch_limit: gauge,
+    #[describe("Transaction observability expire scan cycles ended")]
+    #[label(name = "retention_class", default = ["hot", "warm", "cold"])]
+    #[label(name = "reason", default = ["interval", "exhausted"])]
+    transaction_event_retention_cycles_ended: counter,
     #[describe("Transaction observability retention delete failures")]
     transaction_event_retention_failures: counter,
 }

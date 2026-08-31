@@ -560,6 +560,7 @@ async fn postgres_expire_statement_timeout_advances_to_later_classes() -> anyhow
             max_batches: 10,
             statement_timeout_ms: 200,
             test_hot_sleep_ms: Some(2_000),
+            ..Default::default()
         })
         .await?;
     assert_eq!(outcome.hot_rows_deleted, 0, "timed-out hot class must not fail the pass");
@@ -573,6 +574,54 @@ async fn postgres_expire_statement_timeout_advances_to_later_classes() -> anyhow
     .fetch_all(&pool)
     .await?;
     assert_eq!(remaining, vec![format!("{event_prefix}-hot")]);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_expire_timeout_then_limit_one_deletes_hot_rows() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let event_prefix = unique_event_id();
+
+    let events = [
+        event(&format!("{event_prefix}-hot-a")),
+        event(&format!("{event_prefix}-hot-b")),
+        event_with_type(&format!("{event_prefix}-warm"), "TXPOOL_SEND_RAW_TRANSACTION"),
+    ];
+    sink.insert_events(&events).await?;
+    sqlx::query(
+        "UPDATE transaction_events SET ingested_at = now() - interval '10 days' \
+         WHERE event_id LIKE $1",
+    )
+    .bind(format!("{event_prefix}-%"))
+    .execute(&pool)
+    .await?;
+
+    let outcome = sink
+        .expire_old_events(TransactionEventRetentionConfig {
+            hot_days: 7,
+            warm_days: 7,
+            cold_days: 7,
+            delete_batch_size: 10,
+            max_batches: 20,
+            statement_timeout_ms: 200,
+            test_hot_sleep_ms: Some(2_000),
+            test_hot_sleep_min_limit: Some(2),
+            ..Default::default()
+        })
+        .await?;
+    assert_eq!(outcome.hot_rows_deleted, 2);
+    assert_eq!(outcome.warm_rows_deleted, 1);
+
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM transaction_events WHERE event_id LIKE $1")
+            .bind(format!("{event_prefix}-%"))
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(remaining, 0);
 
     Ok(())
 }

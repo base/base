@@ -9,6 +9,7 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
     DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_CONNECTIONS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
@@ -143,10 +144,12 @@ struct Args {
 
     /// Seconds between transaction-event retention delete passes. The first
     /// pass runs immediately at startup; later passes wait this interval.
+    /// An expire scan cycle older than this interval is restarted at the
+    /// configured batch size after at least one returned attempt.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS",
-        default_value = "3600"
+        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS
     )]
     transaction_event_retention_interval_secs: u64,
 
@@ -195,7 +198,8 @@ struct Args {
     /// Postgres statement timeout for one retention delete, in milliseconds.
     ///
     /// Bounds a sparse expire scan so it cannot hold the advisory lock for
-    /// hours. On timeout the pass advances to the next retention class.
+    /// hours. On timeout, expire tries `LIMIT 1` then bisects the batch size.
+    /// A `LIMIT 1` timeout advances to the next retention class.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS",
@@ -295,7 +299,9 @@ async fn run_server(args: Args) -> Result<()> {
         delete_batch_size: args.transaction_event_retention_batch_size,
         max_batches: args.transaction_event_retention_max_batches,
         statement_timeout_ms: args.transaction_event_retention_statement_timeout_ms,
+        interval_secs: args.transaction_event_retention_interval_secs,
         test_hot_sleep_ms: None,
+        test_hot_sleep_min_limit: None,
     }
     .validate()?;
     if args.transaction_event_retention_interval_secs == 0 {
