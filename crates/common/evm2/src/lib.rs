@@ -34,7 +34,7 @@ pub use eip8130_gas::{
 };
 
 mod nonce_manager;
-pub use nonce_manager::NonceManager;
+pub use nonce_manager::{NonceManager, NonceOverflow};
 
 mod transition;
 pub use transition::{BaseForkActivations, IrregularStateChange};
