@@ -227,9 +227,7 @@ const DEFAULT_RECENT_LIMIT: i64 = 25;
 /// to the default; anything below 1 floors at 1 so a malformed value cannot make
 /// Postgres reject the query.
 fn resolve_recent_limit(limit: Option<i64>) -> i64 {
-fn resolve_recent_limit(limit: Option<i64>) -> i64 {
-    limit.unwrap_or(DEFAULT_RECENT_LIMIT).clamp(1, 1000)
-}
+    limit.unwrap_or(DEFAULT_RECENT_LIMIT).max(1)
 }
 
 /// The most recent resolved shadow blocks, newest first, paged backwards by `before`.
