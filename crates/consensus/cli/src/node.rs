@@ -28,7 +28,7 @@ use url::Url;
 use crate::{
     ConsensusChainArgs, EmbeddedL2ClientArgs, EmbeddedP2PArgs, EmbeddedRpcArgs, L1ClientArgs,
     L1ConfigFile, L2ClientArgs, L2ConfigFile, LogArgs, MetricsArgs, P2PArgs, RpcArgs,
-    SequencerArgs, metrics::CliMetrics,
+    SequencerArgs, TelemetryArgs, metrics::CliMetrics,
 };
 
 /// Overrides supplied by callers that embed consensus alongside another service.
@@ -73,6 +73,10 @@ pub struct ConsensusNodeCommand {
     #[command(flatten)]
     pub traces: TraceArgs,
 
+    /// Telemetry configuration.
+    #[command(flatten)]
+    pub telemetry: TelemetryArgs,
+
     /// Consensus node arguments.
     #[command(flatten)]
     pub args: ConsensusNodeConfigArgs,
@@ -93,6 +97,10 @@ impl ConsensusNodeCommand {
         }
 
         let metrics_enabled = self.metrics.enabled;
+        let telemetry = args.telemetry_node_config(
+            self.telemetry.config(args.chain.l2_chain_id.id()),
+            metrics_enabled,
+        );
         let rt = RuntimeManager::new().tokio_runtime()?;
         // Build the subscriber — including the gRPC OTLP layer — inside the main runtime
         // so tonic's transport channel lives for the full program lifetime (reth pattern).
@@ -110,7 +118,10 @@ impl ConsensusNodeCommand {
                 res = async move {
                     let _upgrade_countdown_metrics = metrics_enabled
                         .then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
-                    args.start_with_overrides(cfg, Default::default()).await
+                    args.start_with_options(
+                        ConsensusNodeStartOptions::new(cfg).with_telemetry(Some(telemetry)),
+                    )
+                    .await
                 } => res,
             }
         })
