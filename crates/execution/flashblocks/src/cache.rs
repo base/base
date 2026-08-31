@@ -95,6 +95,18 @@ impl FlashblockCache {
             return false;
         }
         let by_payload = self.entries.entry(block_number).or_default();
+        if let Some(existing) = by_payload
+            .get(&flashblock.payload_id)
+            .and_then(|(_, by_index)| by_index.get(&flashblock.index))
+        {
+            if existing == &flashblock {
+                return true;
+            }
+            by_payload.remove(&flashblock.payload_id);
+            if flashblock.index != 0 {
+                return false;
+            }
+        }
         if !by_payload.contains_key(&flashblock.payload_id)
             && by_payload.len() >= MAX_PAYLOADS_PER_BLOCK
             && let Some(oldest) = by_payload
@@ -312,6 +324,34 @@ mod tests {
         let drained = cache.drain(11, B256::ZERO);
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].diff.state_root, fb_new.diff.state_root);
+    }
+
+    #[test]
+    fn conflicting_base_retry_discards_cached_suffix() {
+        let mut cache = FlashblockCache::new(10);
+        let base = make_flashblock(11, 0);
+        assert!(cache.insert(base.clone()));
+        assert!(cache.insert(make_flashblock(11, 1)));
+
+        let mut replacement = base;
+        replacement.diff.state_root = B256::repeat_byte(0x11);
+        assert!(cache.insert(replacement.clone()));
+
+        let drained = cache.drain(11, B256::ZERO);
+        assert_eq!(drained, vec![replacement]);
+    }
+
+    #[test]
+    fn conflicting_delta_invalidates_cached_payload() {
+        let mut cache = FlashblockCache::new(10);
+        assert!(cache.insert(make_flashblock(11, 0)));
+        let delta = make_flashblock(11, 1);
+        assert!(cache.insert(delta.clone()));
+
+        let mut conflicting = delta;
+        conflicting.diff.state_root = B256::repeat_byte(0x22);
+        assert!(!cache.insert(conflicting));
+        assert!(cache.drain(11, B256::ZERO).is_empty());
     }
 
     #[test]
