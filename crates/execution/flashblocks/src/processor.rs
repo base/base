@@ -176,7 +176,7 @@ pub struct StateProcessor<Client> {
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     client: Client,
     sender: Sender<Arc<PendingBlocks>>,
-    cache: Arc<Mutex<FlashblockCache>>,
+    cache: StdMutex<FlashblockCache>,
     live_state: StdMutex<Option<LivePendingState>>,
     max_pending_blocks_depth: u64,
     recovery_epoch: Arc<StdMutex<u64>>,
@@ -193,6 +193,10 @@ where
 {
     fn lock_live_state(&self) -> StdMutexGuard<'_, Option<LivePendingState>> {
         self.live_state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_cache(&self) -> StdMutexGuard<'_, FlashblockCache> {
+        self.cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn clear_live_state(&self) {
@@ -237,7 +241,7 @@ where
             client,
             rx,
             sender,
-            cache: Arc::new(Mutex::new(cache)),
+            cache: StdMutex::new(cache),
             live_state: StdMutex::new(None),
             max_pending_blocks_depth,
             recovery_epoch,
@@ -255,12 +259,12 @@ where
                 <= self.max_pending_blocks_depth
     }
 
-    async fn enter_recovery(&self, best_number: u64) {
+    fn enter_recovery(&self, best_number: u64) {
         warn!(best = best_number, "flashblock processor entering recovery");
         Metrics::pending_queue_recovery().increment(1);
         self.pending_blocks.swap(None);
         self.clear_live_state();
-        *self.cache.lock().await = FlashblockCache::new(best_number);
+        *self.lock_cache() = FlashblockCache::new(best_number);
     }
 
     async fn preflight_update(
@@ -277,8 +281,8 @@ where
             }
             if provider_retries >= 20 {
                 let last_canonical =
-                    self.cache.lock().await.latest_canonical_number().unwrap_or_default();
-                self.enter_recovery(last_canonical).await;
+                    self.lock_cache().latest_canonical_number().unwrap_or_default();
+                self.enter_recovery(last_canonical);
                 *recovering = true;
                 Metrics::pending_stale_events_skipped().increment(1);
                 return None;
@@ -290,7 +294,7 @@ where
             *self.recovery_epoch.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if *observed_generation != generation {
             *observed_generation = generation;
-            self.enter_recovery(best.number()).await;
+            self.enter_recovery(best.number());
             *recovering = true;
         }
         if enqueued_generation != generation {
@@ -317,7 +321,7 @@ where
                     && flashblock.payload_id == pending.latest_payload_id()
             });
             if extends_accepted_payload {
-                self.enter_recovery(best.number()).await;
+                self.enter_recovery(best.number());
                 *recovering = true;
             }
             Metrics::pending_stale_events_skipped().increment(1);
@@ -391,7 +395,7 @@ where
             UpdatePreflight::Process => Some((best, false, generation)),
             UpdatePreflight::ResumeRecovery => {
                 if pending_blocks.is_some() && !pending_is_based_on_best {
-                    self.enter_recovery(best.number()).await;
+                    self.enter_recovery(best.number());
                     *recovering = true;
                 }
                 Some((best, true, generation))
@@ -410,7 +414,7 @@ where
                         .unwrap_or_else(|poisoned| poisoned.into_inner()) =
                         Some((block.clone(), enqueued_generation));
                 }
-                self.enter_recovery(best.number()).await;
+                self.enter_recovery(best.number());
                 *recovering = true;
                 Metrics::pending_stale_events_skipped().increment(1);
                 None
@@ -475,19 +479,19 @@ where
                     match self.process_canonical_block(prev_pending_blocks, &block) {
                         Ok((new_pending_blocks, requires_recovery)) => {
                             if requires_recovery {
-                                self.enter_recovery(best.number()).await;
+                                self.enter_recovery(best.number());
                                 recovering = true;
                                 continue;
                             }
 
                             if let Some(pending) = &new_pending_blocks {
                                 let Some(current_best) = self.best_canonical_header() else {
-                                    self.enter_recovery(best.number()).await;
+                                    self.enter_recovery(best.number());
                                     recovering = true;
                                     continue;
                                 };
                                 if !self.pending_tracks_canonical_tip(pending, &current_best) {
-                                    self.enter_recovery(current_best.number()).await;
+                                    self.enter_recovery(current_best.number());
                                     recovering = true;
                                     continue;
                                 }
@@ -506,31 +510,34 @@ where
                                 }
                             };
                             if stale_generation {
-                                self.enter_recovery(best.number()).await;
+                                self.enter_recovery(best.number());
                                 recovering = true;
                                 continue;
                             }
 
-                            let mut cache = self.cache.lock().await;
-                            let cache_rolled_back = cache
-                                .latest_canonical_number()
-                                .is_some_and(|canonical| canonical > block.number)
-                                && block.number == best.number()
-                                && block.hash() == best.hash();
-                            if cache_rolled_back {
-                                *cache = FlashblockCache::new(block.number);
-                            }
-                            let should_advance = cache
-                                .latest_canonical_number()
-                                .is_none_or(|canonical| block.number >= canonical);
-                            if should_advance {
-                                cache.update_canonical(block.number);
-                                let cached_block_number = block.number.saturating_add(1);
-                                let mut cached = cache.drain(cached_block_number, block.hash());
-                                // Recovery may replace the cache while replaying, so release this
-                                // lock before preflighting any cached payload.
-                                drop(cache);
-
+                            let cached = {
+                                let mut cache = self.lock_cache();
+                                let cache_rolled_back = cache
+                                    .latest_canonical_number()
+                                    .is_some_and(|canonical| canonical > block.number)
+                                    && block.number == best.number()
+                                    && block.hash() == best.hash();
+                                if cache_rolled_back {
+                                    *cache = FlashblockCache::new(block.number);
+                                }
+                                let should_advance = cache
+                                    .latest_canonical_number()
+                                    .is_none_or(|canonical| block.number >= canonical);
+                                should_advance.then(|| {
+                                    cache.update_canonical(block.number);
+                                    let cached_block_number = block.number.saturating_add(1);
+                                    (
+                                        cached_block_number,
+                                        cache.drain(cached_block_number, block.hash()),
+                                    )
+                                })
+                            };
+                            if let Some((cached_block_number, mut cached)) = cached {
                                 if self.pending_blocks.load_full().is_some_and(|pending| {
                                     pending.latest_block_number() >= cached_block_number
                                 }) {
@@ -599,7 +606,7 @@ where
                         }
                         Err(e) => {
                             error!(message = "could not process canonical block", error = %e);
-                            self.enter_recovery(best.number()).await;
+                            self.enter_recovery(best.number());
                             recovering = true;
                         }
                     }
@@ -654,11 +661,11 @@ where
                 let applied = new_pending_blocks.is_some();
                 if let Some(ref pb) = new_pending_blocks {
                     let Some(current_best) = self.best_canonical_header() else {
-                        self.enter_recovery(expected_best.number()).await;
+                        self.enter_recovery(expected_best.number());
                         return (false, true);
                     };
                     if !self.pending_tracks_canonical_tip(pb, &current_best) {
-                        self.enter_recovery(current_best.number()).await;
+                        self.enter_recovery(current_best.number());
                         return (false, true);
                     }
                 }
@@ -676,7 +683,7 @@ where
                     }
                 };
                 if stale_generation {
-                    self.enter_recovery(expected_best.number()).await;
+                    self.enter_recovery(expected_best.number());
                     return (false, true);
                 }
                 Metrics::block_processing_duration().record(start_time.elapsed());
@@ -687,14 +694,14 @@ where
                     StateProcessorError::Provider(ProviderError::MissingCanonicalHeader {
                         ..
                     }) if cache_on_missing_canonical_header => {
-                        let inserted = self.cache.lock().await.insert(flashblock);
+                        let inserted = self.lock_cache().insert(flashblock);
                         if inserted {
                             debug!(message = "cached flashblock pending canonical block", error = %e);
                             return (false, false);
                         }
                     }
                     StateProcessorError::MissingFirstFlashblock => {
-                        let mut cache = self.cache.lock().await;
+                        let mut cache = self.lock_cache();
                         // this error should only occur for non-zero index flashblocks, but check here for index safety
                         if flashblock.index > 0
                             && cache.has_flashblock(
@@ -711,7 +718,7 @@ where
                     }
                     StateProcessorError::Provider(_) => {
                         error!(message = "provider remained unavailable while processing flashblock", error = %e);
-                        self.enter_recovery(expected_best.number()).await;
+                        self.enter_recovery(expected_best.number());
                         return (false, true);
                     }
                     _ => {}

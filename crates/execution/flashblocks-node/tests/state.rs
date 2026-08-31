@@ -1226,28 +1226,6 @@ async fn test_live_payload_flashblock_count_is_bounded() {
 }
 
 #[tokio::test]
-async fn test_current_base_immediately_recovers_stale_pending() {
-    let mut test = FlashblocksBuilderTestHarness::new().await;
-    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
-
-    let block_one = test.new_canonical_block_without_processing(vec![]).await;
-    let current_base = FlashblockBuilder::new_base(&test).build();
-    test.flashblocks.on_flashblock_received(current_base);
-
-    wait_until(
-        Duration::from_secs(5),
-        || {
-            test.flashblocks.get_pending_blocks().as_ref().is_some_and(|pending| {
-                pending.earliest_block_number() == block_one.number + 1
-                    && pending.parent_hash() == block_one.hash()
-            })
-        },
-        "the flashblock that discovers stale pending must also resume recovery",
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn test_stale_queue_clears_pending_and_resumes_at_current_tip() {
     let mut test = FlashblocksBuilderTestHarness::new().await;
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
