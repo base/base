@@ -83,15 +83,18 @@ impl ExecutionUpgradeSignal {
     /// chain spec and installing it through [`RuntimeForkFilterNetwork::install_fork_filter`] keeps
     /// the node's advertised fork identity — across both the devp2p session layer and the discovery
     /// ENR — aligned with the rules it now enforces.
+    ///
+    /// Returns an error if the network install fails to refresh the advertised discovery entry, so
+    /// the caller can leave its baseline unadvanced and retry rather than record a stale install.
     pub fn install_runtime_fork_filter<Net: RuntimeForkFilterNetwork>(
         chain_spec: &BaseChainSpec,
         head: Head,
         network: &Net,
-    ) -> ForkId {
+    ) -> eyre::Result<ForkId> {
         let fork_filter = chain_spec.fork_filter(head);
         let fork_id = fork_filter.current();
-        network.install_fork_filter(fork_filter);
-        fork_id
+        network.install_fork_filter(fork_filter)?;
+        Ok(fork_id)
     }
 
     /// A fork id that folds in the entire runtime schedule, used as a change signal for runtime
@@ -113,9 +116,10 @@ impl ExecutionUpgradeSignal {
     /// schedule update lands via the auto-apply path or the manual `admin_refreshUpgradeSignal` RPC;
     /// both mutate the same runtime registry that [`Self::schedule_fork_id`] reads, so a single
     /// check covers both. `schedule_id` tracks the last installed schedule and is advanced only when
-    /// a new filter is installed, so the network message is sent once per change rather than every
-    /// block. A `None` `schedule_id` has no last-installed baseline yet and therefore always
-    /// installs, forcing the initial install after startup.
+    /// a new filter is installed successfully, so the network message is sent once per change rather
+    /// than every block, and a failed install leaves the baseline unadvanced so the next poll
+    /// retries instead of advertising a stale fork id. A `None` `schedule_id` has no last-installed
+    /// baseline yet and therefore always installs, forcing the initial install after startup.
     pub fn refresh_advertised_fork_filter<Net: RuntimeForkFilterNetwork>(
         chain_spec: &BaseChainSpec,
         head: Head,
@@ -127,9 +131,22 @@ impl ExecutionUpgradeSignal {
             return None;
         }
 
-        let fork_id = Self::install_runtime_fork_filter(chain_spec, head, network);
-        *schedule_id = Some(current);
-        Some(fork_id)
+        match Self::install_runtime_fork_filter(chain_spec, head, network) {
+            Ok(fork_id) => {
+                *schedule_id = Some(current);
+                Some(fork_id)
+            }
+            // Leave `schedule_id` unadvanced so the next poll retries; the advertised discovery fork
+            // id is still stale, so recording this schedule as installed would suppress that retry.
+            Err(error) => {
+                warn!(
+                    target: "upgrade_signal",
+                    error = %error,
+                    "failed to install runtime P2P fork filter; leaving schedule baseline unadvanced to retry on next poll"
+                );
+                None
+            }
+        }
     }
 
     /// Reconciles the advertised P2P fork filter with the current runtime schedule, reading the head
@@ -282,11 +299,15 @@ impl ExecutionUpgradeSignal {
 pub trait RuntimeForkFilterNetwork {
     /// Installs `fork_filter` on the devp2p session layer and refreshes every advertised discovery
     /// ENR fork-id entry, so the node's advertised fork identity matches the rules it now enforces.
-    fn install_fork_filter(&self, fork_filter: ForkFilter);
+    ///
+    /// Returns an error if refreshing the `opel` discovery entry fails. Callers must not advance
+    /// their last-installed baseline on an error: the `opel` fork id Base discovery reads first is
+    /// still stale, so the install must be retried rather than recorded as done.
+    fn install_fork_filter(&self, fork_filter: ForkFilter) -> eyre::Result<()>;
 }
 
 impl<N: NetworkPrimitives> RuntimeForkFilterNetwork for NetworkHandle<N> {
-    fn install_fork_filter(&self, fork_filter: ForkFilter) {
+    fn install_fork_filter(&self, fork_filter: ForkFilter) -> eyre::Result<()> {
         let fork_id = fork_filter.current();
 
         // Updates the devp2p sessions and reth's built-in `eth` discovery ENR entry.
@@ -296,20 +317,28 @@ impl<N: NetworkPrimitives> RuntimeForkFilterNetwork for NetworkHandle<N> {
         // discovery fork id under `opel` (and discovery reads it first), so refresh `opel` on both
         // discovery backends. Any node this crate runs is an OP-stack chain, hence the fixed key.
         let entry = EnrForkIdEntry::from(fork_id);
+
+        // discv4 first: it is infallible (fire-and-forget over a channel), so it still advertises
+        // the new `opel` fork id even if the fallible discv5 write below fails and short-circuits.
+        if let Some(discv4) = self.discv4() {
+            discv4.set_eip868_rlp(NetworkStackId::OPEL.to_vec(), entry.clone());
+        }
         if let Some(discv5) = self.discv5() {
             // NB: reth's `encode_and_set_eip868_in_local_enr` double-encodes — it rlp-encodes the
             // value, then the inner `enr_insert` rlp-encodes those bytes again, producing an entry
             // `get_fork_id` cannot decode. Insert the typed entry directly so it is encoded exactly
-            // once, matching how the startup ENR (`add_value_rlp`) and discv4 (below) store it.
+            // once, matching how the startup ENR (`add_value_rlp`) and discv4 (above) store it.
             let opel = core::str::from_utf8(NetworkStackId::OPEL)
                 .expect("opel network stack id is valid utf-8");
-            discv5.with_discv5(|discv5| {
-                let _ = discv5.enr_insert(opel, &entry);
-            });
+            // `enr_insert` can fail (e.g. the ENR exceeds the EIP-778 size limit, or signing the
+            // bumped record fails), leaving the advertised `opel` fork id stale. Propagate so the
+            // caller retries on the next poll instead of recording a stale install as complete.
+            discv5.with_discv5(|discv5| discv5.enr_insert(opel, &entry)).map_err(|error| {
+                eyre::eyre!("failed to refresh opel discv5 fork id in local ENR: {error}")
+            })?;
         }
-        if let Some(discv4) = self.discv4() {
-            discv4.set_eip868_rlp(NetworkStackId::OPEL.to_vec(), entry);
-        }
+
+        Ok(())
     }
 }
 
@@ -614,6 +643,9 @@ mod tests {
     #[derive(Debug, Default)]
     struct RecordingNetwork {
         installed: std::sync::Mutex<Option<ForkFilter>>,
+        /// When set, `install_fork_filter` fails without recording, reproducing a discovery ENR
+        /// refresh failure so the baseline-retry behaviour can be exercised.
+        fail: std::sync::atomic::AtomicBool,
     }
 
     impl RecordingNetwork {
@@ -624,11 +656,19 @@ mod tests {
         fn installed(&self) -> ForkFilter {
             self.installed_opt().expect("install_fork_filter was never called")
         }
+
+        fn set_failing(&self, fail: bool) {
+            self.fail.store(fail, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     impl RuntimeForkFilterNetwork for RecordingNetwork {
-        fn install_fork_filter(&self, fork_filter: ForkFilter) {
+        fn install_fork_filter(&self, fork_filter: ForkFilter) -> eyre::Result<()> {
+            if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                eyre::bail!("simulated opel discovery ENR refresh failure");
+            }
             *self.installed.lock().unwrap() = Some(fork_filter);
+            Ok(())
         }
     }
 
@@ -759,6 +799,63 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
+    /// A failed install (the advertised `opel` discovery fork id could not be refreshed) must leave
+    /// the schedule baseline unadvanced, so the next poll retries instead of recording the stale
+    /// install as complete and suppressing reconciliation until another schedule change.
+    #[test]
+    fn refresh_advertised_fork_filter_retries_after_failed_install() {
+        use base_execution_chainspec::BaseChainSpecBuilder;
+        use reth_chainspec::Chain;
+
+        let chain_id = 9_100_102;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Default::default())
+            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
+            .build();
+
+        let head = Head { timestamp: 43, ..Default::default() };
+        let network = RecordingNetwork::default();
+        let mut schedule_id = Some(ExecutionUpgradeSignal::schedule_fork_id(&spec));
+
+        // A runtime schedule change lands, but the discovery ENR refresh fails.
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
+        network.set_failing(true);
+
+        // The failed install advertises nothing new and, crucially, does not advance the baseline.
+        assert_eq!(
+            ExecutionUpgradeSignal::refresh_advertised_fork_filter(
+                &spec,
+                head,
+                &network,
+                &mut schedule_id,
+            ),
+            None
+        );
+        assert!(network.installed_opt().is_none());
+        assert_ne!(schedule_id, Some(ExecutionUpgradeSignal::schedule_fork_id(&spec)));
+
+        // The next poll retries because the baseline still reflects the pre-change schedule; this
+        // time the install succeeds and the baseline advances to the new schedule.
+        network.set_failing(false);
+        let installed_id = ExecutionUpgradeSignal::refresh_advertised_fork_filter(
+            &spec,
+            head,
+            &network,
+            &mut schedule_id,
+        )
+        .expect("the retry after a failed install must reinstall the fork filter");
+
+        assert_eq!(installed_id, spec.fork_filter(head).current());
+        assert_eq!(schedule_id, Some(ExecutionUpgradeSignal::schedule_fork_id(&spec)));
+        assert!(network.installed_opt().is_some());
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
     /// Production-path regression for the `opel` discovery ENR refresh.
     ///
     /// [`RecordingNetwork`] only proves the routing; it cannot show that the real
@@ -834,7 +931,7 @@ mod tests {
         let new_fork_id = new_filter.current();
         assert_ne!(new_fork_id, startup_fork_id, "test requires an observable fork-id change");
 
-        handle.install_fork_filter(new_filter);
+        handle.install_fork_filter(new_filter).expect("opel discv5 ENR refresh should succeed");
 
         // The advertised `opel` entry now reflects the newly enforced fork id.
         let discv5 = handle.discv5().expect("discv5 still enabled");
