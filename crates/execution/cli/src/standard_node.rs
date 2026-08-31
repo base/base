@@ -63,7 +63,11 @@ pub struct MeteringArgs {
     pub metering_da_bytes: Option<u64>,
 
     /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    #[arg(long = "metering.target-flashblocks-per-block", requires = "enable_metering", hide = true)]
+    #[arg(
+        long = "metering.target-flashblocks-per-block",
+        requires = "enable_metering",
+        hide = true
+    )]
     pub metering_target_flashblocks_per_block: Option<usize>,
 }
 

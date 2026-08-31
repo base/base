@@ -73,11 +73,7 @@ impl MeteringConfig {
 
     /// Creates a configuration with metering enabled and no flashblocks integration.
     pub fn enabled() -> Self {
-        Self {
-            enabled: true,
-            flashblocks_config: None,
-            metered_opcodes: MeteredOpcodes::default(),
-        }
+        Self { enabled: true, flashblocks_config: None, metered_opcodes: MeteredOpcodes::default() }
     }
 
     /// Creates a configuration with metering enabled and flashblocks integration.
