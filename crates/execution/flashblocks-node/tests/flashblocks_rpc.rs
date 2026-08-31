@@ -538,12 +538,13 @@ async fn test_blockhash_dependent_transaction_receipt_pending() -> Result<()> {
     let block_two_fb_base = FlashblockBuilder::new_base(&builder_setup).build();
     let block_two_fb_one = FlashblockBuilder::new(&builder_setup, 1).build();
     let block_two_fb_two = FlashblockBuilder::new(&builder_setup, 2).build();
+    let block_two_transactions = block_two_fb_base.diff.transactions.clone();
     client_setup.send_flashblock(block_two_fb_base.clone()).await;
     client_setup.send_flashblock(block_two_fb_one).await;
     client_setup.send_flashblock(block_two_fb_two).await;
     builder_setup
         .node
-        .build_block_from_transactions(block_two_fb_base.diff.transactions)
+        .build_block_from_transactions(block_two_transactions.clone())
         .await
         .expect("able to build canon block 2");
     let canon_block_two = builder_setup
@@ -554,9 +555,7 @@ async fn test_blockhash_dependent_transaction_receipt_pending() -> Result<()> {
         .try_into_recovered()
         .expect("able to recover block 2");
 
-    // Step 3. Builder builds flashblocks for block 3
-    // that contain a call to the contract
-    // It is processed by client before client has canon block 2
+    // Step 3. Builder builds flashblocks for block 3 that contain a call to the contract.
     let guard = ParentBlockhashGuardInstance::new(guard_address, builder_provider.clone());
     let txn = TransactionBuilder::default()
         .signer(Account::Deployer.signer_b256())
@@ -572,8 +571,21 @@ async fn test_blockhash_dependent_transaction_receipt_pending() -> Result<()> {
         .unwrap()
         .clone();
     let flashblock = FlashblockBuilder::new_base(&builder_setup).build();
+    client_setup
+        .node
+        .build_block_from_transactions(block_two_transactions)
+        .await
+        .expect("able to build client canon block 2");
+    let client_canon_block_two = client_setup
+        .provider
+        .block(BlockHashOrNumber::Number(2))
+        .expect("able to load client block 2")
+        .expect("client block 2 should be available")
+        .try_into_recovered()
+        .expect("able to recover client block 2");
+    assert_eq!(client_canon_block_two.hash(), canon_block_two.hash());
+    client_setup.flashblocks.on_canonical_block_received(client_canon_block_two);
     client_setup.send_flashblock(flashblock).await;
-    client_setup.flashblocks.on_canonical_block_received(canon_block_two);
     let flashblock = FlashblockBuilder::new(&builder_setup, 1)
         .with_transactions(vec![BaseTransactionSigned::Eip1559(txn.clone())])
         .build();
