@@ -19,14 +19,15 @@ use base_common_consensus::{
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
-use base_common_precompiles::NonceManagerStorage;
+use base_common_precompiles::{NonceManagerStorage, UpgradeGatedStorageFeatures};
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
     IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
     TxAuthError,
 };
 use base_precompile_storage::{
-    BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
+    BasePrecompileError, PrecompileStorageProvider, StorageCtx, StorageFeatures,
+    validate_loaded_code_presence,
 };
 use lru::LruCache;
 use parking_lot::RwLock;
@@ -209,11 +210,21 @@ struct StateProviderPrecompileStorage<'a> {
     state: &'a dyn StateProvider,
     chain_id: u64,
     timestamp: u64,
+    storage_features: StorageFeatures,
 }
 
 impl<'a> StateProviderPrecompileStorage<'a> {
-    fn new(state: &'a dyn StateProvider, chain_id: u64, timestamp: u64) -> Self {
-        Self { state, chain_id, timestamp }
+    /// Build a read-only provider pinned to `storage_features`, which callers
+    /// must derive from the currently-active upgrade at `timestamp` (typically
+    /// via `UpgradeGatedStorageFeatures::from_upgrade(BaseSpecId::from_timestamp(spec, ts).upgrade())`)
+    /// so admission-time storage semantics match block execution.
+    fn new(
+        state: &'a dyn StateProvider,
+        chain_id: u64,
+        timestamp: u64,
+        storage_features: StorageFeatures,
+    ) -> Self {
+        Self { state, chain_id, timestamp, storage_features }
     }
 
     fn provider_error(error: impl core::fmt::Display) -> BasePrecompileError {
@@ -361,6 +372,10 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
 
     fn reservoir(&self) -> u64 {
         0
+    }
+
+    fn storage_features(&self) -> StorageFeatures {
+        self.storage_features
     }
 
     fn is_static(&self) -> bool {
@@ -579,6 +594,14 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
 
     fn reservoir(&self) -> u64 {
         0
+    }
+
+    // The overlay never re-declares features; it inherits whatever the inner
+    // read-only snapshot was pinned to at construction (which is derived from
+    // the currently-active upgrade). Any change in fork semantics therefore
+    // flows through a single seat: `StateProviderPrecompileStorage::new`.
+    fn storage_features(&self) -> StorageFeatures {
+        self.inner.storage_features()
     }
 
     fn is_static(&self) -> bool {
@@ -861,6 +884,17 @@ where
         }
     }
 
+    /// Persistent-storage features active at `timestamp`. Every admission-time
+    /// [`StateProviderPrecompileStorage`] construction must be pinned to this
+    /// so pool storage semantics track the fork the builder will include
+    /// under. Threading it through the constructor removes the trait-default
+    /// escape hatch that used to silently pick `Legacy` on a Cobalt-active fork.
+    fn eip8130_storage_features(&self, timestamp: u64) -> StorageFeatures {
+        UpgradeGatedStorageFeatures::from_upgrade(
+            BaseSpecId::from_timestamp(self.chain_spec(), timestamp).upgrade(),
+        )
+    }
+
     /// Validates a single transaction.
     ///
     /// See also [`TransactionValidator::validate_transaction`]
@@ -1012,6 +1046,7 @@ where
             &*state,
             local_chain_id,
             now,
+            self.eip8130_storage_features(now),
         ));
         let auth_start = Instant::now();
         let auth_result = StorageCtx::enter(&mut storage, |ctx| {
@@ -1060,7 +1095,12 @@ where
         // Nonce validity is intentionally checked against canonical state, not
         // authorization's speculative overlay writes. Those writes are effects
         // of this transaction and cannot satisfy its own admission nonce.
-        let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
+        let mut storage = StateProviderPrecompileStorage::new(
+            &*state,
+            local_chain_id,
+            now,
+            self.eip8130_storage_features(now),
+        );
         // `NonceValidator::validate` compares the nonce-free replay ring's stored
         // `valid_before` (Unix milliseconds) against `now`, so it must be passed in
         // milliseconds (`block.timestamp * 1000`) — the storage overlay above keeps
@@ -1383,7 +1423,12 @@ where
             value
         } else {
             ValidatorMetrics::classification_state_reads("sload").increment(1);
-            let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
+            let mut storage = StateProviderPrecompileStorage::new(
+                state,
+                local_chain_id,
+                now,
+                self.eip8130_storage_features(now),
+            );
             let value = match StorageCtx::enter(&mut storage, |ctx| {
                 AccountConfigurationStorage::new(ctx).get_account_state(account)
             }) {
@@ -1485,7 +1530,12 @@ where
         if nonce_key.is_zero() {
             return Ok((protocol_nonce == 0, protocol_nonce));
         }
-        let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
+        let mut storage = StateProviderPrecompileStorage::new(
+            state,
+            local_chain_id,
+            now,
+            self.eip8130_storage_features(now),
+        );
         StorageCtx::enter(&mut storage, |ctx| {
             NonceManagerStorage::new(ctx)
                 .get_nonce(sender, nonce_key)

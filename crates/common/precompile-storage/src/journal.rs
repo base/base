@@ -25,7 +25,7 @@ use revm::{
 
 use crate::{
     error::{BasePrecompileError, Result},
-    provider::{PrecompileStorageProvider, validate_loaded_code_presence},
+    provider::{PrecompileStorageProvider, StorageFeatures, validate_loaded_code_presence},
 };
 
 /// Gas-free [`PrecompileStorageProvider`] backed by a live EVM journal.
@@ -45,13 +45,26 @@ pub struct JournalStorageProvider<'a> {
     chain_id: u64,
     beneficiary: Address,
     origin: Address,
+    storage_features: StorageFeatures,
 }
 
 impl<'a> JournalStorageProvider<'a> {
     /// Build a gas-free provider over `internals`, attributing storage access to
-    /// `caller`. Block metadata (number, timestamp, chain id, beneficiary,
-    /// origin) is snapshotted from the journal's block/transaction environment.
-    pub fn new(internals: EvmInternals<'a>, caller: Address) -> Self {
+    /// `caller` and pinning persistent-storage semantics to `storage_features`.
+    ///
+    /// `storage_features` is required — the constructor accepts no default so
+    /// every enshrined callsite must derive it from the currently-active
+    /// upgrade (typically via `UpgradeGatedStorageFeatures::from_upgrade`).
+    /// This prevents Cobalt-active forks from silently executing under
+    /// `Legacy` semantics.
+    ///
+    /// Block metadata (number, timestamp, chain id, beneficiary, origin) is
+    /// snapshotted from the journal's block/transaction environment.
+    pub fn new(
+        internals: EvmInternals<'a>,
+        caller: Address,
+        storage_features: StorageFeatures,
+    ) -> Self {
         // Truncating to `u64` is safe: EVM block numbers are bounded far below
         // `u64::MAX` and `block_env().number()` is only `U256` for ABI uniformity.
         // (Unlike the block *timestamp*, which the EIP-8130 executor converts with
@@ -63,7 +76,16 @@ impl<'a> JournalStorageProvider<'a> {
         let beneficiary = internals.block_env().beneficiary();
         let origin = internals.tx_origin();
 
-        Self { internals, caller, block_number, timestamp, chain_id, beneficiary, origin }
+        Self {
+            internals,
+            caller,
+            block_number,
+            timestamp,
+            chain_id,
+            beneficiary,
+            origin,
+            storage_features,
+        }
     }
 }
 
@@ -200,6 +222,10 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         0
     }
 
+    fn storage_features(&self) -> StorageFeatures {
+        self.storage_features
+    }
+
     fn is_static(&self) -> bool {
         false
     }
@@ -240,7 +266,7 @@ mod tests {
     use revm::{database::EmptyDB, primitives::hardfork::SpecId, state::Bytecode};
 
     use super::JournalStorageProvider;
-    use crate::provider::PrecompileStorageProvider;
+    use crate::provider::{PrecompileStorageProvider, StorageFeatures};
 
     const ADDR: Address = Address::repeat_byte(0x42);
 
@@ -250,7 +276,11 @@ mod tests {
     fn sstore_then_sload_roundtrips_without_gas() {
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
         let mut provider =
-            JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), Address::ZERO);
+            JournalStorageProvider::new(
+                EvmInternals::from_context(&mut ctx),
+                Address::ZERO,
+                StorageFeatures::Cobalt,
+            );
 
         let key = U256::from(7);
         let value = U256::from(99);
@@ -268,7 +298,11 @@ mod tests {
     fn tstore_then_tload_roundtrips_without_gas() {
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
         let mut provider =
-            JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), Address::ZERO);
+            JournalStorageProvider::new(
+                EvmInternals::from_context(&mut ctx),
+                Address::ZERO,
+                StorageFeatures::Cobalt,
+            );
         let key = U256::from(7);
         let value = U256::from(99);
 
@@ -283,7 +317,11 @@ mod tests {
     fn set_code_persists_without_gas() {
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
         let mut provider =
-            JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), Address::ZERO);
+            JournalStorageProvider::new(
+                EvmInternals::from_context(&mut ctx),
+                Address::ZERO,
+                StorageFeatures::Cobalt,
+            );
 
         let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
         let expected_hash = code.hash_slow();
@@ -301,7 +339,11 @@ mod tests {
     fn gas_deduction_is_a_noop() {
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
         let mut provider =
-            JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), Address::ZERO);
+            JournalStorageProvider::new(
+                EvmInternals::from_context(&mut ctx),
+                Address::ZERO,
+                StorageFeatures::Cobalt,
+            );
 
         provider.deduct_gas(1_000_000).unwrap();
         provider.deduct_state_gas(1_000_000).unwrap();

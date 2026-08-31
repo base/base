@@ -24,7 +24,7 @@ use alloy_primitives::U256;
 
 use crate::{
     error::Result,
-    provider::{FromWord, Layout, StorableType, StorageOps},
+    provider::{FromWord, Layout, StorableType, StorageFeatures, StorageOps},
 };
 
 /// A helper struct to support packing elements into a single slot. Represents an
@@ -49,6 +49,15 @@ impl StorageOps for PackedSlot {
     fn store(&mut self, _slot: U256, value: U256) -> Result<()> {
         self.0 = value;
         Ok(())
+    }
+
+    // A packed slot only ever holds `Packable` primitives; the `dynamic_storage_tail_cleanup`
+    // path this feature gates never triggers here (dynamic types are `Layout::Slots(_)` and
+    // route through the full-slot `Slot`/`TransientOps` handlers). `Legacy` is the correct
+    // pin — the value is defensive, and it is declared explicitly (not defaulted) so the
+    // fork-sensitive dispatch never inherits an implicit value.
+    fn storage_features(&self) -> StorageFeatures {
+        StorageFeatures::Legacy
     }
 }
 

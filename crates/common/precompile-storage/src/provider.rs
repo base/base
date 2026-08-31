@@ -105,9 +105,12 @@ pub trait PrecompileStorageProvider {
     fn reservoir(&self) -> u64;
 
     /// Returns the active persistent-storage features.
-    fn storage_features(&self) -> StorageFeatures {
-        StorageFeatures::Legacy
-    }
+    ///
+    /// Required — no default. Deleting the default forces every provider to
+    /// declare its own features so a Cobalt-active fork can never silently
+    /// execute under `Legacy` semantics. See the equivalent removal on
+    /// [`StorageOps::storage_features`].
+    fn storage_features(&self) -> StorageFeatures;
 
     /// Returns whether the current call context is static.
     fn is_static(&self) -> bool;
@@ -160,9 +163,11 @@ pub trait StorageOps {
     /// Loads a value from the provided slot.
     fn load(&self, slot: U256) -> Result<U256>;
     /// Returns the active persistent-storage features.
-    fn storage_features(&self) -> StorageFeatures {
-        StorageFeatures::Legacy
-    }
+    ///
+    /// Required — no default. Every ops implementation must delegate to (or
+    /// explicitly declare) its features so dynamic types (`Vec`, `bytes_like`)
+    /// cannot silently execute under `Legacy` semantics when Cobalt is active.
+    fn storage_features(&self) -> StorageFeatures;
 }
 
 /// Fork-dependent features for persistent storage writes.

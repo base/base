@@ -50,7 +50,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use base_common_consensus::{
     AccountChange, Delegation, Eip8130Constants, Eip8130Contracts, Predeploys,
 };
-use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
+use base_common_precompiles::{NonceManagerStorage, TxContextStorage, UpgradeGatedStorageFeatures};
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationEvents, AccountConfigurationStorage, ApplyError,
     DelegationEffect, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
@@ -785,8 +785,15 @@ impl Eip8130Executor {
         // a different path and skew the estimate. No signature is verified here.
         let payer = tx.payer.unwrap_or(sender);
 
+        // Pin persistent-storage semantics to the currently-active upgrade so any
+        // dynamic storage field the estimation path reads/writes is treated
+        // identically to inclusion. Snapshot the spec before borrowing `ctx`
+        // mutably for `EvmInternals`.
+        let storage_features =
+            UpgradeGatedStorageFeatures::from_upgrade(ctx.cfg().spec().upgrade());
+
         let internals = EvmInternals::from_context(ctx);
-        let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
+        let mut provider = JournalStorageProvider::new(internals, Address::ZERO, storage_features);
 
         StorageCtx::enter(&mut provider, |sctx| {
             let nonce_mgr = NonceManagerStorage::new(sctx);
@@ -965,8 +972,15 @@ impl Eip8130Executor {
             return Err(BaseTransactionError::eip8130("transaction validity window has expired"));
         }
 
+        // Pin persistent-storage semantics to the currently-active upgrade so
+        // account-config / nonce-manager writes performed here match the fork's
+        // Vec/bytes semantics exactly (no silent `Legacy` fallback). Snapshot
+        // the spec before the mutable borrow for `EvmInternals`.
+        let storage_features =
+            UpgradeGatedStorageFeatures::from_upgrade(ctx.cfg().spec().upgrade());
+
         let internals = EvmInternals::from_context(ctx);
-        let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
+        let mut provider = JournalStorageProvider::new(internals, Address::ZERO, storage_features);
 
         StorageCtx::enter(&mut provider, |sctx| {
             // Ordering note: the apply step (1) and code effects (2) write journal
@@ -3051,8 +3065,11 @@ mod tests {
         let actor_id = AccountConfigurationStorage::self_actor_id(signer_addr);
         {
             let ctx = evm.ctx_mut();
+            let storage_features =
+                UpgradeGatedStorageFeatures::from_upgrade(ctx.cfg().spec().upgrade());
             let internals = EvmInternals::from_context(ctx);
-            let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
+            let mut provider =
+                JournalStorageProvider::new(internals, Address::ZERO, storage_features);
             StorageCtx::enter(&mut provider, |sctx| {
                 let mut acc = AccountConfigurationStorage::new(sctx);
                 acc.actor_config

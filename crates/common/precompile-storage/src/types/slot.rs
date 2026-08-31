@@ -129,6 +129,10 @@ impl StorageOps for TransientOps<'_> {
     fn store(&mut self, slot: U256, value: U256) -> Result<()> {
         self.storage.tstore(self.address, slot, value)
     }
+
+    fn storage_features(&self) -> StorageFeatures {
+        self.storage.storage_features()
+    }
 }
 
 impl<'a, T: Storable> Slot<'a, T> {
