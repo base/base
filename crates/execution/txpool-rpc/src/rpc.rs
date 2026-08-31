@@ -1,8 +1,9 @@
 //! RPC implementation for transaction submission, status queries, and pool management.
 
-use alloy_consensus::BlockHeader;
+use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{Address, Bytes, TxHash};
 use base_common_chains::Upgrades;
+use base_common_consensus::EIP8130_TX_TYPE_ID;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, ValidityPredicate,
 };
@@ -23,13 +24,13 @@ use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool}
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-/// Rejection message returned when `base_sendRawTransactionValidity` is called before the Cobalt
-/// hard fork is active at the latest block.
+/// Rejection message returned when an EIP-8130 (account abstraction) validity transaction is
+/// submitted before the Cobalt hard fork is active at the latest block.
 ///
-/// Validity transactions carry EIP-8130 semantics, which are gated behind Cobalt, so the RPC method
-/// is unavailable until the fork activates.
-pub const VALIDITY_TX_PRE_COBALT_RPC_ERROR: &str = "base_sendRawTransactionValidity is gated behind \
-     the Cobalt hard fork; validity transactions are not accepted before Cobalt is active";
+/// EIP-8130 validity transactions are fork-gated on Cobalt; other transaction types (e.g. EIP-1559)
+/// carry validity predicates under the experimental flag alone.
+pub const VALIDITY_TX_PRE_COBALT_RPC_ERROR: &str = "EIP-8130 validity transactions are gated behind \
+     the Cobalt hard fork; they are not accepted before Cobalt is active";
 
 /// The status of a transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -209,14 +210,6 @@ where
         &self,
         request: SendRawTransactionValidityRequest,
     ) -> RpcResult<TxHash> {
-        if !self.is_cobalt_active_at_latest()? {
-            return Err(ErrorObjectOwned::owned(
-                ErrorCode::InvalidParams.code(),
-                VALIDITY_TX_PRE_COBALT_RPC_ERROR,
-                None::<()>,
-            ));
-        }
-
         ValidityPredicate::validate_batch(&request.validity, self.max_validity_predicates)
             .map_err(|error| {
                 ErrorObjectOwned::owned(
@@ -234,6 +227,18 @@ where
                     None::<()>,
                 )
             })?;
+
+        // EIP-8130 (account abstraction) validity transactions are fork-gated on Cobalt. Other
+        // transaction types (e.g. EIP-1559) carry validity predicates under the experimental flag
+        // alone and are accepted before Cobalt activates.
+        if transaction.ty() == EIP8130_TX_TYPE_ID && !self.is_cobalt_active_at_latest()? {
+            return Err(ErrorObjectOwned::owned(
+                ErrorCode::InvalidParams.code(),
+                VALIDITY_TX_PRE_COBALT_RPC_ERROR,
+                None::<()>,
+            ));
+        }
+
         let tx_hash = *transaction.hash();
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseRethNode,
@@ -297,7 +302,11 @@ mod tests {
     use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use base_common_consensus::BasePrimitives;
+    use base_common_chains::ChainConfig;
+    use base_common_consensus::{
+        BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, Eip8130Signed,
+        TxEip8130,
+    };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_observability_events::{
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
@@ -386,6 +395,34 @@ mod tests {
         };
         let signature = signer.sign_hash_sync(&tx.signature_hash()).expect("test signer");
         tx.into_signed(signature).encoded_2718().into()
+    }
+
+    /// Builds a raw, EOA-recoverable EIP-8130 transaction with a k1 sender authenticator.
+    fn signed_eip8130(signer: &PrivateKeySigner) -> Bytes {
+        let tx = TxEip8130 {
+            chain_id: ChainConfig::mainnet().chain_id,
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).expect("test signer");
+        // The EOA sender authenticator is a canonical 65-byte `r || s || v` blob with `v` in
+        // Electrum notation (`27`/`28`), which is what recovery requires.
+        let mut sender_auth = [0u8; 65];
+        sender_auth[..32].copy_from_slice(&signature.r().to_be_bytes::<32>());
+        sender_auth[32..64].copy_from_slice(&signature.s().to_be_bytes::<32>());
+        sender_auth[64] = 27 + u8::from(signature.v());
+        let signed = Eip8130Signed::new(tx, Bytes::from(sender_auth.to_vec()), Bytes::new());
+        ConsensusPooledTransaction::Eip8130(signed).encoded_2718().into()
     }
 
     #[test]
@@ -497,7 +534,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_before_cobalt() {
+    async fn send_raw_transaction_validity_rejects_eip8130_before_cobalt() {
+        let signer = PrivateKeySigner::random();
+        let raw = signed_eip8130(&signer);
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_cobalt_provider());
+        let request =
+            SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
+
+        let error = rpc
+            .send_raw_transaction_validity(request)
+            .await
+            .expect_err("EIP-8130 validity transactions should be rejected before Cobalt");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert_eq!(error.message(), VALIDITY_TX_PRE_COBALT_RPC_ERROR);
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_accepts_eip1559_before_cobalt() {
+        // EIP-1559 validity transactions are gated by the experimental flag alone, not by Cobalt,
+        // so they clear the fork gate before Cobalt activates. The admission event fires only once
+        // the gate is cleared; the noop pool then rejects insertion.
+        let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
         let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_cobalt_provider());
@@ -507,10 +565,17 @@ mod tests {
         let error = rpc
             .send_raw_transaction_validity(request)
             .await
-            .expect_err("validity transactions should be rejected before Cobalt activation");
+            .expect_err("the noop pool rejects insertion after the fork gate is cleared");
 
-        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
-        assert_eq!(error.message(), VALIDITY_TX_PRE_COBALT_RPC_ERROR);
+        assert_ne!(error.message(), VALIDITY_TX_PRE_COBALT_RPC_ERROR);
+        assert!(
+            capture
+                .events()
+                .iter()
+                .any(|event| event.event_type
+                    == TransactionEventType::TxpoolSendRawTransactionValidity),
+            "admission event should fire once the Cobalt gate is cleared for EIP-1559"
+        );
     }
 
     #[tokio::test]
