@@ -302,7 +302,7 @@ impl BatchEncoder {
         );
 
         self.egress.invalidate_artifacts(&affected_artifacts);
-        BatcherMetrics::pending_frames().set(self.egress.ready_frame_count() as f64);
+        BatcherMetrics::pending_frames().set(self.egress.artifacts().ready_frame_count() as f64);
         self.channels.truncate(replay_idx);
         self.block_cursor = self.block_cursor.min(replay_from);
     }
@@ -381,7 +381,8 @@ impl BatchEncoder {
                 self.channels.iter().take(channels_to_prune).map(Channel::id).collect();
             self.channels.drain(..channels_to_prune);
             self.egress.prune_channels(&channel_ids);
-            BatcherMetrics::pending_frames().set(self.egress.ready_frame_count() as f64);
+            BatcherMetrics::pending_frames()
+                .set(self.egress.artifacts().ready_frame_count() as f64);
         }
 
         // Remove the safe block prefix and rebase every remaining block-relative offset.
@@ -529,7 +530,7 @@ impl BatchPipeline for BatchEncoder {
         self.next_id += 1;
         let frame_count = submission.frame_count();
         let blob_count = submission.blob_count();
-        BatcherMetrics::pending_frames().set(self.egress.ready_frame_count() as f64);
+        BatcherMetrics::pending_frames().set(self.egress.artifacts().ready_frame_count() as f64);
         if let Some(channel) = self.channels.iter().rev().find(|channel| channel.framing_complete())
         {
             BatcherMetrics::channel_num_frames().set(channel.frame_count() as f64);
@@ -583,7 +584,7 @@ impl BatchPipeline for BatchEncoder {
             return;
         };
 
-        BatcherMetrics::pending_frames().set(self.egress.ready_frame_count() as f64);
+        BatcherMetrics::pending_frames().set(self.egress.artifacts().ready_frame_count() as f64);
 
         debug!(
             id = ?id,
