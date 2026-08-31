@@ -222,12 +222,13 @@ struct RecentShadowBlocksQuery {
 }
 
 const DEFAULT_RECENT_LIMIT: i64 = 25;
+const MAX_RECENT_LIMIT: i64 = 1000;
 
-/// No upper bound: this endpoint is consumed server-to-server. Absent falls back
-/// to the default; anything below 1 floors at 1 so a malformed value cannot make
-/// Postgres reject the query.
+/// Absent falls back to the default; the result is clamped to [1, MAX] so a
+/// malformed low value cannot make Postgres reject the query and an oversized
+/// value cannot force an unbounded scan.
 fn resolve_recent_limit(limit: Option<i64>) -> i64 {
-    limit.unwrap_or(DEFAULT_RECENT_LIMIT).max(1)
+    limit.unwrap_or(DEFAULT_RECENT_LIMIT).clamp(1, MAX_RECENT_LIMIT)
 }
 
 /// The most recent resolved shadow blocks, newest first, paged backwards by `before`.
@@ -525,11 +526,12 @@ mod tests {
     }
 
     #[test]
-    fn resolve_recent_limit_defaults_and_floors() {
+    fn resolve_recent_limit_defaults_and_clamps() {
         assert_eq!(resolve_recent_limit(None), DEFAULT_RECENT_LIMIT);
         assert_eq!(resolve_recent_limit(Some(50)), 50);
         assert_eq!(resolve_recent_limit(Some(0)), 1);
         assert_eq!(resolve_recent_limit(Some(-5)), 1);
+        assert_eq!(resolve_recent_limit(Some(MAX_RECENT_LIMIT + 1)), MAX_RECENT_LIMIT);
     }
 
     #[test]
