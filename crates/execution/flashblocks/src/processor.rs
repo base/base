@@ -2,7 +2,10 @@
 
 use std::{
     collections::{BTreeMap, VecDeque},
-    sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard},
+    sync::{
+        Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -29,7 +32,7 @@ use reth_revm::{State, database::StateProviderDatabase};
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::{
     sync::{Mutex, broadcast::Sender, mpsc::Receiver},
-    time::sleep,
+    time::{MissedTickBehavior, interval, sleep},
 };
 
 use crate::{
@@ -182,6 +185,8 @@ pub struct StateProcessor<Client> {
     live_state: StdMutex<Option<LivePendingState>>,
     quarantined_flashblocks: StdMutex<VecDeque<(BlockNumber, PayloadId)>>,
     max_pending_blocks_depth: u64,
+    recovery_generation: Arc<AtomicU64>,
+    deferred_canonical: StdMutex<Option<RecoveredBlock<BaseBlock>>>,
 }
 
 impl<Client> StateProcessor<Client>
@@ -225,6 +230,7 @@ where
         client: Client,
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
         max_pending_blocks_depth: u64,
+        recovery_generation: Arc<AtomicU64>,
         rx: Arc<Mutex<Receiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
@@ -241,6 +247,8 @@ where
             live_state: StdMutex::new(None),
             quarantined_flashblocks: StdMutex::new(VecDeque::new()),
             max_pending_blocks_depth,
+            recovery_generation,
+            deferred_canonical: StdMutex::new(None),
         }
     }
 
@@ -300,7 +308,7 @@ where
         &self,
         update: &StateUpdate,
         recovering: &mut bool,
-    ) -> Option<(SealedHeader, bool)> {
+    ) -> Option<(SealedHeader, bool, u64)> {
         let mut provider_retries = 0;
         let best = loop {
             if let Some(best) = self.best_canonical_header() {
@@ -317,6 +325,7 @@ where
             provider_retries += 1;
             sleep(Duration::from_millis(25)).await;
         };
+        let generation = self.recovery_generation.load(Ordering::Acquire);
 
         if self.is_quarantined_flashblock(update) {
             Metrics::pending_stale_events_skipped().increment(1);
@@ -327,6 +336,14 @@ where
         let pending_is_based_on_best = pending_blocks
             .as_ref()
             .is_some_and(|pending| self.pending_tracks_canonical_tip(pending, &best));
+        if let StateUpdate::Flashblock(flashblock) = update
+            && (flashblock.metadata.block_number == 0
+                || flashblock.base.as_ref().is_some_and(|base| base.block_number == 0))
+        {
+            self.quarantine_flashblock(flashblock);
+            Metrics::pending_stale_events_skipped().increment(1);
+            return None;
+        }
         if let StateUpdate::Flashblock(flashblock) = update
             && flashblock.index >= MAX_FLASHBLOCKS_PER_PAYLOAD
         {
@@ -377,7 +394,7 @@ where
                         return None;
                     }
                     if flashblock.payload_id != payload_id {
-                        return Some((best, false));
+                        return Some((best, false, generation));
                     }
                 }
                 if flashblock.payload_id != payload_id || flashblock.index == 0 {
@@ -409,13 +426,13 @@ where
         );
 
         match preflight {
-            UpdatePreflight::Process => Some((best, false)),
+            UpdatePreflight::Process => Some((best, false, generation)),
             UpdatePreflight::ResumeRecovery => {
                 if pending_blocks.is_some() && !pending_is_based_on_best {
                     self.enter_recovery(best.number()).await;
                     *recovering = true;
                 }
-                Some((best, true))
+                Some((best, true, generation))
             }
             UpdatePreflight::Skip => {
                 if let StateUpdate::Flashblock(flashblock) = update
@@ -431,6 +448,14 @@ where
                 None
             }
             UpdatePreflight::EnterRecovery => {
+                if let StateUpdate::Canonical(block) = update
+                    && block.number > best.number()
+                {
+                    *self
+                        .deferred_canonical
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(block.clone());
+                }
                 self.enter_recovery(best.number()).await;
                 *recovering = true;
                 Metrics::pending_stale_events_skipped().increment(1);
@@ -442,8 +467,40 @@ where
     /// Processes updates from the queue until the channel closes.
     pub async fn start(&self) {
         let mut recovering = false;
-        while let Some(update) = self.rx.lock().await.recv().await {
-            let Some((best, resuming_recovery)) =
+        let mut deferred_interval = interval(Duration::from_millis(100));
+        deferred_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        loop {
+            let update = tokio::select! {
+                update = async { self.rx.lock().await.recv().await } => {
+                    let Some(update) = update else {
+                        break;
+                    };
+                    update
+                }
+                _ = deferred_interval.tick() => {
+                    let deferred = self
+                        .deferred_canonical
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .clone();
+                    let Some(deferred) = deferred else {
+                        continue;
+                    };
+                    if self
+                        .best_canonical_header()
+                        .is_none_or(|best| best.number() < deferred.number)
+                    {
+                        continue;
+                    }
+                    self.deferred_canonical
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .take()
+                        .map(StateUpdate::Canonical)
+                        .expect("deferred canonical remains available")
+                }
+            };
+            let Some((best, resuming_recovery, generation)) =
                 self.preflight_update(&update, &mut recovering).await
             else {
                 continue;
@@ -455,6 +512,11 @@ where
                     debug!(message = "processing canonical block", block_number = block.number);
                     match self.process_canonical_block(prev_pending_blocks, &block) {
                         Ok((new_pending_blocks, requires_recovery)) => {
+                            if self.recovery_generation.load(Ordering::Acquire) != generation {
+                                self.enter_recovery(best.number()).await;
+                                recovering = true;
+                                continue;
+                            }
                             if requires_recovery {
                                 self.enter_recovery(best.number()).await;
                                 recovering = true;
@@ -511,7 +573,11 @@ where
                                     );
                                     for flashblock in cached {
                                         let cached_update = StateUpdate::Flashblock(flashblock);
-                                        let Some((cached_best, cached_resuming_recovery)) = self
+                                        let Some((
+                                            cached_best,
+                                            cached_resuming_recovery,
+                                            cached_generation,
+                                        )) = self
                                             .preflight_update(&cached_update, &mut recovering)
                                             .await
                                         else {
@@ -532,6 +598,7 @@ where
                                                 flashblock,
                                                 !cached_resuming_recovery,
                                                 &cached_best,
+                                                cached_generation,
                                             )
                                             .await;
                                         if requires_recovery {
@@ -567,6 +634,7 @@ where
                             flashblock,
                             !resuming_recovery,
                             &best,
+                            generation,
                         )
                         .await;
                     if requires_recovery {
@@ -585,6 +653,7 @@ where
         flashblock: Flashblock,
         cache_on_missing_canonical_header: bool,
         expected_best: &SealedHeader,
+        expected_generation: u64,
     ) -> (bool, bool) {
         let start_time = Instant::now();
         let mut provider_retries = 0;
@@ -600,6 +669,10 @@ where
 
         match result {
             Ok(new_pending_blocks) => {
+                if self.recovery_generation.load(Ordering::Acquire) != expected_generation {
+                    self.enter_recovery(expected_best.number()).await;
+                    return (false, true);
+                }
                 let applied = new_pending_blocks.is_some();
                 if let Some(ref pb) = new_pending_blocks {
                     let Some(current_best) = self.best_canonical_header() else {
@@ -1206,8 +1279,10 @@ where
                 .push(flashblock.clone());
         }
 
-        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
-        let canonical_block = earliest_block_number - 1;
+        let earliest_block_number =
+            *flashblocks_per_block.keys().min().ok_or(ProtocolError::EmptyFlashblocks)?;
+        let canonical_block =
+            earliest_block_number.checked_sub(1).ok_or(ProtocolError::ZeroBlockNumber)?;
         let mut last_block_header = self
             .client
             .header_by_number(canonical_block)

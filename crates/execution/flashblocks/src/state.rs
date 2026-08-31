@@ -1,6 +1,9 @@
 //! Flashblocks state management.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use alloy_consensus::Header;
 use arc_swap::{ArcSwapOption, Guard};
@@ -32,6 +35,7 @@ pub struct FlashblocksState {
     rx: Arc<Mutex<mpsc::Receiver<StateUpdate>>>,
     flashblock_sender: Sender<Arc<PendingBlocks>>,
     max_pending_blocks_depth: u64,
+    recovery_generation: Arc<AtomicU64>,
 }
 
 impl FlashblocksState {
@@ -50,6 +54,7 @@ impl FlashblocksState {
             rx: Arc::new(Mutex::new(rx)),
             flashblock_sender,
             max_pending_blocks_depth,
+            recovery_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -69,6 +74,7 @@ impl FlashblocksState {
             client,
             Arc::clone(&self.pending_blocks),
             self.max_pending_blocks_depth,
+            Arc::clone(&self.recovery_generation),
             Arc::clone(&self.rx),
             self.flashblock_sender.clone(),
         );
@@ -86,6 +92,7 @@ impl FlashblocksState {
                 info!(message = "added canonical block to processing queue", block_number)
             }
             Err(e) => {
+                self.recovery_generation.fetch_add(1, Ordering::AcqRel);
                 self.pending_blocks.swap(None);
                 error!(message = "could not add canonical block to processing queue", block_number, error = %e);
             }
@@ -105,6 +112,7 @@ impl FlashblocksReceiver for FlashblocksState {
                 );
             }
             Err(e) => {
+                self.recovery_generation.fetch_add(1, Ordering::AcqRel);
                 self.pending_blocks.swap(None);
                 error!(message = "could not add flashblock to processing queue", block_number, flashblock_index, error = %e);
             }

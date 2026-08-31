@@ -36,6 +36,10 @@ pub enum ProtocolError {
         /// Block number declared by metadata.
         metadata: u64,
     },
+
+    /// Pending flashblocks cannot target genesis block zero.
+    #[error("flashblock block number must be greater than zero")]
+    ZeroBlockNumber,
 }
 
 /// Errors related to state provider and infrastructure operations.
@@ -214,6 +218,10 @@ mod tests {
     #[case::block_number_mismatch(
         ProtocolError::BlockNumberMismatch { base: 11, metadata: 12 },
         "flashblock block number mismatch: base 11, metadata 12"
+    )]
+    #[case::zero_block_number(
+        ProtocolError::ZeroBlockNumber,
+        "flashblock block number must be greater than zero"
     )]
     fn test_protocol_error_display(#[case] error: ProtocolError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);

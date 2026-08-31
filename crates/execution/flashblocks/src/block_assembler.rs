@@ -73,6 +73,9 @@ impl BlockAssembler {
     pub fn assemble(flashblocks: &[Flashblock]) -> Result<AssembledBlock> {
         let first = flashblocks.first().ok_or(ProtocolError::EmptyFlashblocks)?;
         let base = first.base.clone().ok_or(ProtocolError::MissingBase)?;
+        if base.block_number == 0 || first.metadata.block_number == 0 {
+            return Err(ProtocolError::ZeroBlockNumber.into());
+        }
         if base.block_number != first.metadata.block_number {
             return Err(ProtocolError::BlockNumberMismatch {
                 base: base.block_number,
@@ -321,6 +324,19 @@ mod tests {
                 base: 100,
                 metadata: 101
             }))
+        ));
+    }
+
+    #[test]
+    fn test_assemble_rejects_block_zero() {
+        let mut flashblock = create_test_flashblock(0, true);
+        flashblock.base.as_mut().expect("test base exists").block_number = 0;
+        flashblock.metadata = Metadata::new(0);
+
+        let result = BlockAssembler::assemble(&[flashblock]);
+        assert!(matches!(
+            result,
+            Err(crate::StateProcessorError::Protocol(ProtocolError::ZeroBlockNumber))
         ));
     }
 }

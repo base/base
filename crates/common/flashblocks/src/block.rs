@@ -1,6 +1,6 @@
 //! Contains the [`Flashblock`] type used in Flashblocks.
 
-use std::io::Read;
+use std::{io::Read, mem::size_of};
 
 use alloy_rpc_types_engine::PayloadId;
 use bytes::Bytes;
@@ -40,13 +40,41 @@ impl Flashblock {
         let metadata: Metadata = serde_json::from_value(payload.metadata.clone())
             .map_err(FlashblockDecodeError::MetadataParse)?;
 
-        Ok(Self {
+        let flashblock = Self {
             payload_id: payload.payload_id,
             index: payload.index,
             base: payload.base,
             diff: payload.diff,
             metadata,
-        })
+        };
+        let retained_bytes = flashblock.estimated_retained_bytes();
+        if retained_bytes > MAX_DECOMPRESSED_FLASHBLOCK_BYTES {
+            return Err(FlashblockDecodeError::PayloadTooLarge {
+                given: retained_bytes,
+                max: MAX_DECOMPRESSED_FLASHBLOCK_BYTES,
+            });
+        }
+
+        Ok(flashblock)
+    }
+
+    /// Estimates heap and inline bytes retained by this decoded flashblock.
+    pub fn estimated_retained_bytes(&self) -> usize {
+        let base_bytes = self.base.as_ref().map_or(0, |base| base.extra_data.len());
+        let transaction_bytes = self.diff.transactions.iter().fold(0usize, |total, transaction| {
+            total
+                .saturating_add(size_of::<alloy_primitives::Bytes>())
+                .saturating_add(transaction.len())
+        });
+        size_of::<Self>()
+            .saturating_add(base_bytes)
+            .saturating_add(transaction_bytes)
+            .saturating_add(
+                self.diff
+                    .withdrawals
+                    .len()
+                    .saturating_mul(size_of::<alloy_rpc_types_eth::Withdrawal>()),
+            )
     }
 
     fn try_parse_message(bytes: Bytes) -> Result<String, FlashblockDecodeError> {
