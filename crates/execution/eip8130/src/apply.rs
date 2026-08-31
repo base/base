@@ -1565,10 +1565,7 @@ mod tests {
         // nothing; exactly 52 bytes attaches; any other length rejects.
         assert_eq!(AccountChangeApplier::slice_policy(&[]).unwrap(), (Address::ZERO, B256::ZERO));
         assert!(!AccountChangeApplier::policy_attached(&[]));
-        assert_eq!(
-            AccountChangeApplier::slice_policy(&[1]),
-            Err(ApplyError::InvalidPolicyData)
-        );
+        assert_eq!(AccountChangeApplier::slice_policy(&[1]), Err(ApplyError::InvalidPolicyData));
 
         let mut data = Vec::new();
         data.extend_from_slice(MANAGER.as_slice());

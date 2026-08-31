@@ -904,7 +904,11 @@ mod tests {
             acc.actors
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_NONCE, 0))
+                .write(pack(
+                    K1,
+                    Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_NONCE,
+                    0,
+                ))
                 .unwrap();
             acc.actors
                 .at_mut(&pid)

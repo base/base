@@ -603,13 +603,12 @@ impl IntrinsicGas {
         if payload.len() < OFFSET_WORD + 32 {
             return false;
         }
-        let Ok(offset) = usize::try_from(U256::from_be_slice(&payload[OFFSET_WORD..OFFSET_WORD + 32]))
+        let Ok(offset) =
+            usize::try_from(U256::from_be_slice(&payload[OFFSET_WORD..OFFSET_WORD + 32]))
         else {
             return false;
         };
-        offset
-            .checked_add(32)
-            .is_some_and(|length_end| length_end <= payload.len())
+        offset.checked_add(32).is_some_and(|length_end| length_end <= payload.len())
             && U256::from_be_slice(&payload[offset..offset + 32])
                 == U256::from(Eip8130Constants::POLICY_DATA_LEN)
     }

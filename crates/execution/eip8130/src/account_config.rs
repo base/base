@@ -186,7 +186,10 @@ impl AccountConfigurationStorage<'_> {
         if !Eip8130Constants::sender_is_policy_gated(scope) {
             return Ok((Address::ZERO, B256::ZERO));
         }
-        Ok((self.get_policy_manager(account, actor_id)?, self.get_policy_commitment(account, actor_id)?))
+        Ok((
+            self.get_policy_manager(account, actor_id)?,
+            self.get_policy_commitment(account, actor_id)?,
+        ))
     }
 
     /// Reads only the stored policy *manager* slot for `(account, actor_id)`,

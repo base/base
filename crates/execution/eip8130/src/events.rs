@@ -178,8 +178,7 @@ mod tests {
         };
         let manager = address!("0x00000000000000000000000000000000000000cc");
         let commitment = B256::repeat_byte(0x11);
-        let data =
-            AccountConfigurationEvents::pack_actor_data(&config, manager, commitment, true);
+        let data = AccountConfigurationEvents::pack_actor_data(&config, manager, commitment, true);
         assert_eq!(data.len(), 84);
         assert_eq!(&data[32..52], manager.as_slice());
         assert_eq!(&data[52..], commitment.as_slice());
