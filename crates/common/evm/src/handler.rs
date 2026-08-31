@@ -1586,4 +1586,142 @@ mod tests {
             "pre-Cobalt 7702 auths must not consult the keystore"
         );
     }
+
+    /// Directly exercises the EIP-2780 auth-list apply. That path is gated on
+    /// `is_amsterdam_eip2780_enabled()`, which no `BaseSpecId` reaches yet (the
+    /// highest upgrade maps to Osaka, EIP-2780 lands in Amsterdam), so it cannot
+    /// be driven through the handler. We call the inner function with explicit
+    /// per-authority gas costs to cover the keystore gate and the interleaved
+    /// state/regular gas charges.
+    ///
+    /// Returns `(oog, delegated_per_authority, written_per_authority)`.
+    fn run_eip2780_auth_list(
+        db: InMemoryDB,
+        authorities: &[Address],
+        auths: Vec<RecoveredAuthorization>,
+        account_write_cost: u64,
+        new_account_state_gas: u64,
+        delegation_bytes_state_gas: u64,
+        gas: &mut GasTracker,
+    ) -> (bool, Vec<bool>, Vec<bool>) {
+        let caller = Address::repeat_byte(0x33);
+        let ctx = standard_keystore_context(db, BaseUpgrade::Cobalt)
+            .with_tx(standard_7702_tx(caller, auths));
+        let mut evm = ctx.build_base();
+        let chain_id = evm.ctx().cfg().chain_id();
+        let mut written: HashSet<Address> = HashSet::default();
+
+        let oog = {
+            let (tx, journal) = evm.ctx_mut().tx_journal_mut();
+            apply_auth_list_eip2780_standard_keystore::<
+                _,
+                EVMError<core::convert::Infallible, BaseTransactionError>,
+            >(
+                chain_id,
+                0,
+                tx.authorization_list(),
+                journal,
+                account_write_cost,
+                new_account_state_gas,
+                delegation_bytes_state_gas,
+                &mut written,
+                gas,
+            )
+            .expect("EIP-2780 auth list apply must not error on an infallible db")
+        };
+
+        let delegated = authorities
+            .iter()
+            .map(|authority| {
+                evm.ctx_mut()
+                    .journal_mut()
+                    .load_account_with_code(*authority)
+                    .unwrap()
+                    .info
+                    .code
+                    .as_ref()
+                    .is_some_and(|code| code.is_eip7702())
+            })
+            .collect();
+        let written_flags =
+            authorities.iter().map(|authority| written.contains(authority)).collect();
+
+        (oog, delegated, written_flags)
+    }
+
+    #[test]
+    fn eip2780_records_gas_for_accepted_authority() {
+        let authority = Address::repeat_byte(0x11);
+        let delegate = Address::repeat_byte(0x44);
+        let mut gas = GasTracker::new(1_000, 1_000, 0);
+
+        let (oog, delegated, written) = run_eip2780_auth_list(
+            standard_keystore_db(authority, None),
+            &[authority],
+            vec![recovered_auth(authority, delegate)],
+            100, // account_write_cost
+            0,   // new_account_state_gas (authority is already funded, so unused)
+            50,  // delegation_bytes_state_gas
+            &mut gas,
+        );
+
+        assert!(!oog, "a fully-funded auth list must not report OOG");
+        assert!(delegated[0], "an accepted authority must be delegated");
+        assert!(written[0], "an accepted authority must be recorded as written");
+        assert_eq!(gas.remaining(), 850, "must charge account_write (100) + delegation_bytes (50)");
+    }
+
+    #[test]
+    fn eip2780_skips_revoked_authority_without_charging_gas() {
+        let authority = Address::repeat_byte(0x11);
+        let delegate = Address::repeat_byte(0x44);
+        let db = standard_keystore_db(authority, Some(pack_inline_self(0, 0, true)));
+        let mut gas = GasTracker::new(1_000, 1_000, 0);
+
+        let (oog, delegated, written) = run_eip2780_auth_list(
+            db,
+            &[authority],
+            vec![recovered_auth(authority, delegate)],
+            100,
+            25,
+            50,
+            &mut gas,
+        );
+
+        assert!(!oog, "skipping a revoked authority is not an OOG");
+        assert!(!delegated[0], "a revoked default EOA must not be delegated");
+        assert!(!written[0], "a skipped authority must not be recorded as written");
+        assert_eq!(gas.remaining(), 1_000, "a skipped authority must not consume gas");
+    }
+
+    #[test]
+    fn eip2780_out_of_gas_midlist_returns_true() {
+        let live_a = Address::repeat_byte(0x11);
+        let live_b = Address::repeat_byte(0x12);
+        let delegate = Address::repeat_byte(0x44);
+        let mut db = standard_keystore_db(live_a, None);
+        db.insert_account_info(
+            live_b,
+            AccountInfo { balance: U256::from(1_000_000), ..Default::default() },
+        );
+
+        // Budget covers the first authority (100 + 50 = 150) but not the second
+        // authority's account-write charge (100): remaining 200 → 50 after the
+        // first, so the second's `record_regular_cost(100)` runs out.
+        let mut gas = GasTracker::new(200, 200, 0);
+
+        let (oog, delegated, _written) = run_eip2780_auth_list(
+            db,
+            &[live_a, live_b],
+            vec![recovered_auth(live_a, delegate), recovered_auth(live_b, delegate)],
+            100,
+            0,
+            50,
+            &mut gas,
+        );
+
+        assert!(oog, "running out mid-list must return Ok(true)");
+        assert!(delegated[0], "the first authority is applied before gas is exhausted");
+        assert!(!delegated[1], "the second authority must not be applied after OOG");
+    }
 }
