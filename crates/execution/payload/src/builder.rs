@@ -11,7 +11,7 @@ use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseTransaction, Predeploys};
+use base_common_consensus::{BaseTransaction, CoinbaseTip, Predeploys};
 use base_common_evm::L1BlockInfo;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
@@ -860,8 +860,9 @@ where
 
             let tx_hash = *tx.hash();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let has_coinbase_tip =
-                tx.as_eip8130().is_some_and(|signed| signed.tx().coinbase_tip().is_some());
+            let has_coinbase_tip = tx
+                .as_eip8130()
+                .is_some_and(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()).is_some());
             if has_validity_predicates {
                 validity_consideration_index += 1;
                 emit_native_validity_event!(
