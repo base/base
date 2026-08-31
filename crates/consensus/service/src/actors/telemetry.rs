@@ -3,6 +3,7 @@
 use std::{
     collections::HashSet,
     convert::Infallible,
+    net::IpAddr,
     path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -10,6 +11,7 @@ use std::{
 
 use base_consensus_engine::EngineState;
 use base_consensus_gossip::{P2pRpcRequest, PeerDump, PeerInfo};
+use base_consensus_peers::BootNode;
 use base_telemetry_client::{
     HttpReportSink, LatencySampler, NodeIdentity, NodeReportBuilder, TelemetryConfig, TelemetryId,
     TelemetryReporter,
@@ -282,21 +284,47 @@ impl TelemetryActor {
 
     /// Builds the network half of a report, resetting the churn counters.
     ///
-    /// `advertised_ip` is deliberately left unset: the ingest server records the address it
-    /// observed, which is the one that actually reached it.
+    /// `advertised_ip` is decoded from the node's own ENR rather than left for the ingest server
+    /// to infer from the connection. The observed address is whichever hop last touched the
+    /// request - a load balancer, or a private range when the node and the collector share a
+    /// network - so it describes the reporting path rather than the node. The ENR carries the
+    /// address the node already publishes to every peer it meets, which is the one that says
+    /// where it actually runs.
     pub async fn net_health(&mut self) -> NetHealth {
         let peer_info = self.local_peer_info().await;
+        let peer_id = peer_info.as_ref().map(|info| info.peer_id.clone());
+        let enr = peer_info.and_then(|info| info.enr);
+        let advertised_ip = enr.as_deref().and_then(Self::advertised_ip);
+
         NetHealth {
             peer_count: self.connected_peers.len() as u32,
             peer_target: self.peer_target,
             discovered_count: self.discovered_peer_count().await,
             peers_joined: std::mem::take(&mut self.peers_joined),
             peers_left: std::mem::take(&mut self.peers_left),
-            peer_id: peer_info.as_ref().map(|info| info.peer_id.clone()),
-            enr: peer_info.and_then(|info| info.enr),
-            advertised_ip: None,
+            peer_id,
+            enr,
+            advertised_ip,
             gossip_error_rate: None,
             rpc_error_rate: None,
+        }
+    }
+
+    /// Decodes the routable address a node record advertises.
+    ///
+    /// An undecodable record costs the report one field and nothing else: telemetry must never
+    /// turn a malformed string into a failed reporting cycle.
+    pub fn advertised_ip(enr: &str) -> Option<IpAddr> {
+        match BootNode::parse_bootnode(enr) {
+            Ok(record) => record.advertised_ip(),
+            Err(error) => {
+                debug!(
+                    target: "telemetry",
+                    error = %error,
+                    "could not decode the local ENR; omitting the advertised address"
+                );
+                None
+            }
         }
     }
 
@@ -398,6 +426,13 @@ mod tests {
 
     use super::*;
 
+    /// A real Base ENR, so the advertised address the actor decodes is a genuine decode rather
+    /// than a value handed to it.
+    const SAMPLE_ENR: &str = "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg";
+
+    /// The address [`SAMPLE_ENR`] advertises.
+    const SAMPLE_ENR_IP: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(54, 145, 88, 85));
+
     /// Answers p2p RPC queries with a fixed peer set for as long as the channel stays open.
     ///
     /// Hand-rolled rather than mocked: the actor talks to the network over a channel of enum
@@ -424,7 +459,7 @@ mod tests {
                     P2pRpcRequest::PeerInfo(out) => {
                         let _ = out.send(PeerInfo {
                             peer_id: "local-peer".to_string(),
-                            enr: Some("enr:local".to_string()),
+                            enr: Some(SAMPLE_ENR.to_string()),
                             ..Default::default()
                         });
                     }
@@ -620,9 +655,23 @@ mod tests {
         assert_eq!(report.net_health.peer_target, Some(64));
         assert_eq!(report.net_health.discovered_count, Some(42));
         assert_eq!(report.net_health.peer_id.as_deref(), Some("local-peer"));
-        assert_eq!(report.net_health.enr.as_deref(), Some("enr:local"));
+        assert_eq!(report.net_health.enr.as_deref(), Some(SAMPLE_ENR));
+        assert_eq!(
+            report.net_health.advertised_ip,
+            Some(SAMPLE_ENR_IP),
+            "the report should carry the address the node publishes to its peers"
+        );
         assert!(report.is_current_schema());
         assert_eq!(delivered.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_an_undecodable_enr_costs_only_the_address() {
+        assert_eq!(
+            TelemetryActor::advertised_ip("enr:not-a-real-record"),
+            None,
+            "a malformed record must yield no address rather than propagate an error"
+        );
     }
 
     #[tokio::test]
