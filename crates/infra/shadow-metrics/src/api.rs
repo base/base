@@ -223,15 +223,19 @@ struct RecentShadowBlocksQuery {
 
 const DEFAULT_RECENT_LIMIT: i64 = 25;
 
+/// No upper bound: this endpoint is consumed server-to-server. Absent falls back
+/// to the default; anything below 1 floors at 1 so a malformed value cannot make
+/// Postgres reject the query.
+fn resolve_recent_limit(limit: Option<i64>) -> i64 {
+    limit.unwrap_or(DEFAULT_RECENT_LIMIT).max(1)
+}
+
 /// The most recent resolved shadow blocks, newest first, paged backwards by `before`.
-///
-/// No upper bound on `limit`: this endpoint is consumed server-to-server. `limit`
-/// only floors at 1 so a malformed value cannot make Postgres reject the query.
 async fn get_recent_shadow_blocks(
     State(state): State<ApiState>,
     Query(query): Query<RecentShadowBlocksQuery>,
 ) -> Result<Json<Vec<ShadowBlockSummary>>, ApiError> {
-    let limit = query.limit.unwrap_or(DEFAULT_RECENT_LIMIT).max(1);
+    let limit = resolve_recent_limit(query.limit);
 
     let repo = state.repo()?;
     let shadows = repo.list_recent(limit, query.before).await?;
@@ -518,6 +522,14 @@ mod tests {
             header: Json(row.payload.block.header().clone()),
             transactions: Json(row.payload.block.body().transactions.clone()),
         }
+    }
+
+    #[test]
+    fn resolve_recent_limit_defaults_and_floors() {
+        assert_eq!(resolve_recent_limit(None), DEFAULT_RECENT_LIMIT);
+        assert_eq!(resolve_recent_limit(Some(50)), 50);
+        assert_eq!(resolve_recent_limit(Some(0)), 1);
+        assert_eq!(resolve_recent_limit(Some(-5)), 1);
     }
 
     #[test]
