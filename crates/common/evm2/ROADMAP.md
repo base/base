@@ -64,10 +64,11 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Post-block balance increments (empty withdrawals for OP) | ⬜ | |
-| `requests` / `blob_gas_used` result fields | ⬜ | |
-| State-gas accounting in cumulative gas | ⬜ | |
-| Full block-level differential parity test | ⬜ | drives reference executor |
+| Post-block balance increments (empty withdrawals for OP) | ✅ | no-op for OP: no block reward, no in-body withdrawals |
+| `blob_gas_used` result field | ✅ | carries the accumulated DA-footprint gas (Phase 3) |
+| State-gas accounting in cumulative gas | ✅ | `tx_gas_used` matches revm in the block parity harness |
+| Full block-level differential parity test | ✅ | drives evm2 executor vs revm sequentially |
+| EIP-7685 `requests` result field | ⬜ | OP emits none today; add if/when a request type lands |
 
 ### Phase 5 — Precompiles
 
