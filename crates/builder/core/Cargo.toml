@@ -248,3 +248,7 @@ harness = false
 [[bench]]
 name = "tx_selection"
 harness = false
+
+[[bench]]
+name = "reorg_state_root"
+harness = false
