@@ -17,8 +17,12 @@ use base_observability_events::TransactionEvent;
 use chrono::Utc;
 use serde_json::json;
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
-use testcontainers::runners::AsyncRunner;
+use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
+
+/// `testcontainers-modules` still defaults to Postgres 11, which rejects CTE
+/// `AS MATERIALIZED` (Postgres 12+). Production RDS is Postgres 17.
+const POSTGRES_TAG: &str = "16-alpine";
 
 struct PostgresHarness {
     database_url: String,
@@ -27,7 +31,7 @@ struct PostgresHarness {
 
 impl PostgresHarness {
     async fn new() -> anyhow::Result<Self> {
-        let container = Postgres::default().start().await?;
+        let container = Postgres::default().with_tag(POSTGRES_TAG).start().await?;
         let port = container.get_host_port_ipv4(5432).await?;
         let database_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
         Ok(Self { database_url, _container: container })
