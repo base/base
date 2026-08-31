@@ -116,7 +116,8 @@ Landed and tested in this spike (revm-free non-test build preserved throughout):
 - **Phase 1 (complete)** — block gas-limit pre-check; executor fork-schedule input
   (`BaseForkActivations`) and irregular-state flush (`IrregularStateChange`).
 - **Phase 2 (complete)** — Canyon create2-deployer, Denim `BaseTime`, and Cobalt EIP-8130
-  system-account transition hooks.
+  system-account transition hooks, with a **differential parity** harness proving byte-identical
+  installed state against the revm reference functions.
 - **Phase 3 (complete)** — Jovian DA-footprint metering + `blob_gas_used`; Azul EIP-7825 per-tx
   gas cap (already enforced by the evm2 handlers, pinned by tests).
 - **Phase 4 (complete)** — block-level differential parity harness (cumulative gas + per-tx
