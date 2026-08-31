@@ -180,6 +180,75 @@ fn rejects_post_regolith_deposit_over_block_gas_limit() {
         .expect_err("post-Regolith deposit over the block gas limit is rejected");
 }
 
+/// Builds a Jovian executor with the given block gas limit and DA-footprint gas scalar.
+fn jovian_executor(block_gas_limit: u64, da_scalar: u128) -> BaseBlockExecutor<'static> {
+    let mut db = InMemoryDB::default();
+    db.insert_account_info(
+        &SENDER,
+        evm2::AccountInfo { balance: U256::from(10u128.pow(18)), nonce: 0, ..Default::default() },
+    );
+    let block = BlockEnv::<BaseEvmTypes> {
+        beneficiary: COINBASE,
+        gas_limit: U256::from(block_gas_limit),
+        ext: L1FeeParams {
+            da_footprint_gas_scalar: Some(U256::from(da_scalar)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let spec = BaseSpecId::new(BaseUpgrade::Jovian);
+    let evm =
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+    BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default())
+}
+
+fn jovian_transfer() -> Recovered<BaseTxEnvelope> {
+    let standard = TxEnvelope::Eip1559(TxEip1559 {
+        chain_id: 1,
+        nonce: 0,
+        gas_limit: 100_000,
+        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: 100,
+        to: TxKind::Call(TARGET),
+        value: U256::ZERO,
+        input: Bytes::new(),
+        access_list: Default::default(),
+    });
+    Recovered::new_unchecked(
+        BaseTxEnvelope::standard(standard, Bytes::from(vec![0x02u8; 120])),
+        SENDER,
+    )
+}
+
+#[test]
+fn jovian_rejects_tx_over_da_footprint_budget() {
+    // A large DA scalar makes even a minimal transaction's DA footprint exceed the block budget.
+    let mut executor = jovian_executor(60_000_000, 1_000_000);
+    let err = executor
+        .execute_transaction(&jovian_transfer())
+        .expect_err("a tx over the block DA footprint budget is rejected");
+    assert!(format!("{err}").contains("DA footprint"), "got: {err}");
+}
+
+#[test]
+fn jovian_accumulates_blob_gas_used() {
+    // A modest DA scalar keeps the footprint within budget; it is surfaced as blob_gas_used.
+    let mut executor = jovian_executor(60_000_000, 1_000);
+    executor.execute_transaction(&jovian_transfer()).expect("tx within DA budget executes");
+    let (_evm, result, _) = executor.finish();
+    assert!(result.blob_gas_used > 0, "the DA footprint is surfaced as blob_gas_used");
+}
+
+#[test]
+fn pre_jovian_block_has_no_da_footprint() {
+    // Before Jovian, the DA footprint is not metered and blob_gas_used stays zero.
+    let mut executor =
+        executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Isthmus), 60_000_000);
+    executor.execute_transaction(&jovian_transfer()).expect("tx executes");
+    let (_evm, result, _) = executor.finish();
+    assert_eq!(result.blob_gas_used, 0, "no DA footprint before Jovian");
+}
+
 #[test]
 fn azul_enforces_eip7825_per_tx_gas_cap() {
     // Azul maps to the Osaka EVM spec, which caps a transaction's gas limit at 2^24 (EIP-7825).

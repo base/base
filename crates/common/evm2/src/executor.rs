@@ -83,6 +83,32 @@ impl core::fmt::Display for BlockGasLimitExceeded {
 
 impl core::error::Error for BlockGasLimitExceeded {}
 
+/// Error returned when a transaction's Jovian DA footprint exceeds the block's remaining DA
+/// footprint budget.
+///
+/// Mirrors the reference `BaseBlockExecutionError::TransactionDaFootprintAboveGasLimit`: from
+/// Jovian, each non-deposit transaction's DA footprint (its FastLZ-estimated compressed size times
+/// the DA-footprint gas scalar) is metered against the block gas limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DaFootprintAboveGasLimit {
+    /// The transaction's DA footprint.
+    pub transaction_da_footprint: u64,
+    /// The block's remaining DA footprint budget (block gas limit minus accumulated DA footprint).
+    pub available_block_da_footprint: u64,
+}
+
+impl core::fmt::Display for DaFootprintAboveGasLimit {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "transaction DA footprint {} is more than the block's available DA footprint {}",
+            self.transaction_da_footprint, self.available_block_da_footprint
+        )
+    }
+}
+
+impl core::error::Error for DaFootprintAboveGasLimit {}
+
 /// Block-boundary context for pre-execution system calls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BaseBlockExecutionCtx {
@@ -102,6 +128,9 @@ pub struct BlockExecutionResult {
     pub receipts: Vec<BaseReceiptEnvelope>,
     /// The block's cumulative gas used (the last receipt's cumulative gas, or zero).
     pub gas_used: u64,
+    /// The block's accumulated Jovian DA footprint (zero before Jovian). Surfaced in the block
+    /// result as `blob_gas_used`, mirroring the reference.
+    pub blob_gas_used: u64,
 }
 
 /// Executes a Base block's transactions on an EVM2 [`Evm`], building receipts and accumulating
@@ -120,6 +149,7 @@ pub struct BaseBlockExecutor<'a> {
     block_state: BlockStateAccumulator,
     receipts: Vec<BaseReceiptEnvelope>,
     gas_used: u64,
+    da_footprint_used: u64,
 }
 
 impl<'a> BaseBlockExecutor<'a> {
@@ -131,6 +161,7 @@ impl<'a> BaseBlockExecutor<'a> {
             block_state: BlockStateAccumulator::new(),
             receipts: Vec::new(),
             gas_used: 0,
+            da_footprint_used: 0,
         }
     }
 
@@ -236,6 +267,25 @@ impl<'a> BaseBlockExecutor<'a> {
             }));
         }
 
+        // From Jovian, meter each non-deposit transaction's DA footprint against the block's DA
+        // footprint budget (the block gas limit less what earlier transactions consumed). Deposits
+        // are exempt. Accumulated below into `da_footprint_used` (surfaced as `blob_gas_used`).
+        let is_jovian = (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Jovian as u8);
+        let tx_da_footprint = if is_jovian && !is_deposit {
+            let enveloped = tx.enveloped().map(|bytes| bytes.as_ref()).unwrap_or_default();
+            let footprint = self.evm.block().ext.jovian_da_footprint(enveloped);
+            let available = block_gas_limit.saturating_sub(self.da_footprint_used);
+            if footprint > available {
+                return Err(HandlerError::external(DaFootprintAboveGasLimit {
+                    transaction_da_footprint: footprint,
+                    available_block_da_footprint: available,
+                }));
+            }
+            footprint
+        } else {
+            0
+        };
+
         // The deposit receipt records the depositor's nonce *before* the deposit executes (and
         // bumps it), read untracked so it does not perturb execution. Matches the reference.
         let deposit_nonce = if is_deposit {
@@ -256,13 +306,15 @@ impl<'a> BaseBlockExecutor<'a> {
         let success = result.status;
         let logs = result.logs.clone();
         // Fail on overflow rather than silently saturating, which would corrupt this and every
-        // later receipt's cumulative gas. Practically unreachable under block gas limits, but
-        // this executor has no pre-execution block-gas-limit guard yet.
+        // later receipt's cumulative gas. Practically unreachable given the block-gas pre-check
+        // above, but kept as a hard guard against a corrupted cumulative total.
         self.gas_used = self
             .gas_used
             .checked_add(result.tx_gas_used())
             .ok_or_else(|| HandlerError::external(CumulativeGasOverflow))?;
         let cumulative_gas_used = self.gas_used;
+        // Accumulate the DA footprint metered above (zero for deposits and before Jovian).
+        self.da_footprint_used = self.da_footprint_used.saturating_add(tx_da_footprint);
         let _ = executed.commit_to(&mut self.block_state);
 
         let receipt = Receipt { status: Eip658Value::Eip658(success), cumulative_gas_used, logs };
@@ -298,7 +350,11 @@ impl<'a> BaseBlockExecutor<'a> {
     /// Finalizes the block, returning the EVM, the execution result (receipts + gas used), and
     /// the accumulated block-state delta.
     pub fn finish(self) -> (Evm<'a, BaseEvmTypes>, BlockExecutionResult, BlockStateAccumulator) {
-        let result = BlockExecutionResult { receipts: self.receipts, gas_used: self.gas_used };
+        let result = BlockExecutionResult {
+            receipts: self.receipts,
+            gas_used: self.gas_used,
+            blob_gas_used: self.da_footprint_used,
+        };
         (self.evm, result, self.block_state)
     }
 }

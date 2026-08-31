@@ -56,8 +56,8 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Jovian DA-footprint per-tx metering + block limit | ⬜ | FastLZ estimate vs DA scalar |
-| `blob_gas_used` surfacing in `BlockExecutionResult` | ⬜ | carries DA-footprint gas |
+| Jovian DA-footprint per-tx metering + block limit | ✅ | FastLZ estimate vs DA scalar (in `L1FeeParams`) |
+| `blob_gas_used` surfacing in `BlockExecutionResult` | ✅ | carries the accumulated DA-footprint gas |
 | Azul EIP-7825 per-tx gas cap (16,777,216) | ✅ | enforced by evm2 handlers at Osaka; deposits exempt |
 
 ### Phase 4 — Block result completeness
