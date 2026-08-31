@@ -176,7 +176,6 @@ where
             gas_fees: output.total_gas_fees,
             results: output.results,
             state_block_number,
-            state_flashblock_index: None,
             total_gas_used: output.total_gas_used,
             total_execution_time_us,
         })
@@ -626,7 +625,6 @@ mod tests {
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.state_block_number, 1);
-        assert_eq!(response.state_flashblock_index, None);
 
         Ok(())
     }
@@ -783,7 +781,6 @@ mod tests {
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.state_block_number, 1);
-        assert_eq!(response.state_flashblock_index, None);
 
         Ok(())
     }

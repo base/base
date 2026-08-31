@@ -2024,7 +2024,7 @@ mod tests {
             .state_by_block_hash(latest.hash())
             .context("getting state provider")?;
 
-        // Mimic a pending flashblock header that lacks the parent beacon block root.
+        // Headers without a parent beacon block root fail EVM env construction (EIP-4788).
         let mut header_without_root = header.clone_header();
         header_without_root.parent_beacon_block_root = None;
         let sealed_without_root = SealedHeader::new(header_without_root, header.hash());

@@ -171,7 +171,6 @@ mod tests {
             gas_fees: U256::from(123),
             results: vec![],
             state_block_number: 4,
-            state_flashblock_index: None,
             total_gas_used: gas_used,
             total_execution_time_us: 533,
         }
