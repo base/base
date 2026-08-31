@@ -25,7 +25,6 @@ build-range-elf:
         --ignore-rust-version \
         --tag {{ _sp1_tag }} \
         --docker \
-        --ignore-rust-version \
         --workspace-directory {{ _repo_root }} \
         --output-directory {{ _succinct_dir }}/elf
 
@@ -40,7 +39,6 @@ build-agg-elf:
         --ignore-rust-version \
         --tag {{ _sp1_tag }} \
         --docker \
-        --ignore-rust-version \
         --workspace-directory {{ _repo_root }} \
         --output-directory {{ _succinct_dir }}/elf
 

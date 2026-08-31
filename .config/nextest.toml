@@ -14,13 +14,6 @@ max-threads = 6
 junit = { path = "test-results.xml" }
 retries = 1
 
-# First matching override wins. Keep this above any broader CI timeout.
-# Debug-profile SP1 execute does not finish in this window; run with --release.
-[[profile.ci.overrides]]
-filter = 'binary(eip8130)'
-retries = 0
-slow-timeout = { period = "5m", terminate-after = 5 }
-
 # Action tests use a full EVM stack; the slowest tests can take 30-45 s.
 # Flag anything that runs longer than 90 s as slow and kill it after 2 periods.
 [[profile.ci.overrides]]
