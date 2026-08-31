@@ -26,6 +26,21 @@ const FUNDING_WEI: u128 = 100_000_000_000_000_000_000;
 /// never independently configurable.
 const CHALLENGER_ENV_FILE: &str = "/shared/challenger.env";
 
+/// Counters that must stay at zero for as long as every game on the fork is
+/// valid. Checked absolutely at the baseline and as a delta over the window.
+const DISPUTE_COUNTERS: [&str; 3] = [
+    "base_challenger_games_invalid_total",
+    "base_challenger_nullify_tx_submitted_total",
+    "base_challenger_challenge_tx_submitted_total",
+];
+
+/// Count series of the challenger's validation-latency histogram.
+///
+/// Recorded once per call to the validator's `validate_output_roots`, which is
+/// reached per candidate game, so this is the only metric that shows the
+/// challenger got past the factory and looked at a game.
+const VALIDATIONS: &str = "base_challenger_validation_latency_seconds_count";
+
 /// Behavioural end-to-end test of the challenger.
 ///
 /// See the crate README for the full argument; the short version is that the
@@ -74,7 +89,13 @@ impl ChallengerE2e {
     }
 
     fn spawn_fork(config: &Config) -> Result<AnvilInstance> {
-        info!(fork_source = %config.l1_eth_rpc, port = config.anvil_port, "spawning L1 fork");
+        // Host only. Provider URLs routinely carry the API key in the path or
+        // the query string, and this log ships to a shared aggregator.
+        info!(
+            fork_source = config.l1_eth_rpc.host_str().unwrap_or("<no host>"),
+            port = config.anvil_port,
+            "spawning L1 fork"
+        );
         Anvil::new()
             .fork(config.l1_eth_rpc.as_str())
             .port(config.anvil_port)
@@ -176,8 +197,15 @@ impl ChallengerE2e {
     fn release_challenger(fork_url: &Url, signer: &PrivateKeySigner) -> Result<()> {
         // Sourced after /envmapper/mapping.env, so these override the
         // config-service values for the run.
+        //
+        // The unsets are load-bearing. `--private-key` and `--signer-endpoint`
+        // are `conflicts_with` in the shared signer CLI, and clap counts an
+        // env-sourced value as present, so a mapping that carries the
+        // production sidecar variables makes the challenger refuse to start.
         let contents = format!(
-            "export BASE_CHALLENGER_L1_ETH_RPC={fork_url}\n\
+            "unset BASE_CHALLENGER_SIGNER_ENDPOINT\n\
+             unset BASE_CHALLENGER_SIGNER_ADDRESS\n\
+             export BASE_CHALLENGER_L1_ETH_RPC={fork_url}\n\
              export BASE_CHALLENGER_PRIVATE_KEY={}\n",
             hex::encode_prefixed(signer.to_bytes())
         );
@@ -219,23 +247,42 @@ impl ChallengerE2e {
     /// challenger can see is one it must leave alone.
     async fn assert_quiet_on_valid_games(config: &Config) -> Result<()> {
         let before = Scrape::fetch(&config.challenger_metrics_url).await?;
+
+        // Cumulative, not a delta. `games_scanned_total` is incremented for the
+        // whole scanned range before any candidate is validated, so a scan that
+        // has already completed can have disputed something before this
+        // baseline was taken; a delta comparison would absorb it into `before`
+        // and pass.
+        for metric in DISPUTE_COUNTERS {
+            let total = before.sum(metric);
+            ensure!(
+                total == 0.0,
+                "{metric} is already {total} on the first completed scan; the challenger \
+                 disputed something before the observation window opened, or the fork source \
+                 carries a genuinely invalid game"
+            );
+        }
+
         info!(window = ?config.quiet_window, "observing the challenger against an unmodified fork");
         tokio::time::sleep(config.quiet_window).await;
         let after = Scrape::fetch(&config.challenger_metrics_url).await?;
 
+        // `games_scanned_total` counts attempted factory indices and is
+        // incremented even when every game query fails, so it cannot show that
+        // any game was actually looked at. The validation histogram is only
+        // touched from inside `validate_output_roots`, which is reached per
+        // candidate game, so its count is the positive signal.
+        let validated = after.sum(VALIDATIONS) - before.sum(VALIDATIONS);
         let scanned = after.sum("base_challenger_games_scanned_total")
             - before.sum("base_challenger_games_scanned_total");
         ensure!(
-            scanned > 0.0,
-            "the challenger scanned no games in {:?}; it is not making progress against the fork",
+            validated > 0.0,
+            "the challenger validated no game in {:?} ({scanned} indices scanned); it is \
+             reaching the factory but not the games, so a quiet window proves nothing",
             config.quiet_window
         );
 
-        for metric in [
-            "base_challenger_games_invalid_total",
-            "base_challenger_nullify_tx_submitted_total",
-            "base_challenger_challenge_tx_submitted_total",
-        ] {
+        for metric in DISPUTE_COUNTERS {
             let delta = after.sum(metric) - before.sum(metric);
             ensure!(
                 delta == 0.0,
@@ -244,15 +291,20 @@ impl ChallengerE2e {
         }
 
         // Validation errors are usually the L2 RPC rather than the challenger,
-        // so they are reported rather than fatal. A persistent storm shows up
-        // as a dispute timeout below, which repeats this number.
+        // so they are reported rather than fatal. A storm severe enough to
+        // matter fails the assertion above instead, because a game whose roots
+        // cannot be computed is never validated.
         let errors = after.sum("base_challenger_validation_errors_total")
             - before.sum("base_challenger_validation_errors_total");
         if errors > 0.0 {
             warn!(validation_errors = errors, "the challenger reported validation errors");
         }
 
-        info!(games_scanned = scanned, "the challenger left every valid game alone");
+        info!(
+            games_validated = validated,
+            indices_scanned = scanned,
+            "the challenger left every valid game alone"
+        );
         Ok(())
     }
 

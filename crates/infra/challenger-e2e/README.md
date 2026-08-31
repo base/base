@@ -22,15 +22,28 @@ them cannot exercise the challenger at all.
 
 1. **The challenger comes up.** `base_challenger_up` is 1 and at least one scan
    has completed.
-2. **The challenger leaves valid games alone.** Over
-   `CHALLENGER_E2E_QUIET_WINDOW`, `base_challenger_games_scanned_total`
-   advances while `games_invalid_total`, `nullify_tx_submitted_total` and
-   `challenge_tx_submitted_total` stay flat. Nothing on the fork has been
-   corrupted, so a challenger that disputes anything here is disputing a valid
-   game.
+2. **The challenger leaves valid games alone.** `games_invalid_total`,
+   `nullify_tx_submitted_total` and `challenge_tx_submitted_total` must be zero
+   outright on the first post-scan scrape, and must still be zero after
+   `CHALLENGER_E2E_QUIET_WINDOW`. Nothing on the fork has been corrupted, so a
+   challenger that disputes anything here is disputing a valid game.
+
+   The baseline is checked absolutely rather than as a delta because
+   `games_scanned_total` is incremented for the whole scanned range *before*
+   any candidate is validated — a challenger that disputed during startup would
+   otherwise be absorbed into the baseline and pass.
+
+   Progress over the window is asserted on
+   `base_challenger_validation_latency_seconds_count`, not on
+   `games_scanned_total`. The latter counts attempted factory indices and
+   advances even when every game query fails; the histogram is only touched
+   from inside the validator, once per candidate game, so it is the only metric
+   that shows a game was actually looked at.
 
 `base_challenger_validation_errors_total` is reported rather than fatal — it is
-usually the L2 RPC rather than the challenger.
+usually the L2 RPC rather than the challenger. A storm severe enough to matter
+fails the assertion above instead, since a game whose roots cannot be computed
+is never validated.
 
 ## Required environment
 
