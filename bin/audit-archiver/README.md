@@ -43,5 +43,4 @@ losers do not occupy ingest connections.
 - `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE` (default `10000`): rows deleted per statement
 - `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES` (default `1000`): delete statements per locked pass
 - `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS` (default `30000`): statement timeout per expire DELETE
-- `TIPS_AUDIT_POSTGRES_RETENTION_MAX_CONNECTIONS` (default `1`): connections in the retention pool
 

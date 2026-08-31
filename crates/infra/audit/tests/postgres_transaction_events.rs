@@ -374,6 +374,46 @@ async fn postgres_expires_at_lifecycle_events_with_peer_classes() -> anyhow::Res
 }
 
 #[tokio::test]
+async fn postgres_expire_walks_keyset_across_batches() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let event_prefix = unique_event_id();
+    let events: Vec<_> = (0..5).map(|i| event(&format!("{event_prefix}-hot-{i}"))).collect();
+    sink.insert_events(&events).await?;
+    sqlx::query(
+        "UPDATE transaction_events SET ingested_at = now() - interval '10 days' \
+         WHERE event_id LIKE $1",
+    )
+    .bind(format!("{event_prefix}-%"))
+    .execute(&pool)
+    .await?;
+
+    let outcome = sink
+        .expire_old_events(TransactionEventRetentionConfig {
+            hot_days: 7,
+            warm_days: 7,
+            cold_days: 7,
+            delete_batch_size: 2,
+            max_batches: 10,
+            ..Default::default()
+        })
+        .await?;
+    assert_eq!(outcome.hot_rows_deleted, 5);
+    assert!(outcome.batches >= 3, "expected multiple keyset pages, got {}", outcome.batches);
+
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM transaction_events WHERE event_id LIKE $1")
+            .bind(format!("{event_prefix}-%"))
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(remaining, 0);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn postgres_retention_skips_when_another_replica_holds_lock() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;

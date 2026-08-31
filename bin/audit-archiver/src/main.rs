@@ -11,7 +11,6 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
     DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_CONNECTIONS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
     DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
     S3EventReaderWriter, TransactionEventIngestConfig, TransactionEventRetentionConfig,
@@ -131,21 +130,11 @@ struct Args {
     #[arg(long, env = "TIPS_AUDIT_POSTGRES_MAX_CONNECTIONS", default_value = "10")]
     postgres_max_connections: u32,
 
-    /// Maximum Postgres connections used by transaction-event retention.
-    ///
-    /// Keep this at 1 so lock losers wait on this small pool instead of taking
-    /// ingest connections used by persist, RPC reads, and `/readyz`.
-    #[arg(
-        long,
-        env = "TIPS_AUDIT_POSTGRES_RETENTION_MAX_CONNECTIONS",
-        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_CONNECTIONS
-    )]
-    postgres_retention_max_connections: u32,
-
     /// Seconds between transaction-event retention delete passes. The first
     /// pass runs immediately at startup; later passes wait this interval.
     /// An expire scan cycle older than this interval is restarted at the
-    /// configured batch size after at least one returned attempt.
+    /// configured batch size after at least one returned attempt, except
+    /// while a post-timeout LIMIT 1 is still queued.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS",
@@ -304,14 +293,7 @@ async fn run_server(args: Args) -> Result<()> {
         test_hot_sleep_min_limit: None,
     }
     .validate()?;
-    if args.transaction_event_retention_interval_secs == 0 {
-        anyhow::bail!("transaction event retention interval must be greater than zero");
-    }
-    anyhow::ensure!(
-        (1..=2).contains(&args.postgres_retention_max_connections),
-        "transaction event retention max connections must be 1 or 2"
-    );
-    let retention_interval = Duration::from_secs(args.transaction_event_retention_interval_secs);
+    let retention_interval = Duration::from_secs(retention_config.interval_secs);
 
     info!(
         s3_bucket = %s3_bucket,
@@ -327,7 +309,6 @@ async fn run_server(args: Args) -> Result<()> {
         transaction_event_retention_max_batches = retention_config.max_batches,
         transaction_event_retention_statement_timeout_ms = retention_config.statement_timeout_ms,
         transaction_event_retention_interval_secs = retention_interval.as_secs(),
-        postgres_retention_max_connections = args.postgres_retention_max_connections,
         rpc_cache_capacity = args.rpc_cache_capacity,
         rpc_cache_ttl_secs = args.rpc_cache_ttl_secs,
         channel_buffer_size = args.channel_buffer_size,
@@ -348,14 +329,7 @@ async fn run_server(args: Args) -> Result<()> {
 
     let rpc_addr = SocketAddr::from(([0, 0, 0, 0], args.rpc_port));
     let transaction_event_sink = if let Some(postgres_url) = &args.postgres_url {
-        Some(
-            PgTransactionEventSink::connect_with_retention_pool(
-                postgres_url,
-                args.postgres_max_connections,
-                args.postgres_retention_max_connections,
-            )
-            .await?,
-        )
+        Some(PgTransactionEventSink::connect(postgres_url, args.postgres_max_connections).await?)
     } else {
         None
     };

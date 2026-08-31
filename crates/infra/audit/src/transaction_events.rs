@@ -79,9 +79,6 @@ pub const DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS: u64 = 3_600;
 ///
 /// Bounds a sparse `doomed` scan so it cannot hold the advisory lock for hours.
 pub const DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS: u64 = 30_000;
-/// Default connections in the retention pool. Keep this at 1 so lock losers
-/// do not compete with ingest for Postgres connections.
-pub const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_CONNECTIONS: u32 = 1;
 const TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT: StdDuration = StdDuration::from_secs(1);
 const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
 
@@ -254,7 +251,8 @@ pub struct TransactionEventRetentionConfig {
     /// Seconds between retention passes. A scan cycle older than this is
     /// restarted so a bisected LIMIT cannot crawl forever. The first batch of
     /// a cycle always runs, even when this interval is shorter than one
-    /// statement.
+    /// statement. A queued `LIMIT 1` after statement timeout also runs before
+    /// the cycle restarts.
     pub interval_secs: u64,
     /// Test-only sleep injected into hot expire statements so a short
     /// `statement_timeout_ms` can cancel a statement without failing the pass.
@@ -550,42 +548,16 @@ impl PgTransactionEventSink {
     }
 
     /// Connects to Postgres without running migrations.
-    pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
-        Self::connect_with_retention_pool(
-            database_url,
-            max_connections,
-            DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_CONNECTIONS,
-        )
-        .await
-    }
-
-    /// Connects ingest and retention pools.
     ///
-    /// The ingest pool keeps long-lived connections for persist, RPC reads, and
-    /// `/readyz`. Retention uses a separate small pool with a short acquire
+    /// The ingest pool is used for persist, RPC reads, and `/readyz`.
+    /// Retention uses a dedicated one-connection pool with a short acquire
     /// timeout so lock losers do not occupy ingest connections.
-    pub async fn connect_with_retention_pool(
-        database_url: &str,
-        max_connections: u32,
-        retention_max_connections: u32,
-    ) -> Result<Self> {
+    pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
         let max_connections = max_connections.max(1);
-        // RDS IAM auth tokens are only validated when a connection opens; open
-        // connections remain usable after token expiry. sqlx does not expose a
-        // pre-connect password callback, so the IAM-auth deployment path passes
-        // a fresh startup token, eagerly opens the full configured pool while
-        // that token is valid, and keeps those physical connections open. If
-        // the pool is fully dropped after token expiry, the process should be
-        // restarted so a new token is minted before rebuilding the pool.
-        let pool = PgPoolOptions::new()
-            .max_connections(max_connections)
-            .min_connections(max_connections)
-            .max_lifetime(None)
-            .idle_timeout(None)
-            .connect(database_url)
-            .await?;
+        let pool =
+            PgPoolOptions::new().max_connections(max_connections).connect(database_url).await?;
         let retention_pool = PgPoolOptions::new()
-            .max_connections(retention_max_connections.max(1))
+            .max_connections(1)
             .acquire_timeout(TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT)
             .connect(database_url)
             .await?;
@@ -667,8 +639,9 @@ impl PgTransactionEventSink {
     /// Each class resumes a descending keyset on this lock holder. A statement
     /// timeout commits a `LIMIT 1` progress step when possible, then bisects
     /// the batch LIMIT. A cycle older than `interval_secs` restarts at the
-    /// configured LIMIT after at least one returned attempt. A `LIMIT 1`
-    /// timeout stops that class and continues the pass with the next class.
+    /// configured LIMIT after at least one returned attempt, but not while a
+    /// `LIMIT 1` fallback is queued. A `LIMIT 1` timeout stops that class and
+    /// continues the pass with the next class.
     /// Scan progress is in memory for this pass; the next pass starts new
     /// cycles.
     /// Hot rows are expired first so high-churn types free space before colder
@@ -704,7 +677,7 @@ impl PgTransactionEventSink {
             let mut cold_rows_deleted = 0u64;
             for class in classes {
                 let event_types = class.event_type_labels();
-                let mut progress = RetentionClassProgress::empty();
+                let mut progress = RetentionClassProgress::new_cycle(Utc::now(), &config, class);
                 while batches < u64::from(config.max_batches) {
                     let now = Utc::now();
                     if progress.should_end_cycle(now, config.interval_secs) {
@@ -719,8 +692,6 @@ impl PgTransactionEventSink {
                             "interval",
                         )
                         .increment(1);
-                        progress = RetentionClassProgress::new_cycle(now, &config, class);
-                    } else if !progress.has_open_cycle() {
                         progress = RetentionClassProgress::new_cycle(now, &config, class);
                     }
                     let batch_limit = expire_batch_limit(
@@ -1189,63 +1160,44 @@ struct RetentionScanCursor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RetentionClassProgress {
-    scan_cutoff: Option<DateTime<Utc>>,
+    scan_cutoff: DateTime<Utc>,
     cursor: Option<RetentionScanCursor>,
     limit_lo: u32,
     limit_hi: Option<u32>,
     needs_limit_one: bool,
-    cycle_started_at: Option<DateTime<Utc>>,
+    cycle_started_at: DateTime<Utc>,
     batches_this_cycle: u32,
 }
 
 impl RetentionClassProgress {
-    const fn empty() -> Self {
-        Self {
-            scan_cutoff: None,
-            cursor: None,
-            limit_lo: 0,
-            limit_hi: None,
-            needs_limit_one: false,
-            cycle_started_at: None,
-            batches_this_cycle: 0,
-        }
-    }
-
     fn new_cycle(
         now: DateTime<Utc>,
         config: &TransactionEventRetentionConfig,
         class: TransactionEventRetentionClass,
     ) -> Self {
         Self {
-            scan_cutoff: Some(now - Duration::days(i64::from(config.class_days(class)))),
+            scan_cutoff: now - Duration::days(i64::from(config.class_days(class))),
             cursor: None,
             limit_lo: 0,
             limit_hi: None,
             needs_limit_one: false,
-            cycle_started_at: Some(now),
+            cycle_started_at: now,
             batches_this_cycle: 0,
         }
     }
 
-    const fn has_open_cycle(&self) -> bool {
-        self.cycle_started_at.is_some() && self.scan_cutoff.is_some()
-    }
-
     fn cycle_age_secs(&self, now: DateTime<Utc>) -> i64 {
-        self.cycle_started_at.map(|started| (now - started).num_seconds()).unwrap_or(0)
+        (now - self.cycle_started_at).num_seconds()
     }
 
     fn should_end_cycle(&self, now: DateTime<Utc>, interval_secs: u64) -> bool {
-        let Some(started) = self.cycle_started_at else {
-            return false;
-        };
-        if self.batches_this_cycle == 0 {
+        if self.needs_limit_one || self.batches_this_cycle == 0 {
             return false;
         }
         let Ok(interval_secs) = i64::try_from(interval_secs) else {
             return false;
         };
-        (now - started) >= Duration::seconds(interval_secs)
+        (now - self.cycle_started_at) >= Duration::seconds(interval_secs)
     }
 }
 
@@ -1262,9 +1214,7 @@ async fn delete_expired_event_batch(
     class: TransactionEventRetentionClass,
     config: &TransactionEventRetentionConfig,
 ) -> Result<ExpireBatchOutcome> {
-    let cutoff = progress.scan_cutoff.ok_or_else(|| {
-        anyhow::anyhow!("transaction event expire cycle is missing a scan cutoff")
-    })?;
+    let cutoff = progress.scan_cutoff;
     let timeout_sql = config.statement_timeout_sql();
     let mut attempt = 1u32;
     loop {
@@ -1290,7 +1240,10 @@ async fn delete_expired_event_batch(
         // lookup. ANY(ARRAY(ctid)) keeps that plan as catch-up shrinks the heap;
         // USING ctid can seq-scan. FOR UPDATE SKIP LOCKED skips rows held by a
         // concurrent writer instead of waiting. MATERIALIZED so the keyset
-        // cursor is read from the selected set, not a rewritten join.
+        // cursor is read from the selected set, not a rewritten join. The
+        // resume key is the smallest selected tuple (last in DESC order) so
+        // the next `WHERE key < cursor` scan does not walk just-deleted dead
+        // index entries.
         let result = sqlx::query(
             "WITH doomed AS MATERIALIZED ( \
                 SELECT ctid, event_type, ingested_at, event_id \
@@ -1314,11 +1267,11 @@ async fn delete_expired_event_batch(
                 (SELECT COUNT(*) FROM doomed)::bigint, \
                 (SELECT COUNT(*) FROM deleted)::bigint, \
                 (SELECT event_type FROM doomed \
-                 ORDER BY event_type DESC, ingested_at DESC, event_id DESC LIMIT 1), \
+                 ORDER BY event_type ASC, ingested_at ASC, event_id ASC LIMIT 1), \
                 (SELECT ingested_at FROM doomed \
-                 ORDER BY event_type DESC, ingested_at DESC, event_id DESC LIMIT 1), \
+                 ORDER BY event_type ASC, ingested_at ASC, event_id ASC LIMIT 1), \
                 (SELECT event_id FROM doomed \
-                 ORDER BY event_type DESC, ingested_at DESC, event_id DESC LIMIT 1)",
+                 ORDER BY event_type ASC, ingested_at ASC, event_id ASC LIMIT 1)",
         )
         .bind(event_types)
         .bind(cutoff)
@@ -1922,6 +1875,12 @@ mod tests {
             "a cycle with no returned batch must still run once"
         );
         progress.batches_this_cycle = 1;
+        progress.needs_limit_one = true;
+        assert!(
+            !progress.should_end_cycle(now, 1),
+            "a queued LIMIT 1 after timeout must run before the cycle restarts"
+        );
+        progress.needs_limit_one = false;
         assert!(progress.should_end_cycle(now, 1));
         assert!(!progress.should_end_cycle(now, 3_600));
     }
