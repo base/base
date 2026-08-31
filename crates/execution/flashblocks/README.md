@@ -40,11 +40,11 @@ pending is cleared; in-flight work from the previous epoch is not published.
 
 Every update is preflighted against the provider's current canonical header:
 
-- **EnterRecovery** clears pending when it cannot safely track the tip.
-- **ResumeRecovery** accepts an index-0 flashblock whose parent hash is the
+- **`EnterRecovery`** clears pending when it cannot safely track the tip.
+- **`ResumeRecovery`** accepts an index-0 flashblock whose parent hash is the
   current tip and rebuilds pending from there.
-- **Skip** drops a stale update when pending is already tip-aligned.
-- **Process** applies the update when pending already tracks the tip.
+- **`Skip`** drops a stale update when pending is already tip-aligned.
+- **`Process`** applies the update when pending already tracks the tip.
 
 A canonical notification can arrive before the provider exposes that block.
 The processor stores it as a deferred canonical, keeps nearby cache entries,
@@ -53,11 +53,11 @@ the deferred block once it is visible.
 
 When a canonical block is applied, [`CanonicalBlockReconciler`] chooses:
 
-- **Keep** for untracked older canonicals so they are not treated as reorgs.
-- **Rebase** if canonical sits inside the pending chain and is still behind
+- **`Keep`** for untracked older canonicals so they are not treated as reorgs.
+- **`Rebase`** if canonical sits inside the pending chain and is still behind
   latest: drop flashblocks at or below that height and rebuild the suffix.
-- **CatchUp** if canonical has reached or passed pending latest.
-- **HandleReorg** on a real transaction-set or pending-anchor hash mismatch.
+- **`CatchUp`** if canonical has reached or passed pending latest.
+- **`HandleReorg`** on a real transaction-set or pending-anchor hash mismatch.
 
 Live and cached payloads stay scoped to one payload ID. Identical
 retransmissions are ignored; conflicting content for the same identity fails
