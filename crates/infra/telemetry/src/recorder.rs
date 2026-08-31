@@ -145,6 +145,7 @@ impl ReportRecorder for JsonlRecorder {
             worst_unsafe_latency_secs = event.report.heads.worst_unsafe_latency_secs,
             peer_count = event.report.net_health.peer_count,
             hardware_platform = event.report.hardware.platform.as_str(),
+            reported_ip = %event.reported_ip,
             ip_source = event.ip_source.as_str(),
             "node report accepted"
         );
