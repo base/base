@@ -21,7 +21,7 @@ pub use handler::BaseTxHandlerHooks;
 mod executor;
 pub use executor::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BlockExecutionResult, BlockGasLimitExceeded,
-    CumulativeGasOverflow,
+    CumulativeGasOverflow, DaFootprintAboveGasLimit,
 };
 
 mod registry;
