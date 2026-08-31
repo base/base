@@ -166,11 +166,12 @@ where
         >,
         ordering: O,
     ) -> Self {
-        let price_bump_config = protocol_pool.config().price_bumps;
+        let config = protocol_pool.config().clone();
+        let base_fee = protocol_pool.block_info().pending_basefee;
         Self {
             protocol_pool,
             ordering,
-            nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
+            nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new_with_config(config, base_fee))),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
@@ -304,6 +305,7 @@ where
             }
             removed.extend(sidecar_removed);
         }
+        self.cleanup_removed_bookkeeping(&removed);
         removed
     }
 
@@ -314,6 +316,17 @@ where
         let mut guard = self.guard.write();
         for transaction in removed {
             guard.release(transaction.hash());
+        }
+    }
+
+    fn cleanup_removed_bookkeeping(&self, removed: &[Arc<ValidPoolTransaction<T>>]) {
+        if removed.is_empty() {
+            return;
+        }
+        self.release_from_guard(removed);
+        let mut block_expiry = self.block_expiry.write();
+        for transaction in removed {
+            block_expiry.remove(transaction.hash());
         }
     }
 
@@ -709,8 +722,11 @@ where
                     }
                     (None, None) => {}
                 }
-                drop(guard);
                 listeners.on_inserted(&nonce_pool, &outcome);
+                let discarded = nonce_pool.enforce_limits();
+                if !discarded.is_empty() {
+                    listeners.on_discarded(&discarded);
+                }
                 if is_validity {
                     ValidityPoolMetrics::record_admission(outcome.replaced.is_some());
                 }
@@ -720,9 +736,23 @@ where
                 // not acquired while holding the nonce pool.
                 let inserted_hash = outcome.outcome.hash;
                 let replaced_hash = outcome.replaced.as_ref().map(|replaced| *replaced.hash());
+                let discarded_on_insert =
+                    discarded.iter().any(|transaction| *transaction.hash() == inserted_hash);
+                drop(guard);
                 drop(listeners);
                 drop(nonce_pool);
-                self.register_block_expiry(inserted_hash, block_expiry_bound, replaced_hash);
+                self.cleanup_removed_bookkeeping(&discarded);
+                self.register_block_expiry(
+                    inserted_hash,
+                    (!discarded_on_insert).then_some(block_expiry_bound).flatten(),
+                    replaced_hash,
+                );
+                if discarded_on_insert {
+                    return Err(reth_transaction_pool::error::PoolError::new(
+                        inserted_hash,
+                        reth_transaction_pool::error::PoolErrorKind::DiscardedOnInsert,
+                    ));
+                }
                 Ok(outcome.outcome)
             }
             TransactionValidationOutcome::Invalid(transaction, error) => {
@@ -846,16 +876,15 @@ where
     fn pool_size(&self) -> PoolSize {
         let mut size = self.protocol_pool.pool_size();
         let nonce_pool = self.nonce_pool.read();
-        let (pending, queued) = nonce_pool.pending_and_queued_txn_count();
-        let pending_size: usize =
-            nonce_pool.pending_transactions().iter().map(|tx| tx.encoded_length()).sum();
-        let queued_size: usize =
-            nonce_pool.queued_transactions().iter().map(|tx| tx.encoded_length()).sum();
+        let [(pending, pending_size), (basefee, basefee_size), (queued, queued_size)] =
+            nonce_pool.subpool_size();
         size.pending += pending;
         size.pending_size += pending_size;
+        size.basefee += basefee;
+        size.basefee_size += basefee_size;
         size.queued += queued;
         size.queued_size += queued_size;
-        size.total += pending + queued;
+        size.total += pending + basefee + queued;
         size
     }
 
@@ -1150,7 +1179,9 @@ where
 
     fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut transactions = self.protocol_pool.queued_transactions();
-        transactions.extend(self.nonce_pool.read().queued_transactions());
+        let nonce_pool = self.nonce_pool.read();
+        transactions.extend(nonce_pool.basefee_transactions());
+        transactions.extend(nonce_pool.queued_transactions());
         transactions
     }
 
@@ -1165,6 +1196,7 @@ where
         let mut transactions = self.protocol_pool.all_transactions();
         let nonce_pool = self.nonce_pool.read();
         transactions.pending.extend(nonce_pool.pending_transactions());
+        transactions.queued.extend(nonce_pool.basefee_transactions());
         transactions.queued.extend(nonce_pool.queued_transactions());
         transactions
     }
@@ -1181,13 +1213,12 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions(protocol_hashes);
-        self.release_from_guard(&removed);
         let sidecar_removed = self.nonce_pool.write().remove_transactions(&sidecar_hashes);
         if !sidecar_removed.is_empty() {
             self.listeners.write().on_discarded(&sidecar_removed);
         }
-        self.release_from_guard(&sidecar_removed);
         removed.extend(sidecar_removed);
+        self.cleanup_removed_bookkeeping(&removed);
         removed
     }
 
@@ -1197,14 +1228,13 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions_and_descendants(protocol_hashes);
-        self.release_from_guard(&removed);
         let sidecar_removed =
             self.nonce_pool.write().remove_transactions_and_descendants(&sidecar_hashes);
         if !sidecar_removed.is_empty() {
             self.listeners.write().on_discarded(&sidecar_removed);
         }
-        self.release_from_guard(&sidecar_removed);
         removed.extend(sidecar_removed);
+        self.cleanup_removed_bookkeeping(&removed);
         removed
     }
 
@@ -1213,13 +1243,12 @@ where
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut removed = self.protocol_pool.remove_transactions_by_sender(sender);
-        self.release_from_guard(&removed);
         let sidecar_removed = self.nonce_pool.write().remove_transactions_by_sender(sender);
         if !sidecar_removed.is_empty() {
             self.listeners.write().on_discarded(&sidecar_removed);
         }
-        self.release_from_guard(&sidecar_removed);
         removed.extend(sidecar_removed);
+        self.cleanup_removed_bookkeeping(&removed);
         removed
     }
 
@@ -1229,10 +1258,9 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
-        self.release_from_guard(&removed);
         let pruned = self.nonce_pool.write().prune_mined(&sidecar_hashes);
-        self.release_from_guard(&pruned.removed);
         removed.extend(pruned.removed);
+        self.cleanup_removed_bookkeeping(&removed);
         removed
     }
 
@@ -1481,7 +1509,18 @@ where
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
 
     fn set_block_info(&self, info: BlockInfo) {
-        self.protocol_pool.set_block_info(info)
+        self.protocol_pool.set_block_info(info);
+        let mut nonce_pool = self.nonce_pool.write();
+        let mut listeners = self.listeners.write();
+        let outcome = nonce_pool.set_base_fee(info.pending_basefee);
+        listeners.on_fee_update(&outcome.promoted, &outcome.demoted);
+        let discarded = nonce_pool.enforce_limits();
+        if !discarded.is_empty() {
+            listeners.on_discarded(&discarded);
+        }
+        drop(listeners);
+        drop(nonce_pool);
+        self.cleanup_removed_bookkeeping(&discarded);
     }
 
     fn on_canonical_state_change(
@@ -1507,7 +1546,7 @@ where
             }
         }
         self.protocol_pool.on_canonical_state_change(update);
-        {
+        let removed_sidecar = {
             let mut nonce_pool = self.nonce_pool.write();
             let pruned = nonce_pool.prune_mined(&mined_transactions);
             // The nonce-free validity window is in milliseconds, evaluated
@@ -1520,15 +1559,11 @@ where
             if !expired.is_empty() {
                 listeners.on_discarded(&expired);
             }
-            // Sidecar maintenance lock order is nonce_pool -> listeners -> guard.
-            let mut guard = self.guard.write();
-            for transaction in &pruned.removed {
-                guard.release(transaction.hash());
-            }
-            for transaction in &expired {
-                guard.release(transaction.hash());
-            }
-        }
+            let mut removed = pruned.removed;
+            removed.extend(expired);
+            removed
+        };
+        self.cleanup_removed_bookkeeping(&removed_sidecar);
         self.expire_due_buckets(now);
         self.expire_by_block(block_number);
         self.reconcile_guard();
@@ -1682,12 +1717,42 @@ impl<T: BasePooledTx> SidecarListeners<T> {
             AddedTransactionState::Queued(reason) => {
                 self.broadcast_hash_event(&hash, TransactionEvent::Queued);
                 self.broadcast_all(FullTransactionEvent::Queued(hash, Some(reason.clone())));
-                self.broadcast_new(NewTransactionEvent { subpool: SubPool::Queued, transaction });
+                let subpool =
+                    if *reason == reth_transaction_pool::pool::QueuedReason::InsufficientBaseFee {
+                        SubPool::BaseFee
+                    } else {
+                        SubPool::Queued
+                    };
+                self.broadcast_new(NewTransactionEvent { subpool, transaction });
             }
         }
 
         for promoted in &outcome.promoted {
             self.broadcast_pending_transaction(promoted);
+        }
+    }
+
+    fn on_fee_update(
+        &mut self,
+        promoted: &[Arc<ValidPoolTransaction<T>>],
+        demoted: &[(Arc<ValidPoolTransaction<T>>, SubPool)],
+    ) {
+        for transaction in promoted {
+            self.broadcast_pending_transaction(transaction);
+        }
+        for (transaction, subpool) in demoted {
+            let hash = *transaction.hash();
+            let reason = if *subpool == SubPool::BaseFee {
+                reth_transaction_pool::pool::QueuedReason::InsufficientBaseFee
+            } else {
+                reth_transaction_pool::pool::QueuedReason::ParkedAncestors
+            };
+            self.broadcast_hash_event(&hash, TransactionEvent::Queued);
+            self.broadcast_all(FullTransactionEvent::Queued(hash, Some(reason)));
+            self.broadcast_new(NewTransactionEvent {
+                subpool: *subpool,
+                transaction: Arc::clone(transaction),
+            });
         }
     }
 
@@ -1814,9 +1879,9 @@ mod tests {
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
-        CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, TransactionOrigin,
-        blobstore::InMemoryBlobStore, error::PoolErrorKind, identifier::TransactionId,
-        validate::EthTransactionValidatorBuilder,
+        CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, SubPoolLimit,
+        TransactionOrigin, blobstore::InMemoryBlobStore, error::PoolErrorKind,
+        identifier::TransactionId, validate::EthTransactionValidatorBuilder,
     };
 
     use super::*;
@@ -1979,6 +2044,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn base_fee_updates_emit_sidecar_demotions_and_promotions() {
+        let mut nonce_pool = TwoDNoncePool::new_with_config(PoolConfig::default(), 50);
+        let mut listeners = SidecarListeners::default();
+        let signer = signer();
+        let transaction = valid_pool_transaction(signed_channel_tx(&signer, U256::from(2), 0, 100));
+        let hash = *transaction.hash();
+        let mut hash_events = listeners.subscribe_hash(hash).0;
+        let mut new_events = listeners.subscribe_new_transactions(TransactionListenerKind::All);
+
+        let inserted = nonce_pool.insert_validated(transaction, 0).unwrap();
+        listeners.on_inserted(&nonce_pool, &inserted);
+        assert!(matches!(hash_events.next().await, Some(TransactionEvent::Pending)));
+        assert!(
+            matches!(new_events.recv().await, Some(event) if event.subpool == SubPool::Pending)
+        );
+
+        let raised = nonce_pool.set_base_fee(101);
+        listeners.on_fee_update(&raised.promoted, &raised.demoted);
+        assert!(matches!(hash_events.next().await, Some(TransactionEvent::Queued)));
+        assert!(
+            matches!(new_events.recv().await, Some(event) if event.subpool == SubPool::BaseFee)
+        );
+
+        let lowered = nonce_pool.set_base_fee(100);
+        listeners.on_fee_update(&lowered.promoted, &lowered.demoted);
+        assert!(matches!(hash_events.next().await, Some(TransactionEvent::Pending)));
+        assert!(
+            matches!(new_events.recv().await, Some(event) if event.subpool == SubPool::Pending)
+        );
+    }
+
+    #[tokio::test]
     async fn discarded_sidecar_transaction_broadcasts_terminal_events() {
         let mut listeners = SidecarListeners::default();
         let signer = signer();
@@ -2032,6 +2129,12 @@ mod tests {
 
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_with_config(PoolConfig::default())
+    }
+
+    fn build_integration_pool_with_config(
+        config: PoolConfig,
+    ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
@@ -2047,7 +2150,7 @@ mod tests {
                     .require_l1_data_gas_fee(false)
             });
         let ordering = BaseOrdering::default();
-        let pool = Pool::new(validator, ordering.clone(), blob_store, PoolConfig::default());
+        let pool = Pool::new(validator, ordering.clone(), blob_store, config);
         (BaseTransactionPool::new(pool, ordering).with_guard_limits(GuardLimits::default()), client)
     }
 
@@ -2325,6 +2428,33 @@ mod tests {
         let replacement =
             self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, cap + 2, 1_000);
         assert!(pool.add_transaction(TransactionOrigin::Local, replacement).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn sidecar_limit_eviction_releases_guard_and_block_expiry_bookkeeping() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(1, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let low_signer = signer();
+        let high_signer = signer();
+        fund(&client, low_signer.address());
+        fund(&client, high_signer.address());
+        let low = self_paid_eoa_8130(&low_signer, U256::from(1), 0, 0, 1_000);
+        let low_hash = *low.hash();
+        pool.add_transaction(TransactionOrigin::External, low).await.unwrap();
+        pool.block_expiry.write().insert(low_hash, 100);
+        assert!(pool.guard.read().contains(&low_hash));
+        assert_eq!(pool.block_expiry.read().len(), 1);
+
+        let high = self_paid_eoa_8130(&high_signer, U256::from(1), 0, 0, 2_000);
+        let high_hash = *high.hash();
+        pool.add_transaction(TransactionOrigin::External, high).await.unwrap();
+
+        assert!(pool.get(&low_hash).is_none());
+        assert!(pool.get(&high_hash).is_some());
+        assert!(!pool.guard.read().contains(&low_hash));
+        assert!(pool.guard.read().contains(&high_hash));
+        assert!(pool.block_expiry.read().is_empty());
     }
 
     #[tokio::test]
