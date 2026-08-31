@@ -220,7 +220,7 @@ where
     }
 
     fn is_sidecar_transaction(&self, transaction: &T) -> bool {
-        transaction.is_eip8130_sidecar_transaction()
+        transaction.identity().is_sidecar()
     }
 
     fn limit_rejection_error(

@@ -19,7 +19,7 @@ use reth_transaction_pool::{
     pool::{AddedTransactionState, QueuedReason},
 };
 
-use crate::{BasePooledTx, BestTransactionPriority};
+use crate::{BasePooledTx, BaseTransactionIdentity, BaseTransactionLane, BestTransactionPriority};
 
 type LaneId = (Address, U256);
 
@@ -249,7 +249,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             return Err(PoolError::new(hash, PoolErrorKind::AlreadyImported));
         }
 
-        if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
+        if let BaseTransactionIdentity::Replay { replay_id } = transaction.transaction.identity() {
             let sender_id = self.senders.sender_id_or_create(transaction.sender());
             transaction.transaction_id = TransactionId::new(sender_id, transaction.nonce());
             let transaction = Arc::new(transaction);
@@ -273,14 +273,19 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             });
         }
 
-        let sender = transaction.sender();
-        let nonce_key = transaction.transaction.eip8130_nonce_channel_key().ok_or_else(|| {
-            PoolError::other(hash, "2D nonce pool only accepts channelized EIP-8130 transactions")
-        })?;
+        let BaseTransactionIdentity::Nonce {
+            lane: BaseTransactionLane::Channel { sender, nonce_key },
+            nonce,
+        } = transaction.transaction.identity()
+        else {
+            return Err(PoolError::other(
+                hash,
+                "2D nonce pool only accepts sidecar EIP-8130 transactions",
+            ));
+        };
 
         let lane_id = (sender, nonce_key);
         let sender_id = self.senders.sender_id_or_create(sender);
-        let nonce = transaction.nonce();
         transaction.transaction_id = TransactionId::new(sender_id, nonce);
         let transaction = Arc::new(transaction);
         let lane = self.lanes.entry(lane_id).or_insert_with(|| NonceLane {
@@ -371,11 +376,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut removed = Vec::new();
         for hash in hashes {
-            if self
-                .hashes
-                .get(hash)
-                .is_some_and(|transaction| transaction.transaction.eip8130_replay_id().is_some())
-            {
+            if self.hashes.get(hash).is_some_and(|transaction| {
+                matches!(transaction.transaction.identity(), BaseTransactionIdentity::Replay { .. })
+            }) {
                 if let Some(transaction) = self.remove_hash(*hash, false) {
                     removed.push(transaction);
                 }
@@ -384,7 +387,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             let Some(transaction) = self.hashes.get(hash) else {
                 continue;
             };
-            let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() else {
+            let BaseTransactionIdentity::Nonce {
+                lane: BaseTransactionLane::Channel { nonce_key, .. },
+                ..
+            } = transaction.transaction.identity()
+            else {
                 continue;
             };
             let lane_id = (transaction.sender(), nonce_key);
@@ -407,11 +414,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     pub(crate) fn prune_mined(&mut self, hashes: &[TxHash]) -> PruneMinedOutcome<T> {
         let mut removed = Vec::new();
         for hash in hashes {
-            if self
-                .hashes
-                .get(hash)
-                .is_some_and(|transaction| transaction.transaction.eip8130_replay_id().is_some())
-                && let Some(transaction) = self.remove_hash(*hash, false)
+            if self.hashes.get(hash).is_some_and(|transaction| {
+                matches!(transaction.transaction.identity(), BaseTransactionIdentity::Replay { .. })
+            }) && let Some(transaction) = self.remove_hash(*hash, false)
             {
                 removed.push(transaction);
             }
@@ -420,8 +425,14 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .iter()
             .filter_map(|hash| {
                 let transaction = self.hashes.get(hash)?;
-                let nonce_key = transaction.transaction.eip8130_nonce_channel_key()?;
-                Some((transaction.sender(), nonce_key, transaction.nonce(), *hash))
+                let BaseTransactionIdentity::Nonce {
+                    lane: BaseTransactionLane::Channel { sender, nonce_key },
+                    nonce,
+                } = transaction.transaction.identity()
+                else {
+                    return None;
+                };
+                Some((sender, nonce_key, nonce, *hash))
             })
             .collect();
         ordered_hashes.sort_unstable();
@@ -485,16 +496,22 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         advance_lane: bool,
     ) -> Option<Arc<ValidPoolTransaction<T>>> {
         if let Some(transaction) = self.hashes.get(&hash)
-            && let Some(replay_id) = transaction.transaction.eip8130_replay_id()
+            && let BaseTransactionIdentity::Replay { replay_id } =
+                transaction.transaction.identity()
         {
             let transaction = self.nonce_free.remove(&replay_id)?;
             self.hashes.remove(&hash);
             return Some(transaction);
         }
         let transaction = self.hashes.get(&hash)?;
-        let nonce_key = transaction.transaction.eip8130_nonce_channel_key()?;
-        let lane_id = (transaction.sender(), nonce_key);
-        let nonce = transaction.nonce();
+        let BaseTransactionIdentity::Nonce {
+            lane: BaseTransactionLane::Channel { sender, nonce_key },
+            nonce,
+        } = transaction.transaction.identity()
+        else {
+            return None;
+        };
+        let lane_id = (sender, nonce_key);
         let transaction = {
             let lane = self.lanes.get_mut(&lane_id)?;
             let transaction = lane.transactions.remove(&nonce)?;
@@ -645,10 +662,17 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
-        let index = if let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() {
-            self.lane_indexes.get(&(transaction.sender(), nonce_key)).copied()
-        } else {
-            self.nonce_free_indexes.get(transaction.hash()).copied()
+        let index = match transaction.transaction.identity() {
+            BaseTransactionIdentity::Nonce {
+                lane: BaseTransactionLane::Channel { sender, nonce_key },
+                ..
+            } => self.lane_indexes.get(&(sender, nonce_key)).copied(),
+            BaseTransactionIdentity::Replay { .. } => {
+                self.nonce_free_indexes.get(transaction.hash()).copied()
+            }
+            BaseTransactionIdentity::Nonce {
+                lane: BaseTransactionLane::Protocol { .. }, ..
+            } => None,
         };
         if let Some(index) = index {
             self.lanes[index].invalidated = true;

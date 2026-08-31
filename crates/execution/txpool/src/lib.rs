@@ -38,7 +38,8 @@ pub use block_expiry::BlockExpiryIndex;
 
 mod transaction;
 pub use transaction::{
-    BasePooledTransaction, BasePooledTx, TimestampedTransaction, unix_time_millis,
+    BasePooledTransaction, BasePooledTx, BaseTransactionIdentity, BaseTransactionLane,
+    TimestampedTransaction, unix_time_millis,
 };
 
 mod ordering;
@@ -49,8 +50,8 @@ pub use ordering::{
 
 mod parking;
 pub use parking::{
-    BestTransactionLane, BestTransactionLaneState, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions,
+    BestTransactionLaneState, ParkableBestTransactions, ParkableTransactionPool,
+    ParkedBestTransactions,
 };
 
 mod pool;

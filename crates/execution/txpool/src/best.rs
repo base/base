@@ -101,7 +101,7 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
-        if transaction.transaction.is_eip8130_sidecar_transaction() {
+        if transaction.transaction.identity().is_sidecar() {
             self.next_sidecar = None;
             self.sidecar.mark_invalid(transaction, kind);
         } else {
@@ -113,6 +113,11 @@ where
     fn no_updates(&mut self) {
         self.protocol.no_updates();
         self.sidecar.no_updates();
+    }
+
+    fn allow_updates_out_of_order(&mut self) {
+        self.protocol.allow_updates_out_of_order();
+        self.sidecar.allow_updates_out_of_order();
     }
 
     fn set_skip_blobs(&mut self, skip_blobs: bool) {
@@ -137,7 +142,7 @@ mod tests {
     use reth_transaction_pool::{TransactionOrigin, identifier::TransactionId};
 
     use super::*;
-    use crate::{BaseOrdering, BasePooledTransaction, TimestampedTransaction};
+    use crate::{BaseOrdering, BasePooledTransaction, BaseTransactionLane, TimestampedTransaction};
 
     #[derive(Debug)]
     struct StaticBestTransactions<T: BasePooledTx> {
@@ -160,14 +165,12 @@ mod tests {
 
     impl<T: BasePooledTx> BestTransactions for StaticBestTransactions<T> {
         fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
-            let nonce_key = transaction.transaction.eip8130_nonce_channel_key();
+            let identity = transaction.transaction.identity();
             self.transactions.retain(|candidate| {
-                if nonce_key.is_some() {
-                    candidate.sender() != transaction.sender()
-                        || candidate.transaction.eip8130_nonce_channel_key() != nonce_key
-                } else {
-                    candidate.sender() != transaction.sender()
-                }
+                identity.lane().map_or_else(
+                    || candidate.hash() != transaction.hash(),
+                    |lane| candidate.transaction.identity().lane() != Some(lane),
+                )
             });
         }
 
@@ -349,11 +352,17 @@ mod tests {
         );
 
         let first = merged.next().expect("expected protocol transaction");
-        assert_eq!(first.transaction.eip8130_nonce_channel_key(), None);
+        assert!(matches!(
+            first.transaction.identity().lane(),
+            Some(BaseTransactionLane::Protocol { .. })
+        ));
         assert_eq!(first.nonce(), 0);
 
         let second = merged.next().expect("expected sidecar transaction");
-        assert_eq!(second.transaction.eip8130_nonce_channel_key(), Some(U256::from(1)));
+        assert!(matches!(
+            second.transaction.identity().lane(),
+            Some(BaseTransactionLane::Channel { nonce_key, .. }) if nonce_key == U256::from(1)
+        ));
 
         merged.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
 
