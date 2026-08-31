@@ -47,7 +47,23 @@ impl Flashblock {
             diff: payload.diff,
             metadata,
         };
-        let retained_bytes = flashblock.estimated_retained_bytes();
+        let base_bytes = flashblock.base.as_ref().map_or(0, |base| base.extra_data.len());
+        let transaction_bytes =
+            flashblock.diff.transactions.iter().fold(0usize, |total, transaction| {
+                total
+                    .saturating_add(size_of::<alloy_primitives::Bytes>())
+                    .saturating_add(transaction.len())
+            });
+        let retained_bytes = size_of::<Self>()
+            .saturating_add(base_bytes)
+            .saturating_add(transaction_bytes)
+            .saturating_add(
+                flashblock
+                    .diff
+                    .withdrawals
+                    .len()
+                    .saturating_mul(size_of::<alloy_rpc_types_eth::Withdrawal>()),
+            );
         if retained_bytes > MAX_DECOMPRESSED_FLASHBLOCK_BYTES {
             return Err(FlashblockDecodeError::PayloadTooLarge {
                 given: retained_bytes,
@@ -56,25 +72,6 @@ impl Flashblock {
         }
 
         Ok(flashblock)
-    }
-
-    /// Estimates heap and inline bytes retained by this decoded flashblock.
-    pub fn estimated_retained_bytes(&self) -> usize {
-        let base_bytes = self.base.as_ref().map_or(0, |base| base.extra_data.len());
-        let transaction_bytes = self.diff.transactions.iter().fold(0usize, |total, transaction| {
-            total
-                .saturating_add(size_of::<alloy_primitives::Bytes>())
-                .saturating_add(transaction.len())
-        });
-        size_of::<Self>()
-            .saturating_add(base_bytes)
-            .saturating_add(transaction_bytes)
-            .saturating_add(
-                self.diff
-                    .withdrawals
-                    .len()
-                    .saturating_mul(size_of::<alloy_rpc_types_eth::Withdrawal>()),
-            )
     }
 
     fn try_parse_message(bytes: Bytes) -> Result<String, FlashblockDecodeError> {
