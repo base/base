@@ -31,7 +31,7 @@ use revm::{
 use revm::{
     context_interface::transaction::{AuthorizationTr, TransactionType},
     database_interface::Database,
-    primitives::Address,
+    primitives::{Address, HashSet, TxKind},
 };
 
 use crate::{
@@ -94,47 +94,77 @@ fn load_standard_account_state<JOURNAL: JournalTr>(
 }
 
 /// EIP-7702 auth-list apply with the standard-keystore gate on each recovered
-/// authority. Invalid auths still `continue` (the transaction is included);
-/// a revoked / expired / non-admin default EOA is the same skip as a bad
-/// nonce or failed `ecrecover`.
+/// authority. Mirrors stock [`revm::handler::pre_execution::apply_eip7702_auth_list`]
+/// (including the EIP-2780 runtime-charge path); a revoked / expired / non-admin
+/// default EOA is the same skip as a bad nonce or failed `ecrecover`.
+///
+/// Returns the EIP-7702 gas refund, or `None` when EIP-2780 authorization
+/// charges ran out of gas.
 #[cfg(feature = "std")]
 fn apply_eip7702_auth_list_standard_keystore<CTX, ERROR>(
     context: &mut CTX,
-    init_and_floor_gas: &mut InitialAndFloorGas,
-) -> Result<u64, ERROR>
+    gas: &mut GasTracker,
+) -> Result<Option<u64>, ERROR>
 where
     CTX: ContextTr,
     ERROR:
         From<InvalidTransaction> + From<<CTX::Db as Database>::Error> + From<BaseTransactionError>,
 {
-    let chain_id = context.cfg().chain_id();
-    let is_eip8037 = context.cfg().is_amsterdam_eip8037_enabled();
     let now: u64 = context
         .block()
         .timestamp()
         .try_into()
         .map_err(|_| BaseTransactionError::standard_sender("block timestamp exceeds u64"))?;
-    let (tx, journal) = context.tx_journal_mut();
 
-    if tx.tx_type() != TransactionType::Eip7702 {
-        return Ok(0);
-    }
+    // EIP-2780: state-dependent charges are recorded on the transaction-level
+    // `gas` instead of the pessimistic intrinsic-charge/refund bookkeeping.
+    if context.cfg().is_amsterdam_eip2780_enabled() {
+        if context.tx().tx_type() != TransactionType::Eip7702 {
+            return Ok(Some(0));
+        }
+        let chain_id = context.cfg().chain_id();
+        let is_eip8037 = context.cfg().is_amsterdam_eip8037_enabled();
+        let params = context.cfg().gas_params();
+        let account_write_cost = params.tx_account_write_cost();
+        let new_account_state_gas = if is_eip8037 { params.new_account_state_gas() } else { 0 };
+        let delegation_bytes_state_gas =
+            if is_eip8037 { params.tx_eip7702_state_gas_bytecode() } else { 0 };
+        let (tx, journal) = context.tx_journal_mut();
 
-    let (number_of_refunded_accounts, number_of_refunded_bytecodes) =
-        apply_auth_list_standard_keystore::<_, ERROR>(
+        let mut written_accounts: HashSet<Address> = HashSet::default();
+        written_accounts.insert(tx.caller());
+        if let TxKind::Call(target) = tx.kind()
+            && !tx.value().is_zero()
+        {
+            written_accounts.insert(target);
+        }
+        let oog = apply_auth_list_eip2780_standard_keystore::<_, ERROR>(
             chain_id,
             now,
             tx.authorization_list(),
             journal,
+            account_write_cost,
+            new_account_state_gas,
+            delegation_bytes_state_gas,
+            &mut written_accounts,
+            gas,
         )?;
-
-    let params = context.cfg().gas_params();
-    if is_eip8037 {
-        init_and_floor_gas.state_refund += params
-            .tx_eip7702_state_refund(number_of_refunded_accounts, number_of_refunded_bytecodes);
+        return Ok(if oog { None } else { Some(0) });
     }
 
-    Ok(params.tx_eip7702_auth_refund_regular().saturating_mul(number_of_refunded_accounts))
+    let chain_id = context.cfg().chain_id();
+    let (tx, journal) = context.tx_journal_mut();
+    if tx.tx_type() != TransactionType::Eip7702 {
+        return Ok(Some(0));
+    }
+    let number_of_refunded_accounts = apply_auth_list_standard_keystore::<_, ERROR>(
+        chain_id,
+        now,
+        tx.authorization_list(),
+        journal,
+    )?;
+    let params = context.cfg().gas_params();
+    Ok(Some(params.tx_eip7702_auth_refund_regular().saturating_mul(number_of_refunded_accounts)))
 }
 
 /// Stock [`revm::handler::pre_execution::apply_auth_list`] plus a keystore
@@ -146,13 +176,12 @@ fn apply_auth_list_standard_keystore<JOURNAL, ERROR>(
     now: u64,
     auth_list: impl Iterator<Item = impl AuthorizationTr>,
     journal: &mut JOURNAL,
-) -> Result<(u64, u64), ERROR>
+) -> Result<u64, ERROR>
 where
     JOURNAL: JournalTr,
     ERROR: From<InvalidTransaction> + From<<JOURNAL::Database as Database>::Error>,
 {
     let mut refunded_accounts = 0;
-    let mut refunded_bytecodes = 0;
     for authorization in auth_list {
         let auth_chain_id = authorization.chain_id();
         if !auth_chain_id.is_zero() && auth_chain_id != U256::from(chain_id) {
@@ -206,14 +235,109 @@ where
             refunded_accounts += 1;
         }
 
-        if !authority_acc_info.is_code_hash_empty_or_zero() || authorization.address().is_zero() {
-            refunded_bytecodes += 1;
+        authority_acc.delegate(authorization.address());
+    }
+
+    Ok(refunded_accounts)
+}
+
+/// Stock [`revm::handler::pre_execution::apply_auth_list_eip2780`] plus the
+/// standard-keystore gate after authority recovery. Returns `true` on OOG.
+#[cfg(feature = "std")]
+#[allow(clippy::too_many_arguments)]
+fn apply_auth_list_eip2780_standard_keystore<JOURNAL, ERROR>(
+    chain_id: u64,
+    now: u64,
+    auth_list: impl Iterator<Item = impl AuthorizationTr>,
+    journal: &mut JOURNAL,
+    account_write_cost: u64,
+    new_account_state_gas: u64,
+    delegation_bytes_state_gas: u64,
+    written_accounts: &mut HashSet<Address>,
+    gas: &mut GasTracker,
+) -> Result<bool, ERROR>
+where
+    JOURNAL: JournalTr,
+    ERROR: From<InvalidTransaction> + From<<JOURNAL::Database as Database>::Error>,
+{
+    let mut charged_delegation_bytes: HashSet<Address> = HashSet::default();
+
+    for authorization in auth_list {
+        let auth_chain_id = authorization.chain_id();
+        if !auth_chain_id.is_zero() && auth_chain_id != U256::from(chain_id) {
+            continue;
+        }
+
+        if authorization.nonce() == u64::MAX {
+            continue;
+        }
+
+        let Some(authority) = authorization.authority() else {
+            continue;
+        };
+
+        let authority_acc = journal.load_account_with_code_mut(authority)?;
+        let authority_acc_info = &authority_acc.account().info;
+
+        if let Some(bytecode) = &authority_acc_info.code
+            && !bytecode.is_empty()
+            && !bytecode.is_eip7702()
+        {
+            continue;
+        }
+
+        if authorization.nonce() != authority_acc_info.nonce {
+            continue;
+        }
+
+        // Drop so we can SLOAD AccountConfiguration, then skip like a bad nonce.
+        drop(authority_acc);
+        let state = load_standard_account_state(journal, authority)?;
+        if base_execution_eip8130::ActorAuthorizer::authorize_standard_sender_from_state(
+            authority, &state, now,
+        )
+        .is_err()
+        {
+            continue;
+        }
+
+        // INVARIANT: same warmed-entry re-load as the non-2780 path above.
+        let mut authority_acc = journal.load_account_with_code_mut(authority)?;
+        let authority_acc_info = &authority_acc.account().info;
+
+        let existed = !(authority_acc_info.is_empty()
+            && authority_acc.account().is_loaded_as_not_existing_not_touched());
+        let delegated_now = !authority_acc_info.is_code_hash_empty_or_zero();
+        let delegated_before_tx =
+            !authority_acc.account().original_info().is_code_hash_empty_or_zero();
+        let clearing = authorization.address().is_zero();
+
+        if !existed && !gas.record_state_cost(new_account_state_gas) {
+            return Ok(true);
+        }
+
+        if !written_accounts.contains(&authority) {
+            if !gas.record_regular_cost(account_write_cost) {
+                return Ok(true);
+            }
+            written_accounts.insert(authority);
+        }
+
+        if !clearing
+            && !delegated_now
+            && !delegated_before_tx
+            && !charged_delegation_bytes.contains(&authority)
+        {
+            if !gas.record_state_cost(delegation_bytes_state_gas) {
+                return Ok(true);
+            }
+            charged_delegation_bytes.insert(authority);
         }
 
         authority_acc.delegate(authorization.address());
     }
 
-    Ok((refunded_accounts, refunded_bytecodes))
+    Ok(false)
 }
 
 impl<EVM, ERROR, FRAME> Handler for BaseHandler<EVM, ERROR, FRAME>
@@ -356,17 +480,17 @@ where
     fn apply_eip7702_auth_list(
         &self,
         evm: &mut Self::Evm,
-        init_and_floor_gas: &mut InitialAndFloorGas,
-    ) -> Result<u64, Self::Error> {
+        gas: &mut GasTracker,
+    ) -> Result<Option<u64>, Self::Error> {
         // Cobalt+: each recovered 7702 authority must still present a live
         // unrestricted default EOA. A revoked / expired / scoped k1 is
         // skipped (`continue`), same as a bad signature or nonce — the
         // transaction is still included, that delegation is not applied.
         #[cfg(feature = "std")]
         if evm.ctx().cfg().spec().is_enabled_in(BaseUpgrade::Cobalt) {
-            return apply_eip7702_auth_list_standard_keystore(evm.ctx_mut(), init_and_floor_gas);
+            return apply_eip7702_auth_list_standard_keystore(evm.ctx_mut(), gas);
         }
-        self.mainnet.apply_eip7702_auth_list(evm, init_and_floor_gas)
+        self.mainnet.apply_eip7702_auth_list(evm, gas)
     }
 
     fn last_frame_result(
@@ -1317,8 +1441,8 @@ mod tests {
         let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
-        handler.apply_eip7702_auth_list(&mut evm, &mut init_and_floor_gas).unwrap();
+        let mut gas = GasTracker::new(100_000, 100_000, 0);
+        handler.apply_eip7702_auth_list(&mut evm, &mut gas).unwrap();
         evm.ctx_mut()
             .journal_mut()
             .load_account_with_code(authority)
@@ -1386,9 +1510,9 @@ mod tests {
         let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
+        let mut gas = GasTracker::new(100_000, 100_000, 0);
         handler
-            .apply_eip7702_auth_list(&mut evm, &mut init_and_floor_gas)
+            .apply_eip7702_auth_list(&mut evm, &mut gas)
             .expect("an invalid 7702 signature must skip, not fail the transaction");
         assert!(
             evm.ctx_mut()
@@ -1423,9 +1547,9 @@ mod tests {
         let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
+        let mut gas = GasTracker::new(100_000, 100_000, 0);
         handler
-            .apply_eip7702_auth_list(&mut evm, &mut init_and_floor_gas)
+            .apply_eip7702_auth_list(&mut evm, &mut gas)
             .expect("mixed 7702 list must not fail the transaction");
 
         let live_delegated = evm
