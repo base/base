@@ -73,7 +73,8 @@ Type 3 (EIP-4844 blob) is intentionally unregistered — Base rejects blob txs.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Confirm per-fork static variants resolve | ⬜ | Fjord P256, Granite/Jovian bn254, Isthmus BLS |
+| `BaseEvmTypes::precompiles()` + Fjord P256VERIFY | ✅ | RIP-7212 at Fjord (ahead of upstream Osaka) |
+| Base bn254 pairing caps (Granite/Jovian) + BLS variants (Isthmus/Jovian) | ⬜ | Base-specific precompile impls not in evm2 |
 | Dynamic installs (B20, registries, TxContext, NonceManager) | ⬜ | Beryl/Cobalt |
 | Precompile metrics observer + storage-feature gating | ⬜ | |
 

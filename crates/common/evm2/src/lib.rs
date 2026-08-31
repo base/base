@@ -18,6 +18,8 @@ pub use transaction::BaseTxEnvelope;
 mod handler;
 pub use handler::BaseTxHandlerHooks;
 
+mod precompiles;
+
 mod executor;
 pub use executor::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BlockExecutionResult, BlockGasLimitExceeded,
