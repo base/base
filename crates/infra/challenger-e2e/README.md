@@ -16,9 +16,13 @@ that may ever dispute. Both are generated per run and never leave the pod.
 ## What it asserts
 
 One process, one fork, two TEE-only in-progress games (newest-first, lookback
-50, at least one intermediate root). The run bails if fewer than two such games
-exist — they are the games the dispute paths will corrupt, so a fork without
-them cannot exercise the challenger at all.
+50, at least one intermediate root, all above the anchor game). The run bails if
+fewer than two such games exist — they are the games the dispute paths will
+corrupt, so a fork without them cannot exercise the challenger at all.
+
+The anchor bound is not cosmetic: the scanner starts at one past the anchor
+game's factory index, so a game at or before the anchor is one the challenger
+will never look at, however invalid it is made.
 
 1. **The challenger comes up.** `base_challenger_up` is 1 and at least one scan
    has completed.
@@ -34,16 +38,16 @@ them cannot exercise the challenger at all.
    otherwise be absorbed into the baseline and pass.
 
    Progress over the window is asserted on
-   `base_challenger_validation_latency_seconds_count`, not on
-   `games_scanned_total`. The latter counts attempted factory indices and
-   advances even when every game query fails; the histogram is only touched
-   from inside the validator, once per candidate game, so it is the only metric
-   that shows a game was actually looked at.
+   `validation_latency_seconds_count` minus `validation_errors_total`, not on
+   `games_scanned_total`. The last counts attempted factory indices and
+   advances even when every game query fails. The histogram is closer — it is
+   only touched from inside the validator — but its latency is recorded from a
+   drop guard, so it too counts attempts rather than successes. Subtracting the
+   error counter, which the validator increments exactly once per failed call,
+   leaves the games the challenger actually managed to check.
 
-`base_challenger_validation_errors_total` is reported rather than fatal — it is
-usually the L2 RPC rather than the challenger. A storm severe enough to matter
-fails the assertion above instead, since a game whose roots cannot be computed
-is never validated.
+Validation errors below that threshold are reported rather than fatal — they
+are usually the L2 RPC rather than the challenger.
 
 ## Required environment
 
@@ -58,6 +62,7 @@ is pointed at and talks to the same prover-service.
 | `BASE_CHALLENGER_ZK_RPC_URL` | Yes | Live prover-service JSON-RPC (not the fork) |
 | `BASE_CHALLENGER_DISPUTE_GAME_FACTORY_ADDR` | Yes | `DisputeGameFactory` on L1 |
 | `BASE_CHALLENGER_GAME_TYPE` | Yes | `AggregateVerifier` game type |
+| `BASE_CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR` | Yes | `AnchorStateRegistry` on L1; read to find the scanner's lower bound |
 | `CHALLENGER_E2E_ANVIL_PORT` | No (default `18545`) | Fork port; not 8545, which the production challenger reserves for its signer sidecar |
 | `CHALLENGER_E2E_CHALLENGER_METRICS_URL` | No (default `http://127.0.0.1:7300/metrics`) | Prometheus endpoint of the challenger under test |
 | `CHALLENGER_E2E_GAME_LOOKBACK` | No (default `50`) | Factory indices searched for two games |

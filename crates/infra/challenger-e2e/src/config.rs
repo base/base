@@ -36,6 +36,14 @@ pub struct Config {
     #[arg(long = "game-type", env = "BASE_CHALLENGER_GAME_TYPE")]
     pub game_type: u32,
 
+    /// `AnchorStateRegistry` on L1.
+    ///
+    /// Read only to find the anchor game's factory index. The challenger scans
+    /// from one past it, so a game at or before the anchor is one it will never
+    /// look at.
+    #[arg(long = "anchor-state-registry-addr", env = "BASE_CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR")]
+    pub anchor_state_registry_addr: Address,
+
     /// Port Anvil binds to.
     ///
     /// Deliberately not 8545: the production challenger config reserves that

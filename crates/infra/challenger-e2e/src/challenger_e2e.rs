@@ -7,8 +7,9 @@ use alloy_primitives::{Address, U256, hex};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
-    DisputeGameFactoryContractClient, GameStatus,
+    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
+    AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+    GameStatus,
 };
 use clap::Parser;
 use eyre::{Context, Result, bail, ensure, eyre};
@@ -37,9 +38,17 @@ const DISPUTE_COUNTERS: [&str; 3] = [
 /// Count series of the challenger's validation-latency histogram.
 ///
 /// Recorded once per call to the validator's `validate_output_roots`, which is
-/// reached per candidate game, so this is the only metric that shows the
-/// challenger got past the factory and looked at a game.
+/// reached once per candidate game.
 const VALIDATIONS: &str = "base_challenger_validation_latency_seconds_count";
+
+/// Failed validations, one per failed [`VALIDATIONS`] call.
+///
+/// `validate_output_roots` records its latency from a drop guard, so the
+/// histogram counts attempts rather than successes. It increments this counter
+/// exactly once on the way out of a failure — the `?` returns on the first
+/// error it observes — so the difference of the two is the number of games the
+/// challenger actually validated.
+const VALIDATION_ERRORS: &str = "base_challenger_validation_errors_total";
 
 /// Behavioural end-to-end test of the challenger.
 ///
@@ -70,10 +79,15 @@ impl ChallengerE2e {
             provider.clone(),
         );
         let verifier = AggregateVerifierContractClient::new(provider.clone());
+        let anchor_registry = AnchorStateRegistryContractClient::new(
+            config.anchor_state_registry_addr,
+            provider.clone(),
+        );
 
         // Chosen before the challenger boots, so the quiet window below is
         // measured against a fork that already contains the target games.
-        let (game_a, game_b) = Self::select_games(&config, &factory, &verifier).await?;
+        let (game_a, game_b) =
+            Self::select_games(&config, &factory, &verifier, &anchor_registry).await?;
 
         Self::release_challenger(&fork_url, &challenger)?;
         Self::await_first_scan(&config).await?;
@@ -130,6 +144,7 @@ impl ChallengerE2e {
         config: &Config,
         factory: &DisputeGameFactoryContractClient,
         verifier: &AggregateVerifierContractClient,
+        anchor_registry: &AnchorStateRegistryContractClient,
     ) -> Result<(Address, Address)> {
         let game_count = factory.game_count().await?;
         if game_count == 0 {
@@ -137,9 +152,20 @@ impl ChallengerE2e {
         }
         let floor = game_count.saturating_sub(config.game_lookback);
 
+        // The challenger scans from one past the anchor game's factory index,
+        // so anything at or before it is invisible to the challenger no matter
+        // what state it is in. Walking newest-first means stopping at the
+        // anchor is the whole lower bound.
+        let anchor_game = anchor_registry.anchor_snapshot().await?.anchor_game;
+
         let mut selected = Vec::with_capacity(2);
         for index in (floor..game_count).rev() {
             let game = factory.game_at_index(index).await?;
+            // ZERO is the starting anchor, where the challenger scans from 0.
+            if anchor_game != Address::ZERO && game.proxy == anchor_game {
+                info!(anchor_game = %anchor_game, factory_index = index, "reached the anchor");
+                break;
+            }
             if game.game_type != config.game_type {
                 continue;
             }
@@ -182,8 +208,9 @@ impl ChallengerE2e {
             return Ok((*game_a, *game_b));
         }
         bail!(
-            "need two in-progress, uncountered games of type {} in the newest {} factory \
-             indices, found {}; the fork source may be behind or the proposer may be stalled",
+            "need two in-progress, uncountered games of type {} above the anchor in the newest \
+             {} factory indices, found {}; the fork source may be behind, the proposer may be \
+             stalled, or the anchor may have advanced past them",
             config.game_type,
             game_count - floor,
             selected.len()
@@ -269,16 +296,20 @@ impl ChallengerE2e {
 
         // `games_scanned_total` counts attempted factory indices and is
         // incremented even when every game query fails, so it cannot show that
-        // any game was actually looked at. The validation histogram is only
-        // touched from inside `validate_output_roots`, which is reached per
-        // candidate game, so its count is the positive signal.
-        let validated = after.sum(VALIDATIONS) - before.sum(VALIDATIONS);
+        // any game was actually looked at. The validation histogram is closer
+        // but still counts attempts, because its latency is recorded from a
+        // drop guard that fires on the error path too. Subtracting the error
+        // counter leaves the validations that actually computed a root.
+        let attempted = after.sum(VALIDATIONS) - before.sum(VALIDATIONS);
+        let failed = after.sum(VALIDATION_ERRORS) - before.sum(VALIDATION_ERRORS);
+        let validated = attempted - failed;
         let scanned = after.sum("base_challenger_games_scanned_total")
             - before.sum("base_challenger_games_scanned_total");
         ensure!(
             validated > 0.0,
-            "the challenger validated no game in {:?} ({scanned} indices scanned); it is \
-             reaching the factory but not the games, so a quiet window proves nothing",
+            "the challenger completed no validation in {:?} ({attempted} attempted, {failed} \
+             failed, {scanned} indices scanned); a quiet window over games it never managed to \
+             check proves nothing",
             config.quiet_window
         );
 
@@ -290,14 +321,11 @@ impl ChallengerE2e {
             );
         }
 
-        // Validation errors are usually the L2 RPC rather than the challenger,
-        // so they are reported rather than fatal. A storm severe enough to
-        // matter fails the assertion above instead, because a game whose roots
-        // cannot be computed is never validated.
-        let errors = after.sum("base_challenger_validation_errors_total")
-            - before.sum("base_challenger_validation_errors_total");
-        if errors > 0.0 {
-            warn!(validation_errors = errors, "the challenger reported validation errors");
+        // Some failures are tolerable — they are usually the L2 RPC rather than
+        // the challenger — so they are reported rather than fatal. A storm that
+        // swallows every game fails the assertion above instead.
+        if failed > 0.0 {
+            warn!(validation_errors = failed, "the challenger reported validation errors");
         }
 
         info!(
