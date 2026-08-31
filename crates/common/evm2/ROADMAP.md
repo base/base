@@ -124,7 +124,11 @@ Landed and tested in this spike (revm-free non-test build preserved throughout):
 - **Phase 4 (complete)** — block-level differential parity harness (cumulative gas + per-tx
   success vs revm across Ecotone/Fjord/Isthmus); `blob_gas_used` and state-gas accounting; OP
   post-block balance increments are a no-op (no block reward, no in-body withdrawals).
-- **Phase 5 (partial)** — `BaseEvmTypes::precompiles()` with Fjord `P256VERIFY`.
+- **Phase 5 (partial)** — `BaseEvmTypes::precompiles()` with Fjord `P256VERIFY` and the bn254/BLS
+  input caps (cap constants pinned to the revm reference).
+- **Phase 6 (started)** — EIP-8130 transaction envelope variant (`BaseTxEnvelope::Eip8130`) and the
+  `NonceManager` storage layout (2D channel nonces + nonce-free replay protection), slot-parity
+  tested against the revm reference.
 
 Remaining, in rough size order, with the reason each is out of scope for this spike:
 
@@ -133,7 +137,10 @@ Remaining, in rough size order, with the reason each is out of scope for this sp
   variants delegating to evm2's precompiles). The dynamic ones are custom stateful contracts whose
   reference lives in the revm-typed `base-common-precompiles`, so they need an evm2-native
   reimplementation with their own differential validation.
-- **Phase 6 — EIP-8130 (XL).** ~3,400 lines in the revm reference, deeply coupled to revm's `Evm`;
-  its own multi-PR track.
+- **Phase 6 — EIP-8130 execution engine (XL).** The envelope variant and nonce storage layout are
+  done; the remainder (registry handler, intrinsic-gas compute, dispatch/authorizer/policy gate,
+  phased-call execution, fee settlement, verified/simulate) is ~3,000 lines tightly coupled to the
+  revm-typed `base-execution-eip8130` subsystem and evm2 execution semantics — its own multi-PR
+  track, only end-to-end validatable as a whole.
 - **Phase 7 — node wiring.** Blocked on the upstream `alloy-evm`/`reth` EVM2 bridge, which does not
   exist yet.
