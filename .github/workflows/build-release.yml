@@ -67,7 +67,13 @@ jobs:
         if: matrix.target.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev pkg-config
+          sudo apt-get install -y libclang-dev pkg-config protobuf-compiler
+
+      - name: Install Go for basectl
+        if: matrix.binary == 'basectl'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.24.x'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
@@ -85,6 +91,13 @@ jobs:
 
       - name: Build binary
         run: |
+          if [ "${{ matrix.target.triple }}" = "aarch64-unknown-linux-gnu" ]; then
+            case "${{ matrix.binary }}" in
+              base|base-consensus|basectl)
+                export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-lblst"
+                ;;
+            esac
+          fi
           cargo build --locked --profile maxperf --bin "${{ matrix.binary }}"
 
       - name: Package binary
