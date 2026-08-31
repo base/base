@@ -9,7 +9,7 @@
 //! (ABI dispatch, nonce increment + events, and the nonce-free replay ring buffer) is layered on
 //! with the EIP-8130 track.
 
-use alloy_primitives::{Address, U256, keccak256};
+use alloy_primitives::{Address, B256, U256, keccak256};
 use evm2::{
     Evm,
     registry::{HandlerError, HandlerResult},
@@ -32,6 +32,14 @@ impl NonceManager {
     /// pins it to the reference `NonceManagerStorage::NONCES_BASE_SLOT`.
     pub const NONCES_BASE_SLOT: U256 = alloy_primitives::uint!(
         0x9d3ea32ad25774a46482ebbae019e8da4242109d164d324a59aa787515b9fe00_U256
+    );
+
+    /// ERC-7201 base storage slot of the nonce-free replay `expiring_nonce_seen` mapping.
+    ///
+    /// Hardcoded to keep this crate revm-free; a parity test pins it to the reference
+    /// `NonceManagerStorage::EXPIRING_NONCE_SEEN_BASE_SLOT`.
+    pub const EXPIRING_NONCE_SEEN_BASE_SLOT: U256 = alloy_primitives::uint!(
+        0x9d3ea32ad25774a46482ebbae019e8da4242109d164d324a59aa787515b9fe01_U256
     );
 
     /// The reserved protocol nonce key (held in account state, not managed here).
@@ -65,6 +73,31 @@ impl NonceManager {
             .storage_slot_untracked(&Self::ADDRESS, &slot)
             .map_err(HandlerError::Fatal)?;
         Ok(Some(value.saturating_to::<u64>()))
+    }
+
+    /// Returns the storage slot holding the recorded expiry for a nonce-free transaction's
+    /// `replay_id`. Mirrors the reference `NonceManagerStorage::expiring_nonce_seen_slot`.
+    pub fn expiring_nonce_seen_slot(replay_id: B256) -> U256 {
+        Self::u256_mapping_slot(
+            U256::from_be_bytes(replay_id.0),
+            Self::EXPIRING_NONCE_SEEN_BASE_SLOT,
+        )
+    }
+
+    /// Returns whether `replay_id` has been recorded and has not yet expired relative to `now`
+    /// (Unix milliseconds) — the nonce-free replay check. Reads storage untracked.
+    pub fn is_expiring_nonce_seen(
+        evm: &mut Evm<'_, BaseEvmTypes>,
+        replay_id: B256,
+        now: u64,
+    ) -> HandlerResult<bool> {
+        let slot = Self::expiring_nonce_seen_slot(replay_id);
+        let expiry = evm
+            .state_mut()
+            .storage_slot_untracked(&Self::ADDRESS, &slot)
+            .map_err(HandlerError::Fatal)?
+            .saturating_to::<u64>();
+        Ok(expiry != 0 && expiry > now)
     }
 
     /// The Solidity slot for `mapping[address_key]` at base `slot`: `keccak256(pad32(key) ++ slot)`.
@@ -132,6 +165,39 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn expiring_nonce_seen_slot_matches_the_revm_reference() {
+        use base_common_precompiles::NonceManagerStorage;
+        assert_eq!(
+            NonceManager::EXPIRING_NONCE_SEEN_BASE_SLOT,
+            NonceManagerStorage::EXPIRING_NONCE_SEEN_BASE_SLOT,
+        );
+        for id in [B256::repeat_byte(0x11), B256::repeat_byte(0xff), B256::ZERO] {
+            assert_eq!(
+                NonceManager::expiring_nonce_seen_slot(id),
+                NonceManagerStorage::expiring_nonce_seen_slot(id),
+                "expiring-nonce slot diverged for {id}",
+            );
+        }
+    }
+
+    #[test]
+    fn is_expiring_nonce_seen_respects_recorded_expiry() {
+        let replay_id = B256::repeat_byte(0x42);
+        let slot = NonceManager::expiring_nonce_seen_slot(replay_id);
+        let mut db = InMemoryDB::default();
+        // Recorded expiry of 5_000 ms.
+        db.insert_account_storage(&NonceManager::ADDRESS, &slot, &U256::from(5_000u64));
+        let mut evm = evm(db);
+        // Seen while now < expiry; not seen once now >= expiry (the entry has lapsed).
+        assert!(NonceManager::is_expiring_nonce_seen(&mut evm, replay_id, 4_999).unwrap());
+        assert!(!NonceManager::is_expiring_nonce_seen(&mut evm, replay_id, 5_000).unwrap());
+        // An unrecorded id is never seen.
+        assert!(
+            !NonceManager::is_expiring_nonce_seen(&mut evm, B256::repeat_byte(0x99), 0).unwrap()
+        );
     }
 
     #[test]
