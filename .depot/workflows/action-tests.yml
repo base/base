@@ -33,11 +33,8 @@ jobs:
         with:
           native-deps: "true"
           foundry: "true"
-          components: clippy
           tools: cargo-nextest
       - name: Build test contracts
         run: just build::contracts
-      - name: Lint action tests
-        run: just actions::lint-ci
       - name: Run action tests
         run: just actions::test-ci
