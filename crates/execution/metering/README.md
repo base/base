@@ -5,7 +5,8 @@ Metering RPC for Base node. Provides RPC methods for measuring transaction and b
 ## Overview
 
 Exposes JSON-RPC endpoints for profiling transaction and block execution on the Base node.
-`base_meterBundle` simulates a bundle and returns per-transaction gas and timing metrics.
+`base_meterBundle` simulates a bundle against latest canonical state and returns
+per-transaction gas and timing metrics.
 `base_meterBlockByHash` and `base_meterBlockByNumber` re-execute a historical block and return
 a breakdown of signer recovery and EVM execution times.
 `base_meteredPriorityFeePerGas` combines bundle metering with a priority fee recommendation
@@ -24,7 +25,7 @@ base-metering = { workspace = true }
 
 ### `base_meterBundle`
 
-Simulates and meters a bundle of transactions.
+Simulates and meters a bundle of transactions against latest canonical state.
 
 **Parameters:**
 - `bundle`: Bundle object containing transactions to simulate

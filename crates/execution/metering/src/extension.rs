@@ -4,7 +4,7 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use alloy_primitives::U256;
-use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState};
+use base_flashblocks::{FlashblocksAPI, FlashblocksConfig};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use parking_lot::RwLock;
 use tracing::{debug, info, warn};
@@ -182,9 +182,6 @@ impl BaseNodeExtension for MeteringExtension {
         let metered_opcodes = Arc::new(self.metered_opcodes);
 
         hooks.add_rpc_module(move |ctx| {
-            let fb_state: Arc<FlashblocksState> =
-                flashblocks_config.as_ref().map(|cfg| Arc::clone(&cfg.state)).unwrap_or_default();
-
             let metering_api = if has_estimator {
                 let cache_size = cache_size.expect("estimator configuration validated");
                 let target_flashblocks_per_block =
@@ -229,13 +226,12 @@ impl BaseNodeExtension for MeteringExtension {
 
                 MeteringApiImpl::with_estimator(
                     ctx.provider().clone(),
-                    fb_state,
                     estimator,
                     Arc::clone(&metered_opcodes),
                 )
             } else {
                 info!(message = "Starting Metering RPC (priority fee estimation disabled)");
-                MeteringApiImpl::new(ctx.provider().clone(), fb_state, Arc::clone(&metered_opcodes))
+                MeteringApiImpl::new(ctx.provider().clone(), Arc::clone(&metered_opcodes))
             };
 
             ctx.modules.merge_configured(metering_api.into_rpc())?;

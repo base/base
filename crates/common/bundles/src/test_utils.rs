@@ -70,7 +70,6 @@ pub fn create_test_meter_bundle_response() -> MeterBundleResponse {
         gas_fees: U256::from(0),
         results: vec![],
         state_block_number: 0,
-        state_flashblock_index: None,
         total_gas_used: 0,
         total_execution_time_us: 0,
     }
@@ -121,6 +120,5 @@ mod tests {
         assert_eq!(response.coinbase_diff, U256::ZERO);
         assert!(response.results.is_empty());
         assert_eq!(response.state_block_number, 0);
-        assert!(response.state_flashblock_index.is_none());
     }
 }

@@ -12,7 +12,7 @@ use crate::{MeterBlockResponse, MeteredPriorityFeeResponse};
 /// The API exposes bundle simulation, block profiling, and priority-fee estimation.
 #[rpc(server, namespace = "base")]
 pub trait MeteringApi {
-    /// Simulates and meters a bundle of transactions
+    /// Simulates and meters a bundle of transactions against latest canonical state.
     #[method(name = "meterBundle")]
     async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse>;
 
