@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: always
+  SCCACHE_CLIENT_SIDE: "1"
   RUSTC_WRAPPER: "sccache"
 permissions:
   contents: read
@@ -35,6 +36,14 @@ jobs:
           foundry: "true"
           components: clippy
           tools: cargo-nextest
+      - name: Check sccache error logging
+        shell: bash
+        run: |
+          if [[ -v SCCACHE_ERROR_LOG ]]; then
+            echo "SCCACHE_ERROR_LOG is set"
+          else
+            echo "SCCACHE_ERROR_LOG is not set"
+          fi
       - name: Build test contracts
         run: just build::contracts
       - name: Lint action tests
