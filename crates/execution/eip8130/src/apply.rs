@@ -119,14 +119,6 @@ pub enum ApplyError {
     #[error("policy data does not match policy type")]
     InvalidPolicyData,
 
-    /// Revoking an actor that is not currently authorized. Mirrors
-    /// `_revokeActor`'s `require(isActor(...))`.
-    #[error("actor {actor_id} is not authorized and cannot be revoked")]
-    UnknownActor {
-        /// The actor id that was not an authorized actor.
-        actor_id: B256,
-    },
-
     /// A create entry had no initial actors. Mirrors
     /// `require(initialActors.length > 0)`.
     #[error("create entry has no initial actors")]
@@ -736,6 +728,10 @@ impl AccountChangeApplier {
     ///   on how many of its policy slots were written non-zero — a gated actor may
     ///   still carry a zero manager and/or commitment (see [`Self::slice_policy`]),
     ///   which are zero-to-zero no-ops rather than real resets.
+    /// - An **absent** actor revoke is an idempotent no-op (mirrors
+    ///   `_applyRevoke`'s early return, eip-8130 #100) and returns `3`: all three
+    ///   conservatively reset-priced slots are empty, so the whole revoke is
+    ///   discounted.
     ///
     /// The authorize/create paths maintain mutual exclusion between the inline
     /// secp256k1 self key and an explicit non-k1 self actor. This method does not
@@ -768,7 +764,14 @@ impl AccountChangeApplier {
             return Ok(0);
         }
         if !is_self || state.default_eoa_revoked() {
-            return Err(ApplyError::UnknownActor { actor_id });
+            // Idempotent: the actor is already absent — no explicit `actor_config`
+            // entry, and either a non-self id or a self whose inline secp256k1 key
+            // is revoked. Mirrors `_applyRevoke`'s `if (!_isAuthorized(...)) return;`
+            // (eip-8130 #100): no state change and no `ActorRevoked` event. All
+            // three conservatively reset-priced revoke slots (`actor_config` and
+            // both policy slots) are empty for an absent actor, so the whole revoke
+            // is discounted.
+            return Ok(3);
         }
 
         // The inline self's `actor_config` slot is always empty (a zero-to-zero
@@ -808,7 +811,9 @@ impl AccountChangeApplier {
         config: ActorConfig,
     ) -> Result<(), ApplyError> {
         if config.authenticator == Address::ZERO {
-            return Err(ApplyError::UnknownActor { actor_id });
+            // Idempotent: an absent actor is a no-op (no clear, no event), mirroring
+            // `_applyRevoke`'s early return when `!_isAuthorized` (eip-8130 #100).
+            return Ok(());
         }
         storage.clear_actor_config(account, actor_id)?;
         storage.clear_policy(account, actor_id)?;
@@ -1576,11 +1581,30 @@ mod tests {
             // Revoke clears the slot.
             AccountChangeApplier::revoke_actor(acc, ACCOUNT, NON_SELF).unwrap();
             assert!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap().is_empty());
-            assert_eq!(
-                AccountChangeApplier::revoke_actor(acc, ACCOUNT, NON_SELF),
-                Err(ApplyError::UnknownActor { actor_id: NON_SELF })
-            );
+            // Revoking an already-absent actor is idempotent: a no-op, not an
+            // error (mirrors `_applyRevoke`'s early return, eip-8130 #100).
+            assert_eq!(AccountChangeApplier::revoke_actor(acc, ACCOUNT, NON_SELF), Ok(()));
+            assert!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap().is_empty());
         });
+    }
+
+    #[test]
+    fn revoke_absent_actor_is_idempotent_noop_with_full_discount() {
+        // Revoking an actor that was never authorized mirrors `_applyRevoke`'s
+        // `if (!_isAuthorized(...)) return;` (eip-8130 #100): a no-op that emits
+        // no `ActorRevoked` event and discounts all three conservatively
+        // reset-priced revoke slots (they are all empty for an absent actor).
+        let events = with_storage_events(|acc| {
+            let mut state = acc.get_account_state(ACCOUNT).unwrap();
+            assert_eq!(
+                AccountChangeApplier::revoke_actor_with_account_state(
+                    acc, ACCOUNT, NON_SELF, &mut state
+                ),
+                Ok(3),
+            );
+            assert!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap().is_empty());
+        });
+        assert!(events.is_empty(), "a no-op revoke must not emit ActorRevoked");
     }
 
     #[test]

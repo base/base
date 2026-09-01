@@ -1565,7 +1565,6 @@ where
             ApplyError::InvalidActorId => "actor id bytes32(0) is reserved",
             ApplyError::InvalidAuthenticator => "actor authenticator is not canonical",
             ApplyError::InvalidPolicyData => "actor policy data is malformed",
-            ApplyError::UnknownActor { .. } => "revoked actor is not authorized",
             ApplyError::NoInitialActors => "create entry has no initial actors",
             ApplyError::ActorsNotSortedOrDuplicate => {
                 "create initial actors are not strictly ascending"
