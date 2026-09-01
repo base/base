@@ -1,32 +1,21 @@
 # `shadow-metrics`
 
-Service process for shadow block metrics. It polls Postgres for shadow
-candidate blocks that were reorged out, emits Prometheus metrics about them,
-and exposes Kubernetes-style health probes.
+Service process for the shadow block explorer API. It connects to Postgres for
+shadow candidate blocks that were reorged out, serves them over a read-only HTTP
+JSON API, and exposes Kubernetes-style health probes.
 
 ## Behavior
 
-On startup, the service connects to Postgres when
-`SHADOW_METRICS_POSTGRES_URL` is set, resolves the reader's starting cursor,
-spawns the poll loop, and starts an HTTP health server (`GET /healthz`, `GET
-/readyz`).
+On startup, the service connects to Postgres when a Postgres host is configured,
+then starts an HTTP server exposing the block API and health probes (`GET
+/healthz`, `GET /readyz`).
 
-Each poll reads shadow block rows newer than the persisted cursor and emits
-gas used, transaction count, priority fee inversions, empty blocks, and the
-latest block number. Metrics are emitted before the cursor is
-persisted, so delivery is at-least-once. Payloads deserialize during the database
-fetch, so one incompatible payload fails the entire poll, increments
-`poll_errors_total`, and leaves the cursor untouched. This accepted trade-off
-stalls the reader on the same batch until the offending row is repaired or
-deleted; other database errors have the same retry behavior.
+When no Postgres host is configured, database connectivity is disabled: the
+block API responds `503` and `/readyz` always reports ready.
 
-When `SHADOW_METRICS_POSTGRES_URL` is unset, Postgres connectivity is disabled
-and no reader is started.
-
-`/readyz` verifies that the shadow-indexer schema is usable by the runtime role
-and that a configured reader is still running; it reports not ready if either
-fails, so Kubernetes restarts the pod. With no Postgres configured it always
-reports ready.
+`/readyz` verifies that the shadow-indexer schema is readable by the runtime
+role; it reports not ready if that check fails, so Kubernetes restarts the pod.
+With no Postgres configured it always reports ready.
 
 ## Security Model
 
@@ -36,23 +25,22 @@ container networking.
 
 ## Configuration
 
-| Env var                                   | Default | Description                                    |
-| ----------------------------------------- | ------- | ---------------------------------------------- |
-| `SHADOW_METRICS_POSTGRES_URL`             | (unset) | Postgres URL. When unset, DB is disabled.      |
-| `SHADOW_METRICS_POSTGRES_MAX_CONNECTIONS` | `10`    | Max Postgres pool connections.                 |
-| `SHADOW_METRICS_HTTP_PORT`                | `9101`  | Health server port.                            |
-| `SHADOW_METRICS_POLL_INTERVAL_SECS`       | `2`     | Seconds between polls.                         |
-| `SHADOW_METRICS_MAX_ROWS_PER_POLL`        | `1000`  | Max shadow block rows fetched by one poll.     |
-| `SHADOW_METRICS_METRICS_PORT`             | `9003`  | Prometheus metrics port.                       |
+| Env var                                   | Default          | Description                                |
+| ----------------------------------------- | ---------------- | ------------------------------------------ |
+| `SHADOW_METRICS_POSTGRES_HOST`            | (unset)          | Postgres host. When unset, DB is disabled. |
+| `SHADOW_METRICS_POSTGRES_PASSWORD`        | (unset)          | Password for the Postgres role.            |
+| `SHADOW_METRICS_POSTGRES_PORT`            | `5432`           | Postgres port.                             |
+| `SHADOW_METRICS_POSTGRES_DATABASE`        | `shadow_metrics` | Postgres database name.                    |
+| `SHADOW_METRICS_POSTGRES_USER`            | `app`            | Postgres role to authenticate as.          |
+| `SHADOW_METRICS_POSTGRES_MAX_CONNECTIONS` | `10`             | Max Postgres pool connections.             |
+| `SHADOW_METRICS_HTTP_PORT`                | `9101`           | Health + block API server port.            |
+| `SHADOW_METRICS_METRICS_PORT`             | `9003`           | Prometheus metrics port.                   |
+
+Setting `SHADOW_METRICS_POSTGRES_HOST` requires `SHADOW_METRICS_POSTGRES_PASSWORD`.
 
 The `9101` HTTP default applies only when nothing overrides it. The deployment
 chart sets `SHADOW_METRICS_HTTP_PORT` to `8080`, so probes in a running pod hit
 `8080` and not `9101`.
-
-`SHADOW_METRICS_POLL_INTERVAL_SECS` defaults to `2` because the writer flushes
-every second and reconciliation lands in bursts roughly every ten seconds.
-`SHADOW_METRICS_MAX_ROWS_PER_POLL` bounds catch-up so a long outage drains
-steadily instead of loading every JSONB payload at once.
 
 Prometheus metrics are only served when `--metrics.enabled` is passed.
 

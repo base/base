@@ -68,30 +68,6 @@ impl ShadowRetentionRepo {
             .context("failed to resolve the shadow retention cutoff")
     }
 
-    /// Reports whether expiring rows include reorged blocks the metrics reader never consumed.
-    ///
-    /// Retention is never clamped to the reader: a reader that stops advancing would otherwise
-    /// pin the table and defeat the point of the sweep. Losing unread rows is the deliberate
-    /// trade, so callers surface this as an operational signal instead.
-    ///
-    /// # Errors
-    /// Returns an error when the query fails.
-    pub async fn has_unread_expired(&self, cutoff: DateTime<Utc>) -> Result<bool> {
-        query_scalar(
-            "SELECT EXISTS ( \
-               SELECT 1 FROM shadow_blocks AS blocks \
-               JOIN shadow_metrics_cursor AS cursor_row ON cursor_row.id = 1 \
-               WHERE blocks.updated_at < $1 \
-                 AND (blocks.updated_at, blocks.number) \
-                     > (cursor_row.last_updated_at, cursor_row.last_number) \
-             )",
-        )
-        .bind(cutoff)
-        .fetch_one(&self.pool)
-        .await
-        .context("failed to check the shadow metrics cursor against the retention cutoff")
-    }
-
     /// Deletes every row last written before `cutoff`, in bounded batches.
     ///
     /// Returns `None` when another builder in the fleet already holds the retention lock.

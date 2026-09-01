@@ -86,14 +86,6 @@ impl ShadowRetention {
     async fn sweep_once(repo: &ShadowRetentionRepo, period: Duration) -> anyhow::Result<()> {
         let cutoff = repo.cutoff(period).await?;
 
-        if repo.has_unread_expired(cutoff).await? {
-            warn!(
-                target: "base::shadow-indexer",
-                %cutoff,
-                "Expiring reorged shadow blocks the metrics reader never consumed"
-            );
-        }
-
         let Some(sweep) = repo.sweep(cutoff).await? else {
             debug!(
                 target: "base::shadow-indexer",
