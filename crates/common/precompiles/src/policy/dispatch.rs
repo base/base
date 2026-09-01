@@ -4,11 +4,11 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, BerylAuxiliaryMetrics, BerylCallRecorder,
-    BerylMetricLabels,
+    ActivationFeature, ActivationRegistryStorage,
     IPolicyRegistry::{self, IPolicyRegistryCalls as C},
     NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyRegistryV2, PolicyVersion,
-    PolicyVersions, PrecompileCallObserver,
+    PolicyVersions, PrecompileAuxiliaryMetrics, PrecompileCallObserver, PrecompileCallRecorder,
+    PrecompileMetricLabels,
 };
 
 impl PolicyRegistryStorage<'_> {
@@ -36,8 +36,10 @@ impl PolicyRegistryStorage<'_> {
     where
         O: PrecompileCallObserver,
     {
-        let mut recorder =
-            BerylCallRecorder::start(observer.clone(), BerylMetricLabels::policy_call(calldata));
+        let mut recorder = PrecompileCallRecorder::start(
+            observer.clone(),
+            PrecompileMetricLabels::policy_call(calldata),
+        );
         if !ctx.call_value().is_zero() {
             return recorder.record_base_error_result(
                 ctx,
@@ -105,7 +107,7 @@ impl PolicyRegistryStorage<'_> {
             }
             C::createPolicyWithAccounts(call) => {
                 observer.record_batch_items(
-                    &BerylAuxiliaryMetrics::singleton("policy", "createPolicyWithAccounts"),
+                    &PrecompileAuxiliaryMetrics::singleton("policy", "createPolicyWithAccounts"),
                     call.accounts.len(),
                 );
                 let id = logic.create_policy_with_accounts(
@@ -130,7 +132,7 @@ impl PolicyRegistryStorage<'_> {
             }
             C::updateAllowlist(call) => {
                 observer.record_batch_items(
-                    &BerylAuxiliaryMetrics::singleton("policy", "updateAllowlist"),
+                    &PrecompileAuxiliaryMetrics::singleton("policy", "updateAllowlist"),
                     call.accounts.len(),
                 );
                 logic.update_allowlist(self, call.policyId, call.allowed, call.accounts)?;
@@ -138,7 +140,7 @@ impl PolicyRegistryStorage<'_> {
             }
             C::updateBlocklist(call) => {
                 observer.record_batch_items(
-                    &BerylAuxiliaryMetrics::singleton("policy", "updateBlocklist"),
+                    &PrecompileAuxiliaryMetrics::singleton("policy", "updateBlocklist"),
                     call.accounts.len(),
                 );
                 logic.update_blocklist(self, call.policyId, call.blocked, call.accounts)?;
@@ -209,9 +211,9 @@ mod tests {
     use base_precompile_storage::{HashMapStorageProvider, PrecompileOutput, StorageCtx};
 
     use crate::{
-        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, BerylErrorKind,
-        IPolicyRegistry, PolicyRegistryStorage, PolicyRegistryV1, PrecompileCallMetric,
-        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus,
+        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
+        PolicyRegistryStorage, PolicyRegistryV1, PrecompileCallMetric, PrecompileCallObserver,
+        PrecompileCallOutcome, PrecompileCallStatus, PrecompileErrorKind,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -341,7 +343,7 @@ mod tests {
         assert_eq!(calls[0].0.precompile, "policy");
         assert_eq!(calls[0].0.method, "createPolicy");
         assert_eq!(calls[0].1.status, PrecompileCallStatus::Revert);
-        assert_eq!(calls[0].1.error, Some(BerylErrorKind::FeatureInactive));
+        assert_eq!(calls[0].1.error, Some(PrecompileErrorKind::FeatureInactive));
     }
 
     #[test]

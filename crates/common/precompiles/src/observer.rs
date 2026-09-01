@@ -30,10 +30,10 @@ pub trait PrecompileCallObserver: Clone + Send + Sync + 'static {
     /// Records a B-20 token creation.
     fn record_b20_created(&self, _variant: &'static str) {}
 
-    /// Records the number of logical items in a Beryl batch call.
+    /// Records the number of logical items in a native precompile batch call.
     fn record_batch_items(&self, _call: &PrecompileCallMetric, _count: usize) {}
 
-    /// Records internal calls made by Beryl precompile logic.
+    /// Records internal calls made by native precompile logic.
     fn record_internal_calls(&self, _call: &PrecompileCallMetric, _calls: usize, _bytes: usize) {}
 }
 

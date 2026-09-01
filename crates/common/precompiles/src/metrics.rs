@@ -1,4 +1,4 @@
-//! Low-cardinality metadata for observing Beryl-native precompile calls.
+//! Low-cardinality metadata for observing native precompile calls.
 
 use alloc::{borrow::Cow, string::ToString};
 #[cfg(feature = "std")]
@@ -12,10 +12,10 @@ use base_precompile_storage::{
 
 use crate::{IActivationRegistry, IB20, IB20Asset, IB20Factory, IB20Stablecoin, IPolicyRegistry};
 
-/// Low-cardinality metadata for one Beryl-native precompile call.
+/// Low-cardinality metadata for one native precompile call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrecompileCallMetric {
-    /// Beryl precompile surface, such as `factory`, `activation`, `policy`, or `b20`.
+    /// Precompile surface, such as `factory`, `activation`, `policy`, or `b20`.
     pub precompile: &'static str,
     /// ABI method name or `unknown`.
     pub method: Cow<'static, str>,
@@ -95,10 +95,7 @@ impl PrecompileCallStatus {
     }
 }
 
-/// Backwards-compatible alias for Beryl call status labels.
-pub type BerylCallOutcome = PrecompileCallStatus;
-
-/// Final outcome for one Beryl-native precompile call.
+/// Final outcome for one native precompile call.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PrecompileCallOutcome {
     /// Terminal call status.
@@ -109,10 +106,10 @@ pub struct PrecompileCallOutcome {
     pub state_gas_used: i64,
     /// Gas refunded by the precompile.
     pub gas_refunded: i64,
-    /// Total time spent in the Beryl dispatch wrapper, in seconds.
+    /// Total time spent in the precompile dispatch wrapper, in seconds.
     pub duration_seconds: Option<f64>,
     /// Optional bounded error class.
-    pub error: Option<BerylErrorKind>,
+    pub error: Option<PrecompileErrorKind>,
 }
 
 impl PrecompileCallOutcome {
@@ -120,7 +117,7 @@ impl PrecompileCallOutcome {
     pub fn from_result(
         result: &PrecompileResult,
         duration_seconds: Option<f64>,
-        error: Option<BerylErrorKind>,
+        error: Option<PrecompileErrorKind>,
     ) -> Self {
         match result {
             Ok(output) => Self::from_output(output, duration_seconds, error),
@@ -130,7 +127,7 @@ impl PrecompileCallOutcome {
                 state_gas_used: 0,
                 gas_refunded: 0,
                 duration_seconds,
-                error: Some(BerylErrorKind::from_precompile_error(error)),
+                error: Some(PrecompileErrorKind::from_precompile_error(error)),
             },
         }
     }
@@ -139,13 +136,13 @@ impl PrecompileCallOutcome {
     pub fn from_output(
         output: &PrecompileOutput,
         duration_seconds: Option<f64>,
-        mut error: Option<BerylErrorKind>,
+        mut error: Option<PrecompileErrorKind>,
     ) -> Self {
         let status = if output.is_success() {
             PrecompileCallStatus::Success
         } else if output.is_revert() {
             if error.is_none() {
-                error = Some(BerylErrorKind::from_revert_bytes(&output.bytes));
+                error = Some(PrecompileErrorKind::from_revert_bytes(&output.bytes));
             }
             PrecompileCallStatus::Revert
         } else {
@@ -165,7 +162,7 @@ impl PrecompileCallOutcome {
 
 /// Bounded error-class label for precompile failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BerylErrorKind {
+pub enum PrecompileErrorKind {
     /// State mutation was attempted during a static call.
     StaticWrite,
     /// Calldata did not contain a known selector.
@@ -200,7 +197,7 @@ pub enum BerylErrorKind {
     OtherRevert,
 }
 
-impl BerylErrorKind {
+impl PrecompileErrorKind {
     /// Returns the metric label for this error kind.
     pub const fn as_label(self) -> &'static str {
         match self {
@@ -246,98 +243,148 @@ impl BerylErrorKind {
 
     /// Classifies ABI-encoded revert bytes into a bounded metric label.
     pub fn from_revert_bytes(bytes: &Bytes) -> Self {
-        let Some(selector) = BerylSelector::selector(bytes.as_ref()) else {
+        let Some(selector) = PrecompileSelector::selector(bytes.as_ref()) else {
             return Self::OtherRevert;
         };
 
-        if BerylErrorClassifier::is_error_selector::<IActivationRegistry::StaticCallNotAllowed>(
+        if PrecompileErrorClassifier::is_error_selector::<IActivationRegistry::StaticCallNotAllowed>(
             selector,
         ) {
             return Self::StaticWrite;
         }
-        if BerylErrorClassifier::is_error_selector::<IActivationRegistry::FeatureNotActivated>(
+        if PrecompileErrorClassifier::is_error_selector::<IActivationRegistry::FeatureNotActivated>(
             selector,
         ) {
             return Self::FeatureInactive;
         }
-        if BerylErrorClassifier::is_error_selector::<IActivationRegistry::Unauthorized>(selector)
-            || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::Unauthorized>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::Unauthorized>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::AccessControlUnauthorizedAccount>(
+        if PrecompileErrorClassifier::is_error_selector::<IActivationRegistry::Unauthorized>(
+            selector,
+        ) || PrecompileErrorClassifier::is_error_selector::<IPolicyRegistry::Unauthorized>(
+            selector,
+        ) || PrecompileErrorClassifier::is_error_selector::<IB20::Unauthorized>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::AccessControlUnauthorizedAccount>(
                 selector,
             )
         {
             return Self::Unauthorized;
         }
-        if BerylErrorClassifier::is_error_selector::<IB20::PolicyForbids>(selector) {
+        if PrecompileErrorClassifier::is_error_selector::<IB20::PolicyForbids>(selector) {
             return Self::PolicyDenied;
         }
-        if BerylErrorClassifier::is_error_selector::<IPolicyRegistry::PolicyNotFound>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::PolicyNotFound>(selector)
+        if PrecompileErrorClassifier::is_error_selector::<IPolicyRegistry::PolicyNotFound>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::PolicyNotFound>(selector)
         {
             return Self::PolicyMissing;
         }
-        if BerylErrorClassifier::is_error_selector::<IB20::ContractPaused>(selector) {
+        if PrecompileErrorClassifier::is_error_selector::<IB20::ContractPaused>(selector) {
             return Self::Paused;
         }
-        if BerylErrorClassifier::is_error_selector::<IB20Factory::TokenAlreadyExists>(selector) {
+        if PrecompileErrorClassifier::is_error_selector::<IB20Factory::TokenAlreadyExists>(selector)
+        {
             return Self::DuplicateCreate;
         }
-        if BerylErrorClassifier::is_error_selector::<IB20Factory::InitCallFailed>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::InternalCallFailed>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::InternalCallMalformed>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::AnnouncementInProgress>(
+        if PrecompileErrorClassifier::is_error_selector::<IB20Factory::InitCallFailed>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20Asset::InternalCallFailed>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<IB20Asset::InternalCallMalformed>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<IB20Asset::AnnouncementInProgress>(
                 selector,
             )
         {
             return Self::InternalCallFailed;
         }
-        if BerylErrorClassifier::is_error_selector::<IB20Factory::InvalidVariant>(selector)
-            || BerylErrorClassifier::is_error_selector::<IActivationRegistry::AdminStorageNotEnabled>(
+        if PrecompileErrorClassifier::is_error_selector::<IB20Factory::InvalidVariant>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<
+                IActivationRegistry::AdminStorageNotEnabled,
+            >(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IActivationRegistry::ZeroAdminAddress>(
                 selector,
             )
-            || BerylErrorClassifier::is_error_selector::<IActivationRegistry::ZeroAdminAddress>(
+            || PrecompileErrorClassifier::is_error_selector::<IB20Factory::UnsupportedVersion>(
                 selector,
             )
-            || BerylErrorClassifier::is_error_selector::<IB20Factory::UnsupportedVersion>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Factory::MissingRequiredField>(
+            || PrecompileErrorClassifier::is_error_selector::<IB20Factory::MissingRequiredField>(
                 selector,
             )
-            || BerylErrorClassifier::is_error_selector::<IB20Factory::InvalidCurrency>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Factory::InvalidDecimals>(selector)
-            || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::IncompatiblePolicyType>(
+            || PrecompileErrorClassifier::is_error_selector::<IB20Factory::InvalidCurrency>(
                 selector,
             )
-            || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::ZeroAddress>(selector)
-            || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::BatchSizeTooLarge>(
+            || PrecompileErrorClassifier::is_error_selector::<IB20Factory::InvalidDecimals>(
                 selector,
             )
-            || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::NoPendingAdmin>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::AnnouncementIdAlreadyUsed>(
+            || PrecompileErrorClassifier::is_error_selector::<IPolicyRegistry::IncompatiblePolicyType>(
                 selector,
             )
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::InvalidMetadataKey>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::LengthMismatch>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::EmptyBatch>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidSender>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidReceiver>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidApprover>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidSpender>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidAmount>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::EmptyFeatureSet>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidSupplyCap>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::SupplyCapExceeded>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InsufficientAllowance>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InsufficientBalance>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::AccountNotBlocked>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::ExpiredSignature>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidSigner>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::LastAdminCannotRenounce>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::NotSoleAdmin>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::AccessControlBadConfirmation>(
+            || PrecompileErrorClassifier::is_error_selector::<IPolicyRegistry::ZeroAddress>(
                 selector,
             )
-            || BerylErrorClassifier::is_error_selector::<IB20::UnsupportedPolicyType>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IPolicyRegistry::BatchSizeTooLarge>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<IPolicyRegistry::NoPendingAdmin>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<
+                IPolicyRegistry::ChildPoliciesOutsideOfRange,
+            >(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IPolicyRegistry::InvalidChildPolicy>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<IB20Asset::AnnouncementIdAlreadyUsed>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<IB20Asset::InvalidMetadataKey>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<IB20Asset::InvalidMultiplier>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<IB20Asset::EffectiveAtInPast>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<IB20Asset::EffectiveAtTooFar>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<IB20Asset::UIMultiplierUpdateExists>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<
+                IB20Asset::UIMultiplierUpdateDoesNotExist,
+            >(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20Asset::LengthMismatch>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20Asset::EmptyBatch>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::InvalidSender>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::InvalidReceiver>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::InvalidApprover>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::InvalidSpender>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::InvalidAmount>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::EmptyFeatureSet>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::InvalidSupplyCap>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::SupplyCapExceeded>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::InsufficientAllowance>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::InsufficientBalance>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::AccountNotBlocked>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::AccountNotSeizable>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::ExpiredSignature>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::InvalidSigner>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::LastAdminCannotRenounce>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<IB20::NotSoleAdmin>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::AccessControlBadConfirmation>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<IB20::UnsupportedPolicyType>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IB20::NonPayable>(selector)
+            || PrecompileErrorClassifier::is_error_selector::<IActivationRegistry::AlreadyActivated>(
+                selector,
+            )
+            || PrecompileErrorClassifier::is_error_selector::<
+                IActivationRegistry::DelegateCallNotAllowed,
+            >(selector)
         {
             return Self::InvalidInput;
         }
@@ -348,9 +395,9 @@ impl BerylErrorKind {
 
 /// Helpers for extracting ABI selectors from encoded data.
 #[derive(Debug, Clone, Copy)]
-pub struct BerylSelector;
+pub struct PrecompileSelector;
 
-impl BerylSelector {
+impl PrecompileSelector {
     /// Returns the ABI selector from encoded data, if present.
     pub fn selector(bytes: &[u8]) -> Option<[u8; 4]> {
         let bytes = bytes.get(..4)?;
@@ -362,9 +409,9 @@ impl BerylSelector {
 
 /// Helpers for working with ABI error selectors.
 #[derive(Debug, Clone, Copy)]
-pub struct BerylErrorClassifier;
+pub struct PrecompileErrorClassifier;
 
-impl BerylErrorClassifier {
+impl PrecompileErrorClassifier {
     /// Returns whether `selector` belongs to the ABI error type `E`.
     pub fn is_error_selector<E>(selector: [u8; 4]) -> bool
     where
@@ -374,11 +421,11 @@ impl BerylErrorClassifier {
     }
 }
 
-/// Method-label helpers for Beryl call observation.
+/// Method-label helpers for native precompile call observation.
 #[derive(Debug, Clone, Copy)]
-pub struct BerylMetricLabels;
+pub struct PrecompileMetricLabels;
 
-impl BerylMetricLabels {
+impl PrecompileMetricLabels {
     /// Returns a B-20 method label from an existing stable call label.
     pub fn b20_method(label: &'static str) -> Cow<'static, str> {
         Cow::Borrowed(
@@ -402,7 +449,7 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for factory calldata.
     pub fn factory_method(calldata: &[u8]) -> Cow<'static, str> {
-        match BerylSelector::selector(calldata) {
+        match PrecompileSelector::selector(calldata) {
             Some(IB20Factory::createB20Call::SELECTOR) => Cow::Borrowed("createB20"),
             Some(IB20Factory::getB20AddressCall::SELECTOR) => Cow::Borrowed("getB20Address"),
             Some(IB20Factory::isB20Call::SELECTOR) => Cow::Borrowed("isB20"),
@@ -422,7 +469,7 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for activation-registry calldata.
     pub fn activation_method(calldata: &[u8]) -> Cow<'static, str> {
-        match BerylSelector::selector(calldata) {
+        match PrecompileSelector::selector(calldata) {
             Some(IActivationRegistry::isActivatedCall::SELECTOR) => Cow::Borrowed("isActivated"),
             Some(IActivationRegistry::checkActivatedCall::SELECTOR) => {
                 Cow::Borrowed("checkActivated")
@@ -442,32 +489,13 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for policy-registry calldata.
     pub fn policy_method(calldata: &[u8]) -> Cow<'static, str> {
-        match BerylSelector::selector(calldata) {
-            Some(IPolicyRegistry::createPolicyCall::SELECTOR) => Cow::Borrowed("createPolicy"),
-            Some(IPolicyRegistry::createPolicyWithAccountsCall::SELECTOR) => {
-                Cow::Borrowed("createPolicyWithAccounts")
-            }
-            Some(IPolicyRegistry::stageUpdateAdminCall::SELECTOR) => {
-                Cow::Borrowed("stageUpdateAdmin")
-            }
-            Some(IPolicyRegistry::finalizeUpdateAdminCall::SELECTOR) => {
-                Cow::Borrowed("finalizeUpdateAdmin")
-            }
-            Some(IPolicyRegistry::renounceAdminCall::SELECTOR) => Cow::Borrowed("renounceAdmin"),
-            Some(IPolicyRegistry::updateAllowlistCall::SELECTOR) => {
-                Cow::Borrowed("updateAllowlist")
-            }
-            Some(IPolicyRegistry::updateBlocklistCall::SELECTOR) => {
-                Cow::Borrowed("updateBlocklist")
-            }
-            Some(IPolicyRegistry::isAuthorizedCall::SELECTOR) => Cow::Borrowed("isAuthorized"),
-            Some(IPolicyRegistry::policyExistsCall::SELECTOR) => Cow::Borrowed("policyExists"),
-            Some(IPolicyRegistry::policyAdminCall::SELECTOR) => Cow::Borrowed("policyAdmin"),
-            Some(IPolicyRegistry::pendingPolicyAdminCall::SELECTOR) => {
-                Cow::Borrowed("pendingPolicyAdmin")
-            }
-            _ => Self::unknown(),
+        let Some(selector) = PrecompileSelector::selector(calldata) else {
+            return Self::unknown();
+        };
+        if let Some(method) = IPolicyRegistry::IPolicyRegistryCalls::name_by_selector(selector) {
+            return Cow::Borrowed(method);
         }
+        Self::unknown()
     }
 
     /// Returns call metadata for asset B-20 calldata.
@@ -477,7 +505,7 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for asset B-20 calldata.
     pub fn b20_asset_method(calldata: &[u8]) -> Cow<'static, str> {
-        let Some(selector) = BerylSelector::selector(calldata) else {
+        let Some(selector) = PrecompileSelector::selector(calldata) else {
             return Self::unknown();
         };
         if let Some(method) = IB20Asset::IB20AssetCalls::name_by_selector(selector) {
@@ -500,7 +528,7 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for stablecoin B-20 calldata.
     pub fn b20_stablecoin_method(calldata: &[u8]) -> Cow<'static, str> {
-        let Some(selector) = BerylSelector::selector(calldata) else {
+        let Some(selector) = PrecompileSelector::selector(calldata) else {
             return Self::unknown();
         };
         if let Some(method) = IB20Stablecoin::IB20StablecoinCalls::name_by_selector(selector) {
@@ -513,14 +541,14 @@ impl BerylMetricLabels {
     }
 }
 
-/// Call timer used by Beryl call recorders.
+/// Call timer used by precompile call recorders.
 #[derive(Debug)]
-pub struct BerylCallTimer {
+pub struct PrecompileCallTimer {
     #[cfg(feature = "std")]
     start: Instant,
 }
 
-impl BerylCallTimer {
+impl PrecompileCallTimer {
     /// Starts a new call timer.
     #[cfg(feature = "std")]
     pub fn start() -> Self {
@@ -546,36 +574,36 @@ impl BerylCallTimer {
     }
 }
 
-/// Per-word calldata ingestion cost charged by Beryl native precompile dispatchers.
+/// Per-word calldata ingestion cost charged by native precompile dispatchers.
 ///
 /// Emulates the cost a Solidity predeploy would incur reading its calldata:
 /// `G_copy` (3 gas/word) + `G_memory` (3 gas/word) = 6 gas/word.
 /// Part of the receipts/gas-used commitment: must be identical across all Base execution clients.
 pub const CALLDATA_WORD_GAS: u64 = 6;
 
-/// Per-call recorder for Beryl precompile observations.
+/// Per-call recorder for native precompile observations.
 #[derive(Debug)]
-pub struct BerylCallRecorder<O> {
+pub struct PrecompileCallRecorder<O> {
     observer: O,
-    timer: BerylCallTimer,
+    timer: PrecompileCallTimer,
     call: PrecompileCallMetric,
-    error: Option<BerylErrorKind>,
+    error: Option<PrecompileErrorKind>,
 }
 
-impl<O> BerylCallRecorder<O>
+impl<O> PrecompileCallRecorder<O>
 where
     O: crate::PrecompileCallObserver,
 {
     /// Starts a recorder for a precompile call.
     #[cfg(feature = "std")]
     pub fn start(observer: O, call: PrecompileCallMetric) -> Self {
-        Self { observer, timer: BerylCallTimer::start(), call, error: None }
+        Self { observer, timer: PrecompileCallTimer::start(), call, error: None }
     }
 
     /// Starts a recorder for a precompile call.
     #[cfg(not(feature = "std"))]
     pub const fn start(observer: O, call: PrecompileCallMetric) -> Self {
-        Self { observer, timer: BerylCallTimer::start(), call, error: None }
+        Self { observer, timer: PrecompileCallTimer::start(), call, error: None }
     }
 
     /// Updates the current call metadata.
@@ -593,14 +621,14 @@ where
         (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS)
     }
 
-    /// Deducts the common calldata gas charged by Beryl precompile dispatch.
+    /// Deducts the common calldata gas charged by native precompile dispatch.
     pub fn deduct_calldata_gas(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<()> {
         ctx.deduct_gas(Self::calldata_gas_cost(calldata))
     }
 
     /// Records a Base precompile error before it is converted to a [`PrecompileResult`].
     pub fn record_base_error(&mut self, error: &BasePrecompileError) {
-        self.error = Some(BerylErrorKind::from_base_error(error));
+        self.error = Some(PrecompileErrorKind::from_base_error(error));
     }
 
     /// Records the final result of the precompile call.
@@ -638,11 +666,11 @@ where
     }
 }
 
-/// Helper methods for observer-only Beryl metric families.
+/// Helper methods for observer-only precompile metric families.
 #[derive(Debug, Clone, Copy)]
-pub struct BerylAuxiliaryMetrics;
+pub struct PrecompileAuxiliaryMetrics;
 
-impl BerylAuxiliaryMetrics {
+impl PrecompileAuxiliaryMetrics {
     /// Creates a singleton call descriptor for auxiliary metric recording.
     pub fn singleton(precompile: &'static str, method: &'static str) -> PrecompileCallMetric {
         PrecompileCallMetric::singleton(precompile, method, 0)
@@ -656,20 +684,23 @@ impl BerylAuxiliaryMetrics {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, U256};
-    use alloy_sol_types::{SolCall, SolError};
+    use alloy_primitives::{Address, B256, Bytes, U256};
+    use alloy_sol_types::{SolCall, SolError, SolInterface};
     use base_precompile_storage::{BasePrecompileError, PrecompileError, PrecompileOutput};
 
     use crate::{
-        BerylCallOutcome, BerylCallRecorder, BerylErrorKind, BerylMetricLabels, BerylSelector,
-        CALLDATA_WORD_GAS, IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
-        NoopPrecompileCallObserver,
+        CALLDATA_WORD_GAS, IActivationRegistry, IB20, IB20Asset, IB20Factory, IPolicyRegistry,
+        NoopPrecompileCallObserver, PrecompileCallRecorder, PrecompileCallStatus,
+        PrecompileErrorKind, PrecompileMetricLabels, PrecompileSelector,
     };
 
     #[test]
     fn b20_method_labels_strip_precompile_prefixes() {
-        assert_eq!(BerylMetricLabels::b20_method("precompile-b20-transfer"), "transfer");
-        assert_eq!(BerylMetricLabels::b20_method("precompile-b20-stablecoin-currency"), "currency");
+        assert_eq!(PrecompileMetricLabels::b20_method("precompile-b20-transfer"), "transfer");
+        assert_eq!(
+            PrecompileMetricLabels::b20_method("precompile-b20-stablecoin-currency"),
+            "currency"
+        );
     }
 
     #[test]
@@ -680,51 +711,59 @@ mod tests {
             salt: B256::ZERO,
         }
         .abi_encode();
-        assert_eq!(BerylMetricLabels::factory_method(&factory), "getB20Address");
+        assert_eq!(PrecompileMetricLabels::factory_method(&factory), "getB20Address");
 
         let b20 = IB20::transferCall { to: Address::ZERO, amount: U256::ZERO }.abi_encode();
-        assert_eq!(BerylMetricLabels::b20_asset_method(&b20), "transfer");
+        assert_eq!(PrecompileMetricLabels::b20_asset_method(&b20), "transfer");
     }
 
     #[test]
     fn base_errors_are_classified() {
         assert_eq!(
-            BerylErrorKind::from_base_error(&BasePrecompileError::UnknownFunctionSelector([0; 4])),
-            BerylErrorKind::UnknownSelector
+            PrecompileErrorKind::from_base_error(&BasePrecompileError::UnknownFunctionSelector(
+                [0; 4]
+            )),
+            PrecompileErrorKind::UnknownSelector
         );
         assert_eq!(
-            BerylErrorKind::from_base_error(&BasePrecompileError::StaticCallViolation),
-            BerylErrorKind::StaticWrite
+            PrecompileErrorKind::from_base_error(&BasePrecompileError::StaticCallViolation),
+            PrecompileErrorKind::StaticWrite
         );
     }
 
     #[test]
     fn revert_bytes_are_classified() {
         let unauthorized = IB20::Unauthorized {}.abi_encode().into();
-        assert_eq!(BerylErrorKind::from_revert_bytes(&unauthorized), BerylErrorKind::Unauthorized);
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&unauthorized),
+            PrecompileErrorKind::Unauthorized
+        );
 
         let policy_not_found = IPolicyRegistry::PolicyNotFound {}.abi_encode().into();
         assert_eq!(
-            BerylErrorKind::from_revert_bytes(&policy_not_found),
-            BerylErrorKind::PolicyMissing
+            PrecompileErrorKind::from_revert_bytes(&policy_not_found),
+            PrecompileErrorKind::PolicyMissing
         );
 
         let admin_storage_disabled =
             IActivationRegistry::AdminStorageNotEnabled {}.abi_encode().into();
         assert_eq!(
-            BerylErrorKind::from_revert_bytes(&admin_storage_disabled),
-            BerylErrorKind::InvalidInput
+            PrecompileErrorKind::from_revert_bytes(&admin_storage_disabled),
+            PrecompileErrorKind::InvalidInput
         );
 
         let zero_admin = IActivationRegistry::ZeroAdminAddress {}.abi_encode().into();
-        assert_eq!(BerylErrorKind::from_revert_bytes(&zero_admin), BerylErrorKind::InvalidInput);
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&zero_admin),
+            PrecompileErrorKind::InvalidInput
+        );
     }
 
     #[test]
     fn selector_extracts_revert_selector() {
         let bytes = IB20::Unauthorized {}.abi_encode();
         assert_eq!(
-            BerylSelector::selector(&bytes),
+            PrecompileSelector::selector(&bytes),
             Some(<IB20::Unauthorized as SolError>::SELECTOR)
         );
     }
@@ -735,19 +774,159 @@ mod tests {
         let revert = Ok(PrecompileOutput::revert(1, Default::default(), 0));
         let fatal = Err(PrecompileError::Fatal("boom".into()));
 
-        assert_eq!(BerylCallOutcome::from_result(&success), BerylCallOutcome::Success);
-        assert_eq!(BerylCallOutcome::from_result(&revert), BerylCallOutcome::Revert);
-        assert_eq!(BerylCallOutcome::from_result(&fatal), BerylCallOutcome::Fatal);
+        assert_eq!(PrecompileCallStatus::from_result(&success), PrecompileCallStatus::Success);
+        assert_eq!(PrecompileCallStatus::from_result(&revert), PrecompileCallStatus::Revert);
+        assert_eq!(PrecompileCallStatus::from_result(&fatal), PrecompileCallStatus::Fatal);
     }
 
     #[test]
     fn deduct_calldata_cost_gas_formula() {
-        type Recorder = BerylCallRecorder<NoopPrecompileCallObserver>;
+        type Recorder = PrecompileCallRecorder<NoopPrecompileCallObserver>;
 
         // 32 bytes = 1 word => CALLDATA_WORD_GAS
         assert_eq!(Recorder::calldata_gas_cost(&[0u8; 32]), CALLDATA_WORD_GAS);
 
         // 36 bytes (4-byte selector + 32-byte arg) = ceil(36/32) = 2 words => 2 * CALLDATA_WORD_GAS
         assert_eq!(Recorder::calldata_gas_cost(&[0u8; 36]), 2 * CALLDATA_WORD_GAS);
+    }
+
+    #[test]
+    fn policy_method_labels_every_canonical_selector() {
+        for selector in IPolicyRegistry::IPolicyRegistryCalls::selectors() {
+            let label = PrecompileMetricLabels::policy_method(&selector);
+            assert_ne!(
+                label,
+                PrecompileMetricLabels::unknown(),
+                "policy selector {selector:?} ({}) fell through to unknown",
+                IPolicyRegistry::IPolicyRegistryCalls::name_by_selector(selector)
+                    .unwrap_or("<unnamed>"),
+            );
+        }
+    }
+
+    #[test]
+    fn cobalt_policy_method_labels_are_stable() {
+        assert_eq!(
+            PrecompileMetricLabels::policy_method(
+                &IPolicyRegistry::createCompositePolicyCall::SELECTOR
+            ),
+            "createCompositePolicy"
+        );
+        assert_eq!(
+            PrecompileMetricLabels::policy_method(&IPolicyRegistry::updateCompositeCall::SELECTOR),
+            "updateComposite"
+        );
+        assert_eq!(
+            PrecompileMetricLabels::policy_method(
+                &IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR
+            ),
+            "compositePolicyChildIds"
+        );
+        assert_eq!(
+            PrecompileMetricLabels::policy_method(
+                &IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::SELECTOR
+            ),
+            "MIN_COMPOSITE_CHILD_POLICIES"
+        );
+        assert_eq!(
+            PrecompileMetricLabels::policy_method(
+                &IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::SELECTOR
+            ),
+            "MAX_COMPOSITE_CHILD_POLICIES"
+        );
+    }
+
+    #[test]
+    fn cobalt_errors_classify_as_invalid_input() {
+        let child_range = IPolicyRegistry::ChildPoliciesOutsideOfRange {}.abi_encode().into();
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&child_range),
+            PrecompileErrorKind::InvalidInput
+        );
+
+        let invalid_child =
+            IPolicyRegistry::InvalidChildPolicy { childPolicyId: 0 }.abi_encode().into();
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&invalid_child),
+            PrecompileErrorKind::InvalidInput
+        );
+
+        let effective_past =
+            IB20Asset::EffectiveAtInPast { effectiveAt: U256::ZERO }.abi_encode().into();
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&effective_past),
+            PrecompileErrorKind::InvalidInput
+        );
+
+        let effective_far =
+            IB20Asset::EffectiveAtTooFar { effectiveAt: U256::ZERO }.abi_encode().into();
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&effective_far),
+            PrecompileErrorKind::InvalidInput
+        );
+
+        let update_exists =
+            IB20Asset::UIMultiplierUpdateExists { effectiveAt: U256::ZERO }.abi_encode().into();
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&update_exists),
+            PrecompileErrorKind::InvalidInput
+        );
+
+        let update_missing = IB20Asset::UIMultiplierUpdateDoesNotExist {}.abi_encode().into();
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&update_missing),
+            PrecompileErrorKind::InvalidInput
+        );
+
+        let not_seizable = IB20::AccountNotSeizable { account: Address::ZERO }.abi_encode().into();
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&not_seizable),
+            PrecompileErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn recorded_abi_errors_are_not_other_revert() {
+        fn assert_classified(name: &str, selector: [u8; 4]) {
+            let bytes = Bytes::from(selector.to_vec());
+            assert_ne!(
+                PrecompileErrorKind::from_revert_bytes(&bytes),
+                PrecompileErrorKind::OtherRevert,
+                "error selector {selector:?} ({name}) fell through to OtherRevert",
+            );
+        }
+
+        for selector in IPolicyRegistry::IPolicyRegistryErrors::selectors() {
+            assert_classified(
+                IPolicyRegistry::IPolicyRegistryErrors::name_by_selector(selector)
+                    .unwrap_or("<unnamed>"),
+                selector,
+            );
+        }
+        for selector in IB20::IB20Errors::selectors() {
+            assert_classified(
+                IB20::IB20Errors::name_by_selector(selector).unwrap_or("<unnamed>"),
+                selector,
+            );
+        }
+        for selector in IB20Asset::IB20AssetErrors::selectors() {
+            assert_classified(
+                IB20Asset::IB20AssetErrors::name_by_selector(selector).unwrap_or("<unnamed>"),
+                selector,
+            );
+        }
+        for selector in IB20Factory::IB20FactoryErrors::selectors() {
+            assert_classified(
+                IB20Factory::IB20FactoryErrors::name_by_selector(selector).unwrap_or("<unnamed>"),
+                selector,
+            );
+        }
+        for selector in IActivationRegistry::IActivationRegistryErrors::selectors() {
+            assert_classified(
+                IActivationRegistry::IActivationRegistryErrors::name_by_selector(selector)
+                    .unwrap_or("<unnamed>"),
+                selector,
+            );
+        }
     }
 }

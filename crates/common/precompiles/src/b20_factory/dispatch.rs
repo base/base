@@ -11,9 +11,9 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
 
 use crate::{
-    B20FactoryStorage, B20Variant, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
-    Factory, FactoryV1, FactoryVersion, FactoryVersions, IB20Factory, NoopPrecompileCallObserver,
-    PrecompileCallObserver,
+    B20FactoryStorage, B20Variant, Factory, FactoryV1, FactoryVersion, FactoryVersions,
+    IB20Factory, NoopPrecompileCallObserver, PrecompileAuxiliaryMetrics, PrecompileCallObserver,
+    PrecompileCallRecorder, PrecompileMetricLabels,
 };
 
 impl<'a> B20FactoryStorage<'a> {
@@ -38,8 +38,10 @@ impl<'a> B20FactoryStorage<'a> {
     where
         O: PrecompileCallObserver,
     {
-        let mut recorder =
-            BerylCallRecorder::start(observer.clone(), BerylMetricLabels::factory_call(calldata));
+        let mut recorder = PrecompileCallRecorder::start(
+            observer.clone(),
+            PrecompileMetricLabels::factory_call(calldata),
+        );
         if !ctx.call_value().is_zero() {
             return recorder.record_base_error_result(
                 ctx,
@@ -100,7 +102,7 @@ impl<'a> B20FactoryStorage<'a> {
                 let internal_call_bytes = call.initCalls.iter().map(|c| c.len()).sum();
                 let token = logic.create_b20(self, call, address_hash, upgrade)?;
                 observer.record_internal_calls(
-                    &BerylAuxiliaryMetrics::singleton("factory", "createB20"),
+                    &PrecompileAuxiliaryMetrics::singleton("factory", "createB20"),
                     internal_call_count,
                     internal_call_bytes,
                 );

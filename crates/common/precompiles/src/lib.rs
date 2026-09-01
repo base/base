@@ -53,9 +53,9 @@ pub use observer::{EndGuard, NoopPrecompileCallObserver, PrecompileCallObserver}
 
 mod metrics;
 pub use metrics::{
-    BerylAuxiliaryMetrics, BerylCallOutcome, BerylCallRecorder, BerylCallTimer,
-    BerylErrorClassifier, BerylErrorKind, BerylMetricLabels, BerylSelector, CALLDATA_WORD_GAS,
-    PrecompileCallMetric, PrecompileCallOutcome, PrecompileCallStatus,
+    CALLDATA_WORD_GAS, PrecompileAuxiliaryMetrics, PrecompileCallMetric, PrecompileCallOutcome,
+    PrecompileCallRecorder, PrecompileCallStatus, PrecompileCallTimer, PrecompileErrorClassifier,
+    PrecompileErrorKind, PrecompileMetricLabels, PrecompileSelector,
 };
 
 mod b20_asset;
