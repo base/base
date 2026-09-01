@@ -112,10 +112,9 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     // starting from genesis, advance it to block 2's state, then build the
     // correct recovery blocks 3 (empty, ts=6) and 4 (user tx, ts=8).
     //
-    // The Holocene BatchValidator overwrites each singular batch's parent_hash
-    // with the current chain head before validating, so the recovery blocks
-    // only need the correct timestamps and user-tx content — not the exact
-    // parent hashes from the primary sequencer's chain.
+    // Rebuilding blocks 1–2 deterministically makes the recovery span's parent check match
+    // canonical block 2. `BatchStream` then assigns each span-derived singular the current
+    // safe-head hash when emitting it.
     {
         let l1_chain2 = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
         let mut builder2 = h.create_l2_sequencer(l1_chain2);
