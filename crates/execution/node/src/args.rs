@@ -38,10 +38,11 @@ const DEFAULT_ROCKSDB_WRITE_BUFFER_SIZE_MIB: u64 = 64;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub enum TxpoolOrdering {
-    /// Order by coinbase tip (fee-based, higher tip = higher priority).
+    /// Order by unified tip-per-gas (higher bid = higher priority).
     ///
-    /// This is the default ordering strategy that prioritizes transactions
-    /// based on the priority fee (tip) they offer to the block producer.
+    /// Standard transactions use `priorityFeePerGas`. EIP-8130 transactions
+    /// with a static coinbase tip use `tip / gasLimit`. Equal bids prefer
+    /// fewer validity predicates.
     #[default]
     CoinbaseTip,
     /// Order by receive timestamp (FIFO, earlier = higher priority).
@@ -360,7 +361,7 @@ pub struct RollupArgs {
     /// Transaction ordering strategy for the mempool.
     ///
     /// Determines how transactions are prioritized when building blocks.
-    /// - `coinbase-tip`: Order by priority fee (higher tip = higher priority). Default.
+    /// - `coinbase-tip`: Order by tip-per-gas (priority fee, or EIP-8130 coinbase tip / gas limit). Default.
     /// - `timestamp`: Order by receive time (FIFO, earlier = higher priority).
     #[arg(long = "rollup.txpool-ordering", default_value = "coinbase-tip")]
     pub txpool_ordering: TxpoolOrdering,

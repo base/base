@@ -7,6 +7,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+use tracing_subscriber as _;
+
 mod utils;
 pub use utils::unique_name;
 
@@ -33,6 +35,9 @@ pub use docker::{
     stop_system_test_containers,
 };
 
+mod devnet_cli;
+pub use devnet_cli::{DevnetCli, DevnetCommand, SnapshotArgs, SnapshotRuntime};
+
 mod host;
 pub use host::{host_address, with_host_port_if_needed};
 
@@ -47,15 +52,20 @@ pub use l1::{
 
 mod l2;
 pub use l2::{
-    InProcessBatcher, InProcessBatcherConfig, InProcessBuilder, InProcessBuilderConfig,
-    InProcessClient, InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig,
-    InProcessFollowConsensus, InProcessFollowConsensusConfig, L2ClientConsensus,
+    ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
+    InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
+    InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
+    InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig, L2ClientConsensus,
     L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer,
-    ShadowSequencerConfig, ShadowSequencersConfig,
+    ShadowSequencerConfig, ShadowSequencersConfig, SnapshotBoundary, SnapshotL2Stack,
+    SnapshotL2StackConfig,
 };
 
 mod network;
 pub use network::{ensure_network_exists, ensure_network_exists_with_name, network_name};
+
+mod prover_service;
+pub use prover_service::InProcessProverService;
 
 mod rpc;
 pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
@@ -73,7 +83,10 @@ pub use smoke::RuntimeUpgradeSignalGuard;
 pub use smoke::{SystemTestStack, SystemTestStackBuilder};
 
 mod system_config;
-pub use system_config::{StableSystemTestConfig, SystemTestPorts};
+pub use system_config::{
+    DevnetBlockInterval, DevnetConfig, DevnetL1Mode, DevnetL2State, DevnetPrefund,
+    DevnetSnapshotConfig, DevnetSnapshotHead, StableSystemTestConfig, SystemTestPorts,
+};
 
 #[cfg(feature = "upgrade-signal")]
 mod upgrade_signal;
@@ -82,3 +95,6 @@ pub use upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 
 mod urls;
 pub use urls::SystemTestUrls;
+
+mod zk_host;
+pub use zk_host::InProcessZkHost;

@@ -26,7 +26,7 @@ services:
       - ../../.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
       - CHAIN_ID=${L1_CHAIN_ID}
-      - SLOT_DURATION=4
+      - SLOT_DURATION=${L1_SLOT_DURATION_OVERRIDE:-12}
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
       - L1_DATA_DIR=/data
@@ -67,6 +67,7 @@ services:
       - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L1_P2P_PORT}
       - --disable-discovery
+      - --txpool.max-account-slots=256
       - -vvv
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_HTTP_PORT}"]
@@ -332,7 +333,7 @@ services:
       - --l1-config-file
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
-      - "4"
+      - "${L1_SLOT_DURATION_OVERRIDE:-12}"
       - --rpc.port
       - "${L2_BUILDER_CL_RPC_PORT}"
       - --rpc.enable-admin
@@ -482,9 +483,6 @@ services:
       - --enable-experimental-validity-transactions
       - --enable-transaction-event-journal
       - --enable-metering
-      - --metering.gas-limit=${METERING_GAS_LIMIT}
-      - --metering.da-bytes=${METERING_DA_BYTES}
-      - --metering.target-flashblocks-per-block=${METERING_TARGET_FLASHBLOCKS_PER_BLOCK}
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
@@ -494,7 +492,7 @@ services:
       - --l1-config-file
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
-      - "4"
+      - "${L1_SLOT_DURATION_OVERRIDE:-12}"
       - --rpc.port
       - "${L2_CLIENT_CL_RPC_PORT}"
       - --p2p.listen.tcp
@@ -597,7 +595,7 @@ services:
       - --l1-config-file
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
-      - "4"
+      - "${L1_SLOT_DURATION_OVERRIDE:-12}"
       - --rpc.port
       - "${L2_BASE_RPC_CL_RPC_PORT}"
       - --rpc.enable-admin

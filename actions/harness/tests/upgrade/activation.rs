@@ -241,10 +241,9 @@ fn base_azul_is_standalone_from_jovian() {
 // would require an unreachable number of L1 blocks. The synthetic configs use
 // the same code paths and enforce the same protocol rules.
 //
-// All derivation tests require Fjord active (fjord_time = Some(0)) because
-// the batcher always uses brotli compression, which the verifier's BatchReader
-// rejects when Fjord is not active. Setting fjord_time = Some(0) activates
-// the full cascade from Canyon through Fjord, so Delta is also active.
+// Tests using Brotli fixtures require Fjord active because the verifier's
+// BatchReader rejects Brotli before Fjord. Legacy zlib fixtures isolate rules
+// from earlier upgrade boundaries without reintroducing zlib into the batcher.
 //
 // When testing an upgrade boundary at a specific timestamp T, all forks
 // *earlier* than that fork are set to Some(0) so they are active from
@@ -252,13 +251,11 @@ fn base_azul_is_standalone_from_jovian() {
 // activates at T, keeping the upgrade-transaction injection isolated.
 // ---------------------------------------------------------------------------
 
-/// With only Canyon active (Delta NOT active, Fjord NOT active), a span batch
-/// submitted by the batcher must NOT be derived.
+/// With only Canyon active (Delta NOT active), a zlib-compressed Span batch
+/// submitted by the derivation fixture must NOT be derived.
 ///
-/// Two protocol gates combine to prevent derivation:
-/// 1. The batcher uses brotli compression; `BatchReader` rejects brotli before Fjord.
-/// 2. Even without the compression gate, `SpanBatch` validation drops the batch
-///    when Delta is not active at the batch L1 origin (`SpanBatchPreDelta`).
+/// `SpanBatch` validation drops the batch because Delta is not active at the
+/// batch L1 origin (`SpanBatchPreDelta`).
 ///
 /// The net result: zero L2 blocks derived, pipeline returns `Ok(0)`.
 #[tokio::test]
@@ -281,7 +278,8 @@ async fn span_batch_rejected_before_delta() {
         builder.build_next_block_with_single_transaction().await,
         builder.build_next_block_with_single_transaction().await,
     ];
-    h.submit_span_batch_calldata(&span_cfg, &blocks, 0).expect("pre-Delta span fixture submission");
+    h.submit_span_batch_zlib_calldata(&span_cfg, &blocks, 0)
+        .expect("pre-Delta zlib Span fixture submission");
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,
@@ -293,19 +291,17 @@ async fn span_batch_rejected_before_delta() {
     assert_eq!(
         node.l2_safe_number(),
         0,
-        "no blocks should be derived: span batch rejected pre-Delta/Fjord"
+        "no blocks should be derived: Span batch rejected before Delta"
     );
 }
 
-/// With Fjord active from genesis (which cascades to activate Ecotone, Delta,
-/// Canyon, and Regolith), a span batch derives successfully.
-///
-/// Fjord is required for two reasons: it activates Delta (via cascade), and
-/// the batcher's brotli compression is only accepted by the verifier at Fjord.
+/// With Delta active from genesis but Fjord inactive, a zlib-compressed Span
+/// batch derives successfully.
 #[tokio::test]
 async fn span_batch_derives_after_delta() {
     let batcher_cfg = BatcherConfig::default();
-    let upgrades = UpgradeConfig { fjord_time: Some(0), ..Default::default() };
+    let upgrades =
+        UpgradeConfig { canyon_time: Some(0), delta_time: Some(0), ..Default::default() };
     let rollup_cfg =
         TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
@@ -322,8 +318,8 @@ async fn span_batch_derives_after_delta() {
         builder.build_next_block_with_single_transaction().await,
         builder.build_next_block_with_single_transaction().await,
     ];
-    h.submit_span_batch_calldata(&span_cfg, &blocks, 0)
-        .expect("post-Delta span fixture submission");
+    h.submit_span_batch_zlib_calldata(&span_cfg, &blocks, 0)
+        .expect("post-Delta zlib Span fixture submission");
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,

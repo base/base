@@ -1,3 +1,4 @@
+use alloy_eips::BlockNumHash;
 use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
 use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use chrono::Utc;
@@ -10,6 +11,8 @@ use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+
+use crate::ShadowExExMetrics;
 
 /// Shadow indexer `ExEx` handler.
 #[derive(Debug)]
@@ -29,37 +32,44 @@ impl ShadowIndexerExEx {
         Node: FullNodeComponents,
         Node::Types: NodeTypes<Primitives = BasePrimitives>,
     {
+        let mut last_finished_height = None;
+
         while let Some(notification) = ctx.notifications.try_next().await? {
             let is_syncing = ctx.network().is_syncing();
-            let fully_processed = match &notification {
-                ExExNotification::ChainCommitted { new } => {
-                    debug!(
-                        target: "base::shadow-indexer",
-                        block_number = new.tip().header().number(),
-                        block_hash = ?new.tip().hash(),
-                        "Committed chain notification received"
-                    );
-                    self.resolve_canonical_heights(new).await?
-                }
-                ExExNotification::ChainReorged { old, new } => {
-                    info!(
-                        target: "base::shadow-indexer",
-                        old_block_number = old.tip().header().number(),
-                        old_block_hash = ?old.tip().hash(),
-                        new_block_number = new.tip().header().number(),
-                        new_block_hash = ?new.tip().hash(),
-                        "ChainReorged notification received"
-                    );
-                    self.handle_chain_reorged(old, new).await?
-                }
-                ExExNotification::ChainReverted { old } => {
-                    info!(
-                        target: "base::shadow-indexer",
-                        old_block_number = old.tip().header().number(),
-                        old_block_hash = ?old.tip().hash(),
-                        "ChainReverted notification received"
-                    );
-                    self.handle_chain_reverted(old).await?
+            let kind = Self::notification_kind(&notification);
+            let fully_processed = {
+                let _timer =
+                    base_metrics::timed!(ShadowExExMetrics::notification_duration_seconds(kind));
+                match &notification {
+                    ExExNotification::ChainCommitted { new } => {
+                        debug!(
+                            target: "base::shadow-indexer",
+                            block_number = new.tip().header().number(),
+                            block_hash = ?new.tip().hash(),
+                            "Committed chain notification received"
+                        );
+                        self.resolve_canonical_heights(new).await?
+                    }
+                    ExExNotification::ChainReorged { old, new } => {
+                        info!(
+                            target: "base::shadow-indexer",
+                            old_block_number = old.tip().header().number(),
+                            old_block_hash = ?old.tip().hash(),
+                            new_block_number = new.tip().header().number(),
+                            new_block_hash = ?new.tip().hash(),
+                            "ChainReorged notification received"
+                        );
+                        self.handle_chain_reorged(old, new).await?
+                    }
+                    ExExNotification::ChainReverted { old } => {
+                        info!(
+                            target: "base::shadow-indexer",
+                            old_block_number = old.tip().header().number(),
+                            old_block_hash = ?old.tip().hash(),
+                            "ChainReverted notification received"
+                        );
+                        self.handle_chain_reverted(old).await?
+                    }
                 }
             };
 
@@ -79,18 +89,38 @@ impl ShadowIndexerExEx {
             // node may still reorg discards the notification that would have recorded the block it
             // discards. While syncing, commits are settled history. Live, any commit can still be
             // reorged, so only a reorg's own replacement chain is safe to expose.
-            if Self::should_emit_finished_height(&notification, is_syncing)
-                && let Some(committed_chain) = notification.committed_chain()
-            {
-                let tip = committed_chain.tip().num_hash();
-                debug!(
-                    target: "base::shadow-indexer",
-                    block_number = tip.number,
-                    block_hash = ?tip.hash,
-                    "Sending FinishedHeight event"
-                );
-                ctx.events.send(ExExEvent::FinishedHeight(tip))?;
-            }
+            Self::emit_finished_height(
+                &ctx.events,
+                &notification,
+                is_syncing,
+                &mut last_finished_height,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn emit_finished_height(
+        events: &mpsc::UnboundedSender<ExExEvent>,
+        notification: &ExExNotification<BasePrimitives>,
+        is_syncing: bool,
+        last_finished_height: &mut Option<BlockNumHash>,
+    ) -> Result<()> {
+        if Self::should_emit_finished_height(notification, is_syncing) {
+            *last_finished_height =
+                notification.committed_chain().map(|chain| chain.tip().num_hash());
+        }
+
+        // Re-emitting the last safe height wakes the manager so it continues draining its
+        // notification buffer without advancing the WAL watermark to a speculative block.
+        if let Some(tip) = *last_finished_height {
+            debug!(
+                target: "base::shadow-indexer",
+                block_number = tip.number,
+                block_hash = ?tip.hash,
+                "Sending FinishedHeight event"
+            );
+            events.send(ExExEvent::FinishedHeight(tip))?;
         }
 
         Ok(())
@@ -107,12 +137,22 @@ impl ShadowIndexerExEx {
         }
     }
 
+    const fn notification_kind(notification: &ExExNotification<BasePrimitives>) -> &'static str {
+        match notification {
+            ExExNotification::ChainCommitted { .. } => "committed",
+            ExExNotification::ChainReorged { .. } => "reorged",
+            ExExNotification::ChainReverted { .. } => "reverted",
+        }
+    }
+
     fn build_row(
         &self,
         block: &RecoveredBlock<BaseBlock>,
         receipts: &[BaseReceipt],
         canonical_hash: Option<Vec<u8>>,
     ) -> Result<ShadowBlockRow> {
+        let _timer = base_metrics::timed!(ShadowExExMetrics::build_row_duration_seconds());
+
         let number = i64::try_from(block.header().number()).map_err(|error| {
             eyre::eyre!("block number overflow for shadow indexer row: {error}")
         })?;
@@ -200,6 +240,8 @@ impl ShadowIndexerExEx {
     }
 
     async fn send_write(&self, write: ShadowWrite) -> Result<bool> {
+        let _timer = base_metrics::timed!(ShadowExExMetrics::send_blocked_seconds());
+
         match self.tx.send(write).await {
             Ok(()) => Ok(true),
             Err(error) => {
@@ -216,12 +258,22 @@ impl ShadowIndexerExEx {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use alloy_consensus::Receipt;
     use alloy_primitives::B256;
+    use futures::TryStreamExt;
+    use reth_chain_state::ForkChoiceStream;
+    use reth_db_common::init::init_genesis;
+    use reth_ethereum_primitives::EthPrimitives;
+    use reth_evm_ethereum::EthEvmConfig;
     use reth_execution_types::{Chain, ExecutionOutcome};
-    use tokio::sync::mpsc;
+    use reth_exex::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
+    use reth_provider::{providers::BlockchainProvider, test_utils::create_test_provider_factory};
+    use tokio::{
+        sync::{mpsc, watch},
+        time::timeout,
+    };
 
     use super::*;
 
@@ -425,5 +477,140 @@ mod tests {
         assert!(ShadowIndexerExEx::should_emit_finished_height(&reorged, false));
         assert!(!ShadowIndexerExEx::should_emit_finished_height(&reverted, true));
         assert!(!ShadowIndexerExEx::should_emit_finished_height(&reverted, false));
+    }
+
+    #[test]
+    fn repeats_last_safe_finished_height_for_speculative_commits() {
+        let (events, mut emitted) = mpsc::unbounded_channel();
+        let speculative = ExExNotification::ChainCommitted { new: Arc::new(mk_chain(2, 2, 0)) };
+        let reorged = ExExNotification::ChainReorged {
+            old: Arc::new(mk_chain(1, 1, 0)),
+            new: Arc::new(mk_chain(1, 1, NEW_CHAIN_VARIANT)),
+        };
+
+        let mut last_finished_height = None;
+        ShadowIndexerExEx::emit_finished_height(
+            &events,
+            &speculative,
+            false,
+            &mut last_finished_height,
+        )
+        .expect("handle speculative commit before reorg");
+        assert!(emitted.is_empty(), "no speculative height is advertised before a reorg");
+
+        ShadowIndexerExEx::emit_finished_height(
+            &events,
+            &reorged,
+            false,
+            &mut last_finished_height,
+        )
+        .expect("handle reorg");
+        let safe_height = reorged.committed_chain().unwrap().tip().num_hash();
+        assert_eq!(
+            emitted.try_recv().expect("reorg height emitted"),
+            ExExEvent::FinishedHeight(safe_height)
+        );
+
+        for number in 2..=4 {
+            let speculative =
+                ExExNotification::ChainCommitted { new: Arc::new(mk_chain(number, number, 0)) };
+            ShadowIndexerExEx::emit_finished_height(
+                &events,
+                &speculative,
+                false,
+                &mut last_finished_height,
+            )
+            .expect("handle speculative commit after reorg");
+            assert_eq!(
+                emitted.try_recv().expect("safe height re-emitted"),
+                ExExEvent::FinishedHeight(safe_height),
+                "each speculative commit re-emits the canonical reorg height"
+            );
+        }
+        assert!(emitted.is_empty());
+    }
+
+    #[tokio::test]
+    async fn repeated_finished_height_drains_stalled_exex_manager_buffer() {
+        const MANAGER_CAPACITY: usize = 4;
+
+        let provider_factory = create_test_provider_factory();
+        init_genesis(&provider_factory).expect("initialize genesis");
+        let provider = BlockchainProvider::new(provider_factory).expect("create provider");
+        let wal_dir = tempfile::tempdir().expect("create WAL directory");
+        let wal = Wal::new(wal_dir.path()).expect("create WAL");
+        let (exex_handle, events, mut notifications) = ExExHandle::new(
+            "shadow-indexer".to_string(),
+            Default::default(),
+            provider.clone(),
+            EthEvmConfig::mainnet(),
+            wal.handle(),
+        );
+        let (finalized_headers, finalized_header_rx) = watch::channel(None);
+        let manager = ExExManager::new(
+            provider,
+            vec![exex_handle],
+            MANAGER_CAPACITY,
+            wal,
+            ForkChoiceStream::new(finalized_header_rx),
+        );
+        let manager_handle = manager.handle();
+
+        let chain = Arc::new(Chain::<EthPrimitives>::new(
+            vec![RecoveredBlock::default()],
+            Default::default(),
+            Default::default(),
+        ));
+        let manager_notification =
+            ExExNotification::ChainReorged { old: Arc::clone(&chain), new: chain };
+        for _ in 0..MANAGER_CAPACITY {
+            manager_handle
+                .send(ExExNotificationSource::Pipeline, manager_notification.clone())
+                .expect("queue manager notification");
+        }
+
+        let manager_task = tokio::spawn(async move {
+            let _finalized_headers = finalized_headers;
+            manager.await
+        });
+
+        for _ in 0..2 {
+            timeout(Duration::from_secs(1), notifications.try_next())
+                .await
+                .expect("manager delivers initial notification")
+                .expect("read initial notification")
+                .expect("notification stream remains open");
+        }
+        assert_eq!(manager_handle.capacity(), 2);
+        assert!(
+            timeout(Duration::from_millis(50), notifications.try_next()).await.is_err(),
+            "manager stalls with two buffered notifications despite an empty ExEx channel"
+        );
+
+        let reorged = ExExNotification::ChainReorged {
+            old: Arc::new(mk_chain(1, 1, 0)),
+            new: Arc::new(mk_chain(1, 1, NEW_CHAIN_VARIANT)),
+        };
+        let speculative = ExExNotification::ChainCommitted { new: Arc::new(mk_chain(2, 2, 0)) };
+        let mut last_finished_height = None;
+
+        for notification in [&reorged, &speculative] {
+            ShadowIndexerExEx::emit_finished_height(
+                &events,
+                notification,
+                false,
+                &mut last_finished_height,
+            )
+            .expect("emit canonical-safe finished height");
+            timeout(Duration::from_secs(1), notifications.try_next())
+                .await
+                .expect("FinishedHeight wakes manager")
+                .expect("read notification after wake")
+                .expect("notification stream remains open");
+        }
+
+        assert_eq!(manager_handle.capacity(), MANAGER_CAPACITY);
+        manager_task.abort();
+        let _ = manager_task.await;
     }
 }

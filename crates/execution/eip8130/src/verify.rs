@@ -275,12 +275,12 @@ mod tests {
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
         with_storage(|acc| {
-            acc.actor_config
+            acc.actors
                 .at_mut(&id)
                 .at_mut(&account)
                 .write(pack(
                     K1,
-                    Eip8130Constants::SCOPE_SENDER
+                    Eip8130Constants::SCOPE_OPERATOR
                         | Eip8130Constants::SCOPE_SELF_PAYER
                         | Eip8130Constants::SCOPE_NONCE,
                     0,
@@ -290,7 +290,7 @@ mod tests {
             assert_eq!(actors.sender.account, account);
             assert_eq!(
                 actors.sender.resolved.scope,
-                Eip8130Constants::SCOPE_SENDER
+                Eip8130Constants::SCOPE_OPERATOR
                     | Eip8130Constants::SCOPE_SELF_PAYER
                     | Eip8130Constants::SCOPE_NONCE
             );
@@ -307,16 +307,20 @@ mod tests {
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
         with_storage(|acc| {
-            acc.actor_config
+            acc.actors
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
+                .write(pack(
+                    K1,
+                    Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_NONCE,
+                    0,
+                ))
                 .unwrap();
             assert_eq!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
                 Err(TxAuthError::Scope {
                     operation: Operation::SelfPayer,
-                    scope: Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
+                    scope: Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_NONCE,
                 }),
             );
         });
@@ -331,8 +335,8 @@ mod tests {
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
         with_storage(|acc| {
-            // Bound, non-zero scope that lacks SCOPE_SENDER.
-            acc.actor_config
+            // Bound, non-zero scope that lacks SCOPE_OPERATOR.
+            acc.actors
                 .at_mut(&id)
                 .at_mut(&account)
                 .write(pack(K1, Eip8130Constants::SCOPE_SELF_PAYER, 0))
@@ -365,12 +369,16 @@ mod tests {
             auth_blob(K1, &sig(&pk, payer_hash)),
         );
         with_storage(|acc| {
-            acc.actor_config
+            acc.actors
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
+                .write(pack(
+                    K1,
+                    Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_NONCE,
+                    0,
+                ))
                 .unwrap();
-            acc.actor_config
+            acc.actors
                 .at_mut(&pid)
                 .at_mut(&payer_account)
                 .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
@@ -404,7 +412,7 @@ mod tests {
         with_storage(|acc| {
             // Sender is an implicit-EOA owner (self-slot empty); only the payer
             // actor needs seeding.
-            acc.actor_config
+            acc.actors
                 .at_mut(&pid)
                 .at_mut(&payer_account)
                 .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
@@ -438,7 +446,7 @@ mod tests {
             auth_blob(K1, &sig(&pk, wrong_payer_hash)),
         );
         with_storage(|acc| {
-            acc.actor_config
+            acc.actors
                 .at_mut(&pid)
                 .at_mut(&payer_account)
                 .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
@@ -447,7 +455,7 @@ mod tests {
             // that is not bound on the payer account.
             assert!(matches!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
-                Err(TxAuthError::Authorize(AuthorizeError::NotBound { .. })),
+                Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch { .. })),
             ));
         });
     }
@@ -470,22 +478,26 @@ mod tests {
             auth_blob(K1, &sig(&pk, payer_hash)),
         );
         with_storage(|acc| {
-            acc.actor_config
+            acc.actors
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
+                .write(pack(
+                    K1,
+                    Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_NONCE,
+                    0,
+                ))
                 .unwrap();
             // Payer actor bound but lacking SCOPE_SPONSOR_PAYER.
-            acc.actor_config
+            acc.actors
                 .at_mut(&pid)
                 .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_OPERATOR, 0))
                 .unwrap();
             assert_eq!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
                 Err(TxAuthError::Scope {
                     operation: Operation::SponsorPayer,
-                    scope: Eip8130Constants::SCOPE_SENDER,
+                    scope: Eip8130Constants::SCOPE_OPERATOR,
                 }),
             );
         });
@@ -515,7 +527,7 @@ mod tests {
             // No actor seeded: the sender actor is not bound on the account.
             assert!(matches!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
-                Err(TxAuthError::Authorize(AuthorizeError::NotBound { .. })),
+                Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch { .. })),
             ));
         });
     }

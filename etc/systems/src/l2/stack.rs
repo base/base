@@ -6,7 +6,7 @@
 //! - Batcher (in-process, submits L2 transaction batches to L1)
 //! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
 
-use std::{num::NonZeroU64, time::Duration};
+use std::{num::NonZeroU64, path::PathBuf, time::Duration};
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
@@ -30,10 +30,10 @@ use tokio::time::{sleep, timeout};
 use url::Url;
 
 use super::{
-    InProcessBatcher, InProcessBatcherConfig, InProcessBuilder, InProcessBuilderConfig,
-    InProcessClient, InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig,
-    InProcessFollowConsensus, InProcessFollowConsensusConfig, L2ContainerConfig, ShadowSequencer,
-    ShadowSequencerConfig,
+    ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
+    InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
+    InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
+    L2ContainerConfig, ShadowSequencer, ShadowSequencerConfig,
 };
 use crate::config::{ANVIL_ACCOUNT_1, BATCHER, SEQUENCER};
 
@@ -52,6 +52,10 @@ pub enum L2ClientConsensusMode {
 pub struct L2StackConfig {
     /// L2 genesis JSON content.
     pub l2_genesis: Vec<u8>,
+    /// Optional caller-owned builder datadir.
+    pub builder_datadir: Option<PathBuf>,
+    /// Optional caller-owned client datadir.
+    pub client_datadir: Option<PathBuf>,
     /// Rollup configuration JSON.
     pub rollup_config: Vec<u8>,
     /// L1 genesis JSON (for consensus chain spec).
@@ -82,6 +86,8 @@ pub struct L2StackConfig {
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
+    /// When set, the in-process batcher posts short-lived calldata channels instead of blobs.
+    pub force_batch_submission: bool,
     /// Consensus mode for the L2 client node.
     pub client_consensus_mode: L2ClientConsensusMode,
     /// Optional L1 upgrade signal configuration shared by both consensus nodes.
@@ -132,6 +138,14 @@ impl L2ClientConsensus {
         match self {
             Self::Validator(_) => None,
             Self::Follow(consensus) => Some(consensus.rollup_config()),
+        }
+    }
+
+    /// Stops the client consensus task.
+    pub async fn shutdown(self) {
+        match self {
+            Self::Validator(consensus) => drop(consensus),
+            Self::Follow(consensus) => consensus.shutdown().await,
         }
     }
 }
@@ -191,20 +205,30 @@ impl L2Stack {
         }
         let l1_chain_config: ChainConfig = serde_json::from_slice(&config.l1_genesis)
             .wrap_err("Failed to parse L1 chain config")?;
+        let builder_chain_spec =
+            InProcessBuilderConfig::chain_spec_from_genesis_json(&config.l2_genesis)
+                .wrap_err("Failed to parse builder L2 chain spec")?;
 
         // 1. Start the builder (in-process EL).
         let builder_config = InProcessBuilderConfig {
-            genesis_json: config.l2_genesis.clone(),
+            chain_spec: builder_chain_spec,
+            datadir: config.builder_datadir,
             jwt_secret: config.jwt_secret,
             http_port: container_config.and_then(|c| c.builder_http_port),
             ws_port: container_config.and_then(|c| c.builder_ws_port),
             auth_port: container_config.and_then(|c| c.builder_auth_port),
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
+            metrics_port: None,
             enable_experimental_validity_transactions: config
                 .enable_experimental_validity_transactions,
             payload_builder_cutover: config.payload_builder_cutover,
             extra_extensions: config.extra_builder_extensions,
+            block_time: Duration::from_secs(rollup_config.block_time),
+            persistence_threshold: None,
+            txpool_max_transactions: None,
+            txpool_max_size_mb: None,
+            txpool_max_account_slots: None,
         };
         let builder = InProcessBuilder::start(builder_config)
             .await
@@ -251,7 +275,7 @@ impl L2Stack {
                     l2_rpc_url: builder.rpc_url()?,
                     rollup_rpc_url: builder_consensus.rpc_url(),
                     batcher_key: config.batcher_key,
-                    force_batch_submission: false,
+                    force_batch_submission: config.force_batch_submission,
                 })
                 .await
                 .wrap_err("Failed to start in-process batcher")?,
@@ -272,15 +296,18 @@ impl L2Stack {
         };
 
         let client_config = InProcessClientConfig {
-            genesis_json: config.l2_genesis.clone(),
+            chain_spec: ChainSpecSource::GenesisJson(config.l2_genesis.clone()),
+            datadir: config.client_datadir,
             jwt_secret: config.jwt_secret,
             builder_rpc_url: builder.rpc_url()?.to_string(),
-            builder_flashblocks_url: builder.flashblocks_url(),
+            builder_flashblocks_url: Some(builder.flashblocks_url()),
             builder_p2p_enode: builder.p2p_enode(),
             http_port: container_config.and_then(|c| c.client_http_port),
             ws_port: container_config.and_then(|c| c.client_ws_port),
             auth_port: container_config.and_then(|c| c.client_auth_port),
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
+            metrics_port: None,
+            persistence_threshold: None,
             tx_forwarding_config,
             enable_experimental_validity_transactions: config
                 .enable_experimental_validity_transactions,
@@ -392,6 +419,10 @@ impl L2Stack {
                 .await
                 .wrap_err("Timed out waiting for delayed-shadow catch-up receipt")??;
             }
+            builder_consensus
+                .stop_sequencer()
+                .await
+                .wrap_err("Failed to pause active sequencer for delayed shadow startup")?;
             batcher = Some(
                 InProcessBatcher::start(InProcessBatcherConfig {
                     l1_rpc_url: l1_rpc_url.clone(),
@@ -457,19 +488,25 @@ impl L2Stack {
                 })
                 .await
                 .wrap_err_with(|| format!("Failed to start shadow sequencer {index}"))?;
-                let shadow_start_height = if shadow_config.start_block.is_some() {
+                let shadow_start_safe_height = if shadow_config.start_block.is_some() {
                     Some(
                         RootProvider::<Base>::new_http(builder.rpc_url()?)
-                            .get_block_number()
-                            .await?,
+                            .get_block_by_number(BlockNumberOrTag::Safe)
+                            .await?
+                            .map_or(0, |block| block.header.number),
                     )
                 } else {
                     None
                 };
-                if let Some(shadow_start_height) = shadow_start_height {
+                if let Some(shadow_start_safe_height) = shadow_start_safe_height {
                     let shadow_provider = RootProvider::<Base>::new_http(shadow.rpc_url()?);
                     timeout(Duration::from_secs(30), async {
-                        while shadow_provider.get_block_number().await? < shadow_start_height {
+                        while shadow_provider
+                            .get_block_by_number(BlockNumberOrTag::Safe)
+                            .await?
+                            .map_or(0, |block| block.header.number)
+                            < shadow_start_safe_height
+                        {
                             sleep(Duration::from_millis(100)).await;
                         }
                         Ok::<_, eyre::Error>(())
@@ -477,6 +514,9 @@ impl L2Stack {
                     .await
                     .wrap_err("Timed out waiting for delayed shadow safe catch-up")??;
                     batcher.as_ref().expect("delayed batcher started").stop();
+                    builder_consensus.start_sequencer().await.wrap_err(
+                        "Failed to resume active sequencer after delayed shadow startup",
+                    )?;
                 }
                 shadow_sequencers.push(shadow);
             }
@@ -563,5 +603,30 @@ impl L2Stack {
     /// Returns the follow-mode client consensus rollup configuration, when enabled.
     pub fn client_follow_rollup_config(&self) -> Option<&RollupConfig> {
         self.client_consensus.follow_rollup_config()
+    }
+
+    /// Stops the in-process L2 services and gracefully shuts down execution runtimes.
+    pub async fn shutdown(self) -> Result<()> {
+        let Self {
+            builder,
+            builder_consensus,
+            batcher,
+            client,
+            client_consensus,
+            shadow_sequencers,
+        } = self;
+
+        for shadow in shadow_sequencers {
+            shadow.shutdown().await.wrap_err("Failed to shut down shadow sequencer")?;
+        }
+
+        client_consensus.shutdown().await;
+        drop(batcher);
+        drop(builder_consensus);
+
+        client.shutdown().await.wrap_err("Failed to shut down L2 client")?;
+        builder.shutdown().await.wrap_err("Failed to shut down L2 builder")?;
+
+        Ok(())
     }
 }

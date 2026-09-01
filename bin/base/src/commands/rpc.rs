@@ -537,10 +537,8 @@ mod tests {
             "base",
             "rpc",
             "--enable-metering",
-            "--metering.target-flashblocks-per-block",
-            "4",
-            "--metering.gas-limit",
-            "30000000",
+            "--metering.metered-opcodes",
+            "SSTORE",
         ]));
 
         let BaseCommand::Rpc(rpc) = cli.command else {
@@ -550,7 +548,10 @@ mod tests {
         let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
 
         assert!(launch_config.standard.metering.enable_metering);
-        assert_eq!(launch_config.standard.metering.metering_gas_limit, Some(30_000_000));
+        assert_eq!(
+            launch_config.standard.metering.metering_metered_opcodes,
+            vec!["SSTORE".to_string()]
+        );
     }
 
     #[test]

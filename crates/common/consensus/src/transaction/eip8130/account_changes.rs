@@ -55,9 +55,9 @@ impl Scope {
         self.0
     }
 
-    /// Returns true if the scope grants the ungated `SCOPE_SENDER` context.
-    pub const fn has_sender(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_SENDER != 0
+    /// Returns true if the scope grants the ungated `SCOPE_OPERATOR` context.
+    pub const fn has_operator(&self) -> bool {
+        self.0 & Eip8130Constants::SCOPE_OPERATOR != 0
     }
 
     /// Returns true if the scope enables policy gating.
@@ -86,8 +86,11 @@ impl Scope {
 /// Per [EIP-8130], a create entry's initial actors are
 /// `[actorId, authenticator, scope, policyData]` tuples. `scope` is stored
 /// verbatim (`0x00` = unrestricted admin; unknown bits allowed), and `policyData`
-/// is empty unless `scope` sets `POLICY`, in which case it is exactly
-/// `manager (20) || commitment (32)`. Two things are deliberately **not**
+/// is either empty (no policy attached) or exactly `manager (20) || commitment
+/// (32)`. Attachment is decided by **length**, not the `POLICY` scope bit
+/// (base/eip-8130 #95): the `POLICY` bit is the protocol sender gate, while the
+/// presence of the 52-byte payload is what attaches the manager/commitment. Two
+/// things are deliberately **not**
 /// expressible here and are added afterwards via a [`ConfigChange`]: `expiry`
 /// (initial actors are always non-expiring, committed as `0`) and a
 /// self-referential `manager = account` (the account address is not known at
@@ -108,8 +111,10 @@ pub struct InitialActor {
     pub authenticator: Address,
     /// Scope bitfield (`uint16`; `0x0000` = unrestricted admin), stored verbatim.
     pub scope: u16,
-    /// Policy data: empty unless `scope` sets `POLICY`, otherwise exactly
-    /// `manager (20) || commitment (32)`. Committed to the derived address.
+    /// Policy data: empty (no policy attached) or exactly
+    /// `manager (20) || commitment (32)`. Attachment is length-based and
+    /// decoupled from the `POLICY` scope bit (base/eip-8130 #95). Committed to
+    /// the derived address.
     pub policy_data: Bytes,
 }
 
@@ -502,18 +507,18 @@ mod tests {
     #[test]
     fn scope_bit_helpers() {
         let s = Scope(
-            Eip8130Constants::SCOPE_SENDER
+            Eip8130Constants::SCOPE_OPERATOR
                 | Eip8130Constants::SCOPE_POLICY
                 | Eip8130Constants::SCOPE_NONCE
                 | Eip8130Constants::SCOPE_SELF_PAYER
                 | Eip8130Constants::SCOPE_SPONSOR_PAYER,
         );
-        assert!(s.has_sender());
+        assert!(s.has_operator());
         assert!(s.has_policy());
         assert!(s.has_nonce());
         assert!(s.has_self_payer());
         assert!(s.has_sponsor_payer());
-        assert!(!Scope::UNRESTRICTED.has_sender());
+        assert!(!Scope::UNRESTRICTED.has_operator());
     }
 
     #[test]

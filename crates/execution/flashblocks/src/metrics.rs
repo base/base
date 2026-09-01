@@ -20,6 +20,10 @@ base_metrics::define_metrics! {
     pending_clear_catchup: counter,
     #[describe("Number of times pending snapshot was cleared because of reorg")]
     pending_clear_reorg: counter,
+    #[describe("Number of times a pending snapshot was dropped because it did not extend the canonical tip")]
+    pending_drop_stale: counter,
+    #[describe("Number of flashblock updates skipped because their block was already canonical")]
+    flashblock_superseded: counter,
     #[describe("Pending snapshot flashblock index (current)")]
     pending_snapshot_fb_index: gauge,
     #[describe("Pending snapshot block number (current)")]

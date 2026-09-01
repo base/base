@@ -2961,7 +2961,6 @@ dependencies = [
  "base-common-network",
  "base-common-precompiles",
  "base-common-rpc-types-engine",
- "base-comp",
  "base-consensus-derive",
  "base-consensus-engine",
  "base-consensus-gossip",
@@ -2979,6 +2978,7 @@ dependencies = [
  "base-test-utils",
  "base-tx-manager",
  "eyre",
+ "miniz_oxide 0.9.1",
  "reth-basic-payload-builder",
  "reth-db",
  "reth-db-common",
@@ -3038,6 +3038,7 @@ dependencies = [
  "base-tx-manager",
  "clap",
  "eyre",
+ "humantime",
  "serde",
  "tracing",
  "url",
@@ -3075,12 +3076,14 @@ dependencies = [
  "alloy-consensus 2.4.1",
  "alloy-eips 2.4.1",
  "alloy-primitives",
+ "alloy-rlp",
  "base-common-consensus",
  "base-common-genesis",
  "base-comp",
  "base-metrics",
  "base-protocol",
  "clap",
+ "derive_more 2.1.1",
  "metrics",
  "rand 0.9.5",
  "rstest",
@@ -3256,7 +3259,6 @@ dependencies = [
  "k256 0.13.4",
  "metrics",
  "metrics-exporter-prometheus",
- "moka",
  "nanoid",
  "opentelemetry 0.32.0",
  "parking_lot",
@@ -3395,26 +3397,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-bundle-extension"
-version = "0.0.0"
-dependencies = [
- "base-execution-txpool",
- "base-node-runner",
- "reth-chain-state",
- "reth-provider",
- "tokio",
- "tokio-stream",
- "tracing",
-]
-
-[[package]]
 name = "base-bundles"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.4.1",
  "alloy-primitives",
  "alloy-provider",
- "alloy-serde 2.4.1",
  "alloy-signer-local 2.4.1",
  "base-common-consensus",
  "base-common-flz",
@@ -3480,6 +3468,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-challenger-e2e"
+version = "0.0.0"
+dependencies = [
+ "alloy-node-bindings",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-signer-local 2.4.1",
+ "base-proof-contracts",
+ "clap",
+ "eyre",
+ "humantime",
+ "reqwest 0.13.4",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-challenger-e2e-bin"
+version = "0.0.0"
+dependencies = [
+ "base-challenger-e2e",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "base-cli-utils"
 version = "0.0.0"
 dependencies = [
@@ -3535,6 +3551,7 @@ dependencies = [
  "alloy-serde 2.4.1",
  "alloy-signer 2.4.1",
  "alloy-signer-local 2.4.1",
+ "alloy-sol-types",
  "arbitrary",
  "bincode 2.0.1",
  "bytes",
@@ -3587,7 +3604,15 @@ dependencies = [
 name = "base-common-evm2"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
+ "alloy-primitives",
+ "base-common-consensus",
+ "base-common-evm",
+ "base-common-genesis",
+ "base-common-l1-fees",
  "evm2",
+ "revm",
 ]
 
 [[package]]
@@ -3756,24 +3781,12 @@ dependencies = [
 name = "base-comp"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus 2.4.1",
- "alloy-eips 2.4.1",
  "alloy-primitives",
- "alloy-rlp",
- "alloy-sol-types",
- "arbitrary",
- "base-common-consensus",
  "base-common-genesis",
  "base-protocol",
  "brotli",
  "derive_more 2.1.1",
- "miniz_oxide 0.9.1",
- "proptest",
- "rstest",
- "serde_json",
- "spin 0.10.1",
  "thiserror 2.0.19",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -4069,7 +4082,6 @@ dependencies = [
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.19",
  "tracing",
  "unsigned-varint 0.8.0",
@@ -4220,11 +4232,11 @@ dependencies = [
 name = "base-execution-cli"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.4.1",
  "alloy-eips 2.4.1",
  "alloy-primitives",
  "axum 0.8.9",
  "backon",
- "base-bundle-extension",
  "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",
@@ -4262,6 +4274,7 @@ dependencies = [
  "reth-db",
  "reth-discv4",
  "reth-discv5",
+ "reth-ethereum-forks",
  "reth-net-nat",
  "reth-network",
  "reth-network-p2p",
@@ -4451,6 +4464,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
+ "base-bundles",
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
@@ -4459,7 +4473,12 @@ dependencies = [
  "base-execution-eip8130",
  "base-execution-evm",
  "base-execution-txpool",
+ "base-metrics",
+ "base-observability-events",
  "derive_more 2.1.1",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "moka",
  "reth-basic-payload-builder",
  "reth-chainspec",
  "reth-ethereum-forks",
@@ -4480,6 +4499,7 @@ dependencies = [
  "reth-trie-parallel",
  "revm",
  "serde",
+ "serde_json",
  "thiserror 2.0.19",
  "tracing",
 ]
@@ -4613,6 +4633,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer 2.4.1",
  "alloy-signer-local 2.4.1",
+ "alloy-sol-types",
  "async-trait",
  "base-common-chains",
  "base-common-consensus",
@@ -4899,7 +4920,6 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "base-common-flashblocks",
- "base-common-flz",
  "base-common-precompiles",
  "base-common-rpc-types",
  "base-execution-chainspec",
@@ -4911,7 +4931,6 @@ dependencies = [
  "derive_more 2.1.1",
  "eyre",
  "jsonrpsee",
- "parking_lot",
  "rand 0.9.5",
  "reth-db",
  "reth-db-common",
@@ -4922,10 +4941,8 @@ dependencies = [
  "reth-transaction-pool",
  "revm",
  "revm-bytecode",
- "revm-database",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
  "tokio",
  "tracing",
  "url",
@@ -4956,7 +4973,6 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
- "base-common-network",
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
  "base-execution-consensus",
@@ -4970,6 +4986,7 @@ dependencies = [
  "base-protocol",
  "base-upgrade-signal",
  "clap",
+ "criterion",
  "eyre",
  "futures",
  "humantime",
@@ -4979,9 +4996,11 @@ dependencies = [
  "reth-consensus",
  "reth-db",
  "reth-db-api",
+ "reth-db-common",
  "reth-discv5",
  "reth-e2e-test-utils",
  "reth-ethereum-forks",
+ "reth-ethereum-primitives",
  "reth-evm",
  "reth-network",
  "reth-network-peers",
@@ -5005,6 +5024,7 @@ dependencies = [
  "reth-tasks",
  "reth-tracing",
  "reth-transaction-pool",
+ "reth-trie",
  "reth-trie-common",
  "reth-trie-db",
  "revm",
@@ -6019,6 +6039,7 @@ name = "base-shadow-indexer"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
  "alloy-primitives",
  "anyhow",
  "async-trait",
@@ -6031,12 +6052,18 @@ dependencies = [
  "futures",
  "metrics",
  "mockall",
+ "reth-chain-state",
+ "reth-db-common",
+ "reth-ethereum-primitives",
+ "reth-evm-ethereum",
  "reth-execution-types",
  "reth-exex",
  "reth-network-api",
  "reth-node-api",
  "reth-primitives-traits",
+ "reth-provider",
  "reth-tasks",
+ "tempfile",
  "tokio",
  "tracing",
 ]
@@ -6220,7 +6247,7 @@ dependencies = [
  "base-batcher-service",
  "base-builder-core",
  "base-builder-multiplex",
- "base-bundle-extension",
+ "base-common-chains",
  "base-common-consensus",
  "base-common-flashblocks",
  "base-common-genesis",
@@ -6247,8 +6274,12 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-optimism-rpc",
+ "base-proof-zk-backend",
+ "base-proof-zk-host",
  "base-protocol",
+ "base-prover-service",
  "base-prover-service-client",
+ "base-prover-service-db",
  "base-prover-service-protocol",
  "base-runtime",
  "base-shadow-indexer",
@@ -6273,6 +6304,7 @@ dependencies = [
  "rand 0.9.5",
  "reqwest 0.13.4",
  "reth-db",
+ "reth-ethereum-forks",
  "reth-node-builder",
  "reth-node-core",
  "reth-primitives-traits",
@@ -6290,6 +6322,7 @@ dependencies = [
  "tokio-util",
  "tower 0.5.3",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 
@@ -6445,14 +6478,20 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer 2.4.1",
  "alloy-signer-local 2.4.1",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-execution-chainspec",
  "base-execution-txpool",
  "base-node-runner",
  "base-observability-events",
  "eyre",
  "httpmock",
  "jsonrpsee",
+ "reth-chainspec",
+ "reth-provider",
  "reth-rpc-eth-types",
  "reth-rpc-server-types",
+ "reth-storage-api",
  "reth-transaction-pool",
  "serde",
  "serde_json",

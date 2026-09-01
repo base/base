@@ -309,6 +309,18 @@ mod tests {
         }
     }
 
+    /// The borrowed `announce` fast path in `route` decodes against the canonical `Token`/`type_check`,
+    /// but must accept the same payloads each frozen surface accepts. That invariant depends on
+    /// `announce`'s signature staying byte-identical across versions: same selector then same `Token`
+    /// then same `type_check`. A version that changed `announce`'s parameters would break the
+    /// fast-path accept-set identity, and the fix would need re-derivation. This pin fails loudly
+    /// when that happens.
+    #[test]
+    fn announce_signature_is_frozen_across_versions() {
+        assert_eq!(IB20AssetV1::announceCall::SELECTOR, IB20AssetV2::announceCall::SELECTOR);
+        assert_eq!(IB20AssetV1::announceCall::SIGNATURE, IB20AssetV2::announceCall::SIGNATURE);
+    }
+
     #[test]
     fn asset_and_common_selectors_are_disjoint_on_each_wire() {
         for wire in [AssetVersion::V1.abi(), AssetVersion::V2.abi()] {

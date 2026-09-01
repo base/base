@@ -559,3 +559,32 @@ async fn resumes_from_persisted_cursor_after_restart() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn list_recent_returns_resolved_rows_newest_first_and_pages_by_before() -> Result<()> {
+    let database = TestDatabase::start().await?;
+    let repo = ShadowBlockRepo::new(database.pool.clone());
+    repo.flush(&reorged([
+        ShadowBlockFixture::new(300).into_row(0x01, Some(0x11)),
+        ShadowBlockFixture::new(301).into_row(0x02, None),
+        ShadowBlockFixture::new(302).into_row(0x03, Some(0x12)),
+        ShadowBlockFixture::new(303).into_row(0x04, Some(0x13)),
+    ]))
+    .await?;
+
+    let page1 = repo.list_recent(2, None).await?;
+    assert_eq!(
+        page1.iter().map(|row| row.number).collect::<Vec<_>>(),
+        [303, 302],
+        "newest resolved rows first, capped by limit"
+    );
+
+    let page2 = repo.list_recent(2, Some(page1.last().expect("page1 not empty").number)).await?;
+    assert_eq!(
+        page2.iter().map(|row| row.number).collect::<Vec<_>>(),
+        [300],
+        "before excludes the cursor row and the unresolved 301 is skipped"
+    );
+
+    Ok(())
+}

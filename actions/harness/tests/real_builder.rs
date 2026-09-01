@@ -104,25 +104,7 @@ async fn builder_backed_sequencer_produces_block_with_azul_active() -> eyre::Res
 /// injected transaction from the pool.
 #[tokio::test(flavor = "multi_thread")]
 async fn builder_backed_sequencer_selects_pool_transaction() -> eyre::Result<()> {
-    let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
-        ..BatcherConfig::default()
-    };
-    // Anchor genesis a little ahead of wall-clock so produced-block timestamps are in the future
-    // (which the Flashblocks builder needs to schedule flashblocks), but close enough that the
-    // block's slot lands well inside the harness's inserted-block timeout.
-    let base_ts =
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 4;
-    let l1_cfg = L1MinerConfig { genesis_timestamp: base_ts, ..L1MinerConfig::default() };
-    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
-        .through_isthmus()
-        .with_jovian_at(0)
-        .build();
-    rollup_cfg.genesis.l2_time = base_ts;
-    let h = ActionTestHarness::new(l1_cfg, rollup_cfg);
-
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut sequencer = h.create_l2_sequencer_with_builder(l1_chain).await?;
+    let (_h, mut sequencer, _batcher_cfg) = wall_clock_builder_sequencer().await?;
 
     // In production-builder mode this transaction is injected into the real pool and selected by
     // the builder, rather than force-included via the payload attributes.
@@ -134,50 +116,6 @@ async fn builder_backed_sequencer_selects_pool_transaction() -> eyre::Result<()>
         block.body.transactions.len() >= 2,
         "expected the pool-selected user tx alongside the L1-info deposit, got {} tx(s)",
         block.body.transactions.len(),
-    );
-
-    Ok(())
-}
-
-/// A bundle transaction whose validity window includes the block being built is selected by the
-/// production builder — exercising bundle-window enforcement through the harness sequencer.
-#[tokio::test(flavor = "multi_thread")]
-async fn builder_backed_sequencer_includes_in_window_bundle() -> eyre::Result<()> {
-    let (h, mut sequencer, _batcher_cfg) = wall_clock_builder_sequencer().await?;
-    let chain_id = h.rollup_config.l2_chain_id.id();
-    let tx = sequencer.test_account().lock().expect("test account").create_eip1559_tx(chain_id);
-
-    // Valid from block 1 onward — the next block is block 1, so it is in-window.
-    sequencer.engine_client().inject_bundle_transaction(tx, Some(1), None, None, None).await?;
-    let block = sequencer.build_empty_block().await;
-
-    assert_eq!(block.header.number, 1, "block 1 must be produced");
-    assert!(
-        block.body.transactions.len() >= 2,
-        "in-window bundle tx must be selected alongside the L1-info deposit, got {} tx(s)",
-        block.body.transactions.len(),
-    );
-
-    Ok(())
-}
-
-/// A bundle transaction whose validity window starts in the future is deferred (not selected) by
-/// the production builder for the current block.
-#[tokio::test(flavor = "multi_thread")]
-async fn builder_backed_sequencer_excludes_future_bundle() -> eyre::Result<()> {
-    let (h, mut sequencer, _batcher_cfg) = wall_clock_builder_sequencer().await?;
-    let chain_id = h.rollup_config.l2_chain_id.id();
-    let tx = sequencer.test_account().lock().expect("test account").create_eip1559_tx(chain_id);
-
-    // Only valid from block 100 onward — must be excluded from block 1.
-    sequencer.engine_client().inject_bundle_transaction(tx, Some(100), None, None, None).await?;
-    let block = sequencer.build_empty_block().await;
-
-    assert_eq!(block.header.number, 1, "block 1 must be produced");
-    assert_eq!(
-        block.body.transactions.len(),
-        1,
-        "future bundle tx must be excluded; only the L1-info deposit should remain",
     );
 
     Ok(())

@@ -11,7 +11,6 @@
 
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_sol_types::{SolEvent, sol};
-use base_common_consensus::Eip8130Constants;
 use base_precompile_storage::{ContractStorage, Result as StorageResult, StorageCtx};
 
 use crate::{AccountConfigurationStorage, ActorConfig};
@@ -45,20 +44,29 @@ impl AccountConfigurationEvents {
     /// Packs `ActorAuthorized.actorData` as the finalized Keystore's
     /// `_emitActorAuthorized` does: `authenticator(20) ‖ expiry(6) ‖ scope(2) ‖
     /// reserved(4 zero bytes)` (32 bytes), plus `manager(20) ‖ commitment(32)`
-    /// when `SCOPE_POLICY` is set (84 bytes total). This mirrors the right-aligned
-    /// `ActorConfig` storage-slot field order (`authenticator ‖ expiry ‖ scope ‖
-    /// reserved`) packed left-to-right via `abi.encodePacked`.
+    /// when policy bytes were attached (84 bytes total). This mirrors the
+    /// right-aligned `ActorConfig` storage-slot field order (`authenticator ‖
+    /// expiry ‖ scope ‖ reserved`) packed left-to-right via `abi.encodePacked`.
+    ///
+    /// `policy_attached` is length-derived (base/eip-8130 #95): the trailer is
+    /// emitted whenever the authorize payload carried a 52-byte policy — even an
+    /// all-zero one — and omitted when it carried none, decoupled from the
+    /// `SCOPE_POLICY` bit.
     #[must_use]
-    pub fn pack_actor_data(config: &ActorConfig, manager: Address, commitment: B256) -> Bytes {
-        let policy = config.scope & Eip8130Constants::SCOPE_POLICY != 0;
-        let mut data = Vec::with_capacity(if policy { 84 } else { 32 });
+    pub fn pack_actor_data(
+        config: &ActorConfig,
+        manager: Address,
+        commitment: B256,
+        policy_attached: bool,
+    ) -> Bytes {
+        let mut data = Vec::with_capacity(if policy_attached { 84 } else { 32 });
         data.extend_from_slice(config.authenticator.as_slice());
         // uint48 expiry: low 6 bytes of the big-endian u64.
         data.extend_from_slice(&config.expiry.to_be_bytes()[2..]);
         // uint16 scope: 2 bytes big-endian.
         data.extend_from_slice(&config.scope.to_be_bytes());
         data.extend_from_slice(&[0u8; 4]);
-        if policy {
+        if policy_attached {
             data.extend_from_slice(manager.as_slice());
             data.extend_from_slice(commitment.as_slice());
         }
@@ -73,13 +81,14 @@ impl AccountConfigurationEvents {
         config: &ActorConfig,
         manager: Address,
         commitment: B256,
+        policy_attached: bool,
     ) -> StorageResult<()> {
         storage.storage().emit_event(
             storage.address(),
             ActorAuthorized {
                 account,
                 actorId: actor_id,
-                actorData: Self::pack_actor_data(config, manager, commitment),
+                actorData: Self::pack_actor_data(config, manager, commitment, policy_attached),
             }
             .encode_log_data(),
         )
@@ -138,36 +147,44 @@ impl AccountConfigurationEvents {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
+    use base_common_consensus::Eip8130Constants;
 
     use super::*;
 
     #[test]
-    fn pack_actor_data_ungated_is_32_bytes() {
+    fn pack_actor_data_unattached_is_32_bytes() {
         let config = ActorConfig {
             authenticator: address!("0x00000000000000000000000000000000000000bb"),
-            scope: Eip8130Constants::SCOPE_SENDER,
+            scope: Eip8130Constants::SCOPE_OPERATOR,
             expiry: 0x0102_0304_0506,
         };
-        let data = AccountConfigurationEvents::pack_actor_data(&config, Address::ZERO, B256::ZERO);
+        let data =
+            AccountConfigurationEvents::pack_actor_data(&config, Address::ZERO, B256::ZERO, false);
         assert_eq!(data.len(), 32);
         assert_eq!(&data[..20], config.authenticator.as_slice());
         assert_eq!(&data[20..26], &config.expiry.to_be_bytes()[2..]);
-        assert_eq!(&data[26..28], &Eip8130Constants::SCOPE_SENDER.to_be_bytes());
+        assert_eq!(&data[26..28], &Eip8130Constants::SCOPE_OPERATOR.to_be_bytes());
         assert_eq!(&data[28..], &[0u8; 4]);
     }
 
     #[test]
-    fn pack_actor_data_policy_gated_is_84_bytes() {
+    fn pack_actor_data_policy_attached_is_84_bytes() {
+        // Length-derived: the trailer rides on attachment, not the scope bit — an
+        // all-zero (but attached) policy still emits 84 bytes.
         let config = ActorConfig {
             authenticator: address!("0x00000000000000000000000000000000000000bb"),
-            scope: Eip8130Constants::SCOPE_POLICY,
+            scope: Eip8130Constants::SCOPE_OPERATOR,
             expiry: 0,
         };
         let manager = address!("0x00000000000000000000000000000000000000cc");
         let commitment = B256::repeat_byte(0x11);
-        let data = AccountConfigurationEvents::pack_actor_data(&config, manager, commitment);
+        let data = AccountConfigurationEvents::pack_actor_data(&config, manager, commitment, true);
         assert_eq!(data.len(), 84);
         assert_eq!(&data[32..52], manager.as_slice());
         assert_eq!(&data[52..], commitment.as_slice());
+
+        let zero_but_attached =
+            AccountConfigurationEvents::pack_actor_data(&config, Address::ZERO, B256::ZERO, true);
+        assert_eq!(zero_but_attached.len(), 84);
     }
 }

@@ -29,7 +29,6 @@ base-execution-chainspec.workspace = true
 
 # revm
 revm.workspace = true
-revm-database.workspace = true
 revm-bytecode.workspace = true
 
 # alloy
@@ -44,14 +43,8 @@ jsonrpsee.workspace = true
 # base-alloy
 base-common-consensus.workspace = true
 
-# DA calculation
-base-common-flz.workspace = true
-
 # misc
 eyre.workspace = true
-tokio.workspace = true
-thiserror.workspace = true
-parking_lot.workspace = true
 derive_more.workspace = true
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
@@ -87,4 +80,5 @@ base-common-rpc-types.workspace = true
 # misc
 url.workspace = true
 rand.workspace = true
+tokio.workspace = true
 serde_json.workspace = true

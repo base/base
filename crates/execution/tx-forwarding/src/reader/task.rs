@@ -2,9 +2,7 @@ use std::{fmt, sync::Arc};
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, TxHash};
-use base_execution_txpool::{
-    BundleTransaction, NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions,
-};
+use base_execution_txpool::{NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -39,7 +37,7 @@ pub(crate) struct DestinationReader<P: TransactionPool, E = NoExtensions> {
 impl<P, E> DestinationReader<P, E>
 where
     P: TransactionPool + 'static,
-    P::Transaction: PoolTransaction + BundleTransaction,
+    P::Transaction: PoolTransaction,
     <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
     E: ValidatedTransactionExtensions<P::Transaction>,
 {
@@ -152,10 +150,6 @@ where
             transaction: ValidatedTransaction {
                 sender: *transaction.sender_ref(),
                 raw: Bytes::from(consensus.inner().encoded_2718()),
-                min_block_number: transaction.transaction.min_block_number(),
-                max_block_number: transaction.transaction.max_block_number(),
-                min_timestamp: transaction.transaction.min_timestamp_millis(),
-                max_timestamp: transaction.transaction.max_timestamp_millis(),
                 extensions: E::extract(transaction),
             },
             tx_hash: *transaction.transaction.hash(),

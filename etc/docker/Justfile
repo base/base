@@ -19,11 +19,12 @@ up-single mode='default':
     just --justfile {{ source_file() }} _up-devnet "base" {{ quote(mode) }}
 
 # Starts the single-Anvil L1 devnet and its two-worker local Nitro proof stack
-up-anvil-nitro-local: down-anvil _build-setup-image (_build-rust-images "devnet" "dev")
+up-anvil-nitro-local: down-anvil _build-setup-image (_build-rust-images "devnet" "dev") (_build-nitro-images "dev")
     #!/usr/bin/env bash
     set -euo pipefail
     l1_rpc_url="http://l1-el:${L1_HTTP_PORT}"
     export L1_CONTAINER_BEACON_URL="$l1_rpc_url"
+    export L1_SLOT_DURATION_OVERRIDE="${L1_SLOT_DURATION_OVERRIDE:-12}"
     compose_cmd=(docker compose {{ _env }} {{ _anvil }})
 
     mkdir -p .devnet/l2/configs
@@ -31,8 +32,8 @@ up-anvil-nitro-local: down-anvil _build-setup-image (_build-rust-images "devnet"
     until cast block-number --rpc-url "$L1_RPC_URL" >/dev/null 2>&1; do
       sleep 0.25
     done
-    cast rpc --rpc-url "$L1_RPC_URL" anvil_setBlockTimestampInterval 4 >/dev/null
-    cast rpc --rpc-url "$L1_RPC_URL" anvil_setIntervalMining 4 >/dev/null
+    cast rpc --rpc-url "$L1_RPC_URL" anvil_setBlockTimestampInterval "$L1_SLOT_DURATION_OVERRIDE" >/dev/null
+    cast rpc --rpc-url "$L1_RPC_URL" anvil_setIntervalMining "$L1_SLOT_DURATION_OVERRIDE" >/dev/null
     "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l2
     setup_l2_status="$(docker wait setup-l2)"
     if [ "$setup_l2_status" != "0" ]; then
@@ -49,12 +50,15 @@ up-anvil-nitro-local: down-anvil _build-setup-image (_build-rust-images "devnet"
     # they booted with, which can predate the file bootstrap just wrote.
     # Force-recreate them so they always boot off the final file.
     "${compose_cmd[@]}" up -d --no-build --force-recreate base-client base-rpc base-builder
-    ./etc/scripts/devnet/anvil-nitro-local.sh up
+    "${compose_cmd[@]}" --profile nitro-local up -d --no-build --remove-orphans
+
+    echo "Single-L1 local Nitro stack is running."
+    echo "  Status: just anvil-nitro-local status"
+    echo "  Logs:   just anvil-nitro-local logs"
 
 # Stops the single-Anvil L1 devnet, proof workers, and all of their data
 down-anvil:
-    -./etc/scripts/devnet/anvil-nitro-local.sh down
-    -docker compose {{ _env }} {{ _anvil }} --profile profiling down
+    -docker compose {{ _env }} {{ _anvil }} --profile profiling --profile nitro-local down
     -[ ! -d .devnet ] || docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
 # Builds the latest Base-Anvil default branch used by the local Nitro devnet
@@ -206,6 +210,10 @@ _build-rust-images group profile='dev':
         ;;
     esac
     PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
+
+[private]
+_build-nitro-images profile='dev':
+    PROFILE="{{ profile }}" docker buildx bake -f etc/docker/docker-bake.hcl proposer prover-service nitro-host-local --load
 
 [private]
 _up-devnet compose_profile mode:

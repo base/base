@@ -1,29 +1,37 @@
 # base-batcher-encoder
 
-Batcher encoding pipeline: `BatchPipeline` trait and `BatchEncoder` state machine.
+Synchronous encoder: L2 blocks → L1 submissions. No async, no I/O.
 
-The encoder is a synchronous, pure state machine that transforms L2 blocks into
-L1 submission frames. No async, no I/O, no tokio dependency.
+Produces Single batches. Span decoding stays in protocol/consensus for
+historical derivation.
 
-## Batch format
+The writable channel is the FIFO tail. Each accepted batch is compressed once;
+hard limits are checked before the stream is mutated. `compressed_size_target`
+tracks stable output emitted by the compression stream and closes after the
+batch that reaches it.
 
-The encoder produces Single batches. Span decoding and derivation remain in the
-protocol and consensus crates so nodes can continue deriving existing Span data.
+`DaEgress` frames compressor output against remaining blob capacity, so a full
+blob can emit while the channel is still open. Artifacts are immutable after
+creation. A soft-target or protocol-limit close retains the same channel's
+partial compressed tail until its L1 deadline or an explicit flush releases it.
+`max_blobs_per_tx` only controls how many blobs are grouped into a transaction;
+it does not close channels.
+
+Channel-close metric `reason` labels: `soft_target`, `protocol_limit`,
+`timeout`, `flush`, `discard`.
 
 ## Usage
 
 ```rust,ignore
 use base_batcher_encoder::{
-    BatchEncoder, BatchPipeline, DerivationReconciliation, EncoderConfig, FrameEncoder,
-    StepResult,
+    BatchEncoder, BatchPipeline, DerivationReconciliation, EncoderConfig, StepResult,
+    SubmissionPayload,
 };
 
-let mut encoder = BatchEncoder::new(rollup_config, EncoderConfig::default());
+let mut encoder = BatchEncoder::new(rollup_config, EncoderConfig::default())?;
 
-// Feed L2 blocks.
 encoder.add_block(block)?;
 
-// Step until idle.
 loop {
     match encoder.step()? {
         StepResult::Idle => break,
@@ -31,19 +39,22 @@ loop {
     }
 }
 
-// Drain ready submissions.
 while let Some(sub) = encoder.next_submission() {
-    for frame in &sub.frames {
-        // Encode as L1 calldata:
-        let calldata = FrameEncoder::to_calldata(frame);
-        // Or pack into EIP-4844 blobs via base-blobs::BlobEncoder.
+    match sub.payload() {
+        SubmissionPayload::Blobs(blobs) => {
+            for blob in blobs {
+                let encoded = base_blobs::BlobEncoder::encode_packed(blob.frames())?;
+            }
+        }
+        SubmissionPayload::Calldata(frame) => {
+            let _ = base_batcher_encoder::FrameEncoder::to_calldata(&frame);
+        }
     }
+    // Call encoder.requeue(sub.id) instead if the L1 transaction fails or is dropped.
     encoder.confirm(sub.id, l1_block_number);
     encoder.advance_l1_head(l1_block_number);
-    // Call encoder.requeue(sub.id) if submission fails and frames must be retried.
 }
 
-// Reconcile derivation progress. `current_l1_number` is `None` when no cursor is available.
 match encoder.reconcile_derivation(safe_head, current_l1_number) {
     DerivationReconciliation::Consistent => {}
     DerivationReconciliation::SafeHeadMismatch
@@ -53,25 +64,12 @@ match encoder.reconcile_derivation(safe_head, current_l1_number) {
 }
 ```
 
-## Confirm / requeue lifecycle
+## Confirm / requeue
 
-During normal operation, every submission drained from `next_submission()` **must**
-be resolved with either `confirm(id, l1_block)` or `requeue(id)`:
+Every `next_submission()` must be followed by `confirm` or `requeue`.
+`confirm` records inclusion; blocks stay until `reconcile_derivation`.
+`requeue` puts the same immutable artifacts back to ready. Unresolved
+submissions remain pending and cannot be leased again.
 
-- `confirm` records frame inclusion. Completed channels and their L2 blocks remain
-  buffered until `reconcile_derivation` observes the corresponding safe-head advance.
-- `requeue` makes the submission's frames available again. Use this when an L1
-  transaction fails or is dropped.
-
-Failing to call either leaves the submission in the encoder's internal `pending` map.
-The block deque tracks the `(safe, unsafe]` range; normal removal happens during
-derivation reconciliation.
-
-## Frame encoding
-
-`FrameEncoder::to_calldata(frame)` produces the exact byte sequence the derivation
-pipeline expects: `[DERIVATION_VERSION_0] ++ frame.encode()`. Both `BatchDriver` (the
-production async driver in `base-batcher-core`) and the action-test `Batcher` harness use
-this shared implementation so the framing logic is defined exactly once.
-
-For EIP-4844 blob submission, use `base_blobs::BlobEncoder::encode_packed(&frames)`.
+`FrameEncoder::to_calldata` is `[DERIVATION_VERSION_0] ++ frame.encode()`.
+Blob payloads use `base_blobs::BlobEncoder::encode_packed`.

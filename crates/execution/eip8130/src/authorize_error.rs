@@ -22,15 +22,16 @@ pub enum AuthorizeError {
     Storage(#[from] BasePrecompileError),
 
     /// The resolved actor id was zero (e.g. a delegate to `address(0)`). Mirrors
-    /// the contract's `require(actorId != bytes32(0))`.
+    /// `Keystore.AuthenticationFailed` (`require(actorId != bytes32(0))`).
     #[error("resolved actor id is zero")]
-    ZeroActor,
+    AuthenticationFailed,
 
     /// The resolved actor is not bound to the authenticator that signed for it on
     /// this account (`actor_config.authenticator != authenticator`), so the actor
-    /// is unknown, revoked, or registered under a different authenticator.
+    /// is unknown, revoked, or registered under a different authenticator. Mirrors
+    /// `Keystore.AuthenticatorMismatch`.
     #[error("actor {actor_id} is not bound to authenticator {authenticator} on the account")]
-    NotBound {
+    AuthenticatorMismatch {
         /// The resolved actor id whose binding check failed.
         actor_id: B256,
         /// The authenticator that signed and was expected to be bound.
@@ -49,8 +50,9 @@ pub enum AuthorizeError {
     },
 
     /// The resolved actor's configured expiry has passed (`now > expiry`).
+    /// Mirrors `Keystore.ActorExpired`.
     #[error("actor {actor_id} expired at {expiry}")]
-    Expired {
+    ActorExpired {
         /// The resolved actor id that is expired.
         actor_id: B256,
         /// The Unix-seconds expiry that was exceeded.

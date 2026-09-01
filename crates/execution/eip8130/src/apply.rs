@@ -78,12 +78,12 @@ pub enum ApplyError {
     #[error("local epoch is saturated and cannot be incremented")]
     EpochSaturated,
 
-    /// A signed batch carried an environment op (`Lock` or `Unlock`) whose apply
-    /// handler is not yet enshrined. These ops are wired into the apply path by a
-    /// subsequent change; until then a batch carrying one is rejected rather than
-    /// silently ignored.
-    #[error("unsupported account-change op in the enshrined apply path")]
-    UnsupportedChangeType,
+    /// A signed batch carried an unrecognized or not-yet-enshrined change type
+    /// (currently `Lock` / `Unlock`, whose apply handlers are wired by a
+    /// subsequent change). Mirrors `Keystore.UnknownChangeType`: rejected rather
+    /// than silently ignored.
+    #[error("unknown account-change op in the enshrined apply path")]
+    UnknownChangeType,
 
     /// The operation is not permitted while the account is locked. Mirrors
     /// `Keystore.AccountIsLocked`.
@@ -113,19 +113,11 @@ pub enum ApplyError {
     #[error("authenticator address(0) is not a valid selector")]
     InvalidAuthenticator,
 
-    /// `policyData` did not match the actor's `SCOPE_POLICY` bit (non-empty for
-    /// an ungated actor, or not exactly `manager(20) || commitment(32)` for a
-    /// gated actor). Mirrors `_slicePolicy`.
+    /// `policyData` was neither empty nor exactly `manager(20) || commitment(32)`.
+    /// Attachment is length-based (base/eip-8130 #95) and decoupled from
+    /// `SCOPE_POLICY`. Mirrors `_slicePolicy`.
     #[error("policy data does not match policy type")]
-    MalformedPolicyData,
-
-    /// Revoking an actor that is not currently authorized. Mirrors
-    /// `_revokeActor`'s `require(isActor(...))`.
-    #[error("actor {actor_id} is not authorized and cannot be revoked")]
-    NotAnActor {
-        /// The actor id that was not an authorized actor.
-        actor_id: B256,
-    },
+    InvalidPolicyData,
 
     /// A create entry had no initial actors. Mirrors
     /// `require(initialActors.length > 0)`.
@@ -172,8 +164,8 @@ pub enum ApplyError {
 
     /// The account targeted by a create entry already has EIP-8130 state. Mirrors
     /// the CREATE2 collision that makes `createAccount` unrepeatable.
-    #[error("account {account} is already created")]
-    AlreadyCreated {
+    #[error("account {account} is already initialized")]
+    AlreadyInitialized {
         /// The counterfactual address that already holds state.
         account: Address,
     },
@@ -215,9 +207,10 @@ pub enum ApplyError {
         account: Address,
     },
 
-    /// A channel sequence would overflow `u64`.
-    #[error("account-change sequence overflow")]
-    SequenceOverflow,
+    /// A channel's sequence counter is at its terminal value and cannot advance.
+    /// Mirrors `Keystore.SequenceSaturated`.
+    #[error("account-change channel sequence is saturated")]
+    SequenceSaturated,
 }
 
 /// A created account's deferred code write: its counterfactual address and the
@@ -459,7 +452,7 @@ impl AccountChangeApplier {
                 }
                 // Lock / Unlock apply handlers are not yet enshrined.
                 ChangeType::Lock | ChangeType::Unlock => {
-                    return Err(ApplyError::UnsupportedChangeType);
+                    return Err(ApplyError::UnknownChangeType);
                 }
             }
         }
@@ -497,7 +490,7 @@ impl AccountChangeApplier {
                 let seq = sequence as u32;
                 if seq != Eip8130Constants::UNSEQUENCED {
                     state.local_sequence =
-                        u64::from(seq).checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
+                        u64::from(seq).checked_add(1).ok_or(ApplyError::SequenceSaturated)?;
                 } else if !state.is_initialized() {
                     state.local_sequence = 1;
                 }
@@ -512,8 +505,10 @@ impl AccountChangeApplier {
                     sequence, state.multichain_sequence,
                     "multichain sequence must match the account's current multichain sequence",
                 );
-                state.multichain_sequence =
-                    state.multichain_sequence.checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
+                state.multichain_sequence = state
+                    .multichain_sequence
+                    .checked_add(1)
+                    .ok_or(ApplyError::SequenceSaturated)?;
             }
         }
         Ok(())
@@ -604,7 +599,7 @@ impl AccountChangeApplier {
             return Ok(());
         }
 
-        let (manager, commitment) = Self::slice_policy(config.scope, policy_data)?;
+        let (manager, commitment) = Self::slice_policy(policy_data)?;
         if config.authenticator != current.authenticator
             || config.scope != current.scope
             || manager != storage.get_policy_manager(account, actor_id)?
@@ -642,7 +637,7 @@ impl AccountChangeApplier {
             return Self::authorize_non_self_actor(storage, account, actor_id, config, policy_data);
         }
 
-        let (manager, commitment) = Self::slice_policy(config.scope, policy_data)?;
+        let (manager, commitment) = Self::slice_policy(policy_data)?;
         if config.authenticator == Eip8130Constants::K1_AUTHENTICATOR {
             // Upsert: overwrite a live self in place (no re-authorize guard);
             // the end state equals revoke-then-authorize.
@@ -664,7 +659,13 @@ impl AccountChangeApplier {
         // warming for the subsequent call phases.
         storage.set_policy(account, actor_id, manager, commitment)?;
         AccountConfigurationEvents::emit_actor_authorized(
-            storage, account, actor_id, &config, manager, commitment,
+            storage,
+            account,
+            actor_id,
+            &config,
+            manager,
+            commitment,
+            Self::policy_attached(policy_data),
         )?;
         Ok(())
     }
@@ -688,14 +689,20 @@ impl AccountChangeApplier {
         if config.authenticator.is_zero() {
             return Err(ApplyError::InvalidAuthenticator);
         }
-        let (manager, commitment) = Self::slice_policy(config.scope, policy_data)?;
+        let (manager, commitment) = Self::slice_policy(policy_data)?;
         // Non-self actor: a single `actor_config` home. Upsert: overwrite in
         // place. Both policy slots are always touched so zero-to-zero clears
         // preserve the reference operation's access warming.
         storage.set_actor_config(account, actor_id, config)?;
         storage.set_policy(account, actor_id, manager, commitment)?;
         AccountConfigurationEvents::emit_actor_authorized(
-            storage, account, actor_id, &config, manager, commitment,
+            storage,
+            account,
+            actor_id,
+            &config,
+            manager,
+            commitment,
+            Self::policy_attached(policy_data),
         )?;
         Ok(())
     }
@@ -735,6 +742,10 @@ impl AccountChangeApplier {
     ///   on how many of its policy slots were written non-zero — a gated actor may
     ///   still carry a zero manager and/or commitment (see [`Self::slice_policy`]),
     ///   which are zero-to-zero no-ops rather than real resets.
+    /// - An **absent** actor revoke is an idempotent no-op (mirrors
+    ///   `_applyRevoke`'s early return, eip-8130 #100) and returns `3`: all three
+    ///   conservatively reset-priced slots are empty, so the whole revoke is
+    ///   discounted.
     ///
     /// The authorize/create paths maintain mutual exclusion between the inline
     /// secp256k1 self key and an explicit non-k1 self actor. This method does not
@@ -767,7 +778,14 @@ impl AccountChangeApplier {
             return Ok(0);
         }
         if !is_self || state.default_eoa_revoked() {
-            return Err(ApplyError::NotAnActor { actor_id });
+            // Idempotent: the actor is already absent — no explicit `actor_config`
+            // entry, and either a non-self id or a self whose inline secp256k1 key
+            // is revoked. Mirrors `_applyRevoke`'s `if (!_isAuthorized(...)) return;`
+            // (eip-8130 #100): no state change and no `ActorRevoked` event. All
+            // three conservatively reset-priced revoke slots (`actor_config` and
+            // both policy slots) are empty for an absent actor, so the whole revoke
+            // is discounted.
+            return Ok(3);
         }
 
         // The inline self's `actor_config` slot is always empty (a zero-to-zero
@@ -807,7 +825,9 @@ impl AccountChangeApplier {
         config: ActorConfig,
     ) -> Result<(), ApplyError> {
         if config.authenticator == Address::ZERO {
-            return Err(ApplyError::NotAnActor { actor_id });
+            // Idempotent: an absent actor is a no-op (no clear, no event), mirroring
+            // `_applyRevoke`'s early return when `!_isAuthorized` (eip-8130 #100).
+            return Ok(());
         }
         storage.clear_actor_config(account, actor_id)?;
         storage.clear_policy(account, actor_id)?;
@@ -839,7 +859,7 @@ impl AccountChangeApplier {
         // initial actor (mirrors `createAccount`'s guard).
         let mut state = storage.get_account_state(address)?;
         if state.is_initialized() {
-            return Err(ApplyError::AlreadyCreated { account: address });
+            return Err(ApplyError::AlreadyInitialized { account: address });
         }
 
         // Mark initialized and disable the implicit default-EOA path by default
@@ -901,7 +921,7 @@ impl AccountChangeApplier {
     /// rejected rather than silently truncated. Solidity's `abi.decode` reverts
     /// on non-zero padding, so the lenient decoder would otherwise let the native
     /// path accept a signed payload the contract rejects — a consensus divergence.
-    fn decode_authorize(payload: &[u8]) -> Result<(B256, ActorConfig, Bytes), ApplyError> {
+    pub fn decode_authorize(payload: &[u8]) -> Result<(B256, ActorConfig, Bytes), ApplyError> {
         let (actor_id, abi, policy_data) =
             <(B256, ActorConfigAbi, Bytes)>::abi_decode_params_validate(payload)
                 .map_err(|_| ApplyError::MalformedAuthorizeData)?;
@@ -922,25 +942,35 @@ impl AccountChangeApplier {
             .map_err(|_| ApplyError::MalformedRevokeData)
     }
 
-    /// Validates `policy_data` against `scope`, returning `(manager,
-    /// commitment)`. Mirrors `_slicePolicy`: an actor without `SCOPE_POLICY`
-    /// requires empty data; a gated actor requires exactly
-    /// `manager(20) || commitment(32)`, written verbatim. Neither field need be
-    /// nonzero — a zero `commitment` is a valid "no parameters" value and a zero
-    /// `manager` gates the key to `address(0)` (no productive target).
-    pub fn slice_policy(scope: u16, policy_data: &[u8]) -> Result<(Address, B256), ApplyError> {
-        if scope & Eip8130Constants::SCOPE_POLICY == 0 {
-            if !policy_data.is_empty() {
-                return Err(ApplyError::MalformedPolicyData);
-            }
+    /// Validates and slices `policy_data` by **length**, returning `(manager,
+    /// commitment)`. Mirrors the finalized `_slicePolicy` (base/eip-8130 #95):
+    /// length decides what gets stored; POLICY decides whether the sender is
+    /// gated; OPERATOR overrides POLICY. Empty data attaches no policy (both
+    /// fields zero); exactly `manager(20) || commitment(32)` attaches the two,
+    /// written verbatim (either may be zero — a zero `commitment` is a valid "no
+    /// parameters" value and a zero `manager` is `address(0)`); any other length
+    /// is rejected. The `SCOPE_POLICY` bit is the protocol sender gate and is
+    /// deliberately not consulted here — use [`Self::policy_attached`] to learn
+    /// whether a payload carried policy bytes.
+    pub fn slice_policy(policy_data: &[u8]) -> Result<(Address, B256), ApplyError> {
+        if policy_data.is_empty() {
             return Ok((Address::ZERO, B256::ZERO));
         }
         if policy_data.len() != Eip8130Constants::POLICY_DATA_LEN {
-            return Err(ApplyError::MalformedPolicyData);
+            return Err(ApplyError::InvalidPolicyData);
         }
         let manager = Address::from_slice(&policy_data[..20]);
         let commitment = B256::from_slice(&policy_data[20..Eip8130Constants::POLICY_DATA_LEN]);
         Ok((manager, commitment))
+    }
+
+    /// Whether an authorize payload's `policy_data` carries policy bytes, decided
+    /// solely by length (non-empty ⇒ attached). Distinguishes a genuine all-zero
+    /// policy attachment (`52` zero bytes) from no attachment at all, which the
+    /// `(manager, commitment)` pair alone cannot express.
+    #[must_use]
+    pub const fn policy_attached(policy_data: &[u8]) -> bool {
+        !policy_data.is_empty()
     }
 
     /// Computes the counterfactual CREATE2 address for a created account. Mirrors
@@ -1169,7 +1199,7 @@ mod tests {
         let now = 1_000u64;
         with_storage(|acc| {
             set_hard_locked(acc, 3_600);
-            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
+            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_OPERATOR);
             AccountChangeApplier::apply_config_change(
                 acc,
                 ACCOUNT,
@@ -1191,7 +1221,7 @@ mod tests {
                 acc,
                 ACCOUNT,
                 NON_SELF,
-                ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER),
+                ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_OPERATOR),
                 &[],
             )
             .unwrap();
@@ -1252,7 +1282,7 @@ mod tests {
             set_hard_locked(acc, 3_600);
             let widened = ActorConfig {
                 authenticator: AUTHENTICATOR,
-                scope: Eip8130Constants::SCOPE_SENDER,
+                scope: Eip8130Constants::SCOPE_OPERATOR,
                 expiry: now + 86_400,
             };
             let err = AccountChangeApplier::apply_config_change(
@@ -1287,7 +1317,7 @@ mod tests {
             acc.set_account_state(ACCOUNT, state).unwrap();
 
             let add =
-                ActorConfig { authenticator: K1, scope: Eip8130Constants::SCOPE_SENDER, expiry };
+                ActorConfig { authenticator: K1, scope: Eip8130Constants::SCOPE_OPERATOR, expiry };
             let rescope = ActorConfig { authenticator: K1, scope: 0, expiry };
             let err = AccountChangeApplier::apply_config_change(
                 acc,
@@ -1416,7 +1446,7 @@ mod tests {
         // revert `InvalidActorId`, mirroring the contract's `_authorizeActor`.
         with_storage(|acc| {
             let zero =
-                [authorize_op(B256::ZERO, &ungated(K1, Eip8130Constants::SCOPE_SENDER), &[])];
+                [authorize_op(B256::ZERO, &ungated(K1, Eip8130Constants::SCOPE_OPERATOR), &[])];
             let err = AccountChangeApplier::apply_config_change(
                 acc,
                 ACCOUNT,
@@ -1531,41 +1561,37 @@ mod tests {
 
     #[test]
     fn slice_policy_matches_contract() {
-        assert_eq!(
-            AccountChangeApplier::slice_policy(0, &[]).unwrap(),
-            (Address::ZERO, B256::ZERO)
-        );
-        assert_eq!(
-            AccountChangeApplier::slice_policy(0, &[1]),
-            Err(ApplyError::MalformedPolicyData)
-        );
+        // Length-based (base/eip-8130 #95), decoupled from scope: empty attaches
+        // nothing; exactly 52 bytes attaches; any other length rejects.
+        assert_eq!(AccountChangeApplier::slice_policy(&[]).unwrap(), (Address::ZERO, B256::ZERO));
+        assert!(!AccountChangeApplier::policy_attached(&[]));
+        assert_eq!(AccountChangeApplier::slice_policy(&[1]), Err(ApplyError::InvalidPolicyData));
 
         let mut data = Vec::new();
         data.extend_from_slice(MANAGER.as_slice());
         data.extend_from_slice(COMMITMENT.as_slice());
-        assert_eq!(
-            AccountChangeApplier::slice_policy(Eip8130Constants::SCOPE_POLICY, &data).unwrap(),
-            (MANAGER, COMMITMENT)
-        );
+        assert_eq!(AccountChangeApplier::slice_policy(&data).unwrap(), (MANAGER, COMMITMENT));
+        assert!(AccountChangeApplier::policy_attached(&data));
 
         // Wrong length rejects.
         assert_eq!(
-            AccountChangeApplier::slice_policy(Eip8130Constants::SCOPE_POLICY, &data[..51]),
-            Err(ApplyError::MalformedPolicyData)
+            AccountChangeApplier::slice_policy(&data[..51]),
+            Err(ApplyError::InvalidPolicyData)
         );
-        // Per the frozen rule, neither field need be nonzero: a zero
-        // manager/commitment is well-formed (`manager(20) || commitment(32)`).
+        // Neither field need be nonzero: a zero manager/commitment is well-formed
+        // (`manager(20) || commitment(32)`), yet still counts as attached.
         let zero_mgr = [0u8; 52];
         assert_eq!(
-            AccountChangeApplier::slice_policy(Eip8130Constants::SCOPE_POLICY, &zero_mgr).unwrap(),
+            AccountChangeApplier::slice_policy(&zero_mgr).unwrap(),
             (Address::ZERO, B256::ZERO)
         );
+        assert!(AccountChangeApplier::policy_attached(&zero_mgr));
     }
 
     #[test]
     fn authorize_and_revoke_non_self_actor() {
         with_storage(|acc| {
-            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
+            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_OPERATOR);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, config, &[]).unwrap();
             assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), config);
             assert!(acc.is_actor(ACCOUNT, NON_SELF).unwrap());
@@ -1578,11 +1604,30 @@ mod tests {
             // Revoke clears the slot.
             AccountChangeApplier::revoke_actor(acc, ACCOUNT, NON_SELF).unwrap();
             assert!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap().is_empty());
-            assert_eq!(
-                AccountChangeApplier::revoke_actor(acc, ACCOUNT, NON_SELF),
-                Err(ApplyError::NotAnActor { actor_id: NON_SELF })
-            );
+            // Revoking an already-absent actor is idempotent: a no-op, not an
+            // error (mirrors `_applyRevoke`'s early return, eip-8130 #100).
+            assert_eq!(AccountChangeApplier::revoke_actor(acc, ACCOUNT, NON_SELF), Ok(()));
+            assert!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap().is_empty());
         });
+    }
+
+    #[test]
+    fn revoke_absent_actor_is_idempotent_noop_with_full_discount() {
+        // Revoking an actor that was never authorized mirrors `_applyRevoke`'s
+        // `if (!_isAuthorized(...)) return;` (eip-8130 #100): a no-op that emits
+        // no `ActorRevoked` event and discounts all three conservatively
+        // reset-priced revoke slots (they are all empty for an absent actor).
+        let events = with_storage_events(|acc| {
+            let mut state = acc.get_account_state(ACCOUNT).unwrap();
+            assert_eq!(
+                AccountChangeApplier::revoke_actor_with_account_state(
+                    acc, ACCOUNT, NON_SELF, &mut state
+                ),
+                Ok(3),
+            );
+            assert!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap().is_empty());
+        });
+        assert!(events.is_empty(), "a no-op revoke must not emit ActorRevoked");
     }
 
     #[test]
@@ -1597,20 +1642,37 @@ mod tests {
     }
 
     #[test]
-    fn policy_scope_controls_policy_data() {
+    fn policy_attachment_is_length_based_and_read_is_scope_gated() {
+        // base/eip-8130 #95: length decides what gets stored; POLICY decides
+        // whether the sender is gated; OPERATOR overrides POLICY. Attachment is
+        // accepted for any 52-byte payload (decoupled from scope). The protocol
+        // sender gate stays `SCOPE_POLICY`-based (not length-based).
         with_storage(|acc| {
             let mut data = Vec::new();
             data.extend_from_slice(MANAGER.as_slice());
             data.extend_from_slice(COMMITMENT.as_slice());
 
-            // Policy data without SCOPE_POLICY is rejected.
+            // Wrong length is rejected regardless of scope.
             let unrestricted = ActorConfig { authenticator: AUTHENTICATOR, scope: 0, expiry: 0 };
             assert_eq!(
-                AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, unrestricted, &data),
-                Err(ApplyError::MalformedPolicyData)
+                AccountChangeApplier::authorize_actor(
+                    acc,
+                    ACCOUNT,
+                    NON_SELF,
+                    unrestricted,
+                    &data[..51]
+                ),
+                Err(ApplyError::InvalidPolicyData)
             );
 
-            // SCOPE_POLICY actor accepted; policy slots written.
+            // 52-byte policy with an ungated scope now *succeeds* (length-based)
+            // and writes the raw slots, but the scope-gated read reports no policy.
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, unrestricted, &data)
+                .unwrap();
+            assert_eq!(acc.get_policy_manager(ACCOUNT, NON_SELF).unwrap(), MANAGER);
+            assert_eq!(acc.get_policy(ACCOUNT, NON_SELF).unwrap(), (Address::ZERO, B256::ZERO));
+
+            // SCOPE_POLICY actor: the same attachment now reads back as gated.
             let ok = ActorConfig {
                 authenticator: AUTHENTICATOR,
                 scope: Eip8130Constants::SCOPE_POLICY,
@@ -1638,8 +1700,9 @@ mod tests {
             assert_eq!(acc.get_policy(ACCOUNT, NON_SELF).unwrap(), (MANAGER, COMMITMENT));
 
             // Upsert the same actor down to no policy: the stale manager/commitment
-            // must be cleared (policy slots are written only while SCOPE_POLICY is set).
-            let ungated_cfg = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
+            // must be cleared. `set_policy` always writes both slots, so an empty
+            // `policy_data` upsert writes zeros (length-based; independent of scope).
+            let ungated_cfg = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_OPERATOR);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, ungated_cfg, &[])
                 .unwrap();
             assert_eq!(acc.get_policy(ACCOUNT, NON_SELF).unwrap(), (Address::ZERO, B256::ZERO));
@@ -1652,11 +1715,11 @@ mod tests {
         with_storage(|acc| {
             let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
             // Account starts with the inline self live (flag unset, all-zero inline).
-            let scoped = ungated(K1, Eip8130Constants::SCOPE_SENDER);
+            let scoped = ungated(K1, Eip8130Constants::SCOPE_OPERATOR);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, scoped, &[]).unwrap();
             let state = acc.get_account_state(ACCOUNT).unwrap();
             assert!(!state.default_eoa_revoked());
-            assert_eq!(state.default_eoa_scope, Eip8130Constants::SCOPE_SENDER);
+            assert_eq!(state.default_eoa_scope, Eip8130Constants::SCOPE_OPERATOR);
             // No explicit actor_config slot is used for the k1 self.
             assert!(acc.actor_config_slot(ACCOUNT, self_id).unwrap().is_empty());
 
@@ -1800,7 +1863,7 @@ mod tests {
 
         with_storage(|acc| {
             // Revoking a non-self actor is never the inline-self shape.
-            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
+            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_OPERATOR);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, config, &[]).unwrap();
             let revoke_other = vec![revoke_op(NON_SELF)];
             let count = AccountChangeApplier::apply_config_change(
@@ -1820,7 +1883,7 @@ mod tests {
     fn config_change_advances_sequence_and_applies() {
         with_storage(|acc| {
             // Authorize a non-self actor in one multichain batch.
-            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
+            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_OPERATOR);
             let changes = vec![authorize_op(NON_SELF, &config, &[])];
             AccountChangeApplier::apply_config_change(
                 acc,
@@ -1838,7 +1901,7 @@ mod tests {
             // batch must be non-empty (the apply path rejects `EmptyChangeSet`),
             // so it carries a benign upsert whose actor set is not asserted here.
             let local_changes =
-                vec![authorize_op(NON_SELF, &ungated(K1, Eip8130Constants::SCOPE_SENDER), &[])];
+                vec![authorize_op(NON_SELF, &ungated(K1, Eip8130Constants::SCOPE_OPERATOR), &[])];
             AccountChangeApplier::apply_config_change(
                 acc,
                 ACCOUNT,
@@ -1928,7 +1991,7 @@ mod tests {
     fn config_change_preserves_evolving_inline_self_state() {
         with_storage(|acc| {
             let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
-            let scoped = ungated(K1, Eip8130Constants::SCOPE_SENDER);
+            let scoped = ungated(K1, Eip8130Constants::SCOPE_OPERATOR);
             let changes = vec![authorize_op(self_id, &scoped, &[]), revoke_op(self_id)];
 
             AccountChangeApplier::apply_config_change(
@@ -2067,7 +2130,7 @@ mod tests {
             // Re-creating the same account is rejected.
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &entry),
-                Err(ApplyError::AlreadyCreated { account: expected })
+                Err(ApplyError::AlreadyInitialized { account: expected })
             );
         });
     }
@@ -2098,7 +2161,7 @@ mod tests {
             // create must still reject (the guard checks both sequences).
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &entry),
-                Err(ApplyError::AlreadyCreated { account: expected })
+                Err(ApplyError::AlreadyInitialized { account: expected })
             );
         });
     }
@@ -2130,7 +2193,7 @@ mod tests {
 
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &entry),
-                Err(ApplyError::AlreadyCreated { account: expected })
+                Err(ApplyError::AlreadyInitialized { account: expected })
             );
         });
     }
@@ -2409,7 +2472,7 @@ mod tests {
     #[test]
     fn authorize_and_revoke_emit_protocol_logs() {
         let events = with_storage_events(|acc| {
-            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
+            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_OPERATOR);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, config, &[]).unwrap();
             AccountChangeApplier::revoke_actor(acc, ACCOUNT, NON_SELF).unwrap();
         });
@@ -2421,9 +2484,10 @@ mod tests {
         assert_eq!(
             authorized.actorData,
             AccountConfigurationEvents::pack_actor_data(
-                &ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER),
+                &ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_OPERATOR),
                 Address::ZERO,
                 B256::ZERO,
+                false,
             )
         );
 
@@ -2451,7 +2515,7 @@ mod tests {
         assert_eq!(authorized.actorData.len(), 84);
         assert_eq!(
             authorized.actorData,
-            AccountConfigurationEvents::pack_actor_data(&config, MANAGER, COMMITMENT)
+            AccountConfigurationEvents::pack_actor_data(&config, MANAGER, COMMITMENT, true)
         );
     }
 

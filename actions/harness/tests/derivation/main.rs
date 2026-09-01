@@ -1381,7 +1381,8 @@ async fn single_l2_block_derived_from_span_batch() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block_with_single_transaction().await;
-    h.submit_span_batch_calldata(&batcher_cfg, &[block], 0).expect("span fixture submission");
+    h.submit_span_batch_brotli_calldata(&batcher_cfg, &[block], 0)
+        .expect("span fixture submission");
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
@@ -1417,7 +1418,7 @@ async fn three_l2_blocks_derived_from_span_batch() {
         let block = sequencer.build_next_block_with_single_transaction().await;
         blocks.push(block);
     }
-    h.submit_span_batch_calldata(&batcher_cfg, &blocks, 0).expect("span fixture submission");
+    h.submit_span_batch_brotli_calldata(&batcher_cfg, &blocks, 0).expect("span fixture submission");
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
@@ -2388,7 +2389,7 @@ async fn span_batch_crossing_l1_epoch_boundary() {
     );
 
     // Encode all 6 blocks as a single span batch and submit in L1 block 2.
-    h.submit_span_batch_calldata(&batcher_cfg, &blocks, 0).expect("span fixture submission");
+    h.submit_span_batch_brotli_calldata(&batcher_cfg, &blocks, 0).expect("span fixture submission");
     chain.push(h.l1.tip().clone()); // L1 block 2: span batch for all 6 L2 blocks
 
     node.initialize().await;
@@ -2442,11 +2443,12 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
     );
 
     // L1 block 1: span batch for L2 block 2 (future batch, submitted out of order).
-    h.submit_span_batch_calldata(&span_cfg, &[block2], 0).expect("future span fixture submission");
+    h.submit_span_batch_brotli_calldata(&span_cfg, &[block2], 0)
+        .expect("future span fixture submission");
     chain.push(h.l1.tip().clone()); // L1 block 1: future span batch
 
     // L1 block 2: span batch for L2 block 1 (the expected-next batch).
-    h.submit_span_batch_calldata(&span_cfg, &[block1], 100)
+    h.submit_span_batch_brotli_calldata(&span_cfg, &[block1], 100)
         .expect("expected span fixture submission");
     // Do NOT push block 2 yet — let the pipeline see only block 1 first.
 

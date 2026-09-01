@@ -58,9 +58,9 @@ pub struct BuilderConfig {
     /// Transactions younger than this without metering data will be skipped.
     pub metering_wait_duration: Option<Duration>,
 
-    /// Hard cutoff on cumulative validity-predicate evaluation time per flashblock build.
+    /// Hard cutoff on cumulative validity-predicate evaluation time per builder iteration.
     /// Once the cutoff is exceeded, further validity-gated transactions are deferred to a
-    /// later flashblock rather than evaluated. This is the guardrail backing the
+    /// later iteration rather than evaluated. This is the guardrail backing the
     /// `base_builder_predicate_eval_duration_per_block` metric's P99 SLO.
     pub predicate_eval_hard_cutoff: Duration,
 
@@ -143,7 +143,7 @@ impl Default for BuilderConfig {
             metering_wait_duration: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             metering_provider: Arc::new(NoopMeteringProvider),
-            rejection_cache: RejectionCache::new(100_000, Duration::from_secs(1800)),
+            rejection_cache: RejectionCache::default(),
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,

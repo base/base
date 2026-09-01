@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_batcher_encoder::{BatchPipeline, DerivationReconciliation, StepResult};
+use base_batcher_encoder::{BatchPipeline, DerivationReconciliation, StepError, StepResult};
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
@@ -18,16 +18,19 @@ use crate::{
     SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
 };
 
-/// Live L1 and derivation inputs consumed when constructing a [`BatchDriver`].
+/// Initial L1 and derivation inputs consumed by a [`BatchDriver`].
 #[derive(Debug)]
 pub struct BatchDriverHeads<L> {
+    /// Source of live L1 head updates.
     l1_head_source: L,
+    /// Live L1 head used to seed channel deadlines.
     initial_l1_head: Option<u64>,
+    /// Initial derivation status and its ordered update stream.
     derivation_feed: Option<(DerivationStatus, mpsc::Receiver<DerivationStatus>)>,
 }
 
 impl<L> BatchDriverHeads<L> {
-    /// Production inputs: L1 head source, current L1 tip, and derivation status.
+    /// Creates production head inputs from independent live and derivation clocks.
     pub const fn new(
         l1_head_source: L,
         initial_l1_head: u64,
@@ -41,7 +44,7 @@ impl<L> BatchDriverHeads<L> {
         }
     }
 
-    /// Head inputs without derivation tracking or an initial L1 tip, for tests.
+    /// Creates head inputs without derivation tracking for tests.
     #[cfg(any(test, feature = "test-utils"))]
     pub const fn without_derivation(l1_head_source: L) -> Self {
         Self { l1_head_source, initial_l1_head: None, derivation_feed: None }
@@ -237,6 +240,7 @@ where
         }
 
         let mut shutting_down = false;
+        let mut shutdown_flush_error: Option<StepError> = None;
         loop {
             if !shutting_down {
                 self.apply_pending_derivation_status_updates()?;
@@ -264,6 +268,9 @@ where
                 self.submissions
                     .drain(&mut self.pipeline, self.runtime.sleep(self.drain_timeout))
                     .await;
+                if let Some(error) = shutdown_flush_error {
+                    return Err(error.into());
+                }
                 return Ok(());
             }
 
@@ -273,18 +280,21 @@ where
                         in_flight = %self.submissions.in_flight_count(),
                         "batcher shutting down, draining in-flight submissions"
                     );
-                    self.pipeline.force_close_channel();
+                    if let Err(error) = self.pipeline.flush() {
+                        warn!(error = %error, "flush failed during shutdown");
+                        shutdown_flush_error = Some(error);
+                    }
                     shutting_down = true;
                 }
                 DriverEvent::Block(b) => {
                     self.on_block(b);
                 }
                 DriverEvent::Flush(ack) => {
-                    self.pipeline.force_close_channel();
+                    self.pipeline.flush()?;
                     if let Some(ack) = ack {
                         self.pending_flush_acks.push(ack);
                     }
-                    debug!("flush signal received, force-closed channel");
+                    debug!("flush signal received, released channel artifacts");
                 }
                 DriverEvent::Reorg => {
                     warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
@@ -611,12 +621,14 @@ mod tests {
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_primitives::{Address, B256, Bloom, Bytes};
     use alloy_rpc_types_eth::TransactionReceipt;
-    use base_batcher_encoder::{BatchSubmission, DaType, FrameEncoder, SubmissionId};
+    use base_batcher_encoder::{
+        BatchSubmission, BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload,
+    };
     use base_batcher_source::{
         L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
     };
     use base_blobs::{BlobDecoder, BlobEncoder};
-    use base_protocol::{BlockInfo, ChannelId, Frame};
+    use base_protocol::{BlockInfo, Frame};
     use base_runtime::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
@@ -688,6 +700,7 @@ mod tests {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
             let (_status_tx, status_rx) = mpsc::channel(1);
+            let status = DerivationStatus::new(safe_head(10), safe_head(42));
 
             let _driver = BatchDriver::new(
                 ctx,
@@ -704,7 +717,7 @@ mod tests {
                 BatchDriverHeads::new(
                     QueuedL1HeadSource::new(std::iter::empty()),
                     50,
-                    DerivationStatus::from_safe_l2(safe_head(10)),
+                    status,
                     status_rx,
                 ),
             );
@@ -723,20 +736,18 @@ mod tests {
 
     fn blob_filling_submission_with_frames(id: u64, frame_count: usize) -> BatchSubmission {
         let data_len = BlobEncoder::BLOB_MAX_DATA_SIZE - 1 - BlobEncoder::FRAME_OVERHEAD;
-        BatchSubmission {
-            id: SubmissionId(id),
-            channel_id: ChannelId::default(),
-            da_type: DaType::Blob,
-            frames: (0..frame_count)
+        BatchSubmission::blobs(
+            SubmissionId(id),
+            (0..frame_count)
                 .map(|number| {
-                    Arc::new(Frame {
-                        number: number.try_into().unwrap(),
+                    BlobPayload::new(vec![Arc::new(Frame {
+                        number: number.try_into().expect("frame number fits in u16"),
                         data: vec![0u8; data_len],
                         ..Frame::default()
-                    })
+                    })])
                 })
                 .collect(),
-        }
+        )
     }
 
     const fn stub_receipt(block_number: u64) -> TransactionReceipt {
@@ -1059,12 +1070,13 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(BatchSubmission {
-                id: SubmissionId(0),
-                channel_id: ChannelId::default(),
-                da_type: DaType::Blob,
-                frames: vec![Arc::new(Frame { data: vec![0u8; OVERSIZED], ..Frame::default() })],
-            });
+            pipeline.submissions.push_back(BatchSubmission::blobs(
+                SubmissionId(0),
+                vec![BlobPayload::new(vec![Arc::new(Frame {
+                    data: vec![0u8; OVERSIZED],
+                    ..Frame::default()
+                })])],
+            ));
 
             let handle = ctx.spawn(
                 DriverFixture::build(
@@ -1134,7 +1146,7 @@ mod tests {
     }
 
     /// A single submission may contain multiple blob-filling frames when
-    /// `target_num_frames > 1`. Each frame becomes its own blob in the same L1
+    /// `max_blobs_per_tx > 1`. Each frame becomes its own blob in the same L1
     /// transaction.
     #[test]
     fn test_multi_frame_blob_submission_maps_frames_to_blobs() {
@@ -1143,8 +1155,13 @@ mod tests {
             let candidates = Arc::new(Mutex::new(Vec::new()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
             let submission = blob_filling_submission_with_frames(0, 3);
-            let expected_blob_payloads: Vec<_> =
-                submission.frames.iter().map(|frame| FrameEncoder::to_calldata(frame)).collect();
+            let SubmissionPayload::Blobs(payloads) = submission.payload() else {
+                panic!("helper must create blob payloads");
+            };
+            let expected_blob_payloads: Vec<_> = payloads
+                .iter()
+                .map(|payload| FrameEncoder::to_calldata(&payload.frames()[0]))
+                .collect();
             pipeline.submissions.push_back(submission);
 
             let handle = ctx.spawn(

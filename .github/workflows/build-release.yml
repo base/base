@@ -34,10 +34,10 @@ jobs:
       matrix:
         target:
           - triple: x86_64-unknown-linux-gnu
-            runner: ubuntu-24.04
+            runner: depot-ubuntu-24.04-16
             os: linux
           - triple: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: depot-ubuntu-24.04-arm-16
             os: linux
           - triple: aarch64-apple-darwin
             runner: macos-14
@@ -67,7 +67,17 @@ jobs:
         if: matrix.target.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev pkg-config
+          sudo apt-get install -y libclang-dev pkg-config protobuf-compiler
+
+      - name: Install system dependencies (macOS)
+        if: matrix.target.os == 'macos' && matrix.binary == 'basectl'
+        run: brew install protobuf
+
+      - name: Install Go for basectl
+        if: matrix.binary == 'basectl'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.24.x'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
@@ -85,6 +95,13 @@ jobs:
 
       - name: Build binary
         run: |
+          if [ "${{ matrix.target.triple }}" = "aarch64-unknown-linux-gnu" ]; then
+            case "${{ matrix.binary }}" in
+              base|base-consensus|basectl)
+                cargo rustc --locked --profile maxperf -p "${{ matrix.binary }}" --bin "${{ matrix.binary }}" -- -C link-arg=-lblst
+                exit
+            esac
+          fi
           cargo build --locked --profile maxperf --bin "${{ matrix.binary }}"
 
       - name: Package binary
@@ -143,9 +160,9 @@ jobs:
       matrix:
         settings:
           - arch: linux/amd64
-            runs-on: ubuntu-24.04
+            runs-on: depot-ubuntu-24.04-16
           - arch: linux/arm64
-            runs-on: ubuntu-24.04-arm
+            runs-on: depot-ubuntu-24.04-arm-16
         image:
           - target: base
             name: node

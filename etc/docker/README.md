@@ -51,7 +51,7 @@ First build the latest Base-Anvil default branch, then start the complete stack:
 
 ```bash
 just devnet build-anvil-image
-just devnet up-anvil-nitro-local
+just anvil-nitro-local up
 ```
 
 The second command generates the L2 genesis, computes its output root offline,
@@ -60,17 +60,18 @@ no-Nitro contracts before any L2 node starts. These contracts bypass hardware
 attestation, while the workers run the Nitro enclave proving code in-process.
 The Base nodes and proof verifier therefore use the same real `ProtocolVersions`
 contract from genesis; this path does not deploy the normal devnet's mock
-upgrade-signal contract. It then starts a fresh prover database, registers and
-starts two Nitro workers in local mode, and starts the proposer. Inspect or stop
-it with:
+upgrade-signal contract. Docker Compose then starts a proofs-history execution
+node with a follow-mode consensus node, a fresh prover database, prover-service,
+two registered Nitro workers in local mode, and the proposer. Inspect or stop it
+with:
 
 ```bash
 just anvil-nitro-local status
 just anvil-nitro-local logs
-just devnet down-anvil
+just anvil-nitro-local down
 ```
 
-Anvil mines one block every four seconds. Do not use timestamp-warp RPCs in
+Anvil mines one block every 12 seconds. Do not use timestamp-warp RPCs in
 this variant: Base derives Beacon slots from L1 timestamps, so arbitrary time
 jumps would break the one-slot-per-execution-block mapping used to fetch blobs.
 
@@ -78,11 +79,25 @@ Denim activates at block 23 by default and switches the sequencer to its 200ms
 cadence. The local Nitro stack exercises proof generation across this boundary:
 
 ```bash
-just devnet up-anvil-nitro-local
+just anvil-nitro-local up
 ```
 
 Set `L2_BASE_DENIM_BLOCK` to another block to move activation, or set it to an
 empty value to run a pre-Denim devnet.
+
+To exercise Cobalt validity transactions on the native payload builder, the
+deployment must schedule Cobalt no later than Denim and configure both sides of
+the forwarding path:
+
+- builder: `--builder.enable-experimental-validity-transactions` and
+  `--builder.payload-builder-cutover`
+- ingress/client: `--enable-experimental-validity-transactions` and a
+  `--builder-rpc-urls` endpoint targeting the builder
+
+The default devnet compose files include these flags and schedule Cobalt at
+block 22 followed by Denim at block 23. Native payload building supports balance,
+storage, and block-number predicates; `flashblock_index` predicates remain
+specific to the Flashblocks builder and are rejected after the Denim cutover.
 
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
 Zenith mode additionally activates Zenith at block 50:

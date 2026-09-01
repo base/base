@@ -78,7 +78,7 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     );
 
     // --- Phase 1: submit all 4 blocks as one span fixture (block 3 has user txs) ---
-    h.submit_span_batch_calldata(
+    h.submit_span_batch_brotli_calldata(
         &batcher_cfg,
         &[block1.clone(), block2.clone(), block3_invalid, block4.clone()],
         0,
@@ -112,10 +112,9 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     // starting from genesis, advance it to block 2's state, then build the
     // correct recovery blocks 3 (empty, ts=6) and 4 (user tx, ts=8).
     //
-    // The Holocene BatchValidator overwrites each singular batch's parent_hash
-    // with the current chain head before validating, so the recovery blocks
-    // only need the correct timestamps and user-tx content — not the exact
-    // parent hashes from the primary sequencer's chain.
+    // Rebuilding blocks 1–2 deterministically makes the recovery span's parent check match
+    // canonical block 2. `BatchStream` then assigns each span-derived singular the current
+    // safe-head hash when emitting it.
     {
         let l1_chain2 = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
         let mut builder2 = h.create_l2_sequencer(l1_chain2);
@@ -124,7 +123,7 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
         let block3_empty = builder2.build_empty_block().await;
         let block4_recovery = builder2.build_next_block_with_single_transaction().await;
 
-        h.submit_span_batch_calldata(&batcher_cfg, &[block3_empty, block4_recovery], 100)
+        h.submit_span_batch_brotli_calldata(&batcher_cfg, &[block3_empty, block4_recovery], 100)
             .expect("recovery span fixture submission");
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: recovery span batch (blocks 3–4)
@@ -179,7 +178,7 @@ async fn mixed_singular_and_span_batches_after_delta() {
 
     // L1 block 2: block 2 as a SPAN batch.
     {
-        h.submit_span_batch_calldata(&batcher_cfg, &[block2], 100)
+        h.submit_span_batch_brotli_calldata(&batcher_cfg, &[block2], 100)
             .expect("span fixture submission");
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: span batch for L2 block 2
@@ -251,7 +250,8 @@ async fn span_batch_stops_at_denim_and_recovers_with_single_batches() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    h.submit_span_batch_calldata(&batcher_cfg, &blocks, 100).expect("span fixture submission");
+    h.submit_span_batch_brotli_calldata(&batcher_cfg, &blocks, 100)
+        .expect("span fixture submission");
     chain.push(h.l1.tip().clone());
 
     node.initialize().await;

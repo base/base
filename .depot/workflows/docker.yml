@@ -7,6 +7,9 @@ on:
     branches:
       - main
   workflow_dispatch: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node
 permissions:
@@ -64,6 +67,7 @@ jobs:
             --set "${TARGET}.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }}" \
             --set "${TARGET}.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }}"
   warm-devnet-cache:
+    needs: build-and-push
     runs-on: depot-ubuntu-24.04
     env:
       PROFILE: dev

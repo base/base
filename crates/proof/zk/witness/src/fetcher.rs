@@ -1,7 +1,7 @@
 use std::{
     cmp::{Ordering, min},
     env, fmt, fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -75,6 +75,32 @@ pub struct RPCConfig {
     // TODO(fakedev9999): Make optional if possible.
     /// L2 consensus node RPC URL.
     pub l2_node_rpc: Url,
+    /// Directory containing `<chain_id>.json` L1 chain configs.
+    ///
+    /// When unset, [`Self::l1_config_directory`] falls back to `L1_CONFIG_DIR`, then `configs/L1`.
+    pub l1_config_dir: Option<PathBuf>,
+    /// Directory where fetched L2 rollup configs are written.
+    ///
+    /// When unset, [`Self::l2_config_directory`] falls back to `L2_CONFIG_DIR`, then `configs/L2`.
+    pub l2_config_dir: Option<PathBuf>,
+}
+
+impl RPCConfig {
+    /// Directory containing `<chain_id>.json` L1 chain configs.
+    pub fn l1_config_directory(&self) -> PathBuf {
+        resolve_config_dir(self.l1_config_dir.as_deref(), "L1_CONFIG_DIR", "configs/L1")
+    }
+
+    /// Directory where fetched L2 rollup configs are written.
+    pub fn l2_config_directory(&self) -> PathBuf {
+        resolve_config_dir(self.l2_config_dir.as_deref(), "L2_CONFIG_DIR", "configs/L2")
+    }
+}
+
+fn resolve_config_dir(explicit: Option<&Path>, env_name: &str, default: &str) -> PathBuf {
+    explicit.map(Path::to_path_buf).unwrap_or_else(|| {
+        env::var_os(env_name).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(default))
+    })
 }
 
 /// The mode corresponding to the chain we are fetching data for.
@@ -115,6 +141,8 @@ pub fn get_rpcs_from_env() -> RPCConfig {
         l1_beacon_rpc,
         l2_rpc: Url::parse(&l2_rpc).expect("L2_RPC must be a valid URL"),
         l2_node_rpc: Url::parse(&l2_node_rpc).expect("L2_NODE_RPC must be a valid URL"),
+        l1_config_dir: None,
+        l2_config_dir: None,
     }
 }
 
@@ -196,7 +224,7 @@ impl OPSuccinctDataFetcher {
         }
 
         // Fetch and save L1 config based on the rollup config's L1 chain ID
-        let l1_config_path = Self::fetch_and_save_l1_config(&rollup_config).await?;
+        let l1_config_path = Self::fetch_and_save_l1_config(&rollup_config, &rpc_config).await?;
 
         Ok(Self {
             rpc_config,
@@ -363,9 +391,7 @@ impl OPSuccinctDataFetcher {
         let rollup_config: RollupConfig =
             Self::fetch_rpc_data(&rpc_config.l2_node_rpc, "optimism_rollupConfig", vec![]).await?;
 
-        // Create configs directory if it doesn't exist
-        let default_dir = PathBuf::from("configs/L2");
-        let l2_config_dir = env::var("L2_CONFIG_DIR").map(PathBuf::from).unwrap_or(default_dir);
+        let l2_config_dir = rpc_config.l2_config_directory();
         fs::create_dir_all(&l2_config_dir)?;
 
         // Save rollup config to a file named by chain ID
@@ -386,9 +412,11 @@ impl OPSuccinctDataFetcher {
     }
 
     /// Fetch and save the L1 config based on the rollup config's L1 chain ID.
-    async fn fetch_and_save_l1_config(rollup_config: &RollupConfig) -> Result<PathBuf> {
-        let default_dir = PathBuf::from("configs/L1");
-        let l1_config_dir = env::var("L1_CONFIG_DIR").map(PathBuf::from).unwrap_or(default_dir);
+    async fn fetch_and_save_l1_config(
+        rollup_config: &RollupConfig,
+        rpc_config: &RPCConfig,
+    ) -> Result<PathBuf> {
+        let l1_config_dir = rpc_config.l1_config_directory();
 
         // Check if the L1 config file exists. If it does, return the path to the file.
         let l1_config_path = l1_config_dir.join(format!("{}.json", rollup_config.l1_chain_id));
@@ -744,14 +772,18 @@ impl OPSuccinctDataFetcher {
         // Get L2 output data.
         let l2_output_block = l2_provider
             .get_block_by_number(l2_start_block.into())
-            .await?
+            .await
+            .with_context(|| format!("fetch L2 start block {l2_start_block}"))?
             .ok_or_else(|| anyhow::anyhow!("Block not found for block number {l2_start_block}"))?;
         let l2_output_state_root = l2_output_block.header.state_root;
         let agreed_l2_head_hash = l2_output_block.header.hash;
         let l2_output_storage_hash = l2_provider
             .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
             .block_id(l2_start_block.into())
-            .await?
+            .await
+            .with_context(|| {
+                format!("eth_getProof L2ToL1MessagePasser at L2 block {l2_start_block}")
+            })?
             .storage_hash;
 
         let l2_output_encoded = L2Output {
@@ -763,13 +795,20 @@ impl OPSuccinctDataFetcher {
         let agreed_l2_output_root = keccak256(l2_output_encoded.abi_encode());
 
         // Get L2 claim data.
-        let l2_claim_block = l2_provider.get_block_by_number(l2_end_block.into()).await?.unwrap();
+        let l2_claim_block = l2_provider
+            .get_block_by_number(l2_end_block.into())
+            .await
+            .with_context(|| format!("fetch L2 end block {l2_end_block}"))?
+            .ok_or_else(|| anyhow::anyhow!("Block not found for block number {l2_end_block}"))?;
         let l2_claim_state_root = l2_claim_block.header.state_root;
         let l2_claim_hash = l2_claim_block.header.hash;
         let l2_claim_storage_hash = l2_provider
             .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
             .block_id(l2_end_block.into())
-            .await?
+            .await
+            .with_context(|| {
+                format!("eth_getProof L2ToL1MessagePasser at L2 block {l2_end_block}")
+            })?
             .storage_hash;
 
         let l2_claim_encoded = L2Output {
@@ -789,8 +828,10 @@ impl OPSuccinctDataFetcher {
 
         // Load L1 config from file or registry.
         let l1_config = if let Some(ref l1_config_path) = self.l1_config_path {
-            let file = fs::File::open(l1_config_path)?;
-            serde_json::from_reader(file)?
+            let file = fs::File::open(l1_config_path)
+                .with_context(|| format!("open L1 config {}", l1_config_path.display()))?;
+            serde_json::from_reader(file)
+                .with_context(|| format!("deserialize L1 config {}", l1_config_path.display()))?
         } else {
             base_common_chains::L1_CONFIGS
                 .get(&rollup_config.l1_chain_id)
@@ -800,7 +841,11 @@ impl OPSuccinctDataFetcher {
                 .clone()
         };
 
-        let l1_head_number = self.get_l1_header(l1_head_hash.into()).await?.number;
+        let l1_head_number = self
+            .get_l1_header(l1_head_hash.into())
+            .await
+            .with_context(|| format!("fetch L1 header {l1_head_hash}"))?
+            .number;
 
         let request = base_proof_primitives::ProofRequest {
             l1_head: l1_head_hash,
@@ -827,5 +872,28 @@ impl OPSuccinctDataFetcher {
         };
 
         Ok(HostConfig { request, prover, data_dir: None })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rpc_config(l1: Option<PathBuf>, l2: Option<PathBuf>) -> RPCConfig {
+        RPCConfig {
+            l1_rpc: "http://l1".parse().unwrap(),
+            l1_beacon_rpc: None,
+            l2_rpc: "http://l2".parse().unwrap(),
+            l2_node_rpc: "http://l2-node".parse().unwrap(),
+            l1_config_dir: l1,
+            l2_config_dir: l2,
+        }
+    }
+
+    #[test]
+    fn explicit_config_dirs_win_over_defaults() {
+        let rpc = rpc_config(Some(PathBuf::from("/tmp/l1")), Some(PathBuf::from("/tmp/l2")));
+        assert_eq!(rpc.l1_config_directory(), PathBuf::from("/tmp/l1"));
+        assert_eq!(rpc.l2_config_directory(), PathBuf::from("/tmp/l2"));
     }
 }

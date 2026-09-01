@@ -103,6 +103,16 @@ L2_BASE_RPC_METRICS_PORT=8190
 L2_BASE_RPC_CL_RPC_PORT=8649
 L2_BASE_RPC_CL_P2P_PORT=8103
 
+# L2 Proofs Node Ports
+L2_PROOFS_HTTP_PORT=8745
+L2_PROOFS_AUTH_PORT=8751
+L2_PROOFS_METRICS_PORT=8290
+L2_PROOFS_CL_RPC_PORT=8749
+
+# Local Nitro Stack Ports
+PROVER_SERVICE_RPC_PORT=19000
+PROPOSER_HEALTH_PORT=18080
+
 # Batcher Ports
 BATCHER_METRICS_PORT=6060
 
@@ -157,6 +167,8 @@ L2_CLIENT_OP_RPC_URL=http://localhost:8549
 L2_BASE_RPC_URL=http://localhost:8645
 L2_BASE_RPC_WS_URL=ws://localhost:8646
 L2_BASE_RPC_OP_RPC_URL=http://localhost:8649
+L2_PROOFS_RPC_URL=http://localhost:8745
+L2_PROOFS_OP_RPC_URL=http://localhost:8749
 L2_INGRESS_RPC_URL=http://localhost:8080
 CONDUCTOR0_RPC_URL=http://localhost:6545
 CONDUCTOR1_RPC_URL=http://localhost:6546
@@ -206,11 +218,4 @@ L2_BASE_DENIM_BLOCK=23
 # Leave unset to avoid setting base.zenith during genesis generation.
 # L2_BASE_ZENITH_BLOCK=50
 
-# Metering Resource Limits
-# Whole-block budgets for gas and DA.
-# These preserve the builder's current 10-flashblock targets: 60M gas / block
-# and ~1.5MB DA / block.
-METERING_GAS_LIMIT=60000000
-METERING_DA_BYTES=1572860
-METERING_TARGET_FLASHBLOCKS_PER_BLOCK=10
 BUILDER_MAX_REJECTED_TXS_PER_BLOCK=20000

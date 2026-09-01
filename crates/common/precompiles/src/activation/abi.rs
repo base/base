@@ -39,6 +39,9 @@ sol! {
         /// The new admin address is zero.
         error ZeroAdminAddress();
 
+        /// ETH was attached to a call targeting a nonpayable activation-registry selector.
+        error NonPayable();
+
         /// Returns true when `feature` is activated.
         function isActivated(bytes32 feature) external view returns (bool);
 

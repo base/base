@@ -121,12 +121,7 @@ where
         let encoded_len = tx.raw.len();
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
-        let pool_tx = BasePooledTransaction::new(recovered, encoded_len).with_bundle_metadata(
-            tx.min_block_number,
-            tx.max_block_number,
-            tx.min_timestamp,
-            tx.max_timestamp,
-        );
+        let pool_tx = BasePooledTransaction::new(recovered, encoded_len);
 
         // Attach any extension data carried on the wire. This is a no-op for
         // `NoExtensions`, the default payload.
@@ -262,15 +257,7 @@ mod tests {
         raw: Bytes,
         extensions: E,
     ) -> ValidatedTransaction<E> {
-        ValidatedTransaction {
-            sender,
-            raw,
-            min_block_number: None,
-            max_block_number: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            extensions,
-        }
+        ValidatedTransaction { sender, raw, extensions }
     }
 
     // ==========================================================================

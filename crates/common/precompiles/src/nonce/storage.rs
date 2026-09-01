@@ -122,7 +122,9 @@ impl NonceManagerStorage<'_> {
     }
 
     /// Increments the 2D nonce for `account` at `nonce_key`, returning the new
-    /// value and emitting [`INonceManager::NonceIncremented`].
+    /// value and emitting [`INonceManager::NonceIncremented`]. The pre-write
+    /// value is loaded from storage inside this call, so the value written is
+    /// always `storage + 1` — callers cannot supply a stale `current`.
     ///
     /// Intended for the EIP-8130 execution layer; not reachable through ABI
     /// dispatch.
@@ -136,26 +138,6 @@ impl NonceManagerStorage<'_> {
         }
 
         let current = self.nonces.at(&account).at(&nonce_key).read()?;
-        self.increment_nonce_from_current(account, nonce_key, current)
-    }
-
-    /// Increments a 2D nonce from its caller-provided current value.
-    ///
-    /// `current` must be loaded from the same storage context with no intervening
-    /// write to `(account, nonce_key)`.
-    ///
-    /// # Errors
-    /// - [`INonceManager::InvalidNonceKey`] — `nonce_key` is `0` (the protocol nonce).
-    /// - [`INonceManager::NonceOverflow`] — `current` is already `u64::MAX`.
-    pub fn increment_nonce_from_current(
-        &mut self,
-        account: Address,
-        nonce_key: U256,
-        current: u64,
-    ) -> Result<u64> {
-        if nonce_key == Self::PROTOCOL_NONCE_KEY {
-            return Err(BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
-        }
 
         // The nonce write and its NonceIncremented event must commit together;
         // guard them with a checkpoint so a failure after the write (e.g. during
@@ -329,21 +311,19 @@ mod tests {
     }
 
     #[test]
-    fn loaded_increment_uses_one_sload_and_one_sstore() {
+    fn increment_nonce_uses_one_sload_and_one_sstore() {
         let mut storage = HashMapStorageProvider::new(1);
         let nonce_key = U256::from(5);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
 
             ctx.reset_counters();
-            let current = mgr.get_nonce(ACCOUNT_A, nonce_key).unwrap();
-            assert_eq!(mgr.increment_nonce_from_current(ACCOUNT_A, nonce_key, current).unwrap(), 1);
+            assert_eq!(mgr.increment_nonce(ACCOUNT_A, nonce_key).unwrap(), 1);
             assert_eq!(ctx.counter_sload(), 1);
             assert_eq!(ctx.counter_sstore(), 1);
 
             ctx.reset_counters();
-            let current = mgr.get_nonce(ACCOUNT_A, nonce_key).unwrap();
-            assert_eq!(mgr.increment_nonce_from_current(ACCOUNT_A, nonce_key, current).unwrap(), 2);
+            assert_eq!(mgr.increment_nonce(ACCOUNT_A, nonce_key).unwrap(), 2);
             assert_eq!(ctx.counter_sload(), 1);
             assert_eq!(ctx.counter_sstore(), 1);
         });

@@ -9,13 +9,13 @@ use crate::{
     ResolvedActor, TxAuthError,
 };
 
-/// Precomputed `keccak256` typehash of the `SignedAccountChanges` struct, matching
+/// Precomputed `keccak256` typehash of the `SignedAccountChangeBatch` struct, matching
 /// the one hashed by `Keystore` (the trailing `AccountChange(...)` is the
 /// referenced struct's type, per the EIP-712 encoding rules):
-/// `keccak256("SignedAccountChanges(address account,uint256 chainId,uint64 sequence,AccountChange[] changes)AccountChange(uint8 changeType,bytes payload)")`.
+/// `keccak256("SignedAccountChangeBatch(address account,uint256 chainId,uint64 sequence,AccountChange[] changes)AccountChange(uint8 changeType,bytes payload)")`.
 /// Pinned to its preimage by `typehashes_match_their_preimages`.
 const SIGNED_ACCOUNT_CHANGES_TYPEHASH: B256 =
-    b256!("7f229a23553aa919fdcad551f55a0532adae8076aac7b11fb3b6ac2efe5821ce");
+    b256!("bee0c72c3efba751405b4c241f52736439f7e1e2a804925d36ddc9a6e1aa3614");
 /// Precomputed `keccak256` typehash for the per-change `AccountChange` leaves:
 /// `keccak256("AccountChange(uint8 changeType,bytes payload)")`.
 /// Pinned to its preimage by `typehashes_match_their_preimages`.
@@ -117,7 +117,7 @@ impl ConfigChangeAuthorizer {
                 // must match the account's current local sequence.
                 if seq != Eip8130Constants::UNSEQUENCED {
                     if u64::from(seq) != state.local_sequence {
-                        return Err(TxAuthError::ConfigSequence {
+                        return Err(TxAuthError::BadSequence {
                             expected: state.local_sequence,
                             got: u64::from(seq),
                         });
@@ -129,7 +129,7 @@ impl ConfigChangeAuthorizer {
             }
             AccountChangeChannel::Multichain => {
                 if change.sequence != state.multichain_sequence {
-                    return Err(TxAuthError::ConfigSequence {
+                    return Err(TxAuthError::BadSequence {
                         expected: state.multichain_sequence,
                         got: change.sequence,
                     });
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(
             SIGNED_ACCOUNT_CHANGES_TYPEHASH,
             keccak256(
-                b"SignedAccountChanges(address account,uint256 chainId,uint64 sequence,AccountChange[] changes)AccountChange(uint8 changeType,bytes payload)"
+                b"SignedAccountChangeBatch(address account,uint256 chainId,uint64 sequence,AccountChange[] changes)AccountChange(uint8 changeType,bytes payload)"
             )
         );
         assert_eq!(
@@ -328,7 +328,7 @@ mod tests {
         let change =
             signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![revoke(0xcd)]);
         with_storage(|acc| {
-            acc.actor_config
+            acc.actors
                 .at_mut(&id)
                 .at_mut(&account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
@@ -348,16 +348,16 @@ mod tests {
             signed_change(account, K1, &k, AccountChangeChannel::Multichain, 0, vec![revoke(0x01)]);
         with_storage(|acc| {
             // Bound actor that lacks CONFIG (only SENDER).
-            acc.actor_config
+            acc.actors
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_OPERATOR, 0))
                 .unwrap();
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
                 Err(TxAuthError::Scope {
                     operation: Operation::Config,
-                    scope: Eip8130Constants::SCOPE_SENDER,
+                    scope: Eip8130Constants::SCOPE_OPERATOR,
                 }),
             );
         });
@@ -407,7 +407,7 @@ mod tests {
         with_storage(|acc| {
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
-                Err(TxAuthError::ConfigSequence { expected: 0, got: 5 }),
+                Err(TxAuthError::BadSequence { expected: 0, got: 5 }),
             );
         });
     }
@@ -463,7 +463,7 @@ mod tests {
             // The recovered signer is not the account and has no registered actor.
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
-                Err(TxAuthError::Authorize(AuthorizeError::NotBound {
+                Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch {
                     actor_id: attacker_id,
                     authenticator: Eip8130Constants::K1_AUTHENTICATOR,
                 })),

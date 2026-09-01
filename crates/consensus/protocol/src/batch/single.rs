@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{BlockHash, Bytes};
-use alloy_rlp::{RlpDecodable, RlpEncodable};
+use alloy_rlp::{Encodable, Header, RlpDecodable, RlpEncodable};
 use base_common_consensus::OpTxType;
 use base_common_genesis::RollupConfig;
 use tracing::warn;
@@ -14,8 +14,8 @@ use crate::{BatchDropReason, BatchValidity, BlockInfo, L2BlockInfo};
 /// Represents a single batch: a single encoded L2 block
 #[derive(Debug, Default, RlpDecodable, RlpEncodable, Clone, PartialEq, Eq)]
 pub struct SingleBatch {
-    /// Block hash of the previous L2 block. `B256::ZERO` if it has not been set by the Batch
-    /// Queue.
+    /// Block hash of the previous L2 block. `B256::ZERO` if a span-derived batch has not yet been
+    /// assigned its parent by the derivation pipeline.
     pub parent_hash: BlockHash,
     /// The batch epoch number. Same as the first L1 block number in the epoch.
     pub epoch_num: u64,
@@ -28,6 +28,14 @@ pub struct SingleBatch {
 }
 
 impl SingleBatch {
+    /// Returns the RLP string header wrapping this batch inside a channel.
+    ///
+    /// A channel entry is an RLP byte string holding the batch type byte
+    /// followed by the encoded batch.
+    pub fn rlp_header(&self) -> Header {
+        Header { list: false, payload_length: 1 + self.length() }
+    }
+
     /// Returns the [`BlockNumHash`] of the batch.
     pub const fn epoch(&self) -> BlockNumHash {
         BlockNumHash { number: self.epoch_num, hash: self.epoch_hash }

@@ -3142,6 +3142,51 @@ fn gas(
     (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
 }
 
+/// Unprivileged reject-path footprint: `(sload, sstore, keccak256)` after `calldata` reverts.
+///
+/// Locks that a zero-address `transfer` rejects before the transfer-policy-id SLOAD
+/// (Cantina #13 / BOP-600). Privileged success-path `gas()` cannot catch that.
+fn gas_unprivileged_revert(
+    setup: impl FnOnce(&mut B20AssetStorage<'_>),
+    caller: Address,
+    policy: FakePolicyAccounting,
+    calldata: Vec<u8>,
+) -> (u64, u64, u64) {
+    let mut s = fresh();
+    seed(&mut s, setup);
+    s.set_caller(caller);
+    warp(&mut s, U256::ZERO);
+    s.reset_counters();
+    let err = StorageCtx::enter(&mut s, |ctx| {
+        let version =
+            AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt).expect("Cobalt activates V2");
+        B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(TOKEN, ctx),
+            policy,
+            PolicyVersion::V2,
+        )
+        .route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
+    })
+    .expect_err("reject-path gas golden must revert");
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO }));
+    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
+}
+
+#[test]
+fn golden_transfer_unprivileged_zero_receiver_storage_access() {
+    let actual = gas_unprivileged_revert(
+        |t| fund(t, ALICE, u(10)),
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::transferCall { to: Address::ZERO, amount: u(1) }.abi_encode(),
+    );
+    // Pause SLOAD only — no transfer_policy_ids SLOAD before InvalidReceiver.
+    bless_or_assert_gas(
+        &[("transfer_unprivileged_zero_receiver", actual)],
+        &[("transfer_unprivileged_zero_receiver", (1, 0, 0))],
+    );
+}
+
 #[test]
 fn golden_gas_footprints() {
     let actual: Vec<(&str, (u64, u64, u64))> = vec![
@@ -3470,6 +3515,7 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_transfer_unprivileged_allowed,
             golden_transfer_unprivileged_blocked_sender_reverts,
             golden_transfer_reverts_zero_receiver,
+            golden_transfer_unprivileged_zero_receiver_storage_access,
             golden_transfer_reverts_insufficient_balance,
             golden_transfer_reverts_when_paused,
             golden_transfer_reverts_zero_sender,

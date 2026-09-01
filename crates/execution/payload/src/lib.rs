@@ -9,10 +9,25 @@
 
 extern crate alloc;
 
+mod affordability;
+pub use affordability::CoinbaseTipAffordability;
 pub mod builder;
 pub use builder::BasePayloadBuilder;
 pub mod config;
+pub use config::ResourceMeteringConfig;
+mod rejection_cache;
+pub use rejection_cache::{REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache};
 pub mod error;
+mod metering;
+pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
+mod resource_metering;
+pub use resource_metering::{
+    ResourceMeteringDimension, ResourceMeteringError, ResourceMeteringOperation,
+    ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample, ResourceThrottlingCheckError,
+    ResourceThrottlingDecision, ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope,
+};
+mod resource_metering_metrics;
+pub use resource_metering_metrics::ResourceMeteringMetrics;
 pub mod payload;
 pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 
@@ -21,6 +36,12 @@ pub use parkable::{
     NonParkablePayloadTransactions, NoopPayloadTransactions, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, PayloadTransactionInvalidated,
 };
+
+mod metrics;
+pub use metrics::{BuilderMetrics, ValidityMetrics};
+
+mod inclusion;
+pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};
 
 mod predicate_loads;
 pub use predicate_loads::{PredicateLoadTracker, PredicateReadRecorder};

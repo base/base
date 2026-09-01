@@ -31,3 +31,224 @@ services:
   setup-l2:
     environment:
       - SETUP_L2_SKIP_IF_CONFIGURED=true
+
+  # The proof host needs historical trie data and debug_executePayload. Keep that
+  # workload on the same proofs-history + follow-mode pair used in production.
+  base-proofs:
+    image: base:local
+    container_name: base-proofs
+    profiles: ["nitro-local"]
+    depends_on:
+      setup-l2:
+        condition: service_completed_successfully
+      base-builder:
+        condition: service_healthy
+    ports:
+      - "${L2_PROOFS_HTTP_PORT}:${L2_PROOFS_HTTP_PORT}"
+      - "${L2_PROOFS_AUTH_PORT}:${L2_PROOFS_AUTH_PORT}"
+      - "${L2_PROOFS_METRICS_PORT}:${L2_PROOFS_METRICS_PORT}"
+    volumes:
+      - ../../.devnet/l2/proofs:/data
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        /app/base-reth-node init \
+          --chain=/genesis/l2/genesis.json \
+          --datadir=/data
+        /app/base-reth-node proofs init \
+          --chain=/genesis/l2/genesis.json \
+          --datadir=/data \
+          --proofs-history.storage-path=/data/proofs
+        exec /app/base-reth-node node \
+          --chain=/genesis/l2/genesis.json \
+          --datadir=/data \
+          --disable-discovery \
+          --http \
+          --http.addr=0.0.0.0 \
+          --http.port=${L2_PROOFS_HTTP_PORT} \
+          --http.api=eth,web3,net,rpc,debug \
+          --authrpc.addr=0.0.0.0 \
+          --authrpc.port=${L2_PROOFS_AUTH_PORT} \
+          --authrpc.jwtsecret=/genesis/jwt.hex \
+          --metrics=0.0.0.0:${L2_PROOFS_METRICS_PORT} \
+          --rollup.sequencer-http=http://base-builder:${L2_BUILDER_HTTP_PORT} \
+          --proofs-history \
+          --proofs-history.storage-path=/data/proofs \
+          --enable-experimental-validity-transactions \
+          -vvv
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"debug_proofsSyncStatus\",\"params\":[],\"id\":1}' http://localhost:${L2_PROOFS_HTTP_PORT}/ | grep -q '\"result\"'"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  base-proofs-consensus:
+    image: base:local
+    container_name: base-proofs-consensus
+    profiles: ["nitro-local"]
+    depends_on:
+      base-proofs:
+        condition: service_healthy
+    ports:
+      - "${L2_PROOFS_CL_RPC_PORT}:${L2_PROOFS_CL_RPC_PORT}"
+    volumes:
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    entrypoint: ["/app/base-consensus"]
+    command:
+      - --chain
+      - "${L2_CHAIN_ID}"
+      - follow
+      - --source-l2-rpc=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --l2-rpc-url=http://base-proofs:${L2_PROOFS_HTTP_PORT}
+      - --l2-engine-rpc=http://base-proofs:${L2_PROOFS_AUTH_PORT}
+      - --l2-engine-jwt-secret=/genesis/jwt.hex
+      - --proofs
+      - --l1-eth-rpc=http://l1-el:${L1_HTTP_PORT}
+      - --l1-beacon=http://l1-el:${L1_HTTP_PORT}
+      - --l2-config-file=/genesis/l2/rollup.json
+      - --l1-config-file=/genesis/el/chain-config.json
+      - --l1-slot-duration-override=${L1_SLOT_DURATION_OVERRIDE:-12}
+      - --rpc.port=${L2_PROOFS_CL_RPC_PORT}
+      - -vvv
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${L2_PROOFS_CL_RPC_PORT}/healthz >/dev/null"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  prover-service-postgres:
+    image: postgres:17-alpine
+    container_name: prover-service-postgres
+    profiles: ["nitro-local"]
+    environment:
+      - POSTGRES_DB=prover
+      - POSTGRES_USER=prover
+      - POSTGRES_PASSWORD=devnet
+    volumes:
+      - ../../.devnet/anvil-no-nitro/postgres:/var/lib/postgresql/data
+      - ../../crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prover -d prover"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  base-prover-service:
+    image: base-prover-service:local
+    container_name: base-prover-service
+    profiles: ["nitro-local"]
+    depends_on:
+      prover-service-postgres:
+        condition: service_healthy
+    ports:
+      - "${PROVER_SERVICE_RPC_PORT}:9000"
+    environment:
+      - RPC_LISTEN_ADDR=0.0.0.0:9000
+      - WORKER_RPC_LISTEN_ADDR=0.0.0.0:9001
+      - POSTGRES_HOST=prover-service-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=prover
+      - POSTGRES_USER=prover
+      - POSTGRES_PASSWORD=devnet
+      - POSTGRES_SSLMODE=disable
+      - OTEL_SERVICE_NAME=base-prover-service
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  nitro-prover-1:
+    image: base-prover-nitro-host:local
+    container_name: nitro-prover-1
+    profiles: ["nitro-local"]
+    depends_on:
+      base-proofs-consensus:
+        condition: service_healthy
+      base-prover-service:
+        condition: service_healthy
+    env_file:
+      - path: ../../.devnet/anvil-no-nitro/runtime.env
+        required: false
+    environment:
+      - L1_ETH_URL=http://l1-el:${L1_HTTP_PORT}
+      - L2_ETH_URL=http://base-proofs:${L2_PROOFS_HTTP_PORT}
+      - L2_NODE_URL=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
+      - L1_BEACON_URL=http://l1-el:${L1_HTTP_PORT}
+      - L2_CHAIN_ID=${L2_CHAIN_ID}
+      - ENABLE_EXPERIMENTAL_WITNESS_ENDPOINT=true
+      - PROVER_SERVICE_ENDPOINT=http://base-prover-service:9001
+      - BASE_ENCLAVE_SIGNER_KEY=0x0000000000000000000000000000000000000000000000000000000000000001
+      - OTEL_SERVICE_NAME=nitro-prover-1
+    entrypoint: ["/app/base-prover-nitro-host", "local"]
+    restart: unless-stopped
+
+  nitro-prover-2:
+    image: base-prover-nitro-host:local
+    container_name: nitro-prover-2
+    profiles: ["nitro-local"]
+    depends_on:
+      base-proofs-consensus:
+        condition: service_healthy
+      base-prover-service:
+        condition: service_healthy
+    env_file:
+      - path: ../../.devnet/anvil-no-nitro/runtime.env
+        required: false
+    environment:
+      - L1_ETH_URL=http://l1-el:${L1_HTTP_PORT}
+      - L2_ETH_URL=http://base-proofs:${L2_PROOFS_HTTP_PORT}
+      - L2_NODE_URL=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
+      - L1_BEACON_URL=http://l1-el:${L1_HTTP_PORT}
+      - L2_CHAIN_ID=${L2_CHAIN_ID}
+      - ENABLE_EXPERIMENTAL_WITNESS_ENDPOINT=true
+      - PROVER_SERVICE_ENDPOINT=http://base-prover-service:9001
+      - BASE_ENCLAVE_SIGNER_KEY=0x0000000000000000000000000000000000000000000000000000000000000002
+      - OTEL_SERVICE_NAME=nitro-prover-2
+    entrypoint: ["/app/base-prover-nitro-host", "local"]
+    restart: unless-stopped
+
+  base-proposer:
+    image: base-proposer:local
+    container_name: base-proposer
+    profiles: ["nitro-local"]
+    depends_on:
+      base-prover-service:
+        condition: service_healthy
+      base-rpc:
+        condition: service_healthy
+    env_file:
+      - path: ../../.devnet/anvil-no-nitro/runtime.env
+        required: false
+    ports:
+      - "${PROPOSER_HEALTH_PORT}:8080"
+    environment:
+      - BASE_PROPOSER_PROVER_RPC=http://base-prover-service:9000
+      - BASE_PROPOSER_L1_ETH_RPC=http://l1-el:${L1_HTTP_PORT}
+      - BASE_PROPOSER_L2_ETH_RPC=http://base-rpc:${L2_BASE_RPC_HTTP_PORT}
+      - BASE_PROPOSER_ROLLUP_RPC=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
+      - BASE_PROPOSER_GAME_TYPE=621
+      - BASE_PROPOSER_PRIVATE_KEY=${PROPOSER_KEY}
+      # One confirmation means inclusion with no additional L1 blocks waited.
+      - BASE_PROPOSER_NUM_CONFIRMATIONS=1
+      - BASE_PROPOSER_HEALTH_ADDR=0.0.0.0
+      - BASE_PROPOSER_HEALTH_PORT=8080
+      - OTEL_SERVICE_NAME=base-proposer
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/readyz >/dev/null"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped

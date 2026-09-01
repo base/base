@@ -24,36 +24,8 @@ use reth_revm::{
 };
 use revm::primitives::hardfork::SpecId;
 use revm_bytecode::opcode::OpCode;
-use revm_database::states::{BundleState, CacheState};
 
 use crate::{inspector::MeteringInspector, transaction::validate_tx};
-
-/// Converts a pending [`BundleState`] into a [`CacheState`] for use with
-/// `with_cached_prestate()`.
-fn cache_state_from_bundle_state(bundle_state: &BundleState) -> CacheState {
-    CacheState {
-        accounts: bundle_state
-            .state
-            .iter()
-            .map(|(&address, account)| (address, account.into()))
-            .collect(),
-        contracts: bundle_state
-            .contracts
-            .iter()
-            .map(|(&hash, code)| (hash, code.clone()))
-            .collect(),
-    }
-}
-
-/// Pending state from flashblocks used as the base for bundle metering.
-///
-/// This contains the accumulated state changes from pending flashblocks,
-/// allowing bundle simulation to build on top of not-yet-canonical state.
-#[derive(Debug, Clone)]
-pub struct PendingState {
-    /// The accumulated bundle of state changes from pending flashblocks.
-    pub bundle_state: Arc<BundleState>,
-}
 
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
 // Static floor from the current minimum base fee for metering simulation.
@@ -371,24 +343,10 @@ fn is_dead_provider_account(account: &Account) -> bool {
         && account.bytecode_hash.is_none_or(|hash| hash == KECCAK_EMPTY)
 }
 
-fn is_dead_account_info(account: &reth_revm::state::AccountInfo) -> bool {
-    account.nonce == 0 && account.balance.is_zero() && account.code_hash == KECCAK_EMPTY
-}
-
-fn lookup_value_recipient_is_dead<SP>(
-    state_provider: &SP,
-    pending_state: Option<&PendingState>,
-    address: &Address,
-) -> EyreResult<bool>
+fn lookup_value_recipient_is_dead<SP>(state_provider: &SP, address: &Address) -> EyreResult<bool>
 where
     SP: reth_provider::StateProvider,
 {
-    if let Some(pending_account) =
-        pending_state.and_then(|pending_state| pending_state.bundle_state.account(address))
-    {
-        return Ok(pending_account.info.as_ref().is_none_or(is_dead_account_info));
-    }
-
     Ok(state_provider.basic_account(address)?.as_ref().is_none_or(is_dead_provider_account))
 }
 
@@ -579,11 +537,6 @@ pub struct MeterBundleInput<SP> {
     pub bundle: ParsedBundle,
     /// Header used as the parent block for simulation; the EVM env is derived from it.
     pub header: SealedHeader,
-    /// Optional parent beacon block root override (e.g., from a flashblock base payload)
-    /// used when the header itself omits it.
-    pub parent_beacon_block_root: Option<B256>,
-    /// Optional pending flashblock state to layer below the bundle.
-    pub pending_state: Option<PendingState>,
     /// L1 block info used to compute L1 data fees during simulation.
     pub l1_block_info: L1BlockInfo,
     /// Opcodes and precompiles to track gas usage for.
@@ -607,8 +560,6 @@ where
         chain_spec,
         bundle,
         header,
-        parent_beacon_block_root,
-        pending_state,
         mut l1_block_info,
         metered_opcodes,
     } = input;
@@ -626,8 +577,7 @@ where
                 && tx.value() > U256::ZERO
                 && !initial_value_recipient_is_dead.contains_key(&to)
             {
-                let is_dead =
-                    lookup_value_recipient_is_dead(&state_provider, pending_state.as_ref(), &to)?;
+                let is_dead = lookup_value_recipient_is_dead(&state_provider, &to)?;
                 initial_value_recipient_is_dead.insert(to, is_dead);
             }
         }
@@ -635,22 +585,10 @@ where
 
     // Create state database
     let state_db = StateProviderDatabase::new(state_provider);
-
-    // Seed execution from the pending cache prestate so bundles observe non-canonical state
-    // already published by flashblocks.
-    let mut db = if let Some(ref ps) = pending_state {
-        State::builder()
-            .with_database(state_db)
-            .with_bundle_update()
-            .with_cached_prestate(cache_state_from_bundle_state(&ps.bundle_state))
-            .build()
-    } else {
-        State::builder().with_database(state_db).with_bundle_update().build()
-    };
+    let mut db = State::builder().with_database(state_db).with_bundle_update().build();
 
     // Override sender nonces to match their first transaction's nonce and collect
-    // account info for pre-flight validation. `load_cache_account` reads from the
-    // cached pending prestate when available, so balances reflect pending state.
+    // account info for pre-flight validation.
     let mut first_nonces: HashMap<Address, u64> = HashMap::default();
     for tx in bundle.transactions() {
         first_nonces.entry(tx.signer()).or_insert_with(|| tx.nonce());
@@ -687,17 +625,13 @@ where
     }
 
     // Set up next block attributes
-    // Use bundle.min_timestamp if provided, otherwise use header timestamp + BLOCK_TIME
-    let timestamp = bundle.min_timestamp.unwrap_or_else(|| header.timestamp() + BLOCK_TIME);
-    // Pending flashblock headers may omit parent_beacon_block_root; prefer the explicit value
-    // provided by the caller (e.g., flashblock base payload) to keep EIP-4788 happy.
+    let timestamp = header.timestamp() + BLOCK_TIME;
     let attributes = BaseNextBlockEnvAttributes {
         timestamp,
         suggested_fee_recipient: header.beneficiary(),
         prev_randao: header.mix_hash().unwrap_or_else(B256::random),
         gas_limit: header.gas_limit(),
-        parent_beacon_block_root: parent_beacon_block_root
-            .or_else(|| header.parent_beacon_block_root()),
+        parent_beacon_block_root: header.parent_beacon_block_root(),
         extra_data: header.extra_data().clone(),
     };
 
@@ -844,7 +778,6 @@ mod tests {
     };
     use eyre::Context;
     use reth_provider::StateProviderFactory;
-    use reth_revm::{bytecode::Bytecode, state::AccountInfo};
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
     use super::*;
@@ -852,19 +785,7 @@ mod tests {
     fn create_parsed_bundle(txs: Vec<BaseTransactionSigned>) -> eyre::Result<ParsedBundle> {
         let txs: Vec<Bytes> = txs.iter().map(|tx| Bytes::from(tx.encoded_2718())).collect();
 
-        let bundle = Bundle {
-            txs,
-            block_number: None,
-            min_block_number: None,
-            max_block_number: None,
-            flashblock_number_min: None,
-            flashblock_number_max: None,
-            min_timestamp: None,
-            max_timestamp: None,
-            reverting_tx_hashes: vec![],
-            replacement_uuid: None,
-            dropping_tx_hashes: vec![],
-        };
+        let bundle = Bundle { txs };
 
         ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))
     }
@@ -976,9 +897,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })?;
@@ -1027,9 +946,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })?;
@@ -1093,9 +1010,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1153,9 +1068,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })?;
@@ -1206,9 +1119,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1278,9 +1189,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1346,9 +1255,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1409,9 +1316,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1506,9 +1411,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1606,9 +1509,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1673,9 +1574,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })?;
@@ -1728,9 +1627,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1861,9 +1758,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default().with_all_precompiles()),
         })?;
@@ -2129,7 +2024,7 @@ mod tests {
             .state_by_block_hash(latest.hash())
             .context("getting state provider")?;
 
-        // Mimic a pending flashblock header that lacks the parent beacon block root.
+        // Headers without a parent beacon block root fail EVM env construction (EIP-4788).
         let mut header_without_root = header.clone_header();
         header_without_root.parent_beacon_block_root = None;
         let sealed_without_root = SealedHeader::new(header_without_root, header.hash());
@@ -2138,9 +2033,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle.clone(),
-            header: sealed_without_root.clone(),
-            parent_beacon_block_root: None,
-            pending_state: None,
+            header: sealed_without_root,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })
@@ -2159,9 +2052,7 @@ mod tests {
             state_provider: state_provider2,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: sealed_without_root,
-            parent_beacon_block_root: Some(header.parent_beacon_block_root().unwrap_or(B256::ZERO)),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })?;
@@ -2226,9 +2117,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })?;
@@ -2308,9 +2197,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         });
@@ -2324,130 +2211,6 @@ mod tests {
         let output = result.unwrap();
         assert_eq!(output.results.len(), 1);
         assert_eq!(output.total_gas_used, 21_000);
-
-        Ok(())
-    }
-
-    /// Verifies that a nonce behind on-chain state succeeds via override.
-    ///
-    /// Uses pending state to advance Alice's nonce to 5, then submits a transaction
-    /// with nonce=0. The nonce override sets the account nonce to match the
-    /// transaction, so simulation succeeds despite the nonce being "too low".
-    #[tokio::test]
-    async fn meter_bundle_overrides_nonce_too_low() -> eyre::Result<()> {
-        let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
-
-        // Build pending state where Alice's nonce has advanced to 5
-        let bundle_state = BundleState::new(
-            [(
-                Account::Alice.address(),
-                Some(AccountInfo {
-                    balance: U256::from(1_000_000_000_000_000_000u128),
-                    nonce: 0, // original
-                    code_hash: KECCAK_EMPTY,
-                    code: None,
-                    account_id: None,
-                }),
-                Some(AccountInfo {
-                    balance: U256::from(1_000_000_000_000_000_000u128),
-                    nonce: 5, // pending
-                    code_hash: KECCAK_EMPTY,
-                    code: None,
-                    account_id: None,
-                }),
-                Default::default(),
-            )],
-            Vec::<Vec<(Address, Option<Option<AccountInfo>>, Vec<(U256, U256)>)>>::new(),
-            Vec::<(B256, Bytecode)>::new(),
-        );
-        let pending_state = PendingState { bundle_state: Arc::new(bundle_state) };
-
-        // Transaction with nonce=0 — "too low" relative to pending nonce of 5
-        let to = Address::random();
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to)
-            .value(100)
-            .gas_limit(21_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
-
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let result = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: Some(pending_state),
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        });
-
-        assert!(
-            result.is_ok(),
-            "Nonce behind on-chain state should succeed via override: {:?}",
-            result.err()
-        );
-
-        let output = result.unwrap();
-        assert_eq!(output.results.len(), 1);
-        assert_eq!(output.total_gas_used, 21_000);
-
-        Ok(())
-    }
-
-    /// Verifies pending flashblock prestate is loaded into the execution cache.
-    #[test]
-    fn cached_prestate_does_not_leak_into_bundle_output() -> eyre::Result<()> {
-        let pending_bundle = BundleState::new(
-            [(
-                Account::Alice.address(),
-                Some(AccountInfo {
-                    balance: U256::from(1_000_000_000_000_000_000u128),
-                    nonce: 0,
-                    code_hash: KECCAK_EMPTY,
-                    code: None,
-                    account_id: None,
-                }),
-                Some(AccountInfo {
-                    balance: U256::from(1_000_000_000_000_000_000u128),
-                    nonce: 5,
-                    code_hash: KECCAK_EMPTY,
-                    code: None,
-                    account_id: None,
-                }),
-                Default::default(),
-            )],
-            Vec::<Vec<(Address, Option<Option<AccountInfo>>, Vec<(U256, U256)>)>>::new(),
-            Vec::<(B256, Bytecode)>::new(),
-        );
-
-        let mut db = State::builder()
-            .with_bundle_update()
-            .with_cached_prestate(cache_state_from_bundle_state(&pending_bundle))
-            .build();
-
-        let pending_account = db.load_cache_account(Account::Alice.address())?;
-        assert_eq!(
-            pending_account.account.as_ref().expect("pending account").info.nonce,
-            5,
-            "execution must read the pending prestate nonce from the cache"
-        );
 
         Ok(())
     }
@@ -2487,9 +2250,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         });
@@ -2541,9 +2302,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         });
@@ -2600,9 +2359,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         });
@@ -2612,82 +2369,6 @@ mod tests {
             result.unwrap_err().to_string().contains("Insufficient funds"),
             "Expected insufficient funds error"
         );
-
-        Ok(())
-    }
-
-    /// Meters a bundle on top of pending flashblock state.
-    #[tokio::test]
-    async fn meter_bundle_with_pending_state_and_cached_prestate() -> eyre::Result<()> {
-        let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
-
-        // Build pending state: Alice sent a tx (nonce advanced to 1, balance decreased)
-        let pending_balance = U256::from(999_999_999_999_000_000_000_000u128);
-        let bundle_state = BundleState::new(
-            [(
-                Account::Alice.address(),
-                Some(AccountInfo {
-                    balance: U256::from(1_000_000u128) * U256::from(10u128).pow(U256::from(18)),
-                    nonce: 0,
-                    code_hash: KECCAK_EMPTY,
-                    code: None,
-                    account_id: None,
-                }),
-                Some(AccountInfo {
-                    balance: pending_balance,
-                    nonce: 1,
-                    code_hash: KECCAK_EMPTY,
-                    code: None,
-                    account_id: None,
-                }),
-                Default::default(),
-            )],
-            Vec::<Vec<(Address, Option<Option<AccountInfo>>, Vec<(U256, U256)>)>>::new(),
-            Vec::<(B256, Bytecode)>::new(),
-        );
-
-        let pending_state = PendingState { bundle_state: Arc::new(bundle_state) };
-
-        // Create a bundle tx: Alice (nonce=1 from pending) sends to a random address
-        let to = Address::random();
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(1)
-            .to(to)
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
-
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: Some(pending_state),
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        })?;
-
-        assert_eq!(output.results.len(), 1);
-        assert_eq!(output.total_gas_used, 21_000);
-        assert!(output.total_time_us > 0);
-        assert!(output.results[0].execution_time_us > 0);
 
         Ok(())
     }

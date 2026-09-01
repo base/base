@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use alloy_consensus::SignableTransaction;
+use alloy_consensus::{SignableTransaction, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -13,6 +13,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_common_consensus::{Call, Eip8130Signed, TxEip8130};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{
@@ -102,6 +103,33 @@ fn create_signed_eip1559_tx(
     Ok((sender, raw_tx, tx_hash))
 }
 
+/// Creates a signed, self-paying EIP-8130 transaction and returns its raw bytes and hash.
+fn create_signed_eip8130_tx(
+    signer: &PrivateKeySigner,
+    chain_id: u64,
+    nonce_sequence: u64,
+) -> Result<(Bytes, B256)> {
+    let tx = TxEip8130 {
+        chain_id,
+        sender: None,
+        nonce_key: U256::ZERO,
+        nonce_sequence,
+        valid_after: 0,
+        valid_before: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 200_000,
+        account_changes: Vec::new(),
+        calls: vec![vec![Call { to: Address::repeat_byte(0xde), data: Bytes::new() }]],
+        metadata: Bytes::new(),
+        payer: None,
+    };
+    let signature = signer.sign_hash_sync(&tx.sender_signature_hash())?;
+    let signed = Eip8130Signed::new(tx, signature.as_bytes().to_vec().into(), Bytes::new());
+    let tx_hash = *signed.hash();
+    Ok((signed.encoded_2718().into(), tx_hash))
+}
+
 /// Tests that a single transaction can be inserted via `base_insertValidatedTransaction`.
 ///
 /// This is the foundational test for the forwarding pipeline. It verifies:
@@ -149,15 +177,7 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
 
     // Create the ValidatedTransaction payload
-    let validated_tx = ValidatedTransaction {
-        sender,
-        raw: raw_tx,
-        min_block_number: None,
-        max_block_number: None,
-        min_timestamp: None,
-        max_timestamp: None,
-        extensions: NoExtensions {},
-    };
+    let validated_tx = ValidatedTransaction { sender, raw: raw_tx, extensions: NoExtensions {} };
 
     // Create RPC client for the builder
     let builder_rpc_url = system.l2_rpc_url()?;
@@ -189,6 +209,8 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
     assert!(receipt.inner.block_number.is_some(), "Receipt should have block number");
     assert_eq!(receipt.inner.from, sender);
     assert_eq!(receipt.inner.to, Some(recipient));
+
+    system.shutdown().await?;
 
     Ok(())
 }
@@ -291,6 +313,8 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     assert_eq!(receipt.inner.from, sender);
     assert_eq!(receipt.inner.to, Some(recipient));
 
+    system.shutdown().await?;
+
     Ok(())
 }
 
@@ -352,6 +376,47 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
         recipient_balance_before + U256::from(1_000_000_000u64),
         "the validity metadata must not alter the signed transaction's state transition"
     );
+
+    system.shutdown().await?;
+
+    Ok(())
+}
+
+/// Verifies a Cobalt EIP-8130 transaction can carry validity predicates through forwarding and be
+/// included by the native Denim payload builder.
+#[tokio::test]
+async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Result<()> {
+    let system = start_validity_system().await?;
+    let builder_provider = system.l2_builder_provider()?;
+    let client_provider = system.l2_client_provider()?;
+    let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
+    let sender = signer.address();
+    client_provider.wait_for_balance(sender, Duration::from_secs(15)).await?;
+
+    let nonce_sequence = client_provider.get_transaction_count(sender).await?;
+    let (raw_tx, expected_tx_hash) =
+        create_signed_eip8130_tx(&signer, L2_CHAIN_ID, nonce_sequence)?;
+    let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
+    let tx_hash: B256 = rpc_client
+        .request(
+            "base_sendRawTransactionValidity",
+            (SendRawTransactionValidityRequest {
+                tx: raw_tx,
+                validity: vec![ValidityPredicate::Balance {
+                    address: sender,
+                    op: ValidityOperator::GreaterThan,
+                    value: U256::ZERO,
+                }],
+            },),
+        )
+        .await?;
+
+    assert_eq!(tx_hash, expected_tx_hash);
+    let receipt = builder_provider.wait_for_receipt(tx_hash, TX_RECEIPT_TIMEOUT).await?;
+    assert_eq!(receipt.inner.transaction_hash, tx_hash);
+    assert!(receipt.inner.inner.status());
+
+    system.shutdown().await?;
 
     Ok(())
 }
@@ -418,6 +483,8 @@ async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() 
         "validity transaction landed before the state change that satisfied it"
     );
     assert!(builder_provider.get_balance(watched).await? >= U256::from(1));
+
+    system.shutdown().await?;
 
     Ok(())
 }
@@ -539,6 +606,8 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
         "recoverable storage predicate mismatch should remain pending"
     );
 
+    system.shutdown().await?;
+
     Ok(())
 }
 
@@ -594,6 +663,8 @@ async fn test_invalid_validity_batches_are_rejected_at_mempool_ingress() -> Resu
 
     assert!(client_provider.get_transaction_by_hash(tx_hash).await?.is_none());
     assert!(builder_provider.get_transaction_by_hash(tx_hash).await?.is_none());
+
+    system.shutdown().await?;
 
     Ok(())
 }
@@ -732,6 +803,8 @@ async fn test_tx_forwarding_pipeline_system_high_load() -> Result<()> {
         included_count, total_txs,
         "Expected all {total_txs} transactions to be included, got {included_count}"
     );
+
+    system.shutdown().await?;
 
     Ok(())
 }

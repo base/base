@@ -3,9 +3,7 @@
 use alloy_consensus::Header;
 use base_common_consensus::{BasePrimitives, BaseTransactionSigned};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{
-    BasePooledTx, BundleTransaction, StateDiffInvalidation, TimestampedTransaction,
-};
+use base_execution_txpool::{BasePooledTx, StateDiffInvalidation, TimestampedTransaction};
 use base_node_core::BaseEngineTypes;
 use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
@@ -39,33 +37,27 @@ impl<T> NodeBounds for T where
 /// Composite trait bound for a transaction pool compatible with the Base builder.
 pub trait PoolBounds:
     TransactionPool<
-        Transaction: BasePooledTx<Consensus = BaseTransactionSigned>
-                         + BundleTransaction
-                         + TimestampedTransaction,
+        Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
     > + TransactionPoolExt
     + base_execution_txpool::ParkableTransactionPool
     + StateDiffInvalidation
     + Unpin
     + 'static
 where
-    <Self as TransactionPool>::Transaction:
-        BasePooledTx + BundleTransaction + TimestampedTransaction,
+    <Self as TransactionPool>::Transaction: BasePooledTx + TimestampedTransaction,
 {
 }
 
 impl<T> PoolBounds for T
 where
     T: TransactionPool<
-            Transaction: BasePooledTx<Consensus = BaseTransactionSigned>
-                             + BundleTransaction
-                             + TimestampedTransaction,
+            Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
         > + TransactionPoolExt
         + base_execution_txpool::ParkableTransactionPool
         + StateDiffInvalidation
         + Unpin
         + 'static,
-    <Self as TransactionPool>::Transaction:
-        BasePooledTx + BundleTransaction + TimestampedTransaction,
+    <Self as TransactionPool>::Transaction: BasePooledTx + TimestampedTransaction,
 {
 }
 
@@ -89,18 +81,14 @@ impl<T> ClientBounds for T where
 /// Composite trait bound for payload transaction iterators used by the Base builder.
 pub trait PayloadTxsBounds:
     ParkablePayloadTransactions<
-    Transaction: BasePooledTx<Consensus = BaseTransactionSigned>
-                     + BundleTransaction
-                     + TimestampedTransaction,
+    Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
 >
 {
 }
 
 impl<T> PayloadTxsBounds for T where
     T: ParkablePayloadTransactions<
-        Transaction: BasePooledTx<Consensus = BaseTransactionSigned>
-                         + BundleTransaction
-                         + TimestampedTransaction,
+        Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
     >
 {
 }

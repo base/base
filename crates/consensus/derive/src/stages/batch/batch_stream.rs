@@ -71,7 +71,7 @@ where
         Ok(self.config.is_holocene_active(origin.timestamp))
     }
 
-    /// Gets a [`SingleBatch`] from the in-memory buffer.
+    /// Gets a span-derived [`SingleBatch`] from the in-memory buffer and assigns its parent hash.
     pub fn get_single_batch(
         &mut self,
         parent: L2BlockInfo,
@@ -79,8 +79,12 @@ where
     ) -> Result<Option<SingleBatch>, SpanBatchError> {
         trace!(target: "batch_span", buffer_len = self.buffer.len(), "Attempting to get a SingleBatch from buffer");
 
+        let parent_hash = parent.block_info.hash;
         self.try_hydrate_buffer(parent, l1_origins)?;
-        Ok(self.buffer.pop_front())
+        Ok(self.buffer.pop_front().map(|mut batch| {
+            batch.parent_hash = parent_hash;
+            batch
+        }))
     }
 
     /// Hydrates the buffer with single batches derived from the span batch, if there is one
@@ -391,10 +395,15 @@ mod tests {
             panic!("Wrong batch type");
         }
 
-        let batch = stream.next_batch(Default::default(), &mock_origins).await.unwrap();
+        let parent = L2BlockInfo {
+            block_info: BlockInfo { hash: FixedBytes::repeat_byte(0x11), ..Default::default() },
+            ..Default::default()
+        };
+        let batch = stream.next_batch(parent, &mock_origins).await.unwrap();
         if let Batch::Single(single) = batch {
             assert_eq!(single.epoch_num, 1);
             assert_eq!(single.timestamp, 4);
+            assert_eq!(single.parent_hash, parent.block_info.hash);
         } else {
             panic!("Wrong batch type");
         }
@@ -558,7 +567,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_single_batch_pass_through() {
-        let data = vec![Ok(Batch::Single(SingleBatch::default()))];
+        let single =
+            SingleBatch { parent_hash: FixedBytes::repeat_byte(0x11), ..Default::default() };
+        let data = vec![Ok(Batch::Single(single.clone()))];
         let config = Arc::new(RollupConfig {
             upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
@@ -572,7 +583,7 @@ mod tests {
 
         // The next batch should be passed through to the [BatchQueue] stage.
         let batch = stream.next_batch(Default::default(), &[]).await.unwrap();
-        assert!(matches!(batch, Batch::Single(_)));
+        assert_eq!(batch, Batch::Single(single));
         assert_eq!(stream.span_buffer_size(), 0);
         assert!(stream.span.is_none());
     }

@@ -837,7 +837,7 @@ impl Eip8130Executor {
                 .resolve_actor_config(sender, sender_actor_id)
                 .map_err(BaseTransactionError::eip8130)?
                 .scope;
-            let policy_gated = actor_scope & Eip8130Constants::SCOPE_POLICY != 0;
+            let policy_gated = Eip8130Constants::sender_is_policy_gated(actor_scope);
             let policy_target = if policy_gated {
                 acc.get_policy_manager(sender, sender_actor_id)
                     .map_err(BaseTransactionError::eip8130)?
@@ -1056,7 +1056,7 @@ impl Eip8130Executor {
                     NonceValidator::validate_sequence(tx, current_nonce, NonceMode::Inclusion)
                         .map_err(BaseTransactionError::eip8130)?;
                     nonce_mgr
-                        .increment_nonce_from_current(sender, nonce_key, current_nonce)
+                        .increment_nonce(sender, nonce_key)
                         .map_err(BaseTransactionError::eip8130)?;
                     (current_nonce == 0, false)
                 };
@@ -2582,7 +2582,7 @@ mod tests {
                 payload: authorize_change_data(
                     session_actor,
                     Eip8130Constants::K1_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_POLICY,
+                    Eip8130Constants::SCOPE_POLICY,
                     0,
                     &policy_data,
                 ),
@@ -3039,8 +3039,9 @@ mod tests {
         Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new())
     }
 
-    /// Seeds a policy-gated `SENDER | PAYER` k1 actor for `account`,
-    /// authorized to the `signer` key and gated to `target`, then commits it.
+    /// Seeds a policy-gated k1 actor for `account`, authorized to the `signer`
+    /// key and gated to `target`, then commits it. POLICY-only (plus payer/nonce
+    /// grants): OPERATOR would override POLICY and leave the sender ungated.
     fn seed_gated_sender(
         evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
         account: Address,
@@ -3055,19 +3056,18 @@ mod tests {
             let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
             StorageCtx::enter(&mut provider, |sctx| {
                 let mut acc = AccountConfigurationStorage::new(sctx);
-                acc.actor_config
+                acc.actors
                     .at_mut(&actor_id)
                     .at_mut(&account)
                     .write(pack_actor(
                         Eip8130Constants::K1_AUTHENTICATOR,
-                        Eip8130Constants::SCOPE_SENDER
+                        Eip8130Constants::SCOPE_POLICY
                             | Eip8130Constants::SCOPE_SELF_PAYER
-                            | Eip8130Constants::SCOPE_NONCE
-                            | Eip8130Constants::SCOPE_POLICY,
+                            | Eip8130Constants::SCOPE_NONCE,
                         0,
                     ))
                     .unwrap();
-                acc.policy_manager.at_mut(&actor_id).at_mut(&account).write(target).unwrap();
+                acc.set_policy(account, actor_id, target, B256::ZERO).unwrap();
             });
         }
         let state = evm.ctx_mut().journal_mut().finalize();
@@ -3173,7 +3173,7 @@ mod tests {
         // address must authorize and be *included* through the full
         // `Eip8130Executor::execute` pipeline — not just the unit-level
         // `authorize_and_apply`. Before the fix this returned
-        // `BaseTransactionError::Eip8130("...NotBound")` and was rejected at every
+        // `BaseTransactionError::Eip8130("...AuthenticatorMismatch")` and was rejected at every
         // flashblock. Non-empty runtime code mirrors the on-chain account.
         let key = signing_key(0xc1);
         let (derived, signed) = counterfactual_create_signed(&key, bytes!("00"), Vec::new());

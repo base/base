@@ -248,6 +248,7 @@ impl ActivationRegistryStorage<'_> {
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, keccak256, uint};
     use alloy_sol_types::{SolCall, SolEvent};
+    use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::{
         BasePrecompileError, HashMapStorageProvider, PrecompileOutput, Result, StorageCtx,
         StorageKey,
@@ -722,7 +723,12 @@ mod tests {
         let calldata = IActivationRegistry::deactivateCall { feature: FEATURE }.abi_encode();
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).dispatch(ctx, &calldata, STATIC_ADMIN_CONFIG)
+            ActivationRegistryStorage::new(ctx).dispatch(
+                ctx,
+                &calldata,
+                STATIC_ADMIN_CONFIG,
+                BaseUpgrade::Beryl,
+            )
         })
         .expect("dispatch must not fatally error");
 
@@ -743,7 +749,12 @@ mod tests {
         let calldata = IActivationRegistry::activateCall { feature: FEATURE }.abi_encode();
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).dispatch(ctx, &calldata, STATIC_ADMIN_CONFIG)
+            ActivationRegistryStorage::new(ctx).dispatch(
+                ctx,
+                &calldata,
+                STATIC_ADMIN_CONFIG,
+                BaseUpgrade::Beryl,
+            )
         })
         .expect("dispatch must not fatally error");
 

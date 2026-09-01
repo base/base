@@ -18,6 +18,7 @@ workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
+alloy-sol-types.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
 # compat
@@ -67,6 +68,7 @@ std = [
 	"alloy-rlp/std",
 	"alloy-rpc-types-eth?/std",
 	"alloy-serde?/std",
+	"alloy-sol-types/std",
 	"reth-codecs?/std",
 	"reth-primitives-traits?/std",
 	"reth-zstd-compressors?/std",

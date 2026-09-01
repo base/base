@@ -109,6 +109,41 @@ impl FeeCheck {
         }
         Ok(())
     }
+
+    /// Validates that worst-case gas and a declared coinbase tip are payable.
+    ///
+    /// Self-pay (`payer_is_sender`) requires one balance to cover
+    /// `max_fee_charge + tip`. Sponsored payment requires the payer to cover
+    /// gas and the sender to cover the tip.
+    ///
+    /// # Errors
+    /// - [`FeeError::InsufficientBalance`] — a required balance is below its charge.
+    #[must_use = "discarding the result silently skips the gas-and-tip check"]
+    pub fn validate_gas_and_tip(
+        payer_balance: U256,
+        sender_balance: U256,
+        payer_is_sender: bool,
+        gas_limit: u64,
+        payer_auth_cost: u64,
+        max_fee: u128,
+        tip: U256,
+    ) -> Result<(), FeeError> {
+        let gas = Self::max_fee_charge(gas_limit, payer_auth_cost, max_fee);
+        if payer_is_sender {
+            let required = gas.saturating_add(tip);
+            if payer_balance < required {
+                return Err(FeeError::InsufficientBalance { balance: payer_balance, required });
+            }
+            return Ok(());
+        }
+        if payer_balance < gas {
+            return Err(FeeError::InsufficientBalance { balance: payer_balance, required: gas });
+        }
+        if sender_balance < tip {
+            return Err(FeeError::InsufficientBalance { balance: sender_balance, required: tip });
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -153,6 +188,86 @@ mod tests {
             Err(FeeError::InsufficientBalance {
                 balance: U256::from(41_999u64),
                 required: U256::from(42_000u64),
+            })
+        );
+    }
+
+    #[test]
+    fn self_pay_requires_gas_plus_tip_from_one_balance() {
+        // gas = 21_000 * 2 = 42_000; tip = 1_000; required = 43_000.
+        assert_eq!(
+            FeeCheck::validate_gas_and_tip(
+                U256::from(43_000u64),
+                U256::from(43_000u64),
+                true,
+                21_000,
+                0,
+                2,
+                U256::from(1_000u64),
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            FeeCheck::validate_gas_and_tip(
+                U256::from(42_999u64),
+                U256::from(42_999u64),
+                true,
+                21_000,
+                0,
+                2,
+                U256::from(1_000u64),
+            ),
+            Err(FeeError::InsufficientBalance {
+                balance: U256::from(42_999u64),
+                required: U256::from(43_000u64),
+            })
+        );
+    }
+
+    #[test]
+    fn sponsored_checks_payer_gas_and_sender_tip_separately() {
+        let payer = U256::from(42_000u64);
+        let sender = U256::from(1_000u64);
+        assert_eq!(
+            FeeCheck::validate_gas_and_tip(
+                payer,
+                sender,
+                false,
+                21_000,
+                0,
+                2,
+                U256::from(1_000u64)
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            FeeCheck::validate_gas_and_tip(
+                U256::from(41_999u64),
+                sender,
+                false,
+                21_000,
+                0,
+                2,
+                U256::from(1_000u64),
+            ),
+            Err(FeeError::InsufficientBalance {
+                balance: U256::from(41_999u64),
+                required: U256::from(42_000u64),
+            })
+        );
+        assert_eq!(
+            FeeCheck::validate_gas_and_tip(
+                payer,
+                U256::from(999u64),
+                false,
+                21_000,
+                0,
+                2,
+                U256::from(1_000u64),
+            ),
+            Err(FeeError::InsufficientBalance {
+                balance: U256::from(999u64),
+                required: U256::from(1_000u64),
             })
         );
     }
