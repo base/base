@@ -475,6 +475,11 @@ impl ChallengerE2e {
         game: Candidate,
     ) -> Result<Path1Outcome> {
         let fork_config = Self::fork_config(config, fork_url, driver, game);
+        // Before the patch, not after. `Checkpoint::patch` mutates the game and
+        // then reads it back several times; a challenger that scans during
+        // those readbacks would have already spent the nonce this baseline is
+        // meant to precede, and its correct dispute would read as nobody's.
+        let nonce = provider.get_transaction_count(challenger.address()).await?;
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
             .context("failed to corrupt an intermediate output root on the fork")?;
@@ -486,7 +491,7 @@ impl ChallengerE2e {
             "corrupted intermediate output root; waiting for the challenger to dispute"
         );
 
-        Self::await_dispute(config, verifier, provider, game.address, challenger).await
+        Self::await_dispute(config, verifier, provider, game.address, challenger, nonce).await
     }
 
     /// The challenger must leave game A alone once it has acted on it.
@@ -603,8 +608,17 @@ impl ChallengerE2e {
         Ok(())
     }
 
-    /// Path 4 then 3: patch the dual-proof game, wait for TEE nullify, then ZK
-    /// nullify. Each step must move B's nonce.
+    /// Path 4 then whatever Path 4 leaves behind. Each step must move B's nonce.
+    ///
+    /// A dual-proof game takes two disputes to clear, and the challenger is
+    /// free to drop either proof first. With a TEE prover available it nullifies
+    /// the TEE proof, leaving a ZK-only game the next scan disputes as Path 3.
+    /// When the TEE request or submission fails it falls back to a ZK nullify —
+    /// a supported path, covered by the dual-proof ZK-fallback test in
+    /// `crates/proof/challenge/tests/driver.rs` — which leaves a TEE-only game
+    /// the next scan disputes as Path 1, by nullify or by challenge. Demanding
+    /// the TEE proof go first would sit out the whole dispute budget on a
+    /// challenger doing exactly what it is supposed to.
     async fn run_path4_then_3(
         config: &Config,
         fork_url: &Url,
@@ -615,6 +629,8 @@ impl ChallengerE2e {
         game: Candidate,
     ) -> Result<()> {
         let fork_config = Self::fork_config(config, fork_url, driver, game);
+        // Sampled before the patch for the reason given in `run_path1`.
+        let nonce = provider.get_transaction_count(challenger.address()).await?;
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
             .context("failed to corrupt the dual-proof game on the fork")?;
@@ -623,46 +639,53 @@ impl ChallengerE2e {
             invalid_index = checkpoint.index,
             start_block = checkpoint.start_block,
             target_block = checkpoint.target_block(),
-            "corrupted dual-proof game; waiting for Path 4 then Path 3"
+            "corrupted dual-proof game; waiting for Path 4"
         );
 
-        let mut nonce = provider.get_transaction_count(challenger.address()).await?;
-
-        Self::poll_until(
+        // Path 4 is done when either proof is gone; which one tells us what the
+        // game has become, and so which path must clear the remainder.
+        let tee_first = Self::poll_until(
             config,
             config.dispute_timeout,
-            "the challenger to TEE-nullify the dual-proof game",
+            "the challenger to nullify one of the dual-proof game's two proofs",
             || async {
-                Ok((verifier.tee_prover(game.address).await? == Address::ZERO).then_some(()))
+                if verifier.tee_prover(game.address).await? == Address::ZERO {
+                    return Ok(Some(true));
+                }
+                Ok((verifier.zk_prover(game.address).await? == Address::ZERO).then_some(false))
             },
         )
         .await?;
-        nonce = Self::assert_challenger_acted(
-            provider,
-            challenger,
-            nonce,
-            "TEE-nullified the dual-proof game",
-        )
-        .await?;
-        info!(game = %game.address, "Path 4: TEE proof nullified");
+        let nonce =
+            Self::assert_challenger_acted(provider, challenger, nonce, "nullified one proof")
+                .await?;
 
-        Self::poll_until(
-            config,
-            config.dispute_timeout,
-            "the challenger to ZK-nullify the remaining proof",
-            || async {
-                Ok((verifier.zk_prover(game.address).await? == Address::ZERO).then_some(()))
-            },
-        )
-        .await?;
-        Self::assert_challenger_acted(
-            provider,
-            challenger,
-            nonce,
-            "ZK-nullified the remaining proof",
-        )
-        .await?;
-        info!(game = %game.address, "Path 3: ZK proof nullified");
+        if tee_first {
+            info!(game = %game.address, "Path 4: TEE proof nullified, ZK proof remains");
+            Self::poll_until(
+                config,
+                config.dispute_timeout,
+                "the challenger to ZK-nullify the remaining proof",
+                || async {
+                    Ok((verifier.zk_prover(game.address).await? == Address::ZERO).then_some(()))
+                },
+            )
+            .await?;
+            Self::assert_challenger_acted(
+                provider,
+                challenger,
+                nonce,
+                "ZK-nullified the remaining proof",
+            )
+            .await?;
+            info!(game = %game.address, "Path 3: ZK proof nullified");
+        } else {
+            info!(game = %game.address, "Path 4: ZK fallback nullified, TEE proof remains");
+            let outcome =
+                Self::await_dispute(config, verifier, provider, game.address, challenger, nonce)
+                    .await?;
+            info!(game = %game.address, ?outcome, "Path 1: the remaining TEE proof was disputed");
+        }
         Ok(())
     }
 
@@ -678,9 +701,8 @@ impl ChallengerE2e {
         provider: &RootProvider,
         game: Address,
         challenger: &PrivateKeySigner,
+        nonce_before: u64,
     ) -> Result<Path1Outcome> {
-        let nonce_before = provider.get_transaction_count(challenger.address()).await?;
-
         let outcome = Self::poll_until(
             config,
             config.dispute_timeout,

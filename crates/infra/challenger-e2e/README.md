@@ -24,7 +24,8 @@ delta on B. Both are generated per run and never leave the pod.
 
 One process, one fork, two TEE-only in-progress games (newest-first, lookback
 50, ≥1 intermediate root, all above the anchor game). Game A is Path 1 / Path 2
-skip. Game B is Path 4→3. The run bails if fewer than two such games exist.
+skip. Game B is Path 4 and then whichever path Path 4 leaves behind. The run
+bails if fewer than two such games exist.
 
 The anchor bound is not cosmetic: the scanner starts at one past the anchor
 game's factory index, so a game at or before the anchor is one the challenger
@@ -78,11 +79,17 @@ disputes games it was never given would pass the run.
    was released: A requested a real SNARK of B's canonical roots from
    `BASE_CHALLENGER_ZK_RPC_URL` (not the fork) and submitted
    `verifyProposalProof`. `zkProver != 0` and `counteredIndex == 0`. After the
-   quiet window, B is patched. The challenger must TEE-nullify first
-   (`teeProver == 0`). B's nonce must advance.
-6. **Path 3 `InvalidZkProposal`.** Same game, next scan after TEE nullify
-   (`tee=0`, `zk≠0`, `countered=0`). B ZK-nullifies (`zkProver == 0`). B's
-   nonce must advance again.
+   quiet window, B is patched. The challenger must drop one of B's two proofs.
+   B's nonce must advance.
+6. **Whatever Path 4 left behind.** A dual-proof game takes two disputes to
+   clear, and either proof may go first — so which assertion runs is decided by
+   what step 5 observed, not fixed in advance. TEE first (`tee=0`, `zk≠0`) is
+   **Path 3**: the next scan ZK-nullifies (`zkProver == 0`). ZK first is the
+   supported **TEE-fallback** case, where the TEE request or submission failed;
+   that leaves a TEE-only game (`tee≠0`, `zk=0`) and the next scan disputes it
+   as **Path 1**, by nullify or by challenge. B's nonce must advance again
+   either way. Insisting on the TEE proof going first would sit out the whole
+   `CHALLENGER_E2E_DISPUTE_TIMEOUT` on a correctly behaving challenger.
 7. **No collateral damage.** Every bystander game snapshotted in step 0 must
    still read the same `(teeProver, zkProver, counteredIndex)`. Catches what
    the per-game assertions cannot see: a challenger misconfigured on
