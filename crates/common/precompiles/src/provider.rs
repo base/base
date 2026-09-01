@@ -1,17 +1,12 @@
-use alloc::string::String;
-
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
 use base_common_chains::BaseUpgradeExt;
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::StorageFeatures;
 use revm::{
-    context::Cfg,
-    context_interface::ContextTr,
-    handler::{EthPrecompiles, PrecompileProvider},
-    interpreter::{CallInputs, InterpreterResult},
+    handler::EthPrecompiles,
     precompile::{self, Precompiles, bn254, modexp, secp256r1},
-    primitives::{AddressSet, OnceLock, hardfork::SpecId},
+    primitives::{OnceLock, hardfork::SpecId},
 };
 
 use crate::{
@@ -20,19 +15,26 @@ use crate::{
     TxContext, UpgradeGatedStorageFeatures, bls12_381, bn254_pair,
 };
 
-/// Base precompile provider.
+/// Static Base precompile table for a [`BasePrecompileSpec`].
+///
+/// This type selects the fork's Ethereum-style precompiles. It is not a
+/// [`revm::handler::PrecompileProvider`]. Call [`Self::install`] or
+/// [`Self::install_with_observer`] to build the executable [`PrecompilesMap`].
 #[derive(Debug, Clone)]
 pub struct BasePrecompiles<S = BaseUpgrade> {
-    /// Inner precompile provider is the same as Ethereum's.
+    /// Inner static Ethereum-style precompile table.
     inner: EthPrecompiles,
-    /// Spec id of the precompile provider.
+    /// Spec id of the precompile table.
     spec: S,
     /// Activation registry admin address.
     activation_admin_address: Option<Address>,
 }
 
 impl<S: BasePrecompileSpec> BasePrecompiles<S> {
-    /// Create a new precompile provider with the given spec.
+    /// Create the static precompile table for the given spec.
+    ///
+    /// The returned value does not include Beryl or later dynamic precompiles.
+    /// Call [`Self::install`] before using the set for EVM execution.
     #[inline]
     pub fn new_with_spec(spec: S) -> Self {
         let precompiles = match spec.upgrade() {
@@ -240,43 +242,6 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     }
 }
 
-impl<CTX, S> PrecompileProvider<CTX> for BasePrecompiles<S>
-where
-    S: BasePrecompileSpec,
-    CTX: ContextTr<Cfg: Cfg<Spec = S>>,
-{
-    type Output = InterpreterResult;
-
-    #[inline]
-    fn set_spec(&mut self, spec: <CTX::Cfg as Cfg>::Spec) -> bool {
-        if spec == self.spec {
-            return false;
-        }
-        *self =
-            Self::new_with_spec(spec).with_activation_admin_address(self.activation_admin_address);
-        true
-    }
-
-    #[inline]
-    fn run(
-        &mut self,
-        context: &mut CTX,
-        inputs: &CallInputs,
-    ) -> Result<Option<Self::Output>, String> {
-        self.inner.run(context, inputs)
-    }
-
-    #[inline]
-    fn warm_addresses(&self) -> &AddressSet {
-        self.inner.warm_addresses()
-    }
-
-    #[inline]
-    fn contains(&self, address: &Address) -> bool {
-        self.inner.contains(address)
-    }
-}
-
 impl<S: BasePrecompileSpec> Default for BasePrecompiles<S> {
     fn default() -> Self {
         Self::new_with_spec(S::default_precompile_spec())
@@ -298,7 +263,7 @@ mod tests {
 
     use crate::{
         ActivationRegistryStorage, B20FactoryStorage, B20Variant, BasePrecompiles,
-        NonceManagerStorage, TxContextStorage, bls12_381, bn254_pair,
+        NonceManagerStorage, PolicyRegistryStorage, TxContextStorage, bls12_381, bn254_pair,
     };
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
@@ -570,6 +535,25 @@ mod tests {
 
         assert!(precompiles.get(&bn254::pair::ADDRESS).is_some());
         assert!(precompiles.get(secp256r1::P256VERIFY.address()).is_some());
+    }
+
+    // Static table only. Factory, lookup, registries, nonce manager, and tx context
+    // are registered later by install() / install_with_observer().
+    #[rstest]
+    #[case::beryl(BaseUpgrade::Beryl)]
+    #[case::cobalt(BaseUpgrade::Cobalt)]
+    fn new_with_spec_omits_dynamic_precompiles(#[case] spec: BaseUpgrade) {
+        let precompiles = BasePrecompiles::new_with_spec(spec);
+        let static_table = precompiles.precompiles();
+        let (token, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+
+        assert!(static_table.get(&B20FactoryStorage::ADDRESS).is_none());
+        assert!(static_table.get(&token).is_none());
+        assert!(static_table.get(&PolicyRegistryStorage::ADDRESS).is_none());
+        assert!(static_table.get(&ActivationRegistryStorage::ADDRESS).is_none());
+        assert!(static_table.get(&TxContextStorage::ADDRESS).is_none());
+        assert!(static_table.get(&NonceManagerStorage::ADDRESS).is_none());
     }
 
     #[rstest]

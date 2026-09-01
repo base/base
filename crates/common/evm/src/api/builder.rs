@@ -13,7 +13,7 @@ use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId, BerylPrecompileMe
 /// Trait that allows constructing a [`BaseEvm`] from a [`BaseContext`].
 ///
 /// Implemented for [`BaseContext<DB>`] of any database. The resulting [`BaseEvm`]
-/// installs the full [`BasePrecompiles`] map for the active [`BaseSpecId`]; call
+/// installs the full [`PrecompilesMap`] for the active [`BaseSpecId`]; call
 /// [`BaseEvm::with_precompiles`] afterwards to substitute a custom precompile set.
 pub trait Builder: Sized {
     /// The database type of the context.

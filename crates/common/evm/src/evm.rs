@@ -1,6 +1,6 @@
 use core::ops::{Deref, DerefMut};
 
-use alloy_evm::{Database as AlloyDatabase, Evm, EvmEnv};
+use alloy_evm::{Database as AlloyDatabase, Evm, EvmEnv, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes};
 use revm::{
     Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
@@ -25,8 +25,8 @@ use revm::{
 #[cfg(feature = "std")]
 use crate::Eip8130Executor;
 use crate::{
-    BaseContext, BaseHaltReason, BasePrecompiles, BaseSpecId, BaseTransaction,
-    BaseTransactionError, BaseTxTr, handler::BaseHandler,
+    BaseContext, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError, BaseTxTr,
+    handler::BaseHandler,
 };
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
@@ -42,14 +42,14 @@ type InnerEvm<DB, I, P> = RevmEvm<
 /// The Base EVM, wrapping [`RevmEvm`] with a [`BaseContext`] and an optional [`Inspector`].
 ///
 /// Parameterized over a database [`DB`], inspector [`I`], and precompile set [`P`]
-/// (defaulting to [`BasePrecompiles`]). All Base-specific context configuration —
+/// (defaulting to [`PrecompilesMap`]). All Base-specific context configuration —
 /// [`BaseSpecId`], [`BaseTransaction`], and [`crate::L1BlockInfo`] — is fixed by [`BaseContext`].
 ///
 /// The `inspect` flag controls whether [`Inspector`] callbacks are invoked during
 /// [`Evm::transact`]. When `false`, the inspector is present in the type but silent,
 /// enabling zero-cost tracing toggling at runtime without type changes.
 #[allow(missing_debug_implementations)] // revm::Context does not implement Debug
-pub struct BaseEvm<DB: RevmDatabase, I, P = BasePrecompiles> {
+pub struct BaseEvm<DB: RevmDatabase, I, P = PrecompilesMap> {
     /// Inner revm EVM with Base-specific context, fixed [`EthInstructions`] and
     /// [`EthFrame`], and generic precompile set [`P`].
     pub(crate) inner: InnerEvm<DB, I, P>,
@@ -93,7 +93,7 @@ impl<DB: RevmDatabase, I, P> BaseEvm<DB, I, P> {
     }
 
     /// Consumes `self` and returns a new [`BaseEvm`] with the given precompile set,
-    /// preserving the inspect flag. Used to substitute [`BasePrecompiles`] with
+    /// preserving the inspect flag. Used to substitute the default [`PrecompilesMap`] with
     /// custom implementations such as FPVM-accelerated precompiles in the proof system.
     pub fn with_precompiles<Q>(self, precompiles: Q) -> BaseEvm<DB, I, Q> {
         BaseEvm { inner: self.inner.with_precompiles(precompiles), inspect: self.inspect }

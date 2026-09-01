@@ -8,11 +8,13 @@ Provides the Base-specific precompile layer used by the Base EVM. The crate sele
 Ethereum and Base precompile table for each supported `BaseUpgrade`, and it also owns the Beryl
 native precompiles that are installed into a dynamic `PrecompilesMap`.
 
-`BasePrecompiles` is the main entry point. It can expose the static precompile table for a fork, or
-build the full installed map used by EVM execution. `BasePrecompileSpec` is the small trait bound
-that lets downstream crates use their own spec wrapper as long as it converts to and from
-`BaseUpgrade`. Most EVM users should still go through the `BasePrecompiles` alias and builders in
-`base-common-evm`, because those are already wired to `BaseSpecId` and install the full map.
+`BasePrecompiles` is the main entry point. It exposes the static precompile table for a fork, and
+`install()` / `install_with_observer()` build the full map used by EVM execution. `BasePrecompiles`
+is not a `PrecompileProvider`; plug the installed `PrecompilesMap` into an EVM, not the selector
+type. `BasePrecompileSpec` is the small trait bound that lets downstream crates use their own spec
+wrapper as long as it converts to and from `BaseUpgrade`. Most EVM users should still go through
+the `BasePrecompiles` alias and builders in `base-common-evm`, because those are already wired to
+`BaseSpecId` and install the full map.
 
 The crate also exports the ABI types, storage adapters, entry points, and shared token traits for
 the native B-20 token system. Those exports cover the activation registry, policy registry, B-20
