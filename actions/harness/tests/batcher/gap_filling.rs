@@ -25,7 +25,8 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 /// 2. **Phase 2** — [`signal_reorg`] clears the encoder, then the batcher posts
 ///    blocks 8-10.
 ///    These land on L1 but the verifier **cannot** derive them because
-///    blocks 6-7 are missing (parent-hash mismatch against safe head 5).
+///    blocks 6-7 are missing. Block 8's timestamp is ahead of the next expected
+///    slot (block 6), so it is classified as future.
 ///
 /// 3. **Phase 3** — [`signal_reorg`] clears the encoder again, then the batcher
 ///    posts blocks 6-10. The verifier derives all remaining blocks and reaches
@@ -87,8 +88,8 @@ async fn batcher_gap_fill_single_instance_reorg_signal() {
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
-    // The verifier should NOT advance past 5: batches for 8-10 have
-    // parent_hash = hash(block 7) which doesn't match safe_head hash(block 5).
+    // The verifier should NOT advance past 5: block 8's timestamp is ahead of the next expected
+    // slot (block 6), so it is classified as future.
     let derived = node.run_until_idle().await;
     assert_eq!(
         node.l2_safe_number(),
