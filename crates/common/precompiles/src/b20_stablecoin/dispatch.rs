@@ -14,12 +14,11 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant, BerylCallRecorder,
-    BerylMetricLabels, BerylSelector,
+    B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant, BerylCallRecorder, BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
-    StablecoinAccounting, StablecoinVersion, StablecoinVersions,
+    PrecompileMetricLabels, StablecoinAccounting, StablecoinVersion, StablecoinVersions,
 };
 
 impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
@@ -46,7 +45,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
     {
         let mut recorder = BerylCallRecorder::start(
             observer.clone(),
-            BerylMetricLabels::b20_stablecoin_call(calldata),
+            PrecompileMetricLabels::b20_stablecoin_call(calldata),
         );
         if !ctx.call_value().is_zero() {
             return recorder

@@ -6,9 +6,9 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistryStorage, BerylCallRecorder, BerylMetricLabels,
+    ActivationAdminConfig, ActivationRegistryStorage, BerylCallRecorder,
     IActivationRegistry::{self, IActivationRegistryCalls as C},
-    NoopPrecompileCallObserver, PrecompileCallObserver,
+    NoopPrecompileCallObserver, PrecompileCallObserver, PrecompileMetricLabels,
     macros::decode_precompile_call,
 };
 
@@ -43,7 +43,7 @@ impl ActivationRegistryStorage<'_> {
         O: PrecompileCallObserver,
     {
         let mut recorder =
-            BerylCallRecorder::start(observer, BerylMetricLabels::activation_call(calldata));
+            BerylCallRecorder::start(observer, PrecompileMetricLabels::activation_call(calldata));
         // Activation-registry selectors are all nonpayable; reject attached ETH from Cobalt
         // onward. Pre-Cobalt (Beryl) preserves the historical accept-and-strand behavior so
         // replay of live-installed activation calls remains byte-identical.

@@ -17,10 +17,11 @@ use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx}
 
 use crate::{
     AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
-    B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
+    B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
+    PrecompileMetricLabels,
 };
 
 impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
@@ -45,8 +46,10 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        let mut recorder =
-            BerylCallRecorder::start(observer.clone(), BerylMetricLabels::b20_asset_call(calldata));
+        let mut recorder = BerylCallRecorder::start(
+            observer.clone(),
+            PrecompileMetricLabels::b20_asset_call(calldata),
+        );
         if !ctx.call_value().is_zero() {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::revert(IB20::NonPayable {}));
@@ -589,10 +592,10 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        AssetV1, AssetVersion, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind,
-        FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver,
-        PolicyVersion, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
-        PrecompileCallStatus, Token, TokenAccounting,
+        AssetV1, AssetVersion, B20AssetStorage, B20AssetToken, B20TokenRole, FakePolicyAccounting,
+        IB20, IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver, PolicyVersion,
+        PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus,
+        PrecompileErrorKind, Token, TokenAccounting,
     };
 
     type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, FakePolicyAccounting>;
@@ -715,7 +718,7 @@ mod tests {
         assert_eq!(calls[0].0.method, "balanceOf");
         assert_eq!(calls[0].0.variant, Some("asset"));
         assert_eq!(calls[0].1.status, PrecompileCallStatus::Revert);
-        assert_eq!(calls[0].1.error, Some(BerylErrorKind::AbiDecode));
+        assert_eq!(calls[0].1.error, Some(PrecompileErrorKind::AbiDecode));
     }
 
     #[test]

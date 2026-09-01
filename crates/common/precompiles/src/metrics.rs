@@ -112,7 +112,7 @@ pub struct PrecompileCallOutcome {
     /// Total time spent in the Beryl dispatch wrapper, in seconds.
     pub duration_seconds: Option<f64>,
     /// Optional bounded error class.
-    pub error: Option<BerylErrorKind>,
+    pub error: Option<PrecompileErrorKind>,
 }
 
 impl PrecompileCallOutcome {
@@ -120,7 +120,7 @@ impl PrecompileCallOutcome {
     pub fn from_result(
         result: &PrecompileResult,
         duration_seconds: Option<f64>,
-        error: Option<BerylErrorKind>,
+        error: Option<PrecompileErrorKind>,
     ) -> Self {
         match result {
             Ok(output) => Self::from_output(output, duration_seconds, error),
@@ -130,7 +130,7 @@ impl PrecompileCallOutcome {
                 state_gas_used: 0,
                 gas_refunded: 0,
                 duration_seconds,
-                error: Some(BerylErrorKind::from_precompile_error(error)),
+                error: Some(PrecompileErrorKind::from_precompile_error(error)),
             },
         }
     }
@@ -139,13 +139,13 @@ impl PrecompileCallOutcome {
     pub fn from_output(
         output: &PrecompileOutput,
         duration_seconds: Option<f64>,
-        mut error: Option<BerylErrorKind>,
+        mut error: Option<PrecompileErrorKind>,
     ) -> Self {
         let status = if output.is_success() {
             PrecompileCallStatus::Success
         } else if output.is_revert() {
             if error.is_none() {
-                error = Some(BerylErrorKind::from_revert_bytes(&output.bytes));
+                error = Some(PrecompileErrorKind::from_revert_bytes(&output.bytes));
             }
             PrecompileCallStatus::Revert
         } else {
@@ -165,7 +165,7 @@ impl PrecompileCallOutcome {
 
 /// Bounded error-class label for precompile failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BerylErrorKind {
+pub enum PrecompileErrorKind {
     /// State mutation was attempted during a static call.
     StaticWrite,
     /// Calldata did not contain a known selector.
@@ -200,7 +200,7 @@ pub enum BerylErrorKind {
     OtherRevert,
 }
 
-impl BerylErrorKind {
+impl PrecompileErrorKind {
     /// Returns the metric label for this error kind.
     pub const fn as_label(self) -> &'static str {
         match self {
@@ -397,11 +397,11 @@ impl BerylErrorClassifier {
     }
 }
 
-/// Method-label helpers for Beryl call observation.
+/// Method-label helpers for native precompile call observation.
 #[derive(Debug, Clone, Copy)]
-pub struct BerylMetricLabels;
+pub struct PrecompileMetricLabels;
 
-impl BerylMetricLabels {
+impl PrecompileMetricLabels {
     /// Returns a B-20 method label from an existing stable call label.
     pub fn b20_method(label: &'static str) -> Cow<'static, str> {
         Cow::Borrowed(
@@ -563,7 +563,7 @@ pub struct BerylCallRecorder<O> {
     observer: O,
     timer: BerylCallTimer,
     call: PrecompileCallMetric,
-    error: Option<BerylErrorKind>,
+    error: Option<PrecompileErrorKind>,
 }
 
 impl<O> BerylCallRecorder<O>
@@ -604,7 +604,7 @@ where
 
     /// Records a Base precompile error before it is converted to a [`PrecompileResult`].
     pub fn record_base_error(&mut self, error: &BasePrecompileError) {
-        self.error = Some(BerylErrorKind::from_base_error(error));
+        self.error = Some(PrecompileErrorKind::from_base_error(error));
     }
 
     /// Records the final result of the precompile call.
@@ -665,15 +665,18 @@ mod tests {
     use base_precompile_storage::{BasePrecompileError, PrecompileError, PrecompileOutput};
 
     use crate::{
-        BerylCallOutcome, BerylCallRecorder, BerylErrorKind, BerylMetricLabels, BerylSelector,
-        CALLDATA_WORD_GAS, IActivationRegistry, IB20, IB20Asset, IB20Factory, IPolicyRegistry,
-        NoopPrecompileCallObserver,
+        BerylCallOutcome, BerylCallRecorder, BerylSelector, CALLDATA_WORD_GAS, IActivationRegistry,
+        IB20, IB20Asset, IB20Factory, IPolicyRegistry, NoopPrecompileCallObserver,
+        PrecompileErrorKind, PrecompileMetricLabels,
     };
 
     #[test]
     fn b20_method_labels_strip_precompile_prefixes() {
-        assert_eq!(BerylMetricLabels::b20_method("precompile-b20-transfer"), "transfer");
-        assert_eq!(BerylMetricLabels::b20_method("precompile-b20-stablecoin-currency"), "currency");
+        assert_eq!(PrecompileMetricLabels::b20_method("precompile-b20-transfer"), "transfer");
+        assert_eq!(
+            PrecompileMetricLabels::b20_method("precompile-b20-stablecoin-currency"),
+            "currency"
+        );
     }
 
     #[test]
@@ -684,44 +687,52 @@ mod tests {
             salt: B256::ZERO,
         }
         .abi_encode();
-        assert_eq!(BerylMetricLabels::factory_method(&factory), "getB20Address");
+        assert_eq!(PrecompileMetricLabels::factory_method(&factory), "getB20Address");
 
         let b20 = IB20::transferCall { to: Address::ZERO, amount: U256::ZERO }.abi_encode();
-        assert_eq!(BerylMetricLabels::b20_asset_method(&b20), "transfer");
+        assert_eq!(PrecompileMetricLabels::b20_asset_method(&b20), "transfer");
     }
 
     #[test]
     fn base_errors_are_classified() {
         assert_eq!(
-            BerylErrorKind::from_base_error(&BasePrecompileError::UnknownFunctionSelector([0; 4])),
-            BerylErrorKind::UnknownSelector
+            PrecompileErrorKind::from_base_error(&BasePrecompileError::UnknownFunctionSelector(
+                [0; 4]
+            )),
+            PrecompileErrorKind::UnknownSelector
         );
         assert_eq!(
-            BerylErrorKind::from_base_error(&BasePrecompileError::StaticCallViolation),
-            BerylErrorKind::StaticWrite
+            PrecompileErrorKind::from_base_error(&BasePrecompileError::StaticCallViolation),
+            PrecompileErrorKind::StaticWrite
         );
     }
 
     #[test]
     fn revert_bytes_are_classified() {
         let unauthorized = IB20::Unauthorized {}.abi_encode().into();
-        assert_eq!(BerylErrorKind::from_revert_bytes(&unauthorized), BerylErrorKind::Unauthorized);
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&unauthorized),
+            PrecompileErrorKind::Unauthorized
+        );
 
         let policy_not_found = IPolicyRegistry::PolicyNotFound {}.abi_encode().into();
         assert_eq!(
-            BerylErrorKind::from_revert_bytes(&policy_not_found),
-            BerylErrorKind::PolicyMissing
+            PrecompileErrorKind::from_revert_bytes(&policy_not_found),
+            PrecompileErrorKind::PolicyMissing
         );
 
         let admin_storage_disabled =
             IActivationRegistry::AdminStorageNotEnabled {}.abi_encode().into();
         assert_eq!(
-            BerylErrorKind::from_revert_bytes(&admin_storage_disabled),
-            BerylErrorKind::InvalidInput
+            PrecompileErrorKind::from_revert_bytes(&admin_storage_disabled),
+            PrecompileErrorKind::InvalidInput
         );
 
         let zero_admin = IActivationRegistry::ZeroAdminAddress {}.abi_encode().into();
-        assert_eq!(BerylErrorKind::from_revert_bytes(&zero_admin), BerylErrorKind::InvalidInput);
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&zero_admin),
+            PrecompileErrorKind::InvalidInput
+        );
     }
 
     #[test]
@@ -758,10 +769,10 @@ mod tests {
     #[test]
     fn policy_method_labels_every_canonical_selector() {
         for selector in IPolicyRegistry::IPolicyRegistryCalls::selectors() {
-            let label = BerylMetricLabels::policy_method(&selector);
+            let label = PrecompileMetricLabels::policy_method(&selector);
             assert_ne!(
                 label,
-                BerylMetricLabels::unknown(),
+                PrecompileMetricLabels::unknown(),
                 "policy selector {selector:?} ({}) fell through to unknown",
                 IPolicyRegistry::IPolicyRegistryCalls::name_by_selector(selector)
                     .unwrap_or("<unnamed>"),
@@ -772,27 +783,29 @@ mod tests {
     #[test]
     fn cobalt_policy_method_labels_are_stable() {
         assert_eq!(
-            BerylMetricLabels::policy_method(&IPolicyRegistry::createCompositePolicyCall::SELECTOR),
+            PrecompileMetricLabels::policy_method(
+                &IPolicyRegistry::createCompositePolicyCall::SELECTOR
+            ),
             "createCompositePolicy"
         );
         assert_eq!(
-            BerylMetricLabels::policy_method(&IPolicyRegistry::updateCompositeCall::SELECTOR),
+            PrecompileMetricLabels::policy_method(&IPolicyRegistry::updateCompositeCall::SELECTOR),
             "updateComposite"
         );
         assert_eq!(
-            BerylMetricLabels::policy_method(
+            PrecompileMetricLabels::policy_method(
                 &IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR
             ),
             "compositePolicyChildIds"
         );
         assert_eq!(
-            BerylMetricLabels::policy_method(
+            PrecompileMetricLabels::policy_method(
                 &IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::SELECTOR
             ),
             "MIN_COMPOSITE_CHILD_POLICIES"
         );
         assert_eq!(
-            BerylMetricLabels::policy_method(
+            PrecompileMetricLabels::policy_method(
                 &IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::SELECTOR
             ),
             "MAX_COMPOSITE_CHILD_POLICIES"
@@ -802,35 +815,50 @@ mod tests {
     #[test]
     fn cobalt_errors_classify_as_invalid_input() {
         let child_range = IPolicyRegistry::ChildPoliciesOutsideOfRange {}.abi_encode().into();
-        assert_eq!(BerylErrorKind::from_revert_bytes(&child_range), BerylErrorKind::InvalidInput);
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&child_range),
+            PrecompileErrorKind::InvalidInput
+        );
 
         let invalid_child =
             IPolicyRegistry::InvalidChildPolicy { childPolicyId: 0 }.abi_encode().into();
-        assert_eq!(BerylErrorKind::from_revert_bytes(&invalid_child), BerylErrorKind::InvalidInput);
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&invalid_child),
+            PrecompileErrorKind::InvalidInput
+        );
 
         let effective_past =
             IB20Asset::EffectiveAtInPast { effectiveAt: U256::ZERO }.abi_encode().into();
         assert_eq!(
-            BerylErrorKind::from_revert_bytes(&effective_past),
-            BerylErrorKind::InvalidInput
+            PrecompileErrorKind::from_revert_bytes(&effective_past),
+            PrecompileErrorKind::InvalidInput
         );
 
         let effective_far =
             IB20Asset::EffectiveAtTooFar { effectiveAt: U256::ZERO }.abi_encode().into();
-        assert_eq!(BerylErrorKind::from_revert_bytes(&effective_far), BerylErrorKind::InvalidInput);
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&effective_far),
+            PrecompileErrorKind::InvalidInput
+        );
 
         let update_exists =
             IB20Asset::UIMultiplierUpdateExists { effectiveAt: U256::ZERO }.abi_encode().into();
-        assert_eq!(BerylErrorKind::from_revert_bytes(&update_exists), BerylErrorKind::InvalidInput);
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&update_exists),
+            PrecompileErrorKind::InvalidInput
+        );
 
         let update_missing = IB20Asset::UIMultiplierUpdateDoesNotExist {}.abi_encode().into();
         assert_eq!(
-            BerylErrorKind::from_revert_bytes(&update_missing),
-            BerylErrorKind::InvalidInput
+            PrecompileErrorKind::from_revert_bytes(&update_missing),
+            PrecompileErrorKind::InvalidInput
         );
 
         let not_seizable = IB20::AccountNotSeizable { account: Address::ZERO }.abi_encode().into();
-        assert_eq!(BerylErrorKind::from_revert_bytes(&not_seizable), BerylErrorKind::InvalidInput);
+        assert_eq!(
+            PrecompileErrorKind::from_revert_bytes(&not_seizable),
+            PrecompileErrorKind::InvalidInput
+        );
     }
 
     #[test]
@@ -838,8 +866,8 @@ mod tests {
         fn assert_classified(name: &str, selector: [u8; 4]) {
             let bytes = Bytes::from(selector.to_vec());
             assert_ne!(
-                BerylErrorKind::from_revert_bytes(&bytes),
-                BerylErrorKind::OtherRevert,
+                PrecompileErrorKind::from_revert_bytes(&bytes),
+                PrecompileErrorKind::OtherRevert,
                 "error selector {selector:?} ({name}) fell through to OtherRevert",
             );
         }

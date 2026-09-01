@@ -11,9 +11,9 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
 
 use crate::{
-    B20FactoryStorage, B20Variant, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
-    Factory, FactoryV1, FactoryVersion, FactoryVersions, IB20Factory, NoopPrecompileCallObserver,
-    PrecompileCallObserver,
+    B20FactoryStorage, B20Variant, BerylAuxiliaryMetrics, BerylCallRecorder, Factory, FactoryV1,
+    FactoryVersion, FactoryVersions, IB20Factory, NoopPrecompileCallObserver,
+    PrecompileCallObserver, PrecompileMetricLabels,
 };
 
 impl<'a> B20FactoryStorage<'a> {
@@ -38,8 +38,10 @@ impl<'a> B20FactoryStorage<'a> {
     where
         O: PrecompileCallObserver,
     {
-        let mut recorder =
-            BerylCallRecorder::start(observer.clone(), BerylMetricLabels::factory_call(calldata));
+        let mut recorder = BerylCallRecorder::start(
+            observer.clone(),
+            PrecompileMetricLabels::factory_call(calldata),
+        );
         if !ctx.call_value().is_zero() {
             return recorder.record_base_error_result(
                 ctx,
