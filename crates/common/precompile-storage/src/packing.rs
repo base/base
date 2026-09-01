@@ -53,10 +53,16 @@ impl StorageOps for PackedSlot {
 
     // A packed slot only ever holds `Packable` primitives; the `dynamic_storage_tail_cleanup`
     // path this feature gates never triggers here (dynamic types are `Layout::Slots(_)` and
-    // route through the full-slot `Slot`/`TransientOps` handlers). `Legacy` is the correct
-    // pin — the value is defensive, and it is declared explicitly (not defaulted) so the
-    // fork-sensitive dispatch never inherits an implicit value.
+    // route through the full-slot `Slot`/`TransientOps` handlers). If a future refactor
+    // routes a dynamic type through a packed intermediate, returning `Legacy` here would
+    // silently skip Cobalt tail cleanup — trip `debug_assert!` at test time so the mistake
+    // surfaces in CI, and keep the defensive `Legacy` return so prod never crashes on a
+    // consensus-critical path.
     fn storage_features(&self) -> StorageFeatures {
+        debug_assert!(
+            false,
+            "PackedSlot::storage_features reached; a dynamic-cleanup path is routing through a packed intermediate",
+        );
         StorageFeatures::Legacy
     }
 }
