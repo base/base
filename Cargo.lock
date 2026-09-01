@@ -4634,6 +4634,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer 2.4.1",
  "alloy-signer-local 2.4.1",
+ "alloy-sol-types",
  "async-trait",
  "base-common-chains",
  "base-common-consensus",
