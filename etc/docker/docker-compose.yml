@@ -67,6 +67,7 @@ services:
       - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L1_P2P_PORT}
       - --disable-discovery
+      - --txpool.max-account-slots=256
       - -vvv
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_HTTP_PORT}"]
