@@ -897,7 +897,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })?;
@@ -946,7 +946,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })?;
@@ -1010,7 +1010,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1068,7 +1068,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })?;
@@ -1119,7 +1119,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1189,7 +1189,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1255,7 +1255,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1316,7 +1316,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1411,7 +1411,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1509,7 +1509,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1574,7 +1574,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })?;
@@ -1627,7 +1627,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
@@ -1758,7 +1758,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default().with_all_precompiles()),
         })?;
@@ -2033,7 +2033,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle.clone(),
-            header: sealed_without_root.clone(),
+            header: sealed_without_root,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })
@@ -2117,7 +2117,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         })?;
@@ -2197,7 +2197,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         });
@@ -2250,7 +2250,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         });
@@ -2302,7 +2302,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         });
@@ -2359,7 +2359,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: parsed_bundle,
-            header: header.clone(),
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
         });
