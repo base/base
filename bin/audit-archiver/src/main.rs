@@ -9,9 +9,11 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES, DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS,
-    Metrics, PgTransactionEventSink, RpcEventReader, S3EventReaderWriter,
-    TransactionEventIngestConfig, TransactionEventRetentionConfig,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
+    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
+    S3EventReaderWriter, TransactionEventIngestConfig, TransactionEventRetentionConfig,
 };
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
@@ -130,10 +132,13 @@ struct Args {
 
     /// Seconds between transaction-event retention delete passes. The first
     /// pass runs immediately at startup; later passes wait this interval.
+    /// An expire scan cycle older than this interval is restarted at the
+    /// configured batch size after at least one returned attempt, except
+    /// while a post-timeout LIMIT 1 is still queued.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS",
-        default_value = "3600"
+        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS
     )]
     transaction_event_retention_interval_secs: u64,
 
@@ -178,6 +183,18 @@ struct Args {
         default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES
     )]
     transaction_event_retention_max_batches: u32,
+
+    /// Postgres statement timeout for one retention delete, in milliseconds.
+    ///
+    /// Bounds a sparse expire scan so it cannot hold the advisory lock for
+    /// hours. On timeout, expire tries `LIMIT 1` then bisects the batch size.
+    /// A `LIMIT 1` timeout advances to the next retention class.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS
+    )]
+    transaction_event_retention_statement_timeout_ms: u64,
 
     /// HTTP path for Vector transaction-event batch ingest.
     #[arg(
@@ -270,12 +287,13 @@ async fn run_server(args: Args) -> Result<()> {
         cold_days: args.transaction_event_cold_retention_days,
         delete_batch_size: args.transaction_event_retention_batch_size,
         max_batches: args.transaction_event_retention_max_batches,
+        statement_timeout_ms: args.transaction_event_retention_statement_timeout_ms,
+        interval_secs: args.transaction_event_retention_interval_secs,
+        test_hot_sleep_ms: None,
+        test_hot_sleep_min_limit: None,
     }
     .validate()?;
-    if args.transaction_event_retention_interval_secs == 0 {
-        anyhow::bail!("transaction event retention interval must be greater than zero");
-    }
-    let retention_interval = Duration::from_secs(args.transaction_event_retention_interval_secs);
+    let retention_interval = Duration::from_secs(retention_config.interval_secs);
 
     info!(
         s3_bucket = %s3_bucket,
@@ -289,6 +307,7 @@ async fn run_server(args: Args) -> Result<()> {
         transaction_event_cold_retention_days = retention_config.cold_days,
         transaction_event_retention_batch_size = retention_config.delete_batch_size,
         transaction_event_retention_max_batches = retention_config.max_batches,
+        transaction_event_retention_statement_timeout_ms = retention_config.statement_timeout_ms,
         transaction_event_retention_interval_secs = retention_interval.as_secs(),
         rpc_cache_capacity = args.rpc_cache_capacity,
         rpc_cache_ttl_secs = args.rpc_cache_ttl_secs,
