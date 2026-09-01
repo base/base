@@ -1998,10 +1998,7 @@ fn gas_unprivileged_revert(
         .route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
     })
     .expect_err("reject-path gas golden must revert");
-    assert_eq!(
-        err,
-        BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
-    );
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO }));
     (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
 }
 
