@@ -3472,12 +3472,28 @@ dependencies = [
 name = "base-challenger-e2e"
 version = "0.0.0"
 dependencies = [
+ "alloy-node-bindings",
  "alloy-primitives",
+ "alloy-provider",
+ "alloy-signer-local 2.4.1",
+ "base-proof-contracts",
  "clap",
  "eyre",
  "humantime",
  "reqwest 0.13.4",
+ "tokio",
+ "tracing",
  "url",
+]
+
+[[package]]
+name = "base-challenger-e2e-bin"
+version = "0.0.0"
+dependencies = [
+ "base-challenger-e2e",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

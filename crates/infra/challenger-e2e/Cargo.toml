@@ -14,7 +14,13 @@ workspace = true
 [dependencies]
 eyre.workspace = true
 url.workspace = true
+tracing.workspace = true
 reqwest.workspace = true
 humantime.workspace = true
+alloy-provider.workspace = true
 alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
+alloy-node-bindings.workspace = true
+base-proof-contracts.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["time"] }
