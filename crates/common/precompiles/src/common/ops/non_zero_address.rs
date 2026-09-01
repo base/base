@@ -17,11 +17,7 @@ pub struct NonZeroAddress(Address);
 impl NonZeroAddress {
     /// Returns a non-zero address, or [`ZeroAddressError`] if `address` is zero.
     pub fn new(address: Address) -> Result<Self, ZeroAddressError> {
-        if address == Address::ZERO {
-            Err(ZeroAddressError)
-        } else {
-            Ok(Self(address))
-        }
+        if address == Address::ZERO { Err(ZeroAddressError) } else { Ok(Self(address)) }
     }
 
     /// Returns the wrapped address.
