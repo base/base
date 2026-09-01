@@ -47,6 +47,11 @@ pub use l1_watcher::{
 mod upgrade_signal;
 pub use upgrade_signal::{UpgradeSignalMetricsActor, UpgradeSignalNodeConfig};
 
+mod telemetry;
+pub use telemetry::{
+    P2P_QUERY_TIMEOUT, TelemetryActor, TelemetryNodeConfig, TelemetryNodeFacts, TelemetrySources,
+};
+
 mod network;
 #[cfg(test)]
 pub use network::MockUnsafePayloadGossipClient;

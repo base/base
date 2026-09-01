@@ -105,6 +105,159 @@ macro_rules! define_metrics_args {
     };
 }
 
+/// Generates a `TelemetryArgs` struct with node telemetry configuration,
+/// parameterized by env var prefix at compile time.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// base_cli_utils::define_telemetry_args!("BASE_NODE");
+/// ```
+///
+/// Telemetry is opt-*out*: `enabled` defaults to `true` and is switched off with
+/// `--telemetry.enabled=false`. Reporting is nevertheless inert until an endpoint is configured,
+/// so a build with no `--telemetry.endpoint` sends nothing and mints no identity.
+///
+/// Each env-backed field appends `_TELEMETRY_ENABLED`, `_TELEMETRY_ENDPOINT`,
+/// `_TELEMETRY_INSTANCE_ID`, `_TELEMETRY_ID_PATH`, `_TELEMETRY_DATA_DIR`,
+/// `_TELEMETRY_REPORT_INTERVAL`, or `_TELEMETRY_SAMPLE_INTERVAL` to the given prefix.
+///
+/// Also generates `impl Default for TelemetryArgs` and
+/// `TelemetryArgs::config(&self, l2_chain_id)`, which resolves the identity path for the chain
+/// when `--telemetry.id-path` is not set.
+#[rustfmt::skip]
+#[macro_export]
+macro_rules! define_telemetry_args {
+    ($prefix:literal) => {
+        /// Configuration for node telemetry reporting.
+        ///
+        /// Telemetry is opt-out. Switch it off with `--telemetry.enabled=false`.
+        #[derive(Debug, Clone, ::clap::Parser)]
+        #[command(next_help_heading = "Telemetry")]
+        pub struct TelemetryArgs {
+            /// Controls whether this node reports telemetry. Enabled by default; reporting still
+            /// requires an endpoint.
+            #[arg(
+                id = "telemetry_enabled",
+                long = "telemetry.enabled",
+                global = true,
+                default_value_t = true,
+                action = ::clap::ArgAction::Set,
+                env = concat!($prefix, "_TELEMETRY_ENABLED")
+            )]
+            pub enabled: bool,
+
+            /// Where to send telemetry reports. Nothing is sent while this is unset.
+            #[arg(
+                id = "telemetry_endpoint",
+                long = "telemetry.endpoint",
+                global = true,
+                env = concat!($prefix, "_TELEMETRY_ENDPOINT")
+            )]
+            pub endpoint: Option<::url::Url>,
+
+            /// Operator-chosen tag for this node, used to identify a node across restarts.
+            #[arg(
+                id = "telemetry_instance_id",
+                long = "telemetry.instance-id",
+                global = true,
+                env = concat!($prefix, "_TELEMETRY_INSTANCE_ID")
+            )]
+            pub instance_id: Option<String>,
+
+            /// Where the persisted telemetry identity lives.
+            ///
+            /// Defaults to `$HOME/.base/<l2_chain_id>/telemetry-id`. Set this when `$HOME` is
+            /// unset, as it is for most containers: with neither, there is nowhere durable to
+            /// keep an identity and the node reports nothing.
+            #[arg(
+                id = "telemetry_id_path",
+                long = "telemetry.id-path",
+                global = true,
+                env = concat!($prefix, "_TELEMETRY_ID_PATH")
+            )]
+            pub id_path: Option<::std::path::PathBuf>,
+
+            /// Directory whose filesystem the reported disk fields describe.
+            ///
+            /// Defaults to the directory holding the node's own on-disk state. Set this when
+            /// chain data lives on a volume the node does not otherwise name, or the disk
+            /// fields describe the wrong device.
+            #[arg(
+                id = "telemetry_data_dir",
+                long = "telemetry.data-dir",
+                global = true,
+                env = concat!($prefix, "_TELEMETRY_DATA_DIR")
+            )]
+            pub data_dir: Option<::std::path::PathBuf>,
+
+            /// How often to send a report, in seconds.
+            #[arg(
+                id = "telemetry_report_interval",
+                long = "telemetry.report-interval",
+                global = true,
+                default_value = "900",
+                env = concat!($prefix, "_TELEMETRY_REPORT_INTERVAL")
+            )]
+            pub report_interval: u64,
+
+            /// How often to sample head lag between reports, in seconds.
+            #[arg(
+                id = "telemetry_sample_interval",
+                long = "telemetry.sample-interval",
+                global = true,
+                default_value = "60",
+                env = concat!($prefix, "_TELEMETRY_SAMPLE_INTERVAL")
+            )]
+            pub sample_interval: u64,
+        }
+
+        impl Default for TelemetryArgs {
+            fn default() -> Self {
+                Self {
+                    enabled: true,
+                    endpoint: None,
+                    instance_id: None,
+                    id_path: None,
+                    data_dir: None,
+                    report_interval: 900,
+                    sample_interval: 60,
+                }
+            }
+        }
+
+        impl TelemetryArgs {
+            /// Resolves these arguments into a telemetry client configuration.
+            ///
+            /// `l2_chain_id` only decides where the identity is persisted, and only when
+            /// `--telemetry.id-path` is not set.
+            ///
+            /// The identity path resolves to `None` when neither the flag nor `$HOME` names a
+            /// location. That is the whole answer: the node warns and reports nothing, rather
+            /// than writing an identity to a working directory it may not have next restart.
+            pub fn config(&self, l2_chain_id: u64) -> $crate::TelemetryConfig {
+                // An empty value counts as unset. A declared-but-empty
+                // `<PREFIX>_TELEMETRY_ID_PATH` is how a container manifest routinely spells "not
+                // configured", and clap hands that through as an empty path rather than `None`.
+                let id_path = self
+                    .id_path
+                    .clone()
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .or_else(|| $crate::TelemetryConfig::default_id_path(l2_chain_id));
+                $crate::TelemetryConfig {
+                    enabled: self.enabled,
+                    endpoint: self.endpoint.clone(),
+                    instance_id: self.instance_id.clone(),
+                    data_dir: self.data_dir.clone(),
+                    report_interval: ::std::time::Duration::from_secs(self.report_interval),
+                    sample_interval: ::std::time::Duration::from_secs(self.sample_interval),
+                    ..$crate::TelemetryConfig::disabled(id_path)
+                }
+            }
+        }
+    };
+}
+
 /// Generates a `LogArgs` struct with logging configuration,
 /// parameterized by env var prefix at compile time.
 ///

@@ -7,4 +7,5 @@ mod reth;
 mod rpc;
 mod sequencer;
 mod snapshot;
+mod telemetry;
 mod update;

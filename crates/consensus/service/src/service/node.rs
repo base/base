@@ -1,7 +1,7 @@
 //! Contains the [`RollupNode`] implementation.
 use std::{
     ops::Not as _,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicU64},
     time::Duration,
 };
@@ -22,6 +22,7 @@ use base_consensus_providers::{
 use base_consensus_rpc::{BaseRpc, RpcBuilder};
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
+use base_telemetry_types::NodeRole;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -35,8 +36,8 @@ use crate::{
     QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
-    ValidatorEngineRequestHandler,
+    SequencerConfig, SequencerEngineRequestCoordinator, TelemetryNodeConfig, TelemetryNodeFacts,
+    TelemetrySources, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -145,6 +146,10 @@ pub struct RollupNode {
     pub safedb_path: Option<PathBuf>,
     /// Optional upgrade signal configuration for the consensus node.
     pub upgrade_signal_config: Option<UpgradeSignalNodeConfig>,
+    /// Optional telemetry configuration for the consensus node.
+    ///
+    /// `None`, or a configuration with no endpoint, means the node reports nothing.
+    pub telemetry_config: Option<TelemetryNodeConfig>,
 }
 
 /// A RollupNode-level derivation actor wrapper.
@@ -188,6 +193,25 @@ impl RollupNode {
     /// The mode of operation for the node.
     const fn mode(&self) -> NodeMode {
         self.engine_config.mode
+    }
+
+    /// Returns the telemetry facts this node derives for itself.
+    ///
+    /// The measured directory is whatever `--telemetry.data-dir` names, and otherwise the one
+    /// holding the checkpoint database. The fallback is the best guess this node can make on its
+    /// own, but it is only a guess: an operator who keeps chain data on a separate volume has to
+    /// say so, or the disk fields describe the wrong device.
+    fn telemetry_facts(&self, mode: NodeMode) -> TelemetryNodeFacts {
+        TelemetryNodeFacts {
+            l2_chain_id: self.config.l2_chain_id.into(),
+            role: if mode.is_sequencer() { NodeRole::Sequencer } else { NodeRole::Validator },
+            data_dir: self
+                .telemetry_config
+                .as_ref()
+                .and_then(|config| config.client.data_dir.clone())
+                .or_else(|| self.checkpoint_path.parent().map(Path::to_path_buf)),
+            peer_target: Some(self.p2p_config.connection_limits_config.max_established),
+        }
     }
 
     /// Creates a network builder for the node.
@@ -575,6 +599,16 @@ impl RollupNode {
             .as_ref()
             .map(|c| c.metrics_actor(upgrade_signal_refresher.clone(), cancellation.clone()));
         let node_mode = self.mode();
+        let telemetry_actor = self.telemetry_config.as_ref().and_then(|config| {
+            config.actor(
+                self.telemetry_facts(node_mode),
+                TelemetrySources {
+                    engine_state: sequencer_engine_state_rx.clone(),
+                    p2p_rpc: network_rpc.clone(),
+                    cancellation: cancellation.clone(),
+                },
+            )
+        });
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
             let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(
@@ -670,6 +704,7 @@ impl RollupNode {
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
                 upgrade_signal_metrics_actor.map(|actor| (actor, ())),
+                telemetry_actor.map(|actor| (actor, ())),
                 Some((derivation, ())),
                 Some((checkpoint_actor, cancellation.clone())),
                 Some((engine_actor, ())),

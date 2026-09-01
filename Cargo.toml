@@ -153,6 +153,8 @@ base-common-chains = { path = "crates/common/chains" }
 base-common-network = { path = "crates/common/network" }
 base-common-rpc-types = { path = "crates/common/rpc-types" }
 base-common-flashblocks = { path = "crates/common/flashblocks" }
+base-telemetry-types = { path = "crates/common/telemetry-types" }
+base-telemetry-client = { path = "crates/common/telemetry-client" }
 base-precompile-macros = { path = "crates/common/precompile-macros" }
 base-common-evm = { path = "crates/common/evm", default-features = false }
 base-common-evm2 = { path = "crates/common/evm2", default-features = false }

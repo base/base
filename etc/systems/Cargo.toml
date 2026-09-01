@@ -31,6 +31,12 @@ base-protocol = { workspace = true, features = ["serde", "std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-builder-core = { workspace = true, features = ["test-utils"] }
 
+# telemetry
+base-trusted-proxy.workspace = true
+base-telemetry-types.workspace = true
+base-telemetry-client.workspace = true
+base-telemetry-service.workspace = true
+
 # consensus
 base-consensus-disc.workspace = true
 base-consensus-node.workspace = true
