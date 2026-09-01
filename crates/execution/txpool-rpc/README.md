@@ -10,11 +10,12 @@ transaction pool.
 Exposes JSON-RPC APIs for transaction pool administration and transaction lifecycle tracking.
 `AdminTxPoolApiImpl` provides admin-level pool management, while `TransactionStatusApiImpl`
 allows clients to query the current status of individual transactions by hash. The separate
-`SendRawTransactionValidityExtension` registers local mempool ingress through
-`base_sendRawTransactionValidity`; typed validity predicates are preserved while forwarding to
-builders. This endpoint is experimental, but predicates are now evaluated and enforced by the
-builder during block construction: a transaction is only included at a point where all of its
-predicates hold, and it is evicted once it can no longer be included.
+`SendRawTransactionValidityExtension` registers local ingress through
+`base_sendRawTransactionValidity` on both mempool/client nodes and builder nodes. Typed
+validity predicates are preserved in the pool (and while forwarding to builders). This endpoint
+is experimental, but predicates are evaluated and enforced by the builder during block
+construction: a transaction is only included at a point where all of its predicates hold, and
+it is evicted once it can no longer be included.
 
 ## Usage
 

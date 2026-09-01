@@ -1,7 +1,8 @@
 //! System tests for the transaction forwarding pipeline.
 //!
 //! These tests verify that transactions can be forwarded from mempool nodes
-//! to builder nodes via the `base_insertValidatedTransaction` RPC endpoint.
+//! to builder nodes via the `base_insertValidatedTransaction` RPC endpoint, and
+//! that validity transactions can also be submitted directly to the builder.
 
 use std::time::Duration;
 
@@ -378,6 +379,53 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
     );
 
     system.shutdown().await?;
+
+    Ok(())
+}
+
+/// Verifies a validity transaction submitted directly to the builder is included without an
+/// extra mempool-node hop.
+#[tokio::test]
+async fn test_validity_transaction_submitted_directly_to_builder_is_included() -> Result<()> {
+    let system = start_validity_system().await?;
+    let builder_provider = system.l2_builder_provider()?;
+
+    let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_3.private_key)?;
+    let sender = signer.address();
+    builder_provider.wait_for_balance(sender, Duration::from_secs(15)).await?;
+
+    let nonce = builder_provider.get_transaction_count(sender).await?;
+    let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
+    let recipient_balance_before = builder_provider.get_balance(recipient).await?;
+    let (_, raw_tx, expected_tx_hash) =
+        create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+    let rpc_client = RpcClient::builder().http(system.l2_rpc_url()?);
+    let tx_hash: B256 = rpc_client
+        .request(
+            "base_sendRawTransactionValidity",
+            (SendRawTransactionValidityRequest {
+                tx: raw_tx,
+                validity: vec![ValidityPredicate::Balance {
+                    address: sender,
+                    op: ValidityOperator::GreaterThan,
+                    value: U256::ZERO,
+                }],
+            },),
+        )
+        .await?;
+
+    assert_eq!(tx_hash, expected_tx_hash, "Transaction hash mismatch");
+
+    let receipt = builder_provider.wait_for_receipt(expected_tx_hash, TX_RECEIPT_TIMEOUT).await?;
+    assert_eq!(receipt.inner.transaction_hash, expected_tx_hash);
+    assert!(receipt.inner.block_number.is_some(), "Receipt should have block number");
+    assert_eq!(receipt.inner.from, sender);
+    assert_eq!(receipt.inner.to, Some(recipient));
+    assert_eq!(
+        builder_provider.get_balance(recipient).await?,
+        recipient_balance_before + U256::from(1_000_000_000u64),
+        "direct builder ingress must not alter the signed transaction's state transition"
+    );
 
     Ok(())
 }

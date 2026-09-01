@@ -90,7 +90,8 @@ deployment must schedule Cobalt no later than Denim and configure both sides of
 the forwarding path:
 
 - builder: `--builder.enable-experimental-validity-transactions` and
-  `--builder.payload-builder-cutover`
+  `--builder.payload-builder-cutover`. The builder flag also registers
+  `base_sendRawTransactionValidity` for direct ingress.
 - ingress/client: `--enable-experimental-validity-transactions` and a
   `--builder-rpc-urls` endpoint targeting the builder
 

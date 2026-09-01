@@ -3237,6 +3237,7 @@ dependencies = [
  "base-node-runner",
  "base-observability-events",
  "base-test-utils",
+ "base-txpool-rpc",
  "chrono",
  "clap",
  "clap_builder",
