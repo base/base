@@ -1,5 +1,7 @@
 //! System tests for the activation registry precompile over Base node RPC.
 
+#[path = "common/balance.rs"]
+mod balance;
 #[path = "common/beryl.rs"]
 mod beryl;
 #[path = "common/cobalt.rs"]

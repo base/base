@@ -188,6 +188,7 @@ impl InProcessClient {
             };
         rpc_args.auth_ipc_path = unique_ipc_path;
         rpc_args.auth_jwtsecret = Some(jwt_path);
+        rpc_args.rpc_eth_proof_window = 1_209_600;
         if let Some(port) = config.http_port {
             rpc_args.http_port = port;
         }

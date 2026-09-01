@@ -42,6 +42,15 @@ filter = 'package(base-builder-core) & (binary(data_availability) | binary(flash
 test-group = 'builder-integration'
 retries = 1
 
+# First matching override wins per setting. Must sit above
+# package(base-system-tests) or that 6-minute kill still applies.
+# The test waits up to 15 minutes for local SP1 execute, plus stack setup.
+# Debug-profile SP1 execute does not finish in that window; run with --release.
+[[profile.default.overrides]]
+filter = 'binary(eip8130)'
+retries = 0
+slow-timeout = { period = "5m", terminate-after = 5 }
+
 [[profile.default.overrides]]
 filter = 'package(base-system-tests)'
 test-group = 'system-tests'

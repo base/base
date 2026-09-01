@@ -6,6 +6,8 @@
 //!     slot via `updatePolicy`.
 //!   - Exercises the full transfer-gate cycle: blocked → allowed (or vice versa).
 
+#[path = "common/balance.rs"]
+mod balance;
 #[path = "common/beryl.rs"]
 mod beryl;
 mod common;

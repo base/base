@@ -86,6 +86,8 @@ pub struct L2StackConfig {
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
+    /// When set, the in-process batcher posts short-lived calldata channels instead of blobs.
+    pub force_batch_submission: bool,
     /// Consensus mode for the L2 client node.
     pub client_consensus_mode: L2ClientConsensusMode,
     /// Optional L1 upgrade signal configuration shared by both consensus nodes.
@@ -273,7 +275,7 @@ impl L2Stack {
                     l2_rpc_url: builder.rpc_url()?,
                     rollup_rpc_url: builder_consensus.rpc_url(),
                     batcher_key: config.batcher_key,
-                    force_batch_submission: false,
+                    force_batch_submission: config.force_batch_submission,
                 })
                 .await
                 .wrap_err("Failed to start in-process batcher")?,

@@ -772,14 +772,18 @@ impl OPSuccinctDataFetcher {
         // Get L2 output data.
         let l2_output_block = l2_provider
             .get_block_by_number(l2_start_block.into())
-            .await?
+            .await
+            .with_context(|| format!("fetch L2 start block {l2_start_block}"))?
             .ok_or_else(|| anyhow::anyhow!("Block not found for block number {l2_start_block}"))?;
         let l2_output_state_root = l2_output_block.header.state_root;
         let agreed_l2_head_hash = l2_output_block.header.hash;
         let l2_output_storage_hash = l2_provider
             .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
             .block_id(l2_start_block.into())
-            .await?
+            .await
+            .with_context(|| {
+                format!("eth_getProof L2ToL1MessagePasser at L2 block {l2_start_block}")
+            })?
             .storage_hash;
 
         let l2_output_encoded = L2Output {
@@ -791,13 +795,20 @@ impl OPSuccinctDataFetcher {
         let agreed_l2_output_root = keccak256(l2_output_encoded.abi_encode());
 
         // Get L2 claim data.
-        let l2_claim_block = l2_provider.get_block_by_number(l2_end_block.into()).await?.unwrap();
+        let l2_claim_block = l2_provider
+            .get_block_by_number(l2_end_block.into())
+            .await
+            .with_context(|| format!("fetch L2 end block {l2_end_block}"))?
+            .ok_or_else(|| anyhow::anyhow!("Block not found for block number {l2_end_block}"))?;
         let l2_claim_state_root = l2_claim_block.header.state_root;
         let l2_claim_hash = l2_claim_block.header.hash;
         let l2_claim_storage_hash = l2_provider
             .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
             .block_id(l2_end_block.into())
-            .await?
+            .await
+            .with_context(|| {
+                format!("eth_getProof L2ToL1MessagePasser at L2 block {l2_end_block}")
+            })?
             .storage_hash;
 
         let l2_claim_encoded = L2Output {
@@ -817,8 +828,10 @@ impl OPSuccinctDataFetcher {
 
         // Load L1 config from file or registry.
         let l1_config = if let Some(ref l1_config_path) = self.l1_config_path {
-            let file = fs::File::open(l1_config_path)?;
-            serde_json::from_reader(file)?
+            let file = fs::File::open(l1_config_path)
+                .with_context(|| format!("open L1 config {}", l1_config_path.display()))?;
+            serde_json::from_reader(file)
+                .with_context(|| format!("deserialize L1 config {}", l1_config_path.display()))?
         } else {
             base_common_chains::L1_CONFIGS
                 .get(&rollup_config.l1_chain_id)
@@ -828,7 +841,11 @@ impl OPSuccinctDataFetcher {
                 .clone()
         };
 
-        let l1_head_number = self.get_l1_header(l1_head_hash.into()).await?.number;
+        let l1_head_number = self
+            .get_l1_header(l1_head_hash.into())
+            .await
+            .with_context(|| format!("fetch L1 header {l1_head_hash}"))?
+            .number;
 
         let request = base_proof_primitives::ProofRequest {
             l1_head: l1_head_hash,

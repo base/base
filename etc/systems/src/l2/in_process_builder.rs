@@ -158,7 +158,6 @@ impl InProcessBuilder {
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
         let rollup_args = RollupArgs::default();
-
         let base_node = BaseNode::new(rollup_args.clone());
 
         let addons: base_node_runner::BaseAddOns<
@@ -380,6 +379,8 @@ fn create_node_config(
     rpc.http_addr = Ipv4Addr::LOCALHOST.into();
     rpc.ws_addr = Ipv4Addr::LOCALHOST.into();
     rpc.auth_jwtsecret = Some(jwt_path.to_path_buf());
+    // Match docker-compose `--rpc.eth-proof-window=1209600` (reth default is 0).
+    rpc.rpc_eth_proof_window = 1_209_600;
 
     if let Some(port) = config.http_port {
         rpc.http_port = port;
