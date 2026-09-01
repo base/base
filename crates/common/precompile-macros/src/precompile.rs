@@ -58,6 +58,18 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
     });
     let precompile_doc = format!("Creates the EVM precompile wrapper for `{ident}`.");
     let arg_names = args.iter().map(|arg| &arg.ident);
+    let macro_invocation = match config.storage_features {
+        Some(storage_features) => quote! {
+            #macro_path!(#id, storage_features: #storage_features, |ctx, calldata| {
+                <#storage>::new(ctx).dispatch(ctx, &calldata #(, #arg_names)*)
+            })
+        },
+        None => quote! {
+            #macro_path!(#id, |ctx, calldata| {
+                <#storage>::new(ctx).dispatch(ctx, &calldata #(, #arg_names)*)
+            })
+        },
+    };
 
     Ok(quote! {
         #input
@@ -67,9 +79,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
 
             #[doc = #precompile_doc]
             pub fn precompile(#(#arg_defs),*) -> ::alloy_evm::precompiles::DynPrecompile {
-                #macro_path!(#id, |ctx, calldata| {
-                    <#storage>::new(ctx).dispatch(ctx, &calldata #(, #arg_names)*)
-                })
+                #macro_invocation
             }
         }
     })
@@ -81,6 +91,7 @@ struct PrecompileConfig {
     macro_path: Option<Path>,
     args: Vec<PrecompileArg>,
     install: bool,
+    storage_features: Option<Expr>,
 }
 
 impl Parse for PrecompileConfig {
@@ -91,6 +102,7 @@ impl Parse for PrecompileConfig {
         let mut args = Vec::new();
         let mut args_seen = false;
         let mut install = false;
+        let mut storage_features = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -134,10 +146,15 @@ impl Parse for PrecompileConfig {
                     }
                     install = true;
                 }
+                "storage_features" => {
+                    reject_duplicate(&storage_features, &key)?;
+                    input.parse::<Token![=]>()?;
+                    storage_features = Some(input.parse()?);
+                }
                 _ => {
                     return Err(syn::Error::new_spanned(
                         key,
-                        "expected `id`, `storage`, `macro_path`, `args`, or `install`",
+                        "expected `id`, `storage`, `macro_path`, `args`, `install`, or `storage_features`",
                     ));
                 }
             }
@@ -147,7 +164,7 @@ impl Parse for PrecompileConfig {
             }
         }
 
-        Ok(Self { id, storage, macro_path, args, install })
+        Ok(Self { id, storage, macro_path, args, install, storage_features })
     }
 }
 
@@ -215,7 +232,7 @@ mod tests {
 
         assert!(
             err.to_string()
-                .contains("expected `id`, `storage`, `macro_path`, `args`, or `install`")
+                .contains("expected `id`, `storage`, `macro_path`, `args`, `install`, or `storage_features`")
         );
     }
 
@@ -225,7 +242,7 @@ mod tests {
 
         assert!(
             err.to_string()
-                .contains("expected `id`, `storage`, `macro_path`, `args`, or `install`")
+                .contains("expected `id`, `storage`, `macro_path`, `args`, `install`, or `storage_features`")
         );
     }
 
@@ -288,6 +305,62 @@ mod tests {
         let err = parse_config(quote! { args(), args(x: u8) }).err().unwrap();
 
         assert!(err.to_string().contains("duplicate `args` option"));
+    }
+
+    #[test]
+    fn config_accepts_storage_features() {
+        let config = parse_config(quote! {
+            install,
+            storage_features = ::base_precompile_storage::StorageFeatures::Cobalt,
+        })
+        .unwrap();
+
+        assert!(config.install);
+        assert!(config.storage_features.is_some());
+    }
+
+    #[test]
+    fn config_rejects_duplicate_storage_features() {
+        let err = parse_config(quote! {
+            storage_features = A,
+            storage_features = B,
+        })
+        .err()
+        .unwrap();
+
+        assert!(err.to_string().contains("duplicate `storage_features` option"));
+    }
+
+    #[test]
+    fn storage_features_arg_threads_through_expansion() {
+        let tokens = expand_impl(
+            quote! {
+                install,
+                storage_features = ::base_precompile_storage::StorageFeatures::Cobalt,
+            },
+            quote! {
+                pub struct Example;
+            },
+        )
+        .unwrap()
+        .to_string();
+
+        assert!(tokens.contains("storage_features"), "got: {tokens}");
+        assert!(tokens.contains("Cobalt"), "got: {tokens}");
+    }
+
+    #[test]
+    fn without_storage_features_arg_expansion_omits_it() {
+        let tokens = expand_impl(
+            quote! { install },
+            quote! {
+                pub struct Example;
+            },
+        )
+        .unwrap()
+        .to_string();
+
+        assert!(!tokens.contains("storage_features"), "got: {tokens}");
     }
 
     #[test]

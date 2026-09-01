@@ -14,6 +14,14 @@ impl UpgradeGatedStorageFeatures {
             StorageFeatures::Legacy
         }
     }
+
+    /// Returns the persistent-storage features for a wrapper that must run at
+    /// `min` or later. Resolves to `from_upgrade(max(BaseUpgrade::LATEST, min))`
+    /// so an install site that is gated at `min` never underruns its own gate,
+    /// but still rides `LATEST` once it advances past `min`.
+    pub fn at_least(min: BaseUpgrade) -> StorageFeatures {
+        Self::from_upgrade(core::cmp::max(BaseUpgrade::LATEST, min))
+    }
 }
 
 /// A chain spec that can select Base precompile sets.
@@ -44,6 +52,25 @@ mod tests {
         assert_eq!(
             UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
             StorageFeatures::Cobalt,
+        );
+    }
+
+    #[test]
+    fn at_least_honors_floor_when_latest_is_behind() {
+        // LATEST is currently pre-Cobalt; a wrapper gated at Cobalt must still get Cobalt features.
+        assert!(BaseUpgrade::LATEST < BaseUpgrade::Cobalt);
+        assert_eq!(
+            UpgradeGatedStorageFeatures::at_least(BaseUpgrade::Cobalt),
+            StorageFeatures::Cobalt,
+        );
+    }
+
+    #[test]
+    fn at_least_rides_latest_when_latest_meets_floor() {
+        // A wrapper with a pre-Cobalt floor tracks whatever LATEST already provides.
+        assert_eq!(
+            UpgradeGatedStorageFeatures::at_least(BaseUpgrade::Beryl),
+            UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::LATEST),
         );
     }
 }
