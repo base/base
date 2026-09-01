@@ -1519,20 +1519,24 @@ where
             TxAuthError::Authorize(AuthorizeError::Storage(_)) => {
                 "account configuration read failed"
             }
-            TxAuthError::Authorize(AuthorizeError::ZeroActor) => "actor id is zero",
-            TxAuthError::Authorize(AuthorizeError::NotBound { .. }) => "actor is not bound",
+            TxAuthError::Authorize(AuthorizeError::AuthenticationFailed) => "actor id is zero",
+            TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch { .. }) => {
+                "actor is not bound"
+            }
             TxAuthError::Authorize(AuthorizeError::DefaultEoaRevoked { .. }) => {
                 "default EOA actor is revoked"
             }
-            TxAuthError::Authorize(AuthorizeError::Expired { .. }) => "actor credential expired",
+            TxAuthError::Authorize(AuthorizeError::ActorExpired { .. }) => {
+                "actor credential expired"
+            }
             TxAuthError::Authorize(AuthorizeError::NestedSignatureScope { .. }) => {
                 "delegate nested actor lacks SIGNATURE scope"
             }
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
             TxAuthError::Scope { .. } => "actor scope insufficient",
-            TxAuthError::AccountLocked => "account is locked",
+            TxAuthError::AccountIsLocked => "account is locked",
             TxAuthError::DelegationUnauthorized => "delegation requires admin actor",
-            TxAuthError::ConfigSequence { .. } => "config change sequence mismatch",
+            TxAuthError::BadSequence { .. } => "config change sequence mismatch",
             TxAuthError::StaleEpoch { .. } => "config change local epoch is stale",
             TxAuthError::SequenceSaturated => "config change channel sequence is saturated",
             TxAuthError::Apply(apply) => Self::map_apply_error(apply),
@@ -1553,15 +1557,14 @@ where
             ApplyError::MalformedRevokeData => "actor change revoke data is malformed",
             ApplyError::InvalidChangePayload => "account-change op payload must be empty",
             ApplyError::EpochSaturated => "local epoch is saturated",
-            ApplyError::UnsupportedChangeType => "unsupported account-change op",
+            ApplyError::UnknownChangeType => "unknown account-change op",
             ApplyError::AccountIsLocked => "account is locked",
             ApplyError::ExpiryDoesNotOutliveUnlock => {
                 "authorize expiry does not outlive the unlock floor"
             }
             ApplyError::InvalidActorId => "actor id bytes32(0) is reserved",
             ApplyError::InvalidAuthenticator => "actor authenticator is not canonical",
-            ApplyError::MalformedPolicyData => "actor policy data is malformed",
-            ApplyError::NotAnActor { .. } => "revoked actor is not authorized",
+            ApplyError::InvalidPolicyData => "actor policy data is malformed",
             ApplyError::NoInitialActors => "create entry has no initial actors",
             ApplyError::ActorsNotSortedOrDuplicate => {
                 "create initial actors are not strictly ascending"
@@ -1570,13 +1573,13 @@ where
             ApplyError::BytecodeTooLarge => "create bytecode exceeds the size limit",
             ApplyError::CreateCodeExceedsMaxSize => "create bytecode exceeds MAX_CODE_SIZE",
             ApplyError::CreateCodeStartsWithEf => "create bytecode begins with 0xEF",
-            ApplyError::AlreadyCreated { .. } => "create account already exists",
+            ApplyError::AlreadyInitialized { .. } => "create account already exists",
             ApplyError::CreateAddressMismatch { .. } => "create address does not match the sender",
             ApplyError::InvalidCreatePosition => "create entry must be the only one, at index 0",
             ApplyError::MultipleDelegations => "at most one delegation is allowed",
             ApplyError::CreateAndDelegation => "create and delegation may not coexist",
             ApplyError::NonDelegatableCode { .. } => "delegation sender has non-delegation code",
-            ApplyError::SequenceOverflow => "config change sequence overflow",
+            ApplyError::SequenceSaturated => "config change sequence is saturated",
             ApplyError::EmptyChangeSet => "signed account-change batch is empty",
         }
     }
@@ -3608,7 +3611,7 @@ mod tests {
     /// freshly-created account's evolving state (the create installs an
     /// unrestricted owner; the config change then advances the multichain
     /// channel from sequence 0). If the overlay did not persist the create's
-    /// storage transitions, the config change would fail with `NotBound`.
+    /// storage transitions, the config change would fail with `AuthenticatorMismatch`.
     #[test]
     fn admits_eip8130_create_then_config_change_via_overlay() {
         let signer = PrivateKeySigner::random();

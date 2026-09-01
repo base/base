@@ -447,7 +447,7 @@ mod tests {
             // that is not bound on the payer account.
             assert!(matches!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
-                Err(TxAuthError::Authorize(AuthorizeError::NotBound { .. })),
+                Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch { .. })),
             ));
         });
     }
@@ -515,7 +515,7 @@ mod tests {
             // No actor seeded: the sender actor is not bound on the account.
             assert!(matches!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
-                Err(TxAuthError::Authorize(AuthorizeError::NotBound { .. })),
+                Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch { .. })),
             ));
         });
     }

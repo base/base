@@ -19,9 +19,9 @@ use crate::{AccountConfigurationStorage, ActorAuthorizer, AuthorizeError, Resolv
 
 /// Precomputed `keccak256` typehash of the replay-safe signed-message struct,
 /// matching `Keystore.SIGNED_MESSAGE_TYPEHASH`:
-/// `keccak256("EIP8130SignedMessage(address account,uint256 chainId,bytes32 hash)")`.
+/// `keccak256("SignedMessageEnvelope(address account,uint256 chainId,bytes32 hash)")`.
 const SIGNED_MESSAGE_TYPEHASH: B256 =
-    b256!("9d2bc80c29f8a3962243919d898fa1b566a99dc64dd59734f6a10e20be3a7e04");
+    b256!("9bc1b3ab5fdd3e5a2f41b687d0f20e02a512f6f13da58a2f35b2bae1262a050c");
 
 /// The replay channel a typed signature envelope binds to. Mirrors
 /// `Keystore.SignatureType`: the leading envelope byte is `Local` (`0x01`,
@@ -75,7 +75,7 @@ pub enum SignatureError {
     /// The envelope was empty (missing its leading `sigType` byte). Mirrors
     /// `EmptySignatureEnvelope`.
     #[error("signature envelope is empty (missing its leading sigType byte)")]
-    EmptyEnvelope,
+    EmptySignatureEnvelope,
 
     /// The leading `sigType` byte is not a recognized [`SignatureType`] (it was
     /// `Invalid` or out of range). Mirrors `UnknownSignatureType`.
@@ -143,7 +143,8 @@ impl SignatureVerifier {
         local_chain_id: u64,
         now: u64,
     ) -> Result<ResolvedActor, SignatureError> {
-        let (&sig_type_byte, inner) = auth.split_first().ok_or(SignatureError::EmptyEnvelope)?;
+        let (&sig_type_byte, inner) =
+            auth.split_first().ok_or(SignatureError::EmptySignatureEnvelope)?;
         let sig_type = SignatureType::from_byte(sig_type_byte)
             .ok_or(SignatureError::UnknownSignatureType(sig_type_byte))?;
         let digest = Self::envelope_digest(sig_type, account, hash, local_chain_id);
@@ -170,7 +171,7 @@ mod tests {
     fn typehash_matches_string() {
         assert_eq!(
             SIGNED_MESSAGE_TYPEHASH,
-            keccak256(b"EIP8130SignedMessage(address account,uint256 chainId,bytes32 hash)")
+            keccak256(b"SignedMessageEnvelope(address account,uint256 chainId,bytes32 hash)")
         );
     }
 
@@ -239,7 +240,7 @@ mod tests {
         with_storage(|acc| {
             assert_eq!(
                 SignatureVerifier::validate_signature(acc, ACCOUNT, HASH, &[], CHAIN_ID, NOW),
-                Err(SignatureError::EmptyEnvelope),
+                Err(SignatureError::EmptySignatureEnvelope),
             );
         });
     }
@@ -306,10 +307,10 @@ mod tests {
         let auth = envelope(SignatureType::Local as u8, K1, &sig(&k, digest));
         with_storage(|acc| {
             acc.actor_config.at_mut(&id).at_mut(&ACCOUNT).write(pack(K1, 0, 0)).unwrap();
-            // Recovers a different actor id than the one bound: NotBound.
+            // Recovers a different actor id than the one bound: AuthenticatorMismatch.
             assert!(matches!(
                 SignatureVerifier::validate_signature(acc, ACCOUNT, HASH, &auth, CHAIN_ID + 1, NOW,),
-                Err(SignatureError::Authenticate(AuthorizeError::NotBound { .. })),
+                Err(SignatureError::Authenticate(AuthorizeError::AuthenticatorMismatch { .. })),
             ));
         });
     }

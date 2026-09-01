@@ -3173,7 +3173,7 @@ mod tests {
         // address must authorize and be *included* through the full
         // `Eip8130Executor::execute` pipeline — not just the unit-level
         // `authorize_and_apply`. Before the fix this returned
-        // `BaseTransactionError::Eip8130("...NotBound")` and was rejected at every
+        // `BaseTransactionError::Eip8130("...AuthenticatorMismatch")` and was rejected at every
         // flashblock. Non-empty runtime code mirrors the on-chain account.
         let key = signing_key(0xc1);
         let (derived, signed) = counterfactual_create_signed(&key, bytes!("00"), Vec::new());
