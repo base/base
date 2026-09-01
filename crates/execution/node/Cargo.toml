@@ -110,7 +110,6 @@ alloy-eips.workspace = true
 alloy-network.workspace = true
 criterion = { workspace = true, features = ["html_reports"] }
 base-common-evm.workspace = true
-base-common-network.workspace = true
 
 [[bench]]
 name = "provider"
