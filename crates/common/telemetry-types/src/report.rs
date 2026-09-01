@@ -241,6 +241,16 @@ pub struct NodeReportEvent {
     /// Equal to `reported_ip` whenever the node advertised nothing.
     pub observed_ip: IpAddr,
     /// The report as the node sent it.
+    ///
+    /// This flatten nests inside another: `NodeReport` itself flattens `ClientMeta`. Nested
+    /// flatten is a known cost — serde buffers each level into an intermediate map instead of
+    /// streaming, and a malformed field is reported against the outer type rather than the one
+    /// that owns it. Both are accepted deliberately. The wire shape is fixed: the ingest schema,
+    /// the Datadog dashboard, and the ingest tests all read these fields at the top level, so
+    /// removing a level of flatten would either change the JSON or replace it with hand-written
+    /// `Serialize`/`Deserialize` impls that restate every field. Buffering a payload the ingest
+    /// route caps at 16 `KiB` costs nothing measurable, and the error quality only degrades on
+    /// input that is already being rejected.
     #[serde(flatten)]
     pub report: NodeReport,
 }
@@ -398,6 +408,22 @@ mod tests {
         assert!(
             encoded.get("telemetry_id").is_some(),
             "report fields should sit next to server fields, not nested under report"
+        );
+    }
+
+    #[test]
+    fn test_event_round_trips_through_two_levels_of_flatten() {
+        let observed = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 4));
+        let event = NodeReportEvent::new(sample_report(), Utc::now(), observed);
+
+        let encoded = serde_json::to_string(&event).expect("event should serialize");
+        let decoded: NodeReportEvent =
+            serde_json::from_str(&encoded).expect("event should deserialize");
+
+        assert_eq!(
+            decoded, event,
+            "flattening the report into the event, and the client meta into the report, must \
+             still decode back to the same value"
         );
     }
 

@@ -36,6 +36,12 @@ pub trait ReportRecorder: fmt::Debug + Send + Sync + 'static {
 /// full disk cannot stall the ingest handler. Rotation is left to the operator's log rotation:
 /// the worker reopens nothing, so configure `copytruncate` or restart the service after a
 /// rotation.
+///
+/// Clones share one background worker. The worker is flushed and joined when the *last* clone
+/// drops, and nothing else flushes it, so a clone must outlive every request handler that can
+/// call [`ReportRecorder::record`] — the server holds one for the process lifetime. Shortening
+/// that lifetime silently truncates the tail of the file. A signal that skips destructors
+/// (`SIGKILL`) loses the queued lines by design: the alternative is blocking ingest on the disk.
 pub struct JsonlRecorder {
     inner: Arc<RecorderInner>,
 }
@@ -45,6 +51,10 @@ struct RecorderInner {
     errors: Option<ErrorCounter>,
     reported_drops: AtomicU64,
     path: Option<PathBuf>,
+    /// Flushes queued lines and joins the writer thread when the last [`JsonlRecorder`] drops.
+    ///
+    /// Held here rather than by the caller so that any live clone keeps the worker running: a
+    /// handler cannot observe a shut-down writer while it still holds a recorder.
     _guard: Option<WorkerGuard>,
 }
 
@@ -101,7 +111,10 @@ impl JsonlRecorder {
 
     /// Returns the number of reports the background writer has dropped.
     pub fn dropped(&self) -> u64 {
-        self.inner.errors.as_ref().map_or(0, |errors| errors.dropped_lines() as u64)
+        self.inner
+            .errors
+            .as_ref()
+            .map_or(0, |errors| u64::try_from(errors.dropped_lines()).unwrap_or(u64::MAX))
     }
 
     /// Returns the JSONL path, if one is configured.
@@ -206,6 +219,26 @@ mod tests {
         assert_eq!(decoded.ip_source, IpSource::ServerObserved);
         assert_eq!(decoded.reported_ip, IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)));
         assert_eq!(decoded.observed_ip, IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)));
+    }
+
+    #[test]
+    fn test_writer_survives_until_the_last_clone_drops() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node-reports.jsonl");
+        let recorder = JsonlRecorder::new(&path).unwrap();
+        let held = recorder.clone();
+
+        recorder.record(&event());
+        drop(recorder);
+        held.record(&event());
+        drop(held);
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            contents.lines().count(),
+            2,
+            "dropping one clone must not shut the writer down, and the last drop must flush"
+        );
     }
 
     #[test]

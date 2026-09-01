@@ -192,6 +192,13 @@ pub struct ConsensusNodeArgs {
 }
 
 impl ConsensusNodeArgs {
+    /// Reported name of the DA batcher sender override, mirroring the `long` name of
+    /// [`L1ClientArgs::l1_da_batcher_sender_override`](crate::L1ClientArgs).
+    ///
+    /// Only the name is ever reported: the value is an L1 address and belongs to the operator.
+    pub const DA_BATCHER_SENDER_OVERRIDE_FLAG: &'static str =
+        "l1.dangerously-override-da-batcher-sender";
+
     /// Creates reusable consensus node arguments from typed chain and node config components.
     pub const fn new(chain: ConsensusChainArgs, config: ConsensusNodeConfigArgs) -> Self {
         Self { chain, config }
@@ -207,16 +214,36 @@ impl ConsensusNodeArgs {
         client: TelemetryConfig,
         metrics_enabled: bool,
     ) -> TelemetryNodeConfig {
+        // Sorted by construction, as the wire contract requires. Names only, never values.
+        let mut experimental_flags = Vec::new();
+        if self.config.l1_rpc_args.l1_da_batcher_sender_override.is_some() {
+            experimental_flags.push(Self::DA_BATCHER_SENDER_OVERRIDE_FLAG.to_string());
+        }
+
         let node_config = NodeConfigReport {
             // A consensus node holds no chain history, so pruning is not a property it has.
             prune_mode: None,
+            // `RollupNodeBuilder` takes a `NetworkConfig` by value and `RollupNode::start` always
+            // spawns the network actor from it. No flag can turn the gossip stack off, so this is
+            // structurally true for every consensus node; only discovery is optional.
             p2p_enabled: true,
             discovery_enabled: !self.config.p2p_flags.no_discovery,
             sequencer_enabled: self.config.node_mode.is_sequencer(),
+            // Nothing in `ConsensusNodeConfigArgs` configures an interop supervisor, and the
+            // consensus service has no supervisor integration to enable. Read this from config
+            // once one exists.
             supervisor_enabled: false,
+            // Flashblocks are an execution-side concern: `--flashblocks-url` in
+            // `base-flashblocks-node` and `--flashblocks.port` in `base-builder-cli`. A consensus
+            // node neither produces nor consumes them.
             flashblocks_enabled: false,
             metrics_enabled,
-            experimental_flags: Vec::new(),
+            // The names of the non-default, protocol-affecting flags this node runs with, so a
+            // fleet view can tell which nodes are running something unusual. Names only: the DA
+            // batcher sender override carries an address, and reporting it would leak operator
+            // configuration. Anyone adding such a flag to `ConsensusNodeConfigArgs`, or to an
+            // argument group it flattens, pushes its name here when it is enabled.
+            experimental_flags,
             report_interval_secs: client.report_interval.as_secs(),
             sample_interval_secs: client.sample_interval.as_secs(),
         };
@@ -1028,5 +1055,59 @@ mod tests {
         assert_eq!(config.rpc_flags.listen_port, 9546);
         assert!(config.sequencer_flags.stopped);
         assert_eq!(config.sequencer_flags.conductor_rpc, Some(conductor_rpc));
+    }
+
+    #[rstest]
+    #[case::override_set(
+        Some(address!("2222222222222222222222222222222222222222")),
+        vec![ConsensusNodeArgs::DA_BATCHER_SENDER_OVERRIDE_FLAG.to_string()]
+    )]
+    #[case::override_unset(None, Vec::new())]
+    fn reports_da_batcher_sender_override_by_name(
+        #[case] da_batcher_sender_override: Option<Address>,
+        #[case] expected: Vec<String>,
+    ) {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                l1_rpc_args: L1ClientArgs {
+                    l1_da_batcher_sender_override: da_batcher_sender_override,
+                    ..L1ClientArgs::default()
+                },
+                ..default_node_config_args()
+            },
+        );
+
+        let report = args
+            .telemetry_node_config(
+                TelemetryConfig::disabled(PathBuf::from("/tmp/telemetry-id")),
+                false,
+            )
+            .node_config;
+
+        assert_eq!(report.experimental_flags, expected);
+    }
+
+    /// The reported name is a copy of the clap `long` name, so it can silently drift from the
+    /// flag it describes. Parsing the CLI with the reported name proves it has not.
+    #[test]
+    fn reported_da_batcher_flag_name_matches_the_cli_flag() {
+        let args = CommandParser::<ConsensusNodeConfigArgs>::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l2-engine-rpc",
+            "http://localhost:8551",
+            &format!("--{}", ConsensusNodeArgs::DA_BATCHER_SENDER_OVERRIDE_FLAG),
+            "0x2222222222222222222222222222222222222222",
+        ])
+        .args;
+
+        assert_eq!(
+            args.l1_rpc_args.l1_da_batcher_sender_override,
+            Some(address!("2222222222222222222222222222222222222222"))
+        );
     }
 }

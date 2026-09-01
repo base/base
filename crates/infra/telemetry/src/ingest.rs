@@ -92,6 +92,18 @@ pub struct IngestRoutes;
 
 impl IngestRoutes {
     /// Returns an ingest router writing to the supplied recorder.
+    ///
+    /// The handler needs the peer address to attribute a report, so it extracts
+    /// [`ConnectInfo`] of [`SocketAddr`]. The returned router must therefore be served through
+    /// `into_make_service_with_connect_info::<SocketAddr>()`:
+    ///
+    /// ```ignore
+    /// let router = IngestRoutes::router(recorder, proxy);
+    /// axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>()).await
+    /// ```
+    ///
+    /// Serving it as a plain `axum::serve(listener, router)` compiles and then fails the
+    /// extractor at runtime, answering every report with a 500.
     pub fn router(recorder: Arc<dyn ReportRecorder>, proxy: Arc<TrustedProxyConfig>) -> Router {
         Router::new()
             .route(NODE_REPORT_PATH, post(Self::ingest_node_report))

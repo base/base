@@ -1,7 +1,8 @@
 //! The persisted node identity.
 
 use std::{
-    fmt, fs, io,
+    fmt, fs,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
@@ -54,20 +55,25 @@ impl TelemetryId {
     ///
     /// A file that exists but does not hold a well-formed ID is replaced rather than treated as
     /// fatal. A truncated write from a crash should not stop a node from starting.
+    ///
+    /// Minting is atomic and racing callers converge, so the banner is logged by exactly the
+    /// process whose ID reached the disk. See [`Self::install`] for why that matters: the
+    /// telemetry ID is the fleet's primary key, and a lost race would count one operator twice.
+    ///
+    /// `path` is a location the caller has already resolved. Deciding there is nowhere durable to
+    /// keep an identity happens where the config is assembled, as
+    /// [`TelemetryConfig::id_path`](crate::TelemetryConfig::id_path) being `None`, so this
+    /// function never has to guess what an unusable path means.
     pub fn load_or_create(path: &Path) -> Result<Self, TelemetryIdError> {
         if let Some(existing) = Self::read(path) {
             return Ok(existing);
         }
 
-        let id = Self::generate();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|source| TelemetryIdError::CreateDir {
-                path: parent.to_path_buf(),
-                source,
-            })?;
+        let minted = Self::generate();
+        let resolved = minted.install(path)?;
+        if resolved != minted {
+            return Ok(resolved);
         }
-        fs::write(path, id.to_string())
-            .map_err(|source| TelemetryIdError::Write { path: path.to_path_buf(), source })?;
 
         warn!(
             target: "telemetry",
@@ -78,7 +84,64 @@ impl TelemetryId {
              --telemetry.enabled=false, or run `base telemetry preview` to see the exact payload."
         );
 
-        Ok(id)
+        Ok(minted)
+    }
+
+    /// Persists this identity at `path` unless one is already there, returning whichever identity
+    /// ended up on disk.
+    ///
+    /// Creating the file is a single atomic step: the contents are written to a temporary file in
+    /// the same directory and linked into place, which fails rather than clobbers when another
+    /// process got there first. A plain read-then-write lets two processes both observe absence
+    /// and mint different IDs, and the loser would go on reporting under an ID no longer on disk.
+    ///
+    /// The link is what makes the file appear complete or not at all. `create_new` alone would
+    /// also stop the second writer, but it leaves a window in which the racing reader opens a
+    /// zero-length file, reads it as corrupt, and replaces the winner's ID.
+    pub fn install(&self, path: &Path) -> Result<Self, TelemetryIdError> {
+        let parent = path.parent().unwrap_or_else(|| Path::new(""));
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|source| TelemetryIdError::CreateDir {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+
+        let temp = path.with_extension(format!("{}.tmp", self.0.simple()));
+        if let Err(error) = Self::write_temp(&temp, self.to_string().as_bytes()) {
+            let _ = fs::remove_file(&temp);
+            return Err(error);
+        }
+
+        let Err(error) = fs::hard_link(&temp, path) else {
+            let _ = fs::remove_file(&temp);
+            return Ok(*self);
+        };
+
+        // The file already exists, so another process minted first and owns the identity for this
+        // node. Adopt it: whoever wins the race must win it for every process on the box.
+        if error.kind() == io::ErrorKind::AlreadyExists
+            && let Some(existing) = Self::read(path)
+        {
+            let _ = fs::remove_file(&temp);
+            return Ok(existing);
+        }
+
+        // Either the file holds no usable ID, or the filesystem has no hard links. A rename is
+        // atomic in both cases, so a reader still never sees a partial file; it just cannot
+        // refuse to overwrite, which is why the value is read back rather than assumed.
+        fs::rename(&temp, path)
+            .map_err(|source| TelemetryIdError::Write { path: path.to_path_buf(), source })?;
+        Ok(Self::read(path).unwrap_or(*self))
+    }
+
+    /// Writes `contents` to `path` and flushes them to the device, so the file that gets linked
+    /// into place is whole even if the machine loses power immediately afterwards.
+    pub fn write_temp(path: &Path, contents: &[u8]) -> Result<(), TelemetryIdError> {
+        let write_error = |source| TelemetryIdError::Write { path: path.to_path_buf(), source };
+        let mut file = fs::File::create(path).map_err(write_error)?;
+        file.write_all(contents).map_err(write_error)?;
+        file.sync_all().map_err(write_error)
     }
 
     /// Returns the identity as a `UUID`.
@@ -114,6 +177,11 @@ impl fmt::Display for TelemetryId {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        sync::{Arc, Barrier},
+        thread,
+    };
+
     use tempfile::TempDir;
 
     use super::*;
@@ -149,6 +217,43 @@ mod tests {
             TelemetryId::load_or_create(&path).expect("reload"),
             id,
             "the replacement must be persisted, not re-minted every start"
+        );
+    }
+
+    #[test]
+    fn test_racing_processes_settle_on_one_identity() {
+        const RACERS: usize = 16;
+
+        let dir = TempDir::new().expect("temp dir");
+        let path = dir.path().join("telemetry-id");
+        let gate = Arc::new(Barrier::new(RACERS));
+
+        let racers: Vec<_> = (0..RACERS)
+            .map(|_| {
+                let path = path.clone();
+                let gate = Arc::clone(&gate);
+                thread::spawn(move || {
+                    gate.wait();
+                    TelemetryId::load_or_create(&path).expect("a racing mint must not fail")
+                })
+            })
+            .collect();
+        let ids: Vec<_> = racers.into_iter().map(|racer| racer.join().expect("racer")).collect();
+
+        let winner = TelemetryId::read(&path).expect("the race must leave a readable identity");
+        assert!(
+            ids.iter().all(|id| *id == winner),
+            "every racer must report under the identity that reached the disk, got {ids:?}"
+        );
+
+        let left_behind: Vec<_> = fs::read_dir(dir.path())
+            .expect("list the identity directory")
+            .map(|entry| entry.expect("entry").path())
+            .collect();
+        assert_eq!(
+            left_behind,
+            vec![path],
+            "the losers must leave no second identity and no temp files"
         );
     }
 
