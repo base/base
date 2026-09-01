@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{BlockHeader, Header};
+use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};

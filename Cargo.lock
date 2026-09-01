@@ -3403,7 +3403,6 @@ dependencies = [
  "alloy-consensus 2.4.1",
  "alloy-primitives",
  "alloy-provider",
- "alloy-serde 2.4.1",
  "alloy-signer-local 2.4.1",
  "base-common-consensus",
  "base-common-flz",
