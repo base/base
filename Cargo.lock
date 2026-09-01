@@ -6237,6 +6237,7 @@ dependencies = [
  "alloy-rpc-client",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth 2.4.1",
+ "alloy-rpc-types-txpool",
  "alloy-signer 2.4.1",
  "alloy-signer-local 2.4.1",
  "alloy-sol-types",

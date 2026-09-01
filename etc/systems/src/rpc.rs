@@ -6,6 +6,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_types_txpool::TxpoolStatus;
 use async_trait::async_trait;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionReceipt;
@@ -59,6 +60,26 @@ pub trait SystemTestProviderExt {
         height: u64,
         within: Duration,
     ) -> Result<()>;
+
+    /// Returns the current `txpool_status` counts (pending and queued) for the node.
+    ///
+    /// Pending transactions are executable now and are the population the builder draws from; queued
+    /// transactions are parked on nonce gaps or below the pending base fee. Tracking both
+    /// distinguishes reinjection lag (pending stays low after a reorg) from nonce-gap or basefee
+    /// parking (queued rises).
+    async fn txpool_counts(&self) -> Result<TxpoolStatus>;
+
+    /// Samples `txpool_status` once per new block for `blocks` newly produced blocks.
+    ///
+    /// Returns `(block_number, status)` pairs, one per block, starting from the block after the
+    /// current head. This isolates post-reorg reinjection lag: a depleted pending pool across a run
+    /// of blocks followed by a sudden refill is the signature of the txpool maintenance task lagging
+    /// block production.
+    async fn sample_txpool_per_block(
+        &self,
+        blocks: u64,
+        within: Duration,
+    ) -> Result<Vec<(u64, TxpoolStatus)>>;
 }
 
 #[async_trait]
@@ -178,6 +199,36 @@ impl SystemTestProviderExt for RootProvider<Base> {
         })
         .await
         .wrap_err("chain did not converge to canonical at the target height")?
+    }
+
+    async fn txpool_counts(&self) -> Result<TxpoolStatus> {
+        self.client()
+            .request("txpool_status", ())
+            .await
+            .wrap_err("txpool_status request failed")
+    }
+
+    async fn sample_txpool_per_block(
+        &self,
+        blocks: u64,
+        within: Duration,
+    ) -> Result<Vec<(u64, TxpoolStatus)>> {
+        timeout(within, async {
+            let mut samples = Vec::with_capacity(blocks as usize);
+            let mut last_sampled = self.get_block_number().await?;
+            while (samples.len() as u64) < blocks {
+                let height = self.get_block_number().await?;
+                if height > last_sampled {
+                    last_sampled = height;
+                    let status = self.txpool_counts().await?;
+                    samples.push((height, status));
+                }
+                sleep(BLOCK_POLL_INTERVAL).await;
+            }
+            Ok::<_, eyre::Error>(samples)
+        })
+        .await
+        .wrap_err("timed out sampling txpool across blocks")?
     }
 }
 
