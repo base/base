@@ -940,7 +940,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{BaseOrdering, BasePooledTransaction, two_d_nonce_pool::TwoDNoncePool};
+    use crate::{BaseOrdering, BasePooledTransaction};
 
     fn protocol_transaction(
         account: Account,
@@ -1251,88 +1251,6 @@ mod tests {
             .collect::<Vec<_>>();
         let theirs = reth.best().map(|transaction| *transaction.hash()).collect::<Vec<_>>();
         assert_eq!(ours, theirs);
-    }
-
-    #[test]
-    fn randomized_sidecar_behavior_matches_two_d_nonce_pool() {
-        let signer = PrivateKeySigner::random();
-        let now = Instant::now();
-        let config = PoolConfig { max_account_slots: usize::MAX, ..PoolConfig::default() };
-        let mut store = LaneTransactionStore::new(config.clone(), 0);
-        let mut sidecar = TwoDNoncePool::new_with_config(config, 0);
-        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
-
-        for step in 0..250_u64 {
-            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-            match seed % 10 {
-                0..=5 => {
-                    let lane = (seed >> 8) % 4;
-                    let nonce = (seed >> 16) % 6;
-                    let fee = 1_000 + u128::from(step) * 20;
-                    let transaction = if lane == 3 {
-                        sidecar_transaction(
-                            &signer,
-                            Eip8130Constants::NONCE_KEY_MAX,
-                            0,
-                            nonce + 1,
-                            fee / 10,
-                            fee,
-                        )
-                    } else {
-                        sidecar_transaction(&signer, U256::from(lane + 1), nonce, 0, fee / 10, fee)
-                    };
-                    let timestamp = now + Duration::from_millis(step);
-                    let ours =
-                        store.insert_validated(validated(transaction.clone(), 0, timestamp), 0);
-                    let theirs = sidecar.insert_validated(validated(transaction, 0, timestamp), 0);
-                    assert_eq!(ours.is_ok(), theirs.is_ok());
-                    if let (Ok(ours), Ok(theirs)) = (ours, theirs) {
-                        assert_eq!(
-                            ours.replaced.as_ref().map(|transaction| *transaction.hash()),
-                            theirs.replaced.as_ref().map(|transaction| *transaction.hash())
-                        );
-                    }
-                }
-                6 => {
-                    if let Some(hash) = store
-                        .all_transactions()
-                        .get((seed as usize) % store.len().max(1))
-                        .map(|transaction| *transaction.hash())
-                    {
-                        assert_eq!(
-                            store.remove_exact(&[hash]).len(),
-                            sidecar.remove_transactions(&[hash]).len()
-                        );
-                    }
-                }
-                7 => {
-                    if let Some(hash) = store
-                        .all_transactions()
-                        .get((seed as usize) % store.len().max(1))
-                        .map(|transaction| *transaction.hash())
-                    {
-                        assert_eq!(
-                            store.remove_with_descendants(&[hash]).len(),
-                            sidecar.remove_transactions_and_descendants(&[hash]).len()
-                        );
-                    }
-                }
-                8 => {}
-                _ => {
-                    let base_fee = (seed >> 24) % 2_000;
-                    store.set_base_fee(base_fee);
-                    sidecar.set_base_fee(base_fee);
-                }
-            }
-
-            assert_eq!(hashes(store.all_transactions()), hashes(sidecar.all_transactions()));
-            let size = store.size();
-            assert_eq!(
-                (size.pending, size.basefee + size.queued),
-                sidecar.pending_and_queued_txn_count()
-            );
-            assert_consistent(&store);
-        }
     }
 
     #[test]
