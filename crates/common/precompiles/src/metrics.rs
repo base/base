@@ -313,9 +313,9 @@ impl BerylErrorKind {
                 selector,
             )
             || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::NoPendingAdmin>(selector)
-            || BerylErrorClassifier::is_error_selector::<
-                IPolicyRegistry::ChildPoliciesOutsideOfRange,
-            >(selector)
+            || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::ChildPoliciesOutsideOfRange>(
+                selector,
+            )
             || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::InvalidChildPolicy>(
                 selector,
             )
@@ -358,9 +358,9 @@ impl BerylErrorKind {
             || BerylErrorClassifier::is_error_selector::<IActivationRegistry::AlreadyActivated>(
                 selector,
             )
-            || BerylErrorClassifier::is_error_selector::<
-                IActivationRegistry::DelegateCallNotAllowed,
-            >(selector)
+            || BerylErrorClassifier::is_error_selector::<IActivationRegistry::DelegateCallNotAllowed>(
+                selector,
+            )
         {
             return Self::InvalidInput;
         }
@@ -772,9 +772,7 @@ mod tests {
     #[test]
     fn cobalt_policy_method_labels_are_stable() {
         assert_eq!(
-            BerylMetricLabels::policy_method(
-                &IPolicyRegistry::createCompositePolicyCall::SELECTOR
-            ),
+            BerylMetricLabels::policy_method(&IPolicyRegistry::createCompositePolicyCall::SELECTOR),
             "createCompositePolicy"
         );
         assert_eq!(
@@ -804,16 +802,11 @@ mod tests {
     #[test]
     fn cobalt_errors_classify_as_invalid_input() {
         let child_range = IPolicyRegistry::ChildPoliciesOutsideOfRange {}.abi_encode().into();
-        assert_eq!(
-            BerylErrorKind::from_revert_bytes(&child_range),
-            BerylErrorKind::InvalidInput
-        );
+        assert_eq!(BerylErrorKind::from_revert_bytes(&child_range), BerylErrorKind::InvalidInput);
 
-        let invalid_child = IPolicyRegistry::InvalidChildPolicy { childPolicyId: 0 }.abi_encode().into();
-        assert_eq!(
-            BerylErrorKind::from_revert_bytes(&invalid_child),
-            BerylErrorKind::InvalidInput
-        );
+        let invalid_child =
+            IPolicyRegistry::InvalidChildPolicy { childPolicyId: 0 }.abi_encode().into();
+        assert_eq!(BerylErrorKind::from_revert_bytes(&invalid_child), BerylErrorKind::InvalidInput);
 
         let effective_past =
             IB20Asset::EffectiveAtInPast { effectiveAt: U256::ZERO }.abi_encode().into();
@@ -824,17 +817,11 @@ mod tests {
 
         let effective_far =
             IB20Asset::EffectiveAtTooFar { effectiveAt: U256::ZERO }.abi_encode().into();
-        assert_eq!(
-            BerylErrorKind::from_revert_bytes(&effective_far),
-            BerylErrorKind::InvalidInput
-        );
+        assert_eq!(BerylErrorKind::from_revert_bytes(&effective_far), BerylErrorKind::InvalidInput);
 
         let update_exists =
             IB20Asset::UIMultiplierUpdateExists { effectiveAt: U256::ZERO }.abi_encode().into();
-        assert_eq!(
-            BerylErrorKind::from_revert_bytes(&update_exists),
-            BerylErrorKind::InvalidInput
-        );
+        assert_eq!(BerylErrorKind::from_revert_bytes(&update_exists), BerylErrorKind::InvalidInput);
 
         let update_missing = IB20Asset::UIMultiplierUpdateDoesNotExist {}.abi_encode().into();
         assert_eq!(
@@ -842,12 +829,8 @@ mod tests {
             BerylErrorKind::InvalidInput
         );
 
-        let not_seizable =
-            IB20::AccountNotSeizable { account: Address::ZERO }.abi_encode().into();
-        assert_eq!(
-            BerylErrorKind::from_revert_bytes(&not_seizable),
-            BerylErrorKind::InvalidInput
-        );
+        let not_seizable = IB20::AccountNotSeizable { account: Address::ZERO }.abi_encode().into();
+        assert_eq!(BerylErrorKind::from_revert_bytes(&not_seizable), BerylErrorKind::InvalidInput);
     }
 
     #[test]
