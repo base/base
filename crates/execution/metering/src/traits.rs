@@ -5,11 +5,11 @@ use alloy_primitives::B256;
 use base_bundles::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
-use crate::{MeterBlockResponse, MeteredPriorityFeeResponse};
+use crate::MeterBlockResponse;
 
 /// RPC API for transaction metering.
 ///
-/// The API exposes bundle simulation, block profiling, and priority-fee estimation.
+/// The API exposes bundle simulation and block profiling.
 #[rpc(server, namespace = "base")]
 pub trait MeteringApi {
     /// Simulates and meters a bundle of transactions against latest canonical state.
@@ -42,21 +42,4 @@ pub trait MeteringApi {
         &self,
         number: BlockNumberOrTag,
     ) -> RpcResult<MeterBlockResponse>;
-
-    /// Handler for: `base_meteredPriorityFeePerGas`
-    ///
-    /// Simulates a bundle, meters its resource consumption, and returns a recommended priority
-    /// fee based on recent block congestion.
-    ///
-    /// The algorithm:
-    /// 1. Meters the bundle (same as `meterBundle`)
-    /// 2. Computes resource demand from the metering results
-    /// 3. Uses recent block data to estimate the minimum priority fee that would have
-    ///    achieved inclusion for each resource type
-    /// 4. Returns the maximum fee across all resources as the recommended priority fee
-    #[method(name = "meteredPriorityFeePerGas")]
-    async fn metered_priority_fee_per_gas(
-        &self,
-        bundle: Bundle,
-    ) -> RpcResult<MeteredPriorityFeeResponse>;
 }

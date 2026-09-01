@@ -86,7 +86,6 @@ base_transactionStatus = "client"
 base_meterBundle = "client"
 base_meterBlockByHash = "client"
 base_meterBlockByNumber = "client"
-base_meteredPriorityFeePerGas = "client"
 
 [transaction_events]
 enabled = true

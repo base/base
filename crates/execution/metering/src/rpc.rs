@@ -8,18 +8,16 @@ use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use base_common_consensus::BaseBlock;
 use base_common_evm::L1BlockInfo;
-use base_common_flz::flz_compress_len;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::extract_l1_info_from_tx;
 use jsonrpsee::core::{RpcResult, async_trait};
 use reth_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::{
-    MeterBlockResponse, MeteredPriorityFeeResponse, PriorityFeeEstimator, ResourceDemand,
-    ResourceFeeEstimateResponse,
+    MeterBlockResponse,
     block::meter_block,
     meter::{MeterBundleInput, meter_bundle},
     traits::MeteringApiServer,
@@ -28,8 +26,6 @@ use crate::{
 /// Implementation of the metering RPC API.
 pub struct MeteringApiImpl<Provider> {
     provider: Provider,
-    /// Optional priority fee estimator for `meteredPriorityFeePerGas`.
-    priority_fee_estimator: Option<Arc<PriorityFeeEstimator>>,
     /// Opcodes and precompiles to track for gas metering. When non-empty, a
     /// `MeteringInspector` is attached during bundle execution.
     metered_opcodes: Arc<crate::MeteredOpcodes>,
@@ -50,18 +46,9 @@ where
         + HeaderProvider<Header = Header>
         + Clone,
 {
-    /// Creates a new instance of `MeteringApi` without priority fee estimation.
+    /// Creates a new instance of `MeteringApi`.
     pub const fn new(provider: Provider, metered_opcodes: Arc<crate::MeteredOpcodes>) -> Self {
-        Self { provider, priority_fee_estimator: None, metered_opcodes }
-    }
-
-    /// Creates a new instance with priority fee estimation enabled.
-    pub const fn with_estimator(
-        provider: Provider,
-        estimator: Arc<PriorityFeeEstimator>,
-        metered_opcodes: Arc<crate::MeteredOpcodes>,
-    ) -> Self {
-        Self { provider, priority_fee_estimator: Some(estimator), metered_opcodes }
+        Self { provider, metered_opcodes }
     }
 }
 
@@ -254,86 +241,6 @@ where
 
         Ok(response)
     }
-
-    async fn metered_priority_fee_per_gas(
-        &self,
-        bundle: Bundle,
-    ) -> RpcResult<MeteredPriorityFeeResponse> {
-        let Some(estimator) = &self.priority_fee_estimator else {
-            debug!("Priority fee estimation requested but no estimator configured");
-            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                "Priority fee estimation not configured".to_string(),
-                None::<()>,
-            ));
-        };
-
-        debug!(num_transactions = &bundle.txs.len(), "Starting metered priority fee estimation");
-
-        // Meter the bundle to get resource consumption
-        let meter_bundle_response = self.meter_bundle(bundle.clone()).await?;
-
-        // Compute resource demand from metering results
-        let demand = compute_resource_demand(&bundle, &meter_bundle_response);
-
-        // Get rolling estimate from the estimator
-        let rolling_estimate = estimator.estimate_rolling(demand).map_err(|e| {
-            debug!(error = %e, "Priority fee estimation failed");
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                format!("Priority fee estimation failed: {e}"),
-                None::<()>,
-            )
-        })?;
-
-        let Some(rolling_estimate) = rolling_estimate else {
-            warn!("No metering data available for priority fee estimation");
-            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                "No metering data available: cache is empty or not yet populated".to_string(),
-                None::<()>,
-            ));
-        };
-
-        // Build response
-        let resource_estimates: Vec<ResourceFeeEstimateResponse> = rolling_estimate
-            .estimates
-            .iter()
-            .map(|(kind, est)| ResourceFeeEstimateResponse {
-                resource: kind.as_camel_case().to_string(),
-                threshold_priority_fee: est.threshold_priority_fee,
-                recommended_priority_fee: est.recommended_priority_fee,
-                cumulative_usage: U256::from(est.cumulative_usage),
-                threshold_tx_count: est.threshold_tx_count as u64,
-                total_transactions: est.total_transactions as u64,
-            })
-            .collect();
-
-        debug!(
-            priority_fee = %rolling_estimate.priority_fee,
-            blocks_sampled = rolling_estimate.blocks_sampled,
-            "Metered priority fee estimation completed"
-        );
-
-        Ok(MeteredPriorityFeeResponse {
-            meter_bundle: meter_bundle_response,
-            priority_fee: rolling_estimate.priority_fee,
-            blocks_sampled: rolling_estimate.blocks_sampled as u64,
-            resource_estimates,
-        })
-    }
-}
-
-/// Computes resource demand from bundle metering results.
-fn compute_resource_demand(bundle: &Bundle, meter_result: &MeterBundleResponse) -> ResourceDemand {
-    // Calculate DA bytes from bundle transactions
-    let da_bytes: u64 =
-        bundle.txs.iter().fold(0u64, |acc, tx| acc.saturating_add(flz_compress_len(tx) as u64));
-
-    ResourceDemand {
-        gas_used: Some(meter_result.total_gas_used),
-        data_availability_bytes: Some(da_bytes),
-    }
 }
 
 impl<Provider> MeteringApiImpl<Provider>
@@ -422,7 +329,7 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::{MeteringConfig, MeteringExtension, MeteringResourceLimits};
+    use crate::{MeteringConfig, MeteringExtension};
 
     fn create_bundle(txs: Vec<Bytes>) -> Bundle {
         Bundle { txs }
@@ -781,109 +688,6 @@ mod tests {
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.state_block_number, 1);
-
-        Ok(())
-    }
-
-    // === Priority Fee Estimation RPC Tests (PR 1a) ===
-
-    async fn setup_with_estimator() -> eyre::Result<(TestHarness, RpcClient)> {
-        let config = MeteringConfig::enabled()
-            .with_resource_limits(MeteringResourceLimits {
-                gas_limit: Some(30_000_000),
-                da_bytes: Some(1_000_000),
-            })
-            .with_target_flashblocks_per_block(4);
-        let harness = TestHarness::builder().with_ext::<MeteringExtension>(config).build().await?;
-        let client = harness.rpc_client()?;
-        Ok((harness, client))
-    }
-
-    #[test]
-    fn compute_resource_demand_preserves_gas_and_da_dimensions() {
-        let tx = Bytes::from_static(&[0x02, 0x01, 0x02, 0x03]);
-        let bundle = create_bundle(vec![tx.clone()]);
-        let meter_result = MeterBundleResponse { total_gas_used: 21_000, ..Default::default() };
-
-        let demand = compute_resource_demand(&bundle, &meter_result);
-
-        assert_eq!(demand.gas_used, Some(21_000));
-        assert_eq!(demand.data_availability_bytes, Some(flz_compress_len(&tx) as u64));
-    }
-
-    #[tokio::test]
-    async fn test_metered_priority_fee_per_gas_empty_cache_returns_error() -> eyre::Result<()> {
-        let (harness, client) = setup_with_estimator().await?;
-
-        harness
-            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
-            .await?;
-
-        let bundle = create_bundle(vec![]);
-
-        let result: Result<serde_json::Value, _> =
-            client.request("base_meteredPriorityFeePerGas", (bundle,)).await;
-
-        // Should error because the metering cache is empty
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("No metering data available"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_metered_priority_fee_per_gas_empty_cache_with_tx_returns_error()
-    -> eyre::Result<()> {
-        let (harness, client) = setup_with_estimator().await?;
-
-        harness
-            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
-            .await?;
-
-        let sender_secret = Account::Alice.signer_b256();
-
-        let tx = TransactionBuilder::default()
-            .signer(sender_secret)
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(address!("0x1111111111111111111111111111111111111111"))
-            .value(1000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(1_000_000_000)
-            .max_priority_fee_per_gas(1_000_000_000)
-            .into_eip1559();
-
-        let signed_tx =
-            BaseTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
-        let envelope: BaseTxEnvelope = signed_tx;
-        let tx_bytes = Bytes::from(envelope.encoded_2718());
-
-        let bundle = create_bundle(vec![tx_bytes]);
-
-        let result: Result<serde_json::Value, _> =
-            client.request("base_meteredPriorityFeePerGas", (bundle,)).await;
-
-        // Should error because the metering cache is empty
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("No metering data available"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_metered_priority_fee_per_gas_no_estimator_returns_error() -> eyre::Result<()> {
-        // Use setup() which doesn't configure resource limits (no estimator)
-        let (_harness, client) = setup().await?;
-
-        let bundle = create_bundle(vec![]);
-
-        let result: Result<serde_json::Value, _> =
-            client.request("base_meteredPriorityFeePerGas", (bundle,)).await;
-
-        // Should error because no estimator is configured
-        assert!(result.is_err());
 
         Ok(())
     }

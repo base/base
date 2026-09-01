@@ -482,9 +482,6 @@ services:
       - --enable-experimental-validity-transactions
       - --enable-transaction-event-journal
       - --enable-metering
-      - --metering.gas-limit=${METERING_GAS_LIMIT}
-      - --metering.da-bytes=${METERING_DA_BYTES}
-      - --metering.target-flashblocks-per-block=${METERING_TARGET_FLASHBLOCKS_PER_BLOCK}
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon

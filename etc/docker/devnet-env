@@ -218,11 +218,4 @@ L2_BASE_DENIM_BLOCK=23
 # Leave unset to avoid setting base.zenith during genesis generation.
 # L2_BASE_ZENITH_BLOCK=50
 
-# Metering Resource Limits
-# Whole-block budgets for gas and DA.
-# These preserve the builder's current 10-flashblock targets: 60M gas / block
-# and ~1.5MB DA / block.
-METERING_GAS_LIMIT=60000000
-METERING_DA_BYTES=1572860
-METERING_TARGET_FLASHBLOCKS_PER_BLOCK=10
 BUILDER_MAX_REJECTED_TXS_PER_BLOCK=20000
