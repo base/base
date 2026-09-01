@@ -114,6 +114,34 @@ impl ValidityPoolMetrics {
 }
 
 base_metrics::define_metrics! {
+    txpool.maintain,
+    struct = PoolMaintenanceMetrics,
+    #[describe("Number of transactions in each post-reorg reinjection batch (reth re-adds the reverted-block transactions in one add_external_transactions call)")]
+    reinjection_batch_size: histogram,
+    #[describe("Wall time to re-validate and re-insert a post-reorg reinjection batch; a long tail here is the txpool source of the shadow builder's post-reconciliation empty-block window")]
+    reinjection_seconds: histogram,
+    #[describe("Per-transaction outcome of post-reorg reinjection batches")]
+    #[label(name = "outcome", default = ["accepted", "rejected"])]
+    reinjection_result: counter,
+}
+
+impl PoolMaintenanceMetrics {
+    /// Records one completed post-reorg reinjection batch: size, total
+    /// re-validation/re-insertion time, and the accepted/rejected split.
+    pub fn record_reinjection_batch(size: usize, elapsed: std::time::Duration, accepted: usize) {
+        Self::reinjection_batch_size().record(size as f64);
+        Self::reinjection_seconds().record(elapsed.as_secs_f64());
+        if accepted > 0 {
+            Self::reinjection_result("accepted").increment(accepted as u64);
+        }
+        let rejected = size.saturating_sub(accepted);
+        if rejected > 0 {
+            Self::reinjection_result("rejected").increment(rejected as u64);
+        }
+    }
+}
+
+base_metrics::define_metrics! {
     txpool.validator,
     struct = ValidatorMetrics,
     #[describe("End-to-end mempool validation wall time by transaction kind")]
@@ -156,6 +184,55 @@ mod tests {
                 _ => None,
             }
         })
+    }
+
+    /// Reads the `txpool.maintain.reinjection_result` counter value for a given
+    /// outcome label out of a materialized snapshot, or `None` when absent.
+    fn reinjection_result_count(snapshot: &Snapshot, outcome: &str) -> Option<u64> {
+        snapshot.iter().find_map(|(ck, _, _, value)| {
+            let key = ck.key();
+            let matches = ck.kind() == MetricKind::Counter
+                && key.name() == "txpool.maintain.reinjection_result"
+                && key.labels().any(|label| label.key() == "outcome" && label.value() == outcome);
+            match (matches, value) {
+                (true, DebugValue::Counter(value)) => Some(*value),
+                _ => None,
+            }
+        })
+    }
+
+    #[test]
+    fn record_reinjection_batch_splits_accepted_and_rejected() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            PoolMaintenanceMetrics::record_reinjection_batch(
+                10,
+                std::time::Duration::from_millis(5),
+                7,
+            );
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert_eq!(reinjection_result_count(&snapshot, "accepted"), Some(7));
+        assert_eq!(reinjection_result_count(&snapshot, "rejected"), Some(3));
+    }
+
+    #[test]
+    fn record_reinjection_batch_omits_zero_rejected() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            PoolMaintenanceMetrics::record_reinjection_batch(
+                4,
+                std::time::Duration::from_millis(1),
+                4,
+            );
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert_eq!(reinjection_result_count(&snapshot, "accepted"), Some(4));
+        assert_eq!(reinjection_result_count(&snapshot, "rejected"), None);
     }
 
     #[test]

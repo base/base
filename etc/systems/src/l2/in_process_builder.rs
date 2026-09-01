@@ -14,6 +14,7 @@ use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
+    ReinjectionObserver,
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, NodeHooks};
@@ -75,6 +76,10 @@ pub struct InProcessBuilderConfig {
     pub txpool_max_size_mb: Option<usize>,
     /// Optional maximum number of transaction slots retained per sender.
     pub txpool_max_account_slots: Option<usize>,
+    /// Optional post-reorg reinjection observer, installed on the builder's
+    /// transaction pool so system tests can assert on the reinjection batch.
+    /// `None` outside those tests.
+    pub reinjection_observer: Option<ReinjectionObserver>,
 }
 
 impl InProcessBuilderConfig {
@@ -183,6 +188,7 @@ impl InProcessBuilder {
         let p2p_port = node_config.network.port;
 
         let accept_validity_transactions = config.enable_experimental_validity_transactions;
+        let reinjection_observer = config.reinjection_observer.clone();
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
@@ -195,7 +201,7 @@ impl InProcessBuilder {
             .apply_to(
                 node_builder
                     .with_components(
-                        base_node.components().pool(pool_component(&rollup_args)).payload(
+                        base_node.components().pool(pool_component(&rollup_args, reinjection_observer)).payload(
                             MultiplexingServiceBuilder::new(builder_config)
                                 .with_cutover_enabled(config.payload_builder_cutover),
                         ),
@@ -469,8 +475,15 @@ fn create_test_db(db_path: &std::path::Path) -> Result<DatabaseEnv> {
     Ok(db)
 }
 
-fn pool_component(_rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransaction> {
-    BasePoolBuilder::<BasePooledTransaction>::default()
+fn pool_component(
+    _rollup_args: &RollupArgs,
+    reinjection_observer: Option<ReinjectionObserver>,
+) -> BasePoolBuilder<BasePooledTransaction> {
+    let builder = BasePoolBuilder::<BasePooledTransaction>::default();
+    match reinjection_observer {
+        Some(observer) => builder.with_reinjection_observer(observer),
+        None => builder,
+    }
 }
 
 #[cfg(test)]

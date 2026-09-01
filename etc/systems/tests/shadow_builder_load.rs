@@ -42,6 +42,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_execution_txpool::ReinjectionBatchEvent;
 use base_load_tests::AccountPool;
 use base_system_tests::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, SystemTestProviderExt,
@@ -126,6 +127,15 @@ async fn shadow_reinjects_reverted_corpus_after_fifty_block_reconciliation() -> 
         .wrap_err("shadow did not adopt canonical funding state before corpus submission")?;
     assert_shadow_funding_ready(&shadow_builder, &corpus).await?;
 
+    // Subscribe to the shadow builder's in-node reinjection signal before any corpus transaction is
+    // submitted, so the reorg batch that reinjects the reverted corpus cannot fire before the test
+    // is listening.
+    let mut reinjection_events = system
+        .l2_stack()
+        .shadow_sequencer(0)
+        .ok_or_else(|| eyre::eyre!("shadow sequencer 0 not present"))?
+        .subscribe_reinjection();
+
     let submission = submit_corpus_to_shadow(&shadow_builder, &corpus).await?;
 
     // From here on, no corpus transaction is ever resubmitted: any later re-inclusion of the same
@@ -138,9 +148,30 @@ async fn shadow_reinjects_reverted_corpus_after_fifty_block_reconciliation() -> 
 
     let reinjected = verify_reinjection(&active_builder, &shadow_builder, &submission).await?;
 
+    let batch_events = drain_reinjection_events(&mut reinjection_events);
+
     assert_causal_signature(&reinjected, &pool_samples, first_cycle_height, submission.hashes.len());
+    assert_reinjection_batch_signal(&batch_events, &submission.hashes, first_cycle_height);
 
     Ok(())
+}
+
+/// Drains every reinjection batch event the shadow builder emitted while the test held the
+/// subscription, without blocking. All batches for the reconciliation under test have already fired
+/// by the time reinjection is verified, so a non-blocking drain captures the full signal.
+fn drain_reinjection_events(
+    receiver: &mut tokio::sync::broadcast::Receiver<ReinjectionBatchEvent>,
+) -> Vec<ReinjectionBatchEvent> {
+    let mut events = Vec::new();
+    loop {
+        match receiver.try_recv() {
+            Ok(event) => events.push(event),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            | Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+        }
+    }
+    events
 }
 
 /// A generated corpus account: its signer, and the private block height/hash where its single
@@ -382,6 +413,62 @@ fn assert_causal_signature(
 
     let observed_flush = reinjected.iter().map(|entry| entry.second_height).min().is_some();
     assert!(observed_flush, "expected the reinjected corpus to reappear in a later private block");
+}
+
+/// Asserts the in-node causal signal: the shadow builder emitted a reinjection batch that carried a
+/// majority of the exact reverted corpus hashes, keyed to the reorg's canonical head, and each such
+/// `Started` was bracketed by a matching `Finished`. This is the direct cause the coarse pool-size
+/// and re-inclusion signatures only imply: the node itself reports it re-validated and re-inserted
+/// the reverted set as one batch keyed to the reorg head.
+///
+/// The reorg head is strictly below the corpus first-inclusion height: reconciliation reverts the
+/// private blocks (including the one that first included the corpus) and adopts the canonical chain,
+/// whose tip at reorg time necessarily precedes that private height.
+fn assert_reinjection_batch_signal(
+    events: &[ReinjectionBatchEvent],
+    corpus_hashes: &HashSet<B256>,
+    first_cycle_height: u64,
+) {
+    assert!(
+        !events.is_empty(),
+        "expected the shadow builder to emit at least one reinjection batch event across the \
+         reconciliation, got none"
+    );
+
+    let mut best_overlap = 0usize;
+    let mut matched: Option<u64> = None;
+    for event in events {
+        let ReinjectionBatchEvent::Started { id, canonical_head, transaction_hashes } = event else {
+            continue;
+        };
+        let overlap =
+            transaction_hashes.iter().filter(|hash| corpus_hashes.contains(*hash)).count();
+        best_overlap = best_overlap.max(overlap);
+        let majority = overlap * 2 >= corpus_hashes.len();
+        if majority && canonical_head.number > 0 && canonical_head.number < first_cycle_height {
+            matched = Some(*id);
+            break;
+        }
+    }
+
+    let batch_id = matched.unwrap_or_else(|| {
+        panic!(
+            "expected a reinjection batch carrying a majority of the {} reverted corpus hashes at a \
+             reorg canonical head below first-inclusion height {first_cycle_height}; best observed \
+             overlap was {best_overlap}; events: {events:?}",
+            corpus_hashes.len(),
+        )
+    });
+
+    let finished = events.iter().any(|event| {
+        matches!(event, ReinjectionBatchEvent::Finished { id, accepted, .. }
+            if *id == batch_id && *accepted > 0)
+    });
+    assert!(
+        finished,
+        "reinjection batch {batch_id} started but never reported a Finished with accepted > 0; \
+         events: {events:?}"
+    );
 }
 
 fn hashes_in_order(corpus: &[PrivateKeySigner], hashes: &HashSet<B256>) -> Vec<B256> {

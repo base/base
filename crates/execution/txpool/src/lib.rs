@@ -54,7 +54,9 @@ pub use parking::{
 };
 
 mod pool;
-pub use pool::{AccountStateDiff, BaseTransactionPool};
+pub use pool::{
+    AccountStateDiff, BaseTransactionPool, ReinjectionBatchEvent, ReinjectionObserver,
+};
 
 mod state_diff_maintain;
 pub use state_diff_maintain::{
@@ -75,6 +77,6 @@ pub use wire::{
 mod two_d_nonce_pool;
 
 mod metrics;
-pub use metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics};
+pub use metrics::{GuardMetrics, PoolMaintenanceMetrics, ValidatorMetrics, ValidityPoolMetrics};
 
 pub mod estimated_da_size;

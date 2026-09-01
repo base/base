@@ -1,8 +1,13 @@
 //! Base transaction-pool wrapper that combines the protocol pool with a 2D nonce sidecar.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Arc, atomic},
+};
 
 use alloy_eips::{
+    BlockNumHash,
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
     eip7594::BlobTransactionSidecarVariant,
 };
@@ -21,11 +26,12 @@ use reth_transaction_pool::{
     TransactionValidationTaskExecutor, TransactionValidator, ValidPoolTransaction,
     pool::{AddedTransactionState, TransactionEvent},
 };
-use tokio::{spawn, sync::mpsc};
+use tokio::{spawn, sync::{broadcast, mpsc}};
 use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics,
+    PoolMaintenanceMetrics,
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
     ParkableTransactionPool, ParkedBestTransactions, StateDiffInvalidation, ValidityPoolMetrics,
     best::MergeBestTransactions,
@@ -33,6 +39,81 @@ use crate::{
 };
 
 const SIDE_CAR_EVENT_CHANNEL_SIZE: usize = 1024;
+
+/// Broadcast capacity for reinjection batch events. Small: a lagging test
+/// subscriber should error rather than retain unbounded history.
+const REINJECTION_OBSERVER_CHANNEL_SIZE: usize = 16;
+
+/// Monotonic id source pairing each reinjection `Started` with its `Finished`.
+static REINJECTION_BATCH_ID: atomic::AtomicU64 = atomic::AtomicU64::new(0);
+
+/// A post-reorg reinjection batch observed at the `add_external_transactions`
+/// seam. reth re-adds every reverted-block transaction in one call after a
+/// reorg; this event pair brackets that call so a test can prove the batch of
+/// exactly the reverted transactions was reinjected in one shot, correlated to
+/// the new canonical head.
+#[derive(Debug, Clone)]
+pub enum ReinjectionBatchEvent {
+    /// Emitted immediately before the batch is re-validated and re-inserted.
+    Started {
+        /// Monotonic id pairing this `Started` with its `Finished`.
+        id: u64,
+        /// New canonical head that triggered the reorg reinjection.
+        canonical_head: BlockNumHash,
+        /// Hashes of every transaction in the reinjected batch.
+        transaction_hashes: Arc<[B256]>,
+    },
+    /// Emitted immediately after the batch completes.
+    Finished {
+        /// Monotonic id pairing this `Finished` with its `Started`.
+        id: u64,
+        /// New canonical head that triggered the reorg reinjection.
+        canonical_head: BlockNumHash,
+        /// Number of transactions in the batch.
+        batch_size: usize,
+        /// Transactions re-admitted to the pool.
+        accepted: usize,
+        /// Transactions rejected on re-validation.
+        rejected: usize,
+        /// Wall time to re-validate and re-insert the whole batch.
+        elapsed: std::time::Duration,
+    },
+}
+
+/// Test-facing observer for post-reorg reinjection batches. Off by default;
+/// production nodes leave the pool's observer `None` and pay only the metric and
+/// tracing cost. When installed via
+/// [`BaseTransactionPool::with_reinjection_observer`], the pool broadcasts a
+/// [`ReinjectionBatchEvent`] pair around each External reinjection batch.
+#[derive(Debug, Clone)]
+pub struct ReinjectionObserver {
+    sender: broadcast::Sender<ReinjectionBatchEvent>,
+}
+
+impl Default for ReinjectionObserver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ReinjectionObserver {
+    /// Creates an observer with its own broadcast channel.
+    pub fn new() -> Self {
+        let (sender, _) = broadcast::channel(REINJECTION_OBSERVER_CHANNEL_SIZE);
+        Self { sender }
+    }
+
+    /// Subscribes a new receiver. Subscribe before submitting the corpus so no
+    /// batch event is missed.
+    pub fn subscribe(&self) -> broadcast::Receiver<ReinjectionBatchEvent> {
+        self.sender.subscribe()
+    }
+
+    /// Broadcasts an event, ignoring the no-subscribers error.
+    pub fn emit(&self, event: ReinjectionBatchEvent) {
+        let _ = self.sender.send(event);
+    }
+}
 
 /// A per-account canonical state delta used for mempool invalidation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -99,6 +180,14 @@ pub struct BaseTransactionPool<
     /// concurrent same-nonce replacement cannot leave a stale guard record.
     /// Validation remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
+    /// New canonical head of the most recent reorg, staged by
+    /// `on_canonical_state_change` and consumed by the next
+    /// `add_external_transactions` call to tag the reinjection batch.
+    reinjection_ctx: Arc<Mutex<Option<BlockNumHash>>>,
+    /// Optional test observer for post-reorg reinjection batches. `None` in
+    /// production; when set, the pool broadcasts a `ReinjectionBatchEvent` pair
+    /// and builds the batch hash list around each External reinjection.
+    reinjection_observer: Option<ReinjectionObserver>,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -133,6 +222,8 @@ where
             guard: Arc::clone(&self.guard),
             block_expiry: Arc::clone(&self.block_expiry),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
+            reinjection_ctx: Arc::clone(&self.reinjection_ctx),
+            reinjection_observer: self.reinjection_observer.clone(),
         }
     }
 }
@@ -175,6 +266,8 @@ where
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
+            reinjection_ctx: Arc::new(Mutex::new(None)),
+            reinjection_observer: None,
         }
     }
 
@@ -182,6 +275,14 @@ where
     #[must_use]
     pub fn with_guard_limits(self, limits: GuardLimits) -> Self {
         *self.guard.write() = MempoolGuard::new(limits);
+        self
+    }
+
+    /// Installs a reinjection observer so tests can watch post-reorg batches.
+    /// Call before sharing the pool. Leave unset in production.
+    #[must_use]
+    pub fn with_reinjection_observer(mut self, observer: ReinjectionObserver) -> Self {
+        self.reinjection_observer = Some(observer);
         self
     }
 
@@ -936,6 +1037,65 @@ where
         results
     }
 
+    async fn add_external_transactions(
+        &self,
+        transactions: Vec<Self::Transaction>,
+    ) -> Vec<PoolResult<AddedTransactionOutcome>> {
+        // reth calls this to reinject the reverted-block transactions after a
+        // reorg. `reinjection_ctx` is Some only when the preceding
+        // `on_canonical_state_change` was a reorg, which distinguishes this
+        // batch from ordinary external RPC imports.
+        let canonical_head = self.reinjection_ctx.lock().take();
+        let Some(canonical_head) = canonical_head else {
+            return self.add_transactions(TransactionOrigin::External, transactions).await;
+        };
+
+        let batch_size = transactions.len();
+        // Hashes are only needed by the test observer; the production path pays
+        // for counts and duration, never a per-transaction hash vector.
+        let started = self.reinjection_observer.as_ref().map(|observer| {
+            let id = REINJECTION_BATCH_ID.fetch_add(1, atomic::Ordering::Relaxed);
+            let transaction_hashes: Arc<[B256]> =
+                transactions.iter().map(|tx| *tx.hash()).collect();
+            observer.emit(ReinjectionBatchEvent::Started {
+                id,
+                canonical_head,
+                transaction_hashes,
+            });
+            id
+        });
+
+        let start = std::time::Instant::now();
+        let results = self.add_transactions(TransactionOrigin::External, transactions).await;
+        let elapsed = start.elapsed();
+
+        let accepted = results.iter().filter(|result| result.is_ok()).count();
+        let rejected = batch_size - accepted;
+        PoolMaintenanceMetrics::record_reinjection_batch(batch_size, elapsed, accepted);
+        debug!(
+            head = %canonical_head.hash,
+            number = canonical_head.number,
+            batch_size,
+            accepted,
+            rejected,
+            elapsed_ms = elapsed.as_millis(),
+            "reinjected reverted-block transactions after reorg"
+        );
+
+        if let (Some(id), Some(observer)) = (started, self.reinjection_observer.as_ref()) {
+            observer.emit(ReinjectionBatchEvent::Finished {
+                id,
+                canonical_head,
+                batch_size,
+                accepted,
+                rejected,
+                elapsed,
+            });
+        }
+
+        results
+    }
+
     async fn add_transactions_with_origins(
         &self,
         transactions: Vec<(TransactionOrigin, Self::Transaction)>,
@@ -1492,6 +1652,12 @@ where
         let now = update.timestamp();
         let block_number = update.number();
         let mined_transactions = update.mined_transactions.clone();
+        // reth invokes this immediately before it reinjects the reverted-block
+        // transactions via `add_external_transactions`. Stage the reorg head so
+        // that batch can tag itself with the head that caused it.
+        if update.update_kind == reth_transaction_pool::PoolUpdateKind::Reorg {
+            *self.reinjection_ctx.lock() = Some(BlockNumHash::new(block_number, block_hash));
+        }
         // Free mined capacity atomically with admission before the heavier pool
         // maintenance. The transaction is already canonical, so it no longer
         // consumes an admission slot even until its pool entry is pruned below.

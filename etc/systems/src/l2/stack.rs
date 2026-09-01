@@ -229,6 +229,7 @@ impl L2Stack {
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
+            reinjection_observer: None,
         };
         let builder = InProcessBuilder::start(builder_config)
             .await

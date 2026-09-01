@@ -29,7 +29,7 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, GuardLimits, TimestampedTransaction,
+    BaseTransactionValidator, GuardLimits, ReinjectionObserver, TimestampedTransaction,
     maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
@@ -881,6 +881,10 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub guard_limits: GuardLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
     pub additional_trusted_delegation_targets: AddressSet,
+    /// Optional post-reorg reinjection observer. `None` in production; system
+    /// tests install one to assert on the reinjection batch that drives the
+    /// shadow builder's post-reconciliation empty-block window.
+    pub reinjection_observer: Option<ReinjectionObserver>,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -893,6 +897,7 @@ impl<T> Default for BasePoolBuilder<T> {
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
+            reinjection_observer: None,
             _pd: Default::default(),
         }
     }
@@ -908,6 +913,7 @@ impl<T> Clone for BasePoolBuilder<T> {
             additional_trusted_delegation_targets: self
                 .additional_trusted_delegation_targets
                 .clone(),
+            reinjection_observer: self.reinjection_observer.clone(),
             _pd: core::marker::PhantomData,
         }
     }
@@ -949,6 +955,13 @@ impl<T> BasePoolBuilder<T> {
         self.additional_trusted_delegation_targets = targets.into_iter().collect();
         self
     }
+
+    /// Installs a post-reorg reinjection observer on the built pool. System-test
+    /// only; production leaves this unset.
+    pub fn with_reinjection_observer(mut self, observer: ReinjectionObserver) -> Self {
+        self.reinjection_observer = Some(observer);
+        self
+    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for BasePoolBuilder<T>
@@ -970,6 +983,7 @@ where
             max_inflight_delegated_slots,
             guard_limits,
             additional_trusted_delegation_targets,
+            reinjection_observer,
             ..
         } = self;
 
@@ -1007,8 +1021,11 @@ where
             blob_store,
             final_pool_config.clone(),
         );
-        let transaction_pool =
+        let mut transaction_pool =
             BaseTransactionPool::new(transaction_pool, ordering).with_guard_limits(guard_limits);
+        if let Some(observer) = reinjection_observer {
+            transaction_pool = transaction_pool.with_reinjection_observer(observer);
+        }
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
         let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
         ctx.task_executor().spawn_critical_task(

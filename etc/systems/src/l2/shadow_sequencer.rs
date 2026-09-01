@@ -22,6 +22,8 @@ use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
+use base_execution_txpool::{ReinjectionBatchEvent, ReinjectionObserver};
+use tokio::sync::broadcast;
 use eyre::{Result, WrapErr};
 use url::Url;
 
@@ -65,6 +67,7 @@ pub struct ShadowSequencerConfig {
 pub struct ShadowSequencer {
     builder: InProcessBuilder,
     consensus: InProcessConsensus,
+    reinjection_observer: ReinjectionObserver,
 }
 
 impl ShadowSequencer {
@@ -82,6 +85,7 @@ impl ShadowSequencer {
     pub async fn start(config: ShadowSequencerConfig) -> Result<Self> {
         let chain_spec = InProcessBuilderConfig::chain_spec_from_genesis_json(&config.l2_genesis)
             .wrap_err("Failed to parse shadow builder L2 chain spec")?;
+        let reinjection_observer = ReinjectionObserver::new();
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
             chain_spec,
             datadir: None,
@@ -100,6 +104,7 @@ impl ShadowSequencer {
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
+            reinjection_observer: Some(reinjection_observer.clone()),
         })
         .await
         .wrap_err("Failed to start shadow builder")?;
@@ -134,7 +139,14 @@ impl ShadowSequencer {
 
         consensus.start_sequencer().await.wrap_err("Failed to start shadow sequencer")?;
 
-        Ok(Self { builder, consensus })
+        Ok(Self { builder, consensus, reinjection_observer })
+    }
+
+    /// Subscribes to post-reorg reinjection batch events from the shadow
+    /// builder's transaction pool. Subscribe before the reconciliation under
+    /// test so no batch event is missed.
+    pub fn subscribe_reinjection(&self) -> broadcast::Receiver<ReinjectionBatchEvent> {
+        self.reinjection_observer.subscribe()
     }
 
     /// Returns a reference to the shadow's builder execution layer.
@@ -154,7 +166,7 @@ impl ShadowSequencer {
 
     /// Stops the shadow consensus task and gracefully shuts down its execution node.
     pub async fn shutdown(self) -> Result<()> {
-        let Self { builder, consensus } = self;
+        let Self { builder, consensus, reinjection_observer: _ } = self;
         drop(consensus);
         builder.shutdown().await.wrap_err("Failed to shut down shadow builder")
     }
