@@ -40,11 +40,10 @@ derive_more = { workspace = true, features = ["display", "deref", "debug"] }
 
 # `arbitrary` feature dependencies
 arbitrary = { workspace = true, features = ["derive"], optional = true }
+arbtest = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
-arbtest.workspace = true
-tempfile.workspace = true
 multihash.workspace = true
 
 arbitrary = { workspace = true, features = ["derive"] }
@@ -52,4 +51,4 @@ alloy-primitives = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = []
-arbitrary = [ "alloy-primitives/arbitrary", "dep:arbitrary" ]
+arbitrary = [ "alloy-primitives/arbitrary", "dep:arbitrary", "dep:arbtest" ]
