@@ -100,7 +100,20 @@ impl TelemetryNodeConfig {
         }
         let endpoint = self.client.endpoint.clone()?;
 
-        let telemetry_id = match TelemetryId::load_or_create(&self.client.id_path) {
+        // No path resolved: neither `--telemetry.id-path` nor `$HOME` named a location that
+        // survives a restart. Reporting from a throwaway identity would count this operator as a
+        // new node every time the process starts, so the run goes without telemetry instead.
+        let Some(id_path) = self.client.id_path.as_deref() else {
+            warn!(
+                target: "telemetry",
+                flag = "--telemetry.id-path",
+                "no durable location for the telemetry identity because $HOME is unset; \
+                 set the flag to a file on a persistent volume. telemetry is off for this run"
+            );
+            return None;
+        };
+
+        let telemetry_id = match TelemetryId::load_or_create(id_path) {
             Ok(id) => id,
             Err(error) => {
                 warn!(
@@ -181,6 +194,14 @@ pub struct TelemetryActor {
 }
 
 impl TelemetryActor {
+    /// Smallest period either telemetry cadence may tick at.
+    ///
+    /// [`tokio::time::interval`] panics on a zero period, and `spawn_and_wait!` installs a
+    /// cancellation drop guard per actor task, so a panic here stops every other actor with it.
+    /// `--telemetry.sample-interval=0` is a misconfiguration; it must cost the operator a warning
+    /// and a clamped cadence, never a node.
+    pub const MIN_TICK_INTERVAL: Duration = Duration::from_secs(1);
+
     /// Creates a telemetry actor from a resolved report builder and the node's live sources.
     pub fn new(
         config: &TelemetryConfig,
@@ -214,11 +235,15 @@ impl TelemetryActor {
     }
 
     /// Builds a report from the accumulated window and enqueues it for delivery.
+    ///
+    /// The connected peer set is whatever the last sample established, rather than a fresh query.
+    /// Under the default cadences the sample interval divides the report interval, so the two
+    /// ticks coincide and a query here would repeat the sample's within the same millisecond;
+    /// under any other pair the set is at most one sample interval stale. Neither costs anything,
+    /// because churn is a windowed count and whatever the last sample missed is counted in the
+    /// next window instead. What it saves is a third round trip, each one of which can hold the
+    /// cycle for [`P2P_QUERY_TIMEOUT`] against a wedged network actor.
     pub async fn report(&mut self) {
-        if let Some(peers) = self.connected_peer_ids().await {
-            self.fold_peer_churn(peers);
-        }
-
         let mut heads = self.heads();
         self.sampler.drain().apply(&mut heads);
         let net = self.net_health().await;
@@ -283,9 +308,20 @@ impl TelemetryActor {
     /// The actor starts with an empty set, so the first fold counts the node's initial peers as
     /// joins. That is the honest reading of "peers joined since this reporter started".
     pub fn fold_peer_churn(&mut self, current: HashSet<String>) {
-        self.peers_joined += current.difference(&self.connected_peers).count() as u32;
-        self.peers_left += self.connected_peers.difference(&current).count() as u32;
+        let joined = Self::saturating_u32(current.difference(&self.connected_peers).count());
+        let left = Self::saturating_u32(self.connected_peers.difference(&current).count());
+        self.peers_joined = self.peers_joined.saturating_add(joined);
+        self.peers_left = self.peers_left.saturating_add(left);
         self.connected_peers = current;
+    }
+
+    /// Narrows a count to the `u32` the report schema uses, saturating instead of truncating.
+    ///
+    /// A truncating `as u32` turns an implausibly large count into a small one, which is the
+    /// worse failure: a wrapped value reads as healthy on every dashboard downstream, while a
+    /// pinned [`u32::MAX`] reads as the bug it is.
+    pub const fn saturating_u32(count: usize) -> u32 {
+        if count > u32::MAX as usize { u32::MAX } else { count as u32 }
     }
 
     /// Builds the network half of a report, resetting the churn counters.
@@ -297,20 +333,32 @@ impl TelemetryActor {
     /// address the node already publishes to every peer it meets, which is the one that says
     /// where it actually runs.
     pub async fn net_health(&mut self) -> NetHealth {
-        let peer_info = self.local_peer_info().await;
+        // Concurrent, not sequential: the two queries are independent and each is bounded by
+        // P2P_QUERY_TIMEOUT, so awaiting them in turn would let one wedged network actor stall a
+        // reporting cycle for twice as long as it has to.
+        let (peer_info, discovered_count) =
+            tokio::join!(self.local_peer_info(), self.discovered_peer_count());
         let peer_id = peer_info.as_ref().map(|info| info.peer_id.clone());
         let enr = peer_info.and_then(|info| info.enr);
         let advertised_ip = enr.as_deref().and_then(Self::advertised_ip);
 
         NetHealth {
-            peer_count: self.connected_peers.len() as u32,
+            peer_count: Self::saturating_u32(self.connected_peers.len()),
             peer_target: self.peer_target,
-            discovered_count: self.discovered_peer_count().await,
+            discovered_count,
             peers_joined: std::mem::take(&mut self.peers_joined),
             peers_left: std::mem::take(&mut self.peers_left),
             peer_id,
             enr,
             advertised_ip,
+            // Left absent because this node has no typed source for either rate. Gossip
+            // validation outcomes and dial/connection failures are only ever incremented into the
+            // metrics registry (`base_consensus_gossip::Metrics`), which telemetry deliberately
+            // does not read, and no `P2pRpcRequest` variant returns them. Reporting them would
+            // take a counter pair on `GossipDriver` plus a new request variant to read it, both
+            // inside the gossip crate. Until that exists, `None` is the honest value: the schema
+            // distinguishes "could not measure" from a clean interval, and a fabricated zero
+            // would throw that away.
             gossip_error_rate: None,
             rpc_error_rate: None,
         }
@@ -344,12 +392,30 @@ impl TelemetryActor {
     /// Returns how many peers discovery currently knows about.
     pub async fn discovered_peer_count(&self) -> Option<u32> {
         let (discovered, _gossip) = self.query_p2p(P2pRpcRequest::PeerCount).await?;
-        discovered.map(|count| count as u32)
+        discovered.map(Self::saturating_u32)
     }
 
     /// Returns this node's own peer identity.
     pub async fn local_peer_info(&self) -> Option<PeerInfo> {
         self.query_p2p(P2pRpcRequest::PeerInfo).await
+    }
+
+    /// Returns a tick period safe to hand to [`tokio::time::interval`].
+    ///
+    /// A zero period panics the timer constructor, and a panicking telemetry task takes the node
+    /// down with it, so a zero is clamped up to [`Self::MIN_TICK_INTERVAL`] and reported. `cadence`
+    /// names which of the two intervals was misconfigured so the operator can find the flag.
+    pub fn tick_interval(configured: Duration, cadence: &'static str) -> Duration {
+        if configured.is_zero() {
+            warn!(
+                target: "telemetry",
+                cadence,
+                minimum_secs = Self::MIN_TICK_INTERVAL.as_secs(),
+                "a zero telemetry interval cannot drive a timer; clamping to the minimum"
+            );
+            return Self::MIN_TICK_INTERVAL;
+        }
+        configured
     }
 
     /// Sends one p2p RPC request and awaits its reply, giving up after [`P2P_QUERY_TIMEOUT`].
@@ -386,13 +452,16 @@ impl NodeActor for TelemetryActor {
     async fn start(mut self, _ctx: ()) -> Result<(), Self::Error> {
         let cancellation = self.sources.cancellation.clone();
 
-        let mut sample_tick = tokio::time::interval(self.sample_interval);
+        let sample_interval = Self::tick_interval(self.sample_interval, "sample");
+        let report_interval = Self::tick_interval(self.report_interval, "report");
+
+        let mut sample_tick = tokio::time::interval(sample_interval);
         sample_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         // The first report waits a full interval. Reporting immediately would publish a payload
         // assembled before the engine has a head or the network has a peer.
         let mut report_tick = tokio::time::interval_at(
-            tokio::time::Instant::now() + self.report_interval,
-            self.report_interval,
+            tokio::time::Instant::now() + report_interval,
+            report_interval,
         );
         report_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -439,17 +508,40 @@ mod tests {
     /// The address [`SAMPLE_ENR`] advertises.
     const SAMPLE_ENR_IP: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(54, 145, 88, 85));
 
-    /// Answers p2p RPC queries with a fixed peer set for as long as the channel stays open.
+    /// Tally of the p2p RPC variants an actor issued, so a test can assert round trips saved.
+    #[derive(Debug, Default)]
+    struct P2pCalls {
+        peers: AtomicU64,
+        peer_count: AtomicU64,
+        peer_info: AtomicU64,
+    }
+
+    impl P2pCalls {
+        /// Returns the `(peers, peer_count, peer_info)` counts observed so far.
+        fn totals(&self) -> (u64, u64, u64) {
+            (
+                self.peers.load(Ordering::Relaxed),
+                self.peer_count.load(Ordering::Relaxed),
+                self.peer_info.load(Ordering::Relaxed),
+            )
+        }
+    }
+
+    /// Answers p2p RPC queries with a fixed peer set for as long as the channel stays open, and
+    /// records how many of each variant it answered.
     ///
     /// Hand-rolled rather than mocked: the actor talks to the network over a channel of enum
     /// requests, not through a trait `automock` can stand in for.
-    fn spawn_fake_p2p(connected: &[&str]) -> mpsc::Sender<P2pRpcRequest> {
+    fn spawn_fake_p2p(connected: &[&str]) -> (mpsc::Sender<P2pRpcRequest>, Arc<P2pCalls>) {
         let connected: Vec<String> = connected.iter().map(|peer| (*peer).to_string()).collect();
+        let calls = Arc::new(P2pCalls::default());
+        let observed = Arc::clone(&calls);
         let (tx, mut rx) = mpsc::channel(16);
         tokio::spawn(async move {
             while let Some(request) = rx.recv().await {
                 match request {
                     P2pRpcRequest::Peers { out, .. } => {
+                        observed.peers.fetch_add(1, Ordering::Relaxed);
                         let mut dump = PeerDump {
                             total_connected: connected.len() as u32,
                             ..Default::default()
@@ -460,9 +552,11 @@ mod tests {
                         let _ = out.send(dump);
                     }
                     P2pRpcRequest::PeerCount(out) => {
+                        observed.peer_count.fetch_add(1, Ordering::Relaxed);
                         let _ = out.send((Some(42), connected.len()));
                     }
                     P2pRpcRequest::PeerInfo(out) => {
+                        observed.peer_info.fetch_add(1, Ordering::Relaxed);
                         let _ = out.send(PeerInfo {
                             peer_id: "local-peer".to_string(),
                             enr: Some(SAMPLE_ENR.to_string()),
@@ -473,7 +567,7 @@ mod tests {
                 }
             }
         });
-        tx
+        (tx, calls)
     }
 
     /// Publishes an engine state whose unsafe head is `number` blocks in, `lag_secs` behind now.
@@ -555,7 +649,7 @@ mod tests {
         let mut telemetry = node_config();
         telemetry.client = config(id_path.clone());
 
-        let sources = sources(engine_state(10, 2), spawn_fake_p2p(&[]));
+        let sources = sources(engine_state(10, 2), spawn_fake_p2p(&[]).0);
         assert!(telemetry.actor(facts(), sources).is_none());
         assert!(
             !id_path.exists(),
@@ -573,7 +667,7 @@ mod tests {
             ..config(dir.path().join("telemetry-id"))
         };
 
-        let sources = sources(engine_state(10, 2), spawn_fake_p2p(&[]));
+        let sources = sources(engine_state(10, 2), spawn_fake_p2p(&[]).0);
         assert!(telemetry.actor(facts(), sources).is_none());
     }
 
@@ -587,9 +681,48 @@ mod tests {
             ..config(id_path.clone())
         };
 
-        let sources = sources(engine_state(10, 2), spawn_fake_p2p(&[]));
+        let sources = sources(engine_state(10, 2), spawn_fake_p2p(&[]).0);
         assert!(telemetry.actor(facts(), sources).is_some());
         assert!(id_path.exists(), "the identity is minted once, on the first reporting run");
+    }
+
+    #[tokio::test]
+    async fn test_an_unresolved_identity_path_turns_telemetry_off_rather_than_reporting_anyway() {
+        let dir = TempDir::new().expect("temp dir");
+        let endpoint = Url::parse("http://127.0.0.1:1/v1/ingest").expect("valid url");
+        let id_path = dir.path().join("telemetry-id");
+
+        // Neither `--telemetry.id-path` nor `$HOME` resolved a location, so there is nowhere to
+        // keep an identity that survives a restart. Reporting from a throwaway one would count
+        // this operator as a new node on every start.
+        let mut unresolved = node_config();
+        unresolved.client = TelemetryConfig {
+            endpoint: Some(endpoint.clone()),
+            id_path: None,
+            ..config(id_path.clone())
+        };
+        let unresolved_sources = sources(engine_state(10, 2), spawn_fake_p2p(&[]).0);
+
+        assert!(
+            unresolved.actor(facts(), unresolved_sources).is_none(),
+            "no durable identity path must disable telemetry, not fail the node's startup"
+        );
+        assert!(
+            !id_path.exists(),
+            "a node that will not report must not leave an identity behind either"
+        );
+
+        // The same construction with a path does build an actor. Without this half, an actor that
+        // failed to build for some unrelated reason would read as the behavior above.
+        let mut resolved = node_config();
+        resolved.client = TelemetryConfig { endpoint: Some(endpoint), ..config(id_path.clone()) };
+        let resolved_sources = sources(engine_state(10, 2), spawn_fake_p2p(&[]).0);
+
+        assert!(
+            resolved.actor(facts(), resolved_sources).is_some(),
+            "the missing path is the only thing that differs between these two configs"
+        );
+        assert!(id_path.exists());
     }
 
     #[tokio::test]
@@ -655,7 +788,7 @@ mod tests {
             Box::pin(async { Ok(()) })
         });
 
-        let sources = sources(engine_state(1_234, 3), spawn_fake_p2p(&["peer-a", "peer-b"]));
+        let sources = sources(engine_state(1_234, 3), spawn_fake_p2p(&["peer-a", "peer-b"]).0);
         let mut actor = actor(sink, sources);
 
         actor.sample().await;
@@ -699,7 +832,7 @@ mod tests {
         let mut sink = MockReportSink::new();
         sink.expect_send().returning(|_| Box::pin(async { Ok(()) }));
 
-        let sources = sources(engine_state(10, 1), spawn_fake_p2p(&["peer-a"]));
+        let sources = sources(engine_state(10, 1), spawn_fake_p2p(&["peer-a"]).0);
         let mut actor = actor(sink, sources);
 
         actor.sample().await;
@@ -731,7 +864,7 @@ mod tests {
             Box::pin(async { Err(ReportSinkError::Rejected("endpoint is gone".to_string())) })
         });
 
-        let sources = sources(engine_state(10, 1), spawn_fake_p2p(&["peer-a"]));
+        let sources = sources(engine_state(10, 1), spawn_fake_p2p(&["peer-a"]).0);
         let cancellation = sources.cancellation.clone();
         let handle = tokio::spawn(actor(sink, sources).start(()));
 
@@ -755,7 +888,7 @@ mod tests {
         let mut sink = MockReportSink::new();
         sink.expect_send().returning(|_| Box::pin(async { Ok(()) }));
 
-        let sources = sources(engine_state(10, 1), spawn_fake_p2p(&[]));
+        let sources = sources(engine_state(10, 1), spawn_fake_p2p(&[]).0);
         let cancellation = sources.cancellation.clone();
         let handle = tokio::spawn(actor(sink, sources).start(()));
 
@@ -765,6 +898,99 @@ mod tests {
             .expect("a cancelled actor should stop promptly")
             .expect("the actor task should not panic")
             .expect("the actor cannot fail");
+    }
+
+    #[test]
+    fn test_a_zero_cadence_is_clamped_and_a_configured_one_is_left_alone() {
+        assert_eq!(
+            TelemetryActor::tick_interval(Duration::ZERO, "sample"),
+            TelemetryActor::MIN_TICK_INTERVAL,
+            "tokio::time::interval panics on a zero period, so zero must never reach it"
+        );
+        assert_eq!(
+            TelemetryActor::tick_interval(Duration::from_secs(900), "report"),
+            Duration::from_secs(900),
+            "a cadence the operator actually set must be used as given"
+        );
+    }
+
+    /// `--telemetry.report-interval=0` must cost a warning, not the node.
+    ///
+    /// `spawn_and_wait!` installs a cancellation drop guard per actor task, so a panic in the
+    /// timer constructor would stop every other actor with it.
+    #[tokio::test(start_paused = true)]
+    async fn test_a_zero_interval_keeps_the_actor_running() {
+        let (attempt_tx, mut attempt_rx) = mpsc::channel(8);
+        let mut sink = MockReportSink::new();
+        sink.expect_send().returning(move |_| {
+            let _ = attempt_tx.try_send(());
+            Box::pin(async { Ok(()) })
+        });
+
+        let sources = sources(engine_state(10, 1), spawn_fake_p2p(&["peer-a"]).0);
+        let cancellation = sources.cancellation.clone();
+        let mut misconfigured = actor(sink, sources);
+        misconfigured.sample_interval = Duration::ZERO;
+        misconfigured.report_interval = Duration::ZERO;
+        let handle = tokio::spawn(misconfigured.start(()));
+
+        tokio::time::timeout(Duration::from_secs(60), attempt_rx.recv())
+            .await
+            .expect("a clamped actor should still reach its first report")
+            .expect("the sink should still be attached");
+        assert!(!handle.is_finished(), "a misconfigured interval must not stop the actor");
+
+        cancellation.cancel();
+        handle.await.expect("the actor task should not panic").expect("the actor cannot fail");
+    }
+
+    #[test]
+    fn test_a_count_past_u32_saturates_rather_than_truncating() {
+        assert_eq!(TelemetryActor::saturating_u32(7), 7);
+        assert_eq!(
+            TelemetryActor::saturating_u32((u32::MAX as usize).saturating_add(1)),
+            u32::MAX,
+            "one past the boundary must pin at the maximum, not wrap around to zero"
+        );
+        assert_eq!(TelemetryActor::saturating_u32(usize::MAX), u32::MAX);
+    }
+
+    #[tokio::test]
+    async fn test_churn_counters_saturate_rather_than_wrapping() {
+        let sources = sources(engine_state(10, 2), mpsc::channel(1).0);
+        let mut actor = actor(MockReportSink::new(), sources);
+        actor.peers_joined = u32::MAX;
+        actor.peers_left = u32::MAX;
+
+        actor.fold_peer_churn(["a"].iter().map(ToString::to_string).collect());
+        actor.fold_peer_churn(HashSet::new());
+
+        assert_eq!(
+            (actor.peers_joined, actor.peers_left),
+            (u32::MAX, u32::MAX),
+            "a churn counter at its ceiling must stay there rather than wrap back to zero"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_a_report_reuses_the_peer_set_the_sampler_already_fetched() {
+        let mut sink = MockReportSink::new();
+        sink.expect_send().returning(|_| Box::pin(async { Ok(()) }));
+
+        let (p2p, calls) = spawn_fake_p2p(&["peer-a"]);
+        let mut actor = actor(sink, sources(engine_state(10, 1), p2p));
+
+        actor.sample().await;
+        assert_eq!(calls.totals(), (1, 0, 0), "a sample only needs the connected peer set");
+
+        actor.report().await;
+        assert_eq!(
+            calls.totals(),
+            (1, 1, 1),
+            "a report needs the local peer info and the discovered count, and nothing else: \
+             re-querying the peer set would duplicate the query the coinciding sample tick just \
+             issued, at the cost of a third P2P_QUERY_TIMEOUT on a wedged network actor"
+        );
     }
 
     /// The mocked sink is only ever used through the trait, so keep the import honest.

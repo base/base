@@ -1,6 +1,9 @@
 //! Configuration for the telemetry client.
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use base_retry::RetryConfig;
 use url::Url;
@@ -48,8 +51,14 @@ pub struct TelemetryConfig {
     pub endpoint: Option<Url>,
     /// Override used to tag our own nodes so they can be excluded from fleet numbers.
     pub instance_id: Option<String>,
-    /// Where the persisted node identity lives.
-    pub id_path: PathBuf,
+    /// Where the persisted node identity lives, or `None` when nowhere could be resolved.
+    ///
+    /// `None` does not mean "use a default". It is the resolved answer that this node has no
+    /// durable place to keep an identity: neither `--telemetry.id-path` nor `$HOME` is set. A
+    /// node in that state reports nothing, because an identity minted under the working
+    /// directory would not survive a restart and one operator would show up as a new node every
+    /// time.
+    pub id_path: Option<PathBuf>,
     /// Directory whose filesystem the disk fields describe.
     ///
     /// Separate from `id_path` on purpose. The identity is a few bytes of state the node keeps
@@ -72,18 +81,22 @@ pub struct TelemetryConfig {
 
 impl TelemetryConfig {
     /// Builds a config that reports to `endpoint`, using the defaults for everything else.
-    pub fn new(id_path: PathBuf, endpoint: Option<Url>) -> Self {
+    pub fn new(id_path: impl Into<Option<PathBuf>>, endpoint: Option<Url>) -> Self {
         Self { endpoint, ..Self::disabled(id_path) }
     }
 
     /// Builds a config that sends nothing, for callers that need a value before an operator's
     /// choice is known.
-    pub fn disabled(id_path: PathBuf) -> Self {
+    ///
+    /// Takes `impl Into<Option<PathBuf>>` so a caller holding a path it knows it has can pass it
+    /// bare. The field stays an `Option`, so nothing downstream can skip the question of what to
+    /// do when there is no path.
+    pub fn disabled(id_path: impl Into<Option<PathBuf>>) -> Self {
         Self {
             enabled: true,
             endpoint: None,
             instance_id: None,
-            id_path,
+            id_path: id_path.into(),
             data_dir: None,
             report_interval: DEFAULT_REPORT_INTERVAL,
             sample_interval: DEFAULT_SAMPLE_INTERVAL,
@@ -94,21 +107,41 @@ impl TelemetryConfig {
     }
 
     /// Returns whether this config will actually send anything.
+    ///
+    /// `const` buys nothing here — every caller asks at runtime — and it forfeits the freedom to
+    /// add a check that cannot be const, such as validating the endpoint. It stays only because
+    /// the workspace enables `clippy::missing_const_for_fn`, so dropping it means an `allow`
+    /// attribute, and a suppressed lint is worse than a keyword. This crate is workspace-internal,
+    /// so the day a non-const check is needed, removing `const` is a local edit.
     pub const fn is_active(&self) -> bool {
         self.enabled && self.endpoint.is_some()
     }
 
-    /// Returns the default identity path for a chain, `$HOME/.base/<l2_chain_id>/telemetry-id`.
+    /// Returns the default identity path for a chain, `$HOME/.base/<l2_chain_id>/telemetry-id`,
+    /// or `None` when `$HOME` is unset.
     ///
     /// This mirrors where the consensus node already puts its checkpoint database. The
     /// execution node has a reth data directory and should pass that instead.
-    pub fn default_id_path(l2_chain_id: u64) -> PathBuf {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".base")
-            .join(l2_chain_id.to_string())
-            .join(TELEMETRY_ID_FILE_NAME)
+    pub fn default_id_path(l2_chain_id: u64) -> Option<PathBuf> {
+        Self::id_path_under(std::env::var_os("HOME").map(PathBuf::from).as_deref(), l2_chain_id)
+    }
+
+    /// Returns the identity path for a chain under `home`, or `None` when there is no usable home
+    /// directory.
+    ///
+    /// `None` rather than a working-directory-relative path. `$HOME` is routinely unset for a
+    /// container started by systemd, and `./.base/<chain>/telemetry-id` resolves against a
+    /// working directory such a deployment does not persist: the node would mint a fresh
+    /// identity on every restart and one operator would appear as an unbounded number of nodes.
+    /// The caller turns `None` into a warning naming `--telemetry.id-path` and a run with
+    /// telemetry off, because telemetry must never be the reason a node fails to start.
+    ///
+    /// Split from the environment lookup so the no-home case is testable without mutating the
+    /// process environment out from under every other test in the binary.
+    pub fn id_path_under(home: Option<&Path>, l2_chain_id: u64) -> Option<PathBuf> {
+        home.filter(|home| !home.as_os_str().is_empty()).map(|home| {
+            home.join(".base").join(l2_chain_id.to_string()).join(TELEMETRY_ID_FILE_NAME)
+        })
     }
 
     /// Returns how many samples a report will carry, given the configured intervals.
@@ -180,8 +213,20 @@ mod tests {
     }
 
     #[test]
-    fn test_default_id_path_is_chain_scoped() {
-        let path = TelemetryConfig::default_id_path(8453);
-        assert!(path.ends_with("8453/telemetry-id"), "got {}", path.display());
+    fn test_id_path_is_chain_scoped_under_home() {
+        let path = TelemetryConfig::id_path_under(Some(Path::new("/home/base")), 8453);
+        assert_eq!(path, Some(PathBuf::from("/home/base/.base/8453/telemetry-id")));
+    }
+
+    #[test]
+    fn test_id_path_without_a_home_is_none_rather_than_relative() {
+        for home in [None, Some(Path::new(""))] {
+            assert_eq!(
+                TelemetryConfig::id_path_under(home, 8453),
+                None,
+                "an unset $HOME must not resolve to a working-directory path: a container that \
+                 does not persist its working directory would re-mint an identity every restart"
+            );
+        }
     }
 }

@@ -167,7 +167,9 @@ macro_rules! define_telemetry_args {
 
             /// Where the persisted telemetry identity lives.
             ///
-            /// Defaults to `$HOME/.base/<l2_chain_id>/telemetry-id`.
+            /// Defaults to `$HOME/.base/<l2_chain_id>/telemetry-id`. Set this when `$HOME` is
+            /// unset, as it is for most containers: with neither, there is nowhere durable to
+            /// keep an identity and the node reports nothing.
             #[arg(
                 id = "telemetry_id_path",
                 long = "telemetry.id-path",
@@ -229,10 +231,19 @@ macro_rules! define_telemetry_args {
             ///
             /// `l2_chain_id` only decides where the identity is persisted, and only when
             /// `--telemetry.id-path` is not set.
+            ///
+            /// The identity path resolves to `None` when neither the flag nor `$HOME` names a
+            /// location. That is the whole answer: the node warns and reports nothing, rather
+            /// than writing an identity to a working directory it may not have next restart.
             pub fn config(&self, l2_chain_id: u64) -> $crate::TelemetryConfig {
-                let id_path = self.id_path.clone().unwrap_or_else(|| {
-                    $crate::TelemetryConfig::default_id_path(l2_chain_id)
-                });
+                // An empty value counts as unset. A declared-but-empty
+                // `<PREFIX>_TELEMETRY_ID_PATH` is how a container manifest routinely spells "not
+                // configured", and clap hands that through as an empty path rather than `None`.
+                let id_path = self
+                    .id_path
+                    .clone()
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .or_else(|| $crate::TelemetryConfig::default_id_path(l2_chain_id));
                 $crate::TelemetryConfig {
                     enabled: self.enabled,
                     endpoint: self.endpoint.clone(),

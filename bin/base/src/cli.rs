@@ -66,8 +66,12 @@ impl BaseCli {
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::OsStr, path::Path};
+    use std::{
+        ffi::OsStr,
+        path::{Path, PathBuf},
+    };
 
+    use base_cli_utils::TelemetryConfig;
     use clap::{CommandFactory, Parser};
 
     use super::*;
@@ -160,11 +164,33 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_id_path_defaults_to_the_chain_directory() {
-        let cli = BaseCli::parse_from(["base", "bootnode"]);
+    fn telemetry_id_path_is_chain_scoped_under_home_and_absent_without_one() {
+        assert_eq!(
+            TelemetryConfig::id_path_under(Some(Path::new("/var/lib/base")), 8453),
+            Some(PathBuf::from("/var/lib/base/.base/8453/telemetry-id"))
+        );
+        assert_eq!(
+            TelemetryConfig::id_path_under(None, 8453),
+            None,
+            "with no home directory there is nowhere durable to keep an identity, and a \
+             working-directory path would re-mint one on every restart"
+        );
+    }
 
-        let config = cli.telemetry.config(8453);
-        assert!(config.id_path.ends_with("8453/telemetry-id"), "got {}", config.id_path.display());
+    #[test]
+    fn telemetry_id_path_flag_wins_over_the_default() {
+        let cli = BaseCli::parse_from([
+            "base",
+            "--telemetry.id-path",
+            "/srv/base/telemetry-id",
+            "bootnode",
+        ]);
+
+        assert_eq!(
+            cli.telemetry.config(8453).id_path.as_deref(),
+            Some(Path::new("/srv/base/telemetry-id")),
+            "an explicit path must be used as given, whatever $HOME says"
+        );
     }
 
     #[test]
@@ -175,7 +201,7 @@ mod tests {
         let config = cli.telemetry.config(8453);
         assert_eq!(config.data_dir.as_deref(), Some(Path::new("/mnt/base-data")));
         assert!(
-            !config.id_path.starts_with("/mnt/base-data"),
+            config.id_path.as_deref().is_none_or(|path| !path.starts_with("/mnt/base-data")),
             "naming the data volume must not move the identity file"
         );
 

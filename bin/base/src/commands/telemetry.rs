@@ -58,7 +58,11 @@ impl TelemetryCommand {
         let config = telemetry.config(l2_chain_id.id());
 
         let identity = NodeIdentity {
-            telemetry_id: TelemetryId::read(&config.id_path).unwrap_or_else(TelemetryId::generate),
+            telemetry_id: config
+                .id_path
+                .as_deref()
+                .and_then(TelemetryId::read)
+                .unwrap_or_else(TelemetryId::generate),
             instance_id: config.instance_id.clone(),
             client_version: env!("CARGO_PKG_VERSION").to_string(),
             l2_chain_id: l2_chain_id.id(),
