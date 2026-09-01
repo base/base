@@ -12,6 +12,9 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
+[package.metadata.cargo-udeps.ignore]
+development = ["arbtest"]
+
 [dependencies]
 # consensus
 base-common-chains.workspace = true
@@ -40,10 +43,10 @@ derive_more = { workspace = true, features = ["display", "deref", "debug"] }
 
 # `arbitrary` feature dependencies
 arbitrary = { workspace = true, features = ["derive"], optional = true }
-arbtest = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
+arbtest.workspace = true
 multihash.workspace = true
 
 arbitrary = { workspace = true, features = ["derive"] }
@@ -51,4 +54,4 @@ alloy-primitives = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = []
-arbitrary = [ "alloy-primitives/arbitrary", "dep:arbitrary", "dep:arbtest" ]
+arbitrary = [ "alloy-primitives/arbitrary", "dep:arbitrary" ]
