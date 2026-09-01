@@ -48,13 +48,4 @@ mod tests {
 
         assert!(precompiles.get(&TxContextStorage::ADDRESS).is_some());
     }
-
-    #[test]
-    fn install_accepts_upgrades_past_cobalt() {
-        let mut precompiles = PrecompilesMap::from_static(Precompiles::cancun());
-
-        TxContext::install(&mut precompiles, BaseUpgrade::LATEST);
-
-        assert!(precompiles.get(&TxContextStorage::ADDRESS).is_some());
-    }
 }

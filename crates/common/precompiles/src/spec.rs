@@ -37,13 +37,17 @@ mod tests {
 
     #[test]
     fn storage_features_activate_at_cobalt() {
-        assert_eq!(
-            UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
-            StorageFeatures::Legacy,
-        );
-        assert_eq!(
-            UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
-            StorageFeatures::Cobalt,
-        );
+        for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
+            let expected = if upgrade >= BaseUpgrade::Cobalt {
+                StorageFeatures::Cobalt
+            } else {
+                StorageFeatures::Legacy
+            };
+            assert_eq!(
+                UpgradeGatedStorageFeatures::from_upgrade(upgrade),
+                expected,
+                "wrong storage features for {upgrade:?}",
+            );
+        }
     }
 }

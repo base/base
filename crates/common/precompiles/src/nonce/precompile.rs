@@ -48,13 +48,4 @@ mod tests {
 
         assert!(precompiles.get(&NonceManagerStorage::ADDRESS).is_some());
     }
-
-    #[test]
-    fn install_accepts_upgrades_past_cobalt() {
-        let mut precompiles = PrecompilesMap::from_static(Precompiles::cancun());
-
-        NonceManager::install(&mut precompiles, BaseUpgrade::LATEST);
-
-        assert!(precompiles.get(&NonceManagerStorage::ADDRESS).is_some());
-    }
 }
