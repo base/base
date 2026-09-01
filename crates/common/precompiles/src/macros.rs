@@ -1,14 +1,11 @@
 //! Runtime helpers for wrapping native precompile dispatch.
 
 /// Wraps a stateful native precompile body in the Base storage-provider setup.
+///
+/// `storage_features:` is required — every caller must state the fork feature set
+/// the wrapper runs under, so a future feature-sensitive field cannot silently
+/// inherit `StorageFeatures::Legacy`. See [`crate::UpgradeGatedStorageFeatures::from_upgrade`].
 macro_rules! base_precompile {
-    ($id:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
-        $crate::macros::base_precompile!(
-            $id,
-            storage_features: ::base_precompile_storage::StorageFeatures::Legacy,
-            |$ctx, $calldata| $impl,
-        )
-    }};
     ($id:expr, storage_features: $storage_features:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
         ::alloy_evm::precompiles::DynPrecompile::new_stateful(
             ::revm::precompile::PrecompileId::Custom($id.into()),

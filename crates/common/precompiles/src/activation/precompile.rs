@@ -11,7 +11,10 @@ use crate::{
 };
 
 /// Entry point for the activation registry precompile.
-#[precompile(args(admin_config: ActivationAdminConfig, upgrade: BaseUpgrade))]
+#[precompile(
+    args(admin_config: ActivationAdminConfig, upgrade: BaseUpgrade),
+    storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade),
+)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ActivationRegistry;
 
