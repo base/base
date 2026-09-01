@@ -183,35 +183,108 @@ impl ActorAuthorizer {
                 loaded_state = storage.get_account_state(account)?;
                 &loaded_state
             };
-            // Flag set => the inline k1 self is disabled: either revoked outright
-            // or superseded by a non-k1 self in `actor_config`. A k1 signature
-            // recovering to the account can never authorize in that state.
-            if state.default_eoa_revoked() {
-                return Err(AuthorizeError::DefaultEoaRevoked { account });
-            }
-            // 0 = no expiry; otherwise valid while now <= expiry.
-            if state.default_eoa_expiry != 0 && now > state.default_eoa_expiry {
-                return Err(AuthorizeError::Expired {
-                    actor_id: recovered,
-                    expiry: state.default_eoa_expiry,
-                });
-            }
-            // `_resolvePolicyTarget`: address(0) when ungated, else the policy
-            // manager (keyed by the self-actorId, shared keyspace). An ungated
-            // (full-owner) self costs no extra read.
-            let policy_target = if state.default_eoa_scope & Eip8130Constants::SCOPE_POLICY == 0 {
-                Address::ZERO
-            } else {
-                storage.get_policy_manager(account, recovered)?
-            };
-            return Ok(ResolvedActor {
-                actor_id: recovered,
-                scope: state.default_eoa_scope,
-                policy_target,
-                expiry: state.default_eoa_expiry,
-            });
+            // Validity (revoked / expired) is checked first so a rejected self
+            // never pays the policy-manager SLOAD that `inline_self_policy_target`
+            // would incur for a `SCOPE_POLICY` self.
+            let resolved = Self::authorize_inline_self(account, state, now, Address::ZERO)?;
+            let policy_target =
+                Self::inline_self_policy_target(storage, account, recovered, state)?;
+            return Ok(ResolvedActor { policy_target, ..resolved });
         }
         Self::resolve_bound(storage, account, recovered, Eip8130Constants::K1_AUTHENTICATOR, now)
+    }
+
+    /// Authorizes a standard (legacy / EIP-2930 / EIP-1559 / EIP-7702) sender
+    /// or EIP-7702 authorization authority whose address was already recovered
+    /// by `SignerRecoverable` / `authorization.authority()`.
+    ///
+    /// The recovered address *is* the account's secp256k1 self-actor. This
+    /// loads [`AccountState`] and requires the inline default EOA to still be
+    /// the unrestricted owner: revoked, expired, and scoped/policy-gated selves
+    /// are rejected. Untouched EOAs (zero `account_state`) still pass.
+    ///
+    /// This is the keystore gate that closes the standalone-ecrecover escape
+    /// hatch. EIP-8130 empty-sender transactions keep using [`Self::authorize_k1`],
+    /// which still accepts a scoped inline self.
+    pub fn authorize_standard_sender(
+        storage: &AccountConfigurationStorage<'_>,
+        caller: Address,
+        now: u64,
+    ) -> Result<ResolvedActor, AuthorizeError> {
+        let state = storage.get_account_state(caller)?;
+        Self::authorize_standard_sender_from_state(caller, &state, now)
+    }
+
+    /// Like [`Self::authorize_standard_sender`], but against an already-loaded
+    /// [`AccountState`]. Used by the execution handler after a journal SLOAD so
+    /// the slot is not read twice.
+    ///
+    /// Policy is not resolved: a policy-gated self fails the admin check, so the
+    /// extra `policy_manager` read is unnecessary on this path.
+    pub fn authorize_standard_sender_from_state(
+        caller: Address,
+        state: &AccountState,
+        now: u64,
+    ) -> Result<ResolvedActor, AuthorizeError> {
+        let resolved = Self::authorize_inline_self(caller, state, now, Address::ZERO)?;
+        if !resolved.is_admin() {
+            return Err(AuthorizeError::StandardSenderNotAdmin { account: caller });
+        }
+        Ok(resolved)
+    }
+
+    /// Resolves a live inline secp256k1 self from `state`.
+    ///
+    /// Shared by [`Self::authorize_k1`] (which still accepts a scoped self) and
+    /// [`Self::authorize_standard_sender`] (which additionally requires admin).
+    ///
+    /// This only validates the inline self (revoked / expired) and echoes the
+    /// supplied `policy_target` straight into the returned [`ResolvedActor`]; it
+    /// does *not* resolve policy itself. When `SCOPE_POLICY` is set the caller is
+    /// responsible for either resolving the manager (via
+    /// [`Self::inline_self_policy_target`], as [`Self::authorize_k1`] does) or
+    /// rejecting the scope outright (as [`Self::authorize_standard_sender`]
+    /// does). Passing `address(0)` for a policy-scoped self therefore yields a
+    /// deliberately partial actor that the caller must finish resolving.
+    pub fn authorize_inline_self(
+        account: Address,
+        state: &AccountState,
+        now: u64,
+        policy_target: Address,
+    ) -> Result<ResolvedActor, AuthorizeError> {
+        let actor_id = AccountConfigurationStorage::self_actor_id(account);
+        // Flag set => the inline k1 self is disabled: either revoked outright
+        // or superseded by a non-k1 self in `actor_config`. A k1 signature
+        // recovering to the account can never authorize in that state.
+        if state.default_eoa_revoked() {
+            return Err(AuthorizeError::DefaultEoaRevoked { account });
+        }
+        // 0 = no expiry; otherwise valid while now <= expiry.
+        if state.default_eoa_expiry != 0 && now > state.default_eoa_expiry {
+            return Err(AuthorizeError::Expired { actor_id, expiry: state.default_eoa_expiry });
+        }
+        Ok(ResolvedActor {
+            actor_id,
+            scope: state.default_eoa_scope,
+            policy_target,
+            expiry: state.default_eoa_expiry,
+        })
+    }
+
+    /// `_resolvePolicyTarget` for the inline self: `address(0)` when ungated,
+    /// else the policy manager (keyed by the self-actorId). An ungated
+    /// (full-owner) self costs no extra read.
+    fn inline_self_policy_target(
+        storage: &AccountConfigurationStorage<'_>,
+        account: Address,
+        actor_id: B256,
+        state: &AccountState,
+    ) -> Result<Address, AuthorizeError> {
+        if state.default_eoa_scope & Eip8130Constants::SCOPE_POLICY == 0 {
+            Ok(Address::ZERO)
+        } else {
+            Ok(storage.get_policy_manager(account, actor_id)?)
+        }
     }
 
     /// Loads `actor_config[actor_id][account]`, requires it to be bound to
@@ -397,6 +470,54 @@ mod tests {
             acc.account_state.at_mut(&account).write(pack_self(0, NOW - 1, false)).unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW),
+                Err(AuthorizeError::Expired { actor_id: actor_id(account), expiry: NOW - 1 }),
+            );
+        });
+    }
+
+    #[test]
+    fn standard_sender_untouched_eoa_is_unrestricted_owner() {
+        let account = k1_address(&k1_key(0x11));
+        with_storage(|acc| {
+            let resolved = ActorAuthorizer::authorize_standard_sender(acc, account, NOW).unwrap();
+            assert_eq!(resolved, ResolvedActor::unrestricted(actor_id(account)));
+        });
+    }
+
+    #[test]
+    fn standard_sender_revoked_default_eoa_is_rejected() {
+        let account = k1_address(&k1_key(0x11));
+        with_storage(|acc| {
+            acc.account_state.at_mut(&account).write(pack_self(0, 0, true)).unwrap();
+            assert_eq!(
+                ActorAuthorizer::authorize_standard_sender(acc, account, NOW),
+                Err(AuthorizeError::DefaultEoaRevoked { account }),
+            );
+        });
+    }
+
+    #[test]
+    fn standard_sender_scoped_self_is_rejected() {
+        let account = k1_address(&k1_key(0x11));
+        with_storage(|acc| {
+            acc.account_state
+                .at_mut(&account)
+                .write(pack_self(Eip8130Constants::SCOPE_SENDER, 0, false))
+                .unwrap();
+            assert_eq!(
+                ActorAuthorizer::authorize_standard_sender(acc, account, NOW),
+                Err(AuthorizeError::StandardSenderNotAdmin { account }),
+            );
+        });
+    }
+
+    #[test]
+    fn standard_sender_expired_self_is_rejected() {
+        let account = k1_address(&k1_key(0x11));
+        with_storage(|acc| {
+            acc.account_state.at_mut(&account).write(pack_self(0, NOW - 1, false)).unwrap();
+            assert_eq!(
+                ActorAuthorizer::authorize_standard_sender(acc, account, NOW),
                 Err(AuthorizeError::Expired { actor_id: actor_id(account), expiry: NOW - 1 }),
             );
         });

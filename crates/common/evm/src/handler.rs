@@ -27,6 +27,12 @@ use revm::{
     interpreter::{GasTracker, interpreter::EthInterpreter, interpreter_action::FrameInit},
     primitives::U256,
 };
+#[cfg(feature = "std")]
+use revm::{
+    context_interface::transaction::{AuthorizationTr, TransactionType},
+    database_interface::Database,
+    primitives::{Address, HashSet, TxKind},
+};
 
 use crate::{
     BaseContextTr, BaseHaltReason, L1BlockInfo,
@@ -66,6 +72,272 @@ impl<DB, TX> IsTxError for EVMError<DB, TX> {
     fn is_tx_error(&self) -> bool {
         matches!(self, Self::Transaction(_))
     }
+}
+
+/// Loads `account_state[account]` from the EIP-8130 `AccountConfiguration`
+/// predeploy. [`JournalTr::sload`] assumes the account is already present.
+#[cfg(feature = "std")]
+fn load_standard_account_state<JOURNAL: JournalTr>(
+    journal: &mut JOURNAL,
+    account: Address,
+) -> Result<
+    base_execution_eip8130::AccountState,
+    <<JOURNAL as JournalTr>::Database as Database>::Error,
+> {
+    let config = base_execution_eip8130::AccountConfigurationStorage::ADDRESS;
+    journal.load_account(config)?;
+    let slot = U256::from_be_bytes(
+        base_execution_eip8130::AccountConfigurationStorage::account_state_slot(account).0,
+    );
+    let word = journal.sload(config, slot)?.data;
+    Ok(base_execution_eip8130::AccountState::from_word(word))
+}
+
+/// EIP-7702 auth-list apply with the standard-keystore gate on each recovered
+/// authority. Mirrors stock [`revm::handler::pre_execution::apply_eip7702_auth_list`]
+/// (including the EIP-2780 runtime-charge path); a revoked / expired / non-admin
+/// default EOA is the same skip as a bad nonce or failed `ecrecover`.
+///
+/// Returns the EIP-7702 gas refund, or `None` when EIP-2780 authorization
+/// charges ran out of gas.
+#[cfg(feature = "std")]
+fn apply_eip7702_auth_list_standard_keystore<CTX, ERROR>(
+    context: &mut CTX,
+    gas: &mut GasTracker,
+) -> Result<Option<u64>, ERROR>
+where
+    CTX: ContextTr,
+    ERROR:
+        From<InvalidTransaction> + From<<CTX::Db as Database>::Error> + From<BaseTransactionError>,
+{
+    let now: u64 = context
+        .block()
+        .timestamp()
+        .try_into()
+        .map_err(|_| BaseTransactionError::standard_sender("block timestamp exceeds u64"))?;
+
+    // EIP-2780: state-dependent charges are recorded on the transaction-level
+    // `gas` instead of the pessimistic intrinsic-charge/refund bookkeeping.
+    if context.cfg().is_amsterdam_eip2780_enabled() {
+        if context.tx().tx_type() != TransactionType::Eip7702 {
+            return Ok(Some(0));
+        }
+        let chain_id = context.cfg().chain_id();
+        let is_eip8037 = context.cfg().is_amsterdam_eip8037_enabled();
+        let params = context.cfg().gas_params();
+        let account_write_cost = params.tx_account_write_cost();
+        let new_account_state_gas = if is_eip8037 { params.new_account_state_gas() } else { 0 };
+        let delegation_bytes_state_gas =
+            if is_eip8037 { params.tx_eip7702_state_gas_bytecode() } else { 0 };
+        let (tx, journal) = context.tx_journal_mut();
+
+        let mut written_accounts: HashSet<Address> = HashSet::default();
+        written_accounts.insert(tx.caller());
+        if let TxKind::Call(target) = tx.kind()
+            && !tx.value().is_zero()
+        {
+            written_accounts.insert(target);
+        }
+        let oog = apply_auth_list_eip2780_standard_keystore::<_, ERROR>(
+            chain_id,
+            now,
+            tx.authorization_list(),
+            journal,
+            account_write_cost,
+            new_account_state_gas,
+            delegation_bytes_state_gas,
+            &mut written_accounts,
+            gas,
+        )?;
+        return Ok(if oog { None } else { Some(0) });
+    }
+
+    let chain_id = context.cfg().chain_id();
+    let (tx, journal) = context.tx_journal_mut();
+    if tx.tx_type() != TransactionType::Eip7702 {
+        return Ok(Some(0));
+    }
+    let number_of_refunded_accounts = apply_auth_list_standard_keystore::<_, ERROR>(
+        chain_id,
+        now,
+        tx.authorization_list(),
+        journal,
+    )?;
+    let params = context.cfg().gas_params();
+    Ok(Some(params.tx_eip7702_auth_refund_regular().saturating_mul(number_of_refunded_accounts)))
+}
+
+/// Stock [`revm::handler::pre_execution::apply_auth_list`] plus a keystore
+/// check after authority recovery. The authority account is warmed first so a
+/// skipped auth still matches EIP-7702's "invalid after `ecrecover`" gas.
+#[cfg(feature = "std")]
+fn apply_auth_list_standard_keystore<JOURNAL, ERROR>(
+    chain_id: u64,
+    now: u64,
+    auth_list: impl Iterator<Item = impl AuthorizationTr>,
+    journal: &mut JOURNAL,
+) -> Result<u64, ERROR>
+where
+    JOURNAL: JournalTr,
+    ERROR: From<InvalidTransaction> + From<<JOURNAL::Database as Database>::Error>,
+{
+    let mut refunded_accounts = 0;
+    for authorization in auth_list {
+        let auth_chain_id = authorization.chain_id();
+        if !auth_chain_id.is_zero() && auth_chain_id != U256::from(chain_id) {
+            continue;
+        }
+
+        if authorization.nonce() == u64::MAX {
+            continue;
+        }
+
+        let Some(authority) = authorization.authority() else {
+            continue;
+        };
+
+        let authority_acc = journal.load_account_with_code_mut(authority)?;
+        let authority_acc_info = &authority_acc.account().info;
+
+        if let Some(bytecode) = &authority_acc_info.code
+            && !bytecode.is_empty()
+            && !bytecode.is_eip7702()
+        {
+            continue;
+        }
+
+        if authorization.nonce() != authority_acc_info.nonce {
+            continue;
+        }
+
+        // Drop so we can SLOAD AccountConfiguration, then skip like a bad nonce.
+        drop(authority_acc);
+        let state = load_standard_account_state(journal, authority)?;
+        if base_execution_eip8130::ActorAuthorizer::authorize_standard_sender_from_state(
+            authority, &state, now,
+        )
+        .is_err()
+        {
+            continue;
+        }
+
+        // INVARIANT: the authority was already warmed by the first
+        // `load_account_with_code_mut` above, so this re-load returns the same
+        // journaled account with its original load flags intact. The refund
+        // accounting below (and `is_loaded_as_not_existing_not_touched`) relies
+        // on revm returning the warmed entry here rather than a fresh load.
+        let mut authority_acc = journal.load_account_with_code_mut(authority)?;
+        let authority_acc_info = &authority_acc.account().info;
+
+        if !(authority_acc_info.is_empty()
+            && authority_acc.account().is_loaded_as_not_existing_not_touched())
+        {
+            refunded_accounts += 1;
+        }
+
+        authority_acc.delegate(authorization.address());
+    }
+
+    Ok(refunded_accounts)
+}
+
+/// Stock [`revm::handler::pre_execution::apply_auth_list_eip2780`] plus the
+/// standard-keystore gate after authority recovery. Returns `true` on OOG.
+#[cfg(feature = "std")]
+#[allow(clippy::too_many_arguments)]
+fn apply_auth_list_eip2780_standard_keystore<JOURNAL, ERROR>(
+    chain_id: u64,
+    now: u64,
+    auth_list: impl Iterator<Item = impl AuthorizationTr>,
+    journal: &mut JOURNAL,
+    account_write_cost: u64,
+    new_account_state_gas: u64,
+    delegation_bytes_state_gas: u64,
+    written_accounts: &mut HashSet<Address>,
+    gas: &mut GasTracker,
+) -> Result<bool, ERROR>
+where
+    JOURNAL: JournalTr,
+    ERROR: From<InvalidTransaction> + From<<JOURNAL::Database as Database>::Error>,
+{
+    let mut charged_delegation_bytes: HashSet<Address> = HashSet::default();
+
+    for authorization in auth_list {
+        let auth_chain_id = authorization.chain_id();
+        if !auth_chain_id.is_zero() && auth_chain_id != U256::from(chain_id) {
+            continue;
+        }
+
+        if authorization.nonce() == u64::MAX {
+            continue;
+        }
+
+        let Some(authority) = authorization.authority() else {
+            continue;
+        };
+
+        let authority_acc = journal.load_account_with_code_mut(authority)?;
+        let authority_acc_info = &authority_acc.account().info;
+
+        if let Some(bytecode) = &authority_acc_info.code
+            && !bytecode.is_empty()
+            && !bytecode.is_eip7702()
+        {
+            continue;
+        }
+
+        if authorization.nonce() != authority_acc_info.nonce {
+            continue;
+        }
+
+        // Drop so we can SLOAD AccountConfiguration, then skip like a bad nonce.
+        drop(authority_acc);
+        let state = load_standard_account_state(journal, authority)?;
+        if base_execution_eip8130::ActorAuthorizer::authorize_standard_sender_from_state(
+            authority, &state, now,
+        )
+        .is_err()
+        {
+            continue;
+        }
+
+        // INVARIANT: same warmed-entry re-load as the non-2780 path above.
+        let mut authority_acc = journal.load_account_with_code_mut(authority)?;
+        let authority_acc_info = &authority_acc.account().info;
+
+        let existed = !(authority_acc_info.is_empty()
+            && authority_acc.account().is_loaded_as_not_existing_not_touched());
+        let delegated_now = !authority_acc_info.is_code_hash_empty_or_zero();
+        let delegated_before_tx =
+            !authority_acc.account().original_info().is_code_hash_empty_or_zero();
+        let clearing = authorization.address().is_zero();
+
+        if !existed && !gas.record_state_cost(new_account_state_gas) {
+            return Ok(true);
+        }
+
+        if !written_accounts.contains(&authority) {
+            if !gas.record_regular_cost(account_write_cost) {
+                return Ok(true);
+            }
+            written_accounts.insert(authority);
+        }
+
+        if !clearing
+            && !delegated_now
+            && !delegated_before_tx
+            && !charged_delegation_bytes.contains(&authority)
+        {
+            if !gas.record_state_cost(delegation_bytes_state_gas) {
+                return Ok(true);
+            }
+            charged_delegation_bytes.insert(authority);
+        }
+
+        authority_acc.delegate(authorization.address());
+    }
+
+    Ok(false)
 }
 
 impl<EVM, ERROR, FRAME> Handler for BaseHandler<EVM, ERROR, FRAME>
@@ -148,6 +420,28 @@ where
             *chain = L1BlockInfo::try_fetch(journal.db_mut(), block.number(), spec)?;
         }
 
+        // Cobalt+: standard txs (legacy / 2930 / 1559 / 7702) must still present
+        // a live unrestricted default EOA in the EIP-8130 keystore. Recovery
+        // stays stateless ecrecover; this is the stateful gate. 8130 txs use
+        // `ActorTxVerifier` instead and never reach this handler. `no_std`
+        // (proof/zkVM) builds skip the check until the eip8130 crate is
+        // available there — same gating as enshrined 8130 execution.
+        // Deposits already returned above, so only the 8130 type needs excluding.
+        #[cfg(feature = "std")]
+        if spec.is_enabled_in(BaseUpgrade::Cobalt)
+            && tx.tx_type() != crate::EIP8130_TRANSACTION_TYPE
+        {
+            let caller = tx.caller();
+            let now: u64 = block.timestamp().try_into().map_err(|_| {
+                BaseTransactionError::standard_sender("block timestamp exceeds u64")
+            })?;
+            let state = load_standard_account_state(journal, caller)?;
+            base_execution_eip8130::ActorAuthorizer::authorize_standard_sender_from_state(
+                caller, &state, now,
+            )
+            .map_err(BaseTransactionError::standard_sender)?;
+        }
+
         let mut caller_account = journal.load_account_with_code_mut(tx.caller())?.data;
 
         // validates account nonce and code
@@ -181,6 +475,22 @@ where
         }
 
         Ok(())
+    }
+
+    fn apply_eip7702_auth_list(
+        &self,
+        evm: &mut Self::Evm,
+        gas: &mut GasTracker,
+    ) -> Result<Option<u64>, Self::Error> {
+        // Cobalt+: each recovered 7702 authority must still present a live
+        // unrestricted default EOA. A revoked / expired / scoped k1 is
+        // skipped (`continue`), same as a bad signature or nonce — the
+        // transaction is still included, that delegation is not applied.
+        #[cfg(feature = "std")]
+        if evm.ctx().cfg().spec().is_enabled_in(BaseUpgrade::Cobalt) {
+            return apply_eip7702_auth_list_standard_keystore(evm.ctx_mut(), gas);
+        }
+        self.mainnet.apply_eip7702_auth_list(evm, gas)
     }
 
     fn last_frame_result(
@@ -397,8 +707,10 @@ where
 #[cfg(test)]
 mod tests {
 
+    use alloy_eips::eip7702::{Authorization, RecoveredAuthority, RecoveredAuthorization};
     use alloy_primitives::uint;
-    use base_common_consensus::Predeploys;
+    use base_common_consensus::{Eip8130Constants, Predeploys};
+    use base_execution_eip8130::AccountConfigurationStorage;
     use revm::{
         InspectEvm,
         bytecode::Bytecode,
@@ -995,5 +1307,421 @@ mod tests {
             clean_result.result.tx_gas_used(),
             "stale authorizer transaction must not make the next EXTCODESIZE(authorizer) warm"
         );
+    }
+
+    /// Packs the inline-self fields of `AccountState` (flags at bit 128, expiry
+    /// at 184, scope at 232). Sequences and lock fields stay zero.
+    fn pack_inline_self(scope: u16, expiry: u64, revoked: bool) -> U256 {
+        let flags = if revoked { Eip8130Constants::DEFAULT_EOA_REVOKED } else { 0 };
+        (U256::from(flags) << 128) | (U256::from(expiry) << 184) | (U256::from(scope) << 232)
+    }
+
+    fn seed_account_state(db: &mut InMemoryDB, account: Address, word: U256) {
+        let slot = U256::from_be_bytes(AccountConfigurationStorage::account_state_slot(account).0);
+        db.load_account(AccountConfigurationStorage::ADDRESS).unwrap().storage.insert(slot, word);
+    }
+
+    fn standard_keystore_db(caller: Address, word: Option<U256>) -> InMemoryDB {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            caller,
+            AccountInfo { balance: U256::from(1_000_000), ..Default::default() },
+        );
+        if let Some(word) = word {
+            seed_account_state(&mut db, caller, word);
+        }
+        db
+    }
+
+    fn standard_keystore_tx(caller: Address) -> BaseTransaction<TxEnv> {
+        BaseTransaction::builder()
+            .base(TxEnv::builder().caller(caller).gas_limit(100_000))
+            .enveloped_tx(Some(bytes!("FACADE")))
+            .build_fill()
+    }
+
+    fn standard_keystore_context(
+        db: InMemoryDB,
+        spec: BaseUpgrade,
+    ) -> crate::BaseContext<InMemoryDB> {
+        Context::base()
+            .with_db(db)
+            .with_chain(L1BlockInfo {
+                l2_block: Some(U256::ZERO),
+                operator_fee_scalar: Some(U256::ZERO),
+                operator_fee_constant: Some(U256::ZERO),
+                ..Default::default()
+            })
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(spec)))
+    }
+
+    fn authorize_standard_sender(
+        db: InMemoryDB,
+        spec: BaseUpgrade,
+        caller: Address,
+    ) -> Result<(), EVMError<core::convert::Infallible, BaseTransactionError>> {
+        let ctx = standard_keystore_context(db, spec).with_tx(standard_keystore_tx(caller));
+        let mut evm = ctx.build_base();
+        let handler =
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
+        handler.validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
+    }
+
+    #[test]
+    fn cobalt_standard_sender_untouched_eoa_is_accepted() {
+        let caller = Address::repeat_byte(0x11);
+        authorize_standard_sender(standard_keystore_db(caller, None), BaseUpgrade::Cobalt, caller)
+            .expect("untouched EOA must still send standard txs");
+    }
+
+    #[test]
+    fn cobalt_standard_sender_revoked_default_eoa_is_rejected() {
+        let caller = Address::repeat_byte(0x11);
+        let db = standard_keystore_db(caller, Some(pack_inline_self(0, 0, true)));
+        let err = authorize_standard_sender(db, BaseUpgrade::Cobalt, caller)
+            .expect_err("revoked default EOA must not send standard txs");
+        assert!(
+            matches!(err, EVMError::Transaction(BaseTransactionError::StandardSender(_))),
+            "expected StandardSender, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn cobalt_standard_sender_scoped_self_is_rejected() {
+        let caller = Address::repeat_byte(0x11);
+        let db = standard_keystore_db(
+            caller,
+            Some(pack_inline_self(Eip8130Constants::SCOPE_SENDER, 0, false)),
+        );
+        let err = authorize_standard_sender(db, BaseUpgrade::Cobalt, caller)
+            .expect_err("scoped inline k1 must not send unrestricted standard txs");
+        assert!(
+            matches!(err, EVMError::Transaction(BaseTransactionError::StandardSender(_))),
+            "expected StandardSender, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn pre_cobalt_standard_sender_skips_keystore() {
+        let caller = Address::repeat_byte(0x11);
+        let db = standard_keystore_db(caller, Some(pack_inline_self(0, 0, true)));
+        authorize_standard_sender(db, BaseUpgrade::Isthmus, caller)
+            .expect("pre-Cobalt standard txs must not consult the keystore");
+    }
+
+    fn recovered_auth(authority: Address, delegate: Address) -> RecoveredAuthorization {
+        RecoveredAuthorization::new_unchecked(
+            Authorization { chain_id: U256::ZERO, address: delegate, nonce: 0 },
+            RecoveredAuthority::Valid(authority),
+        )
+    }
+
+    fn standard_7702_tx(
+        caller: Address,
+        auths: Vec<RecoveredAuthorization>,
+    ) -> BaseTransaction<TxEnv> {
+        BaseTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(caller)
+                    .kind(TxKind::Call(Address::repeat_byte(0x22)))
+                    .gas_limit(100_000)
+                    .authorization_list_recovered(auths),
+            )
+            .enveloped_tx(Some(bytes!("FACADE")))
+            .build_fill()
+    }
+
+    fn authority_has_delegation(db: InMemoryDB, spec: BaseUpgrade, authority: Address) -> bool {
+        let caller = Address::repeat_byte(0x33);
+        let delegate = Address::repeat_byte(0x44);
+        let ctx = standard_keystore_context(db, spec)
+            .with_tx(standard_7702_tx(caller, vec![recovered_auth(authority, delegate)]));
+        let mut evm = ctx.build_base();
+        let handler =
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let mut gas = GasTracker::new(100_000, 100_000, 0);
+        handler.apply_eip7702_auth_list(&mut evm, &mut gas).unwrap();
+        evm.ctx_mut()
+            .journal_mut()
+            .load_account_with_code(authority)
+            .unwrap()
+            .info
+            .code
+            .as_ref()
+            .is_some_and(|code| code.is_eip7702())
+    }
+
+    #[test]
+    fn cobalt_7702_auth_untouched_eoa_is_applied() {
+        let authority = Address::repeat_byte(0x11);
+        assert!(
+            authority_has_delegation(
+                standard_keystore_db(authority, None),
+                BaseUpgrade::Cobalt,
+                authority
+            ),
+            "untouched EOA must still authorize 7702 delegations"
+        );
+    }
+
+    #[test]
+    fn cobalt_7702_auth_revoked_default_eoa_is_skipped() {
+        let authority = Address::repeat_byte(0x11);
+        // `authority_has_delegation` applies the auth list and unwraps the
+        // result, so it also asserts the transaction is not rejected.
+        let db = standard_keystore_db(authority, Some(pack_inline_self(0, 0, true)));
+        assert!(
+            !authority_has_delegation(db, BaseUpgrade::Cobalt, authority),
+            "revoked default EOA must skip its 7702 delegation without failing the transaction"
+        );
+    }
+
+    #[test]
+    fn cobalt_7702_auth_scoped_self_is_skipped() {
+        let authority = Address::repeat_byte(0x11);
+        let db = standard_keystore_db(
+            authority,
+            Some(pack_inline_self(Eip8130Constants::SCOPE_SENDER, 0, false)),
+        );
+        assert!(
+            !authority_has_delegation(db, BaseUpgrade::Cobalt, authority),
+            "scoped inline k1 must not apply a 7702 delegation"
+        );
+    }
+
+    #[test]
+    fn cobalt_7702_auth_invalid_signature_is_skipped() {
+        let live = Address::repeat_byte(0x11);
+        let delegate = Address::repeat_byte(0x44);
+        let caller = Address::repeat_byte(0x33);
+        let ctx = standard_keystore_context(standard_keystore_db(live, None), BaseUpgrade::Cobalt)
+            .with_tx(standard_7702_tx(
+                caller,
+                vec![
+                    RecoveredAuthorization::new_unchecked(
+                        Authorization { chain_id: U256::ZERO, address: delegate, nonce: 0 },
+                        RecoveredAuthority::Invalid,
+                    ),
+                    recovered_auth(live, delegate),
+                ],
+            ));
+        let mut evm = ctx.build_base();
+        let handler =
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let mut gas = GasTracker::new(100_000, 100_000, 0);
+        handler
+            .apply_eip7702_auth_list(&mut evm, &mut gas)
+            .expect("an invalid 7702 signature must skip, not fail the transaction");
+        assert!(
+            evm.ctx_mut()
+                .journal_mut()
+                .load_account_with_code(live)
+                .unwrap()
+                .info
+                .code
+                .as_ref()
+                .is_some_and(|code| code.is_eip7702()),
+            "a later valid authority must still apply after a skipped bad signature"
+        );
+    }
+
+    #[test]
+    fn cobalt_7702_mixed_auth_list_skips_only_revoked() {
+        let live = Address::repeat_byte(0x11);
+        let revoked = Address::repeat_byte(0x12);
+        let delegate = Address::repeat_byte(0x44);
+        let caller = Address::repeat_byte(0x33);
+        let mut db = standard_keystore_db(live, None);
+        db.insert_account_info(
+            revoked,
+            AccountInfo { balance: U256::from(1_000_000), ..Default::default() },
+        );
+        seed_account_state(&mut db, revoked, pack_inline_self(0, 0, true));
+
+        let ctx = standard_keystore_context(db, BaseUpgrade::Cobalt).with_tx(standard_7702_tx(
+            caller,
+            vec![recovered_auth(live, delegate), recovered_auth(revoked, delegate)],
+        ));
+        let mut evm = ctx.build_base();
+        let handler =
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        let mut gas = GasTracker::new(100_000, 100_000, 0);
+        handler
+            .apply_eip7702_auth_list(&mut evm, &mut gas)
+            .expect("mixed 7702 list must not fail the transaction");
+
+        let live_delegated = evm
+            .ctx_mut()
+            .journal_mut()
+            .load_account_with_code(live)
+            .unwrap()
+            .info
+            .code
+            .as_ref()
+            .is_some_and(|code| code.is_eip7702());
+        let revoked_delegated = evm
+            .ctx_mut()
+            .journal_mut()
+            .load_account_with_code(revoked)
+            .unwrap()
+            .info
+            .code
+            .as_ref()
+            .is_some_and(|code| code.is_eip7702());
+        assert!(live_delegated, "live EOA authority must still apply");
+        assert!(!revoked_delegated, "revoked authority must be skipped");
+    }
+
+    #[test]
+    fn pre_cobalt_7702_auth_skips_keystore() {
+        let authority = Address::repeat_byte(0x11);
+        assert!(
+            authority_has_delegation(
+                standard_keystore_db(authority, Some(pack_inline_self(0, 0, true))),
+                BaseUpgrade::Isthmus,
+                authority
+            ),
+            "pre-Cobalt 7702 auths must not consult the keystore"
+        );
+    }
+
+    /// Directly exercises the EIP-2780 auth-list apply. That path is gated on
+    /// `is_amsterdam_eip2780_enabled()`, which no `BaseSpecId` reaches yet (the
+    /// highest upgrade maps to Osaka, EIP-2780 lands in Amsterdam), so it cannot
+    /// be driven through the handler. We call the inner function with explicit
+    /// per-authority gas costs to cover the keystore gate and the interleaved
+    /// state/regular gas charges.
+    ///
+    /// Returns `(oog, delegated_per_authority, written_per_authority)`.
+    fn run_eip2780_auth_list(
+        db: InMemoryDB,
+        authorities: &[Address],
+        auths: Vec<RecoveredAuthorization>,
+        account_write_cost: u64,
+        new_account_state_gas: u64,
+        delegation_bytes_state_gas: u64,
+        gas: &mut GasTracker,
+    ) -> (bool, Vec<bool>, Vec<bool>) {
+        let caller = Address::repeat_byte(0x33);
+        let ctx = standard_keystore_context(db, BaseUpgrade::Cobalt)
+            .with_tx(standard_7702_tx(caller, auths));
+        let mut evm = ctx.build_base();
+        let chain_id = evm.ctx().cfg().chain_id();
+        let mut written: HashSet<Address> = HashSet::default();
+
+        let oog = {
+            let (tx, journal) = evm.ctx_mut().tx_journal_mut();
+            apply_auth_list_eip2780_standard_keystore::<
+                _,
+                EVMError<core::convert::Infallible, BaseTransactionError>,
+            >(
+                chain_id,
+                0,
+                tx.authorization_list(),
+                journal,
+                account_write_cost,
+                new_account_state_gas,
+                delegation_bytes_state_gas,
+                &mut written,
+                gas,
+            )
+            .expect("EIP-2780 auth list apply must not error on an infallible db")
+        };
+
+        let delegated = authorities
+            .iter()
+            .map(|authority| {
+                evm.ctx_mut()
+                    .journal_mut()
+                    .load_account_with_code(*authority)
+                    .unwrap()
+                    .info
+                    .code
+                    .as_ref()
+                    .is_some_and(|code| code.is_eip7702())
+            })
+            .collect();
+        let written_flags =
+            authorities.iter().map(|authority| written.contains(authority)).collect();
+
+        (oog, delegated, written_flags)
+    }
+
+    #[test]
+    fn eip2780_records_gas_for_accepted_authority() {
+        let authority = Address::repeat_byte(0x11);
+        let delegate = Address::repeat_byte(0x44);
+        let mut gas = GasTracker::new(1_000, 1_000, 0);
+
+        let (oog, delegated, written) = run_eip2780_auth_list(
+            standard_keystore_db(authority, None),
+            &[authority],
+            vec![recovered_auth(authority, delegate)],
+            100, // account_write_cost
+            0,   // new_account_state_gas (authority is already funded, so unused)
+            50,  // delegation_bytes_state_gas
+            &mut gas,
+        );
+
+        assert!(!oog, "a fully-funded auth list must not report OOG");
+        assert!(delegated[0], "an accepted authority must be delegated");
+        assert!(written[0], "an accepted authority must be recorded as written");
+        assert_eq!(gas.remaining(), 850, "must charge account_write (100) + delegation_bytes (50)");
+    }
+
+    #[test]
+    fn eip2780_skips_revoked_authority_without_charging_gas() {
+        let authority = Address::repeat_byte(0x11);
+        let delegate = Address::repeat_byte(0x44);
+        let db = standard_keystore_db(authority, Some(pack_inline_self(0, 0, true)));
+        let mut gas = GasTracker::new(1_000, 1_000, 0);
+
+        let (oog, delegated, written) = run_eip2780_auth_list(
+            db,
+            &[authority],
+            vec![recovered_auth(authority, delegate)],
+            100,
+            25,
+            50,
+            &mut gas,
+        );
+
+        assert!(!oog, "skipping a revoked authority is not an OOG");
+        assert!(!delegated[0], "a revoked default EOA must not be delegated");
+        assert!(!written[0], "a skipped authority must not be recorded as written");
+        assert_eq!(gas.remaining(), 1_000, "a skipped authority must not consume gas");
+    }
+
+    #[test]
+    fn eip2780_out_of_gas_midlist_returns_true() {
+        let live_a = Address::repeat_byte(0x11);
+        let live_b = Address::repeat_byte(0x12);
+        let delegate = Address::repeat_byte(0x44);
+        let mut db = standard_keystore_db(live_a, None);
+        db.insert_account_info(
+            live_b,
+            AccountInfo { balance: U256::from(1_000_000), ..Default::default() },
+        );
+
+        // Budget covers the first authority (100 + 50 = 150) but not the second
+        // authority's account-write charge (100): remaining 200 → 50 after the
+        // first, so the second's `record_regular_cost(100)` runs out.
+        let mut gas = GasTracker::new(200, 200, 0);
+
+        let (oog, delegated, _written) = run_eip2780_auth_list(
+            db,
+            &[live_a, live_b],
+            vec![recovered_auth(live_a, delegate), recovered_auth(live_b, delegate)],
+            100,
+            0,
+            50,
+            &mut gas,
+        );
+
+        assert!(oog, "running out mid-list must return Ok(true)");
+        assert!(delegated[0], "the first authority is applied before gas is exhausted");
+        assert!(!delegated[1], "the second authority must not be applied after OOG");
     }
 }

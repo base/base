@@ -89,6 +89,11 @@ pub enum BaseInvalidTransactionError {
     /// account-change apply). The string carries the underlying rejection reason.
     #[error("EIP-8130 transaction rejected: {0}")]
     Eip8130Rejected(String),
+    /// A standard (legacy / EIP-2930 / EIP-1559 / EIP-7702) transaction was
+    /// rejected because its sender failed EIP-8130 keystore authorization after
+    /// ecrecover. The string carries the underlying rejection reason.
+    #[error("standard transaction keystore authorization failed: {0}")]
+    StandardSenderRejected(String),
 }
 
 impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
@@ -98,7 +103,8 @@ impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'
             | BaseInvalidTransactionError::HaltedDepositPostRegolith
             | BaseInvalidTransactionError::MissingEnvelopedTx
             | BaseInvalidTransactionError::Eip8130NotAccepted
-            | BaseInvalidTransactionError::Eip8130Rejected(_) => {
+            | BaseInvalidTransactionError::Eip8130Rejected(_)
+            | BaseInvalidTransactionError::StandardSenderRejected(_) => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
         }
@@ -116,6 +122,9 @@ impl TryFrom<BaseTransactionError> for BaseInvalidTransactionError {
             BaseTransactionError::HaltedDepositPostRegolith => Ok(Self::HaltedDepositPostRegolith),
             BaseTransactionError::MissingEnvelopedTx => Ok(Self::MissingEnvelopedTx),
             BaseTransactionError::Eip8130(reason) => Ok(Self::Eip8130Rejected(reason)),
+            BaseTransactionError::StandardSender(reason) => {
+                Ok(Self::StandardSenderRejected(reason))
+            }
             BaseTransactionError::Base(err) => Err(err),
         }
     }
