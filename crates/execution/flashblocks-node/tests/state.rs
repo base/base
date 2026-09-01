@@ -851,3 +851,108 @@ async fn test_same_block_append_refreshes_pending_header() {
         "same-block append must publish a fresh header with updated transactions_root"
     );
 }
+
+/// Advances the node past `pending`'s anchor without telling the state processor, reproducing
+/// the queue-lag shape from the 2026-08-20 mainnet incident where canonical and flashblock
+/// updates piled up in the shared unbounded queue while the node kept following the chain.
+async fn advance_tip_without_processing(test: &mut FlashblocksBuilderTestHarness, blocks: u64) {
+    for _ in 0..blocks {
+        test.new_canonical_block_without_processing(vec![]).await;
+    }
+}
+
+#[tokio::test]
+async fn test_stale_pending_dropped_once_node_advances_past_it() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+    assert_eq!(
+        test.flashblocks
+            .get_pending_blocks()
+            .get_block(true)
+            .expect("pending tracks block 1")
+            .header
+            .number,
+        1
+    );
+
+    advance_tip_without_processing(&mut test, 7).await;
+    assert_eq!(test.node.latest_block().number, 7);
+
+    // A backlogged flashblock for block 1 must not keep the genesis-anchored overlay live.
+    test.send_flashblock(
+        FlashblockBuilder::new(&test, 1)
+            .with_canonical_block_number(0)
+            .with_transactions(vec![test.build_transaction_to_send_eth(
+                Account::Alice,
+                Account::Bob,
+                100_000,
+            )])
+            .build(),
+    )
+    .await;
+
+    assert!(
+        test.flashblocks.get_pending_blocks().is_none(),
+        "pending must be absent rather than serve an overlay anchored 7 blocks behind the tip"
+    );
+}
+
+#[tokio::test]
+async fn test_stale_base_flashblock_does_not_republish_pending() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+
+    advance_tip_without_processing(&mut test, 7).await;
+    assert_eq!(test.node.latest_block().number, 7);
+
+    // A backlogged base flashblock rebuilds from scratch, so it is the path that kept
+    // republishing stale overlays for hours as the queue drained.
+    test.send_flashblock(FlashblockBuilder::new_base(&test).with_canonical_block_number(0).build())
+        .await;
+
+    assert!(
+        test.flashblocks.get_pending_blocks().is_none(),
+        "a rebuild anchored at genesis must not publish while the node is at block 7"
+    );
+}
+
+#[tokio::test]
+async fn test_pending_recovers_at_current_canonical_tip() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+    advance_tip_without_processing(&mut test, 7).await;
+
+    test.send_flashblock(FlashblockBuilder::new_base(&test).with_canonical_block_number(0).build())
+        .await;
+    assert!(test.flashblocks.get_pending_blocks().is_none());
+
+    // Recovery needs no explicit reset: the first flashblock rooted at the tip rebuilds.
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+
+    let recovered = test
+        .flashblocks
+        .get_pending_blocks()
+        .get_block(true)
+        .expect("pending recovers on the current tip");
+    assert_eq!(recovered.header.number, 8, "pending must track the child of block 7");
+
+    test.send_flashblock(
+        FlashblockBuilder::new(&test, 1)
+            .with_transactions(vec![test.build_transaction_to_send_eth(
+                Account::Alice,
+                Account::Bob,
+                100_000,
+            )])
+            .build(),
+    )
+    .await;
+
+    let extended = test
+        .flashblocks
+        .get_pending_blocks()
+        .get_block(true)
+        .expect("recovered pending keeps accepting flashblocks");
+    assert_eq!(extended.header.number, 8);
+    assert_eq!(extended.transactions.len(), 2, "deposit tx from base + Alice->Bob transfer");
+}
