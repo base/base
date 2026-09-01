@@ -230,20 +230,18 @@ mod tests {
     fn config_rejects_unknown_options() {
         let err = parse_config(quote! { instal }).err().unwrap();
 
-        assert!(
-            err.to_string()
-                .contains("expected `id`, `storage`, `macro_path`, `args`, `install`, or `storage_features`")
-        );
+        assert!(err.to_string().contains(
+            "expected `id`, `storage`, `macro_path`, `args`, `install`, or `storage_features`"
+        ));
     }
 
     #[test]
     fn config_rejects_positional_storage() {
         let err = parse_config(quote! { CustomStorage<'_> }).err().unwrap();
 
-        assert!(
-            err.to_string()
-                .contains("expected `id`, `storage`, `macro_path`, `args`, `install`, or `storage_features`")
-        );
+        assert!(err.to_string().contains(
+            "expected `id`, `storage`, `macro_path`, `args`, `install`, or `storage_features`"
+        ));
     }
 
     #[test]
