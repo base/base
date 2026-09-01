@@ -14,21 +14,6 @@ impl UpgradeGatedStorageFeatures {
             StorageFeatures::Legacy
         }
     }
-
-    /// Returns the persistent-storage features for a caller that must observe
-    /// features from at least `min`, resolving to `from_upgrade(max(BaseUpgrade::LATEST, min))`.
-    ///
-    /// Intended for callers that lack a live [`BaseUpgrade`] at construction — for
-    /// example the enshrined-execution `JournalStorageProvider` in
-    /// `crates/common/evm/src/eip8130.rs`, which currently inherits the trait
-    /// default `StorageFeatures::Legacy` when accessing `NonceManagerStorage` and
-    /// `TxContextStorage` before the first EVM call frame. Regular precompile
-    /// wrappers should thread `upgrade` through their constructor and call
-    /// [`from_upgrade`](Self::from_upgrade) instead, so their features track the
-    /// same signal that gated the wrapper's install.
-    pub fn at_least(min: BaseUpgrade) -> StorageFeatures {
-        Self::from_upgrade(core::cmp::max(BaseUpgrade::LATEST, min))
-    }
 }
 
 /// A chain spec that can select Base precompile sets.
@@ -59,25 +44,6 @@ mod tests {
         assert_eq!(
             UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
             StorageFeatures::Cobalt,
-        );
-    }
-
-    #[test]
-    fn at_least_honors_floor_when_latest_is_behind() {
-        // LATEST is currently pre-Cobalt; a wrapper gated at Cobalt must still get Cobalt features.
-        assert!(BaseUpgrade::LATEST < BaseUpgrade::Cobalt);
-        assert_eq!(
-            UpgradeGatedStorageFeatures::at_least(BaseUpgrade::Cobalt),
-            StorageFeatures::Cobalt,
-        );
-    }
-
-    #[test]
-    fn at_least_rides_latest_when_latest_meets_floor() {
-        // A wrapper with a pre-Cobalt floor tracks whatever LATEST already provides.
-        assert_eq!(
-            UpgradeGatedStorageFeatures::at_least(BaseUpgrade::Beryl),
-            UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::LATEST),
         );
     }
 }

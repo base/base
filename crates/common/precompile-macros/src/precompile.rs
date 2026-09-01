@@ -61,8 +61,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
     let Some(storage_features) = config.storage_features else {
         return Err(syn::Error::new_spanned(
             &input.ident,
-            "`#[precompile]` requires `storage_features = <expr>` (see `UpgradeGatedStorageFeatures::from_upgrade` \
-             or `at_least` for the canonical helpers)",
+            "`#[precompile]` requires `storage_features = <expr>` (see `UpgradeGatedStorageFeatures::from_upgrade`)",
         ));
     };
     let macro_invocation = quote! {
