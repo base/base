@@ -537,6 +537,8 @@ mod tests {
         assert!(precompiles.get(secp256r1::P256VERIFY.address()).is_some());
     }
 
+    // Static table only. Factory, lookup, registries, nonce manager, and tx context
+    // are registered later by install() / install_with_observer().
     #[rstest]
     #[case::beryl(BaseUpgrade::Beryl)]
     #[case::cobalt(BaseUpgrade::Cobalt)]
