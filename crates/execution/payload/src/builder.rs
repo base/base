@@ -52,10 +52,10 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BuilderMetrics, InclusionTracker,
-    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
-    PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder, StateChangeEffects,
-    ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
+    InclusionTracker, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
+    ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder,
+    StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
     error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
@@ -1117,6 +1117,24 @@ where
                 },
                 None => 0,
             };
+
+            if CoinbaseTipAffordability::unaffordable(
+                &tx,
+                tx_payer_auth,
+                builder.evm_mut().db_mut(),
+            ) {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    "skipping transaction unable to pay gas plus declared coinbase tip"
+                );
+                if tx.eip8130_replay_id().is_none() {
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                } else {
+                    best_txs.mark_current_committed();
+                }
+                continue;
+            }
 
             let tx = tx.into_consensus();
 
