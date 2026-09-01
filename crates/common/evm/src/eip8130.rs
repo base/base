@@ -1056,7 +1056,7 @@ impl Eip8130Executor {
                     NonceValidator::validate_sequence(tx, current_nonce, NonceMode::Inclusion)
                         .map_err(BaseTransactionError::eip8130)?;
                     nonce_mgr
-                        .increment_nonce_from_current(sender, nonce_key, current_nonce)
+                        .increment_nonce(sender, nonce_key)
                         .map_err(BaseTransactionError::eip8130)?;
                     (current_nonce == 0, false)
                 };
