@@ -58,17 +58,17 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
     });
     let precompile_doc = format!("Creates the EVM precompile wrapper for `{ident}`.");
     let arg_names = args.iter().map(|arg| &arg.ident);
-    let macro_invocation = match config.storage_features {
-        Some(storage_features) => quote! {
-            #macro_path!(#id, storage_features: #storage_features, |ctx, calldata| {
-                <#storage>::new(ctx).dispatch(ctx, &calldata #(, #arg_names)*)
-            })
-        },
-        None => quote! {
-            #macro_path!(#id, |ctx, calldata| {
-                <#storage>::new(ctx).dispatch(ctx, &calldata #(, #arg_names)*)
-            })
-        },
+    let Some(storage_features) = config.storage_features else {
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "`#[precompile]` requires `storage_features = <expr>` (see `UpgradeGatedStorageFeatures::from_upgrade` \
+             or `at_least` for the canonical helpers)",
+        ));
+    };
+    let macro_invocation = quote! {
+        #macro_path!(#id, storage_features: #storage_features, |ctx, calldata| {
+            <#storage>::new(ctx).dispatch(ctx, &calldata #(, #arg_names)*)
+        })
     };
 
     Ok(quote! {
@@ -350,23 +350,29 @@ mod tests {
     }
 
     #[test]
-    fn without_storage_features_arg_expansion_omits_it() {
-        let tokens = expand_impl(
+    fn expansion_requires_storage_features() {
+        let err = expand_impl(
             quote! { install },
             quote! {
                 pub struct Example;
             },
         )
-        .unwrap()
-        .to_string();
+        .err()
+        .unwrap();
 
-        assert!(!tokens.contains("storage_features"), "got: {tokens}");
+        assert!(
+            err.to_string().contains("`#[precompile]` requires `storage_features = <expr>`"),
+            "got: {err}",
+        );
     }
 
     #[test]
     fn bare_install_expands_to_storage_address() {
         let tokens = expand_impl(
-            quote! { install },
+            quote! {
+                install,
+                storage_features = ::base_precompile_storage::StorageFeatures::Cobalt,
+            },
             quote! {
                 pub struct Example;
             },
@@ -382,7 +388,11 @@ mod tests {
     #[test]
     fn install_with_explicit_storage_uses_that_address() {
         let tokens = expand_impl(
-            quote! { storage = CustomStorage<'_>, install },
+            quote! {
+                storage = CustomStorage<'_>,
+                install,
+                storage_features = ::base_precompile_storage::StorageFeatures::Cobalt,
+            },
             quote! {
                 pub struct Example;
             },

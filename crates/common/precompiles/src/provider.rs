@@ -235,8 +235,8 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             );
         }
         if self.spec.upgrade() >= BaseUpgrade::Cobalt {
-            TxContext::install(&mut precompiles);
-            NonceManager::install(&mut precompiles);
+            TxContext::install(&mut precompiles, self.spec.upgrade());
+            NonceManager::install(&mut precompiles, self.spec.upgrade());
         }
         precompiles
     }

@@ -15,10 +15,17 @@ impl UpgradeGatedStorageFeatures {
         }
     }
 
-    /// Returns the persistent-storage features for a wrapper that must run at
-    /// `min` or later. Resolves to `from_upgrade(max(BaseUpgrade::LATEST, min))`
-    /// so an install site that is gated at `min` never underruns its own gate,
-    /// but still rides `LATEST` once it advances past `min`.
+    /// Returns the persistent-storage features for a caller that must observe
+    /// features from at least `min`, resolving to `from_upgrade(max(BaseUpgrade::LATEST, min))`.
+    ///
+    /// Intended for callers that lack a live [`BaseUpgrade`] at construction — for
+    /// example the enshrined-execution `JournalStorageProvider` in
+    /// `crates/common/evm/src/eip8130.rs`, which currently inherits the trait
+    /// default `StorageFeatures::Legacy` when accessing `NonceManagerStorage` and
+    /// `TxContextStorage` before the first EVM call frame. Regular precompile
+    /// wrappers should thread `upgrade` through their constructor and call
+    /// [`from_upgrade`](Self::from_upgrade) instead, so their features track the
+    /// same signal that gated the wrapper's install.
     pub fn at_least(min: BaseUpgrade) -> StorageFeatures {
         Self::from_upgrade(core::cmp::max(BaseUpgrade::LATEST, min))
     }
