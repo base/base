@@ -22,18 +22,6 @@ pub enum Operation {
 }
 
 impl Operation {
-    /// The scope bit that grants this operation, or unrestricted scope for
-    /// admin-only configuration changes.
-    #[must_use]
-    pub const fn required_bit(self) -> u16 {
-        match self {
-            Self::Sender => Eip8130Constants::SCOPE_OPERATOR,
-            Self::SelfPayer => Eip8130Constants::SCOPE_SELF_PAYER,
-            Self::SponsorPayer => Eip8130Constants::SCOPE_SPONSOR_PAYER,
-            Self::Config => Eip8130Constants::SCOPE_UNRESTRICTED,
-        }
-    }
-
     /// Whether `scope` grants this operation.
     #[must_use]
     pub const fn is_granted_by(self, scope: u16) -> bool {
