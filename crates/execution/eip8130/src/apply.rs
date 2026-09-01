@@ -505,8 +505,10 @@ impl AccountChangeApplier {
                     sequence, state.multichain_sequence,
                     "multichain sequence must match the account's current multichain sequence",
                 );
-                state.multichain_sequence =
-                    state.multichain_sequence.checked_add(1).ok_or(ApplyError::SequenceSaturated)?;
+                state.multichain_sequence = state
+                    .multichain_sequence
+                    .checked_add(1)
+                    .ok_or(ApplyError::SequenceSaturated)?;
             }
         }
         Ok(())
