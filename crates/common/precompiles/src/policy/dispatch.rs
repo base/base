@@ -4,10 +4,11 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, BerylAuxiliaryMetrics, BerylCallRecorder,
+    ActivationFeature, ActivationRegistryStorage,
     IPolicyRegistry::{self, IPolicyRegistryCalls as C},
     NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyRegistryV2, PolicyVersion,
-    PolicyVersions, PrecompileCallObserver, PrecompileMetricLabels,
+    PolicyVersions, PrecompileAuxiliaryMetrics, PrecompileCallObserver, PrecompileCallRecorder,
+    PrecompileMetricLabels,
 };
 
 impl PolicyRegistryStorage<'_> {
@@ -35,7 +36,7 @@ impl PolicyRegistryStorage<'_> {
     where
         O: PrecompileCallObserver,
     {
-        let mut recorder = BerylCallRecorder::start(
+        let mut recorder = PrecompileCallRecorder::start(
             observer.clone(),
             PrecompileMetricLabels::policy_call(calldata),
         );
@@ -106,7 +107,7 @@ impl PolicyRegistryStorage<'_> {
             }
             C::createPolicyWithAccounts(call) => {
                 observer.record_batch_items(
-                    &BerylAuxiliaryMetrics::singleton("policy", "createPolicyWithAccounts"),
+                    &PrecompileAuxiliaryMetrics::singleton("policy", "createPolicyWithAccounts"),
                     call.accounts.len(),
                 );
                 let id = logic.create_policy_with_accounts(
@@ -131,7 +132,7 @@ impl PolicyRegistryStorage<'_> {
             }
             C::updateAllowlist(call) => {
                 observer.record_batch_items(
-                    &BerylAuxiliaryMetrics::singleton("policy", "updateAllowlist"),
+                    &PrecompileAuxiliaryMetrics::singleton("policy", "updateAllowlist"),
                     call.accounts.len(),
                 );
                 logic.update_allowlist(self, call.policyId, call.allowed, call.accounts)?;
@@ -139,7 +140,7 @@ impl PolicyRegistryStorage<'_> {
             }
             C::updateBlocklist(call) => {
                 observer.record_batch_items(
-                    &BerylAuxiliaryMetrics::singleton("policy", "updateBlocklist"),
+                    &PrecompileAuxiliaryMetrics::singleton("policy", "updateBlocklist"),
                     call.accounts.len(),
                 );
                 logic.update_blocklist(self, call.policyId, call.blocked, call.accounts)?;

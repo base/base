@@ -17,11 +17,11 @@ use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx}
 
 use crate::{
     AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
-    B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder,
+    B20PolicyType, B20TokenRole,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
-    NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
-    PrecompileMetricLabels,
+    NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileAuxiliaryMetrics,
+    PrecompileCallObserver, PrecompileCallRecorder, PrecompileMetricLabels,
 };
 
 impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
@@ -46,7 +46,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        let mut recorder = BerylCallRecorder::start(
+        let mut recorder = PrecompileCallRecorder::start(
             observer.clone(),
             PrecompileMetricLabels::b20_asset_call(calldata),
         );
@@ -432,7 +432,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
             // --- Batched mint ---
             SC::batchMint(c) => {
                 observer.record_batch_items(
-                    &BerylAuxiliaryMetrics::b20("asset", "batchMint"),
+                    &PrecompileAuxiliaryMetrics::b20("asset", "batchMint"),
                     c.recipients.len(),
                 );
                 logic.batch_mint(self, caller, c.recipients, c.amounts, privileged)?;
@@ -470,7 +470,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         let count = announce.internal_calls.len();
         let bytes: usize = announce.internal_calls.iter().map(|call| call.len()).sum();
         observer.record_internal_calls(
-            &BerylAuxiliaryMetrics::b20("asset", "announce"),
+            &PrecompileAuxiliaryMetrics::b20("asset", "announce"),
             count,
             bytes,
         );

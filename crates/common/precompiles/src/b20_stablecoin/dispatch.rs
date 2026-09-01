@@ -14,11 +14,12 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
 
 use crate::{
-    B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant, BerylCallRecorder, BerylSelector,
+    B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
-    PrecompileMetricLabels, StablecoinAccounting, StablecoinVersion, StablecoinVersions,
+    PrecompileCallRecorder, PrecompileMetricLabels, PrecompileSelector, StablecoinAccounting,
+    StablecoinVersion, StablecoinVersions,
 };
 
 impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
@@ -43,7 +44,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        let mut recorder = BerylCallRecorder::start(
+        let mut recorder = PrecompileCallRecorder::start(
             observer.clone(),
             PrecompileMetricLabels::b20_stablecoin_call(calldata),
         );
@@ -107,7 +108,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
     {
         let logic = version.implementation();
 
-        if let Some(selector) = BerylSelector::selector(calldata)
+        if let Some(selector) = PrecompileSelector::selector(calldata)
             && IB20Stablecoin::IB20StablecoinCalls::valid_selector(selector)
         {
             let call = IB20Stablecoin::IB20StablecoinCalls::abi_decode_validate(calldata).map_err(
