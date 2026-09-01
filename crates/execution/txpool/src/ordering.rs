@@ -138,10 +138,10 @@ impl PartialOrd for UnifiedTipPriority {
 
 impl Ord for UnifiedTipPriority {
     fn cmp(&self, other: &Self) -> Ordering {
-        // `tip * gas` fits in U256: a larger product would already overflow the
-        // transaction's total fee spend.
-        let left = self.tip * U256::from(other.gas);
-        let right = other.tip * U256::from(self.gas);
+        // Saturate at U256::MAX so a pathological tip*gas product ranks as
+        // the highest bid instead of wrapping.
+        let left = self.tip.saturating_mul(U256::from(other.gas));
+        let right = other.tip.saturating_mul(U256::from(self.gas));
         left.cmp(&right).then_with(|| self.predicates.cmp(&other.predicates))
     }
 }
@@ -149,9 +149,10 @@ impl Ord for UnifiedTipPriority {
 /// Unified tip-per-gas ordering for standard and EIP-8130 transactions.
 ///
 /// Uses [`CoinbaseTip::decode`] when the transaction is a statically-analyzable
-/// EIP-8130 coinbase tip; otherwise ranks by `effective_tip_per_gas`. Same bid
-/// prefers fewer validity predicates, so standard transactions beat equally
-/// priced advanced transactions.
+/// EIP-8130 coinbase tip; otherwise ranks by `effective_tip_per_gas`. Returns
+/// [`Priority::None`] when `max_fee_per_gas < base_fee`, including for a
+/// decoded coinbase tip. Same bid prefers fewer validity predicates, so
+/// standard transactions beat equally priced advanced transactions.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct UnifiedTipOrdering<T = BasePooledTransaction>(PhantomData<T>);
@@ -180,6 +181,9 @@ where
         transaction: &Self::Transaction,
         base_fee: u64,
     ) -> Priority<Self::PriorityValue> {
+        let Some(effective_tip) = transaction.effective_tip_per_gas(base_fee) else {
+            return Priority::None;
+        };
         let predicates = transaction.validity_predicates().len();
         if let Some(signed) = transaction.as_eip8130()
             && let Some(tip) = CoinbaseTip::decode(signed.tx(), transaction.sender())
@@ -190,9 +194,7 @@ where
                 predicates,
             ));
         }
-        transaction.effective_tip_per_gas(base_fee).map_or(Priority::None, |tip| {
-            Priority::Value(UnifiedTipPriority::new(U256::from(tip), 1, predicates))
-        })
+        Priority::Value(UnifiedTipPriority::new(U256::from(effective_tip), 1, predicates))
     }
 }
 
@@ -641,6 +643,13 @@ mod tests {
     fn below_base_fee_standard_tx_has_no_priority() {
         let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
         let tx = eip1559_pooled(1, 10, 1, 21_000);
+        assert_eq!(ordering.priority(&tx, 20), Priority::None);
+    }
+
+    #[test]
+    fn below_base_fee_coinbase_tip_has_no_priority() {
+        let ordering = UnifiedTipOrdering::<BasePooledTransaction>::default();
+        let tx = eip8130_pooled(10, 0, 21_000, Some(U256::from(42_000)));
         assert_eq!(ordering.priority(&tx, 20), Priority::None);
     }
 }
