@@ -518,43 +518,9 @@ pub struct LaneTransactionStore<T: BasePooledTx> {
     funding_reservations: B256Map<FundingReservation>,
     config: PoolConfig,
     base_fee: u64,
-    #[cfg(test)]
-    full_classification_passes: std::sync::atomic::AtomicUsize,
-    #[cfg(test)]
-    incremental_lane_scans: std::sync::atomic::AtomicUsize,
-    #[cfg(test)]
-    incremental_payer_scans: std::sync::atomic::AtomicUsize,
 }
 
 impl<T: BasePooledTx> LaneTransactionStore<T> {
-    /// Resets the test-only counter for whole-store classification passes.
-    #[cfg(test)]
-    pub fn reset_full_classification_passes(&self) {
-        self.full_classification_passes.store(0, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Returns the test-only count of whole-store classification passes.
-    #[cfg(test)]
-    pub fn full_classification_passes(&self) -> usize {
-        self.full_classification_passes.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Resets test-only incremental dependency scan counters.
-    #[cfg(test)]
-    pub fn reset_incremental_scan_counts(&self) {
-        self.incremental_lane_scans.store(0, std::sync::atomic::Ordering::Relaxed);
-        self.incremental_payer_scans.store(0, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Returns test-only incremental lane and payer scan counts.
-    #[cfg(test)]
-    pub fn incremental_scan_counts(&self) -> (usize, usize) {
-        (
-            self.incremental_lane_scans.load(std::sync::atomic::Ordering::Relaxed),
-            self.incremental_payer_scans.load(std::sync::atomic::Ordering::Relaxed),
-        )
-    }
-
     /// Creates an empty store using Reth pool limits and replacement policy.
     pub fn new(config: PoolConfig, base_fee: u64) -> Self {
         Self {
@@ -576,12 +542,6 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
             funding_reservations: B256Map::default(),
             config,
             base_fee,
-            #[cfg(test)]
-            full_classification_passes: std::sync::atomic::AtomicUsize::new(0),
-            #[cfg(test)]
-            incremental_lane_scans: std::sync::atomic::AtomicUsize::new(0),
-            #[cfg(test)]
-            incremental_payer_scans: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -2088,8 +2048,6 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
 
         let mut invalid_suffixes = Vec::new();
         for lane_id in &journal.lanes {
-            #[cfg(test)]
-            self.incremental_lane_scans.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let Some(lane) = self.lanes.get(lane_id) else { continue };
             let mut expected = lane.cursor;
             let mut blocked = false;
@@ -2112,8 +2070,6 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         }
 
         for payer in &journal.payers {
-            #[cfg(test)]
-            self.incremental_payer_scans.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             loop {
                 let reserved = self.payer_reserved(*payer);
                 let balance = self.payer_balances.get(payer).copied().unwrap_or_default();
@@ -2314,8 +2270,6 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
                 journal.lanes.iter().find(|lane| !journal.scanned_lanes.contains(lane)).copied();
             if let Some(lane) = next_lane {
                 journal.scanned_lanes.insert(lane);
-                #[cfg(test)]
-                self.incremental_lane_scans.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if let Some(stored) = self.lanes.get(&lane) {
                     for transaction in stored.transactions.values() {
                         self.journal_hash(journal, *transaction.hash());
@@ -2334,8 +2288,6 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
                 .copied();
             if let Some(payer) = next_payer {
                 journal.scanned_payers.insert(payer);
-                #[cfg(test)]
-                self.incremental_payer_scans.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if let Some(hashes) = self.payer_hashes.get(&payer) {
                     for hash in hashes {
                         self.journal_hash(journal, *hash);
@@ -2551,8 +2503,6 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
     fn classified_transactions(
         &self,
     ) -> impl Iterator<Item = (LaneTransactionState, &Arc<ValidPoolTransaction<T>>)> {
-        #[cfg(test)]
-        self.full_classification_passes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.lanes.values().flat_map(|lane| self.classified_lane(lane)).chain(
             self.replays.values().map(|transaction| {
                 let state = if transaction.transaction.max_fee_per_gas() < u128::from(self.base_fee)
@@ -2832,7 +2782,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        sync::Mutex,
+        time::{Duration, Instant},
+    };
 
     use alloy_consensus::{Transaction, transaction::Recovered};
     use alloy_eips::eip2718::Encodable2718;
@@ -2845,18 +2798,35 @@ mod tests {
         Eip8130Constants, Eip8130Signed, TxEip8130,
     };
     use base_test_utils::Account;
-    use futures::StreamExt;
     use reth_primitives_traits::InMemorySize;
     use reth_transaction_pool::{
-        FullTransactionEvent, PoolTransaction, TransactionEvent, TransactionListenerKind,
-        TransactionOrigin,
+        PoolTransaction, Priority, TransactionOrdering, TransactionOrigin,
         identifier::{SenderId, TransactionId},
         pool::PendingPool,
         test_utils::TransactionBuilder,
     };
 
     use super::*;
-    use crate::{BaseOrdering, BasePooledTransaction, LaneEventHub};
+    use crate::{BaseOrdering, BasePooledTransaction};
+
+    #[derive(Clone, Debug, Default)]
+    struct CountingOrdering {
+        evaluations: Arc<Mutex<HashMap<TxHash, usize>>>,
+    }
+
+    impl TransactionOrdering for CountingOrdering {
+        type PriorityValue = u128;
+        type Transaction = BasePooledTransaction;
+
+        fn priority(
+            &self,
+            transaction: &Self::Transaction,
+            _base_fee: u64,
+        ) -> Priority<Self::PriorityValue> {
+            *self.evaluations.lock().unwrap().entry(*transaction.hash()).or_default() += 1;
+            Priority::Value(transaction.max_fee_per_gas())
+        }
+    }
 
     fn protocol_transaction(
         account: Account,
@@ -2877,27 +2847,6 @@ mod tests {
         let transaction = BaseTransactionSigned::Eip1559(
             signed.as_eip1559().expect("EIP-1559 transaction").clone(),
         );
-        let recovered = Recovered::new_unchecked(transaction, account.address());
-        let encoded_length = recovered.encode_2718_len();
-        BasePooledTransaction::new(recovered, encoded_length)
-    }
-
-    fn legacy_protocol_transaction(
-        account: Account,
-        nonce: u64,
-        gas_price: u128,
-    ) -> BasePooledTransaction {
-        let signed = TransactionBuilder::default()
-            .signer(account.signer_b256())
-            .chain_id(ChainConfig::mainnet().chain_id)
-            .nonce(nonce)
-            .to(Account::Bob.address())
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(gas_price)
-            .into_legacy();
-        let transaction =
-            BaseTransactionSigned::Legacy(signed.as_legacy().expect("legacy transaction").clone());
         let recovered = Recovered::new_unchecked(transaction, account.address());
         let encoded_length = recovered.encode_2718_len();
         BasePooledTransaction::new(recovered, encoded_length)
@@ -3102,6 +3051,531 @@ mod tests {
         assert_eq!(store.len(), 2);
         assert_eq!(store.size().pending, 2);
         assert_consistent(&store);
+    }
+
+    #[test]
+    fn same_sender_channels_with_the_same_sequence_coexist() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut store = store(0);
+        let first = validated(sidecar_transaction(&signer, U256::from(1), 0, 0, 10, 100), 1, now);
+        let second = validated(sidecar_transaction(&signer, U256::from(2), 0, 0, 10, 100), 1, now);
+        let mut expected = vec![*first.hash(), *second.hash()];
+        expected.sort_unstable();
+
+        store.insert_validated(first, 0).unwrap();
+        store.insert_validated(second, 0).unwrap();
+
+        assert_eq!(store.size().pending, 2);
+        assert_eq!(hashes(store.pending_transactions()), expected);
+    }
+
+    #[test]
+    fn replay_transactions_coexist_replace_reject_underpricing_and_remove_independently() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut store = store(0);
+        let original = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 1, 10, 100),
+            1,
+            now,
+        );
+        let original_hash = *original.hash();
+        let distinct = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 2, 20, 100),
+            1,
+            now,
+        );
+        let distinct_hash = *distinct.hash();
+        store.insert_validated(original, 0).unwrap();
+        store.insert_validated(distinct, 0).unwrap();
+
+        let underpriced = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 1, 10, 105),
+            1,
+            now,
+        );
+        assert!(matches!(
+            store.insert_validated(underpriced, 0).unwrap_err().kind,
+            PoolErrorKind::ReplacementUnderpriced
+        ));
+
+        let replacement = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 1, 12, 120),
+            1,
+            now,
+        );
+        let replacement_hash = *replacement.hash();
+        let outcome = store.insert_validated(replacement, 0).unwrap();
+        assert_eq!(outcome.replaced.map(|transaction| *transaction.hash()), Some(original_hash));
+        assert_eq!(hashes(store.pending_transactions()), {
+            let mut expected = vec![distinct_hash, replacement_hash];
+            expected.sort_unstable();
+            expected
+        });
+
+        assert_eq!(hashes(store.remove_exact(&[replacement_hash])), vec![replacement_hash]);
+        assert!(store.contains_hash(&distinct_hash));
+        assert!(!store.contains_hash(&replacement_hash));
+    }
+
+    #[test]
+    fn replay_best_invalidation_does_not_hide_other_replays_or_lanes() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut store = store(0);
+        let invalidated = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 1, 30, 100),
+            1,
+            now,
+        );
+        let invalidated_hash = *invalidated.hash();
+        let surviving_replay = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 2, 20, 100),
+            1,
+            now,
+        );
+        let surviving_replay_hash = *surviving_replay.hash();
+        let channel = validated(sidecar_transaction(&signer, U256::from(6), 0, 0, 10, 100), 1, now);
+        let channel_hash = *channel.hash();
+        for transaction in [invalidated, surviving_replay, channel] {
+            store.insert_validated(transaction, 0).unwrap();
+        }
+
+        let mut best = store.best_transactions(BaseOrdering::coinbase_tip(), 0);
+        let invalidated = store.get_by_hash(&invalidated_hash).unwrap();
+        best.mark_invalid(&invalidated, InvalidPoolTransactionError::Underpriced);
+
+        let mut expected = vec![surviving_replay_hash, channel_hash];
+        expected.sort_unstable();
+        assert_eq!(hashes(best), expected);
+    }
+
+    #[test]
+    fn replay_remove_with_descendants_removes_only_the_selected_replay() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut store = store(0);
+        let removed = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 1, 20, 100),
+            1,
+            now,
+        );
+        let removed_hash = *removed.hash();
+        let surviving_replay = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 2, 10, 100),
+            1,
+            now,
+        );
+        let surviving_replay_hash = *surviving_replay.hash();
+        let channel = validated(sidecar_transaction(&signer, U256::from(7), 0, 0, 10, 100), 1, now);
+        let channel_hash = *channel.hash();
+        for transaction in [removed, surviving_replay, channel] {
+            store.insert_validated(transaction, 0).unwrap();
+        }
+
+        assert_eq!(hashes(store.remove_with_descendants(&[removed_hash])), vec![removed_hash]);
+        assert!(store.contains_hash(&surviving_replay_hash));
+        assert!(store.contains_hash(&channel_hash));
+    }
+
+    #[test]
+    fn replay_expiry_removes_only_due_transactions() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut store = store(0);
+        let due = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 10, 10, 100),
+            1,
+            now,
+        );
+        let due_hash = *due.hash();
+        let future = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 11, 10, 100),
+            1,
+            now,
+        );
+        let future_hash = *future.hash();
+        store.insert_validated(due, 0).unwrap();
+        store.insert_validated(future, 0).unwrap();
+
+        let expired = store.expired_replay_hashes(10);
+        assert_eq!(expired, vec![due_hash]);
+        let outcome = store.remove_expired(&expired);
+        assert_eq!(hashes(outcome.removed), vec![due_hash]);
+        assert_eq!(outcome.transitions.transitions[0].terminal, Some(LaneTerminalEvent::Expired));
+        assert!(store.contains_hash(&future_hash));
+    }
+
+    #[test]
+    fn replay_commit_maps_to_committed_terminal() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut store = store(0);
+        let replay = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 1, 10, 100),
+            1,
+            now,
+        );
+        let identity = replay.transaction.identity();
+        let hash = *replay.hash();
+        store.insert_validated(replay, 0).unwrap();
+
+        let outcome = store.commit(&[identity]);
+
+        assert_eq!(hashes(outcome.removed), vec![hash]);
+        assert_eq!(outcome.transitions.transitions[0].terminal, Some(LaneTerminalEvent::Committed));
+    }
+
+    #[test]
+    fn remove_by_sender_covers_protocol_channel_and_replay_transactions() {
+        let signer = Account::Alice.signer();
+        let now = Instant::now();
+        let mut store = store(0);
+        let transactions = [
+            validated(protocol_transaction(Account::Alice, 0, 10, 100), 1, now),
+            validated(sidecar_transaction(&signer, U256::from(7), 0, 0, 10, 100), 1, now),
+            validated(
+                sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 10, 10, 100),
+                1,
+                now,
+            ),
+        ];
+        let expected =
+            transactions.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>();
+        for transaction in transactions {
+            store.insert_validated(transaction, 0).unwrap();
+        }
+
+        let removed = hashes(store.remove_by_sender(Account::Alice.address()));
+        let mut expected = expected;
+        expected.sort_unstable();
+        assert_eq!(removed, expected);
+        assert!(store.is_empty());
+        assert!(!store.unique_senders().contains(&Account::Alice.address()));
+    }
+
+    #[test]
+    fn unordered_mined_hashes_advance_the_channel_cursor_past_the_full_prefix() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut store = store(0);
+        let lane =
+            BaseTransactionLane::Channel { sender: signer.address(), nonce_key: U256::from(9) };
+        let transactions = (0..4)
+            .map(|nonce| {
+                validated(sidecar_transaction(&signer, U256::from(9), nonce, 0, 10, 100), 1, now)
+            })
+            .collect::<Vec<_>>();
+        let mined_hashes =
+            transactions.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>();
+        for transaction in transactions {
+            store.insert_validated(transaction, 0).unwrap();
+        }
+
+        store.prune_mined(
+            &[mined_hashes[2], mined_hashes[0], mined_hashes[1]],
+            B256::repeat_byte(0xa1),
+        );
+
+        assert_eq!(store.lane_cursor(&lane), Some(3));
+        assert_eq!(hashes(store.pending_transactions()), vec![mined_hashes[3]]);
+    }
+
+    #[test]
+    fn channel_best_order_uses_effective_tip_then_submission_timestamp() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut store = store(10);
+        let low_effective =
+            validated(sidecar_transaction(&signer, U256::from(1), 0, 0, 1, 100), 1, now);
+        let high_effective = validated(
+            sidecar_transaction(&signer, U256::from(2), 0, 0, 50, 50),
+            1,
+            now + Duration::from_millis(2),
+        );
+        let older_tie =
+            validated(sidecar_transaction(&signer, U256::from(3), 0, 0, 40, 50), 1, now);
+        let newer_tie = validated(
+            sidecar_transaction(&signer, U256::from(4), 0, 0, 40, 50),
+            1,
+            now + Duration::from_millis(1),
+        );
+        let expected =
+            [*older_tie.hash(), *newer_tie.hash(), *high_effective.hash(), *low_effective.hash()];
+        for transaction in [low_effective, high_effective, older_tie, newer_tie] {
+            store.insert_validated(transaction, 0).unwrap();
+        }
+
+        let actual = store
+            .best_transactions(BaseOrdering::coinbase_tip(), 10)
+            .map(|transaction| *transaction.hash())
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn best_initialization_evaluates_each_lane_head_once() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut store = store(0);
+        let first_head =
+            validated(sidecar_transaction(&signer, U256::from(1), 0, 0, 10, 100), 1, now);
+        let first_descendant =
+            validated(sidecar_transaction(&signer, U256::from(1), 1, 0, 10, 100), 1, now);
+        let second_head =
+            validated(sidecar_transaction(&signer, U256::from(2), 0, 0, 10, 100), 1, now);
+        let first_head_hash = *first_head.hash();
+        let first_descendant_hash = *first_descendant.hash();
+        let second_head_hash = *second_head.hash();
+        for transaction in [first_head, first_descendant, second_head] {
+            store.insert_validated(transaction, 0).unwrap();
+        }
+        let ordering = CountingOrdering::default();
+        let evaluations = Arc::clone(&ordering.evaluations);
+
+        let _best = store.best_transactions(ordering, 0);
+
+        let mut expected = HashMap::default();
+        expected.insert(first_head_hash, 1);
+        expected.insert(second_head_hash, 1);
+        assert_eq!(*evaluations.lock().unwrap(), expected);
+        assert!(!evaluations.lock().unwrap().contains_key(&first_descendant_hash));
+    }
+
+    #[test]
+    fn channel_and_replay_fee_classification_promotes_and_demotes_contiguous_runs() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut store = store(100);
+        let channel_head =
+            validated(sidecar_transaction(&signer, U256::from(5), 0, 0, 10, 99), 1, now);
+        let channel_next =
+            validated(sidecar_transaction(&signer, U256::from(5), 1, 0, 10, 200), 1, now);
+        let replay = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 1, 10, 98),
+            1,
+            now,
+        );
+        let head_id = channel_head.transaction.identity();
+        let next_id = channel_next.transaction.identity();
+        let replay_id = replay.transaction.identity();
+        for transaction in [channel_head, channel_next, replay] {
+            store.insert_validated(transaction, 0).unwrap();
+        }
+        assert_eq!(store.state(&head_id), Some(LaneTransactionState::BaseFee));
+        assert_eq!(
+            store.state(&next_id),
+            Some(LaneTransactionState::Queued(LaneGap::BlockedByBaseFee { ancestor: 0 }))
+        );
+        assert_eq!(store.state(&replay_id), Some(LaneTransactionState::BaseFee));
+
+        let lowered = store.set_base_fee(98);
+        assert_eq!(hashes(lowered.promoted), hashes(store.all_transactions()));
+        assert_eq!(store.size().pending, 3);
+        let raised = store.set_base_fee(150);
+        assert_eq!(raised.demoted.len(), 3);
+        assert_eq!(store.state(&head_id), Some(LaneTransactionState::BaseFee));
+        assert!(matches!(store.state(&next_id), Some(LaneTransactionState::Queued(_))));
+        assert_eq!(store.state(&replay_id), Some(LaneTransactionState::BaseFee));
+    }
+
+    #[test]
+    fn pending_byte_limit_evicts_the_lower_priority_lane() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let pending_low =
+            validated(sidecar_transaction(&signer, U256::from(10), 0, 0, 10, 100), 1, now);
+        let pending_high =
+            validated(sidecar_transaction(&signer, U256::from(11), 0, 0, 20, 200), 1, now);
+        let pending_low_hash = *pending_low.hash();
+        let pending_limit = pending_low.transaction.size() + pending_high.transaction.size() - 1;
+        let config = PoolConfig {
+            pending_limit: reth_transaction_pool::SubPoolLimit::new(usize::MAX, pending_limit),
+            max_account_slots: usize::MAX,
+            ..PoolConfig::default()
+        };
+        let mut pending_store = LaneTransactionStore::new(config, 0);
+        pending_store.set_payer_balance(Address::ZERO, U256::ZERO);
+        pending_store.insert_validated(pending_low, 0).unwrap();
+        pending_store.insert_validated(pending_high, 0).unwrap();
+        assert_eq!(hashes(pending_store.enforce_limits()), vec![pending_low_hash]);
+        assert_eq!(pending_store.size().pending, 1);
+    }
+
+    #[test]
+    fn queued_count_limit_evicts_the_lower_priority_lane() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let queued_low =
+            validated(sidecar_transaction(&signer, U256::from(12), 2, 0, 10, 100), 1, now);
+        let queued_high =
+            validated(sidecar_transaction(&signer, U256::from(13), 2, 0, 20, 200), 1, now);
+        let queued_low_hash = *queued_low.hash();
+        let config = PoolConfig {
+            queued_limit: reth_transaction_pool::SubPoolLimit::new(1, usize::MAX),
+            max_account_slots: usize::MAX,
+            ..PoolConfig::default()
+        };
+        let mut queued_store = LaneTransactionStore::new(config, 0);
+        queued_store.set_payer_balance(Address::ZERO, U256::ZERO);
+        queued_store.insert_validated(queued_low, 0).unwrap();
+        queued_store.insert_validated(queued_high, 0).unwrap();
+        assert_eq!(hashes(queued_store.enforce_limits()), vec![queued_low_hash]);
+        assert_eq!(queued_store.size().queued, 1);
+    }
+
+    #[test]
+    fn queued_byte_limit_evicts_the_leaf_before_its_ancestor() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let queued_head =
+            validated(sidecar_transaction(&signer, U256::from(14), 2, 0, 10, 100), 1, now);
+        let queued_descendant =
+            validated(sidecar_transaction(&signer, U256::from(14), 3, 0, 20, 200), 1, now);
+        let queued_head_hash = *queued_head.hash();
+        let queued_descendant_hash = *queued_descendant.hash();
+        let queued_limit =
+            queued_head.transaction.size() + queued_descendant.transaction.size() - 1;
+        let config = PoolConfig {
+            queued_limit: reth_transaction_pool::SubPoolLimit::new(usize::MAX, queued_limit),
+            max_account_slots: usize::MAX,
+            ..PoolConfig::default()
+        };
+        let mut queued_store = LaneTransactionStore::new(config, 0);
+        queued_store.set_payer_balance(Address::ZERO, U256::ZERO);
+        queued_store.insert_validated(queued_head, 0).unwrap();
+        queued_store.insert_validated(queued_descendant, 0).unwrap();
+        assert_eq!(hashes(queued_store.enforce_limits()), vec![queued_descendant_hash]);
+        assert!(queued_store.contains_hash(&queued_head_hash));
+    }
+
+    #[test]
+    fn basefee_eviction_removes_lane_descendants() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let blocked_head =
+            validated(sidecar_transaction(&signer, U256::from(15), 0, 0, 10, 100), 1, now);
+        let blocked_descendant =
+            validated(sidecar_transaction(&signer, U256::from(15), 1, 0, 20, 200), 1, now);
+        let mut expected = vec![*blocked_head.hash(), *blocked_descendant.hash()];
+        expected.sort_unstable();
+        let config = PoolConfig {
+            basefee_limit: reth_transaction_pool::SubPoolLimit::new(0, usize::MAX),
+            max_account_slots: usize::MAX,
+            ..PoolConfig::default()
+        };
+        let mut descendant_store = LaneTransactionStore::new(config, 150);
+        descendant_store.set_payer_balance(Address::ZERO, U256::ZERO);
+        descendant_store.insert_validated(blocked_head, 0).unwrap();
+        descendant_store.insert_validated(blocked_descendant, 0).unwrap();
+        assert_eq!(hashes(descendant_store.enforce_limits()), expected);
+        assert!(descendant_store.is_empty());
+    }
+
+    #[test]
+    fn basefee_count_limit_evicts_the_lower_priority_replay() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let replay_low = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 20, 10, 100),
+            1,
+            now,
+        );
+        let replay_high = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 21, 20, 200),
+            1,
+            now,
+        );
+        let replay_low_hash = *replay_low.hash();
+        let config = PoolConfig {
+            basefee_limit: reth_transaction_pool::SubPoolLimit::new(1, usize::MAX),
+            max_account_slots: usize::MAX,
+            ..PoolConfig::default()
+        };
+        let mut basefee_store = LaneTransactionStore::new(config, 300);
+        basefee_store.set_payer_balance(Address::ZERO, U256::ZERO);
+        basefee_store.insert_validated(replay_low, 0).unwrap();
+        basefee_store.insert_validated(replay_high, 0).unwrap();
+        assert_eq!(hashes(basefee_store.enforce_limits()), vec![replay_low_hash]);
+        assert_eq!(basefee_store.size().basefee, 1);
+    }
+
+    #[test]
+    fn basefee_byte_limit_evicts_the_lower_priority_replay() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let replay_low = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 20, 10, 100),
+            1,
+            now,
+        );
+        let replay_high = validated(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 21, 20, 200),
+            1,
+            now,
+        );
+        let replay_low_hash = *replay_low.hash();
+        let byte_limit = replay_low.transaction.size() + replay_high.transaction.size() - 1;
+        let config = PoolConfig {
+            basefee_limit: reth_transaction_pool::SubPoolLimit::new(usize::MAX, byte_limit),
+            max_account_slots: usize::MAX,
+            ..PoolConfig::default()
+        };
+        let mut basefee_store = LaneTransactionStore::new(config, 300);
+        basefee_store.set_payer_balance(Address::ZERO, U256::ZERO);
+        basefee_store.insert_validated(replay_low, 0).unwrap();
+        basefee_store.insert_validated(replay_high, 0).unwrap();
+        assert_eq!(hashes(basefee_store.enforce_limits()), vec![replay_low_hash]);
+        assert_eq!(basefee_store.size().basefee, 1);
+    }
+
+    #[test]
+    fn local_origin_is_exempt_from_sender_capacity() {
+        let config = PoolConfig { max_account_slots: 1, ..PoolConfig::default() };
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let mut external_store = LaneTransactionStore::new(config.clone(), 0);
+        external_store.set_payer_balance(Address::ZERO, U256::ZERO);
+        external_store
+            .insert_validated(
+                validated(sidecar_transaction(&signer, U256::from(30), 0, 0, 10, 100), 1, now),
+                0,
+            )
+            .unwrap();
+        assert!(matches!(
+            external_store
+                .insert_validated(
+                    validated(
+                        sidecar_transaction(
+                            &signer,
+                            Eip8130Constants::NONCE_KEY_MAX,
+                            0,
+                            31,
+                            10,
+                            100,
+                        ),
+                        1,
+                        now,
+                    ),
+                    0,
+                )
+                .unwrap_err()
+                .kind,
+            PoolErrorKind::SpammerExceededCapacity(address) if address == signer.address()
+        ));
+
+        let mut local_store = LaneTransactionStore::new(config, 0);
+        local_store.set_payer_balance(Address::ZERO, U256::ZERO);
+        for transaction in [
+            sidecar_transaction(&signer, U256::from(30), 0, 0, 10, 100),
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 31, 10, 100),
+        ] {
+            let mut transaction = validated(transaction, 1, now);
+            transaction.origin = TransactionOrigin::Local;
+            local_store.insert_validated(transaction, 0).unwrap();
+        }
+        assert_eq!(local_store.size().pending, 2);
     }
 
     #[test]
@@ -3521,383 +3995,45 @@ mod tests {
     }
 
     #[test]
-    fn randomized_funding_operations_preserve_reservation_invariants() {
-        let signer = PrivateKeySigner::random();
+    fn remove_payer_balance_releases_reservation_and_demotes_only_that_payer() {
         let now = Instant::now();
-        let payers =
-            [Address::repeat_byte(0x91), Address::repeat_byte(0x92), Address::repeat_byte(0x93)];
+        let removed_payer = Address::repeat_byte(0x91);
+        let surviving_payer = Address::repeat_byte(0x92);
         let mut store = store(0);
-        for payer in payers {
-            store.set_payer_balance(payer, U256::from(150));
-        }
-        let mut seed = 0xa076_1d64_78bd_642f_u64;
-
-        for step in 0..350_u64 {
-            seed = seed.rotate_left(17).wrapping_mul(0xe703_7ed1_a0b4_28db).wrapping_add(step);
-            match seed % 10 {
-                0..=4 => {
-                    let nonce = (seed >> 8) % 6;
-                    let fee = 1_000 + u128::from(step) * 20;
-                    let transaction = match (seed >> 16) % 4 {
-                        0 => protocol_transaction(Account::Alice, nonce, fee / 10, fee),
-                        1 => protocol_transaction(Account::Bob, nonce, fee / 10, fee),
-                        2 => sidecar_transaction(
-                            &signer,
-                            U256::from(((seed >> 24) % 2) + 1),
-                            nonce,
-                            0,
-                            fee / 10,
-                            fee,
-                        ),
-                        _ => sidecar_transaction(
-                            &signer,
-                            Eip8130Constants::NONCE_KEY_MAX,
-                            0,
-                            nonce + 1,
-                            fee / 10,
-                            fee,
-                        ),
-                    };
-                    let payer = payers[((seed >> 32) as usize) % payers.len()];
-                    let cost = U256::from(((seed >> 40) % 90) + 1);
-                    let _ = store.insert_validated(
-                        validated_with_funding(
-                            transaction,
-                            seed & 3,
-                            now + Duration::from_millis(step),
-                            payer,
-                            cost,
-                        ),
-                        0,
-                    );
-                }
-                5 => {
-                    if let Some(transaction) =
-                        store.all_transactions().get((seed as usize) % store.len().max(1))
-                    {
-                        store.remove_exact(&[*transaction.hash()]);
-                    }
-                }
-                6 => {
-                    if let Some(transaction) =
-                        store.all_transactions().get((seed as usize) % store.len().max(1))
-                    {
-                        store.remove_with_descendants(&[*transaction.hash()]);
-                    }
-                }
-                7 => {
-                    let payer = payers[((seed >> 20) as usize) % payers.len()];
-                    store.set_payer_balance(payer, U256::from((seed >> 28) % 220));
-                }
-                8 => {
-                    let payer = payers[((seed >> 20) as usize) % payers.len()];
-                    store.remove_payer_balance(payer);
-                }
-                _ => {
-                    let payer = payers[((seed >> 20) as usize) % payers.len()];
-                    if store.payer_balance(payer).is_none() {
-                        store.set_payer_balance(payer, U256::from((seed >> 28) % 220));
-                    }
-                }
-            }
-
-            assert_consistent(&store);
-        }
-    }
-
-    #[test]
-    fn randomized_mixed_operations_preserve_indexes_and_lane_ordering() {
-        let signer = PrivateKeySigner::random();
-        let now = Instant::now();
-        let mut store = store(0);
-        let mut seed = 0xd1b5_4a32_d192_ed03_u64;
-
-        for step in 0..400_u64 {
-            seed = seed.rotate_left(13).wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(step);
-            match seed % 8 {
-                0..=3 => {
-                    let nonce = (seed >> 9) % 8;
-                    let fee = 1_000 + u128::from(step) * 25;
-                    let transaction = match (seed >> 5) % 4 {
-                        0 => protocol_transaction(Account::Alice, nonce, fee / 10, fee),
-                        1 => protocol_transaction(Account::Bob, nonce, fee / 10, fee),
-                        2 => sidecar_transaction(&signer, U256::from(11), nonce, 0, fee / 10, fee),
-                        _ => sidecar_transaction(
-                            &signer,
-                            Eip8130Constants::NONCE_KEY_MAX,
-                            0,
-                            nonce + 1,
-                            fee / 10,
-                            fee,
-                        ),
-                    };
-                    let _ = store.insert_validated(
-                        validated(transaction, seed & 3, now + Duration::from_millis(step)),
-                        0,
-                    );
-                }
-                4 => {
-                    if let Some(transaction) =
-                        store.all_transactions().get((seed as usize) % store.len().max(1))
-                    {
-                        store.remove_exact(&[*transaction.hash()]);
-                    }
-                }
-                5 => {
-                    if let Some(transaction) =
-                        store.all_transactions().get((seed as usize) % store.len().max(1))
-                    {
-                        store.remove_with_descendants(&[*transaction.hash()]);
-                    }
-                }
-                6 => {
-                    if let Some(transaction) =
-                        store.all_transactions().get((seed as usize) % store.len().max(1))
-                    {
-                        store.commit(&[transaction.transaction.identity()]);
-                    }
-                }
-                _ => {
-                    store.set_base_fee((seed >> 20) % 2_000);
-                }
-            }
-
-            assert_consistent(&store);
-            let pending: HashSet<_> = store
-                .classified_transactions()
-                .filter(|(state, _)| *state == LaneTransactionState::Pending)
-                .map(|(_, transaction)| *transaction.hash())
-                .collect();
-            let best = store.best_transactions(BaseOrdering::coinbase_tip(), store.base_fee());
-            let mut last_nonce = HashMap::<BaseTransactionLane, u64>::default();
-            for transaction in best {
-                assert!(pending.contains(transaction.hash()));
-                if let BaseTransactionIdentity::Nonce { lane, nonce } =
-                    transaction.transaction.identity()
-                    && let Some(previous) = last_nonce.insert(lane, nonce)
-                {
-                    assert_eq!(nonce, previous + 1);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn lifecycle_batches_cover_protocol_channel_and_replay_promotions() {
-        let signer = PrivateKeySigner::random();
-        let now = Instant::now();
-        let mut store = store(50);
-        let protocol_gap = validated(protocol_transaction(Account::Alice, 1, 10, 100), 1, now);
-        let protocol_gap_hash = *protocol_gap.hash();
-        let channel = validated(sidecar_transaction(&signer, U256::from(7), 0, 0, 20, 100), 1, now);
-        let replay = validated(
-            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 1, 20, 40),
+        store.set_payer_balance(removed_payer, U256::from(30));
+        store.set_payer_balance(surviving_payer, U256::from(30));
+        let removed = validated_with_funding(
+            protocol_transaction(Account::Alice, 0, 20, 100),
             1,
             now,
+            removed_payer,
+            U256::from(30),
         );
-
-        for transaction in [protocol_gap, channel, replay] {
-            let outcome = store.insert_validated(transaction, 0).unwrap();
-            assert_eq!(outcome.transitions.cause, LaneTransitionCause::Insert);
-            assert_eq!(outcome.transitions.transitions.len(), 1);
-            let transition = &outcome.transitions.transitions[0];
-            assert_eq!(transition.previous_state, None);
-            assert!(transition.current_state.is_some());
-            assert_eq!(transition.terminal, None);
-        }
-
-        let head = validated(protocol_transaction(Account::Alice, 0, 30, 100), 1, now);
-        let head_hash = *head.hash();
-        let outcome = store.insert_validated(head, 0).unwrap();
-        assert_eq!(outcome.transitions.transitions.len(), 2);
-        assert!(outcome.transitions.transitions.iter().any(|transition| {
-            *transition.transaction.hash() == head_hash
-                && transition.previous_state.is_none()
-                && transition.current_state == Some(LaneTransactionState::Pending)
-        }));
-        assert!(outcome.transitions.transitions.iter().any(|transition| {
-            *transition.transaction.hash() == protocol_gap_hash
-                && matches!(transition.previous_state, Some(LaneTransactionState::Queued(_)))
-                && transition.current_state == Some(LaneTransactionState::Pending)
-        }));
-    }
-
-    #[test]
-    fn replacement_funding_and_fee_updates_are_coherent_batches() {
-        let now = Instant::now();
-        let payer = Address::repeat_byte(0xa1);
-        let mut store = store(0);
-        store.set_payer_balance(payer, U256::from(100));
-        let original = validated_with_funding(
-            protocol_transaction(Account::Alice, 0, 10, 100),
-            1,
+        let removed_id = removed.transaction.identity();
+        let surviving = validated_with_funding(
+            protocol_transaction(Account::Bob, 0, 10, 100),
+            2,
             now,
-            payer,
-            U256::from(40),
+            surviving_payer,
+            U256::from(30),
         );
-        let original_hash = *original.hash();
-        store.insert_validated(original, 0).unwrap();
-        let replacement = validated_with_funding(
-            protocol_transaction(Account::Alice, 0, 12, 120),
-            1,
-            now + Duration::from_millis(1),
-            payer,
-            U256::from(80),
-        );
-        let replacement_hash = *replacement.hash();
-        let replaced = store.insert_validated(replacement, 0).unwrap();
+        let surviving_id = surviving.transaction.identity();
+        store.insert_validated(removed, 0).unwrap();
+        store.insert_validated(surviving, 0).unwrap();
 
-        assert!(replaced.transitions.transitions.iter().any(|transition| {
-            *transition.transaction.hash() == original_hash
-                && transition.current_state.is_none()
-                && transition.terminal == Some(LaneTerminalEvent::Replaced { by: replacement_hash })
-        }));
-        assert!(replaced.transitions.transitions.iter().any(|transition| {
-            *transition.transaction.hash() == replacement_hash
-                && transition.previous_state.is_none()
-                && transition.current_state == Some(LaneTransactionState::Pending)
-        }));
+        let outcome = store.remove_payer_balance(removed_payer);
 
-        let decreased = store.set_payer_balance(payer, U256::from(50));
-        assert_eq!(decreased.transitions.cause, LaneTransitionCause::PayerBalance);
-        assert_eq!(decreased.demoted.len(), 1);
-        assert_eq!(decreased.funding_transitions.len(), 1);
-        let increased = store.set_payer_balance(payer, U256::from(100));
-        assert_eq!(increased.promoted.len(), 1);
-
-        let raised = store.set_base_fee(121);
-        assert_eq!(raised.transitions.cause, LaneTransitionCause::BaseFee);
-        assert_eq!(raised.demoted.len(), 1);
-        let lowered = store.set_base_fee(120);
-        assert_eq!(lowered.promoted.len(), 1);
-    }
-
-    #[test]
-    fn cross_envelope_replacement_has_one_terminal_and_one_admission() {
-        let now = Instant::now();
-        let mut store = store(0);
-        let legacy = validated(legacy_protocol_transaction(Account::Alice, 0, 100), 1, now);
-        let legacy_hash = *legacy.hash();
-        store.insert_validated(legacy, 0).unwrap();
-        let dynamic = validated(protocol_transaction(Account::Alice, 0, 12, 120), 1, now);
-        let dynamic_hash = *dynamic.hash();
-
-        let outcome = store.insert_validated(dynamic, 0).unwrap();
-
-        assert_eq!(outcome.transitions.transitions.len(), 2);
-        assert!(outcome.transitions.transitions.iter().any(|transition| {
-            *transition.transaction.hash() == legacy_hash
-                && transition.terminal == Some(LaneTerminalEvent::Replaced { by: dynamic_hash })
-        }));
-        assert!(outcome.transitions.transitions.iter().any(|transition| {
-            *transition.transaction.hash() == dynamic_hash
-                && transition.previous_state.is_none()
-                && transition.current_state == Some(LaneTransactionState::Pending)
-        }));
-    }
-
-    #[test]
-    fn eviction_expiry_and_mining_have_single_terminal_transitions() {
-        let now = Instant::now();
-        let mut config = PoolConfig { max_account_slots: usize::MAX, ..PoolConfig::default() };
-        config.pending_limit.max_txs = 1;
-        let mut store = LaneTransactionStore::new(config, 0);
-        store.set_payer_balance(Address::ZERO, U256::ZERO);
-        let lower = validated(protocol_transaction(Account::Alice, 0, 10, 100), 1, now);
-        let lower_hash = *lower.hash();
-        let higher = validated(protocol_transaction(Account::Bob, 0, 20, 100), 2, now);
-        let higher_hash = *higher.hash();
-        store.insert_validated(lower, 0).unwrap();
-        store.insert_validated(higher, 0).unwrap();
-
-        let evicted = store.enforce_limits_with_outcome();
-        assert_eq!(hashes(evicted.removed), vec![lower_hash]);
-        assert_eq!(evicted.transitions.transitions.len(), 1);
-        assert_eq!(evicted.transitions.transitions[0].terminal, Some(LaneTerminalEvent::Evicted));
-
-        let expired = store.remove_expired(&[higher_hash]);
-        assert_eq!(expired.transitions.transitions[0].terminal, Some(LaneTerminalEvent::Expired));
-
-        let mined = validated(protocol_transaction(Account::Alice, 1, 30, 100), 1, now);
-        let mined_hash = *mined.hash();
-        store.insert_validated(mined, 1).unwrap();
-        let block_hash = B256::repeat_byte(0xb1);
-        let mined = store.prune_mined(&[mined_hash], block_hash);
+        assert_eq!(store.payer_balance(removed_payer), None);
+        assert_eq!(store.payer_reserved(removed_payer), U256::ZERO);
+        assert_eq!(outcome.demoted.len(), 1);
         assert_eq!(
-            mined.transitions.transitions[0].terminal,
-            Some(LaneTerminalEvent::Mined { block_hash })
+            store.state(&removed_id),
+            Some(LaneTransactionState::Funding(FundingWaitReason::UnknownPayerBalance {
+                payer: removed_payer,
+            }))
         );
-
-        let replay = validated(
-            sidecar_transaction(
-                &PrivateKeySigner::random(),
-                Eip8130Constants::NONCE_KEY_MAX,
-                0,
-                1,
-                10,
-                100,
-            ),
-            3,
-            now,
-        );
-        let replay_identity = replay.transaction.identity();
-        store.insert_validated(replay, 0).unwrap();
-        let committed = store.commit(&[replay_identity]);
-        assert_eq!(
-            committed.transitions.transitions[0].terminal,
-            Some(LaneTerminalEvent::Committed)
-        );
-    }
-
-    #[tokio::test]
-    async fn event_hub_matches_reth_events_and_survives_backpressure() {
-        let now = Instant::now();
-        let mut store = store(0);
-        let hub = LaneEventHub::new(1);
-        let mut all = hub.all_transactions_event_listener();
-        let mut pending_all = hub.pending_transactions_listener_for(TransactionListenerKind::All);
-        let mut pending_propagate =
-            hub.pending_transactions_listener_for(TransactionListenerKind::PropagateOnly);
-        let mut new_all = hub.new_transactions_listener_for(TransactionListenerKind::All);
-        let mut transaction = validated(protocol_transaction(Account::Alice, 0, 10, 100), 1, now);
-        transaction.propagate = false;
-        let hash = *transaction.hash();
-        let mut by_hash = hub.transaction_event_listener(hash);
-
-        let inserted = store.insert_validated(transaction, 0).unwrap();
-        hub.publish(&inserted.transitions);
-        assert_eq!(by_hash.next().await, Some(TransactionEvent::Pending));
-        assert_eq!(pending_all.recv().await, Some(hash));
-        assert!(pending_propagate.try_recv().is_err());
-        assert_eq!(new_all.recv().await.unwrap().subpool, SubPool::Pending);
-
-        let demoted = store.set_base_fee(101);
-        hub.publish(&demoted.transitions);
-        assert!(new_all.try_recv().is_err());
-        assert!(
-            matches!(all.next().await, Some(FullTransactionEvent::Pending(event)) if event == hash)
-        );
-        let promoted = store.set_base_fee(100);
-        hub.publish(&promoted.transitions);
-        assert_eq!(new_all.recv().await.unwrap().subpool, SubPool::Pending);
-        assert!(
-            matches!(all.next().await, Some(FullTransactionEvent::Pending(event)) if event == hash)
-        );
-
-        let block_hash = B256::repeat_byte(0xc1);
-        let mined = store.prune_mined(&[hash], block_hash);
-        hub.publish(&mined.transitions);
-        hub.publish(&mined.transitions);
-        assert!(matches!(
-            all.next().await,
-            Some(FullTransactionEvent::Mined { tx_hash, block_hash: event_block })
-                if tx_hash == hash && event_block == block_hash
-        ));
-        assert!(tokio::time::timeout(Duration::from_millis(10), all.next()).await.is_err());
-        assert_eq!(by_hash.next().await, Some(TransactionEvent::Queued));
-        assert_eq!(by_hash.next().await, Some(TransactionEvent::Pending));
-        assert_eq!(by_hash.next().await, Some(TransactionEvent::Mined(block_hash)));
-        assert_eq!(by_hash.next().await, None);
+        assert_eq!(store.state(&surviving_id), Some(LaneTransactionState::Pending));
+        assert_eq!(store.payer_reserved(surviving_payer), U256::from(30));
     }
 
     #[test]
@@ -4002,6 +4138,10 @@ mod tests {
             validated(protocol_transaction(Account::Alice, u64::MAX, 10, 100), 1, now);
         let hash = *transaction.hash();
         store.insert_validated(transaction, u64::MAX).unwrap();
+        assert_eq!(store.size().pending, 1);
+        let mut best = store.best_transactions(BaseOrdering::coinbase_tip(), 0);
+        assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(hash));
+        assert!(best.next().is_none());
         store.prune_speculative(&[hash]);
         let replacement =
             validated(protocol_transaction(Account::Alice, u64::MAX, 20, 200), 1, now);
@@ -4009,16 +4149,6 @@ mod tests {
             store.insert_validated(replacement, u64::MAX).unwrap_err().kind,
             PoolErrorKind::InvalidTransaction(_)
         ));
-    }
-
-    #[test]
-    fn size_uses_transaction_memory_footprint() {
-        let now = Instant::now();
-        let mut store = store(0);
-        let transaction = validated(protocol_transaction(Account::Alice, 0, 10, 100), 1, now);
-        let expected = transaction.transaction.size();
-        store.insert_validated(transaction, 0).unwrap();
-        assert_eq!(store.size().pending_size, expected);
     }
 
     #[test]
@@ -4065,132 +4195,5 @@ mod tests {
 
         let evicted = store.enforce_limits_with_ordering(&BaseOrdering::coinbase_tip());
         assert_eq!(hashes(evicted.removed), vec![low_hash]);
-    }
-
-    #[test]
-    fn journal_closes_transitively_across_p_and_q_lanes() {
-        let now = Instant::now();
-        let payer_p = Address::repeat_byte(0xf1);
-        let payer_q = Address::repeat_byte(0xf2);
-        let mut store = store(0);
-        store.set_payer_balance(payer_p, U256::from(10));
-        store.set_payer_balance(payer_q, U256::from(10));
-
-        let a0 = validated_with_funding(
-            protocol_transaction(Account::Alice, 0, 30, 100),
-            1,
-            now,
-            payer_p,
-            U256::from(10),
-        );
-        let a1 = validated_with_funding(
-            protocol_transaction(Account::Alice, 1, 20, 100),
-            1,
-            now,
-            payer_q,
-            U256::from(10),
-        );
-        let b0 = validated_with_funding(
-            protocol_transaction(Account::Bob, 0, 10, 100),
-            2,
-            now,
-            payer_q,
-            U256::from(10),
-        );
-        let a1_hash = *a1.hash();
-        let b0_hash = *b0.hash();
-        store.insert_validated(a0, 0).unwrap();
-        store.insert_validated(a1, 0).unwrap();
-        store.insert_validated(b0, 0).unwrap();
-        assert_eq!(
-            store.state(&store.get_by_hash(&b0_hash).unwrap().transaction.identity()),
-            Some(LaneTransactionState::Funding(FundingWaitReason::InsufficientPayerBalance {
-                payer: payer_q,
-                required: U256::from(10),
-                available: U256::ZERO,
-            }))
-        );
-
-        let replacement = validated_with_funding(
-            protocol_transaction(Account::Alice, 0, 40, 120),
-            1,
-            now,
-            payer_p,
-            U256::from(20),
-        );
-        store.preflight_insert(&replacement, 0).unwrap();
-        let before_size = store.size();
-        let mut journal = store.mutation_journal();
-        store.journal_insertion(&mut journal, &replacement);
-        let replaced = store.protocol_transaction(Account::Alice.address(), 0).unwrap();
-        let replaced_hash = *replaced.hash();
-        store.insert_preflighted_journaled(replacement, 0, &journal);
-        let after_size = store.size_after_journal(before_size, &journal);
-        let transitions = store.transitions_since_journal(
-            journal,
-            LaneTransitionCause::Insert,
-            vec![LaneTerminalTransition {
-                transaction: replaced,
-                terminal: LaneTerminalEvent::Replaced {
-                    by: *store.protocol_transaction(Account::Alice.address(), 0).unwrap().hash(),
-                },
-            }],
-        );
-        assert!(transitions.transitions.iter().any(|transition| {
-            *transition.transaction.hash() == a1_hash
-                && transition.previous_state == Some(LaneTransactionState::Pending)
-                && matches!(transition.current_state, Some(LaneTransactionState::Queued(_)))
-        }));
-        assert!(transitions.transitions.iter().any(|transition| {
-            *transition.transaction.hash() == b0_hash
-                && matches!(transition.previous_state, Some(LaneTransactionState::Funding(_)))
-                && transition.current_state == Some(LaneTransactionState::Pending)
-        }));
-        assert_eq!(after_size.pending, 1);
-        assert_eq!(after_size.queued, 2);
-        assert!(!store.contains_hash(&replaced_hash));
-        assert_eq!(store.size().pending, 1);
-        assert_eq!(store.size().queued, 2);
-        assert_consistent(&store);
-    }
-
-    #[test]
-    fn payer_update_does_not_scan_unrelated_lanes_or_payers() {
-        let signer = PrivateKeySigner::random();
-        let now = Instant::now();
-        let mut store = store(0);
-        let mut first = None;
-        for index in 1..=64u64 {
-            let payer = Address::from_word(B256::from(U256::from(index)));
-            store.set_payer_balance(payer, U256::from(10));
-            let transaction = validated_with_funding(
-                sidecar_transaction(&signer, U256::from(index), 0, 0, 10, 100),
-                index,
-                now,
-                payer,
-                U256::from(10),
-            );
-            if index == 1 {
-                first = Some((payer, *transaction.hash()));
-            }
-            store.insert_validated(transaction, 0).unwrap();
-        }
-        let (payer, first_hash) = first.unwrap();
-        store.reset_full_classification_passes();
-        store.reset_incremental_scan_counts();
-
-        let outcome = store.set_payer_balance(payer, U256::ZERO);
-        assert!(
-            outcome
-                .transitions
-                .transitions
-                .iter()
-                .all(|transition| { *transition.transaction.hash() == first_hash })
-        );
-        assert_eq!(store.full_classification_passes(), 0);
-        let (lane_scans, payer_scans) = store.incremental_scan_counts();
-        assert!(lane_scans <= 4, "unrelated lane scans: {lane_scans}");
-        assert!(payer_scans <= 4, "unrelated payer scans: {payer_scans}");
-        assert_consistent(&store);
     }
 }

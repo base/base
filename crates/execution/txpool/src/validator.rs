@@ -2200,7 +2200,9 @@ mod tests {
         SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
+    use base_execution_eip8130::{
+        AccountChangeApplier, ConfigChangeAuthorizer, Eip8130GasSchedule,
+    };
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::Account;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
@@ -3604,9 +3606,9 @@ mod tests {
             Bytes::from(self_paid_signature.as_bytes().to_vec()),
             Bytes::new(),
         );
-        let expected_self = validator
-            .validate_eip8130_full(&self_paid_signed)
-            .expect("valid self-paid transaction");
+        let expected_self = U256::from(self_paid_signed.tx().gas_limit)
+            .saturating_mul(U256::from(self_paid_signed.tx().max_fee_per_gas))
+            .saturating_add(self_paid_signed.tx().value());
         let self_paid = BasePooledTransaction::from_pooled(Recovered::new_unchecked(
             base_common_consensus::BasePooledTransaction::Eip8130(self_paid_signed),
             sender,
@@ -3619,7 +3621,7 @@ mod tests {
             .validated_funding()
             .expect("self-paid funding metadata");
         assert_eq!(self_funding.payer(), sender);
-        assert_eq!(self_funding.max_cost(), expected_self.payer_max_cost);
+        assert_eq!(self_funding.max_cost(), expected_self);
 
         let sponsored_tx = TxEip8130 {
             nonce_sequence: 0,
@@ -3635,9 +3637,12 @@ mod tests {
             Bytes::from(sender_auth.as_bytes().to_vec()),
             payer_auth,
         );
-        let expected_sponsored = validator
-            .validate_eip8130_full(&sponsored_signed)
-            .expect("valid sponsored transaction");
+        // This fixture uses a prefixed K1 payer authenticator. Its admission contract is one K1
+        // execution plus the actor-config SLOAD and the pinned policy-gate SLOAD.
+        let payer_auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + 2 * Eip8130GasSchedule::COLD_SLOAD;
+        let expected_sponsored =
+            U256::from(sponsored_signed.tx().gas_limit.saturating_add(payer_auth_cost))
+                .saturating_mul(U256::from(sponsored_signed.tx().max_fee_per_gas));
         let sponsored = BasePooledTransaction::from_pooled(Recovered::new_unchecked(
             base_common_consensus::BasePooledTransaction::Eip8130(sponsored_signed),
             sender,
@@ -3651,7 +3656,7 @@ mod tests {
             .validated_funding()
             .expect("sponsored funding metadata");
         assert_eq!(sponsored_funding.payer(), payer);
-        assert_eq!(sponsored_funding.max_cost(), expected_sponsored.payer_max_cost);
+        assert_eq!(sponsored_funding.max_cost(), expected_sponsored);
     }
 
     #[test]

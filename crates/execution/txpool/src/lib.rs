@@ -85,9 +85,6 @@ pub use wire::{
     ExtensionError, NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions,
 };
 
-#[cfg(test)]
-mod two_d_nonce_pool;
-
 mod metrics;
 pub use metrics::{GuardMetrics, ValidatorMetrics, ValidityPoolMetrics};
 
