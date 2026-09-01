@@ -153,6 +153,8 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
     let (second_tx, mut second_rx) = mpsc::unbounded_channel();
     let second = MockBuilder::spawn(second_tx, None, None).await?;
     let config = TxForwardingConfig::new(vec![first.url.clone(), second.url.clone()]);
+    // EIP-1559 validity transactions are gated by the experimental flag alone (not Cobalt), so this
+    // exercises the flow against a pre-Cobalt genesis.
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
     let harness = TestHarness::builder()
         .with_ext::<SendRawTransactionValidityExtension>(DEFAULT_MAX_VALIDITY_PREDICATES)
