@@ -9,7 +9,7 @@ use crate::{
     ResolvedActor, TxAuthError,
 };
 
-/// Precomputed `keccak256` typehash of the `SignedAccountChanges` struct, matching
+/// Precomputed `keccak256` typehash of the `SignedAccountChangeBatch` struct, matching
 /// the one hashed by `Keystore` (the trailing `AccountChange(...)` is the
 /// referenced struct's type, per the EIP-712 encoding rules):
 /// `keccak256("SignedAccountChangeBatch(address account,uint256 chainId,uint64 sequence,AccountChange[] changes)AccountChange(uint8 changeType,bytes payload)")`.

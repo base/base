@@ -164,7 +164,7 @@ pub enum ApplyError {
 
     /// The account targeted by a create entry already has EIP-8130 state. Mirrors
     /// the CREATE2 collision that makes `createAccount` unrepeatable.
-    #[error("account {account} is already created")]
+    #[error("account {account} is already initialized")]
     AlreadyInitialized {
         /// The counterfactual address that already holds state.
         account: Address,
