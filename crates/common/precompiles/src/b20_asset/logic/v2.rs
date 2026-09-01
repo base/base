@@ -246,6 +246,12 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV2 {
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
+        if to == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        if caller == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: caller }));
+        }
         if privileged {
             return self.transfer_inner(token, caller, to, amount, None);
         }
