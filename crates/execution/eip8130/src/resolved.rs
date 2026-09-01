@@ -47,9 +47,14 @@ impl ResolvedActor {
     }
 
     /// `true` if the actor's sender authorization is policy-gated.
+    ///
+    /// Length decides what gets stored; POLICY decides whether the sender is
+    /// gated; OPERATOR overrides POLICY. The protocol gates on `SCOPE_POLICY`
+    /// (not on whether policy bytes were attached); `SCOPE_OPERATOR` is the more
+    /// permissive initiation grant and is not suppressed by `SCOPE_POLICY`.
     #[must_use]
     pub const fn is_policy_gated(&self) -> bool {
-        self.scope & Eip8130Constants::SCOPE_POLICY != 0
+        Eip8130Constants::sender_is_policy_gated(self.scope)
     }
 
     /// Whether this actor may use the transaction's nonce key.
@@ -76,10 +81,10 @@ mod tests {
     fn nonce_scope_allows_expected_keys() {
         assert!(actor(0).can_use_nonce_key(U256::ZERO));
         assert!(
-            actor(Eip8130Constants::SCOPE_SENDER)
+            actor(Eip8130Constants::SCOPE_OPERATOR)
                 .can_use_nonce_key(Eip8130Constants::NONCE_KEY_MAX)
         );
         assert!(actor(Eip8130Constants::SCOPE_NONCE).can_use_nonce_key(U256::from(1)));
-        assert!(!actor(Eip8130Constants::SCOPE_SENDER).can_use_nonce_key(U256::ZERO));
+        assert!(!actor(Eip8130Constants::SCOPE_OPERATOR).can_use_nonce_key(U256::ZERO));
     }
 }
