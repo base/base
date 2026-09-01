@@ -12,10 +12,10 @@ use crate::{
 /// Precomputed `keccak256` typehash of the `SignedAccountChanges` struct, matching
 /// the one hashed by `Keystore` (the trailing `AccountChange(...)` is the
 /// referenced struct's type, per the EIP-712 encoding rules):
-/// `keccak256("SignedAccountChanges(address account,uint256 chainId,uint64 sequence,AccountChange[] changes)AccountChange(uint8 changeType,bytes payload)")`.
+/// `keccak256("SignedAccountChangeBatch(address account,uint256 chainId,uint64 sequence,AccountChange[] changes)AccountChange(uint8 changeType,bytes payload)")`.
 /// Pinned to its preimage by `typehashes_match_their_preimages`.
 const SIGNED_ACCOUNT_CHANGES_TYPEHASH: B256 =
-    b256!("7f229a23553aa919fdcad551f55a0532adae8076aac7b11fb3b6ac2efe5821ce");
+    b256!("bee0c72c3efba751405b4c241f52736439f7e1e2a804925d36ddc9a6e1aa3614");
 /// Precomputed `keccak256` typehash for the per-change `AccountChange` leaves:
 /// `keccak256("AccountChange(uint8 changeType,bytes payload)")`.
 /// Pinned to its preimage by `typehashes_match_their_preimages`.
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(
             SIGNED_ACCOUNT_CHANGES_TYPEHASH,
             keccak256(
-                b"SignedAccountChanges(address account,uint256 chainId,uint64 sequence,AccountChange[] changes)AccountChange(uint8 changeType,bytes payload)"
+                b"SignedAccountChangeBatch(address account,uint256 chainId,uint64 sequence,AccountChange[] changes)AccountChange(uint8 changeType,bytes payload)"
             )
         );
         assert_eq!(

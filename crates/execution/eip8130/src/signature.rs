@@ -19,9 +19,9 @@ use crate::{AccountConfigurationStorage, ActorAuthorizer, AuthorizeError, Resolv
 
 /// Precomputed `keccak256` typehash of the replay-safe signed-message struct,
 /// matching `Keystore.SIGNED_MESSAGE_TYPEHASH`:
-/// `keccak256("EIP8130SignedMessage(address account,uint256 chainId,bytes32 hash)")`.
+/// `keccak256("SignedMessageEnvelope(address account,uint256 chainId,bytes32 hash)")`.
 const SIGNED_MESSAGE_TYPEHASH: B256 =
-    b256!("9d2bc80c29f8a3962243919d898fa1b566a99dc64dd59734f6a10e20be3a7e04");
+    b256!("9bc1b3ab5fdd3e5a2f41b687d0f20e02a512f6f13da58a2f35b2bae1262a050c");
 
 /// The replay channel a typed signature envelope binds to. Mirrors
 /// `Keystore.SignatureType`: the leading envelope byte is `Local` (`0x01`,
@@ -171,7 +171,7 @@ mod tests {
     fn typehash_matches_string() {
         assert_eq!(
             SIGNED_MESSAGE_TYPEHASH,
-            keccak256(b"EIP8130SignedMessage(address account,uint256 chainId,bytes32 hash)")
+            keccak256(b"SignedMessageEnvelope(address account,uint256 chainId,bytes32 hash)")
         );
     }
 
