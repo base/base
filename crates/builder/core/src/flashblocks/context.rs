@@ -21,8 +21,8 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
-    BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, ValidityMetrics,
-    error::BasePayloadBuilderError,
+    BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, CoinbaseTipAffordability,
+    ValidityMetrics, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -1041,6 +1041,47 @@ impl BasePayloadBuilderCtx {
                 },
                 None => 0,
             };
+
+            if CoinbaseTipAffordability::unaffordable(&tx, tx_payer_auth, evm.db_mut()) {
+                let tx_hash = *tx.hash();
+                num_txs_considered += 1;
+                let ordering_position = num_txs_considered;
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx_hash,
+                    "skipping transaction unable to pay gas plus declared coinbase tip"
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderConsidered,
+                    tx_hash,
+                    Some(ordering_position),
+                    || BuilderConsideredEventData::new(info, limits, None),
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::new(
+                            "unaffordable_coinbase_tip",
+                            "sender and gas payer cannot cover worst-case gas plus the declared coinbase tip",
+                            false,
+                            info,
+                            limits,
+                            None,
+                        )
+                    },
+                );
+                diag.txs_rejected_other += 1;
+                // Nonce-free replay-ID entries are independent; leave them
+                // eligible for a later flashblock if state can fund the tip.
+                if tx.eip8130_replay_id().is_none() {
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                }
+                continue;
+            }
 
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();

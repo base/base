@@ -110,7 +110,10 @@ caught here rather than silently diverging.
 the payer's worst-case ETH debit at `(gas_limit + payer_auth_cost) ·
 max_fee_per_gas` — `payer_auth_cost` is added because payer authentication is
 charged on top of `gas_limit`. For self-pay the payer is the sender and
-`payer_auth_cost` is `0`.
+`payer_auth_cost` is `0`. `validate_gas_and_tip` extends that check with a
+declared coinbase tip: self-pay must cover gas and tip from one balance, while
+sponsored payment requires the payer to cover gas and the sender to cover the
+tip.
 
 The gas and fee layer is pure accounting: it reads no state and runs no EVM. The
 state-derived inputs (whether the nonce channel is first-use, whether the sender

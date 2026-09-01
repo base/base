@@ -9,6 +9,8 @@
 
 extern crate alloc;
 
+mod affordability;
+pub use affordability::CoinbaseTipAffordability;
 pub mod builder;
 pub use builder::BasePayloadBuilder;
 pub mod config;
