@@ -84,6 +84,13 @@ impl IpRateLimiter {
         Self { limiter: RateLimiter::dashmap_with_clock(quota, clock.clone()), clock }
     }
 
+    /// Creates a limiter allowing `per_hour` requests per key.
+    pub fn per_hour(per_hour: NonZeroU32) -> Self {
+        let clock = DefaultClock::default();
+        let quota = Quota::per_hour(per_hour);
+        Self { limiter: RateLimiter::dashmap_with_clock(quota, clock.clone()), clock }
+    }
+
     /// Returns the rate-limit bucket key for `ip`.
     ///
     /// `IPv4` addresses key individually, while `IPv6` addresses key by
@@ -133,6 +140,11 @@ impl PerIpRateLimit {
     /// Creates middleware state from a limiter and trusted proxy configuration.
     pub const fn new(limiter: Arc<IpRateLimiter>, proxy: Arc<TrustedProxyConfig>) -> Self {
         Self { limiter, proxy }
+    }
+
+    /// Returns the trusted proxy configuration used to resolve the client IP.
+    pub const fn proxy(&self) -> &Arc<TrustedProxyConfig> {
+        &self.proxy
     }
 
     /// Axum middleware entry point; use with `middleware::from_fn_with_state`.

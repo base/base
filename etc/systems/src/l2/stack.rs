@@ -20,7 +20,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_consensus_node::NodeMode;
+use base_consensus_node::{NodeMode, TelemetryNodeConfig};
 use base_execution_cli::ExecutionUpgradeSignalConfig;
 use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
@@ -86,6 +86,12 @@ pub struct L2StackConfig {
     pub upgrade_signal: Option<UpgradeSignalConfig>,
     /// Optional L1 upgrade signal configuration for the client execution node.
     pub execution_upgrade_signal: Option<ExecutionUpgradeSignalConfig>,
+    /// Optional telemetry configuration for the client (validator) consensus node.
+    ///
+    /// Only the client node reports. It is the node a third-party operator runs, so it is the
+    /// one whose reports are worth proving end to end; the builder and the shadows are stack
+    /// fixtures and reporting from them would only add duplicate rows.
+    pub telemetry: Option<TelemetryNodeConfig>,
     /// Shadow sequencer configuration. When [`None`], no shadow sequencers are started.
     pub shadow_sequencers: Option<ShadowSequencersConfig>,
     /// Additional node extensions installed on the builder, after its built-in RPC wiring.
@@ -230,6 +236,7 @@ impl L2Stack {
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: None,
             upgrade_signal: config.upgrade_signal.clone(),
+            telemetry: None,
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
@@ -310,6 +317,7 @@ impl L2Stack {
                     verifier_l1_confs: config.verifier_l1_confs,
                     shadow_blocks_per_cycle: None,
                     upgrade_signal: config.upgrade_signal.clone(),
+                    telemetry: config.telemetry.clone(),
                 };
                 let client_consensus = InProcessConsensus::start(client_consensus_config)
                     .await

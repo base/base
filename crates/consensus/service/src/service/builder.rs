@@ -15,8 +15,8 @@ use base_upgrade_signal::UpgradeSignalConfig;
 use url::Url;
 
 use crate::{
-    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, UpgradeSignalNodeConfig,
-    actors::DerivationDelegateClient, service::node::L1Config,
+    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, TelemetryNodeConfig,
+    UpgradeSignalNodeConfig, actors::DerivationDelegateClient, service::node::L1Config,
 };
 
 /// Upgrade signal configuration for the [`RollupNodeBuilder`].
@@ -100,6 +100,8 @@ pub struct RollupNodeBuilder {
     pub safedb_path: Option<PathBuf>,
     /// Upgrade signal configuration.
     pub upgrade_signal_config: UpgradeSignalBuilderConfig,
+    /// Optional telemetry configuration for the node.
+    pub telemetry_config: Option<TelemetryNodeConfig>,
 }
 
 impl RollupNodeBuilder {
@@ -138,6 +140,7 @@ impl RollupNodeBuilder {
             finalized_poll_interval: None,
             checkpoint_path: None,
             safedb_path: None,
+            telemetry_config: None,
             upgrade_signal_config: UpgradeSignalBuilderConfig {
                 metrics_config: None,
                 l1_rpc: None,
@@ -191,6 +194,11 @@ impl RollupNodeBuilder {
     /// Sets the upgrade signal configuration.
     pub fn with_upgrade_signal_config(self, config: UpgradeSignalBuilderConfig) -> Self {
         Self { upgrade_signal_config: config, ..self }
+    }
+
+    /// Sets the telemetry configuration for the node.
+    pub fn with_telemetry_config(self, config: Option<TelemetryNodeConfig>) -> Self {
+        Self { telemetry_config: config, ..self }
     }
 
     /// Assembles the [`RollupNode`] service.
@@ -280,6 +288,7 @@ impl RollupNodeBuilder {
             checkpoint_path,
             safedb_path: self.safedb_path,
             upgrade_signal_config,
+            telemetry_config: self.telemetry_config,
         })
     }
 
