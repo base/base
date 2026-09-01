@@ -44,8 +44,8 @@ pub use common::{
 };
 pub use common::{
     B20_MAX_SUPPLY_CAP, B20Abi, B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType,
-    B20TokenRole, Eip712Domain, IB20, IB20V1, IB20V2, PermitArgs, Token, TokenAccounting,
-    TransferPolicyIds,
+    B20TokenRole, Eip712Domain, IB20, IB20V1, IB20V2, NonZeroAddress, PermitArgs, Token,
+    TokenAccounting, TransferPolicyIds, ZeroAddressError,
 };
 
 mod observer;

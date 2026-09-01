@@ -12,7 +12,7 @@ use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
     B20_MAX_SUPPLY_CAP, B20Guards, B20PausableFeature, B20PolicyType, B20StablecoinToken,
-    B20TokenRole, Eip712Domain, IB20, PermitArgs, PolicyAccounting, Stablecoin,
+    B20TokenRole, Eip712Domain, IB20, NonZeroAddress, PermitArgs, PolicyAccounting, Stablecoin,
     StablecoinAccounting, Token, TransferPolicyIds,
 };
 
@@ -38,22 +38,20 @@ impl StablecoinV2 {
 
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
     ///
-    /// `policies` carries the sender/receiver ids pre-read from their shared slot by the caller;
-    /// `Some` enforces both (unprivileged path), `None` skips them (factory-privileged path).
+    /// `from` / `to` are [`NonZeroAddress`]: callers validate zero addresses (and choose the
+    /// typed revert) before any policy SLOAD. `policies` carries the sender/receiver ids
+    /// pre-read from their shared slot by the caller; `Some` enforces both (unprivileged
+    /// path), `None` skips them (factory-privileged path).
     fn transfer_inner<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
         token: &mut B20StablecoinToken<S, A>,
-        from: Address,
-        to: Address,
+        from: NonZeroAddress,
+        to: NonZeroAddress,
         amount: U256,
         policies: Option<&TransferPolicyIds>,
     ) -> Result<()> {
-        if to == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
-        }
-        if from == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
-        }
+        let from = from.get();
+        let to = to.get();
         if let Some(policies) = policies {
             B20Guards::ensure_authorized_by_id(
                 token,
@@ -200,17 +198,16 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        if to == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
-        }
-        if caller == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: caller }));
-        }
+        // Validate before any transfer-policy-id SLOAD (Cantina #13 / BOP-600).
+        let to = NonZeroAddress::new(to)
+            .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
+        let from = NonZeroAddress::new(caller)
+            .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: caller }))?;
         if privileged {
-            return self.transfer_inner(token, caller, to, amount, None);
+            return self.transfer_inner(token, from, to, amount, None);
         }
         let policies = token.accounting().transfer_policy_ids()?;
-        self.transfer_inner(token, caller, to, amount, Some(&policies))
+        self.transfer_inner(token, from, to, amount, Some(&policies))
     }
 
     fn transfer_from(
@@ -223,13 +220,12 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        if to == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
-        }
-        if from == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
-        }
-        let allowance = token.accounting().allowance(from, caller)?;
+        // Validate before allowance / transfer-policy-id SLOADs.
+        let to = NonZeroAddress::new(to)
+            .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
+        let from = NonZeroAddress::new(from)
+            .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: from }))?;
+        let allowance = token.accounting().allowance(from.get(), caller)?;
         let is_infinite = allowance == U256::MAX;
         if !is_infinite && allowance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientAllowance {
@@ -244,7 +240,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
             // One SLOAD fetches all transfer policy ids, reused for the executor and
             // sender/receiver checks.
             let policies = token.accounting().transfer_policy_ids()?;
-            if caller != from {
+            if caller != from.get() {
                 B20Guards::ensure_authorized_by_id(
                     token,
                     B20PolicyType::TransferExecutor.id(),
@@ -257,7 +253,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         if is_infinite {
             return Ok(());
         }
-        token.accounting_mut().set_allowance(from, caller, allowance - amount)
+        token.accounting_mut().set_allowance(from.get(), caller, allowance - amount)
     }
 
     fn approve(
