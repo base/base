@@ -34,10 +34,10 @@ jobs:
       matrix:
         target:
           - triple: x86_64-unknown-linux-gnu
-            runner: ubuntu-24.04
+            runner: depot-ubuntu-24.04-16
             os: linux
           - triple: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: depot-ubuntu-24.04-arm-16
             os: linux
           - triple: aarch64-apple-darwin
             runner: macos-14
@@ -160,9 +160,9 @@ jobs:
       matrix:
         settings:
           - arch: linux/amd64
-            runs-on: ubuntu-24.04
+            runs-on: depot-ubuntu-24.04-16
           - arch: linux/arm64
-            runs-on: ubuntu-24.04-arm
+            runs-on: depot-ubuntu-24.04-arm-16
         image:
           - target: base
             name: node
