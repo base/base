@@ -78,7 +78,7 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     );
 
     // --- Phase 1: submit all 4 blocks as one span fixture (block 3 has user txs) ---
-    h.submit_span_batch_calldata(
+    h.submit_span_batch_brotli_calldata(
         &batcher_cfg,
         &[block1.clone(), block2.clone(), block3_invalid, block4.clone()],
         0,
@@ -124,7 +124,7 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
         let block3_empty = builder2.build_empty_block().await;
         let block4_recovery = builder2.build_next_block_with_single_transaction().await;
 
-        h.submit_span_batch_calldata(&batcher_cfg, &[block3_empty, block4_recovery], 100)
+        h.submit_span_batch_brotli_calldata(&batcher_cfg, &[block3_empty, block4_recovery], 100)
             .expect("recovery span fixture submission");
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: recovery span batch (blocks 3–4)
@@ -179,7 +179,7 @@ async fn mixed_singular_and_span_batches_after_delta() {
 
     // L1 block 2: block 2 as a SPAN batch.
     {
-        h.submit_span_batch_calldata(&batcher_cfg, &[block2], 100)
+        h.submit_span_batch_brotli_calldata(&batcher_cfg, &[block2], 100)
             .expect("span fixture submission");
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: span batch for L2 block 2
@@ -251,7 +251,8 @@ async fn span_batch_stops_at_denim_and_recovers_with_single_batches() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    h.submit_span_batch_calldata(&batcher_cfg, &blocks, 100).expect("span fixture submission");
+    h.submit_span_batch_brotli_calldata(&batcher_cfg, &blocks, 100)
+        .expect("span fixture submission");
     chain.push(h.l1.tip().clone());
 
     node.initialize().await;

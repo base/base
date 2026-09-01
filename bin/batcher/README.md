@@ -5,6 +5,17 @@ The Base Batcher binary.
 Submits L2 batch data to the L1 DA layer. Wraps `base-batcher-service` with
 CLI argument parsing and signal handling.
 
+## Configuration
+
+`--compressed-size-target` optionally closes a channel after an accepted batch
+reaches the target. `--max-blobs-per-tx` caps blob packing per L1 transaction,
+while `--max-calldata-size-bytes` caps calldata transactions. `--brotli-quality`
+selects Brotli quality `0..=11` (default 10). `--data-availability-type`
+selects blobs or calldata; `--max-channel-duration` and `--sub-safety-margin`
+control channel lifetime. For calldata configurations,
+`--no-force-blobs-when-throttling` disables the throttle-driven blob override.
+The corresponding environment variables use the `BATCHER_` prefix.
+
 ## Shadow mode
 
 `base-batcher` normally reads `batch_inbox_address` from the rollup RPC's

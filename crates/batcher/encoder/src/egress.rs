@@ -8,9 +8,8 @@ use std::{
 use base_protocol::{BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, ChannelId, Frame};
 
 use crate::{
-    BatchSubmission, BlobPayload, DaType, SubmissionId,
+    BatchSubmission, BlobPayload, Channel, DaType, SubmissionId,
     artifact::{ArtifactId, DaArtifactPayload, DaArtifacts},
-    record::Channel,
 };
 
 /// Stateful DA egress over an immutable artifact ledger.
@@ -329,19 +328,15 @@ mod tests {
     use base_protocol::SingleBatch;
 
     use super::*;
-    use crate::{CompressionAlgo, EncoderConfig, record::ChannelAddOutcome};
+    use crate::{ChannelAddOutcome, EncoderConfig};
 
     fn channel(id: ChannelId, opened_l1_block: u64, duration: u64) -> Channel {
-        let config = EncoderConfig {
-            compression_algo: CompressionAlgo::Zlib,
-            max_channel_duration: duration,
-            ..EncoderConfig::default()
-        };
+        let config = EncoderConfig { max_channel_duration: duration, ..EncoderConfig::default() };
         Channel::new(id, Arc::new(RollupConfig::default()), &config, 0, opened_l1_block).unwrap()
     }
 
-    fn incompressible_batch(transaction_len: usize) -> SingleBatch {
-        let mut state = 1u64;
+    fn incompressible_batch(transaction_len: usize, seed: u64) -> SingleBatch {
+        let mut state = seed;
         let transaction = (0..transaction_len)
             .map(|_| {
                 state ^= state << 13;
@@ -360,9 +355,10 @@ mod tests {
     }
 
     fn append_accepted(channel: &mut Channel, transaction_len: usize) {
+        let seed = channel.blocks_added() as u64 + 1;
         assert_eq!(
             channel
-                .add_batch(&incompressible_batch(transaction_len), transaction_len as u64)
+                .add_batch(&incompressible_batch(transaction_len, seed), transaction_len as u64)
                 .unwrap(),
             ChannelAddOutcome::Accepted
         );

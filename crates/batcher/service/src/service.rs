@@ -624,7 +624,7 @@ impl BatcherService {
             self.config.poll_interval,
         );
         let encoder =
-            BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone());
+            BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone())?;
 
         // Build the throttle controller and the appropriate client. The throttle
         // RPC uses the L2 endpoint(s); `RpcThrottleClient` rotates per-call

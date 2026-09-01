@@ -7,10 +7,21 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L1MinerTxManager,
     SharedL1Chain, TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{BatchEncoder, BatchPipeline, DaType, EncoderConfig};
+use base_batcher_encoder::{
+    BatchEncoder, BatchPipeline, BatchSubmission, DaType, EncoderConfig, SubmissionPayload,
+};
 use base_blobs::BlobEncoder;
 use base_protocol::Frame;
 use base_tx_manager::TxCandidate;
+
+fn submission_frames(submission: &BatchSubmission) -> Vec<Arc<Frame>> {
+    match submission.payload() {
+        SubmissionPayload::Blobs(blobs) => {
+            blobs.iter().flat_map(|blob| blob.frames().iter().cloned()).collect()
+        }
+        SubmissionPayload::Calldata(frame) => vec![Arc::clone(frame)],
+    }
+}
 
 fn submit_signed_blob_frames(
     h: &mut ActionTestHarness,
@@ -42,8 +53,8 @@ fn submit_signed_blob_frames(
 // Blob DA end-to-end
 // ---------------------------------------------------------------------------
 
-/// Encode 3 L2 blocks as EIP-4844 blobs (one blob per L2 block, each in its
-/// own L1 block) and verify that the blob verifier pipeline derives all three.
+/// Encode 3 L2 blocks with EIP-4844 DA and verify that the blob verifier
+/// pipeline derives all three.
 #[tokio::test]
 async fn batcher_blob_da_end_to_end() {
     let batcher_cfg = BatcherConfig::default(); // DaType::Blob by default
@@ -72,14 +83,14 @@ async fn batcher_blob_da_end_to_end() {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-blob packing (many frames, many blob sidecars in one L1 block)
+// Multi-frame packing (many frames, one blob sidecar)
 // ---------------------------------------------------------------------------
 
 /// Force channel fragmentation via a tiny `max_frame_size`, then verify that
-/// the resulting frames are submitted as multiple blob sidecars in one L1 block
+/// the resulting frames are packed into one blob sidecar
 /// and that the derivation pipeline can reconstruct the L2 block from them.
 #[tokio::test]
-async fn batcher_multi_blob_packing() {
+async fn batcher_multi_frame_blob_packing() {
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
         ..BatcherConfig::default()
@@ -96,13 +107,8 @@ async fn batcher_multi_blob_packing() {
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await;
 
-    // Blob DA maps each fragmented frame to its own blob sidecar. The miner
-    // includes all pending blob transactions in the same L1 block.
     let sidecar_count = h.l1.tip().blob_sidecars.len();
-    assert!(
-        sidecar_count > 1,
-        "expected fragmented frames to produce multiple blob sidecars, got {sidecar_count}"
-    );
+    assert_eq!(sidecar_count, 1, "fragmented frames should share one blob sidecar");
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
@@ -243,9 +249,15 @@ async fn blob_da_channel_timeout() {
     // which L1 block — blob packing in the Batcher actor packs all frames into
     // one blob, which would make partial submission impossible.
     let mut encoder =
-        BatchEncoder::new(Arc::new(h.rollup_config.clone()), batcher_cfg.encoder.clone());
+        BatchEncoder::new(Arc::new(h.rollup_config.clone()), batcher_cfg.encoder.clone())
+            .expect("valid encoder config");
     encoder.add_block(block.clone()).expect("add_block should succeed");
-    let frames = encoder.encode_and_drain().expect("encode_and_drain should succeed");
+    let frames: Vec<_> = encoder
+        .encode_and_drain()
+        .expect("encode_and_drain should succeed")
+        .into_iter()
+        .flat_map(|submission| submission_frames(&submission))
+        .collect();
     let frame_count = frames.len();
     assert!(
         frame_count >= 2,
@@ -286,9 +298,15 @@ async fn blob_da_channel_timeout() {
 
     // Recovery: resubmit all frames as blobs in a fresh channel (new channel ID).
     let mut encoder2 =
-        BatchEncoder::new(Arc::new(h.rollup_config.clone()), batcher_cfg.encoder.clone());
+        BatchEncoder::new(Arc::new(h.rollup_config.clone()), batcher_cfg.encoder.clone())
+            .expect("valid encoder config");
     encoder2.add_block(block).expect("add_block should succeed");
-    let fresh_frames = encoder2.encode_and_drain().expect("encode_and_drain should succeed");
+    let fresh_frames: Vec<_> = encoder2
+        .encode_and_drain()
+        .expect("encode_and_drain should succeed")
+        .into_iter()
+        .flat_map(|submission| submission_frames(&submission))
+        .collect();
     submit_signed_blob_frames(&mut h, &batcher_cfg, &fresh_frames, 2);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone()); // L1 block 6: fresh blob channel with all frames
