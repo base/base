@@ -304,13 +304,14 @@ impl ChallengerE2e {
         let tx_manager = SimpleTxManager::new(
             provider.clone(),
             SignerConfig::local(driver.clone()),
+            // Anvil mines on send: the default 10 confirmations never arrive
+            // and the default 12s receipt poll is 12s of nothing. Send has no
+            // default timeout at all, and this call is not inside a
+            // `poll_until`. Every other default is unreachable here.
             TxManagerConfig {
                 num_confirmations: 1,
-                resubmission_timeout: Duration::from_secs(10),
                 receipt_query_interval: Duration::from_secs(1),
                 tx_send_timeout: Duration::from_secs(180),
-                tx_not_in_mempool_timeout: Duration::from_secs(30),
-                confirmation_timeout: Duration::from_secs(120),
                 ..Default::default()
             },
             chain_id,
