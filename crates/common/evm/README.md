@@ -24,7 +24,7 @@ base-common-evm = { workspace = true }
 use base_common_evm::{BaseEvmFactory, BasePrecompiles, BaseSpecId, BaseUpgrade};
 
 let factory = BaseEvmFactory::default();
-let precompiles = BasePrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus));
+let precompiles = BasePrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Beryl)).install();
 ```
 
 ## License
