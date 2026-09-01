@@ -5,7 +5,7 @@ use alloy_primitives::{Address, U256};
 use base_common_consensus::Predeploys;
 use base_common_genesis::BaseUpgrade;
 use evm2::{
-    Evm, TxResult,
+    Evm, EvmFeatures, TxResult,
     ethereum::{charge_upfront, default_settle_gas},
     handler::{GasSettlement, TxHandlerHooks},
     interpreter::Host,
@@ -61,6 +61,44 @@ impl BaseTxHandlerHooks {
         }
     }
 
+    /// Rejects the transaction when `caller` cannot cover the full upfront charge — the maximum
+    /// gas cost, the transferred value, and the OP-stack L1 data and operator fees.
+    ///
+    /// The framework's `validate_sender` already rejects a caller that cannot cover the gas cost
+    /// and value, but it is unaware of the L1 and operator fees charged here, and
+    /// [`charge_upfront`] deducts with wrapping arithmetic. Without this guard an underfunded
+    /// caller would silently wrap to a spurious balance instead of the transaction failing; this
+    /// mirrors the revm reference, which rejects such a caller with `LackOfFundForMaxFee`.
+    ///
+    /// A no-op for deposits (funded on L1 and exempt) and when fee charging or balance checks are
+    /// disabled (e.g. `eth_call` simulation), matching the conditions under which `validate_sender`
+    /// and `charge_upfront` themselves enforce balances.
+    fn ensure_can_pay_fees(
+        host: &mut Evm<'_, BaseEvmTypes>,
+        envelope: &BaseTxEnvelope,
+        caller: Address,
+        l1_fee: U256,
+        operator_fee: U256,
+    ) -> HandlerResult<()> {
+        let Some(tx) = envelope.as_standard() else {
+            return Ok(());
+        };
+        if !host.feature(EvmFeatures::FEE_CHARGE) || !host.feature(EvmFeatures::BALANCE_CHECK) {
+            return Ok(());
+        }
+        let required = U256::from(tx.gas_limit())
+            .saturating_mul(U256::from(tx.max_fee_per_gas()))
+            .saturating_add(tx.value())
+            .saturating_add(l1_fee)
+            .saturating_add(operator_fee);
+        let balance =
+            host.state_mut().account(&caller, false).map_err(HandlerError::Fatal)?.balance();
+        if balance < required {
+            return Err(HandlerError::InsufficientFunds);
+        }
+        Ok(())
+    }
+
     /// Credits `amount` to `recipient`'s balance.
     fn credit(
         host: &mut Evm<'_, BaseEvmTypes>,
@@ -90,6 +128,10 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         let ext = host.ext_mut();
         ext.l1_fee = l1_fee;
         ext.operator_fee = operator_fee;
+        // `validate_sender` only checks the gas cost and value; the L1 and operator fees are
+        // charged on top here via `charge_upfront`'s wrapping subtraction, so reject an
+        // underfunded caller up front rather than let its balance wrap to a spurious value.
+        Self::ensure_can_pay_fees(host, envelope, caller, l1_fee, operator_fee)?;
         charge_upfront(
             host,
             caller,

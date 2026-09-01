@@ -80,23 +80,8 @@ fn l1_fee_params() -> L1FeeParams {
     }
 }
 
-/// Runs the EIP-1559 transfer through evm2 at `upgrade` and captures the fee outcome.
-fn run_evm2(upgrade: BaseUpgrade) -> Outcome {
-    let mut db = InMemoryDB::default();
-    db.insert_account_info(
-        &SENDER,
-        evm2::AccountInfo { balance: U256::from(10u128.pow(18)), nonce: 0, ..Default::default() },
-    );
-    let spec = BaseSpecId::new(upgrade);
-    let block = BlockEnv::<BaseEvmTypes> {
-        beneficiary: COINBASE,
-        basefee: U256::from(BASEFEE),
-        ext: l1_fee_params(),
-        ..Default::default()
-    };
-    let mut evm =
-        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
-
+/// The EIP-1559 transfer exercised by the harness, paired with its enveloped bytes.
+fn eip1559_envelope() -> BaseTxEnvelope {
     let tx = TxEnvelope::Eip1559(TxEip1559 {
         chain_id: CHAIN_ID,
         nonce: 0,
@@ -108,7 +93,27 @@ fn run_evm2(upgrade: BaseUpgrade) -> Outcome {
         input: Bytes::new(),
         access_list: Default::default(),
     });
-    let envelope = BaseTxEnvelope::standard(tx, enveloped());
+    BaseTxEnvelope::standard(tx, enveloped())
+}
+
+/// Builds an evm2 instance at `upgrade` with `SENDER` funded to `balance`.
+fn build_evm2(upgrade: BaseUpgrade, balance: U256) -> Evm<'static, BaseEvmTypes> {
+    let mut db = InMemoryDB::default();
+    db.insert_account_info(&SENDER, evm2::AccountInfo { balance, nonce: 0, ..Default::default() });
+    let spec = BaseSpecId::new(upgrade);
+    let block = BlockEnv::<BaseEvmTypes> {
+        beneficiary: COINBASE,
+        basefee: U256::from(BASEFEE),
+        ext: l1_fee_params(),
+        ..Default::default()
+    };
+    Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()))
+}
+
+/// Runs the EIP-1559 transfer through evm2 at `upgrade` and captures the fee outcome.
+fn run_evm2(upgrade: BaseUpgrade) -> Outcome {
+    let mut evm = build_evm2(upgrade, U256::from(10u128.pow(18)));
+    let envelope = eip1559_envelope();
     let result = evm.transact(&Recovered::new_unchecked(envelope, SENDER)).unwrap().commit();
 
     let balances = fee_accounts()
@@ -185,4 +190,29 @@ fn standard_transaction_fee_distribution_matches_revm() {
         let revm = run_revm(upgrade);
         assert_eq!(evm2, revm, "standard-tx fee distribution diverged at {upgrade:?}");
     }
+}
+
+/// A caller funded for the gas cost but not the additional L1 and operator fees must have its
+/// transaction rejected, matching the revm reference's `LackOfFundForMaxFee`. Without the
+/// affordability check the underfunded caller would wrap through `charge_upfront`'s saturating
+/// subtraction into a spurious balance instead of failing.
+#[test]
+fn underfunded_caller_is_rejected_not_wrapped() {
+    // Exactly the max gas cost (gas_limit * max_fee), with zero value: enough to clear the
+    // framework's sender validation, but nothing left for the L1 or operator fee charged on top.
+    let balance = U256::from(GAS_LIMIT) * U256::from(MAX_FEE);
+    let mut evm = build_evm2(BaseUpgrade::Isthmus, balance);
+
+    let rejected = evm.transact(&Recovered::new_unchecked(eip1559_envelope(), SENDER)).is_err();
+    assert!(rejected, "underfunded caller must be rejected, not charged");
+
+    // The rejected transaction must not have touched the caller's balance (in particular, it must
+    // not have wrapped to a spurious value).
+    let balance_after = evm
+        .state_mut()
+        .account_info_untracked(&SENDER)
+        .unwrap()
+        .map(|info| info.balance)
+        .unwrap_or_default();
+    assert_eq!(balance_after, balance, "rejected tx must leave the caller balance untouched");
 }
