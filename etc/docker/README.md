@@ -101,7 +101,7 @@ storage, and block-number predicates; `flashblock_index` predicates remain
 specific to the Flashblocks builder and are rejected after the Denim cutover.
 
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
-Zenith mode additionally activates Zenith at block 28:
+Zenith mode additionally activates Zenith at block 53:
 
 ```bash
 just devnet up zenith

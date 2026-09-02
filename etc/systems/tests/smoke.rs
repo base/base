@@ -28,7 +28,7 @@ static SMOKE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new((
 async fn denim_and_zenith_activation_matches_el_and_cl_configs() -> Result<()> {
     const AZUL_ACTIVATION_BLOCK: u64 = 20;
     const DENIM_ACTIVATION_BLOCK: u64 = 23;
-    const ZENITH_ACTIVATION_BLOCK: u64 = 28;
+    const ZENITH_ACTIVATION_BLOCK: u64 = 53;
 
     let _guard = SMOKE_TEST_LOCK.lock().await;
     let system = SystemTestStackBuilder::new()
