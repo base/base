@@ -7,3 +7,4 @@ mod server;
 pub use server::{ProfilingServer, ProfilingServerError};
 
 mod extension;
+pub use extension::{ProfilingConfig, ProfilingExtension};

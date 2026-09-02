@@ -12,6 +12,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# workspace
+base-node-runner.workspace = true
+
 # errors
 eyre.workspace = true
 thiserror.workspace = true

@@ -3386,6 +3386,7 @@ name = "base-builder-profiling"
 version = "0.0.0"
 dependencies = [
  "axum 0.8.9",
+ "base-node-runner",
  "eyre",
  "flate2",
  "pprof",
