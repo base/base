@@ -1143,14 +1143,18 @@ where
 
             // Respond immediately to the bump-fees flag set by
             // process_send_error on retryable errors, rather than waiting
-            // for the next resubmission timer tick. take_bump_fees clears
-            // the flag atomically so a failed bump does not re-trigger.
+            // for the next resubmission timer tick.
             if send_state.take_bump_fees() {
                 if let Some(abort) =
                     self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
                 {
                     return Err(abort);
                 }
+                // A bump that fails to publish runs through
+                // process_send_error, which re-sets the flag taken above. Drop
+                // it so the retry is timer-driven — what "will retry next tick"
+                // promises — instead of spinning on the same replacement.
+                let _ = send_state.take_bump_fees();
                 // Reset the bump ticker so we get a full interval
                 // before the next timer-driven bump.
                 bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
@@ -1191,6 +1195,9 @@ where
             {
                 return Err(abort);
             }
+            // As above: a bump that failed to publish must not re-fire
+            // immediately off its own error flag.
+            let _ = send_state.take_bump_fees();
             bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
             bump_ticker.next().await;
         }

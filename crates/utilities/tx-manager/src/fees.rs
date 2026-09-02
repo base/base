@@ -51,17 +51,31 @@ impl FeeCalculator {
         blob_base_fee.saturating_mul(2)
     }
 
-    /// Returns the minimum replacement value that satisfies geth's
-    /// tx-replacement rules.
+    /// Returns the minimum replacement value that clears **every** mempool's
+    /// tx-replacement rule.
+    ///
+    /// Replacement policy is client policy, not consensus, and the clients we
+    /// submit to round the threshold differently:
+    ///
+    /// * **geth** compares against `floor(x * (100 + bump) / 100)` and accepts
+    ///   equality (`core/txpool/legacypool/list.go`).
+    /// * **reth** compares against `div_ceil(x * (100 + bump), 100)` and
+    ///   requires at least that (`transaction-pool/src/validate/mod.rs`).
+    ///
+    /// `x + x / divisor` is exactly geth's floor, so it satisfies geth but is
+    /// one wei short of reth whenever `x` is not divisible by the divisor. The
+    /// trailing `+ 1` clears the stricter of the two, which is what a
+    /// replacement needs in order to be valid on either client — and to
+    /// propagate across a mixed network, since a reth peer still holding the
+    /// original rejects an under-bumped replacement and keeps the original.
     ///
     /// * **Regular transactions** (`is_blob = false`): 10 % bump →
-    ///   `x + x / 10`, but always at least `x + 1` when `x > 0`.
-    /// * **Blob transactions** (`is_blob = true`): 100 % bump →
-    ///   `x + x` (i.e. `2 × x`), but always at least `x + 1` when `x > 0`.
+    ///   `x + x / 10 + 1`.
+    /// * **Blob transactions** (`is_blob = true`): 100 % bump → `2x + 1`.
     /// * When `x == 0`, returns `0` (there is no fee to bump).
     ///
-    /// The "at least +1" rule prevents stuck bump loops where
-    /// `x / 10 == 0` for small values.
+    /// The trailing `+ 1` also subsumes the old "at least `x + 1`" rule for
+    /// small `x` where `x / 10` truncates to zero.
     ///
     /// Uses saturating arithmetic — the result is capped at [`u128::MAX`]
     /// rather than panicking on overflow.
@@ -71,16 +85,11 @@ impl FeeCalculator {
             return 0;
         }
 
-        let bump = if is_blob {
-            // 100 % bump: x + x = 2x
-            x
-        } else {
-            // 10 % bump: x / 10, but at least 1
-            let v = x / 10;
-            if v > 0 { v } else { 1 }
-        };
+        // 100 % bump for blobs, 10 % otherwise. `x + x / divisor` is exactly
+        // `floor(x * (100 + bump_percent) / 100)`, i.e. the mempool's threshold.
+        let bump = if is_blob { x } else { x / 10 };
 
-        x.saturating_add(bump)
+        x.saturating_add(bump).saturating_add(1)
     }
 
     /// Selects final `(tip, fee_cap)` values that satisfy geth's replacement
@@ -327,26 +336,50 @@ mod tests {
 
     // ── calc_threshold_value ────────────────────────────────────────────
 
+    // Every expectation is one wei above `x + x / divisor`, which is the
+    // boundary the mempool compares against. Returning the boundary itself is
+    // rejected as `replacement transaction underpriced`.
     #[rstest]
     // Regular (non-blob) cases
     #[case::zero_regular(0, false, 0)]
     #[case::one_regular(1, false, 2)]
     #[case::nine_regular(9, false, 10)]
-    #[case::ten_regular(10, false, 11)]
-    #[case::eleven_regular(11, false, 12)]
-    #[case::hundred_regular(100, false, 110)]
-    #[case::thousand_regular(1000, false, 1100)]
+    #[case::ten_regular(10, false, 12)]
+    #[case::eleven_regular(11, false, 13)]
+    #[case::hundred_regular(100, false, 111)]
+    #[case::thousand_regular(1000, false, 1101)]
     #[case::small_value_ensures_plus_one(5, false, 6)]
     #[case::saturates_regular(u128::MAX, false, u128::MAX)]
     // Blob cases
     #[case::zero_blob(0, true, 0)]
-    #[case::one_blob(1, true, 2)]
-    #[case::ten_blob(10, true, 20)]
-    #[case::hundred_blob(100, true, 200)]
+    #[case::one_blob(1, true, 3)]
+    #[case::ten_blob(10, true, 21)]
+    #[case::hundred_blob(100, true, 201)]
     #[case::saturates_blob(u128::MAX, true, u128::MAX)]
     #[case::half_max_blob(u128::MAX / 2 + 1, true, u128::MAX)]
     fn calc_threshold_value(#[case] x: u128, #[case] is_blob: bool, #[case] expected: u128) {
         assert_eq!(FeeCalculator::calc_threshold_value(x, is_blob), expected);
+    }
+
+    /// The regression this guards: the returned value must be **strictly**
+    /// greater than `floor(x * (100 + bump) / 100)`, the mempool's threshold.
+    /// Equality is what produced the observed `replacement transaction
+    /// underpriced` retry loop against a batcher submission on Base Sepolia.
+    #[rstest]
+    #[case::observed_fee_cap(15_297_156, false)]
+    #[case::observed_tip(1_000_000, false)]
+    #[case::round_number(100, false)]
+    #[case::blob(1_000, true)]
+    fn calc_threshold_value_strictly_clears_mempool_threshold(
+        #[case] x: u128,
+        #[case] is_blob: bool,
+    ) {
+        let mempool_threshold = if is_blob { x * 200 / 100 } else { x * 110 / 100 };
+        assert!(
+            FeeCalculator::calc_threshold_value(x, is_blob) > mempool_threshold,
+            "{x} bumped to {} does not clear threshold {mempool_threshold}",
+            FeeCalculator::calc_threshold_value(x, is_blob),
+        );
     }
 
     // ── update_fees ─────────────────────────────────────────────────────
@@ -355,20 +388,20 @@ mod tests {
     // Case 1: both above threshold → use new values
     #[case::both_above(100, 1000, 200, 500, false, (200, 1200))]
     // Case 2: tip above, fee cap below → new tip + threshold fee cap
-    #[case::tip_above_cap_below(100, 1000, 200, 1, false, (200, 1100))]
+    #[case::tip_above_cap_below(100, 1000, 200, 1, false, (200, 1101))]
     // Case 3: fee cap above, tip below → threshold tip + recalculated fee cap
-    #[case::tip_below_cap_above(100, 1000, 50, 5000, false, (110, 10110))]
+    #[case::tip_below_cap_above(100, 1000, 50, 5000, false, (111, 10111))]
     // Case 4: both below → both threshold values
-    #[case::both_below(100, 1000, 50, 1, false, (110, 1100))]
+    #[case::both_below(100, 1000, 50, 1, false, (111, 1101))]
     // Blob cases — all four arms with 100 % bump thresholds
     #[case::blob_both_above(100, 1000, 300, 1000, true, (300, 2300))]
-    #[case::blob_tip_above_cap_below(100, 1000, 300, 1, true, (300, 2000))]
-    #[case::blob_tip_below_cap_above(100, 1000, 50, 5000, true, (200, 10200))]
-    #[case::blob_both_below(100, 1000, 50, 1, true, (200, 2000))]
+    #[case::blob_tip_above_cap_below(100, 1000, 300, 1, true, (300, 2001))]
+    #[case::blob_tip_below_cap_above(100, 1000, 50, 5000, true, (201, 10201))]
+    #[case::blob_both_below(100, 1000, 50, 1, true, (201, 2001))]
     // Case 2: large old_fee_cap keeps threshold_fee_cap well above new_tip (clamp is no-op)
-    #[case::tip_above_cap_below_large_old_fee_cap(100, 10_000, 150, 1, false, (150, 11_000))]
+    #[case::tip_above_cap_below_large_old_fee_cap(100, 10_000, 150, 1, false, (150, 11_001))]
     // Case 4: old_tip > old_fee_cap → threshold_tip > threshold_fee_cap, clamp applies
-    #[case::both_below_tip_dominates(1_000, 100, 50, 1, false, (1_100, 1_100))]
+    #[case::both_below_tip_dominates(1_000, 100, 50, 1, false, (1_101, 1_101))]
     // Zero starting fees
     #[case::zero_old_fees(0, 0, 10, 100, false, (10, 210))]
     fn update_fees(

@@ -215,10 +215,11 @@ impl SendState {
     /// Atomically reads and clears the bump-fees flag. Returns `true` if
     /// fees should be bumped.
     ///
-    /// Clearing eagerly prevents a failed bump attempt (e.g. RPC timeout)
-    /// from immediately re-triggering on the next loop iteration. If a new
-    /// retryable error occurs later, [`process_send_error`] will re-set the
-    /// flag.
+    /// Clearing eagerly stops a *stale* flag from re-triggering. It does not
+    /// by itself stop a failed bump from re-firing: that attempt's own publish
+    /// error runs through [`process_send_error`] and re-sets the flag after
+    /// this call, so the send loop takes it a second time after each attempt to
+    /// keep retries on the resubmission timer.
     ///
     /// [`process_send_error`]: Self::process_send_error
     #[must_use]
