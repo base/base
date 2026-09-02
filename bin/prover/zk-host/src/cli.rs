@@ -6,7 +6,7 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_proof_worker::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
 };
-use base_proof_zk_backend::SuccinctZkProversConfig;
+use base_proof_zk_backend::{SuccinctZkProversConfig, zk_artifact_hash};
 use base_proof_zk_host::{
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
     DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES, ProofGeneratorHeartbeatConfig,
@@ -233,10 +233,13 @@ impl WorkerArgs {
             args.proof_generator_heartbeat_lock_duration_seconds,
             args.proof_generator_max_consecutive_heartbeat_failures,
         );
+        let artifact_hash = zk_artifact_hash()
+            .await
+            .map_err(|error| eyre::eyre!("failed to derive local ZK artifact hash: {error}"))?;
 
         let worker_id =
             args.worker_id.clone().unwrap_or_else(|| format!("zk-host-{}", Uuid::new_v4()));
-        let host_config = ZkHostConfig::sp1(worker_id.clone())
+        let host_config = ZkHostConfig::sp1(worker_id.clone(), artifact_hash)
             .with_job_discovery_poll_interval(Duration::from_millis(
                 args.job_discovery_poll_interval_ms,
             ))

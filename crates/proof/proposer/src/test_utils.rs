@@ -257,7 +257,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         unimplemented!("unused in proposer tests")
     }
     async fn proof_artifacts(&self, _: Address) -> Result<ProofArtifacts, ContractError> {
-        unimplemented!("artifact routing lands with the producer changes")
+        unimplemented!("unused in proposer tests")
     }
     async fn zk_prover(&self, _: Address) -> Result<Address, ContractError> {
         unimplemented!("unused in proposer tests")

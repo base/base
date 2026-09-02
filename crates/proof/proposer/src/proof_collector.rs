@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_proof_rpc::RollupProvider;
 use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::ProofRequesterProvider;
@@ -34,6 +34,7 @@ where
     rollup_client: Arc<R>,
     submitter: ProofSubmitter,
     block_interval: u64,
+    tee_image_hash: B256,
     submit_timeout: Option<Duration>,
 }
 
@@ -59,9 +60,17 @@ where
         rollup_client: Arc<R>,
         submitter: ProofSubmitter,
         block_interval: u64,
+        tee_image_hash: B256,
         submit_timeout: Option<Duration>,
     ) -> Self {
-        Self { proof_requester, rollup_client, submitter, block_interval, submit_timeout }
+        Self {
+            proof_requester,
+            rollup_client,
+            submitter,
+            block_interval,
+            tee_image_hash,
+            submit_timeout,
+        }
     }
 
     /// Runs one collector tick.
@@ -109,7 +118,10 @@ where
                 return false;
             };
 
-            let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
+            let session_id = ProposerProofAdapter::tee_session_id_for_root(
+                self.tee_image_hash,
+                claimed_l2_output_root,
+            );
             let proof = match Self::poll_proof(
                 self.proof_requester.as_ref(),
                 target_block,
@@ -503,6 +515,7 @@ mod tests {
             rollup_client,
             submitter,
             BLOCK_INTERVAL,
+            B256::repeat_byte(0x42),
             Some(std::time::Duration::from_secs(60)),
         )
     }
@@ -552,6 +565,7 @@ mod tests {
             claimed_l2_block_number: target_block,
             intermediate_block_interval: BLOCK_INTERVAL,
             l1_head_number: 1000,
+            image_hash: B256::repeat_byte(0x42),
             ..Default::default()
         };
         requester
@@ -590,6 +604,7 @@ mod tests {
                 claimed_l2_block_number: target_block,
                 intermediate_block_interval: BLOCK_INTERVAL,
                 l1_head_number: 1000,
+                image_hash: B256::repeat_byte(0x42),
                 ..Default::default()
             };
             requester
@@ -648,12 +663,14 @@ mod tests {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(0x42), claimed_root);
         let proof_request = ProofRequest {
             claimed_l2_output_root: claimed_root,
             claimed_l2_block_number: target_block,
             intermediate_block_interval: BLOCK_INTERVAL,
             l1_head_number: 1000,
+            image_hash: B256::repeat_byte(0x42),
             ..Default::default()
         };
         requester
@@ -661,13 +678,15 @@ mod tests {
             .await
             .expect("test setup should dispatch root session");
         let later_root = B256::repeat_byte(0xcc);
-        let later_session_id = ProposerProofAdapter::tee_session_id_for_root(later_root);
+        let later_session_id =
+            ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(0x42), later_root);
         requester
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(ProofRequest {
                 claimed_l2_output_root: later_root,
                 claimed_l2_block_number: target_block + BLOCK_INTERVAL,
                 intermediate_block_interval: BLOCK_INTERVAL,
                 l1_head_number: 1000,
+                image_hash: B256::repeat_byte(0x42),
                 ..Default::default()
             }))
             .await
@@ -699,12 +718,14 @@ mod tests {
         let requester = Arc::new(MockProofRequester { reject_delete: true, ..Default::default() });
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(0x42), claimed_root);
         let proof_request = ProofRequest {
             claimed_l2_output_root: claimed_root,
             claimed_l2_block_number: target_block,
             intermediate_block_interval: BLOCK_INTERVAL,
             l1_head_number: 1000,
+            image_hash: B256::repeat_byte(0x42),
             ..Default::default()
         };
         requester
@@ -734,12 +755,14 @@ mod tests {
         let target_block = 200;
         let stale_root = B256::repeat_byte(0xaa);
         let fresh_root = B256::repeat_byte(0xbb);
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(stale_root);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(0x42), stale_root);
         let proof_request = ProofRequest {
             claimed_l2_output_root: stale_root,
             claimed_l2_block_number: target_block,
             intermediate_block_interval: BLOCK_INTERVAL,
             l1_head_number: 1000,
+            image_hash: B256::repeat_byte(0x42),
             ..Default::default()
         };
         requester
@@ -778,7 +801,8 @@ mod tests {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(0xaa);
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(0x42), claimed_root);
         requester
             .failed_sessions
             .lock()

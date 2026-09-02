@@ -23,11 +23,11 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
 
 # misc
+alloy-primitives.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-alloy-primitives.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 base-proof-primitives = { workspace = true, features = ["std", "serde"] }

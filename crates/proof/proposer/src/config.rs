@@ -2,7 +2,7 @@
 
 use std::{net::SocketAddr, time::Duration};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_cli_utils::{LogConfig, MetricsConfig};
 use base_retry::RetryConfig;
 use eyre::{Result, WrapErr};
@@ -29,6 +29,8 @@ pub struct ProposerConfig {
     pub dispute_game_factory_addr: Address,
     /// Game type ID for `AggregateVerifier` dispute games.
     pub game_type: u32,
+    /// Nitro enclave image hash required for proposal proofs.
+    pub tee_image_hash: B256,
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
     /// RPC request timeout.
@@ -123,6 +125,7 @@ impl ProposerConfig {
             anchor_state_registry_addr: proposer.anchor_state_registry_addr,
             dispute_game_factory_addr: proposer.dispute_game_factory_addr,
             game_type: proposer.game_type,
+            tee_image_hash: proposer.tee_image_hash,
             poll_interval: proposer.poll_interval,
             rpc_timeout: proposer.rpc_timeout,
             rollup_rpc: proposer.rollup_rpc,
@@ -169,6 +172,8 @@ mod tests {
             "0x2234567890123456789012345678901234567890",
             "--game-type",
             "1",
+            "--tee-image-hash",
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
             "--rollup-rpc",
             "http://localhost:7545",
             "--private-key",

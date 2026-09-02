@@ -2,10 +2,12 @@
 
 use std::{sync::Arc, time::Duration};
 
+use alloy_primitives::B256;
 use base_proof_worker::{JobDiscovery, JobDiscoveryConfig, ProofSubmitter};
 use base_prover_service_client::ProverWorkerProvider;
 use base_prover_service_protocol::TeeKind;
 use tokio_util::sync::CancellationToken;
+use tracing::{error, warn};
 
 use crate::{NitroEnclavePool, ProofGenerator, ProofGeneratorHeartbeatConfig};
 
@@ -62,13 +64,49 @@ where
 {
     /// Runs the host until cancellation is requested.
     pub async fn run_until_cancelled(self, cancel: CancellationToken) {
+        let Some(artifact_hash) = self.read_artifact_hash(&cancel).await else {
+            return;
+        };
+        let discovery_config = self.discovery.with_supported_artifact_hash(artifact_hash);
         let submitter = ProofSubmitter::new(self.client.clone());
         let proof_generator = Arc::new(
             ProofGenerator::new(self.pool, submitter, self.heartbeat)
-                .with_max_pending_submissions(self.discovery.normalized_max_concurrent_jobs()),
+                .with_max_pending_submissions(discovery_config.normalized_max_concurrent_jobs()),
         );
-        let discovery = JobDiscovery::new(self.client, proof_generator, self.discovery);
+        let discovery = JobDiscovery::new(self.client, proof_generator, discovery_config);
 
         discovery.run_until_cancelled(cancel).await;
+    }
+
+    /// Reads the local enclave image hash, retrying until it succeeds or is cancelled.
+    ///
+    /// The host cannot claim any job without this hash, so a transient read failure
+    /// must not be fatal: the enclave is frequently still booting when the host
+    /// starts, and exiting here would take the worker out of the pool permanently
+    /// rather than for the few seconds the enclave needs.
+    ///
+    /// Returns `None` only if cancellation was requested while retrying.
+    async fn read_artifact_hash(&self, cancel: &CancellationToken) -> Option<B256> {
+        let retry_delay = self.discovery.normalized_poll_interval();
+        loop {
+            match self.pool.tee_image_hash().await {
+                Ok(hash) => return Some(hash),
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        retry_in_secs = retry_delay.as_secs(),
+                        "failed to read local Nitro artifact hash, retrying"
+                    );
+                }
+            }
+
+            tokio::select! {
+                () = cancel.cancelled() => {
+                    error!("cancelled before the local Nitro artifact hash could be read");
+                    return None;
+                }
+                () = tokio::time::sleep(retry_delay) => {}
+            }
+        }
     }
 }

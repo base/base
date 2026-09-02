@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 
+use alloy_primitives::B256;
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
     GetNextProofRequest, ProofJob, ProofType, TeeKind, ZkBackend, ZkVm,
@@ -92,20 +93,27 @@ impl JobClaimFilter {
     pub fn get_next_proof_requests(
         &self,
         worker_id: String,
+        supported_artifact_hash: Option<B256>,
         lock_duration_seconds: u32,
     ) -> impl Iterator<Item = GetNextProofRequest> {
-        self.get_next_proof_requests_starting_at(worker_id, lock_duration_seconds, 0)
+        self.get_next_proof_requests_starting_at(
+            worker_id,
+            supported_artifact_hash,
+            lock_duration_seconds,
+            0,
+        )
     }
 
     /// Builds the worker claim requests for this filter with a proof-type rotation offset.
     ///
-    /// `supported_artifact_hash` is left `None` here as a placeholder; hosts set it
-    /// from their local enclave image or verification keys when artifact routing
-    /// lands. It is inert today because the prover service does not yet read it, but
-    /// once routing is enabled a `None` claims no jobs at all.
+    /// `supported_artifact_hash` is the artifact this worker can actually execute,
+    /// derived by the host from its local enclave image or verification keys. Once
+    /// artifact routing is enabled the prover service treats `None` as "claims
+    /// nothing", so a host that cannot determine its own hash must not poll.
     pub fn get_next_proof_requests_starting_at(
         &self,
         worker_id: String,
+        supported_artifact_hash: Option<B256>,
         lock_duration_seconds: u32,
         proof_type_offset: usize,
     ) -> impl Iterator<Item = GetNextProofRequest> {
@@ -117,7 +125,7 @@ impl JobClaimFilter {
                     tee_kinds: tee_kinds.clone(),
                     zk_vms: Vec::new(),
                     zk_backends: Vec::new(),
-                    supported_artifact_hash: None,
+                    supported_artifact_hash,
                     lock_duration_seconds,
                 }),
                 None,
@@ -139,7 +147,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms: zk_vms.clone(),
                         zk_backends: zk_backends.clone(),
-                        supported_artifact_hash: None,
+                        supported_artifact_hash,
                         lock_duration_seconds,
                     }),
                     Some(GetNextProofRequest {
@@ -148,7 +156,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms,
                         zk_backends,
-                        supported_artifact_hash: None,
+                        supported_artifact_hash,
                         lock_duration_seconds,
                     }),
                 ]
@@ -164,6 +172,7 @@ impl JobClaimFilter {
 pub struct JobDiscoveryConfig {
     worker_id: String,
     claim_filter: JobClaimFilter,
+    supported_artifact_hash: Option<B256>,
     poll_interval: Duration,
     lock_duration_seconds: u32,
     max_concurrent_jobs: usize,
@@ -189,6 +198,7 @@ impl JobDiscoveryConfig {
         Self {
             worker_id: worker_id.into(),
             claim_filter,
+            supported_artifact_hash: None,
             poll_interval: DEFAULT_JOB_DISCOVERY_POLL_INTERVAL,
             lock_duration_seconds: DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS,
             max_concurrent_jobs: DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
@@ -228,6 +238,13 @@ impl JobDiscoveryConfig {
         self
     }
 
+    /// Sets the exact artifact hash advertised on every claim request.
+    #[must_use]
+    pub const fn with_supported_artifact_hash(mut self, artifact_hash: B256) -> Self {
+        self.supported_artifact_hash = Some(artifact_hash);
+        self
+    }
+
     /// Returns the configured poll interval clamped to the minimum allowed delay.
     pub fn normalized_poll_interval(&self) -> Duration {
         self.poll_interval.max(MIN_JOB_DISCOVERY_POLL_INTERVAL)
@@ -250,6 +267,7 @@ impl JobDiscoveryConfig {
     ) -> impl Iterator<Item = GetNextProofRequest> {
         self.claim_filter.get_next_proof_requests_starting_at(
             self.worker_id.clone(),
+            self.supported_artifact_hash,
             self.lock_duration_seconds,
             proof_type_offset,
         )
@@ -676,6 +694,7 @@ mod tests {
             vec![ZkVm::Sp1],
             vec![ZkBackend::Cluster, ZkBackend::Network],
         )
+        .with_supported_artifact_hash(B256::repeat_byte(0x42))
         .with_lock_duration_seconds(30)
         .with_max_concurrent_jobs(0);
 
@@ -687,12 +706,14 @@ mod tests {
         assert!(requests[0].tee_kinds.is_empty());
         assert_eq!(requests[0].zk_vms, vec![ZkVm::Sp1]);
         assert_eq!(requests[0].zk_backends, vec![ZkBackend::Cluster, ZkBackend::Network]);
+        assert_eq!(requests[0].supported_artifact_hash, Some(B256::repeat_byte(0x42)));
         assert_eq!(requests[0].lock_duration_seconds, 30);
         assert_eq!(requests[1].worker_id, "worker-a");
         assert_eq!(requests[1].proof_type, ProofType::SnarkPlonk);
         assert!(requests[1].tee_kinds.is_empty());
         assert_eq!(requests[1].zk_vms, vec![ZkVm::Sp1]);
         assert_eq!(requests[1].zk_backends, vec![ZkBackend::Cluster, ZkBackend::Network]);
+        assert_eq!(requests[1].supported_artifact_hash, Some(B256::repeat_byte(0x42)));
         assert_eq!(requests[1].lock_duration_seconds, 30);
         assert_eq!(config.normalized_max_concurrent_jobs(), 1);
     }
@@ -700,6 +721,7 @@ mod tests {
     #[test]
     fn config_builds_nitro_claim_request() {
         let config = JobDiscoveryConfig::tee("worker-a", vec![TeeKind::AwsNitro])
+            .with_supported_artifact_hash(B256::repeat_byte(0x24))
             .with_lock_duration_seconds(45);
 
         let requests = config.get_next_proof_requests().collect::<Vec<_>>();
@@ -710,6 +732,7 @@ mod tests {
         assert_eq!(request.proof_type, ProofType::Tee);
         assert_eq!(request.tee_kinds, vec![TeeKind::AwsNitro]);
         assert!(request.zk_vms.is_empty());
+        assert_eq!(request.supported_artifact_hash, Some(B256::repeat_byte(0x24)));
         assert_eq!(request.lock_duration_seconds, 45);
     }
 
