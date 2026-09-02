@@ -46,21 +46,15 @@ impl SingleBatch {
         &self,
         cfg: &RollupConfig,
         l2_safe_head: L2BlockInfo,
-        inclusion_block: &BlockInfo,
+        _inclusion_block: &BlockInfo,
     ) -> BatchValidity {
         let next_timestamp =
             cfg.l2_block_timestamp(l2_safe_head.block_info.number.saturating_add(1));
         if self.timestamp > next_timestamp {
-            if cfg.is_holocene_active(inclusion_block.timestamp) {
-                return BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene);
-            }
-            return BatchValidity::Future;
+            return BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene);
         }
         if self.timestamp < next_timestamp {
-            if cfg.is_holocene_active(inclusion_block.timestamp) {
-                return BatchValidity::Past;
-            }
-            return BatchValidity::Drop(BatchDropReason::PastTimestampPreHolocene);
+            return BatchValidity::Past;
         }
         BatchValidity::Accept
     }
@@ -184,12 +178,6 @@ impl SingleBatch {
             if tx.as_ref().first() == Some(&(OpTxType::Deposit as u8)) {
                 return BatchValidity::Drop(BatchDropReason::DepositTransaction);
             }
-            // If isthmus is not active yet and the transaction is a 7702, drop the batch.
-            if !cfg.is_isthmus_active(self.timestamp)
-                && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
-            {
-                return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
-            }
             // If cobalt is not active yet and the transaction is an 8130, drop the batch.
             if !cfg.is_cobalt_active(self.timestamp)
                 && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
@@ -230,22 +218,6 @@ mod tests {
     }
 
     #[test]
-    fn test_timestamp_future() {
-        let cfg = RollupConfig::default();
-        let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 1, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        let batch = SingleBatch { timestamp: 2, ..Default::default() };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
-            BatchValidity::Future
-        );
-    }
-
-    #[test]
     fn test_parent_hash_mismatch() {
         let cfg = RollupConfig::default();
         let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
@@ -258,21 +230,6 @@ mod tests {
         assert_eq!(
             batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
             BatchValidity::Drop(BatchDropReason::ParentHashMismatch)
-        );
-    }
-
-    #[test]
-    fn test_check_batch_timestamp_holocene_inactive_future() {
-        let cfg = RollupConfig::default();
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 1, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { timestamp: 1, ..Default::default() };
-        let batch = SingleBatch { epoch_num: 1, timestamp: 2, ..Default::default() };
-        assert_eq!(
-            batch.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
-            BatchValidity::Future
         );
     }
 
@@ -311,25 +268,6 @@ mod tests {
         assert_eq!(
             batch.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
             BatchValidity::Past
-        );
-    }
-
-    #[test]
-    fn test_check_batch_timestamp_holocene_inactive_drop() {
-        let cfg = RollupConfig {
-            block_time: 1,
-            genesis: ChainGenesis { l2_time: 1, ..Default::default() },
-            ..Default::default()
-        };
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 2, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { timestamp: 1, ..Default::default() };
-        let batch = SingleBatch { epoch_num: 1, timestamp: 1, ..Default::default() };
-        assert_eq!(
-            batch.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
-            BatchValidity::Drop(BatchDropReason::PastTimestampPreHolocene)
         );
     }
 
@@ -397,13 +335,13 @@ mod tests {
         let past = SingleBatch { epoch_num: 1, timestamp: 101, ..Default::default() };
         assert_eq!(
             past.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
-            BatchValidity::Drop(BatchDropReason::PastTimestampPreHolocene)
+            BatchValidity::Past
         );
 
         let future = SingleBatch { epoch_num: 1, timestamp: 103, ..Default::default() };
         assert_eq!(
             future.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
-            BatchValidity::Future
+            BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene)
         );
     }
 
@@ -526,42 +464,6 @@ mod tests {
             input: vec![8].into(),
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn test_check_batch_drop_7702_pre_isthmus() {
-        // Use the example transaction
-        let mut transactions = example_transactions();
-
-        // Extend the transactions with the 7702 transaction
-        let eip_7702_tx = eip_7702_tx();
-        let sig = Signature::test_signature();
-        let tx_signed = eip_7702_tx.into_signed(sig);
-        let envelope: TxEnvelope = tx_signed.into();
-        let encoded = envelope.encoded_2718();
-        transactions.push(encoded.into());
-
-        // Construct a basic `SingleBatch`
-        let parent_hash = BlockHash::ZERO;
-        let epoch_num = 1;
-        let epoch_hash = BlockHash::ZERO;
-        let timestamp = 1;
-
-        let single_batch =
-            SingleBatch { parent_hash, epoch_num, epoch_hash, timestamp, transactions };
-
-        // Notice: Isthmus is _not_ active yet.
-        let cfg = RollupConfig { max_sequencer_drift: 1, block_time: 1, ..Default::default() };
-        let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 0, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        assert_eq!(
-            single_batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
-            BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus)
-        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
-//! Mock testing utilities for the [`ChannelBank`] stage.
+//! Mock testing utilities for the [`ChannelAssembler`] stage.
 //!
-//! [ChannelBank]: crate::stages::ChannelBank
+//! [ChannelAssembler]: crate::stages::ChannelAssembler
 
 use alloc::{boxed::Box, vec::Vec};
 
@@ -16,16 +16,16 @@ use crate::{
     types::PipelineResult,
 };
 
-/// A mock [`NextFrameProvider`] for testing the [`ChannelBank`] stage.
+/// A mock [`NextFrameProvider`] for testing the [`ChannelAssembler`] stage.
 ///
-/// [`ChannelBank`]: crate::stages::ChannelBank
+/// [`ChannelAssembler`]: crate::stages::ChannelAssembler
 #[derive(Debug, Default)]
 pub struct TestNextFrameProvider {
     /// The data to return.
     pub data: Vec<PipelineResult<Frame>>,
     /// The block info
     pub block_info: Option<BlockInfo>,
-    /// Tracks if the channel bank provider has been reset.
+    /// Tracks if the frame provider has been reset.
     pub reset: bool,
 }
 

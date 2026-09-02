@@ -742,4 +742,68 @@ mod tests {
         assert!(bv.pending_batch.is_none());
         assert!(bv.prev.flushed);
     }
+
+    #[tokio::test]
+    async fn test_denim_validator_skips_same_second_stale_batch() {
+        let origin = BlockInfo { number: 1, hash: B256::repeat_byte(0x11), ..Default::default() };
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                holocene_time: Some(0),
+                base: BaseUpgradeConfig { denim: Some(46), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 300,
+                hash: B256::repeat_byte(0x33),
+                timestamp: cfg.l2_block_timestamp(300),
+                ..Default::default()
+            },
+            l1_origin: BlockNumHash { number: 0, ..Default::default() },
+            ..Default::default()
+        };
+        assert_eq!(cfg.denim_activation_block_number(), Some(23));
+        assert_eq!(cfg.l2_block_timestamp(298), cfg.l2_block_timestamp(301));
+        let valid = SingleBatch {
+            parent_hash: parent.block_info.hash,
+            epoch_num: origin.number,
+            epoch_hash: origin.hash,
+            timestamp: cfg.l2_block_timestamp(parent.block_info.number + 1),
+            ..Default::default()
+        };
+        let stale_298 =
+            SingleBatch { parent_hash: B256::with_last_byte(297_u64 as u8), ..valid.clone() };
+        let stale_299 =
+            SingleBatch { parent_hash: B256::with_last_byte(298_u64 as u8), ..valid.clone() };
+        let mut prev = TestNextBatchProvider::new(vec![
+            Ok(Batch::Single(valid.clone())),
+            Ok(Batch::Single(stale_299)),
+            Ok(Batch::Single(stale_298)),
+        ]);
+        prev.origin = Some(origin);
+        let l2_provider = TestL2ChainProvider {
+            blocks: (295..parent.block_info.number)
+                .map(|number| L2BlockInfo {
+                    block_info: BlockInfo {
+                        number,
+                        hash: B256::with_last_byte(number as u8),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let mut bv = BatchValidator::new(cfg, prev, l2_provider);
+        bv.origin = Some(origin);
+        bv.l1_blocks = vec![origin, origin];
+
+        assert_eq!(bv.next_batch(parent).await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert_eq!(bv.next_batch(parent).await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert!(!bv.prev.flushed);
+        assert_eq!(bv.next_batch(parent).await.unwrap(), valid);
+    }
 }

@@ -77,14 +77,10 @@ impl<F: ChainProvider> PollingTraversal<F> {
         &mut self,
         receipts: &[Receipt],
         l1_system_config_address: Address,
-        ecotone_active: bool,
         block_number: u64,
     ) {
-        let (updates, errors) = self.system_config.update_with_receipts(
-            receipts,
-            l1_system_config_address,
-            ecotone_active,
-        );
+        let (updates, errors) =
+            self.system_config.update_with_receipts(receipts, l1_system_config_address, true);
         for kind in &updates {
             info!(target: "traversal", %kind, block_number, "Applied system config update");
         }
@@ -128,27 +124,16 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
             self.data_source.receipts_by_hash(next_l1_origin.hash).await.map_err(Into::into)?;
 
         let l1_system_config_address = self.rollup_config.l1_system_config_address;
-        let ecotone_active = self.rollup_config.is_ecotone_active(next_l1_origin.timestamp);
         self.update_system_config_with_receipts(
             &receipts,
             l1_system_config_address,
-            ecotone_active,
             next_l1_origin.number,
         );
 
-        let prev_block_holocene = self.rollup_config.is_holocene_active(block.timestamp);
-        let next_block_holocene = self.rollup_config.is_holocene_active(next_l1_origin.timestamp);
-
-        // Update the block origin regardless of if a holocene activation is required.
+        // Update the block origin.
         self.update_origin(next_l1_origin);
 
         timer.stop();
-
-        // If the prev block is not holocene, but the next is, we need to flag this
-        // so the pipeline driver will reset the pipeline for holocene activation.
-        if !prev_block_holocene && next_block_holocene {
-            return Err(ResetError::HoloceneActivation.reset());
-        }
 
         Ok(())
     }

@@ -46,29 +46,12 @@ impl L1BlockInfoTx {
         system_config: &SystemConfig,
         sequence_number: u64,
         l1_header: &Header,
-        l2_parent_block_time: u64,
-        l2_block_time: u64,
+        _l2_parent_block_time: u64,
+        _l2_block_time: u64,
     ) -> Result<Self, BlockInfoError> {
-        // In the first block of Ecotone, the L1Block contract has not been upgraded yet due to the
-        // upgrade transactions being placed after the L1 info transaction. Because of this,
-        // for the first block of Ecotone, we send a Bedrock style L1 block info transaction
-        if !rollup_config.is_ecotone_active(l2_block_time)
-            || rollup_config.is_first_ecotone_block(l2_block_time, l2_parent_block_time)
-        {
-            return Ok(Self::Bedrock(L1BlockInfoBedrock::new(
-                l1_header.number,
-                l1_header.timestamp,
-                l1_header.base_fee_per_gas.unwrap_or(0),
-                l1_header.hash_slow(),
-                sequence_number,
-                system_config.batcher_address,
-                system_config.overhead,
-                system_config.scalar,
-            )));
-        }
-
-        // --- Post-Ecotone Operations ---
-
+        // try_new/try_new_with_deposit_tx are only invoked for blocks >= Azul (>= Jovian,
+        // non-transition); pre-Azul transition blocks are never re-derived. The construction
+        // therefore unconditionally builds a Jovian L1 block info transaction.
         let scalar = system_config.scalar.to_be_bytes::<32>();
         let blob_base_fee_scalar = (scalar[0] == L1BlockInfoEcotone::L1_SCALAR)
             .then(|| {
@@ -117,56 +100,17 @@ impl L1BlockInfoTx {
         let block_hash = l1_header.hash_slow();
         let base_fee = l1_header.base_fee_per_gas.unwrap_or(0);
 
-        if rollup_config.is_jovian_active(l2_block_time)
-            && !rollup_config.is_first_jovian_block(l2_block_time, l2_parent_block_time)
-        {
-            let operator_fee_scalar = system_config.operator_fee_scalar.unwrap_or_default();
-            let operator_fee_constant = system_config.operator_fee_constant.unwrap_or_default();
-            let mut da_footprint_gas_scalar = system_config
-                .da_footprint_gas_scalar
-                .unwrap_or(L1BlockInfoJovian::DEFAULT_DA_FOOTPRINT_GAS_SCALAR);
+        let operator_fee_scalar = system_config.operator_fee_scalar.unwrap_or_default();
+        let operator_fee_constant = system_config.operator_fee_constant.unwrap_or_default();
+        let mut da_footprint_gas_scalar = system_config
+            .da_footprint_gas_scalar
+            .unwrap_or(L1BlockInfoJovian::DEFAULT_DA_FOOTPRINT_GAS_SCALAR);
 
-            if da_footprint_gas_scalar == 0 {
-                da_footprint_gas_scalar = L1BlockInfoJovian::DEFAULT_DA_FOOTPRINT_GAS_SCALAR;
-            }
-
-            return Ok(Self::Jovian(L1BlockInfoJovian::new(
-                l1_header.number,
-                l1_header.timestamp,
-                base_fee,
-                block_hash,
-                sequence_number,
-                system_config.batcher_address,
-                blob_base_fee,
-                blob_base_fee_scalar,
-                base_fee_scalar,
-                operator_fee_scalar,
-                operator_fee_constant,
-                da_footprint_gas_scalar,
-            )));
+        if da_footprint_gas_scalar == 0 {
+            da_footprint_gas_scalar = L1BlockInfoJovian::DEFAULT_DA_FOOTPRINT_GAS_SCALAR;
         }
 
-        if rollup_config.is_isthmus_active(l2_block_time)
-            && !rollup_config.is_first_isthmus_block(l2_block_time, l2_parent_block_time)
-        {
-            let operator_fee_scalar = system_config.operator_fee_scalar.unwrap_or_default();
-            let operator_fee_constant = system_config.operator_fee_constant.unwrap_or_default();
-            return Ok(Self::Isthmus(L1BlockInfoIsthmus::new(
-                l1_header.number,
-                l1_header.timestamp,
-                base_fee,
-                block_hash,
-                sequence_number,
-                system_config.batcher_address,
-                blob_base_fee,
-                blob_base_fee_scalar,
-                base_fee_scalar,
-                operator_fee_scalar,
-                operator_fee_constant,
-            )));
-        }
-
-        Ok(Self::Ecotone(L1BlockInfoEcotone::new(
+        Ok(Self::Jovian(L1BlockInfoJovian::new(
             l1_header.number,
             l1_header.timestamp,
             base_fee,
@@ -176,8 +120,9 @@ impl L1BlockInfoTx {
             blob_base_fee,
             blob_base_fee_scalar,
             base_fee_scalar,
-            false,
-            U256::ZERO,
+            operator_fee_scalar,
+            operator_fee_constant,
+            da_footprint_gas_scalar,
         )))
     }
 
@@ -209,8 +154,8 @@ impl L1BlockInfoTx {
     /// Converts this L1 block info into the deposit transaction placed first in an L2 block.
     pub fn into_deposit_tx(
         self,
-        rollup_config: &RollupConfig,
-        l2_block_time: u64,
+        _rollup_config: &RollupConfig,
+        _l2_block_time: u64,
     ) -> Sealed<TxDeposit> {
         let sequence_number = self.sequence_number();
         let source = DepositSourceDomain::L1Info(L1InfoDepositSource {
@@ -218,23 +163,19 @@ impl L1BlockInfoTx {
             seq_number: sequence_number,
         });
 
-        let mut deposit_tx = TxDeposit {
+        // With the regolith upgrade, system transactions were deprecated, and we allocate
+        // a constant amount of gas for special transactions like L1 block info. Regolith is
+        // always active for re-derived blocks post-migration.
+        let deposit_tx = TxDeposit {
             source_hash: source.source_hash(),
             from: SystemAddresses::DEPOSITOR_ACCOUNT,
             to: TxKind::Call(Predeploys::L1_BLOCK_INFO),
             mint: 0,
             value: U256::ZERO,
-            gas_limit: 150_000_000,
-            is_system_transaction: true,
+            gas_limit: REGOLITH_SYSTEM_TX_GAS,
+            is_system_transaction: false,
             input: self.encode_calldata(),
         };
-
-        // With the regolith upgrade, system transactions were deprecated, and we allocate
-        // a constant amount of gas for special transactions like L1 block info.
-        if rollup_config.is_regolith_active(l2_block_time) {
-            deposit_tx.is_system_transaction = false;
-            deposit_tx.gas_limit = REGOLITH_SYSTEM_TX_GAS;
-        }
 
         deposit_tx.seal_slow()
     }
@@ -828,40 +769,6 @@ mod tests {
     }
 
     #[test]
-    fn test_try_new_bedrock() {
-        let rollup_config = RollupConfig::default();
-        let l1_config = Sepolia::l1_config();
-        let system_config = SystemConfig::default();
-        let sequence_number = 0;
-        let l1_header = Header::default();
-        let l2_block_time = 0u64;
-
-        let l1_info = L1BlockInfoTx::try_new(
-            &rollup_config,
-            &l1_config,
-            &system_config,
-            sequence_number,
-            &l1_header,
-            l2_block_time.saturating_sub(2),
-            l2_block_time,
-        )
-        .unwrap();
-
-        let L1BlockInfoTx::Bedrock(l1_info) = l1_info else {
-            panic!("Wrong fork");
-        };
-
-        assert_eq!(l1_info.number(), l1_header.number);
-        assert_eq!(l1_info.time(), l1_header.timestamp);
-        assert_eq!(l1_info.base_fee(), { l1_header.base_fee_per_gas.unwrap_or(0) });
-        assert_eq!(l1_info.block_hash(), l1_header.hash_slow());
-        assert_eq!(l1_info.sequence_number(), sequence_number);
-        assert_eq!(l1_info.batcher_address(), system_config.batcher_address);
-        assert_eq!(l1_info.l1_fee_overhead(), system_config.overhead);
-        assert_eq!(l1_info.l1_fee_scalar(), system_config.scalar);
-    }
-
-    #[test]
     fn test_try_new_ecotone() {
         let rollup_config = RollupConfig {
             upgrades: UpgradeConfig { ecotone_time: Some(1), ..Default::default() },
@@ -884,7 +791,7 @@ mod tests {
         )
         .unwrap();
 
-        let L1BlockInfoTx::Ecotone(l1_info) = l1_info else {
+        let L1BlockInfoTx::Jovian(l1_info) = l1_info else {
             panic!("Wrong fork");
         };
 
@@ -913,16 +820,31 @@ mod tests {
     }
 
     #[test]
-    fn test_try_new_ecotone_same_second_boundary_uses_parent_timestamp() {
-        let l2_block_time = 0xFFu64;
+    fn test_try_new_jovian() {
         let rollup_config = RollupConfig {
-            upgrades: UpgradeConfig { ecotone_time: Some(l2_block_time), ..Default::default() },
+            upgrades: UpgradeConfig {
+                ecotone_time: Some(1),
+                isthmus_time: Some(1),
+                jovian_time: Some(1),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let l1_config = Sepolia::l1_config();
-        let system_config = SystemConfig::default();
+        let system_config = SystemConfig {
+            batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
+            operator_fee_scalar: Some(0xabcd),
+            operator_fee_constant: Some(0xdcba),
+            ..Default::default()
+        };
         let sequence_number = 0;
-        let l1_header = Header::default();
+        let l1_header = Header {
+            number: 19655712,
+            timestamp: 1713121139,
+            base_fee_per_gas: Some(10445852825),
+            ..Default::default()
+        };
+        let l2_block_time = 0xFFu64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -930,12 +852,27 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
-            l2_block_time,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
 
-        assert!(matches!(l1_info, L1BlockInfoTx::Ecotone(_)));
+        let L1BlockInfoTx::Jovian(l1_info) = l1_info else {
+            panic!("Wrong fork");
+        };
+
+        assert_eq!(l1_info.number(), l1_header.number);
+        assert_eq!(l1_info.time(), l1_header.timestamp);
+        assert_eq!(l1_info.base_fee(), l1_header.base_fee_per_gas.unwrap_or(0));
+        assert_eq!(l1_info.block_hash(), l1_header.hash_slow());
+        assert_eq!(l1_info.sequence_number(), sequence_number);
+        assert_eq!(l1_info.batcher_address(), system_config.batcher_address);
+        assert_eq!(l1_info.operator_fee_scalar(), 0xabcd);
+        assert_eq!(l1_info.operator_fee_constant(), 0xdcba);
+        assert_eq!(
+            l1_info.da_footprint_gas_scalar(),
+            L1BlockInfoJovian::DEFAULT_DA_FOOTPRINT_GAS_SCALAR
+        );
     }
 
     #[rstest]
@@ -982,7 +919,7 @@ mod tests {
         )
         .unwrap();
 
-        let L1BlockInfoTx::Ecotone(l1_info) = l1_info else {
+        let L1BlockInfoTx::Jovian(l1_info) = l1_info else {
             panic!("Wrong fork");
         };
 
@@ -1058,7 +995,7 @@ mod tests {
         )
         .unwrap();
 
-        let L1BlockInfoTx::Ecotone(l1_info) = l1_info else {
+        let L1BlockInfoTx::Jovian(l1_info) = l1_info else {
             panic!("Wrong fork");
         };
         assert_eq!(l1_info.blob_base_fee(), l1_header.blob_fee(BlobParams::cancun()).unwrap_or(1));
@@ -1075,7 +1012,7 @@ mod tests {
         )
         .unwrap();
 
-        let L1BlockInfoTx::Ecotone(l1_info) = l1_info else {
+        let L1BlockInfoTx::Jovian(l1_info) = l1_info else {
             panic!("Wrong fork");
         };
         assert_eq!(l1_info.blob_base_fee(), l1_header.blob_fee(BlobParams::prague()).unwrap_or(1));
@@ -1122,7 +1059,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(l1_info, L1BlockInfoTx::Isthmus(_)));
+        assert!(matches!(l1_info, L1BlockInfoTx::Jovian(_)));
 
         let scalar = system_config.scalar.to_be_bytes::<32>();
         let blob_base_fee_scalar = if scalar[0] == L1BlockInfoIsthmus::L1_SCALAR {
@@ -1139,7 +1076,7 @@ mod tests {
 
         assert_eq!(
             l1_info,
-            L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new(
+            L1BlockInfoTx::Jovian(L1BlockInfoJovian::new(
                 l1_header.number,
                 l1_header.timestamp,
                 l1_header.base_fee_per_gas.unwrap_or(0),
@@ -1153,72 +1090,7 @@ mod tests {
                 base_fee_scalar,
                 system_config.operator_fee_scalar.unwrap_or_default(),
                 system_config.operator_fee_constant.unwrap_or_default(),
-            ))
-        );
-    }
-
-    #[test]
-    fn test_try_new_isthmus() {
-        let rollup_config = RollupConfig {
-            upgrades: UpgradeConfig { isthmus_time: Some(1), ..Default::default() },
-            ..Default::default()
-        };
-        let l1_config = Sepolia::l1_config();
-        let system_config = SystemConfig {
-            batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-            operator_fee_scalar: Some(0xabcd),
-            operator_fee_constant: Some(0xdcba),
-            ..Default::default()
-        };
-        let sequence_number = 0;
-        let l1_header = Header {
-            number: 19655712,
-            timestamp: 1713121139,
-            base_fee_per_gas: Some(10445852825),
-            ..Default::default()
-        };
-        let l2_block_time = 0xFFu64;
-
-        let l1_info = L1BlockInfoTx::try_new(
-            &rollup_config,
-            &l1_config,
-            &system_config,
-            sequence_number,
-            &l1_header,
-            l2_block_time.saturating_sub(2),
-            l2_block_time,
-        )
-        .unwrap();
-
-        assert!(matches!(l1_info, L1BlockInfoTx::Isthmus(_)));
-
-        let scalar = system_config.scalar.to_be_bytes::<32>();
-        let blob_base_fee_scalar = if scalar[0] == L1BlockInfoIsthmus::L1_SCALAR {
-            {
-                u32::from_be_bytes(
-                    scalar[24..28].try_into().expect("Failed to parse L1 blob base fee scalar"),
-                )
-            }
-        } else {
-            Default::default()
-        };
-        let base_fee_scalar =
-            u32::from_be_bytes(scalar[28..32].try_into().expect("Failed to parse base fee scalar"));
-
-        assert_eq!(
-            l1_info,
-            L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new(
-                l1_header.number,
-                l1_header.timestamp,
-                l1_header.base_fee_per_gas.unwrap_or(0),
-                l1_header.hash_slow(),
-                sequence_number,
-                system_config.batcher_address,
-                l1_header.blob_fee(BlobParams::prague()).unwrap_or(1),
-                blob_base_fee_scalar,
-                base_fee_scalar,
-                system_config.operator_fee_scalar.unwrap_or_default(),
-                system_config.operator_fee_constant.unwrap_or_default(),
+                L1BlockInfoJovian::DEFAULT_DA_FOOTPRINT_GAS_SCALAR,
             ))
         );
     }
@@ -1256,7 +1128,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(l1_info, L1BlockInfoTx::Isthmus(_)));
+        assert!(matches!(l1_info, L1BlockInfoTx::Jovian(_)));
         assert_eq!(deposit_tx.from, SystemAddresses::DEPOSITOR_ACCOUNT);
         assert_eq!(deposit_tx.to, TxKind::Call(Predeploys::L1_BLOCK_INFO));
         assert_eq!(deposit_tx.mint, 0);

@@ -53,17 +53,8 @@ where
         Self { prev, queue: VecDeque::new(), rollup_config: cfg }
     }
 
-    /// Returns if holocene is active.
-    pub fn is_holocene_active(&self, origin: BlockInfo) -> bool {
-        self.rollup_config.is_holocene_active(origin.timestamp)
-    }
-
-    /// Prunes frames if Holocene is active.
-    pub fn prune(&mut self, origin: BlockInfo) {
-        if !self.is_holocene_active(origin) {
-            return;
-        }
-
+    /// Prunes frames.
+    pub fn prune(&mut self) {
         let mut i = 0;
         while i < self.queue.len() - 1 {
             let prev_frame = &self.queue[i];
@@ -133,9 +124,9 @@ where
         // Optimistically extend the queue with the new frames.
         self.queue.extend(frames);
 
-        // Prune frames if Holocene is active.
-        let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-        self.prune(origin);
+        // Prune frames.
+        self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
+        self.prune();
 
         // Update metrics with the post-prune queue state.
         Metrics::pipeline_frame_queue_buffer().set(self.queue.len() as f64);
@@ -237,7 +228,6 @@ pub(super) mod tests {
         let mut mock = TestFrameQueueProvider::new(data);
         mock.set_origin(BlockInfo::default());
         let mut frame_queue = FrameQueue::new(mock, Default::default());
-        assert!(!frame_queue.is_holocene_active(BlockInfo::default()));
         let err = frame_queue.next_frame().await.unwrap_err();
         assert_eq!(err, PipelineError::NotEnoughData.temp());
     }
@@ -248,7 +238,6 @@ pub(super) mod tests {
         let mut mock = TestFrameQueueProvider::new(data);
         mock.set_origin(BlockInfo::default());
         let mut frame_queue = FrameQueue::new(mock, Default::default());
-        assert!(!frame_queue.is_holocene_active(BlockInfo::default()));
         let err = frame_queue.next_frame().await.unwrap_err();
         assert_eq!(err, PipelineError::NotEnoughData.temp());
     }
@@ -260,7 +249,6 @@ pub(super) mod tests {
             .with_raw_frames(Bytes::from(vec![0x01]))
             .with_expected_err(PipelineError::NotEnoughData.temp())
             .build();
-        assert.holocene_active(false);
         assert.next_frames().await;
     }
 
@@ -271,7 +259,6 @@ pub(super) mod tests {
             .with_raw_frames(Bytes::from(vec![0x00, 0x01]))
             .with_expected_err(PipelineError::NotEnoughData.temp())
             .build();
-        assert.holocene_active(false);
         assert.next_frames().await;
     }
 
@@ -283,7 +270,6 @@ pub(super) mod tests {
             .with_origin(BlockInfo::default())
             .with_frames(&frames)
             .build();
-        assert.holocene_active(false);
         assert.next_frames().await;
     }
 
@@ -299,7 +285,6 @@ pub(super) mod tests {
             .with_origin(BlockInfo::default())
             .with_frames(&frames)
             .build();
-        assert.holocene_active(false);
         assert.next_frames().await;
     }
 
@@ -310,7 +295,6 @@ pub(super) mod tests {
             .with_expected_frames(&frames)
             .with_frames(&frames)
             .build();
-        assert.holocene_active(false);
         assert.missing_origin().await;
     }
 
@@ -331,7 +315,6 @@ pub(super) mod tests {
             .with_expected_frames(&frames)
             .with_frames(&frames)
             .build();
-        assert.holocene_active(true);
         assert.next_frames().await;
     }
 
@@ -348,7 +331,6 @@ pub(super) mod tests {
             .with_expected_frames(&frames)
             .with_frames(&frames)
             .build();
-        assert.holocene_active(true);
         assert.next_frames().await;
     }
 
@@ -374,7 +356,6 @@ pub(super) mod tests {
             .with_expected_frames(&[&frames[0..3], &frames[4..]].concat())
             .with_frames(&frames)
             .build();
-        assert.holocene_active(true);
         assert.next_frames().await;
     }
 
@@ -397,7 +378,6 @@ pub(super) mod tests {
             .with_expected_frames(&frames[0..2])
             .with_frames(&frames)
             .build();
-        assert.holocene_active(true);
         assert.next_frames().await;
     }
 
@@ -423,7 +403,6 @@ pub(super) mod tests {
             .with_expected_frames(&frames[4..])
             .with_frames(&frames)
             .build();
-        assert.holocene_active(true);
         assert.next_frames().await;
     }
 
@@ -452,7 +431,6 @@ pub(super) mod tests {
             .with_expected_frames(&[&frames[0..4], &frames[6..]].concat())
             .with_frames(&frames)
             .build();
-        assert.holocene_active(true);
         assert.next_frames().await;
     }
 
@@ -478,7 +456,6 @@ pub(super) mod tests {
             .with_expected_frames(&frames[0..4])
             .with_frames(&frames)
             .build();
-        assert.holocene_active(true);
         assert.next_frames().await;
     }
 
@@ -505,7 +482,6 @@ pub(super) mod tests {
             .with_expected_frames(&[&frames[0..2], &frames[4..]].concat())
             .with_frames(&frames)
             .build();
-        assert.holocene_active(true);
         assert.next_frames().await;
     }
 
@@ -532,7 +508,6 @@ pub(super) mod tests {
             .with_expected_frames(&frames[4..])
             .with_frames(&frames)
             .build();
-        assert.holocene_active(true);
         assert.next_frames().await;
     }
 
@@ -559,7 +534,6 @@ pub(super) mod tests {
             .with_expected_frames(&[&frames[1..2], &frames[3..]].concat())
             .with_frames(&frames)
             .build();
-        assert.holocene_active(true);
         assert.next_frames().await;
     }
 }

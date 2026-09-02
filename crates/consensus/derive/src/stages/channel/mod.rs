@@ -1,15 +1,14 @@
 //! Stages pertaining to the reading and decoding of channels.
 //!
-//! Sitting after the [`FrameQueue`] stage, the [`ChannelBank`] and [`ChannelAssembler`] stages are
-//! responsible for reading and decoding the [Frame]s into [Channel]s. The [`ChannelReader`] stage
-//! is responsible for decoding the [Channel]s into [Batch]es, forwarding the [Batch]es to the
-//! [`BatchQueue`] stage.
+//! Sitting after the [`FrameQueue`] stage, the [`ChannelAssembler`] stage is responsible for
+//! assembling the [Frame]s into a raw compressed [Channel]. The [`ChannelReader`] stage then
+//! decodes the [Channel] into [Batch]es and forwards them to the [`BatchStream`] stage.
 //!
 //! [Frame]: base_protocol::Frame
 //! [Channel]: base_protocol::Channel
 //! [Batch]: base_protocol::Batch
 //! [FrameQueue]: crate::stages::FrameQueue
-//! [BatchQueue]: crate::stages::BatchQueue
+//! [BatchStream]: crate::stages::BatchStream
 
 use alloc::boxed::Box;
 
@@ -18,19 +17,13 @@ use base_protocol::Frame;
 
 use crate::types::PipelineResult;
 
-mod channel_provider;
-pub use channel_provider::ChannelProvider;
-
-mod channel_bank;
-pub use channel_bank::{ChannelBank, FJORD_MAX_CHANNEL_BANK_SIZE, MAX_CHANNEL_BANK_SIZE};
-
 mod channel_assembler;
 pub use channel_assembler::ChannelAssembler;
 
 mod channel_reader;
 pub use channel_reader::{ChannelReader, ChannelReaderProvider};
 
-/// Provides frames for the [`ChannelBank`] and [`ChannelAssembler`] stages.
+/// Provides frames for the [`ChannelAssembler`] stage.
 #[async_trait]
 pub trait NextFrameProvider {
     /// Retrieves the next [`Frame`] from the [`FrameQueue`] stage.

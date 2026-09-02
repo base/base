@@ -5,8 +5,8 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_consensus_derive::{
-    ActivationSignal, Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal, Signal,
-    SignalReceiver, StepResult,
+    Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal, Signal, SignalReceiver,
+    StepResult,
 };
 use base_consensus_safedb::SafeHeadListener;
 use base_protocol::{AttributesWithParent, BlockInfo};
@@ -198,44 +198,30 @@ where
                         PipelineErrorKind::Reset(e) => {
                             warn!(target: "derivation", error = %e, "Derivation pipeline is being reset");
 
-                            if matches!(e, ResetError::HoloceneActivation) {
-                                self.pipeline
-                                    .signal(
-                                        ActivationSignal {
-                                            l2_safe_head: self
-                                                .derivation_state_machine
-                                                .last_confirmed_safe_head(),
-                                        }
-                                        .signal(),
-                                    )
-                                    .await?;
+                            let reason = if matches!(&e, ResetError::ReorgDetected(..)) {
+                                ResetReason::DerivationL1Reorg
                             } else {
-                                let reason = if matches!(&e, ResetError::ReorgDetected(..)) {
-                                    ResetReason::DerivationL1Reorg
-                                } else {
-                                    ResetReason::DerivationPipeline
-                                };
-                                if let ResetError::ReorgDetected(expected, new) = e {
-                                    warn!(
-                                        target: "derivation",
-                                        %expected,
-                                        %new,
-                                        "L1 reorg detected"
-                                    );
+                                ResetReason::DerivationPipeline
+                            };
+                            if let ResetError::ReorgDetected(expected, new) = e {
+                                warn!(
+                                    target: "derivation",
+                                    %expected,
+                                    %new,
+                                    "L1 reorg detected"
+                                );
 
-                                    Metrics::l1_reorg_count().increment(1);
-                                }
-                                self.engine_client
-                                    .reset_engine_forkchoice(reason)
-                                    .await
-                                    .map_err(|e| {
-                                        error!(target: "derivation", ?e, "Failed to send reset request");
-                                        DerivationError::Sender(Box::new(e))
-                                    })?;
-                                self.derivation_state_machine
-                                    .update(&DerivationStateUpdate::SignalNeeded)?;
-                                return Err(DerivationError::Yield);
+                                Metrics::l1_reorg_count().increment(1);
                             }
+                            self.engine_client.reset_engine_forkchoice(reason).await.map_err(
+                                |e| {
+                                    error!(target: "derivation", ?e, "Failed to send reset request");
+                                    DerivationError::Sender(Box::new(e))
+                                },
+                            )?;
+                            self.derivation_state_machine
+                                .update(&DerivationStateUpdate::SignalNeeded)?;
+                            return Err(DerivationError::Yield);
                         }
                         PipelineErrorKind::Critical(_) => {
                             error!(target: "derivation", error = %e, "Critical derivation error");

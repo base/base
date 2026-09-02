@@ -3862,7 +3862,6 @@ dependencies = [
  "base-common-consensus",
  "base-common-genesis",
  "base-common-rpc-types-engine",
- "base-consensus-upgrades",
  "base-metrics",
  "base-protocol",
  "criterion",

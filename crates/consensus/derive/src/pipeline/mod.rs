@@ -8,6 +8,6 @@ pub use core::DerivationPipeline;
 
 mod types;
 pub use types::{
-    AttributesQueueStage, BatchProviderStage, BatchStreamStage, ChannelProviderStage,
+    AttributesQueueStage, BatchStreamStage, BatchValidatorStage, ChannelAssemblerStage,
     ChannelReaderStage, FrameQueueStage, L1RetrievalStage, PolledAttributesQueueStage,
 };

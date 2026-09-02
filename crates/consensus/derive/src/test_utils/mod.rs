@@ -2,7 +2,7 @@
 
 mod pipeline;
 pub use pipeline::{
-    TestAttributesQueue, TestBatchProvider, TestBatchStream, TestChannelProvider,
+    TestAttributesQueue, TestBatchStream, TestBatchValidator, TestChannelAssembler,
     TestChannelReader, TestFrameQueue, TestL1Retrieval, TestNextAttributes, TestPipeline,
     TestPollingTraversal, new_test_pipeline,
 };

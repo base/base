@@ -15,7 +15,6 @@ workspace = true
 base-metrics.workspace = true
 base-protocol.workspace = true
 base-common-genesis.workspace = true
-base-consensus-upgrades.workspace = true
 
 # Alloy
 alloy-eips.workspace = true
@@ -55,16 +54,6 @@ tracing-subscriber = { workspace = true, features = ["fmt"] }
 base-protocol = { workspace = true, features = ["test-utils"] }
 base-common-genesis = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map", "arbitrary"] }
-
-[[bench]]
-name = "batch_queue"
-harness = false
-required-features = ["test-utils"]
-
-[[bench]]
-name = "batch_queue_iai"
-harness = false
-required-features = ["test-utils"]
 
 [features]
 default = []
