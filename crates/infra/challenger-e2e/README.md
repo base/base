@@ -118,9 +118,17 @@ disputes games it was never given would pass the run.
    still read the same `(teeProver, zkProver, counteredIndex)`. Catches what
    the per-game assertions cannot see: a challenger misconfigured on
    `game_type`, one with a broken lookback, or one that starts disputing
-   indiscriminately after its first dispute. Games whose prover fields do not
-   read are skipped, not fatal — they are a different verifier shape, so the
-   challenger cannot move them through the fields this test watches.
+   indiscriminately after its first dispute.
+
+   Games whose prover fields do not read **when snapshotted** are left out of
+   the watch set rather than failing the run: they are a different verifier
+   shape, so the challenger cannot move them through the fields this test
+   watches. The re-read at the end is not lenient in the same way. Every game
+   in the set already read cleanly once, so a read that fails now is the RPC,
+   not a shape mismatch — and skipping it would quietly drop a game from the
+   only assertion that catches indiscriminate disputing. It fails the run, with
+   a message that says the check could not be completed rather than that the
+   challenger moved something.
 
 ## Required environment
 

@@ -623,12 +623,24 @@ impl ChallengerE2e {
     /// Catches collateral damage the per-game assertions cannot see: a
     /// challenger misconfigured on `game_type`, one with a broken lookback, or
     /// one that starts disputing indiscriminately after its first dispute.
+    ///
+    /// The leniency in [`Self::snapshot_bystanders`] does not carry over here:
+    /// it decides what to watch, this decides whether the run passes.
     async fn assert_bystanders_untouched(
         verifier: &AggregateVerifierContractClient,
         snapshot: &[(Address, GameState)],
     ) -> Result<()> {
         for (game, before) in snapshot {
-            let after = Self::read_game_state(verifier, *game).await?;
+            // Not skipped on a read failure, unlike the snapshot pass. Every
+            // game in here already read cleanly once, so it is the shape this
+            // check watches; a read that fails now is the RPC, and continuing
+            // past it would drop a game from the only assertion that catches a
+            // challenger disputing indiscriminately. Fail closed and say why.
+            let after = Self::read_game_state(verifier, *game).await.with_context(|| {
+                format!(
+                    "failed to re-read bystander game {game}; it read cleanly when snapshotted,                      so the collateral-damage check could not be completed"
+                )
+            })?;
             ensure!(
                 after == *before,
                 "the challenger moved game {game}, which this test never corrupted: \
