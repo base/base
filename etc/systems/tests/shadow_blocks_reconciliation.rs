@@ -262,3 +262,100 @@ async fn list_recent_returns_resolved_rows_newest_first_and_pages_by_before() ->
 
     Ok(())
 }
+
+/// Reads the hex mirror columns straight from the table, the way the Snowflake ETL does.
+async fn hex_columns(pool: &PgPool, number: i64) -> Result<(Option<String>, Option<String>)> {
+    let row = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT hash_hex, canonical_hash_hex FROM shadow_blocks WHERE number = $1",
+    )
+    .bind(number)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row)
+}
+
+#[tokio::test]
+async fn insert_writes_both_spellings_of_every_hash() -> Result<()> {
+    let database = TestDatabase::start().await?;
+    let repo = ShadowBlockRepo::new(database.pool.clone());
+    repo.flush(&reorged([ShadowBlockFixture::new(400).into_row(0xe1, Some(0xe2))])).await?;
+
+    let (hash_hex, canonical_hash_hex) = hex_columns(&database.pool, 400).await?;
+    assert_eq!(hash_hex, Some(format!("0x{}", "e1".repeat(32))));
+    assert_eq!(canonical_hash_hex, Some(format!("0x{}", "e2".repeat(32))));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_unresolved_row_leaves_its_canonical_hex_null_rather_than_empty() -> Result<()> {
+    let database = TestDatabase::start().await?;
+    let repo = ShadowBlockRepo::new(database.pool.clone());
+    repo.flush(&reorged([ShadowBlockFixture::new(401).into_row(0xe3, None)])).await?;
+
+    let (hash_hex, canonical_hash_hex) = hex_columns(&database.pool, 401).await?;
+    assert_eq!(hash_hex, Some(format!("0x{}", "e3".repeat(32))));
+    assert_eq!(canonical_hash_hex, None, "NULL, not a string that reads as a resolved row");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn resolving_a_canonical_hash_fills_its_hex_mirror() -> Result<()> {
+    let database = TestDatabase::start().await?;
+    let repo = ShadowBlockRepo::new(database.pool.clone());
+    repo.flush(&reorged([ShadowBlockFixture::new(402).into_row(0xe4, None)])).await?;
+
+    repo.flush(&canonical([ShadowCanonicalRef { number: 402, hash: vec![0xe5; 32] }])).await?;
+
+    let (_, canonical_hash_hex) = hex_columns(&database.pool, 402).await?;
+    assert_eq!(
+        canonical_hash_hex,
+        Some(format!("0x{}", "e5".repeat(32))),
+        "the UNNEST resolve path carries the hex mirror with the bytes"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replacement_candidate_replaces_both_hash_spellings() -> Result<()> {
+    let database = TestDatabase::start().await?;
+    let repo = ShadowBlockRepo::new(database.pool.clone());
+    repo.flush(&reorged([ShadowBlockFixture::new(403).into_row(0xe6, Some(0xe7))])).await?;
+
+    repo.flush(&reorged([ShadowBlockFixture::new(403).into_row(0xe8, None)])).await?;
+
+    let (hash_hex, canonical_hash_hex) = hex_columns(&database.pool, 403).await?;
+    assert_eq!(hash_hex, Some(format!("0x{}", "e8".repeat(32))));
+    assert_eq!(
+        canonical_hash_hex, None,
+        "the replaced candidate's canonical hex must not carry over, exactly as its bytes do not"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_database_rejects_a_hash_that_is_not_lowercase_0x_hex() -> Result<()> {
+    let database = TestDatabase::start().await?;
+
+    let rejected = sqlx::query(
+        "INSERT INTO shadow_blocks (number, hash, created_at, payload, hash_hex) \
+         VALUES ($1, $2, now(), '{}'::jsonb, $3)",
+    )
+    .bind(404_i64)
+    .bind(vec![0xe9_u8; 32])
+    .bind(format!("0X{}", "E9".repeat(32)))
+    .execute(&database.pool)
+    .await;
+
+    let error = rejected.expect_err("uppercase hex is not the spelling the reader looks up");
+    assert!(
+        error.to_string().contains("shadow_blocks_hash_hex_format"),
+        "the format constraint is what rejected it, not something incidental: {error}"
+    );
+
+    Ok(())
+}
