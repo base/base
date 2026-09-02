@@ -739,13 +739,13 @@ fn seed_union_composite(s: &mut HashMapStorageProvider) -> u64 {
 }
 
 #[test]
-fn golden_cobalt_bootstrap_routes_asset_seize_holder_policy_init_call() {
+fn golden_cobalt_bootstrap_routes_asset_seize_exempt_policy_init_call() {
     let mut s = fresh();
     let composite = seed_union_composite(&mut s);
     let token = asset_addr(CREATOR, SALT);
 
     let update = IB20::updatePolicyCall {
-        policyScope: B20PolicyType::SeizeHolder.id(),
+        policyScope: B20PolicyType::SeizeExempt.id(),
         newPolicyId: composite,
     }
     .abi_encode();
@@ -764,18 +764,18 @@ fn golden_cobalt_bootstrap_routes_asset_seize_holder_policy_init_call() {
     assert!(!rev, "Cobalt bootstrap must not revert; got {bytes:?}");
     assert_eq!(bytes, Bytes::from(IB20Factory::createB20Call::abi_encode_returns(&token)));
     read_asset(&mut s, token, |t| {
-        assert_eq!(t.policy_id(B20PolicyType::SeizeHolder.id()).unwrap(), composite);
+        assert_eq!(t.policy_id(B20PolicyType::SeizeExempt.id()).unwrap(), composite);
     });
 }
 
 #[test]
-fn golden_cobalt_bootstrap_routes_stablecoin_seize_holder_policy_init_call() {
+fn golden_cobalt_bootstrap_routes_stablecoin_seize_exempt_policy_init_call() {
     let mut s = fresh();
     let composite = seed_union_composite(&mut s);
     let token = stablecoin_addr(CREATOR, SALT);
 
     let update = IB20::updatePolicyCall {
-        policyScope: B20PolicyType::SeizeHolder.id(),
+        policyScope: B20PolicyType::SeizeExempt.id(),
         newPolicyId: composite,
     }
     .abi_encode();
@@ -794,16 +794,16 @@ fn golden_cobalt_bootstrap_routes_stablecoin_seize_holder_policy_init_call() {
     assert!(!rev, "Cobalt bootstrap must not revert; got {bytes:?}");
     assert_eq!(bytes, Bytes::from(IB20Factory::createB20Call::abi_encode_returns(&token)));
     read_stablecoin(&mut s, token, |t| {
-        assert_eq!(t.policy_id(B20PolicyType::SeizeHolder.id()).unwrap(), composite);
+        assert_eq!(t.policy_id(B20PolicyType::SeizeExempt.id()).unwrap(), composite);
     });
 }
 
 #[test]
-fn golden_beryl_bootstrap_rejects_asset_seize_holder_policy_init_call() {
+fn golden_beryl_bootstrap_rejects_asset_seize_exempt_policy_init_call() {
     let mut s = fresh();
     let composite = seed_union_composite(&mut s);
     let update = IB20::updatePolicyCall {
-        policyScope: B20PolicyType::SeizeHolder.id(),
+        policyScope: B20PolicyType::SeizeExempt.id(),
         newPolicyId: composite,
     }
     .abi_encode();
@@ -823,18 +823,18 @@ fn golden_beryl_bootstrap_rejects_asset_seize_holder_policy_init_call() {
     assert_eq!(
         bytes,
         Bytes::from(
-            IB20::UnsupportedPolicyType { policyScope: B20PolicyType::SeizeHolder.id() }
+            IB20::UnsupportedPolicyType { policyScope: B20PolicyType::SeizeExempt.id() }
                 .abi_encode()
         )
     );
 }
 
 #[test]
-fn golden_beryl_bootstrap_rejects_stablecoin_seize_holder_policy_init_call() {
+fn golden_beryl_bootstrap_rejects_stablecoin_seize_exempt_policy_init_call() {
     let mut s = fresh();
     let composite = seed_union_composite(&mut s);
     let update = IB20::updatePolicyCall {
-        policyScope: B20PolicyType::SeizeHolder.id(),
+        policyScope: B20PolicyType::SeizeExempt.id(),
         newPolicyId: composite,
     }
     .abi_encode();
@@ -854,7 +854,7 @@ fn golden_beryl_bootstrap_rejects_stablecoin_seize_holder_policy_init_call() {
     assert_eq!(
         bytes,
         Bytes::from(
-            IB20::UnsupportedPolicyType { policyScope: B20PolicyType::SeizeHolder.id() }
+            IB20::UnsupportedPolicyType { policyScope: B20PolicyType::SeizeExempt.id() }
                 .abi_encode()
         )
     );
@@ -969,10 +969,10 @@ fn v1_op_coverage_checklist(call: IB20Factory::IB20FactoryCalls) {
             golden_create_reverts_when_not_activated,
             golden_create_propagates_typed_init_call_revert,
             golden_create_reverts_malformed_params,
-            golden_cobalt_bootstrap_routes_asset_seize_holder_policy_init_call,
-            golden_cobalt_bootstrap_routes_stablecoin_seize_holder_policy_init_call,
-            golden_beryl_bootstrap_rejects_asset_seize_holder_policy_init_call,
-            golden_beryl_bootstrap_rejects_stablecoin_seize_holder_policy_init_call,
+            golden_cobalt_bootstrap_routes_asset_seize_exempt_policy_init_call,
+            golden_cobalt_bootstrap_routes_stablecoin_seize_exempt_policy_init_call,
+            golden_beryl_bootstrap_rejects_asset_seize_exempt_policy_init_call,
+            golden_beryl_bootstrap_rejects_stablecoin_seize_exempt_policy_init_call,
         ]),
         C::getB20Address(_) => covered(&[golden_get_b20_address]),
         C::isB20(_) => covered(&[golden_is_b20]),

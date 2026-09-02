@@ -26,7 +26,7 @@ pub enum B20TokenRole {
     BurnBlocked,
     /// Role required for `seizeWithMemo`; permits reassigning a seizable account's balance
     /// without going through the normal transfer policy checks. An account is seizable when it
-    /// is NOT authorized by `SEIZE_HOLDER_POLICY`; the unset always-allow default keeps seizure
+    /// is NOT authorized by `SEIZE_EXEMPT_POLICY`; the unset always-allow default keeps seizure
     /// closed until an issuer configures the policy.
     Seize,
     /// Role required for `pause`.

@@ -10,8 +10,8 @@ const TRANSFER_EXECUTOR_POLICY: B256 =
     b256!("10be5173aff2a44e748bd9acd8b19fe34689581398a9db7ba2fb671e786ff7d8");
 const MINT_RECEIVER_POLICY: B256 =
     b256!("a0d5ae037e66a09119acf080a1d807abb9b6d03b6b9130eb19f7c1e6bdb8ffc8");
-const SEIZE_HOLDER_POLICY: B256 =
-    b256!("1497ab2b67ebb0a75dd9cdd6aec9f0e64620e6b87e911af7a088ac12e58d9ef2");
+const SEIZE_EXEMPT_POLICY: B256 =
+    b256!("edb5da348cfb67af08746d3afd1be81034b50d5c8576f31aff688f39dfd540ed");
 const SEIZE_RECEIVER_POLICY: B256 =
     b256!("bf15b19caf5c77422c038bc25f26b8b815c3a14f6d04c6616076b81bcfe07b3d");
 
@@ -26,9 +26,10 @@ pub enum B20PolicyType {
     TransferExecutor,
     /// Policy slot checked against mint receivers.
     MintReceiver,
-    /// Policy slot consulted against `from` by the seize operations. A `from` is seizable only when
-    /// it is NOT authorized by this policy (mirroring the `burnBlocked` "blocked" semantics).
-    SeizeHolder,
+    /// Policy slot consulted against `from` by the seize operations. Accounts authorized by this
+    /// policy are exempt from seizure; a `from` is seizable only when it is NOT in this scope
+    /// (mirroring the `burnBlocked` "blocked" semantics).
+    SeizeExempt,
     /// Policy slot consulted against `to` by the seize operations. Mirrors [`Self::MintReceiver`]:
     /// the destination must be authorized by this policy. An unset scope reads as always-allow, so
     /// seize may send anywhere until an issuer configures it.
@@ -46,8 +47,8 @@ impl B20PolicyType {
             Some(Self::TransferExecutor)
         } else if id == MINT_RECEIVER_POLICY {
             Some(Self::MintReceiver)
-        } else if id == SEIZE_HOLDER_POLICY {
-            Some(Self::SeizeHolder)
+        } else if id == SEIZE_EXEMPT_POLICY {
+            Some(Self::SeizeExempt)
         } else if id == SEIZE_RECEIVER_POLICY {
             Some(Self::SeizeReceiver)
         } else {
@@ -62,7 +63,7 @@ impl B20PolicyType {
             Self::TransferReceiver => TRANSFER_RECEIVER_POLICY,
             Self::TransferExecutor => TRANSFER_EXECUTOR_POLICY,
             Self::MintReceiver => MINT_RECEIVER_POLICY,
-            Self::SeizeHolder => SEIZE_HOLDER_POLICY,
+            Self::SeizeExempt => SEIZE_EXEMPT_POLICY,
             Self::SeizeReceiver => SEIZE_RECEIVER_POLICY,
         }
     }
@@ -82,16 +83,28 @@ mod tests {
         assert_eq!(B20PolicyType::TransferReceiver.id(), keccak256("TRANSFER_RECEIVER_POLICY"));
         assert_eq!(B20PolicyType::TransferExecutor.id(), keccak256("TRANSFER_EXECUTOR_POLICY"));
         assert_eq!(B20PolicyType::MintReceiver.id(), keccak256("MINT_RECEIVER_POLICY"));
-        assert_eq!(B20PolicyType::SeizeHolder.id(), keccak256("SEIZE_HOLDER_POLICY"));
+        assert_eq!(B20PolicyType::SeizeExempt.id(), keccak256("SEIZE_EXEMPT_POLICY"));
         assert_eq!(B20PolicyType::SeizeReceiver.id(), keccak256("SEIZE_RECEIVER_POLICY"));
+    }
+
+    /// The seize-from scope id must derive from the new `SEIZE_EXEMPT_POLICY` preimage, not the
+    /// legacy `SEIZE_HOLDER_POLICY` preimage the scope was originally shipped under.
+    #[test]
+    fn seize_exempt_scope_uses_renamed_preimage() {
+        assert_ne!(B20PolicyType::SeizeExempt.id(), keccak256("SEIZE_HOLDER_POLICY"));
+        assert_eq!(
+            B20PolicyType::from_id(keccak256("SEIZE_HOLDER_POLICY")),
+            None,
+            "the legacy SEIZE_HOLDER_POLICY id must no longer resolve to any built-in scope"
+        );
     }
 
     /// `from_id` is the inverse of `id`, including for the seize scopes.
     #[test]
     fn seizable_scope_round_trips() {
         assert_eq!(
-            B20PolicyType::from_id(B20PolicyType::SeizeHolder.id()),
-            Some(B20PolicyType::SeizeHolder)
+            B20PolicyType::from_id(B20PolicyType::SeizeExempt.id()),
+            Some(B20PolicyType::SeizeExempt)
         );
         assert_eq!(
             B20PolicyType::from_id(B20PolicyType::SeizeReceiver.id()),
