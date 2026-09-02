@@ -873,9 +873,9 @@ impl BasePayloadBuilderCtx {
             let tx_hash = *tx.hash();
             let replay_independent = tx.eip8130_replay_id().is_some();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let has_coinbase_tip = tx
-                .as_eip8130()
-                .is_some_and(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()).is_some());
+            let coinbase_tip =
+                tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()));
+            let has_coinbase_tip = coinbase_tip.is_some();
 
             // Defer without evaluating once this flashblock's predicate-eval time budget is
             // exhausted, rather than spending more IO on the naive per-transaction loop. The
@@ -1582,7 +1582,13 @@ impl BasePayloadBuilderCtx {
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
-            info.inclusion.record(has_validity_predicates, gas_used, miner_fee, base_fee);
+            info.inclusion.record(
+                has_validity_predicates,
+                gas_used,
+                miner_fee,
+                base_fee,
+                coinbase_tip.unwrap_or_default(),
+            );
 
             // Per-tx tip-per-gas distribution (builder priority score), tagged
             // by flow cohort and bid mechanism. `X` for top-X-percentile share is
