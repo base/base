@@ -5,33 +5,30 @@ snapshot devnet. It explains how to run `base-bench snapshot`, publish its outpu
 to `base/benchmark`, and select the exact runs to compare.
 
 The snapshot benchmark is for local performance investigation. It mutates its
-builder and validator datadirs, so every attempt needs a fresh writable clone pair.
+builder and validator datadirs, so every attempt needs a fresh writable datadir pair.
 
 ## Prerequisites
 
 - Build an optimized `base-bench` binary. Debug builds are not suitable for a
   400M-gas performance measurement.
 - Start from an immutable, fully prepared Base mainnet datadir snapshot.
-- Use separate writable builder and validator clones of that exact snapshot.
-- Keep the source snapshot read-only for benchmark purposes; only destroy the
-  disposable per-run clones.
+- Restore that exact snapshot into separate writable builder and validator datadirs.
+- Keep the source snapshot immutable for benchmark purposes; only remove or reset
+  the disposable per-run datadirs.
 
-On a ZFS host, create a pair for one run without copying the underlying chain data:
+Materialize a pair for one run using the snapshot/restore system appropriate to the
+environment, then set the datadir paths:
 
 ```sh
-SOURCE_DATASET=zroot/data/snapshots/base-mainnet@benchmark-source
 RUN=blake2f-2s-run-1
-BUILDER_DATASET=zroot/data/snapshots/${RUN}-builder
-CLIENT_DATASET=zroot/data/snapshots/${RUN}-client
+BUILDER_DATADIR=/path/to/restored/${RUN}-builder
+CLIENT_DATADIR=/path/to/restored/${RUN}-client
 
-sudo zfs clone "$SOURCE_DATASET" "$BUILDER_DATASET"
-sudo zfs clone "$SOURCE_DATASET" "$CLIENT_DATASET"
-
-BUILDER_DATADIR=/home/meyer9/snapshots/${RUN}-builder
-CLIENT_DATADIR=/home/meyer9/snapshots/${RUN}-client
+test -f "$BUILDER_DATADIR/db/mdbx.dat"
+test -f "$CLIENT_DATADIR/db/mdbx.dat"
 ```
 
-Do not reuse either clone for another attempt, including a retry. A benchmark
+Do not reuse either restored datadir for another attempt, including a retry. A benchmark
 advances the chain and changes cache and database state.
 
 ## Run One Benchmark
@@ -46,7 +43,7 @@ export BASE_BENCH_CLIENT_VERSION="base/$(git rev-parse --short HEAD)"
 target/release/base-bench snapshot \
   --builder-datadir "$BUILDER_DATADIR" \
   --client-datadir "$CLIENT_DATADIR" \
-  --load-test-config crates/infra/load-tests/examples/blake2f-mainnet-snapshot-2s.yaml \
+  --load-test-config /path/to/blake2f-2s.yaml \
   --benchmark-run snapshot-throughput \
   --scenario blake2f-2s-run-1 \
   --run-id blake2f-2s-<timestamp> \
@@ -85,19 +82,21 @@ Use the fields below consistently. They have different purposes.
 
 For a fair 2-second versus 200-millisecond Blake2f comparison:
 
-1. Clone both roles from the same immutable snapshot for every repetition.
+1. Restore both roles from the same immutable snapshot for every repetition.
 2. Use the same release binary, host, load parameters, seed, and funding policy.
-3. Run `blake2f-mainnet-snapshot-2s.yaml` with 30 measured blocks.
-4. Run `blake2f-mainnet-snapshot-200ms.yaml` with 300 measured blocks.
+3. Configure the 2-second YAML with 30 measured blocks.
+4. Configure the 200-millisecond YAML with 300 measured blocks.
 5. Give both cases the same `--benchmark-run`; use distinct scenarios and artifact IDs.
 6. Alternate cadence order across repetitions (`2s`, `200ms`, then `200ms`, `2s`) to reduce thermal and cache-order bias.
 
-Both supplied Blake2f configurations cover the same 60-second window. The 2-second
-case uses 30 blocks; the 200-millisecond case uses 300 blocks.
+For both YAMLs, use one fixed Blake2f precompile payload with 50,000 rounds and
+keep sender count, in-flight limits, batching, funding, and seed identical. The
+2-second case uses 30 blocks and the 200-millisecond case uses 300, giving both
+the same 60-second measurement window.
 
 Keep maximum-throughput tuning separate from fixed-offered-load comparisons. Record
-whether runs use a warm or cold page-cache policy; ZFS clone equivalence alone does
-not make page-cache state equal.
+whether runs use a warm or cold page-cache policy; matching restored datadirs alone
+do not make page-cache state equal.
 
 ## Compare In Base/benchmark
 
@@ -135,13 +134,8 @@ not additional benchmark executions.
 
 ## Cleanup
 
-After the harness exits, retain the result directory and destroy only the disposable
-datasets:
-
-```sh
-sudo zfs destroy "$BUILDER_DATASET"
-sudo zfs destroy "$CLIENT_DATASET"
-```
+After the harness exits, retain the result directory and remove or reset only the
+disposable datadirs through the environment's snapshot/restore lifecycle.
 
 If a run was interrupted, check for lingering `base-bench` or `base-devnet` processes
-before destroying its clones. Never destroy the immutable source snapshot.
+before removing its datadirs. Never remove or modify the immutable source snapshot.
