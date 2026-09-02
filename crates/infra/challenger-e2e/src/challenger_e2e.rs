@@ -721,13 +721,18 @@ impl ChallengerE2e {
             info!(game = %game.address, "Path 3: ZK proof nullified");
         } else {
             info!(game = %game.address, "Path 4: ZK fallback nullified, TEE proof remains");
+            // `nonce + 1`, not `nonce`: the cleared ZK proof already accounts
+            // for one transaction, so the baseline `nonce` would let the
+            // nullify we just observed satisfy the dispute check below.
+            // Derived from the state read rather than sampled fresh -- a fresh
+            // read reintroduces the race the end-of-step delta removes.
             let outcome = Self::await_dispute(
                 config,
                 verifier,
                 provider,
                 game.address,
                 challenger,
-                nonce,
+                nonce + 1,
                 checkpoint.index + 1,
             )
             .await?;
