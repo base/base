@@ -2,20 +2,16 @@
 //!
 //! On every protocol/validity/EIP-8130 admission, `protocol_replacement_hash`
 //! (see `pool.rs`) looks for an existing same-sender/same-nonce transaction to
-//! replace. Two strategies are available on the wrapped reth pool, and this
-//! bench measures both against a real [`BaseTransactionPool`] populated with a
-//! single sender holding `K` pooled transactions:
+//! replace. This bench measures that production function directly against a real
+//! [`BaseTransactionPool`] populated with a single sender holding `K` pooled
+//! transactions, sweeping `K` to expose how lookup cost scales with the sender's
+//! queue depth.
 //!
-//! * `scan` — `get_transactions_by_sender(sender)` allocates a `Vec` of, and
-//!   clones an `Arc` for, *every* transaction the sender has pooled, then
-//!   linear-scans for the matching nonce. `O(K)` work and allocation in the
-//!   sender's queue depth `K`.
-//! * `indexed` — `get_transaction_by_sender_and_nonce(sender, nonce)` resolves
-//!   the sender id and does a single `BTreeMap` lookup. Flat in `K`.
-//!
-//! Sweeping `K` shows the `scan` cost growing with queue depth while `indexed`
-//! stays flat — quantifying the win from switching `protocol_replacement_hash`
-//! to the indexed lookup, which is the fix demonstrated on top of this bench.
+//! The function currently scans the sender's full transaction set (`O(K)` work
+//! and allocation); a stacked follow-up swaps its body to an indexed lookup that
+//! stays flat in `K`. Because the bench targets `protocol_replacement_hash`
+//! itself rather than a copy, CI's historical comparison shows the improvement
+//! land on the real code path across the two-PR stack.
 
 use std::{hint::black_box, sync::Arc};
 
@@ -129,32 +125,20 @@ fn bench_replacement_lookup(c: &mut Criterion) {
     let mut group = c.benchmark_group("admission/replacement_lookup");
     for depth in QUEUE_DEPTHS {
         let (pool, sender) = populated_pool(&rt, depth);
-        // Query a nonce in the middle of the queue: a representative hit that the
-        // scan strategy must still allocate the full sender set to find.
+        // Query a nonce in the middle of the queue: a representative hit the
+        // lookup must find without short-circuiting at either end.
         let target = depth / 2;
         group.throughput(Throughput::Elements(depth));
 
-        group.bench_with_input(BenchmarkId::new("scan", depth), &pool, |b, pool| {
-            b.iter(|| {
-                black_box(
-                    pool.protocol_pool()
-                        .get_transactions_by_sender(black_box(sender))
-                        .into_iter()
-                        .find(|existing| existing.nonce() == target)
-                        .map(|existing| *existing.hash()),
-                )
-            });
-        });
-
-        group.bench_with_input(BenchmarkId::new("indexed", depth), &pool, |b, pool| {
-            b.iter(|| {
-                black_box(
-                    pool.protocol_pool()
-                        .get_transaction_by_sender_and_nonce(black_box(sender), black_box(target))
-                        .map(|existing| *existing.hash()),
-                )
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("protocol_replacement_hash", depth),
+            &pool,
+            |b, pool| {
+                b.iter(|| {
+                    black_box(pool.protocol_replacement_hash(black_box(sender), black_box(target)))
+                });
+            },
+        );
     }
     group.finish();
 }
