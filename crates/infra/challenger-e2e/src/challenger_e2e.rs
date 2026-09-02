@@ -140,7 +140,8 @@ impl ChallengerE2e {
         let path1 =
             Self::run_path1(&config, &fork_url, &verifier, &provider, &driver, &challenger, game_a)
                 .await?;
-        Self::assert_game_a_settled(&config, &verifier, game_a, path1).await?;
+        Self::assert_game_a_settled(&config, &verifier, &provider, &challenger, game_a, path1)
+            .await?;
         Self::run_path4_then_3(
             &config,
             &fork_url,
@@ -492,7 +493,16 @@ impl ChallengerE2e {
             "corrupted intermediate output root; waiting for the challenger to dispute"
         );
 
-        Self::await_dispute(config, verifier, provider, game.address, challenger, nonce).await
+        Self::await_dispute(
+            config,
+            verifier,
+            provider,
+            game.address,
+            challenger,
+            nonce,
+            checkpoint.index + 1,
+        )
+        .await
     }
 
     /// The challenger must leave game A alone once it has acted on it.
@@ -504,12 +514,19 @@ impl ChallengerE2e {
     /// it has already nullified. Both branches are checked, so idempotence is
     /// covered on every run rather than only on the ZK half.
     ///
+    /// The nonce is watched alongside the state because a dispute that reverts
+    /// moves none of the three fields: a challenger stuck re-challenging a
+    /// legitimate challenge, or re-nullifying an already-nullified game, is
+    /// invisible to the state comparison alone.
+    ///
     /// Path 2 *dispute* (fraudulent ZK against a correct TEE root) is not
     /// staged: the real prover cannot produce a wrong-root proof the real
     /// verifier accepts.
     async fn assert_game_a_settled(
         config: &Config,
         verifier: &AggregateVerifierContractClient,
+        provider: &RootProvider,
+        challenger: &PrivateKeySigner,
         game: Candidate,
         path1: Path1Outcome,
     ) -> Result<()> {
@@ -521,6 +538,12 @@ impl ChallengerE2e {
         };
 
         let before = Self::read_game_state(verifier, game.address).await?;
+        // Nothing on the fork is disputable for the length of this window —
+        // game B is still valid and the bystanders always were — so the
+        // challenger has no reason to send anything at all. A fee-bumped
+        // replacement reuses its nonce, so only a genuinely new transaction
+        // moves this.
+        let nonce_before = provider.get_transaction_count(challenger.address()).await?;
         info!(
             game = %game.address,
             window = ?config.quiet_window,
@@ -531,10 +554,18 @@ impl ChallengerE2e {
         tokio::time::sleep(config.quiet_window).await;
 
         let after = Self::read_game_state(verifier, game.address).await?;
+        let nonce_after = provider.get_transaction_count(challenger.address()).await?;
         ensure!(
             after == before,
             "{claim} — game {} moved from {before:?} to {after:?}",
             game.address
+        );
+        ensure!(
+            nonce_after == nonce_before,
+            "{claim} — game {} is unchanged, but the challenger sent {} transaction(s) during the \
+             settle window; a dispute that reverts leaves the game state untouched",
+            game.address,
+            nonce_after - nonce_before
         );
 
         info!(game = %game.address, claim, "the settle claim held");
@@ -644,24 +675,26 @@ impl ChallengerE2e {
         );
 
         // Path 4 is done when either proof is gone; which one tells us what the
-        // game has become, and so which path must clear the remainder.
-        let tee_first = Self::poll_until(
+        // game has become, and so which path must clear the remainder. Both
+        // fields are read in the same observation because the challenger can
+        // outrun `poll_interval` and clear both before the first look — reading
+        // only `teeProver` there would call that "TEE first" and then wait for a
+        // ZK nullify that has already happened.
+        let (tee_cleared, zk_cleared) = Self::poll_until(
             config,
             config.dispute_timeout,
             "the challenger to nullify one of the dual-proof game's two proofs",
             || async {
-                if verifier.tee_prover(game.address).await? == Address::ZERO {
-                    return Ok(Some(true));
-                }
-                Ok((verifier.zk_prover(game.address).await? == Address::ZERO).then_some(false))
+                let tee = verifier.tee_prover(game.address).await? == Address::ZERO;
+                let zk = verifier.zk_prover(game.address).await? == Address::ZERO;
+                Ok((tee || zk).then_some((tee, zk)))
             },
         )
         .await?;
-        let nonce =
-            Self::assert_challenger_acted(provider, challenger, nonce, "nullified one proof")
-                .await?;
 
-        if tee_first {
+        if tee_cleared && zk_cleared {
+            info!(game = %game.address, "Path 4 and its follow-up both landed inside one poll");
+        } else if tee_cleared {
             info!(game = %game.address, "Path 4: TEE proof nullified, ZK proof remains");
             Self::poll_until(
                 config,
@@ -672,21 +705,40 @@ impl ChallengerE2e {
                 },
             )
             .await?;
-            Self::assert_challenger_acted(
-                provider,
-                challenger,
-                nonce,
-                "ZK-nullified the remaining proof",
-            )
-            .await?;
             info!(game = %game.address, "Path 3: ZK proof nullified");
         } else {
             info!(game = %game.address, "Path 4: ZK fallback nullified, TEE proof remains");
-            let outcome =
-                Self::await_dispute(config, verifier, provider, game.address, challenger, nonce)
-                    .await?;
+            let outcome = Self::await_dispute(
+                config,
+                verifier,
+                provider,
+                game.address,
+                challenger,
+                nonce,
+                checkpoint.index + 1,
+            )
+            .await?;
             info!(game = %game.address, ?outcome, "Path 1: the remaining TEE proof was disputed");
         }
+
+        // Two disputes clear a dual-proof game, whichever order they arrived in.
+        // Asserted once against the pre-patch baseline rather than per step: a
+        // per-step delta attributes both transactions to the first step whenever
+        // the challenger beats the poll, and then demands a third that is never
+        // coming.
+        let nonce_after = provider.get_transaction_count(challenger.address()).await?;
+        ensure!(
+            nonce_after >= nonce + 2,
+            "both of game {}'s proofs are gone but the challenger sent {} transaction(s), not the \
+             two a dual-proof game takes; something other than the challenger disputed it",
+            game.address,
+            nonce_after - nonce
+        );
+        info!(
+            game = %game.address,
+            transactions = nonce_after - nonce,
+            "the challenger cleared both of the dual-proof game's proofs"
+        );
         Ok(())
     }
 
@@ -703,6 +755,7 @@ impl ChallengerE2e {
         game: Address,
         challenger: &PrivateKeySigner,
         nonce_before: u64,
+        expected_countered: u64,
     ) -> Result<Path1Outcome> {
         let outcome = Self::poll_until(
             config,
@@ -720,6 +773,27 @@ impl ChallengerE2e {
             },
         )
         .await?;
+
+        // Outside the poll on purpose. `poll_until` swallows a predicate error
+        // and retries, so an `ensure!` in there would surface as a timeout
+        // rather than as the mismatch it is.
+        if matches!(outcome, Path1Outcome::ZkChallenge) {
+            let countered = verifier.countered_index(game).await?;
+            let zk_prover = verifier.zk_prover(game).await?;
+            ensure!(
+                countered == expected_countered,
+                "the challenger countered intermediate root {} of game {game}, but the root this \
+                 run corrupted is {}; an accepted proof against a different checkpoint is not a \
+                 dispute of the corruption",
+                countered.saturating_sub(1),
+                expected_countered.saturating_sub(1)
+            );
+            ensure!(
+                zk_prover == challenger.address(),
+                "game {game} was challenged by {zk_prover}, not by the challenger {}",
+                challenger.address()
+            );
+        }
 
         let label = match outcome {
             Path1Outcome::TeeNullify => "nullified via TEE proof",

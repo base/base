@@ -66,7 +66,22 @@ disputes games it was never given would pass the run.
    `zkProver()` and `counteredByIntermediateRootIndexPlusOne()` (ZK challenge).
    Both are correct — the challenger tries TEE first and falls back to ZK.
    B's nonce must move.
-4. **Game A settles.** One quiet window on A, whichever way Path 1 landed. If
+
+   A challenge is checked for *what* it challenged, not just that it happened:
+   `counteredByIntermediateRootIndexPlusOne` must name the root this run
+   corrupted, and `zkProver()` must be B. An accepted proof against some other
+   checkpoint clears the "was it disputed" bar without disputing the
+   corruption, and would otherwise pass. Both are asserted after the poll
+   rather than inside it — the poll retries on error, so an assertion in there
+   would surface as a timeout instead of as the mismatch it is.
+4. **Game A settles.** One quiet window on A, whichever way Path 1 landed. B's
+   nonce must not move either: a dispute that reverts changes none of the three
+   fields, so a challenger stuck re-challenging a legitimate challenge or
+   re-nullifying an already-nullified game is invisible to the state comparison
+   on its own. Nothing else on the fork is disputable for the length of the
+   window — game B is still valid, the bystanders always were — so any new
+   transaction at all is the finding. A fee-bumped replacement reuses its
+   nonce, so retries do not trip this. If
    it was a ZK challenge this is **Path 2 skip**: `zkProver` and
    `counteredIndex` stay set, and a challenger that "defends" a legitimate
    challenge of a wrong TEE root fails here. If it was a TEE nullify there is
@@ -87,9 +102,18 @@ disputes games it was never given would pass the run.
    **Path 3**: the next scan ZK-nullifies (`zkProver == 0`). ZK first is the
    supported **TEE-fallback** case, where the TEE request or submission failed;
    that leaves a TEE-only game (`tee≠0`, `zk=0`) and the next scan disputes it
-   as **Path 1**, by nullify or by challenge. B's nonce must advance again
-   either way. Insisting on the TEE proof going first would sit out the whole
-   `CHALLENGER_E2E_DISPUTE_TIMEOUT` on a correctly behaving challenger.
+   as **Path 1**, by nullify or by challenge. Insisting on the TEE proof going
+   first would sit out the whole `CHALLENGER_E2E_DISPUTE_TIMEOUT` on a
+   correctly behaving challenger.
+
+   Step 5 reads both prover fields in one observation, and a challenger that
+   scans faster than `CHALLENGER_E2E_POLL_INTERVAL` may have cleared both
+   before the first look; that is a third branch, not a failure. Attribution is
+   therefore one assertion at the end — B's nonce must have advanced by at
+   least two against the baseline taken before the patch — rather than one per
+   step. A per-step delta credits both transactions to the first step whenever
+   the challenger beats the poll, and then demands a third that is never
+   coming.
 7. **No collateral damage.** Every bystander game snapshotted in step 0 must
    still read the same `(teeProver, zkProver, counteredIndex)`. Catches what
    the per-game assertions cannot see: a challenger misconfigured on
