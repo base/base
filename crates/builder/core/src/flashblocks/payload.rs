@@ -31,7 +31,6 @@ use base_execution_payload_builder::{
 };
 use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
-use base_protocol::BaseTimeUpdateTx;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -278,11 +277,6 @@ where
         span.record("payload_id", config.attributes.payload_attributes.id.to_string());
 
         let timestamp = config.attributes.timestamp();
-        let transactions =
-            config.attributes.transactions.iter().map(|tx| tx.1.clone()).collect::<Vec<_>>();
-        let timestamp_ms =
-            BaseTimeUpdateTx::extract_timestamp_ms(&transactions, block_number, timestamp)
-                .unwrap_or_else(|_| timestamp.saturating_mul(1_000));
         let mut ctx = self
             .get_base_payload_builder_ctx(
                 config,
@@ -316,7 +310,7 @@ where
 
         // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
         let (flashblocks_per_block, first_flashblock_offset) =
-            self.calculate_flashblocks(timestamp_ms);
+            self.calculate_flashblocks(timestamp);
 
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
 
@@ -1036,14 +1030,14 @@ where
     }
 
     /// Calculate number of flashblocks, taking time drift into account.
-    pub(super) fn calculate_flashblocks(&self, timestamp_ms: u64) -> (u64, Duration) {
+    pub(super) fn calculate_flashblocks(&self, timestamp: u64) -> (u64, Duration) {
         // We use this system time to determine remaining time to build a block
         // Things to consider:
         // FCU(a) - FCU with attributes
         // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
         // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
         // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
-        let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_millis(timestamp_ms)
+        let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
             - self.config.flashblocks_leeway_time;
         let now = std::time::SystemTime::now();
         let Some(time_drift) =
@@ -1061,7 +1055,7 @@ where
             message = "Time drift for building round",
             ?target_time,
             time_drift = self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()),
-            timestamp_ms,
+            ?timestamp,
         );
         // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
         let time_drift = time_drift.min(self.config.block_time);

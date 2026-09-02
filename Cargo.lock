@@ -3236,7 +3236,6 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-observability-events",
- "base-protocol",
  "base-test-utils",
  "chrono",
  "clap",
