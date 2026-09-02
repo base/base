@@ -4,13 +4,16 @@ mod spec;
 pub use spec::BaseSpecId;
 
 mod transaction;
-pub use transaction::{BaseTxEnvelope, DEPOSIT_TX_TYPE, TxDeposit};
+pub use transaction::BaseTxEnvelope;
 
 mod handler;
 pub use handler::BaseTxHandlerHooks;
 
 mod executor;
-pub use executor::{BaseBlockExecutor, BlockExecutionResult, CumulativeGasOverflow};
+pub use executor::{
+    BaseBlockExecutionCtx, BaseBlockExecutor, BlockExecutionResult, CumulativeGasOverflow,
+    PreExecutionError,
+};
 
 mod registry;
 
