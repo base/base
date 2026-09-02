@@ -1318,9 +1318,7 @@ mod tests {
             state_provider,
             chain_spec: harness.chain_spec(),
             bundle: create_parsed_bundle(vec![write_tx, clear_tx])?,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
+            header,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(metered),
         })?;
