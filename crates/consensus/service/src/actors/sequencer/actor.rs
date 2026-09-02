@@ -794,7 +794,9 @@ mod tests {
             // params); `to_system_config_from_payload` now always decodes this format.
             header: alloy_consensus::Header {
                 number: 1,
-                extra_data: Bytes::from_static(&[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                extra_data: Bytes::from_static(&[
+                    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                ]),
                 ..Default::default()
             },
             body: alloy_consensus::BlockBody {

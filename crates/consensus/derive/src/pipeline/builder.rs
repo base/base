@@ -143,8 +143,11 @@ where
         let channel_reader = ChannelReader::new(channel_assembler, Arc::clone(&rollup_config));
         let batch_stream =
             BatchStream::new(channel_reader, Arc::clone(&rollup_config), l2_chain_provider.clone());
-        let batch_validator =
-            BatchValidator::new(Arc::clone(&rollup_config), batch_stream, l2_chain_provider.clone());
+        let batch_validator = BatchValidator::new(
+            Arc::clone(&rollup_config),
+            batch_stream,
+            l2_chain_provider.clone(),
+        );
         let attributes =
             AttributesQueue::new(Arc::clone(&rollup_config), batch_validator, attributes_builder);
 
