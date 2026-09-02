@@ -7,6 +7,7 @@ use base_common_consensus::{
     BaseTimeDepositSource, BaseTransaction, DepositSourceDomain, Predeploys, SystemAddresses,
     TxDeposit,
 };
+use base_common_genesis::RollupConfig;
 
 use crate::REGOLITH_SYSTEM_TX_GAS;
 
@@ -20,7 +21,8 @@ pub struct BaseTimeUpdateTx {
 
 impl BaseTimeUpdateTx {
     /// Milliseconds between consecutive `BaseTime` slots.
-    pub const BLOCK_INTERVAL_MILLIS: u16 = 200;
+    pub const BLOCK_INTERVAL_MILLIS: u16 =
+        RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS as u16;
 
     /// The selector for `setTimestampMillisPart(uint16)`.
     pub const SELECTOR: [u8; 4] = [0x86, 0xbd, 0xf3, 0x94];
