@@ -131,6 +131,10 @@ funder, deposits funds to it in the first local descendant, replaces placeholder
 YAML with dynamically allocated builder endpoints, runs the load generator, writes JSON, and shuts
 the stack down. It does not own the snapshot clones.
 
+For the end-to-end workflow, including disposable ZFS clone pairs, report artifact conventions, and
+how `--benchmark-run`, `--scenario`, and `--run-id` select runs in `base/benchmark`, see
+[Snapshot Benchmarking](../../docs/guides/SNAPSHOT_BENCHMARKS.md).
+
 Always use an optimized build for performance measurements. Debug payload execution becomes
 CPU-bound far below the 400M block gas limit.
 
