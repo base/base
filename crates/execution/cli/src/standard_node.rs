@@ -2,6 +2,7 @@
 
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
+use base_builder_profiling::ProfilingConfig;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -192,6 +193,69 @@ impl Default for ShadowIndexerArgs {
                 DEFAULT_SHADOW_INDEXER_RETENTION_INTERVAL,
             )
             .expect("valid default shadow indexer retention interval"),
+        }
+    }
+}
+
+const DEFAULT_PROFILING_PORT: u16 = 6061;
+
+/// CLI arguments for the builder's opt-in CPU profiling HTTP server.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct ProfilingArgs {
+    /// Enable the CPU profiling HTTP server.
+    #[arg(long = "enable-profiling", env = "ENABLE_PROFILING")]
+    pub enable_profiling: bool,
+
+    /// TCP port used by the CPU profiling HTTP server.
+    ///
+    /// Port 6061 avoids the builder's WS (8546), RPC (8545), auth RPC (8551), metrics (6060),
+    /// discovery and P2P (30303), and discovery v5 (9200) listeners.
+    #[arg(
+        id = "profiling_port",
+        long = "profiling.port",
+        env = "PROFILING_PORT",
+        default_value_t = DEFAULT_PROFILING_PORT,
+        requires = "enable_profiling"
+    )]
+    pub port: u16,
+
+    /// Maximum requested profile duration in seconds.
+    #[arg(
+        long = "profiling.max-seconds",
+        env = "PROFILING_MAX_SECONDS",
+        default_value_t = 60,
+        requires = "enable_profiling"
+    )]
+    pub max_seconds: u64,
+
+    /// Sampling frequency used when a profiling request omits one.
+    #[arg(
+        long = "profiling.default-frequency",
+        env = "PROFILING_DEFAULT_FREQUENCY",
+        default_value_t = 101,
+        requires = "enable_profiling"
+    )]
+    pub default_frequency: u32,
+}
+
+impl Default for ProfilingArgs {
+    fn default() -> Self {
+        Self {
+            enable_profiling: false,
+            port: DEFAULT_PROFILING_PORT,
+            max_seconds: 60,
+            default_frequency: 101,
+        }
+    }
+}
+
+impl From<&ProfilingArgs> for ProfilingConfig {
+    fn from(args: &ProfilingArgs) -> Self {
+        Self {
+            enabled: args.enable_profiling,
+            port: args.port,
+            max_seconds: args.max_seconds,
+            default_frequency: args.default_frequency,
         }
     }
 }
@@ -777,12 +841,12 @@ fn parse_otel_resource_attribute(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use clap::{Args, Parser};
+    use clap::{Args as ClapArgs, Parser};
 
     use super::*;
 
     #[derive(Debug, Parser)]
-    struct CommandParser<T: Args> {
+    struct CommandParser<T: ClapArgs> {
         #[command(flatten)]
         args: T,
     }
@@ -1225,5 +1289,44 @@ mod tests {
         assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
         assert_eq!(args.metering.metering_da_bytes, Some(1_572_860));
         assert_eq!(args.metering.metering_target_flashblocks_per_block, Some(4));
+    }
+
+    #[derive(Debug, Parser)]
+    struct Args {
+        #[command(flatten)]
+        profiling: ProfilingArgs,
+    }
+
+    #[test]
+    fn profiling_defaults_to_disabled() {
+        let args = Args::parse_from(["base-builder"]);
+
+        assert!(!args.profiling.enable_profiling);
+    }
+
+    #[test]
+    fn profiling_port_requires_enable_profiling() {
+        let result = Args::try_parse_from(["base-builder", "--profiling.port", "1234"]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn profiling_args_map_to_config() {
+        let args = Args::parse_from([
+            "base-builder",
+            "--enable-profiling",
+            "--profiling.port",
+            "6062",
+            "--profiling.max-seconds",
+            "45",
+            "--profiling.default-frequency",
+            "99",
+        ]);
+
+        assert_eq!(
+            ProfilingConfig::from(&args.profiling),
+            ProfilingConfig { enabled: true, port: 6062, max_seconds: 45, default_frequency: 99 }
+        );
     }
 }

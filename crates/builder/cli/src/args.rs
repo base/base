@@ -8,7 +8,7 @@ use base_builder_core::{
     ExecutionMeteringMode, RejectionCache, ShadowValidityConfig, SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
-use base_execution_cli::ShadowIndexerArgs;
+use base_execution_cli::{ProfilingArgs, ShadowIndexerArgs};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -300,6 +300,10 @@ pub struct Args {
     /// Shadow indexer `ExEx` configuration
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// CPU profiling HTTP server configuration
+    #[command(flatten)]
+    pub profiling: ProfilingArgs,
 }
 
 impl HasRollupArgs for Args {
@@ -354,6 +358,7 @@ impl Default for Args {
             basic_payload_builder: false,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
+            profiling: ProfilingArgs::default(),
         }
     }
 }
@@ -725,5 +730,21 @@ mod tests {
         assert_eq!(config.block_time_leeway, Duration::from_secs(10));
         assert_eq!(config.flashblocks_interval, Duration::from_millis(200));
         assert_eq!(config.flashblocks_leeway_time, Duration::from_millis(50));
+    }
+
+    #[test]
+    fn profiling_defaults_to_disabled() {
+        let args = CommandParser::parse_from(["base-builder"]).args;
+
+        assert!(!args.profiling.enable_profiling);
+    }
+
+    #[test]
+    fn profiling_port_requires_enable_profiling() {
+        let error = CommandParser::try_parse_from(["base-builder", "--profiling.port", "1234"])
+            .expect_err("profiling port without enable flag should fail");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        assert!(error.to_string().contains("--enable-profiling"));
     }
 }

@@ -40,6 +40,7 @@ base-node-core.workspace = true
 base-txpool-rpc.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
+base-builder-profiling.workspace = true
 base-observability-events.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
