@@ -25,5 +25,8 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 # http
 axum = { workspace = true, features = ["http1", "tokio", "query"] }
 
+# compression
+flate2 = { workspace = true }
+
 # profiling
 pprof = { workspace = true, features = ["flamegraph", "protobuf-codec"] }
