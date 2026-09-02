@@ -785,6 +785,11 @@ where
                 .execute_transaction_with_result_closure(tx.clone(), |result| {
                     let result_and_state = result.result();
                     tx_succeeded = result_and_state.result.is_success();
+                    // Count net post-state even when the call reverts. Revm still
+                    // commits gas payment, nonce, and coinbase balance; rolled-back
+                    // storage writes are already absent from `EvmState`. Gating on
+                    // success would undercount committed account effects that resource
+                    // admission prices.
                     state_effects = state_effect_entries(&result_and_state.state, &metered_opcodes);
                 })
                 .map_err(|e| eyre!("Transaction {tx_hash} execution failed: {e}"))?
@@ -977,6 +982,26 @@ mod tests {
         assert_eq!(opcode_count(&entries, "STATE_CLEARED_STORAGE_SLOT"), Some(1));
         assert_eq!(opcode_count(&entries, "STATE_TOUCHED_ACCOUNT"), Some(1));
         assert!(opcode_count(&entries, "STATE_CHANGED_ACCOUNT").is_none());
+    }
+
+    fn sstore_then_revert_initcode() -> Bytes {
+        // Runtime: SSTORE(0, 42); REVERT(0, 0)
+        let runtime = [0x60, 0x2a, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xfd];
+        let runtime_len = runtime.len() as u8;
+        let mut initcode = vec![
+            0x60,
+            runtime_len,
+            0x60,
+            0x0a,
+            0x5f,
+            0x39, // CODECOPY(0, 10, runtime_len)
+            0x60,
+            runtime_len,
+            0x5f,
+            0xf3, // RETURN(0, runtime_len)
+        ];
+        initcode.extend_from_slice(&runtime);
+        Bytes::from(initcode)
     }
 
     fn value_call_contract_initcode(target: Address) -> Bytes {
@@ -1335,6 +1360,44 @@ mod tests {
         assert!(opcode_count(clear, "STATE_NEW_STORAGE_SLOT").is_none());
         assert_eq!(opcode_count(clear, "STATE_CHANGED_STORAGE_SLOT"), Some(1));
         assert_eq!(opcode_count(clear, "STATE_CLEARED_STORAGE_SLOT"), Some(1));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_state_effects_omit_rolled_back_storage_on_revert() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let (deployment_tx, contract_address, _) =
+            Account::Deployer.create_deployment_tx(sstore_then_revert_initcode(), 0)?;
+        harness.build_block_from_transactions(vec![deployment_tx]).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+        let revert_tx =
+            create_call_tx(harness.chain_id(), 0, contract_address, Bytes::new(), 100_000);
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+        let metered = MeteredOpcodes::parse(&state_effect_names())?;
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: create_parsed_bundle(vec![revert_tx])?,
+            header,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        assert_eq!(output.results.len(), 1);
+        let effects = &output.results[0].opcode_gas;
+        assert!(opcode_count(effects, "STATE_NEW_STORAGE_SLOT").is_none());
+        assert!(opcode_count(effects, "STATE_CHANGED_STORAGE_SLOT").is_none());
+        assert!(opcode_count(effects, "STATE_CLEARED_STORAGE_SLOT").is_none());
+        assert!(opcode_count(effects, "STATE_TOUCHED_ACCOUNT").unwrap_or(0) >= 1);
+        assert!(opcode_count(effects, "STATE_CHANGED_ACCOUNT").unwrap_or(0) >= 1);
 
         Ok(())
     }
