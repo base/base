@@ -518,6 +518,8 @@ impl RollupConfig {
             Some(BaseUpgrade::Beryl)
         } else if self.is_first_cobalt_block(timestamp, parent_timestamp) {
             Some(BaseUpgrade::Cobalt)
+        } else if self.is_first_denim_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Denim)
         } else {
             None
         };
