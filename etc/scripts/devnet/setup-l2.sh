@@ -82,7 +82,6 @@ fi
 validate_activation_block_alignment "L2_BASE_AZUL_BLOCK" "$L2_BASE_AZUL_BLOCK"
 validate_activation_block_alignment "L2_BASE_BERYL_BLOCK" "$L2_BASE_BERYL_BLOCK"
 validate_activation_block_alignment "L2_BASE_COBALT_BLOCK" "$L2_BASE_COBALT_BLOCK"
-validate_activation_block_alignment "L2_BASE_DENIM_BLOCK" "$L2_BASE_DENIM_BLOCK"
 validate_activation_block_alignment "L2_BASE_ZENITH_BLOCK" "$L2_BASE_ZENITH_BLOCK"
 validate_activation_block_alignment "L2_ISTHMUS_BLOCK" "$L2_ISTHMUS_BLOCK"
 
