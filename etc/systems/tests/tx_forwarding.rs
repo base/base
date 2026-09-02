@@ -230,13 +230,17 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
 async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     // Build a system test stack with tx forwarding enabled on the client.
     // The client will forward transactions to the builder's RPC endpoint
+    let forwarding =
+        TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100);
+    assert!(
+        !forwarding.inline_simulation,
+        "inline simulation must stay off so this path still inserts then forwards"
+    );
+
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
-        .with_tx_forwarding(
-            // Empty vector here because the stack will populate it with the builder RPC URL on start
-            TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
-        )
+        .with_tx_forwarding(forwarding)
         .build()
         .await?;
 
