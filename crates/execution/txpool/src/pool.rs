@@ -445,10 +445,13 @@ where
     }
 
     fn protocol_replacement_hash(&self, sender: Address, nonce: u64) -> Option<TxHash> {
+        // Resolve the same-sender/same-nonce entry with a single indexed lookup
+        // rather than collecting and scanning every transaction the sender has
+        // pooled: `get_transactions_by_sender` allocates a `Vec` and clones an
+        // `Arc` per pooled transaction, so the scan is O(sender queue depth),
+        // whereas `get_transaction_by_sender_and_nonce` is an O(log n) map lookup.
         self.protocol_pool
-            .get_transactions_by_sender(sender)
-            .into_iter()
-            .find(|existing| existing.nonce() == nonce)
+            .get_transaction_by_sender_and_nonce(sender, nonce)
             .map(|existing| *existing.hash())
     }
 
