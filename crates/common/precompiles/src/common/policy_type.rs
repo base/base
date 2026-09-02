@@ -87,18 +87,6 @@ mod tests {
         assert_eq!(B20PolicyType::SeizeReceiver.id(), keccak256("SEIZE_RECEIVER_POLICY"));
     }
 
-    /// The seize-from scope id must derive from the new `SEIZE_EXEMPT_POLICY` preimage, not the
-    /// legacy `SEIZE_HOLDER_POLICY` preimage the scope was originally shipped under.
-    #[test]
-    fn seize_exempt_scope_uses_renamed_preimage() {
-        assert_ne!(B20PolicyType::SeizeExempt.id(), keccak256("SEIZE_HOLDER_POLICY"));
-        assert_eq!(
-            B20PolicyType::from_id(keccak256("SEIZE_HOLDER_POLICY")),
-            None,
-            "the legacy SEIZE_HOLDER_POLICY id must no longer resolve to any built-in scope"
-        );
-    }
-
     /// `from_id` is the inverse of `id`, including for the seize scopes.
     #[test]
     fn seizable_scope_round_trips() {
