@@ -16,6 +16,22 @@ base_metrics::define_metrics! {
     )]
     validity_predicate_eval_duration_per_block: histogram,
     #[describe(
+        "Supported validity transaction candidates evaluated during the primary scan per build"
+    )]
+    validity_predicate_candidates_evaluated_per_build: histogram,
+    #[describe(
+        "Validity transaction candidates deferred without evaluation after the predicate budget was exhausted per build"
+    )]
+    validity_predicate_candidates_deferred_per_build: histogram,
+    #[describe(
+        "Fraction of supported primary-scan validity transaction candidates evaluated per build"
+    )]
+    validity_predicate_evaluation_coverage_per_build: histogram,
+    #[describe(
+        "Builds that deferred at least one primary or rescan validity transaction after exhausting the predicate evaluation budget"
+    )]
+    validity_predicate_eval_cutoff_builds_total: counter,
+    #[describe(
         "Number of validity-predicate index buckets woken per build"
     )]
     predicate_bucket_wakeups: histogram,
@@ -74,6 +90,25 @@ impl ValidityMetrics {
     /// Records the total validity predicate evaluation time accumulated across one build.
     pub fn record_predicate_eval_duration(duration: Duration) {
         Self::validity_predicate_eval_duration_per_block().record(duration.as_secs_f64());
+    }
+
+    /// Records primary-scan predicate evaluation coverage and whether the build exhausted its
+    /// evaluation budget.
+    ///
+    /// Counts are emitted for every completed build, including builds with no validity candidates.
+    /// Coverage is emitted only when at least one supported candidate was evaluated or deferred.
+    pub fn record_predicate_evaluation_coverage(evaluated: u64, deferred: u64, cutoff_hit: bool) {
+        Self::validity_predicate_candidates_evaluated_per_build().record(evaluated as f64);
+        Self::validity_predicate_candidates_deferred_per_build().record(deferred as f64);
+
+        let candidates = evaluated + deferred;
+        if candidates > 0 {
+            Self::validity_predicate_evaluation_coverage_per_build()
+                .record(evaluated as f64 / candidates as f64);
+        }
+        if cutoff_hit {
+            Self::validity_predicate_eval_cutoff_builds_total().increment(1);
+        }
     }
 
     /// Records the block's accumulated validity-predicate state loads.
@@ -153,6 +188,7 @@ mod tests {
 
         metrics::with_local_recorder(&recorder, || {
             ValidityMetrics::record_predicate_eval_duration(Duration::from_millis(500));
+            ValidityMetrics::record_predicate_evaluation_coverage(4, 1, true);
             ValidityMetrics::record_predicate_loads(&tracker);
             ValidityMetrics::record_predicate_index_diagnostics(3, &index);
         });
@@ -161,6 +197,19 @@ mod tests {
         assert!(
             rendered.contains("base_builder_validity_predicate_eval_duration_per_block_sum 0.5")
         );
+        assert!(
+            rendered
+                .contains("base_builder_validity_predicate_candidates_evaluated_per_build_sum 4")
+        );
+        assert!(
+            rendered
+                .contains("base_builder_validity_predicate_candidates_deferred_per_build_sum 1")
+        );
+        assert!(
+            rendered
+                .contains("base_builder_validity_predicate_evaluation_coverage_per_build_sum 0.8")
+        );
+        assert!(rendered.contains("base_builder_validity_predicate_eval_cutoff_builds_total 1"));
         assert!(rendered.contains("base_builder_predicate_accounts_loaded_total_sum 2"));
         assert!(rendered.contains("base_builder_predicate_accounts_loaded_unique_sum 1"));
         assert!(rendered.contains("base_builder_predicate_slots_loaded_total_sum 1"));

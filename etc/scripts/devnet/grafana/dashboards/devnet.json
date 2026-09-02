@@ -24,6 +24,18 @@
     {
       "asDropdown": false,
       "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Base MEV",
+      "tooltip": "Open the validity transaction and MEV dashboard",
+      "type": "link",
+      "url": "/d/base-mev"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
       "includeVars": true,
       "keepTime": true,
       "tags": [],

@@ -847,6 +847,9 @@ where
         let mut predicate_eval_duration = None;
         let mut predicate_bucket_wakeups = 0;
         let mut validity_consideration_index = 0_u64;
+        let mut validity_candidates_evaluated = 0_u64;
+        let mut validity_candidates_deferred = 0_u64;
+        let mut predicate_eval_cutoff_hit = false;
 
         let block_timestamp = self.attributes().timestamp();
         let can_finalize_early = self.is_denim_active();
@@ -913,6 +916,8 @@ where
             {
                 ValidityMetrics::validity_predicate_evaluations_total("budget_exhausted")
                     .increment(1);
+                validity_candidates_deferred += 1;
+                predicate_eval_cutoff_hit = true;
                 trace!(
                     target: "payload_builder",
                     tx_hash = ?tx_hash,
@@ -951,6 +956,7 @@ where
             }
 
             if has_validity_predicates {
+                validity_candidates_evaluated += 1;
                 let evaluation_start = Instant::now();
                 let evaluation = {
                     let mut recorder = PredicateReadRecorder::new(
@@ -1215,6 +1221,7 @@ where
                         "rescan_budget_exhausted",
                     )
                     .increment(remaining as u64);
+                    predicate_eval_cutoff_hit = true;
                     break;
                 }
                 let Some(parked_transaction) = predicate_index.transaction(parked_hash) else {
@@ -1294,6 +1301,11 @@ where
         if let Some(predicate_eval_duration) = predicate_eval_duration {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_duration);
         }
+        ValidityMetrics::record_predicate_evaluation_coverage(
+            validity_candidates_evaluated,
+            validity_candidates_deferred,
+            predicate_eval_cutoff_hit,
+        );
         ValidityMetrics::record_predicate_loads(&predicate_loads);
         ValidityMetrics::record_predicate_index_diagnostics(
             predicate_bucket_wakeups,

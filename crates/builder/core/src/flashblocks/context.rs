@@ -855,6 +855,9 @@ impl BasePayloadBuilderCtx {
         // evaluation, so it both accumulates and records whether any validity
         // transaction was seen; emitted once when the loop finishes.
         let mut predicate_eval_total: Option<Duration> = None;
+        let mut validity_candidates_evaluated = 0_u64;
+        let mut validity_candidates_deferred = 0_u64;
+        let mut predicate_eval_cutoff_hit = false;
 
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
@@ -897,6 +900,8 @@ impl BasePayloadBuilderCtx {
                 self.emit_considered(&cx, tx_hash, ordering_position);
                 ValidityMetrics::validity_predicate_evaluations_total("budget_exhausted")
                     .increment(1);
+                validity_candidates_deferred += 1;
+                predicate_eval_cutoff_hit = true;
                 self.defer_or_reject_current(best_txs, &mut diag, &cx, &tx, ordering_position);
                 continue;
             }
@@ -904,6 +909,7 @@ impl BasePayloadBuilderCtx {
             let mut predicate_read_failed = false;
             let mut predicate_expired = false;
             let blocking_predicate = if has_validity_predicates {
+                validity_candidates_evaluated += 1;
                 match Self::accumulate_elapsed(&mut predicate_eval_total, || {
                     let mut recorder =
                         PredicateReadRecorder::new(&mut **evm.db_mut(), &mut info.predicate_loads);
@@ -1509,6 +1515,7 @@ impl BasePayloadBuilderCtx {
                         "rescan_budget_exhausted",
                     )
                     .increment(remaining);
+                    predicate_eval_cutoff_hit = true;
                     break;
                 }
                 let mut predicate_read_failed = false;
@@ -1612,6 +1619,11 @@ impl BasePayloadBuilderCtx {
         if let Some(predicate_eval_total) = predicate_eval_total {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_total);
         }
+        ValidityMetrics::record_predicate_evaluation_coverage(
+            validity_candidates_evaluated,
+            validity_candidates_deferred,
+            predicate_eval_cutoff_hit,
+        );
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
         BuilderMetrics::set_payload_builder_metrics(
