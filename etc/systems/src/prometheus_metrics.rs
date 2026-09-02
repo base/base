@@ -8,81 +8,77 @@ use eyre::{Result, WrapErr};
 use prometheus_scraper::{
     Format, TextFormat,
     borrowed::{BucketCount, LabelPair, MetricValue},
-    owned::{MetricType, NativeCounts, Number},
+    owned::{NativeCounts, Number},
     parse_payload,
 };
 use tokio::{sync::watch, task::JoinHandle};
 use url::Url;
 
-/// Prometheus metric family type relevant to benchmark aggregation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PrometheusMetricKind {
-    /// Monotonically increasing counter.
-    Counter,
-    /// Point-in-time gauge.
-    Gauge,
-    /// Histogram represented by sum and count samples.
-    Histogram,
-    /// Summary represented by sum and count samples.
-    Summary,
-    /// Metric without a declared type.
-    Untyped,
+#[derive(Debug, Clone, Copy)]
+enum ScalarSample {
+    Counter(f64),
+    Gauge(f64),
+}
+
+#[derive(Debug, Clone, Default)]
+struct DistributionSample {
+    sum: Option<f64>,
+    count: Option<f64>,
 }
 
 /// Parsed values from one Prometheus endpoint scrape.
 #[derive(Debug, Clone, Default)]
 pub struct PrometheusSnapshot {
-    values: BTreeMap<String, f64>,
-    kinds: BTreeMap<String, PrometheusMetricKind>,
+    scalars: BTreeMap<String, ScalarSample>,
+    distributions: BTreeMap<String, DistributionSample>,
 }
 
 impl PrometheusSnapshot {
     /// Parses Prometheus text exposition into numeric samples.
     pub fn parse(input: &str) -> Self {
-        let mut kinds = BTreeMap::new();
-        let mut values = BTreeMap::new();
+        let mut scalars = BTreeMap::new();
+        let mut distributions = BTreeMap::new();
         for family in parse_payload(input.as_bytes(), Format::Text(TextFormat::Prometheus)) {
             let Ok(family) = family else {
                 continue;
             };
             let family_name = family.name.as_ref();
-            kinds.insert(family_name.to_string(), Self::parse_kind(family.r#type));
             for metric in family.metric {
                 let key = Self::sample_key(family_name, &metric.label);
                 match metric.value {
                     MetricValue::Counter(counter) => {
-                        Self::insert_finite(&mut values, key, counter.value.as_f64());
+                        Self::insert_scalar(
+                            &mut scalars,
+                            key,
+                            ScalarSample::Counter(counter.value.as_f64()),
+                        );
                     }
                     MetricValue::Gauge(value) | MetricValue::Untyped(value) => {
-                        Self::insert_finite(&mut values, key, value.as_f64());
+                        Self::insert_scalar(&mut scalars, key, ScalarSample::Gauge(value.as_f64()));
                     }
                     MetricValue::Histogram(histogram) | MetricValue::GaugeHistogram(histogram) => {
                         Self::insert_distribution(
-                            &mut values,
-                            family_name,
-                            &metric.label,
+                            &mut distributions,
+                            key,
                             histogram.sample_sum,
                             Self::bucket_count(&histogram.counts),
                         )
                     }
                     MetricValue::Summary(summary) => Self::insert_distribution(
-                        &mut values,
-                        family_name,
-                        &metric.label,
+                        &mut distributions,
+                        key,
                         summary.sample_sum,
                         summary.sample_count.map(|count| count as f64),
                     ),
                     MetricValue::NativeHistogram(histogram) => Self::insert_distribution(
-                        &mut values,
-                        family_name,
-                        &metric.label,
+                        &mut distributions,
+                        key,
                         histogram.sample_sum,
                         Self::native_count(&histogram.counts),
                     ),
                     MetricValue::HybridHistogram { classic, .. } => Self::insert_distribution(
-                        &mut values,
-                        family_name,
-                        &metric.label,
+                        &mut distributions,
+                        key,
                         classic.sample_sum,
                         Self::bucket_count(&classic.counts),
                     ),
@@ -90,7 +86,7 @@ impl PrometheusSnapshot {
                 }
             }
         }
-        Self { values, kinds }
+        Self { scalars, distributions }
     }
 
     /// Produces report-ready gauges and per-scrape counter/histogram deltas.
@@ -102,80 +98,61 @@ impl PrometheusSnapshot {
     pub fn delta_for_blocks(&self, previous: &Self, block_count: u64) -> BTreeMap<String, f64> {
         let divisor = block_count.max(1) as f64;
         let mut metrics = BTreeMap::new();
-        for (key, value) in &self.values {
-            let family = Self::metric_family(key, &self.kinds);
-            match self.kinds.get(family).copied().unwrap_or(PrometheusMetricKind::Untyped) {
-                PrometheusMetricKind::Counter => {
-                    metrics.insert(
-                        key.clone(),
-                        Self::counter_delta(*value, previous.values.get(key)) / divisor,
-                    );
+        for (key, sample) in &self.scalars {
+            let value = match sample {
+                ScalarSample::Counter(value) => {
+                    let previous = previous.scalars.get(key).and_then(|sample| match sample {
+                        ScalarSample::Counter(value) => Some(value),
+                        ScalarSample::Gauge(_) => None,
+                    });
+                    Self::counter_delta(*value, previous) / divisor
                 }
-                PrometheusMetricKind::Gauge | PrometheusMetricKind::Untyped => {
-                    metrics.insert(key.clone(), *value);
-                }
-                PrometheusMetricKind::Histogram | PrometheusMetricKind::Summary => {}
-            }
+                ScalarSample::Gauge(value) => *value,
+            };
+            metrics.insert(key.clone(), value);
         }
 
-        for (family, kind) in &self.kinds {
-            if !matches!(kind, PrometheusMetricKind::Histogram | PrometheusMetricKind::Summary) {
+        for (key, sample) in &self.distributions {
+            let (Some(sum), Some(count)) = (sample.sum, sample.count) else {
                 continue;
-            }
-            let sum_prefix = format!("{family}_sum");
-            for (sum_key, sum) in self.values.iter().filter(|(key, _)| {
-                *key == &sum_prefix
-                    || key.strip_prefix(&sum_prefix).is_some_and(|suffix| suffix.starts_with('_'))
-            }) {
-                let suffix = sum_key.strip_prefix(&sum_prefix).unwrap_or_default();
-                let count_key = format!("{family}_count{suffix}");
-                let Some(count) = self.values.get(&count_key) else {
-                    continue;
-                };
-                let sum_delta = Self::counter_delta(*sum, previous.values.get(sum_key));
-                let count_delta = Self::counter_delta(*count, previous.values.get(&count_key));
-                if count_delta > 0.0 {
-                    metrics.insert(format!("{family}_avg{suffix}"), sum_delta / count_delta);
-                }
+            };
+            let previous = previous.distributions.get(key);
+            let sum_delta =
+                Self::counter_delta(sum, previous.and_then(|sample| sample.sum.as_ref()));
+            let count_delta =
+                Self::counter_delta(count, previous.and_then(|sample| sample.count.as_ref()));
+            if count_delta > 0.0 {
+                metrics.insert(format!("{key}_avg"), sum_delta / count_delta);
             }
         }
         metrics
     }
 
-    const fn parse_kind(kind: MetricType) -> PrometheusMetricKind {
-        match kind {
-            MetricType::Counter => PrometheusMetricKind::Counter,
-            MetricType::Gauge => PrometheusMetricKind::Gauge,
-            MetricType::Histogram
-            | MetricType::GaugeHistogram
-            | MetricType::NativeHistogram
-            | MetricType::HybridHistogram => PrometheusMetricKind::Histogram,
-            MetricType::Summary => PrometheusMetricKind::Summary,
-            MetricType::Untyped | MetricType::StateSet | MetricType::Info => {
-                PrometheusMetricKind::Untyped
-            }
-        }
-    }
-
-    fn insert_finite(values: &mut BTreeMap<String, f64>, key: String, value: f64) {
+    fn insert_scalar(
+        scalars: &mut BTreeMap<String, ScalarSample>,
+        key: String,
+        sample: ScalarSample,
+    ) {
+        let value = match sample {
+            ScalarSample::Counter(value) | ScalarSample::Gauge(value) => value,
+        };
         if value.is_finite() {
-            values.insert(key, value);
+            scalars.insert(key, sample);
         }
     }
 
     fn insert_distribution(
-        values: &mut BTreeMap<String, f64>,
-        family: &str,
-        labels: &[LabelPair<'_>],
+        distributions: &mut BTreeMap<String, DistributionSample>,
+        key: String,
         sum: Option<Number>,
         count: Option<f64>,
     ) {
-        let key = Self::sample_key(family, labels);
+        let entry = distributions.entry(key).or_default();
         if let Some(sum) = sum.map(Number::as_f64).filter(|value| value.is_finite()) {
-            values.insert(format!("{key}_sum"), sum);
+            entry.sum = Some(sum);
         }
         if let Some(count) = count.filter(|value| value.is_finite()) {
-            values.insert(format!("{key}_count"), count);
+            entry.count = Some(count);
         }
     }
 
@@ -210,26 +187,6 @@ impl PrometheusSnapshot {
             .chars()
             .map(|character| if character.is_ascii_alphanumeric() { character } else { '_' })
             .collect()
-    }
-
-    fn metric_family<'a>(
-        key: &'a str,
-        kinds: &'a BTreeMap<String, PrometheusMetricKind>,
-    ) -> &'a str {
-        kinds
-            .keys()
-            .filter(|family| {
-                key == family.as_str()
-                    || key.strip_prefix(family.as_str()).is_some_and(|suffix| {
-                        suffix.starts_with('_')
-                            && (key.ends_with("_sum")
-                                || key.ends_with("_count")
-                                || !kinds.contains_key(key))
-                    })
-            })
-            .max_by_key(|family| family.len())
-            .map(String::as_str)
-            .unwrap_or(key)
     }
 
     fn counter_delta(value: f64, previous: Option<&f64>) -> f64 {

@@ -75,7 +75,7 @@ mod prover_service;
 pub use prover_service::InProcessProverService;
 
 mod prometheus_metrics;
-pub use prometheus_metrics::{PrometheusBlockCollector, PrometheusMetricKind, PrometheusSnapshot};
+pub use prometheus_metrics::{PrometheusBlockCollector, PrometheusSnapshot};
 
 mod rpc;
 pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
