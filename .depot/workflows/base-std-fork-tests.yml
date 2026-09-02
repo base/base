@@ -28,21 +28,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Refs may be release tags or commit SHAs. The resolved commit SHA is
-          # recorded in the result artifact and PR comment.
+          # Every entry shares one base-anvil revision (BASE_ANVIL_REF below) and
+          # selects its hardfork at runtime via `--base <upgrade>`, so a single
+          # current base-anvil tests the latest precompile implementation against
+          # each frozen base-std suite. Refs may be release tags or commit SHAs;
+          # the resolved commit SHA is recorded in the result artifact and PR
+          # comment.
           - fork: Beryl
             key: beryl
-            base_anvil_ref: cecddfa558e5ed99db6fd836ab1c8cd0213dce26
+            upgrade: beryl
             base_std_ref: v1.0.0
           - fork: Cobalt
             key: cobalt
-            base_anvil_ref: 3983d1f5c13592c5074bb47df67fa58f1295d758
-            base_std_ref: e30b34212689186b27acd3d340ba0d75d31495e9
+            upgrade: cobalt
+            base_std_ref: 4571b325c1b9c4d6e21c59d2b7f9b4b60f62ec7c
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
-      BASE_ANVIL_REF: ${{ matrix.base_anvil_ref }}
+      # Shared base-anvil revision across all hardforks, bumped only for
+      # Anvil-compatibility reasons (e.g. an Alloy upgrade). The per-entry
+      # `upgrade` selects the historical fork at runtime via `--base <upgrade>`.
+      BASE_ANVIL_REF: 98e7839c65f64aee9627b69a9b98b79afaeb1fae
       BASE_STD_REF: ${{ matrix.base_std_ref }}
+      # Consumed by base-std's fork harness to launch `anvil --base $BASE_UPGRADE`.
+      BASE_UPGRADE: ${{ matrix.upgrade }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
