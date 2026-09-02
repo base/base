@@ -131,9 +131,7 @@ inherits = "maxperf"
 debug = "line-tables-only"
 strip = "none"
 
-# `release` sets `strip = "symbols"` (see above), so the base-metal shadow
-# builder — which ships under the plain `release` profile, not `maxperf` — has
-# no symbols for a CPU profiler. This profile keeps `release` codegen identical
+# `release` sets `strip = "symbols"` (see above). This profile keeps `release` codegen identical
 # (opt-level=3, lto="thin", codegen-units=16, panic="unwind") while restoring
 # symbols. Debug info is not loaded at runtime, so it costs nothing but binary
 # size.
