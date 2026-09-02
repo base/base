@@ -228,6 +228,7 @@ base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
 base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
 base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc" }
+base-execution-b20-prefetch = { path = "crates/execution/b20-prefetch" }
 base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
 

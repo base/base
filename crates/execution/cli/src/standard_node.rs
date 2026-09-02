@@ -2,6 +2,7 @@
 
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
+use base_execution_b20_prefetch::{B20PrefetchConfig, B20PrefetchExtension};
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -33,6 +34,15 @@ use url::Url;
 use crate::upgrade_signal::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
+
+/// CLI arguments for the B20 storage prefetcher.
+#[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
+pub struct B20PrefetchArgs {
+    /// Number of worker threads prefetching B20 precompile storage slots ahead of execution.
+    /// 0 disables prefetching entirely.
+    #[arg(long = "b20.prefetch-workers", value_name = "B20_PREFETCH_WORKERS", default_value_t = 0)]
+    pub b20_prefetch_workers: usize,
+}
 
 /// CLI arguments for metering RPC.
 #[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
@@ -211,6 +221,10 @@ pub struct StandardNodeArgs {
     /// Shadow indexer `ExEx` arguments.
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// B20 storage prefetcher arguments.
+    #[command(flatten)]
+    pub b20_prefetch: B20PrefetchArgs,
 }
 
 /// CLI arguments for a Base execution node embedded by the unified RPC command.
@@ -352,6 +366,7 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
             rpc: args,
             metering: MeteringArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
+            b20_prefetch: B20PrefetchArgs::default(),
         }
     }
 }
@@ -366,6 +381,12 @@ impl StandardNodeArgs {
     /// Sets the shadow indexer arguments on this standard node configuration.
     pub fn with_shadow_indexer(mut self, shadow_indexer: ShadowIndexerArgs) -> Self {
         self.shadow_indexer = shadow_indexer;
+        self
+    }
+
+    /// Sets the B20 storage prefetcher arguments on this standard node configuration.
+    pub const fn with_b20_prefetch(mut self, b20_prefetch: B20PrefetchArgs) -> Self {
+        self.b20_prefetch = b20_prefetch;
         self
     }
 }
@@ -623,6 +644,9 @@ impl StandardBaseRethNode {
             MeteringConfig::disabled()
         };
         runner.install_ext::<MeteringExtension>(metering_config);
+        runner.install_ext::<B20PrefetchExtension>(B20PrefetchConfig {
+            workers: args.b20_prefetch.b20_prefetch_workers,
+        });
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {

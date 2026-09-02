@@ -23,14 +23,16 @@
 //! `BLESS_GOLDEN=1 cargo test -p base-common-precompiles --features test-utils \
 //!    --test b20_asset_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
+use std::collections::BTreeSet;
+
 use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
-    B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
-    IB20Asset, NoopPrecompileCallObserver, PolicyVersion, TokenAccounting,
-    UpgradeGatedStorageFeatures,
+    B20AssetStorage, B20AssetToken, B20CoreStorage, B20PolicyType, B20TokenRole,
+    FakePolicyAccounting, IB20, IB20Asset, NoopPrecompileCallObserver, PolicyVersion,
+    TokenAccounting, UpgradeGatedStorageFeatures,
 };
 use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
 
@@ -2704,6 +2706,50 @@ fn golden_gas_footprints() {
     ];
 
     bless_or_assert_gas(&actual, expected);
+}
+
+/// Pins `B20CoreStorage::transfer_hint_slots` to the exact set of distinct slots an
+/// unprivileged transfer/transferFrom SLOADs, so the prefetch hint can neither point at unused
+/// slots nor miss a read added to the op later. Runs unprivileged (unset policy ids are
+/// `ALWAYS_ALLOW`) so the packed policy-id word read is included.
+#[test]
+fn golden_transfer_hint_slots_match_sload_footprint() {
+    let cases: [(Option<Address>, Address, Vec<u8>); 2] = [
+        (None, ALICE, IB20::transferCall { to: BOB, amount: u(30) }.abi_encode()),
+        (
+            Some(BOB),
+            BOB,
+            IB20::transferFromCall { from: ALICE, to: BOB, amount: u(30) }.abi_encode(),
+        ),
+    ];
+    for (spender, caller, calldata) in cases {
+        let mut s = fresh();
+        seed(&mut s, |t| {
+            fund(t, ALICE, u(100));
+            t.set_allowance(ALICE, BOB, u(40)).unwrap();
+        });
+        s.set_caller(caller);
+        s.reset_counters();
+        StorageCtx::enter(&mut s, |ctx| {
+            B20AssetToken::with_storage_and_policy(
+                B20AssetStorage::from_address(TOKEN, ctx),
+                FakePolicyAccounting::new(),
+                PolicyVersion::V1,
+            )
+            .route(ctx, &calldata, AssetVersion::V1, false, NoopPrecompileCallObserver)
+        })
+        .expect("transfer op must succeed");
+
+        let hints: BTreeSet<U256> =
+            B20CoreStorage::transfer_hint_slots(ALICE, BOB, spender).into_iter().collect();
+        let sloaded: BTreeSet<U256> = s
+            .sloaded_keys()
+            .iter()
+            .filter(|(address, _)| *address == TOKEN)
+            .map(|(_, slot)| *slot)
+            .collect();
+        assert_eq!(hints, sloaded, "hint slots must equal the op's distinct SLOAD set");
+    }
 }
 
 // ============================================================================
