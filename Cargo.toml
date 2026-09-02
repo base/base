@@ -131,6 +131,17 @@ inherits = "maxperf"
 debug = "line-tables-only"
 strip = "none"
 
+# `release` sets `strip = "symbols"` (see above), so the base-metal shadow
+# builder — which ships under the plain `release` profile, not `maxperf` — has
+# no symbols for a CPU profiler. This profile keeps `release` codegen identical
+# (opt-level=3, lto="thin", codegen-units=16, panic="unwind") while restoring
+# symbols. Debug info is not loaded at runtime, so it costs nothing but binary
+# size.
+[profile.release-symbols]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
+
 # `cargo bench` inherits `release`, which strips symbols. iai-callgrind drives Callgrind,
 # which needs the symbol table and debug info to locate the benchmark function it toggles
 # collection on — without them every counter reads zero. Keep optimizations, restore
