@@ -2,7 +2,7 @@
 
 This directory contains the Dockerfiles and Compose configuration for the **local devnet** and internal Rust services.
 
-The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerfile.rust-services`. Published images and operator `--build` use `PROFILE=maxperf` (same as `base/node`). The bake/Dockerfile default stays `release`; `just devnet` builds `dev`. Operator entrypoints live in `etc/scripts/node/`; operators edit `.env.mainnet` / `.env.sepolia` at the repo root. Root `docker-compose.yml` pulls the published image, or compiles this tree with `--build`. `just devnet up` overrides the entrypoint to `./base`.
+The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerfile.rust-services`. Published images and operator `--build` use `PROFILE=maxperf` (same as `base/node`). The bake/Dockerfile default stays `release`; `just devnet` builds `dev`. `PROFILE` is set on the shared `_rust-service-common` target, so passing it as an environment variable applies it to every target in the invocation; to give one target a different profile, override just that target's build arg — `docker buildx bake -f etc/docker/docker-bake.hcl builder consensus --set builder.args.PROFILE=maxperf-symbols --load` builds `builder` with profiling symbols while `consensus` stays on the default `release`. Operator entrypoints live in `etc/scripts/node/`; operators edit `.env.mainnet` / `.env.sepolia` at the repo root. Root `docker-compose.yml` pulls the published image, or compiles this tree with `--build`. `just devnet up` overrides the entrypoint to `./base`.
 
 ## Dockerfiles
 
