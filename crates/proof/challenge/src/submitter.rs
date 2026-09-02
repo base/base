@@ -47,6 +47,11 @@ impl<T: TxManager> ChallengeSubmitter<T> {
     ///
     /// Returns the transaction hash on success, or an error if the transaction
     /// manager fails or the transaction reverts on-chain.
+    #[tracing::instrument(
+        name = "challenger.submit_dispute",
+        skip_all,
+        fields(game = %game_address, intent = ?intent)
+    )]
     pub async fn submit_dispute(
         &self,
         game_address: Address,

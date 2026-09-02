@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use base_prover_service_db::{FailExpiredProofJobs, ProofJob, ProofRequestRepo, RetryOutcome};
 use tokio::time::sleep;
-use tracing::{error, info, warn};
+use tracing::{Instrument, error, info, info_span, warn};
 
 use crate::metrics;
 
@@ -89,6 +89,12 @@ impl StatusPoller {
             );
 
             for request in stuck_requests {
+                let span = info_span!(
+                    "prover.stuck_request",
+                    proof_request_id = %request.id,
+                    status = %request.status,
+                    retry_count = request.retry_count,
+                );
                 let proof_type_label = metrics::api_proof_type_label(request.api_proof_type);
 
                 let error_msg = format!(
@@ -99,6 +105,7 @@ impl StatusPoller {
                 match self
                     .repo
                     .retry_or_fail_stuck_request(request.id, self.max_proof_retries, &error_msg)
+                    .instrument(span)
                     .await
                 {
                     Ok(RetryOutcome::Retried) => {

@@ -201,6 +201,11 @@ impl ProverServiceServer {
     }
 
     /// Records a worker proof submission and completes the job.
+    #[tracing::instrument(
+        name = "prover.submit_proof",
+        skip_all,
+        fields(session_id = %request.session_id, worker_id = %request.worker_id)
+    )]
     pub async fn submit_proof_impl(
         &self,
         request: WorkerSubmitProofRequest,
@@ -330,6 +335,15 @@ impl ProverServiceServer {
     }
 
     /// Records (inserts or updates) the backend session for a claimed proof job.
+    #[tracing::instrument(
+        name = "prover.record_session",
+        skip_all,
+        fields(
+            session_id = %request.session_id,
+            worker_id = %request.worker_id,
+            session_type = ?request.session_type
+        )
+    )]
     pub async fn record_proof_session_impl(
         &self,
         request: RecordProofSessionRequest,

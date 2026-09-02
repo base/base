@@ -39,6 +39,8 @@ services:
     depends_on:
       prover-service-postgres:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       # Requester RPC. The worker RPC (9001) and Postgres stay internal.
       - "${PROVER_SERVICE_RPC_PORT:-9000}:9000"
@@ -53,6 +55,8 @@ services:
       - POSTGRES_PASSWORD=prover
       - POSTGRES_SSLMODE=disable
       - OTEL_SERVICE_NAME=base-prover-service
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      - OTEL_EXPORTER_OTLP_PROTOCOL
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
       interval: 250ms
@@ -84,4 +88,6 @@ services:
       - DEFAULT_SEQUENCE_WINDOW=${DEFAULT_SEQUENCE_WINDOW:-3600}
       - RUST_LOG=${RUST_LOG:-}
       - OTEL_SERVICE_NAME=base-prover-zk-host
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      - OTEL_EXPORTER_OTLP_PROTOCOL
     restart: unless-stopped

@@ -139,6 +139,11 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
     ///
     /// When `try_tee_first` is `true` and the game has a non-zero TEE prover,
     /// a synchronous TEE proof is attempted before falling back to ZK.
+    #[tracing::instrument(
+        name = "challenger.initiate_proof",
+        skip_all,
+        fields(game = %candidate.factory.proxy, intent = ?intent)
+    )]
     pub async fn initiate_proof(
         &mut self,
         prover_address: Address,

@@ -21,7 +21,7 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     NitroEnclavePool, NitroEnclavePoolError, ProofSubmitterRequest, ProofSubmitterRequestError,
@@ -91,6 +91,12 @@ where
     pub async fn generate_and_submit(&self, job: ProofJob) -> Result<(), ProofGeneratorError> {
         let request = ProofGeneratorRequest::try_from(job)?;
         let l2_block = request.proof.claimed_l2_block_number;
+        let span = info_span!(
+            "nitro.generate_and_submit",
+            session_id = %request.claim.session_id,
+            worker_id = %request.claim.worker_id,
+            l2_block,
+        );
 
         info!(
             session_id = %request.claim.session_id,
@@ -102,10 +108,19 @@ where
 
         let (proof, permit) = self
             .with_heartbeat_while_generating(&request, async {
-                let proof = self.pool.prove(request.proof.clone()).await?;
+                let proof = self
+                    .pool
+                    .prove(request.proof.clone())
+                    .instrument(info_span!(
+                        "nitro.prove",
+                        session_id = %request.claim.session_id,
+                        l2_block,
+                    ))
+                    .await?;
                 let permit = self.tasks.acquire_submission_permit().await;
                 Ok((proof, permit))
             })
+            .instrument(span)
             .await
             .inspect_err(|error| match error {
                 ProofGeneratorError::Generate { source, .. } => {
