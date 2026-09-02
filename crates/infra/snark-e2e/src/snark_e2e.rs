@@ -203,6 +203,9 @@ impl SnarkE2e {
         // fallback, which is more robust than the client-side l1_origin + 50
         // heuristic.
         let client = Self::connect()?;
+        let artifact_hash = base_proof_zk_backend::zk_artifact_hash()
+            .await
+            .context("failed to derive local ZK artifact hash")?;
         let session_id = Uuid::new_v4().to_string();
         let prove_resp = client
             .prove_block_range(ProveBlockRangeRequest {
@@ -216,6 +219,7 @@ impl SnarkE2e {
                             l1_head: None,
                             intermediate_root_interval: None,
                             schedule_l2_block_number: None,
+                            zk_artifact_hash: Some(artifact_hash),
                             zk_vm: ZkVm::Sp1,
                             zk_backend: ZkBackend::Cluster,
                         },

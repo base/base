@@ -108,6 +108,10 @@ impl ProofDispatcher {
             proposer: self.config.proposer_address,
             intermediate_block_interval: self.config.intermediate_block_interval,
             l1_head_number: l1_header.number,
+            // Placeholder: the proposer populates this from its configured TEE image
+            // hash when artifact routing lands. Zero is inert today because the prover
+            // service does not yet read image_hash.
+            image_hash: alloy_primitives::B256::ZERO,
             schedule_l2_block_number: None,
         })
     }

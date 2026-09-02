@@ -7,7 +7,7 @@
 //! [`encode_nullify_calldata`] or `challenge` via
 //! [`encode_challenge_calldata`].
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_provider::RootProvider;
 use alloy_sol_types::{SolCall, SolError, sol};
 use async_trait::async_trait;
@@ -59,6 +59,15 @@ sol! {
 
         /// Returns the intermediate block interval for intermediate output root checkpoints.
         function INTERMEDIATE_BLOCK_INTERVAL() external view returns (uint256);
+
+        /// Returns the Nitro enclave image hash committed by this game.
+        function TEE_IMAGE_HASH() external view returns (bytes32);
+
+        /// Returns the SP1 range verification-key commitment.
+        function ZK_RANGE_HASH() external view returns (bytes32);
+
+        /// Returns the SP1 aggregation verification-key commitment.
+        function ZK_AGGREGATE_HASH() external view returns (bytes32);
 
         /// Returns the game type.
         function gameType() external view returns (uint32);
@@ -183,6 +192,32 @@ pub enum GameStatus {
     DefenderWins = 2,
 }
 
+/// Proving artifacts committed by one historical game proxy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofArtifacts {
+    /// Nitro enclave image hash accepted by this game.
+    pub tee_image_hash: B256,
+    /// SP1 range verification-key commitment.
+    ///
+    /// The contract packs this into the proof journal, so it is the Poseidon2
+    /// digest (`HashableKey::hash_u32`).
+    pub zk_range_hash: B256,
+    /// SP1 aggregation verification-key commitment.
+    ///
+    /// The contract hands this to `ZK_VERIFIER.verify` as the `programVKey`, so
+    /// it is the BN254 digest (`HashableKey::bytes32_raw`) — a *different* digest
+    /// from [`Self::zk_range_hash`].
+    pub zk_aggregate_hash: B256,
+}
+
+impl ProofArtifacts {
+    /// Returns the composite ZK routing hash for this artifact generation.
+    #[must_use]
+    pub fn zk_artifact_hash(&self) -> B256 {
+        keccak256([self.zk_range_hash.as_slice(), self.zk_aggregate_hash.as_slice()].concat())
+    }
+}
+
 impl std::fmt::Display for GameStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -217,6 +252,10 @@ pub trait AggregateVerifierClient: Send + Sync {
 
     /// Returns the current game status.
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError>;
+
+    /// Returns the proving artifacts committed by a historical game proxy.
+    async fn proof_artifacts(&self, game_address: Address)
+    -> Result<ProofArtifacts, ContractError>;
 
     /// Returns the address that provided a ZK proof for the given game.
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError>;
@@ -384,6 +423,23 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
                 "game {game_address} returned unrecognized status {unknown}"
             ))
         })
+    }
+
+    async fn proof_artifacts(
+        &self,
+        game_address: Address,
+    ) -> Result<ProofArtifacts, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+        let (tee_image_hash, zk_range_hash, zk_aggregate_hash) = futures::try_join!(
+            async { contract_call!(contract.TEE_IMAGE_HASH().call(), "TEE_IMAGE_HASH failed") },
+            async { contract_call!(contract.ZK_RANGE_HASH().call(), "ZK_RANGE_HASH failed") },
+            async {
+                contract_call!(contract.ZK_AGGREGATE_HASH().call(), "ZK_AGGREGATE_HASH failed")
+            },
+        )?;
+
+        Ok(ProofArtifacts { tee_image_hash, zk_range_hash, zk_aggregate_hash })
     }
 
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {
@@ -694,6 +750,7 @@ pub fn encode_claim_credit_calldata() -> Bytes {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::b256;
     use alloy_sol_types::SolCall as _;
 
     use super::*;
@@ -819,6 +876,26 @@ mod tests {
             &resolve[..4],
             &claim[..4],
             "resolve and claimCredit must have different selectors"
+        );
+    }
+
+    /// Shared vector with `base_proof_zk_backend::zk_artifact_hash`.
+    ///
+    /// The challenger derives this hash from the game's on-chain commitments and
+    /// the ZK worker derives it from its embedded verification keys. If the two
+    /// implementations drift, every ZK job silently stays queued forever, so both
+    /// crates pin this exact vector.
+    #[test]
+    fn zk_artifact_hash_matches_shared_vector() {
+        let artifacts = ProofArtifacts {
+            tee_image_hash: B256::ZERO,
+            zk_range_hash: B256::repeat_byte(0x22),
+            zk_aggregate_hash: B256::repeat_byte(0x33),
+        };
+
+        assert_eq!(
+            artifacts.zk_artifact_hash(),
+            b256!("0xf3357627f4934d47fe409005b05c900777a6d97ec3788304e2d9c7b4d322cd4d"),
         );
     }
 }

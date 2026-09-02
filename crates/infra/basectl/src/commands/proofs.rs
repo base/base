@@ -563,10 +563,12 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
 
     let games_client = GamesClient::connect(factory, &l1_rpc);
     let details = games_client.game_details(game).await?;
+    let zk_artifact_hash = games_client.proof_artifacts(game).await?.zk_artifact_hash();
     let request = ProofProposeRequest::for_game(
         &details,
         prover_address,
         zk_backend,
+        zk_artifact_hash,
         session_id,
         intermediate_root_interval,
     )?;
@@ -680,12 +682,14 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
 
     let games_client = GamesClient::connect(factory, &l1_rpc);
     let details = games_client.game_details(game).await?;
+    let zk_artifact_hash = games_client.proof_artifacts(game).await?.zk_artifact_hash();
     let derived_session = session_id.is_none();
     let session_id = ProofProposeRequest::session_id_for_game(
         &config.name,
         &details,
         sender,
         zk_backend,
+        zk_artifact_hash,
         session_id,
         intermediate_root_interval,
     )?;
@@ -802,10 +806,12 @@ async fn run_finalize(
         }
     };
     let details = games_client.game_details(game).await?;
+    let zk_artifact_hash = games_client.proof_artifacts(game).await?.zk_artifact_hash();
     let request = ProofProposeRequest::for_game(
         &details,
         sender,
         zk_backend,
+        zk_artifact_hash,
         session_id,
         intermediate_root_interval,
     )?;
@@ -1856,6 +1862,7 @@ mod tests {
             &sample_game_details(),
             Address::repeat_byte(0xDD),
             ZkBackend::Network,
+            B256::repeat_byte(0x33),
             Some("propose-session".to_string()),
             None,
         )

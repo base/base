@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use alloy_primitives::B256;
 use base_cli_utils::RuntimeManager;
 use base_load_tests::{LoadTestDisplay, LoadTestExecutor, LoadTestRunOptions, TestConfig};
 use base_prover_service_protocol::ZkBackend;
@@ -32,6 +33,10 @@ pub(crate) struct ZkBenchArgs {
         default_value = "http://localhost:9000"
     )]
     prover_service_url: url::Url,
+
+    /// Composite ZK artifact hash to request; print it with `vkeys`.
+    #[arg(long, env = "ZK_ARTIFACT_HASH")]
+    zk_artifact_hash: B256,
 
     /// Load test YAML configuration.
     #[arg(value_name = "CONFIG")]
@@ -68,6 +73,7 @@ async fn run_zk_benchmark(args: ZkBenchArgs) -> Result<()> {
     let test_config = TestConfig::load(&args.config)?;
     let zk_config = ZkBenchConfig {
         zk_backend: args.mode.into(),
+        zk_artifact_hash: args.zk_artifact_hash,
         rollup_rpc_url: args.rollup_rpc_url,
         prover_url: args.prover_service_url,
     };

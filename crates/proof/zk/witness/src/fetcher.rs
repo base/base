@@ -855,6 +855,10 @@ impl OPSuccinctDataFetcher {
             claimed_l2_block_number: l2_end_block,
             intermediate_block_interval,
             l1_head_number,
+            // Routing-only field consumed by the prover service for TEE jobs. The ZK
+            // range program never reads it (see `crates/proof/host/src/kv/boot.rs`,
+            // which maps no preimage key to it), so it stays zero here.
+            image_hash: B256::ZERO,
             // We don't need to set the proposer for the range proof zk program
             proposer: Address::ZERO,
             schedule_l2_block_number,

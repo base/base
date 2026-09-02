@@ -20,7 +20,7 @@ use base_common_consensus::Predeploys;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
-    GameStatus,
+    GameStatus, ProofArtifacts,
 };
 use base_proof_rpc::{BaseHeader, L1Provider, L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
@@ -313,6 +313,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         self.get(game_address, |s| s.status)
     }
 
+    async fn proof_artifacts(&self, _: Address) -> Result<ProofArtifacts, ContractError> {
+        unimplemented!("artifact routing lands with the producer changes")
+    }
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {
         self.get(game_address, |s| s.zk_prover)
     }

@@ -108,13 +108,20 @@ impl ZkBenchRunner {
         let start_block_number =
             block_number.checked_sub(1).ok_or_else(|| eyre::eyre!("cannot prove genesis block"))?;
         let zk_backend = config.zk_backend;
+        let zk_artifact_hash = config.zk_artifact_hash;
         let client_config = ProverServiceClientConfig::new(config.prover_url.as_str());
         let proof_timeout = client_config.max_wait();
         let poll_interval = client_config.poll_interval();
         let client = ProofRequesterClient::connect(&client_config)
             .wrap_err_with(|| format!("failed to connect prover service {}", config.prover_url))?;
         let session_id = format!("zk-benchmarks-{}-{}", zk_backend.as_str(), nanoid!());
-        let request = Self::proof_request(session_id, start_block_number, l1_head, zk_backend);
+        let request = Self::proof_request(
+            session_id,
+            start_block_number,
+            l1_head,
+            zk_backend,
+            zk_artifact_hash,
+        );
         let proof_started = Instant::now();
         let response =
             client.prove_block_range(request).await.wrap_err("prove-block-range request failed")?;
@@ -144,6 +151,7 @@ impl ZkBenchRunner {
         start_block_number: u64,
         l1_head: B256,
         zk_backend: ZkBackend,
+        zk_artifact_hash: B256,
     ) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
@@ -155,6 +163,7 @@ impl ZkBenchRunner {
                     l1_head: Some(l1_head),
                     intermediate_root_interval: None,
                     schedule_l2_block_number: None,
+                    zk_artifact_hash: Some(zk_artifact_hash),
                     zk_vm: ZkVm::Sp1,
                     zk_backend,
                 }),
@@ -273,6 +282,7 @@ mod tests {
             9,
             B256::repeat_byte(0xaa),
             ZkBackend::Cluster,
+            B256::repeat_byte(0xbb),
         );
         let ProofRequestKind::Compressed(proof) = request.proof.request else {
             panic!("expected compressed proof request");
@@ -281,6 +291,7 @@ mod tests {
         assert_eq!(proof.start_block_number, 9);
         assert_eq!(proof.number_of_blocks_to_prove, 1);
         assert_eq!(proof.l1_head, Some(B256::repeat_byte(0xaa)));
+        assert_eq!(proof.zk_artifact_hash, Some(B256::repeat_byte(0xbb)));
         assert_eq!(proof.zk_backend, ZkBackend::Cluster);
     }
 

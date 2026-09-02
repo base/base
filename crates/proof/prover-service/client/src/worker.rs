@@ -599,6 +599,7 @@ mod tests {
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
             zk_backends: vec![ZkBackend::Cluster],
+            supported_artifact_hash: None,
             lock_duration_seconds: 60,
         }
     }
@@ -674,6 +675,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 schedule_l2_block_number: None,
+                zk_artifact_hash: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -699,6 +701,7 @@ mod tests {
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
             zk_backends: vec![ZkBackend::Cluster],
+            supported_artifact_hash: None,
             lock_duration_seconds: 60,
         };
         let provider: &dyn ProverWorkerProvider = &server.client;

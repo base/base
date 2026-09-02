@@ -98,6 +98,11 @@ impl JobClaimFilter {
     }
 
     /// Builds the worker claim requests for this filter with a proof-type rotation offset.
+    ///
+    /// `supported_artifact_hash` is left `None` here as a placeholder; hosts set it
+    /// from their local enclave image or verification keys when artifact routing
+    /// lands. It is inert today because the prover service does not yet read it, but
+    /// once routing is enabled a `None` claims no jobs at all.
     pub fn get_next_proof_requests_starting_at(
         &self,
         worker_id: String,
@@ -112,6 +117,7 @@ impl JobClaimFilter {
                     tee_kinds: tee_kinds.clone(),
                     zk_vms: Vec::new(),
                     zk_backends: Vec::new(),
+                    supported_artifact_hash: None,
                     lock_duration_seconds,
                 }),
                 None,
@@ -133,6 +139,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms: zk_vms.clone(),
                         zk_backends: zk_backends.clone(),
+                        supported_artifact_hash: None,
                         lock_duration_seconds,
                     }),
                     Some(GetNextProofRequest {
@@ -141,6 +148,7 @@ impl JobClaimFilter {
                         tee_kinds: Vec::new(),
                         zk_vms,
                         zk_backends,
+                        supported_artifact_hash: None,
                         lock_duration_seconds,
                     }),
                 ]
@@ -628,6 +636,7 @@ mod tests {
             l1_head: None,
             intermediate_root_interval: None,
             schedule_l2_block_number: None,
+            zk_artifact_hash: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         }

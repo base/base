@@ -1,5 +1,6 @@
 //! Error types for host-side TEE prover operations.
 
+use alloy_primitives::B256;
 use base_proof_tee_nitro_enclave::{NitroError, TransportError};
 use thiserror::Error;
 
@@ -33,6 +34,14 @@ pub enum NitroHostError {
     /// The signer public key returned by the enclave is malformed.
     #[error("invalid signer public key: expected 65-byte uncompressed SEC1 key")]
     InvalidSignerKey,
+    /// Enclaves in one worker pool advertise different image hashes.
+    #[error("enclave image hash mismatch: expected {expected}, got {actual}")]
+    ImageHashMismatch {
+        /// Image hash advertised by the first enclave.
+        expected: B256,
+        /// Different image hash advertised by another enclave.
+        actual: B256,
+    },
     /// A response-read timed out (distinct from connect timeout).
     #[error("{operation} timed out")]
     ResponseTimeout {

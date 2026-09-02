@@ -6609,6 +6609,7 @@ dependencies = [
 name = "base-zk-benchmarks-bin"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "base-cli-utils",
  "base-load-tests",
  "base-prover-service-protocol",

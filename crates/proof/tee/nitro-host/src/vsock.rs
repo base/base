@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use alloy_primitives::B256;
 use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
 use base_proof_tee_nitro_enclave::{EnclaveRequest, EnclaveResponse, Frame};
@@ -64,7 +65,9 @@ impl VsockTransport {
         match response {
             EnclaveResponse::Prove(result) => Ok(*result),
             EnclaveResponse::Error(e) => Err(NitroHostError::EnclaveRemoteError(e)),
-            EnclaveResponse::SignerPublicKey(_) | EnclaveResponse::SignerAttestation(_) => {
+            EnclaveResponse::SignerPublicKey(_)
+            | EnclaveResponse::TeeImageHash(_)
+            | EnclaveResponse::SignerAttestation(_) => {
                 Err(NitroHostError::UnexpectedResponse { expected: "prove" })
             }
         }
@@ -92,8 +95,35 @@ impl VsockTransport {
                 Ok(key)
             }
             EnclaveResponse::Error(e) => Err(NitroHostError::EnclaveRemoteError(e)),
-            EnclaveResponse::Prove(_) | EnclaveResponse::SignerAttestation(_) => {
+            EnclaveResponse::Prove(_)
+            | EnclaveResponse::TeeImageHash(_)
+            | EnclaveResponse::SignerAttestation(_) => {
                 Err(NitroHostError::UnexpectedResponse { expected: "signer_public_key" })
+            }
+        }
+    }
+
+    /// Return the enclave image hash derived from PCR0.
+    pub async fn tee_image_hash(&self) -> Result<B256, NitroHostError> {
+        let mut stream = self.connect().await?;
+
+        Frame::write(&mut stream, &EnclaveRequest::TeeImageHash)
+            .await
+            .map_err(NitroHostError::FrameWrite)?;
+
+        let response: EnclaveResponse =
+            tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut stream))
+                .await
+                .map_err(|_| NitroHostError::ResponseTimeout { operation: "tee_image_hash" })?
+                .map_err(NitroHostError::FrameRead)?;
+
+        match response {
+            EnclaveResponse::TeeImageHash(hash) => Ok(hash),
+            EnclaveResponse::Error(e) => Err(NitroHostError::EnclaveRemoteError(e)),
+            EnclaveResponse::Prove(_)
+            | EnclaveResponse::SignerPublicKey(_)
+            | EnclaveResponse::SignerAttestation(_) => {
+                Err(NitroHostError::UnexpectedResponse { expected: "tee_image_hash" })
             }
         }
     }
@@ -119,7 +149,9 @@ impl VsockTransport {
         match response {
             EnclaveResponse::SignerAttestation(doc) => Ok(doc),
             EnclaveResponse::Error(e) => Err(NitroHostError::EnclaveRemoteError(e)),
-            EnclaveResponse::Prove(_) | EnclaveResponse::SignerPublicKey(_) => {
+            EnclaveResponse::Prove(_)
+            | EnclaveResponse::SignerPublicKey(_)
+            | EnclaveResponse::TeeImageHash(_) => {
                 Err(NitroHostError::UnexpectedResponse { expected: "signer_attestation" })
             }
         }
