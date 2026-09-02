@@ -860,9 +860,9 @@ where
 
             let tx_hash = *tx.hash();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let has_coinbase_tip = tx
-                .as_eip8130()
-                .is_some_and(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()).is_some());
+            let coinbase_tip =
+                tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()));
+            let has_coinbase_tip = coinbase_tip.is_some();
             if has_validity_predicates {
                 validity_consideration_index += 1;
                 emit_native_validity_event!(
@@ -1272,7 +1272,13 @@ where
                 .expect("fee is always valid; execution succeeded");
             let gas_used = gas_output.tx_gas_used();
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
-            info.inclusion.record(has_validity_predicates, gas_used, miner_fee, base_fee);
+            info.inclusion.record(
+                has_validity_predicates,
+                gas_used,
+                miner_fee,
+                base_fee,
+                coinbase_tip.unwrap_or_default(),
+            );
             BuilderMetrics::record_tip_per_gas(
                 has_validity_predicates,
                 has_coinbase_tip,
