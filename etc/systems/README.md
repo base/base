@@ -124,7 +124,7 @@ To pin a run to a known snapshot boundary, pass all three of `--expected-head-nu
 `--expected-head-hash`, and `--expected-head-timestamp`. Startup fails before load generation if
 the captured boundary differs.
 
-## Run the account-creation benchmark
+## Run a snapshot benchmark
 
 `base-bench snapshot` owns the process lifecycle around one load test: it generates an ephemeral
 funder, deposits funds to it in the first local descendant, replaces placeholder endpoints in the
@@ -144,6 +144,7 @@ cargo run --release -p base-system-tests --bin base-bench -- snapshot \
   --load-test-config \
     crates/infra/load-tests/examples/account-create-mainnet-snapshot.yaml \
   --benchmark-run snapshot-throughput \
+  --scenario account-create-2s \
   --output-dir results/account-create-2s
 ```
 
@@ -166,9 +167,9 @@ validator replays that range. A run fails if either role lacks a sample for a me
 their canonical hashes differ. When metrics are available for another load-test failure, they are
 written before the command returns the error.
 
-`--output-dir` receives `benchmark-result.json` plus a `visualizer/` subdirectory that writes the
-`base/benchmark` report contract directly: `metadata.json`, `metrics-sequencer.json`,
-`metrics-validator.json`, and `load-test-result.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
+`--output-dir` is one self-contained `base/benchmark` run directory. It receives
+`benchmark-result.json`, `metadata.json`, `metrics-sequencer.json`, `metrics-validator.json`, and
+`load-test-result.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
 build label when the report should compare commits or releases. The role metrics contain
 `gas/per_block`, `gas/per_second`, `transactions/per_block`, `transactions/per_second`, and selected
 Reth Prometheus diagnostics. `BlockNumber` is relative to the measurement (`1..N`); canonical block
@@ -178,9 +179,19 @@ scrape: counter deltas are evenly attributed across those blocks, gauges are rep
 histogram averages describe the whole scrape interval. Collection is intentionally limited to one
 scrape per second because continuously rendering Reth's full endpoint measurably perturbs 200ms
 production. Each output directory is one self-contained report run. Give comparable invocations the
-same `--benchmark-run` cohort and a unique `--output-dir`; the run ID defaults to
-`<benchmark-run>-<timestamp>` unless `--run-id` is set. Upload the metrics and artifact files before
+same `--benchmark-run` cohort, a descriptive `--scenario`, and a unique `--output-dir`. Report
+series are identified by scenario and node role; `--run-id` is only the unique artifact identity and
+defaults to `<benchmark-run>-<timestamp>` when omitted. Upload the metrics and artifact files before
 `metadata.json` when publishing to the report service because metadata is its completion signal.
+
+For a saturated Blake2f comparison with equal 60-second measured windows, use
+`blake2f-mainnet-snapshot-2s.yaml` (30 blocks) and
+`blake2f-mainnet-snapshot-200ms.yaml` (300 blocks). Both issue one fixed 50,000-round Blake2f call
+per transaction with identical sender, in-flight, batching, funding, and seed settings. The report
+labels these runs with `TransactionPayload=blake2f`; use scenarios such as `blake2f-2s-run-1` and
+`blake2f-200ms-run-1` to distinguish repetitions. The 5,000-transaction global in-flight cap is
+exactly one 400M-gas block of queue headroom at the configured 80,000 gas limit per transaction,
+which keeps the builder saturated without leaving an oversized submission backlog at cutoff.
 
 ## Compare 2s and 200ms fairly
 
@@ -188,7 +199,9 @@ One clone pair is one run. A run mutates both clones and they are not restartabl
 repetition:
 
 1. Clone builder and client datadirs from the exact same immutable snapshot.
-2. Use the same optimized binary, machine, load-test YAML, block count, and funder generation method.
+2. Use the same optimized binary, machine, workload settings, measured duration, and funder
+   generation method. Scale the block count with cadence (for example, 30 blocks at 2s and 300 at
+   200ms for equal 60-second windows).
 3. Run one cadence and save its result plus host/build/storage metadata.
 4. Stop the stack and destroy only that run's disposable clones.
 5. Create another fresh pair before running the other cadence.

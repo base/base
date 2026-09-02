@@ -7,6 +7,7 @@ use std::{
 
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
+use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
 use base_common_chains::ChainConfig;
 use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;
@@ -24,7 +25,9 @@ use super::{
 };
 use crate::{DevnetBlockInterval, DevnetSnapshotConfig};
 
-const SNAPSHOT_STARTUP_LEAD: Duration = Duration::from_secs(10);
+const SNAPSHOT_STARTUP_LEAD: Duration = Duration::from_secs(30);
+const SNAPSHOT_EL_READY_TIMEOUT: Duration = Duration::from_secs(30);
+const SNAPSHOT_ADVANCE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Configuration for an L1-free snapshot-backed L2 stack.
 #[derive(Debug, Clone)]
@@ -102,7 +105,6 @@ impl SnapshotL2Stack {
             first_block_timestamp > boundary.head.timestamp,
             "snapshot boundary timestamp must be earlier than the local schedule anchor"
         );
-        Self::ensure_schedule_anchor_is_future(first_block_timestamp, SystemTime::now())?;
         let rollup_config = Arc::new(Self::anchored_rollup_config(
             boundary.head.number,
             first_block_timestamp,
@@ -130,6 +132,11 @@ impl SnapshotL2Stack {
         })
         .await
         .wrap_err("failed to start snapshot client")?;
+        tokio::try_join!(
+            Self::wait_for_el_ready(builder.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT),
+            Self::wait_for_el_ready(client.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT),
+        )?;
+        Self::ensure_schedule_anchor_is_future(first_block_timestamp, SystemTime::now())?;
 
         let unused_l1_url = Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL");
         let follow_config = InProcessFollowConsensusConfig {
@@ -164,7 +171,7 @@ impl SnapshotL2Stack {
             .checked_add(2)
             .ok_or_else(|| eyre::eyre!("snapshot boundary block number overflow"))?;
         tokio::select! {
-            result = Self::wait_for_block(builder.rpc_url()?, target, Duration::from_secs(30)) => {
+            result = Self::wait_for_block(builder.rpc_url()?, target, SNAPSHOT_ADVANCE_TIMEOUT) => {
                 result.wrap_err("snapshot builder did not produce two descendants")?;
             }
             error = standalone_consensus.next_error() => {
@@ -295,6 +302,21 @@ impl SnapshotL2Stack {
         Ok(())
     }
 
+    async fn wait_for_el_ready(rpc_url: Url, timeout: Duration) -> Result<()> {
+        let provider = RootProvider::<Base>::new_http(rpc_url.clone());
+        tokio::time::timeout(timeout, async {
+            loop {
+                if matches!(provider.syncing().await?, EthSyncStatus::None) {
+                    return Ok::<_, eyre::Report>(());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .wrap_err_with(|| format!("timed out waiting for snapshot EL readiness at {rpc_url}"))??;
+        Ok(())
+    }
+
     /// Returns the validated immutable snapshot boundary.
     pub const fn boundary(&self) -> &SnapshotBoundary {
         &self.boundary
@@ -370,7 +392,7 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use reth_ethereum_forks::ForkCondition;
 
-    use super::SnapshotL2Stack;
+    use super::{SNAPSHOT_STARTUP_LEAD, SnapshotL2Stack};
     use crate::DevnetBlockInterval;
 
     #[test]
@@ -426,7 +448,7 @@ mod tests {
 
         let anchor = SnapshotL2Stack::schedule_anchor(now).unwrap();
 
-        assert_eq!(anchor, 2_000_000_000 + 10);
+        assert_eq!(anchor, 2_000_000_000 + SNAPSHOT_STARTUP_LEAD.as_secs());
         SnapshotL2Stack::ensure_schedule_anchor_is_future(anchor, now).unwrap();
     }
 

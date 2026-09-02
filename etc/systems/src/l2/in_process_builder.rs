@@ -424,6 +424,9 @@ fn create_node_config(
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network);
+    if config.datadir.is_some() {
+        node_config.debug.startup_sync_state_idle = true;
+    }
 
     if let Some(persistence_threshold) = config.persistence_threshold {
         node_config.engine.persistence_threshold = persistence_threshold;

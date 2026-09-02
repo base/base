@@ -855,8 +855,9 @@ impl LoadRunner {
         let finished_file = self.config.separate_setup.as_deref().map(|dir| dir.join("finished"));
         Self::publish_handshake(finished_file.as_deref())?;
 
+        // The producer may be blocked sending its next chunk after enqueue stops at the
+        // measurement cutoff. Close its receiver before awaiting it so that send unblocks.
         drop(signed_chunk_rx);
-
         match producer_task.await {
             Ok(Ok(producer_state)) => {
                 self.generator = producer_state.generator;
@@ -900,6 +901,7 @@ impl LoadRunner {
         while self.config.duration.is_none_or(|d| start.elapsed() < d)
             && !self.stop_flag.load(Ordering::SeqCst)
             && open_loop_enqueue_error.is_none()
+            && !results_tracker.measurement_finished()
         {
             // --- Housekeeping (runs once per batch iteration) ---
 
@@ -942,8 +944,10 @@ impl LoadRunner {
 
         submission_pipeline.close_input();
 
+        let stop_at_measurement_cutoff = self.config.measurement_blocks.is_some();
         let drain_started = Instant::now();
         while submission_pipeline.pending_batches() > 0
+            && !stop_at_measurement_cutoff
             && drain_started.elapsed() < SUBMIT_DRAIN_TIMEOUT
         {
             Self::drain_submit_events(
@@ -959,10 +963,14 @@ impl LoadRunner {
 
         let pending_submit_batches = submission_pipeline.pending_batches();
         if pending_submit_batches > 0 {
-            warn!(
-                pending_submit_batches,
-                "timed out waiting for submit queue to drain, closing submit queue"
-            );
+            if stop_at_measurement_cutoff {
+                warn!(pending_submit_batches, "closing submit queue at measured block cutoff");
+            } else {
+                warn!(
+                    pending_submit_batches,
+                    "timed out waiting for submit queue to drain, closing submit queue"
+                );
+            }
             let failures =
                 submission_pipeline.close_and_fail_queued("submit queue abandoned").await;
             Self::apply_queued_submit_failures(

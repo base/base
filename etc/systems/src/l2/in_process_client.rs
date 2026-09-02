@@ -207,6 +207,9 @@ impl InProcessClient {
         let mut node_config = NodeConfig::new(Arc::clone(&chain_spec))
             .with_network(network_config)
             .with_rpc(rpc_args);
+        if config.datadir.is_some() {
+            node_config.debug.startup_sync_state_idle = true;
+        }
         let metrics_addr = SocketAddr::new(
             std::net::Ipv4Addr::LOCALHOST.into(),
             config.metrics_port.unwrap_or_else(get_available_port),

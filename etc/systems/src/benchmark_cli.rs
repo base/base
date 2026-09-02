@@ -56,10 +56,12 @@ pub struct SnapshotBenchmarkArgs {
     pub load_test_config: PathBuf,
     /// Required benchmark artifact directory.
     ///
-    /// Writes `<output-dir>/benchmark-result.json` and
-    /// `<output-dir>/visualizer/{metadata.json,metrics-sequencer.json,metrics-validator.json,load-test-result.json}`.
+    /// Writes `<output-dir>/{benchmark-result.json,metadata.json,metrics-sequencer.json,metrics-validator.json,load-test-result.json}`.
     #[arg(long)]
     pub output_dir: PathBuf,
+    /// User-visible scenario identifier for the report series.
+    #[arg(long)]
+    pub scenario: String,
     /// Cohort key shared by runs that should be compared in the report.
     #[arg(long, default_value = "snapshot-throughput")]
     pub benchmark_run: String,
@@ -74,7 +76,6 @@ pub struct SnapshotBenchmarkArgs {
 /// Wei minted to the benchmark's ephemeral funder in the first local descendant (1000 ETH).
 const PREFUND_AMOUNT_WEI: u128 = 1_000_000_000_000_000_000_000;
 const RESULT_FILE_NAME: &str = "benchmark-result.json";
-const VISUALIZER_DIR_NAME: &str = "visualizer";
 
 /// Machine-readable result from one snapshot benchmark case.
 #[derive(Debug, Serialize)]
@@ -227,7 +228,7 @@ impl SnapshotBenchmarkArgs {
             format!("failed to create benchmark output directory {}", self.output_dir.display())
         })?;
         let result_path = self.output_dir.join(RESULT_FILE_NAME);
-        let visualizer_output_dir = self.output_dir.join(VISUALIZER_DIR_NAME);
+        let visualizer_output_dir = self.output_dir.clone();
         let visualizer_output_name = Self::directory_name_or_default(&self.output_dir);
         let run_id =
             self.run_id.clone().unwrap_or_else(|| Self::derived_run_id(&self.benchmark_run));
@@ -488,25 +489,14 @@ impl SnapshotBenchmarkArgs {
             result.validator_blocks.iter().map(|block| block.gas_used).sum::<u64>() as f64
                 / (result.validator_blocks.len() as f64 * block_seconds);
         let gas_limit = result.blocks.first().map(|block| block.gas_limit).unwrap_or_default();
-        let fresh_recipient_ratio = result
-            .load_test
-            .config
-            .as_ref()
-            .map(|config| config.fresh_recipient_ratio)
-            .unwrap_or_default();
-        let transaction_payload = if fresh_recipient_ratio >= 1.0 {
-            "fresh-account"
-        } else if fresh_recipient_ratio <= 0.0 {
-            "existing-account"
-        } else {
-            "mixed-account"
-        };
+        let transaction_payload = Self::transaction_payload(result);
         let test_config = BTreeMap::from([
             ("BenchmarkRun", serde_json::Value::String(self.benchmark_run.clone())),
+            ("Scenario", serde_json::Value::String(self.scenario.clone())),
             ("BlockTimeMilliseconds", result.block_interval_ms.into()),
             ("GasLimit", gas_limit.into()),
             ("NodeType", serde_json::Value::String("base-reth-node".to_string())),
-            ("TransactionPayload", serde_json::Value::String(transaction_payload.to_string())),
+            ("TransactionPayload", serde_json::Value::String(transaction_payload)),
             ("ClientVersion", serde_json::Value::String(client_version.clone())),
         ]);
         let metadata = VisualizerMetadata {
@@ -552,6 +542,36 @@ impl SnapshotBenchmarkArgs {
         metrics
     }
 
+    /// Returns a stable report filter value for the configured workload.
+    pub fn transaction_payload(result: &SnapshotBenchmarkResult) -> String {
+        let Some(config) = result.load_test.config.as_ref() else {
+            return "unknown".to_string();
+        };
+        if let Some(transactions) = config.transactions.as_array()
+            && transactions.len() == 1
+            && let Some(transaction) = transactions.first().and_then(serde_json::Value::as_object)
+        {
+            let transaction_type = transaction.get("type").and_then(serde_json::Value::as_str);
+            if transaction_type == Some("precompile")
+                && let Some(target) = transaction.get("target").and_then(serde_json::Value::as_str)
+            {
+                return target.to_string();
+            }
+            if let Some(transaction_type) = transaction_type
+                && transaction_type != "transfer"
+            {
+                return transaction_type.to_string();
+            }
+        }
+        if config.fresh_recipient_ratio >= 1.0 {
+            "fresh-account".to_string()
+        } else if config.fresh_recipient_ratio <= 0.0 {
+            "existing-account".to_string()
+        } else {
+            "mixed-account".to_string()
+        }
+    }
+
     fn block_interval_from_test_config(test_config: &TestConfig) -> Result<DevnetBlockInterval> {
         let block_time = test_config
             .parse_block_time()
@@ -584,7 +604,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use alloy_primitives::{Address, B256};
-    use base_load_tests::{MetricsSummary, ThroughputMetrics};
+    use base_load_tests::{MetricsSummary, TestConfig, ThroughputMetrics};
     use clap::Parser;
 
     use super::{BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkResult, SnapshotBlockMetrics};
@@ -602,10 +622,13 @@ mod tests {
             "load.yaml",
             "--output-dir",
             "results/case-a",
+            "--scenario",
+            "example-scenario",
         ]);
 
         let BenchmarkCommand::Snapshot(args) = cli.command;
         assert_eq!(args.output_dir.to_string_lossy(), "results/case-a");
+        assert_eq!(args.scenario, "example-scenario");
         assert_eq!(args.benchmark_run, "snapshot-throughput");
         assert!(args.run_id.is_none());
         assert!(args.client_version.is_none());
@@ -624,6 +647,8 @@ mod tests {
             "load.yaml",
             "--output-dir",
             "result-dir",
+            "--scenario",
+            "example-scenario",
             "--run-id",
             "manual-run-id",
         ]);
@@ -646,6 +671,8 @@ mod tests {
             "load.yaml",
             "--output-dir",
             "results/case-b",
+            "--scenario",
+            "blake2f-200ms",
             "--run-id",
             "run-123",
         ]);
@@ -662,6 +689,21 @@ mod tests {
             funder_address: Address::ZERO,
             load_test: MetricsSummary {
                 throughput: ThroughputMetrics { gps: 2_000_000_000.0, ..Default::default() },
+                config: Some(
+                    TestConfig::from_yaml(
+                        r#"
+transaction_submission_rpcs:
+  - http://127.0.0.1:8545
+transactions:
+  - weight: 100
+    type: precompile
+    target: blake2f
+    rounds: 50000
+"#,
+                    )
+                    .unwrap()
+                    .to_summary(),
+                ),
                 ..Default::default()
             },
             blocks: vec![SnapshotBlockMetrics {
@@ -712,8 +754,9 @@ mod tests {
         assert_eq!(metadata["runs"][0]["id"], "run-123");
         assert_eq!(metadata["runs"][0]["outputDir"], output_name);
         assert_eq!(metadata["runs"][0]["testConfig"]["BenchmarkRun"], "snapshot-throughput");
+        assert_eq!(metadata["runs"][0]["testConfig"]["Scenario"], "blake2f-200ms");
         assert_eq!(metadata["runs"][0]["testConfig"]["GasLimit"], 400_000_000);
-        assert_eq!(metadata["runs"][0]["testConfig"]["TransactionPayload"], "existing-account");
+        assert_eq!(metadata["runs"][0]["testConfig"]["TransactionPayload"], "blake2f");
         assert_eq!(
             metadata["runs"][0]["result"]["artifacts"]["loadTestResult"],
             "load-test-result.json"
