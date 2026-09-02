@@ -63,29 +63,29 @@ impl Eip8130Contracts {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Default wallet implementation, used as the target of default EOA delegation.
-    pub const DEFAULT_ACCOUNT: Address = address!("0x81305ba42044134477a69aEdD70448AEe505adEF");
+    pub const DEFAULT_ACCOUNT: Address = address!("0x81309c54D6Bc190FbBc0FA9f296ea4C6A539ADEf");
 
     /// Per-contract mined CREATE2 salt for [`Self::DEFAULT_ACCOUNT`].
     pub const DEFAULT_ACCOUNT_SALT: B256 =
-        b256!("0x00000000000000000000000000000000000000000000000000000000ba25155c");
+        b256!("0x0000000000000000000000000000000000000000000000000000000023195eb6");
 
     /// keccak256 of the `DEFAULT_ACCOUNT` deployment init code.
     pub const DEFAULT_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0xb0fe5788e0fffd07769e031e3985cc89ed3c962874b8a0fc11aab6c2297b028f");
+        b256!("0x08f1b05056c9a1406b9d8ec9de14d482149877c83b6a58ea9e855f7bdc0205b3");
 
     /// Canonical high-rate payer account implementation
     /// (`CanonicalHighRatePayerAccount`). Wallets that block ETH transfers when
     /// locked, granting higher EIP-8130 mempool access (rate limits).
     pub const CANONICAL_HIGH_RATE_PAYER_ACCOUNT: Address =
-        address!("0x81301cfb780039315893229d3e158e3141a7fA57");
+        address!("0x813002fFdd25C81CeF79781702176D453AF0Fa57");
 
     /// Per-contract mined CREATE2 salt for [`Self::CANONICAL_HIGH_RATE_PAYER_ACCOUNT`].
     pub const CANONICAL_HIGH_RATE_PAYER_ACCOUNT_SALT: B256 =
-        b256!("0x0000000000000000000000000000000000000000000000000000000037db3c2b");
+        b256!("0x000000000000000000000000000000000000000000000000000000007257d389");
 
     /// keccak256 of the `CANONICAL_HIGH_RATE_PAYER_ACCOUNT` deployment init code.
     pub const CANONICAL_HIGH_RATE_PAYER_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0x66d17d42b6718c6772df52f2fd0cab0dd7fb7db039bdeec4def5dcd2189d942f");
+        b256!("0x8508466c8ab34d3dd0b31d7209aacde0501852819dfff3926a997f15d90b28c2");
 
     /// keccak256 of the ERC-1167 minimal-proxy *runtime* bytecode whose
     /// implementation is [`Self::CANONICAL_HIGH_RATE_PAYER_ACCOUNT`]:
@@ -97,7 +97,7 @@ impl Eip8130Contracts {
     /// Used to recognize high-rate payer accounts by codehash (e.g. mempool
     /// admission) without resolving an EIP-7702 delegation target.
     pub const CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH: B256 =
-        b256!("0xdb1653f4a8c36963d065adf2188bc852c67c5ad7a8093686cb35e72b2adcfbfc");
+        b256!("0x567770b5589d02464ad51c8e299cb3fc9192975068969b973839b38263f91c22");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Canonical authenticators (accepted on the EIP-8130 block-validation path)
