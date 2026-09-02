@@ -1,8 +1,9 @@
 //! Sampling CPU profiler that drives `pprof` and renders captured reports as either an SVG
 //! flamegraph or a gzipped `pprof` protobuf.
 
-use std::{sync::Arc, time::Duration};
+use std::{io::Write, sync::Arc, time::Duration};
 
+use flate2::{Compression, write::GzEncoder};
 use pprof::{ProfilerGuardBuilder, protos::Message};
 use tokio::sync::Mutex;
 use tracing::info;
@@ -16,7 +17,6 @@ const MAX_FREQUENCY_HZ: i32 = 1_000;
 // the 1000 ms block cadence, which aliases periodic phases and skews profiles. 101 Hz is prime and
 // non-harmonic. Re-evaluate this default for the 200 ms Denim cadence.
 const DEFAULT_FREQUENCY_HZ: i32 = 101;
-const MAX_DEFLATE_BLOCK_SIZE: usize = 65_535;
 
 /// Errors returned while capturing a CPU profile.
 #[derive(Debug, thiserror::Error)]
@@ -47,6 +47,9 @@ pub enum ProfilerError {
         /// Protobuf encoder error message.
         message: String,
     },
+    /// Gzip compression failed.
+    #[error("failed to gzip cpu profile protobuf: {0}")]
+    Gzip(#[source] std::io::Error),
 }
 
 /// On-demand, single-flight CPU profile capture service.
@@ -107,42 +110,12 @@ impl CpuProfiler {
         let protobuf = profile
             .write_to_bytes()
             .map_err(|error| ProfilerError::ProtobufEncode { message: error.to_string() })?;
-        let bytes = Self::gzip(&protobuf);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&protobuf).map_err(ProfilerError::Gzip)?;
+        let bytes = encoder.finish().map_err(ProfilerError::Gzip)?;
 
         info!(seconds = %secs, frequency = %hz, bytes = %bytes.len(), "cpu profile capture completed");
         Ok(bytes)
-    }
-
-    fn gzip(profile: &[u8]) -> Vec<u8> {
-        let block_count = profile.len().div_ceil(MAX_DEFLATE_BLOCK_SIZE).max(1);
-        let overhead = 18_usize.saturating_add(block_count.saturating_mul(5));
-        let mut gzip = Vec::with_capacity(profile.len().saturating_add(overhead));
-        gzip.extend_from_slice(&[0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff]);
-
-        if profile.is_empty() {
-            gzip.extend_from_slice(&[0x01, 0x00, 0x00, 0xff, 0xff]);
-        } else {
-            for (index, block) in profile.chunks(MAX_DEFLATE_BLOCK_SIZE).enumerate() {
-                gzip.push(u8::from(index + 1 == block_count));
-                let length_bytes = block.len().to_le_bytes();
-                let length = u16::from_le_bytes([length_bytes[0], length_bytes[1]]);
-                gzip.extend_from_slice(&length.to_le_bytes());
-                gzip.extend_from_slice(&(!length).to_le_bytes());
-                gzip.extend_from_slice(block);
-            }
-        }
-
-        let mut crc = u32::MAX;
-        for byte in profile {
-            crc ^= u32::from(*byte);
-            for _ in 0..8 {
-                let mask = 0_u32.wrapping_sub(crc & 1);
-                crc = (crc >> 1) ^ (0xedb8_8320 & mask);
-            }
-        }
-        gzip.extend_from_slice(&(!crc).to_le_bytes());
-        gzip.extend_from_slice(&profile.len().to_le_bytes()[..4]);
-        gzip
     }
 }
 
@@ -150,6 +123,7 @@ impl CpuProfiler {
 mod tests {
     use std::{
         hint::black_box,
+        io::Read,
         sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
@@ -157,6 +131,8 @@ mod tests {
         thread,
         time::Duration,
     };
+
+    use flate2::read::GzDecoder;
 
     use super::*;
 
@@ -219,5 +195,11 @@ mod tests {
         let bytes = result.unwrap();
         assert!(!bytes.is_empty());
         assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+
+        let mut decompressed = Vec::new();
+        GzDecoder::new(bytes.as_slice()).read_to_end(&mut decompressed).unwrap();
+        assert!(!decompressed.is_empty());
+        assert!(pprof::protos::Profile::parse_from_bytes(&decompressed).is_ok());
+        assert!(bytes.len() < decompressed.len());
     }
 }
