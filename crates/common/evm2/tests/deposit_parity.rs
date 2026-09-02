@@ -14,12 +14,14 @@ use std::collections::BTreeMap;
 
 use alloy_consensus::transaction::Recovered;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
+// shared consensus deposit type.
+use base_common_consensus::TxDeposit;
 // revm reference side.
 use base_common_evm::{
     BaseSpecId as RevmBaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo,
 };
 // evm2 side.
-use base_common_evm2::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope, TxDeposit};
+use base_common_evm2::{BaseEvmTypes, BaseSpecId, BaseTxEnvelope};
 use base_common_genesis::BaseUpgrade;
 use evm2::{Evm, Precompiles, bytecode::Bytecode as Evm2Bytecode, env::BlockEnv, evm::InMemoryDB};
 use revm::{
