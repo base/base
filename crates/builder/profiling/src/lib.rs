@@ -4,5 +4,6 @@ mod profiler;
 pub use profiler::{CpuProfiler, ProfilerError};
 
 mod server;
+pub use server::{ProfilingServer, ProfilingServerError};
 
 mod extension;

@@ -3385,8 +3385,11 @@ dependencies = [
  "eyre",
  "flate2",
  "pprof",
+ "serde",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-util",
+ "tower 0.5.3",
  "tracing",
 ]
 
