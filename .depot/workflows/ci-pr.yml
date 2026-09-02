@@ -16,11 +16,11 @@ jobs:
       # The tested PR merge commit stores its exact base as the first parent.
       diff_base: HEAD^1
       build_command: >-
-        just build::affected-ci "$DIFF_BASE"
+        just build::affected-ci "${DIFF_BASE:?}"
       clippy_command: >-
-        just check::clippy-affected-ci "$DIFF_BASE"
+        just check::clippy-affected-ci "${DIFF_BASE:?}"
       run_system_tests: false
       run_sigsegv: false
       test_command: >-
-        just test-affected-ci "$DIFF_BASE"
+        just test-affected-ci "${DIFF_BASE:?}"
     secrets: inherit
