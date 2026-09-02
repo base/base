@@ -20,7 +20,11 @@ thiserror.workspace = true
 tracing = { workspace = true, features = ["std"] }
 
 # async
-tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio-util = { workspace = true }
+tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+
+# serialization
+serde = { workspace = true, features = ["derive"] }
 
 # http
 axum = { workspace = true, features = ["http1", "tokio", "query"] }
@@ -30,3 +34,7 @@ flate2 = { workspace = true }
 
 # profiling
 pprof = { workspace = true, features = ["flamegraph", "protobuf-codec"] }
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
