@@ -145,7 +145,7 @@ impl AssetV1 {
     /// Ensures `policy_scope` names a built-in B-20 policy slot available on the frozen V1 (Beryl)
     /// common surface.
     ///
-    /// The seize scopes (`SEIZE_HOLDER_POLICY` / `SEIZE_RECEIVER_POLICY`) were introduced at Cobalt
+    /// The seize scopes (`SEIZE_EXEMPT_POLICY` / `SEIZE_RECEIVER_POLICY`) were introduced at Cobalt
     /// (V2), so they are rejected here — matching the base-std `v1.0.0` reference. This is what keeps
     /// the common `updatePolicy` / `policyId` selectors (dialable on V1) from reaching a V2-only
     /// scope.
@@ -163,7 +163,7 @@ impl AssetV1 {
                 | B20PolicyType::MintReceiver,
             ) => Ok(()),
             // Cobalt (V2)-only scopes, and any unrecognized id, are not part of the frozen V1 surface.
-            Some(B20PolicyType::SeizeHolder | B20PolicyType::SeizeReceiver) | None => {
+            Some(B20PolicyType::SeizeExempt | B20PolicyType::SeizeReceiver) | None => {
                 Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
                     policyScope: policy_scope,
                 }))

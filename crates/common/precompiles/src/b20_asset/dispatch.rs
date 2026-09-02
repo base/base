@@ -175,7 +175,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 B20PolicyType::TransferExecutor.id().abi_encode().into()
             }
             C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
-            C::SEIZE_HOLDER_POLICY(_) => B20PolicyType::SeizeHolder.id().abi_encode().into(),
+            C::SEIZE_EXEMPT_POLICY(_) => B20PolicyType::SeizeExempt.id().abi_encode().into(),
             C::SEIZE_RECEIVER_POLICY(_) => B20PolicyType::SeizeReceiver.id().abi_encode().into(),
 
             // --- Role reads ---

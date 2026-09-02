@@ -283,7 +283,7 @@ fn golden_v2_selectors_unknown_at_v1() {
     }
 }
 
-/// The seize common selectors (`seizeWithMemo` and the `SEIZE_ROLE` / `SEIZE_HOLDER_POLICY` /
+/// The seize common selectors (`seizeWithMemo` and the `SEIZE_ROLE` / `SEIZE_EXEMPT_POLICY` /
 /// `SEIZE_RECEIVER_POLICY` getters) were introduced at Cobalt (`AssetV2`). At V1 (Beryl) they are
 /// absent from the frozen common `IB20` surface, so `route` rejects them as `UnknownFunctionSelector`.
 #[test]
@@ -292,7 +292,7 @@ fn golden_seize_selectors_unknown_at_v1() {
     let calls: Vec<Vec<u8>> = vec![
         IB20::seizeWithMemoCall { from: ALICE, to: BOB, amount: u(1), memo: MEMO }.abi_encode(),
         IB20::SEIZE_ROLECall {}.abi_encode(),
-        IB20::SEIZE_HOLDER_POLICYCall {}.abi_encode(),
+        IB20::SEIZE_EXEMPT_POLICYCall {}.abi_encode(),
         IB20::SEIZE_RECEIVER_POLICYCall {}.abi_encode(),
     ];
     for calldata in calls {
@@ -302,13 +302,13 @@ fn golden_seize_selectors_unknown_at_v1() {
     }
 }
 
-/// The seize policy scopes were introduced at Cobalt (`AssetV2`). Although the `SEIZE_HOLDER_POLICY()`
+/// The seize policy scopes were introduced at Cobalt (`AssetV2`). Although the `SEIZE_EXEMPT_POLICY()`
 /// / `SEIZE_RECEIVER_POLICY()` getter selectors are absent from V1, the scope *values* must also not
 /// leak through the common `updatePolicy` selector, which is dialable on V1: V1 rejects them with
 /// `UnsupportedPolicyType`, matching the base-std `v1.0.0` reference.
 #[test]
 fn golden_update_policy_rejects_seize_scopes_at_v1() {
-    for scope in [B20PolicyType::SeizeHolder.id(), B20PolicyType::SeizeReceiver.id()] {
+    for scope in [B20PolicyType::SeizeExempt.id(), B20PolicyType::SeizeReceiver.id()] {
         let mut s = fresh();
         let mut policy = FakePolicyAccounting::new();
         policy.create_existing_policy(7);
@@ -330,7 +330,7 @@ fn golden_update_policy_rejects_seize_scopes_at_v1() {
 /// `policyId` selector is dialable on V1 but must reject the V2-only seize scopes.
 #[test]
 fn golden_policy_id_rejects_seize_scopes_at_v1() {
-    for scope in [B20PolicyType::SeizeHolder.id(), B20PolicyType::SeizeReceiver.id()] {
+    for scope in [B20PolicyType::SeizeExempt.id(), B20PolicyType::SeizeReceiver.id()] {
         let mut s = fresh();
         let err = op(
             &mut s,
@@ -2778,7 +2778,7 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
         ]),
         C::seizeWithMemo(_)
         | C::SEIZE_ROLE(_)
-        | C::SEIZE_HOLDER_POLICY(_)
+        | C::SEIZE_EXEMPT_POLICY(_)
         | C::SEIZE_RECEIVER_POLICY(_) => covered(&[golden_seize_selectors_unknown_at_v1]),
 
         // pause / config / roles / policy / permit

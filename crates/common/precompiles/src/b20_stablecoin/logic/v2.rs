@@ -165,7 +165,7 @@ impl StablecoinV2 {
     }
 
     /// Ensures `policy_scope` names a built-in B-20 policy slot available on the V2 (Cobalt) common
-    /// surface, which adds the seize scopes (`SEIZE_HOLDER_POLICY` / `SEIZE_RECEIVER_POLICY`) on top
+    /// surface, which adds the seize scopes (`SEIZE_EXEMPT_POLICY` / `SEIZE_RECEIVER_POLICY`) on top
     /// of V1.
     ///
     /// The match is exhaustive on purpose: a policy scope added to `B20PolicyType` for a future fork
@@ -178,7 +178,7 @@ impl StablecoinV2 {
                 | B20PolicyType::TransferReceiver
                 | B20PolicyType::TransferExecutor
                 | B20PolicyType::MintReceiver
-                | B20PolicyType::SeizeHolder
+                | B20PolicyType::SeizeExempt
                 | B20PolicyType::SeizeReceiver,
             ) => Ok(()),
             None => Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
@@ -1315,10 +1315,10 @@ mod tests {
 
     // --- seize ---
 
-    /// Points `SEIZE_HOLDER_POLICY` at the always-block policy, making every account seizable.
+    /// Points `SEIZE_EXEMPT_POLICY` at the always-block policy, making every account seizable.
     fn make_seizable(tok: &mut Tok) {
         tok.accounting_mut()
-            .set_policy_id(B20PolicyType::SeizeHolder.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID)
+            .set_policy_id(B20PolicyType::SeizeExempt.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID)
             .unwrap();
     }
 
@@ -1376,7 +1376,7 @@ mod tests {
     #[test]
     fn seize_reverts_on_zero_from() {
         let mut tok = token();
-        // A non-default `SeizeHolder` (here ALWAYS_BLOCK via `make_seizable`) treats the zero
+        // A non-default `SeizeExempt` (here ALWAYS_BLOCK via `make_seizable`) treats the zero
         // address as seizable, so without the `from != 0` guard a zero-amount seize from the zero
         // address would emit a misleading `Transfer(0x0, to, 0)` that indexers read as a mint.
         make_seizable(&mut tok);
@@ -1483,10 +1483,10 @@ mod tests {
     }
 
     #[test]
-    fn seize_holder_policy_beats_receiver_policy() {
+    fn seize_exempt_policy_beats_receiver_policy() {
         let mut tok = token();
         grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        // SEIZE_HOLDER unset => ALICE not seizable; SEIZE_RECEIVER blocks BOB. Holder check fires first.
+        // SEIZE_EXEMPT unset => ALICE not seizable; SEIZE_RECEIVER blocks BOB. Exempt check fires first.
         tok.accounting_mut()
             .set_policy_id(
                 B20PolicyType::SeizeReceiver.id(),

@@ -106,16 +106,17 @@ impl B20Guards {
         }
     }
 
-    /// Ensures `account` is seizable, i.e. NOT authorized by the current seize-holder policy.
+    /// Ensures `account` is seizable, i.e. NOT authorized by the current seize-exempt policy.
     ///
-    /// Mirrors [`Self::ensure_blocked`] but consults `SEIZE_HOLDER_POLICY` instead of the
-    /// transfer-sender policy: an account is seizable only when the configured registry policy does
-    /// not authorize it, so the unset always-allow default keeps seizure closed until an issuer
-    /// configures the slot. Used by `seizeWithMemo`. Enforced unconditionally, including in the
-    /// factory bootstrap window. Reverts `AccountNotSeizable` (distinct from `ensure_blocked`'s
-    /// `AccountNotBlocked`) so the seize path and the deprecated `burnBlocked` report separately.
+    /// Mirrors [`Self::ensure_blocked`] but consults `SEIZE_EXEMPT_POLICY` instead of the
+    /// transfer-sender policy: accounts authorized by that scope are exempt from seizure, so an
+    /// account is seizable only when the configured registry policy does not authorize it, and
+    /// the unset always-allow default keeps seizure closed until an issuer configures the slot.
+    /// Used by `seizeWithMemo`. Enforced unconditionally, including in the factory bootstrap
+    /// window. Reverts `AccountNotSeizable` (distinct from `ensure_blocked`'s `AccountNotBlocked`)
+    /// so the seize path and the deprecated `burnBlocked` report separately.
     pub fn ensure_seizable<T: Token + ?Sized>(token: &T, account: Address) -> Result<()> {
-        let policy_scope = B20PolicyType::SeizeHolder.id();
+        let policy_scope = B20PolicyType::SeizeExempt.id();
         let policy_id = token.accounting().policy_id(policy_scope)?;
         if token.policy().is_authorized(token.policy_storage(), policy_id, account)? {
             Err(BasePrecompileError::revert(IB20::AccountNotSeizable { account }))
@@ -149,7 +150,7 @@ mod tests {
 
     fn token_with_seizable_policy(account: Address) -> TestStablecoinToken {
         let mut accounting = InMemoryTokenAccounting::new(Address::repeat_byte(0x20));
-        accounting.policy_ids.insert(B20PolicyType::SeizeHolder.id(), EXTERNAL_POLICY_ID);
+        accounting.policy_ids.insert(B20PolicyType::SeizeExempt.id(), EXTERNAL_POLICY_ID);
 
         let mut policy = FakePolicyAccounting::new();
         policy.allow(EXTERNAL_POLICY_ID, account);
