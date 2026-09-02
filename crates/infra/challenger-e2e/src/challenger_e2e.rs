@@ -638,7 +638,8 @@ impl ChallengerE2e {
             // challenger disputing indiscriminately. Fail closed and say why.
             let after = Self::read_game_state(verifier, *game).await.with_context(|| {
                 format!(
-                    "failed to re-read bystander game {game}; it read cleanly when snapshotted,                      so the collateral-damage check could not be completed"
+                    "failed to re-read bystander game {game}; it read cleanly when snapshotted, \
+                     so the collateral-damage check could not be completed"
                 )
             })?;
             ensure!(
