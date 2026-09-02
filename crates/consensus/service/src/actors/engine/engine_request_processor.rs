@@ -346,7 +346,9 @@ where
             self.rollup.log_upgrade_activation(
                 envelope.execution_payload.block_number(),
                 envelope.execution_payload.timestamp(),
-                envelope.execution_payload.timestamp().saturating_sub(self.rollup.block_time),
+                self.rollup.l2_block_timestamp(
+                    envelope.execution_payload.block_number().saturating_sub(1),
+                ),
             );
         }
         let task = match result_tx {
@@ -669,7 +671,9 @@ mod tests {
     };
     use async_trait::async_trait;
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
-    use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig};
+    use base_common_genesis::{
+        BaseUpgradeConfig, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig,
+    };
     use base_common_rpc_types::Transaction as BaseTransaction;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_derive::Signal;
@@ -783,6 +787,7 @@ mod tests {
         el_sync_finished: bool,
         unsafe_head: L2BlockInfo,
         safe_head: Option<L2BlockInfo>,
+        config: RollupConfig,
     ) -> (
         EngineProcessor<
             base_consensus_engine::test_utils::MockEngineClient,
@@ -791,7 +796,7 @@ mod tests {
         watch::Receiver<usize>,
     ) {
         let client = Arc::new(test_engine_client_builder().build());
-        let config = Arc::new(RollupConfig::default());
+        let config = Arc::new(config);
         let derivation_client = MockEngineDerivationClient::new();
         let mut initial_state_builder = TestEngineStateBuilder::new()
             .with_unsafe_head(unsafe_head)
@@ -924,8 +929,12 @@ mod tests {
         #[case] envelope: BaseExecutionPayloadEnvelope,
         #[case] expected_queue_len: usize,
     ) {
-        let (mut processor, queue_rx) =
-            unsafe_payload_processor(el_sync_finished, unsafe_head, safe_head);
+        let (mut processor, queue_rx) = unsafe_payload_processor(
+            el_sync_finished,
+            unsafe_head,
+            safe_head,
+            RollupConfig::default(),
+        );
 
         if local_payload {
             processor.handle_local_unsafe_l2_block(envelope, None);
@@ -942,6 +951,38 @@ mod tests {
         }
 
         assert_eq!(*queue_rx.borrow(), expected_queue_len);
+    }
+
+    #[test]
+    fn external_payload_logs_denim_activation_once() {
+        let config = RollupConfig {
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(10), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (mut processor, _) =
+            unsafe_payload_processor(true, L2BlockInfo::default(), None, config);
+        let (traces, _guard) = base_protocol::capture_traces!();
+
+        for block_number in 5..10 {
+            let mut envelope = unsafe_payload(
+                block_number,
+                B256::with_last_byte(block_number.saturating_sub(1) as u8),
+                B256::with_last_byte(block_number as u8),
+            );
+            let BaseExecutionPayload::V1(payload) = &mut envelope.execution_payload else {
+                unreachable!();
+            };
+            payload.timestamp = 10;
+            processor.enqueue_unsafe_payload_insert(envelope, None, true);
+        }
+
+        let activation_logs =
+            traces.lock().iter().filter(|(_, event)| event.contains("Activated upgrade")).count();
+        assert_eq!(activation_logs, 1);
     }
 
     /// Verifies that when a standalone sequencer (no conductor) is beyond genesis and reth
