@@ -1128,10 +1128,10 @@ where
                     tx_hash = ?tx.hash(),
                     "skipping transaction unable to pay gas plus declared coinbase tip"
                 );
-                if tx.eip8130_replay_id().is_none() {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else {
+                if tx.identity().is_replay() {
                     best_txs.mark_current_committed();
+                } else {
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
                 }
                 continue;
             }
