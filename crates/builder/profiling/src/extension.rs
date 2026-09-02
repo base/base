@@ -75,7 +75,9 @@ impl BaseNodeExtension for ProfilingExtension {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{net::TcpListener, sync::Arc, time::Duration};
+
+    use tokio::{net::TcpStream, task::yield_now, time::timeout};
 
     use super::*;
 
@@ -112,5 +114,46 @@ mod tests {
         assert_eq!(Arc::strong_count(&marker), 2);
         drop(hooks);
         assert_eq!(Arc::strong_count(&marker), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn profiling_extension_opens_socket_only_when_enabled() -> eyre::Result<()> {
+        let reserved = TcpListener::bind("127.0.0.1:0")?;
+        let port = reserved.local_addr()?.port();
+        drop(reserved);
+        let address = ("127.0.0.1", port);
+
+        NODE_STARTED_HOOK_REGISTRATIONS.with(|count| count.set(0));
+        let disabled = ProfilingExtension::from_config(ProfilingConfig { port, ..config(false) });
+        let disabled_hooks = Box::new(disabled).apply(NodeHooks::new());
+
+        NODE_STARTED_HOOK_REGISTRATIONS.with(|count| assert_eq!(count.get(), 0));
+        assert!(TcpStream::connect(address).await.is_err());
+        let unclaimed = TcpListener::bind(address)?;
+        drop(unclaimed);
+        drop(disabled_hooks);
+
+        NODE_STARTED_HOOK_REGISTRATIONS.with(|count| count.set(0));
+        let enabled = ProfilingExtension::from_config(ProfilingConfig { port, ..config(true) });
+        let enabled_hooks = Box::new(enabled).apply(NodeHooks::new());
+        NODE_STARTED_HOOK_REGISTRATIONS.with(|count| assert_eq!(count.get(), 1));
+        let cancel = CancellationToken::new();
+        let server = ProfilingServer::new(port, CpuProfiler::default(), cancel.clone());
+        let serving = tokio::spawn(server.serve());
+        let connection = timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(connection) = TcpStream::connect(address).await {
+                    break connection;
+                }
+                yield_now().await;
+            }
+        })
+        .await?;
+
+        drop(connection);
+        cancel.cancel();
+        timeout(Duration::from_secs(2), serving).await???;
+        drop(enabled_hooks);
+        Ok(())
     }
 }
