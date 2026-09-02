@@ -27,8 +27,8 @@ static SMOKE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new((
 #[tokio::test]
 async fn denim_and_zenith_activation_matches_el_and_cl_configs() -> Result<()> {
     const AZUL_ACTIVATION_BLOCK: u64 = 20;
-    const DENIM_ACTIVATION_BLOCK: u64 = 23;
-    const ZENITH_ACTIVATION_BLOCK: u64 = 53;
+    const DENIM_ACTIVATION_BLOCK: u64 = 25;
+    const ZENITH_ACTIVATION_BLOCK: u64 = 100;
 
     let _guard = SMOKE_TEST_LOCK.lock().await;
     let system = SystemTestStackBuilder::new()
@@ -67,8 +67,8 @@ async fn denim_and_zenith_activation_matches_el_and_cl_configs() -> Result<()> {
 fn rejects_post_denim_block_without_whole_second_timestamp() {
     let output = Command::new("bash")
         .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/devnet/setup-l2.sh"))
-        .env("L2_BASE_DENIM_BLOCK", "23")
-        .env("L2_BASE_ZENITH_BLOCK", "24")
+        .env("L2_BASE_DENIM_BLOCK", "25")
+        .env("L2_BASE_ZENITH_BLOCK", "26")
         .output()
         .unwrap();
 
