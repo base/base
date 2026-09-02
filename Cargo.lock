@@ -4240,7 +4240,6 @@ dependencies = [
  "axum 0.8.9",
  "backon",
  "base-builder-metering",
- "base-bundle-extension",
  "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",
