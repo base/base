@@ -670,7 +670,7 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:10.4.1
+    image: grafana/grafana:10.4.3
     container_name: grafana
     ports:
       - "3000:3000"
@@ -678,7 +678,7 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_DISABLE_LOGIN_FORM=true
-      - GF_INSTALL_PLUGINS=grafana-pyroscope-app
+      - GF_INSTALL_PLUGINS=grafana-pyroscope-app 0.1.8
     volumes:
       - ../scripts/devnet/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../scripts/devnet/grafana/dashboards:/var/lib/grafana/dashboards:ro
