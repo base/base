@@ -29,11 +29,7 @@ jobs:
       matrix:
         include:
           # Every entry shares one base-anvil revision (BASE_ANVIL_REF below) and
-          # selects its hardfork at runtime via `--base <upgrade>`, so a single
-          # current base-anvil tests the latest precompile implementation against
-          # each frozen base-std suite. Refs may be release tags or commit SHAs;
-          # the resolved commit SHA is recorded in the result artifact and PR
-          # comment.
+          # selects its hardfork at runtime via `--base <upgrade>`
           - fork: Beryl
             key: beryl
             upgrade: beryl
@@ -45,9 +41,6 @@ jobs:
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
-      # Shared base-anvil revision across all hardforks, bumped only for
-      # Anvil-compatibility reasons (e.g. an Alloy upgrade). The per-entry
-      # `upgrade` selects the historical fork at runtime via `--base <upgrade>`.
       BASE_ANVIL_REF: 98e7839c65f64aee9627b69a9b98b79afaeb1fae
       BASE_STD_REF: ${{ matrix.base_std_ref }}
       # Consumed by base-std's fork harness to launch `anvil --base $BASE_UPGRADE`.
