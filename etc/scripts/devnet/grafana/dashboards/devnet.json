@@ -299,7 +299,7 @@
             "type": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(reth_base_builder_block_built_success{job=\"l2_builder\"}[$__rate_interval])",
+          "expr": "rate(reth_base_builder_total_block_built_duration_count{job=\"l2_builder\"}[$__rate_interval])",
           "format": "time_series",
           "legendFormat": "Blocks Built",
           "range": true,
@@ -319,7 +319,7 @@
       },
       "id": 101,
       "panels": [],
-      "title": "OP Node (Consensus Layer)",
+      "title": "Base Consensus",
       "type": "row"
     },
     {
@@ -402,13 +402,13 @@
             "type": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(op_node_default_rpc_client_request_duration_seconds_bucket{method=\"engine_getPayloadV4\"}[$__rate_interval])) by (le))",
-          "legendFormat": "engine_payloadV4",
+          "expr": "reth_base_node_engine_method_request_duration{job=\"l2_builder\", method=\"engine_getPayload\", quantile=\"0.99\"}",
+          "legendFormat": "engine_getPayload",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "getPayload Duration P99 (op-node)",
+      "title": "getPayload Duration P99",
       "type": "barchart"
     },
     {
@@ -491,13 +491,13 @@
             "type": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.90, sum(rate(op_node_default_rpc_client_request_duration_seconds_bucket{method=\"engine_getPayloadV4\"}[$__rate_interval])) by (le))",
-          "legendFormat": "engine_payloadV4",
+          "expr": "reth_base_node_engine_method_request_duration{job=\"l2_builder\", method=\"engine_getPayload\", quantile=\"0.9\"}",
+          "legendFormat": "engine_getPayload",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "getPayload Duration P90 (op-node)",
+      "title": "getPayload Duration P90",
       "type": "barchart"
     },
     {
@@ -580,13 +580,13 @@
             "type": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum(rate(op_node_default_rpc_client_request_duration_seconds_bucket{method=\"engine_getPayloadV4\"}[$__rate_interval])) by (le))",
-          "legendFormat": "engine_payloadV4",
+          "expr": "reth_base_node_engine_method_request_duration{job=\"l2_builder\", method=\"engine_getPayload\", quantile=\"0.5\"}",
+          "legendFormat": "engine_getPayload",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "getPayload Duration P50 (op-node)",
+      "title": "getPayload Duration P50",
       "type": "barchart"
     },
     {
@@ -680,13 +680,13 @@
                 "type": "prometheus"
               },
               "editorMode": "code",
-              "expr": "reth_base_builder_flashblock_build_duration{quantile=\"0.99\"}",
-              "legendFormat": "Flashblocks Build Duration",
+              "expr": "reth_base_builder_total_block_built_duration{job=\"l2_builder\", quantile=\"0.99\"}",
+              "legendFormat": "Block Build Duration",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Flashblock Build Duration (P99)",
+          "title": "Block Build Duration (P99)",
           "type": "timeseries"
         },
         {
@@ -770,13 +770,13 @@
                 "type": "prometheus"
               },
               "editorMode": "code",
-              "expr": "reth_base_builder_flashblock_build_duration{quantile=\"0.9\"}",
-              "legendFormat": "Flashblocks Build Duration",
+              "expr": "reth_base_builder_total_block_built_duration{job=\"l2_builder\", quantile=\"0.9\"}",
+              "legendFormat": "Block Build Duration",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Flashblock Build Duration (P90)",
+          "title": "Block Build Duration (P90)",
           "type": "timeseries"
         },
         {
@@ -860,13 +860,13 @@
                 "type": "prometheus"
               },
               "editorMode": "code",
-              "expr": "reth_base_builder_flashblock_build_duration{quantile=\"0.5\"}",
-              "legendFormat": "Flashblocks Build Duration",
+              "expr": "reth_base_builder_total_block_built_duration{job=\"l2_builder\", quantile=\"0.5\"}",
+              "legendFormat": "Block Build Duration",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Flashblock Build Duration (P50)",
+          "title": "Block Build Duration (P50)",
           "type": "timeseries"
         },
         {
