@@ -82,6 +82,7 @@ use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
+use super::log_filter_limit::LogFilterLimit;
 use crate::{FlashblocksAPI, PendingBlocksAPI, metrics::Metrics};
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
@@ -562,6 +563,11 @@ where
             message = "rpc::get_logs",
             address = ?filter.address
         );
+
+        // Reject pathological filters before any DB access; address / topic sets
+        // each multiply per-block work on the shared executor thread (same DoS
+        // class as eth_getProof, capped in #2596 via `MAX_PROOF_KEYS = 1024`).
+        LogFilterLimit::check(&filter)?;
 
         // Check if this is a mixed query (toBlock is pending)
         let (from_block, to_block) = match &filter.block_option {
