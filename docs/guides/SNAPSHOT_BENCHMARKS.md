@@ -1,6 +1,6 @@
 # Snapshot Benchmarking
 
-This guide covers repeatable performance measurements on an L1-free Base mainnet
+This guide covers repeatable performance measurements on an L1-free Base
 snapshot devnet. It explains how to run `base-bench snapshot`, publish its output
 to `base/benchmark`, and select the exact runs to compare.
 
@@ -11,7 +11,7 @@ builder and validator datadirs, so every attempt needs a fresh writable datadir 
 
 - Build an optimized `base-bench` binary. Debug builds are not suitable for a
   400M-gas performance measurement.
-- Start from an immutable, fully prepared Base mainnet datadir snapshot.
+- Start from an immutable, fully prepared Base datadir snapshot.
 - Restore that exact snapshot into separate writable builder and validator datadirs.
 - Keep the source snapshot immutable for benchmark purposes; only remove or reset
   the disposable per-run datadirs.
@@ -38,6 +38,7 @@ cargo build --release -p base-system-tests --bin base-bench
 export BASE_BENCH_CLIENT_VERSION="base/$(git rev-parse --short HEAD)"
 
 target/release/base-bench snapshot \
+  --chain sepolia \
   --builder-datadir "$BUILDER_DATADIR" \
   --client-datadir "$CLIENT_DATADIR" \
   --load-test-config /path/to/blake2f-2s.yaml \
@@ -46,6 +47,26 @@ target/release/base-bench snapshot \
   --run-id blake2f-2s-<timestamp> \
   --output-dir results/blake2f-2s-run-1
 ```
+
+`--chain` selects the network rules used to continue the snapshot. It accepts the
+built-in Base aliases, including `mainnet` (the default) and `sepolia`. It also
+accepts a path to a Base genesis JSON file. A JSON chain whose L2 chain ID is not
+one of the built-in Base networks additionally requires its rollup configuration:
+
+```sh
+target/release/base-bench snapshot \
+  --chain /path/to/genesis.json \
+  --rollup-config /path/to/rollup.json \
+  --builder-datadir "$BUILDER_DATADIR" \
+  --client-datadir "$CLIENT_DATADIR" \
+  --load-test-config /path/to/load-test.yaml \
+  --benchmark-run custom-throughput \
+  --scenario custom-run-1 \
+  --output-dir results/custom-run-1
+```
+
+For a genesis JSON whose L2 chain ID matches a built-in Base network, the built-in
+rollup configuration is selected automatically and `--rollup-config` is optional.
 
 `base-bench snapshot` launches the snapshot builder and validator, funds an
 ephemeral load-test account, runs the workload, verifies that both roles have
@@ -77,7 +98,7 @@ Use the fields below consistently. They have different purposes.
 | `--output-dir` | Complete local artifact directory | Keep it unique. Never allow two runs to write to the same directory. |
 | `BASE_BENCH_CLIENT_VERSION` | Binary/build label | Keep it equal for cadence comparisons; deliberately vary it only for client-version comparisons. |
 
-For a fair 2-second versus 200-millisecond Blake2f comparison:
+For a fair 2-second versus 200-millisecond Blake2f comparison on any selected chain:
 
 1. Restore both roles from the same immutable snapshot for every repetition.
 2. Use the same release binary, host, load parameters, seed, and funding policy.

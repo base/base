@@ -8,7 +8,6 @@ use std::{
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
-use base_common_chains::ChainConfig;
 use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;
 use base_consensus_node::StandalonePrefund;
@@ -48,6 +47,8 @@ pub struct SnapshotL2Stack {
     follow_consensus: Option<InProcessFollowConsensus>,
     follow_config: Option<InProcessFollowConsensusConfig>,
     block_interval: DevnetBlockInterval,
+    rollup_config: Arc<RollupConfig>,
+    chain_id: u64,
 }
 
 impl SnapshotL2Stack {
@@ -67,9 +68,14 @@ impl SnapshotL2Stack {
             .prefund
             .map(|value| StandalonePrefund { address: value.address, amount: value.amount });
         let block_interval = config.snapshot.block_interval;
-        let canonical_rollup_config = Arc::new(ChainConfig::mainnet().rollup_config());
+        let chain = config.snapshot.chain.resolve()?;
+        let canonical_rollup_config = Arc::clone(&chain.rollup_config);
         let first_block_timestamp = Self::schedule_anchor(SystemTime::now())?;
-        let chain_spec = Arc::new(Self::chain_spec(first_block_timestamp, block_interval));
+        let chain_spec = Arc::new(Self::chain_spec(
+            (*chain.chain_spec).clone(),
+            first_block_timestamp,
+            block_interval,
+        ));
         let jwt_secret = JwtSecret::random();
 
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
@@ -95,8 +101,8 @@ impl SnapshotL2Stack {
         .wrap_err("failed to start snapshot builder")?;
         let boundary = SnapshotBoundary::read(
             builder.rpc_url()?,
-            canonical_rollup_config,
-            config.snapshot.expected_chain_id,
+            Arc::clone(&canonical_rollup_config),
+            chain.l2_chain_id,
             config.snapshot.expected_head,
         )
         .await
@@ -106,6 +112,7 @@ impl SnapshotL2Stack {
             "snapshot boundary timestamp must be earlier than the local schedule anchor"
         );
         let rollup_config = Arc::new(Self::anchored_rollup_config(
+            (*canonical_rollup_config).clone(),
             boundary.head.number,
             first_block_timestamp,
             block_interval,
@@ -187,6 +194,8 @@ impl SnapshotL2Stack {
             follow_consensus: None,
             follow_config: Some(follow_config),
             block_interval,
+            rollup_config: canonical_rollup_config,
+            chain_id: chain.l2_chain_id,
         })
     }
 
@@ -225,11 +234,11 @@ impl SnapshotL2Stack {
 
     /// Anchors the deterministic local block schedule at the first post-snapshot block.
     pub fn anchored_rollup_config(
+        mut config: RollupConfig,
         boundary_number: u64,
         first_block_timestamp: u64,
         block_interval: DevnetBlockInterval,
     ) -> Result<RollupConfig> {
-        let mut config = ChainConfig::mainnet().rollup_config();
         let first_block_number = boundary_number
             .checked_add(1)
             .ok_or_else(|| eyre::eyre!("snapshot boundary block number overflow"))?;
@@ -256,10 +265,10 @@ impl SnapshotL2Stack {
 
     /// Builds the execution chain specification for a local snapshot schedule.
     pub fn chain_spec(
+        mut chain_spec: BaseChainSpec,
         first_block_timestamp: u64,
         block_interval: DevnetBlockInterval,
     ) -> BaseChainSpec {
-        let mut chain_spec = BaseChainSpec::mainnet();
         if block_interval == DevnetBlockInterval::TwoHundredMilliseconds {
             chain_spec
                 .set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(first_block_timestamp));
@@ -327,6 +336,11 @@ impl SnapshotL2Stack {
         self.block_interval
     }
 
+    /// Returns the L2 chain ID of the continued snapshot.
+    pub const fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
     /// Returns the builder RPC URL.
     pub fn builder_rpc_url(&self) -> Result<Url> {
         self.builder.rpc_url()
@@ -356,8 +370,8 @@ impl SnapshotL2Stack {
     pub async fn current_builder_boundary(&self) -> Result<SnapshotBoundary> {
         SnapshotBoundary::read(
             self.builder.rpc_url()?,
-            Arc::new(ChainConfig::mainnet().rollup_config()),
-            ChainConfig::mainnet().chain_id,
+            Arc::clone(&self.rollup_config),
+            self.chain_id,
             None,
         )
         .await
@@ -388,8 +402,9 @@ impl SnapshotL2Stack {
 
 #[cfg(test)]
 mod tests {
-    use base_common_chains::Upgrades;
+    use base_common_chains::{ChainConfig, Upgrades};
     use base_common_genesis::BaseUpgrade;
+    use base_execution_chainspec::BaseChainSpec;
     use reth_ethereum_forks::ForkCondition;
 
     use super::{SNAPSHOT_STARTUP_LEAD, SnapshotL2Stack};
@@ -398,6 +413,7 @@ mod tests {
     #[test]
     fn anchors_two_second_schedule_at_first_descendant() {
         let config = SnapshotL2Stack::anchored_rollup_config(
+            ChainConfig::mainnet().rollup_config(),
             30_000_000,
             2_000_000_000,
             DevnetBlockInterval::TwoSeconds,
@@ -411,6 +427,7 @@ mod tests {
     #[test]
     fn anchors_subsecond_schedule_with_rollover() {
         let config = SnapshotL2Stack::anchored_rollup_config(
+            ChainConfig::mainnet().rollup_config(),
             30_000_000,
             2_000_000_000,
             DevnetBlockInterval::TwoHundredMilliseconds,
@@ -427,13 +444,17 @@ mod tests {
     fn subsecond_cl_and_el_activate_denim_at_same_timestamp() {
         let activation = 2_000_000_000;
         let rollup = SnapshotL2Stack::anchored_rollup_config(
+            ChainConfig::mainnet().rollup_config(),
             30_000_000,
             activation,
             DevnetBlockInterval::TwoHundredMilliseconds,
         )
         .unwrap();
-        let chain_spec =
-            SnapshotL2Stack::chain_spec(activation, DevnetBlockInterval::TwoHundredMilliseconds);
+        let chain_spec = SnapshotL2Stack::chain_spec(
+            BaseChainSpec::mainnet(),
+            activation,
+            DevnetBlockInterval::TwoHundredMilliseconds,
+        );
 
         assert!(!rollup.is_denim_active(activation - 1));
         assert!(rollup.is_denim_active(activation));

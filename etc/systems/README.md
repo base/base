@@ -17,7 +17,7 @@ snapshot builder EL <-> standalone L1-free sequencer CL
 ```
 
 Both ELs start from separate writable copies of the same Base mainnet Reth datadir. The builder
-mines real descendants of the captured mainnet head and the follow client canonicalizes those
+mines real descendants of the captured snapshot head and the follow client canonicalizes those
 blocks. Transactions submitted to the builder use its real transaction pool and normal
 `eth_sendRawTransaction` path.
 
@@ -34,7 +34,7 @@ full-block results and do not compare Flashblock latency against the 2s case.
 Run commands from the `base/base` repository root. You need:
 
 - the normal Rust and native build dependencies for this repository;
-- an immutable Base mainnet Reth snapshot;
+- an immutable Base Reth snapshot;
 - two fresh, writable datadirs restored from that snapshot for each run;
 - enough free space for both datadirs to change during the run; and
 - Foundry's `cast` only when manually interacting with `base-devnet`.
@@ -77,6 +77,7 @@ that address in the first local descendant:
 export FUNDER_ADDRESS=$(cast wallet address --private-key "$FUNDER_KEY")
 
 cargo run -p base-system-tests --bin base-devnet -- snapshot \
+  --chain sepolia \
   --builder-datadir "$BUILDER_DATADIR" \
   --client-datadir "$CLIENT_DATADIR" \
   --block-interval 2s \
@@ -87,9 +88,11 @@ cargo run -p base-system-tests --bin base-devnet -- snapshot \
 Use `--block-interval 200ms` for the subsecond variant. The first descendant activates `BaseTime`
 metadata and subsequent blocks advance on a deterministic 200ms schedule.
 
-Startup validates chain ID 8453, the boundary L1-info transaction, `SystemConfig`, and sequence
-number. It waits for the builder to extend the snapshot and for the client to follow before writing
-the runtime file. The process then runs until Ctrl-C and shuts both EL runtimes down gracefully.
+Startup validates the selected chain ID, the boundary L1-info transaction, `SystemConfig`, and
+sequence number. It waits for the builder to extend the snapshot and for the client to follow before
+writing the runtime file. The process then runs until Ctrl-C and shuts both EL runtimes down
+gracefully. `--chain` accepts built-in aliases such as `mainnet` and `sepolia`, or a Base genesis
+JSON path. A custom genesis whose chain ID is not built in also needs `--rollup-config <rollup.json>`.
 
 In another terminal, inspect the machine-readable endpoints and compare the live heads:
 
@@ -133,6 +136,7 @@ mkdir -p results
 export BASE_BENCH_CLIENT_VERSION="base/v0.0.0-$(git rev-parse --short HEAD)"
 
 cargo run --release -p base-system-tests --bin base-bench -- snapshot \
+  --chain mainnet \
   --builder-datadir "$BUILDER_DATADIR" \
   --client-datadir "$CLIENT_DATADIR" \
   --load-test-config \

@@ -23,7 +23,7 @@ use tracing::warn;
 
 use crate::{
     DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, PrometheusBlockCollector,
-    SnapshotL2Stack, SystemTestStackBuilder,
+    SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
 };
 
 /// Base benchmark launcher.
@@ -38,17 +38,23 @@ pub struct BenchmarkCli {
 /// Supported benchmark targets.
 #[derive(Debug, Subcommand)]
 pub enum BenchmarkCommand {
-    /// Run one load test against a Base mainnet snapshot continuation.
+    /// Run one load test against a Base snapshot continuation.
     Snapshot(SnapshotBenchmarkArgs),
 }
 
 /// Arguments for one snapshot-backed benchmark case.
 #[derive(Debug, Args)]
 pub struct SnapshotBenchmarkArgs {
-    /// Writable builder clone of a Base mainnet datadir.
+    /// Built-in Base chain name or path to a Base genesis JSON file.
+    #[arg(long, default_value = "mainnet")]
+    pub chain: String,
+    /// Rollup config JSON for a custom chain JSON whose chain ID is not built in.
+    #[arg(long)]
+    pub rollup_config: Option<PathBuf>,
+    /// Writable builder snapshot datadir.
     #[arg(long, env = "BASE_SNAPSHOT_BUILDER_DATADIR")]
     pub builder_datadir: PathBuf,
-    /// Writable client clone of the same Base mainnet datadir.
+    /// Writable client snapshot datadir for the same chain.
     #[arg(long, env = "BASE_SNAPSHOT_CLIENT_DATADIR")]
     pub client_datadir: PathBuf,
     /// Load-test YAML. RPC and Flashblocks URLs are replaced with launched endpoints.
@@ -80,6 +86,8 @@ const RESULT_FILE_NAME: &str = "benchmark-result.json";
 /// Machine-readable result from one snapshot benchmark case.
 #[derive(Debug, Serialize)]
 pub struct SnapshotBenchmarkResult {
+    /// L2 chain ID of the continued snapshot.
+    pub chain_id: u64,
     /// Selected interval between blocks, in milliseconds.
     pub block_interval_ms: u64,
     /// Immutable snapshot boundary block number.
@@ -147,13 +155,13 @@ pub struct VisualizerRun {
     /// Unique run ID.
     pub id: String,
     /// Network/source label used by the visualizer.
-    pub source_file: &'static str,
+    pub source_file: String,
     /// Directory containing this run's artifacts.
     pub output_dir: String,
     /// Human-readable benchmark name.
-    pub test_name: &'static str,
+    pub test_name: String,
     /// Human-readable benchmark description.
-    pub test_description: &'static str,
+    pub test_description: String,
     /// Stable filter and comparison dimensions.
     pub test_config: BTreeMap<&'static str, serde_json::Value>,
     /// Completion status and headline metrics.
@@ -213,10 +221,14 @@ impl SnapshotBenchmarkArgs {
             .wrap_err("failed to load benchmark load-test configuration")?;
         let block_interval = Self::block_interval_from_test_config(&test_config)?;
         let funder_key = PrivateKeySigner::random();
-        let mut devnet = DevnetConfig::base_mainnet_snapshot(
+        let mut devnet = DevnetConfig::snapshot(
             self.builder_datadir.clone(),
             self.client_datadir.clone(),
-        );
+            SnapshotChainConfig {
+                chain: self.chain.clone(),
+                rollup_config: self.rollup_config.clone(),
+            },
+        )?;
         let DevnetL2State::Snapshot(snapshot) = &mut devnet.l2_state else {
             unreachable!("snapshot constructor must create snapshot state")
         };
@@ -294,7 +306,7 @@ impl SnapshotBenchmarkArgs {
         test_config.flashblocks_ws = (block_interval == DevnetBlockInterval::TwoSeconds)
             .then(|| stack.builder_flashblocks_url())
             .transpose()?;
-        test_config.chain_id = Some(8453);
+        test_config.chain_id = Some(stack.chain_id());
         let load_config = test_config.to_load_config(None)?;
         let funder_address = funder_key.address();
         let sequencer_metrics =
@@ -343,6 +355,7 @@ impl SnapshotBenchmarkArgs {
         );
 
         let result = SnapshotBenchmarkResult {
+            chain_id: stack.chain_id(),
             block_interval_ms: block_interval.duration().as_millis() as u64,
             boundary_number: stack.boundary().head.number,
             boundary_hash: stack.boundary().head.hash,
@@ -493,6 +506,7 @@ impl SnapshotBenchmarkArgs {
         let test_config = BTreeMap::from([
             ("BenchmarkRun", serde_json::Value::String(self.benchmark_run.clone())),
             ("Scenario", serde_json::Value::String(self.scenario.clone())),
+            ("ChainId", result.chain_id.into()),
             ("BlockTimeMilliseconds", result.block_interval_ms.into()),
             ("GasLimit", gas_limit.into()),
             ("NodeType", serde_json::Value::String("base-reth-node".to_string())),
@@ -502,10 +516,13 @@ impl SnapshotBenchmarkArgs {
         let metadata = VisualizerMetadata {
             runs: vec![VisualizerRun {
                 id: run_id.to_string(),
-                source_file: "base-mainnet-snapshot",
+                source_file: format!("base-{}-snapshot", result.chain_id),
                 output_dir: output_name.to_string(),
-                test_name: "Base mainnet snapshot throughput",
-                test_description: "Saturated block production from a Base mainnet snapshot",
+                test_name: format!("Base {} snapshot throughput", result.chain_id),
+                test_description: format!(
+                    "Saturated block production from a Base {} snapshot",
+                    result.chain_id
+                ),
                 test_config,
                 result: VisualizerRunResult {
                     success: result.load_test.error.is_none(),
@@ -614,6 +631,8 @@ mod tests {
         let cli = BenchmarkCli::parse_from([
             "base-bench",
             "snapshot",
+            "--chain",
+            "sepolia",
             "--builder-datadir",
             "/snapshot/builder",
             "--client-datadir",
@@ -627,6 +646,7 @@ mod tests {
         ]);
 
         let BenchmarkCommand::Snapshot(args) = cli.command;
+        assert_eq!(args.chain, "sepolia");
         assert_eq!(args.output_dir.to_string_lossy(), "results/case-a");
         assert_eq!(args.scenario, "example-scenario");
         assert_eq!(args.benchmark_run, "snapshot-throughput");
@@ -639,6 +659,8 @@ mod tests {
         let cli = BenchmarkCli::parse_from([
             "base-bench",
             "snapshot",
+            "--chain",
+            "mainnet",
             "--builder-datadir",
             "/snapshot/builder",
             "--client-datadir",
@@ -663,6 +685,8 @@ mod tests {
         let cli = BenchmarkCli::parse_from([
             "base-bench",
             "snapshot",
+            "--chain",
+            "mainnet",
             "--builder-datadir",
             "/snapshot/builder",
             "--client-datadir",
@@ -681,6 +705,7 @@ mod tests {
         let output = tempfile::tempdir().unwrap();
         let output_name = output.path().file_name().unwrap().to_string_lossy().to_string();
         let result = SnapshotBenchmarkResult {
+            chain_id: 8453,
             block_interval_ms: 200,
             boundary_number: 9,
             boundary_hash: B256::ZERO,
