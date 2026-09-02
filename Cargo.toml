@@ -131,8 +131,8 @@ inherits = "release"
 debug = true
 strip = false
 
-# TODO: add `rustflags = ["-Cforce-frame-pointers=yes"]` here once
-# `profile-rustflags` is stabilized (tracking: rust-lang/cargo#10271)
+# Docker profiling builds add `-Cforce-frame-pointers=yes` in docker-bake.hcl.
+# Move it here once profile-rustflags is stabilized (tracking: rust-lang/cargo#10271).
 [profile.profiling]
 inherits = "release"
 lto = false

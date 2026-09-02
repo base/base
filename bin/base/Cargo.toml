@@ -39,6 +39,7 @@ alloy-chains = { workspace = true, features = ["std"] }
 # reth
 reth-cli-runner.workspace = true
 reth-cli-commands.workspace = true
+reth-cli-util = { workspace = true, optional = true }
 
 # cli
 clap = { workspace = true, features = ["env"] }
@@ -55,3 +56,11 @@ figment = { workspace = true, features = ["env", "toml"] }
 [dev-dependencies]
 base-common-genesis.workspace = true
 figment = { workspace = true, features = ["test"] }
+
+[features]
+jemalloc-prof = [
+	"base-builder-core/jemalloc-prof",
+	"base-execution-cli/jemalloc-symbols",
+	"dep:reth-cli-util",
+	"reth-cli-util/jemalloc-prof",
+]

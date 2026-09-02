@@ -656,6 +656,17 @@ services:
       - pyroscope
     restart: unless-stopped
 
+  profiling-tools:
+    image: base-profiling-tools:local
+    profiles: ["profiling-tools"]
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.profiling-tools
+    volumes:
+      - ../../profiling-results:/profiles
+    depends_on:
+      - pyroscope
+
   prometheus:
     image: prom/prometheus:v2.51.0
     container_name: prometheus
