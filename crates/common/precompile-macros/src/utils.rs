@@ -16,19 +16,47 @@ type ExtractedAttributes = (Option<U256>, Option<U256>, Option<NamespaceInfo>);
 /// Parses a slot value from a literal.
 ///
 /// Supports:
-/// - Integer literals: decimal (`42`) or hexadecimal (`0x2a`)
+/// - Integer literals in any Rust base:
+///   - Decimal (`42`, `42u64`)
+///   - Hexadecimal (`0x2a`, `0x2au64`)
+///   - Binary (`0b101`, `0b101u64`)
+///   - Octal (`0o17`, `0o17u64`)
 /// - String literals: computes keccak256 hash of the string
 fn parse_slot_value(value: &Lit) -> syn::Result<U256> {
     match value {
         Lit::Int(int) => {
-            let lit_str = int.to_string();
-            let slot = lit_str
-                .strip_prefix("0x")
-                .map_or_else(
-                    || U256::from_str_radix(&lit_str, 10),
-                    |hex| U256::from_str_radix(hex, 16),
-                )
-                .map_err(|_| syn::Error::new_spanned(int, "Invalid slot number"))?;
+            let raw = int.to_string();
+            // Strip any Rust integer type suffix (e.g. u64, usize, i32, …).
+            const SUFFIXES: &[&str] = &[
+                "u128", "u64", "u32", "u16", "u8", "usize", "i128", "i64", "i32", "i16", "i8",
+                "isize",
+            ];
+            let stripped =
+                SUFFIXES.iter().find_map(|s| raw.strip_suffix(s)).unwrap_or(raw.as_str());
+
+            let slot = if let Some(hex) =
+                stripped.strip_prefix("0x").or_else(|| stripped.strip_prefix("0X"))
+            {
+                // Hexadecimal literal.
+                let digits: String = hex.chars().filter(|&c| c != '_').collect();
+                U256::from_str_radix(&digits, 16)
+            } else if let Some(bin) =
+                stripped.strip_prefix("0b").or_else(|| stripped.strip_prefix("0B"))
+            {
+                // Binary literal.
+                let digits: String = bin.chars().filter(|&c| c != '_').collect();
+                U256::from_str_radix(&digits, 2)
+            } else if let Some(oct) =
+                stripped.strip_prefix("0o").or_else(|| stripped.strip_prefix("0O"))
+            {
+                // Octal literal.
+                let digits: String = oct.chars().filter(|&c| c != '_').collect();
+                U256::from_str_radix(&digits, 8)
+            } else {
+                // Decimal literal: use base10_digits() which already strips suffix and separators.
+                U256::from_str_radix(int.base10_digits(), 10)
+            }
+            .map_err(|_| syn::Error::new_spanned(int, "Invalid slot number"))?;
             Ok(slot)
         }
         Lit::Str(lit) => Ok(keccak256(lit.value().as_bytes()).into()),
@@ -348,5 +376,65 @@ mod tests {
     fn test_parse_namespace_id_rejects_whitespace() {
         let id: LitStr = parse_quote!("b20 policy");
         assert!(parse_namespace_id(id).is_err());
+    }
+
+    #[test]
+    fn test_parse_slot_value_decimal() {
+        let lit: Lit = parse_quote!(42);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(42u64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_hex() {
+        let lit: Lit = parse_quote!(0x2a);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(42u64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_binary() {
+        let lit: Lit = parse_quote!(0b101);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(5u64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_octal() {
+        let lit: Lit = parse_quote!(0o17);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(15u64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_decimal_with_suffix() {
+        let lit: Lit = parse_quote!(42u64);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(42u64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_hex_with_suffix() {
+        let lit: Lit = parse_quote!(0x2au64);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(42u64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_hex_with_underscores() {
+        let lit: Lit = parse_quote!(0xFF_FF);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(0xFFFFu64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_binary_with_underscores() {
+        let lit: Lit = parse_quote!(0b1010_0101);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(0b10100101u64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_decimal_with_underscores() {
+        let lit: Lit = parse_quote!(1_000);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(1000u64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_octal_with_underscores() {
+        let lit: Lit = parse_quote!(0o7_7);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(0o77u64));
     }
 }
