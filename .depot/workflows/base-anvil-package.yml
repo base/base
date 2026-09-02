@@ -15,7 +15,7 @@ on:
       base_anvil_ref:
         description: "base/base-anvil ref to build from"
         required: false
-        default: 9df661bc39c6fb96ef28bfd5ff5d345931f133d3
+        default: 3983d1f5c13592c5074bb47df67fa58f1295d758
       base_std_ref:
         description: "base/base-std ref to smoke test against"
         required: false
@@ -24,7 +24,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 env:
-  BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || '9df661bc39c6fb96ef28bfd5ff5d345931f133d3' }}
+  BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || '3983d1f5c13592c5074bb47df67fa58f1295d758' }}
   BASE_STD_REF: ${{ github.event.inputs.base_std_ref || 'main' }}
   CARGO_TERM_COLOR: always
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/base-anvil
@@ -329,7 +329,7 @@ jobs:
           primary_tag="sha-$GITHUB_SHA"
           tags=("$REGISTRY_IMAGE:$primary_tag")
 
-          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_REF" == "9df661bc39c6fb96ef28bfd5ff5d345931f133d3" && "$BASE_STD_REF" == "main" ]]; then
+          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_REF" == "3983d1f5c13592c5074bb47df67fa58f1295d758" && "$BASE_STD_REF" == "main" ]]; then
             tags+=("$REGISTRY_IMAGE:main")
             tags+=("$REGISTRY_IMAGE:main-$commit_date-$short_sha")
           else
