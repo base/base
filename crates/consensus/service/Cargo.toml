@@ -91,8 +91,10 @@ httpmock.workspace = true
 tempfile.workspace = true
 arbitrary.workspace = true
 alloy-network.workspace = true
+tracing-subscriber.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-rpc-types.workspace = true
+base-protocol = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["test-util"] }
 alloy-primitives = { workspace = true, features = ["k256"] }
 metrics-util = { workspace = true, features = ["debugging"] }
