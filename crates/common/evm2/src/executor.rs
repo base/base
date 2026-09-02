@@ -25,13 +25,44 @@ impl core::fmt::Display for CumulativeGasOverflow {
 
 impl core::error::Error for CumulativeGasOverflow {}
 
+/// Error returned when a block's pre-execution block-boundary state is invalid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreExecutionError {
+    /// A post-Cancun block did not carry a parent beacon block root. EIP-4788 requires every
+    /// post-Cancun block to supply one, so its absence makes the block invalid.
+    MissingParentBeaconBlockRoot,
+    /// A Cancun genesis block (number 0) carried a non-zero parent beacon block root. EIP-4788
+    /// requires the genesis beacon root to be zero.
+    CancunGenesisParentBeaconBlockRootNotZero {
+        /// The non-zero parent beacon block root the genesis block carried.
+        parent_beacon_block_root: B256,
+    },
+}
+
+impl core::fmt::Display for PreExecutionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::MissingParentBeaconBlockRoot => {
+                f.write_str("missing parent beacon block root for post-Cancun block")
+            }
+            Self::CancunGenesisParentBeaconBlockRootNotZero { parent_beacon_block_root } => write!(
+                f,
+                "Cancun genesis parent beacon block root must be zero, got {parent_beacon_block_root}"
+            ),
+        }
+    }
+}
+
+impl core::error::Error for PreExecutionError {}
+
 /// Block-boundary context for pre-execution system calls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BaseBlockExecutionCtx {
     /// The parent block hash, stored by the EIP-2935 block-hashes contract (Prague onwards).
     pub parent_hash: B256,
     /// The parent beacon block root, stored by the EIP-4788 beacon-roots contract (Cancun
-    /// onwards). `None` when the block carries no beacon root.
+    /// onwards). Required for every post-Cancun non-genesis block; `None` is only valid before
+    /// Cancun. A post-Cancun `None` is rejected by [`BaseBlockExecutor::apply_pre_execution`].
     pub parent_beacon_block_root: Option<B256>,
 }
 
@@ -79,19 +110,42 @@ impl<'a> BaseBlockExecutor<'a> {
     /// EIP-2935 block-hashes call (Prague onwards) then the EIP-4788 beacon-roots call (Cancun
     /// onwards). Each is a system call whose state changes are committed into the block state; if
     /// the target system contract is not deployed, the call is a no-op.
+    ///
+    /// The genesis block (number 0) runs neither call, matching the reference: EIP-2935 no-ops at
+    /// genesis, and EIP-4788 requires the genesis beacon root to be zero and performs no system
+    /// call. A post-Cancun block that carries no parent beacon block root, or a Cancun genesis
+    /// block whose beacon root is non-zero, is rejected as invalid ([`PreExecutionError`]).
     pub fn apply_pre_execution(&mut self) -> HandlerResult<()> {
         let spec = self.evm.spec_id();
-        if (spec as u8) >= (SpecId::PRAGUE as u8) {
+        // The genesis block never runs the pre-execution system calls, matching the reference.
+        let is_genesis = self.evm.block().number.is_zero();
+
+        // EIP-2935 block-hashes call (Prague onwards), skipped at genesis.
+        if (spec as u8) >= (SpecId::PRAGUE as u8) && !is_genesis {
             let data = Bytes::copy_from_slice(self.ctx.parent_hash.as_slice());
             let executed = self.evm.system_call(SystemTx::new(HISTORY_STORAGE_ADDRESS, data))?;
             let _ = executed.commit_to(&mut self.block_state);
         }
-        if (spec as u8) >= (SpecId::CANCUN as u8)
-            && let Some(root) = self.ctx.parent_beacon_block_root
-        {
-            let data = Bytes::copy_from_slice(root.as_slice());
-            let executed = self.evm.system_call(SystemTx::new(BEACON_ROOTS_ADDRESS, data))?;
-            let _ = executed.commit_to(&mut self.block_state);
+
+        // EIP-4788 beacon-roots call (Cancun onwards). A post-Cancun block must carry a parent
+        // beacon block root; at genesis that root must be zero and no system call runs.
+        if (spec as u8) >= (SpecId::CANCUN as u8) {
+            let root = self.ctx.parent_beacon_block_root.ok_or_else(|| {
+                HandlerError::external(PreExecutionError::MissingParentBeaconBlockRoot)
+            })?;
+            if is_genesis {
+                if !root.is_zero() {
+                    return Err(HandlerError::external(
+                        PreExecutionError::CancunGenesisParentBeaconBlockRootNotZero {
+                            parent_beacon_block_root: root,
+                        },
+                    ));
+                }
+            } else {
+                let data = Bytes::copy_from_slice(root.as_slice());
+                let executed = self.evm.system_call(SystemTx::new(BEACON_ROOTS_ADDRESS, data))?;
+                let _ = executed.commit_to(&mut self.block_state);
+            }
         }
         Ok(())
     }
