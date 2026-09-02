@@ -1055,7 +1055,7 @@ where
             message = "Time drift for building round",
             ?target_time,
             time_drift = self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()),
-            ?timestamp,
+            ?timestamp
         );
         // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
         let time_drift = time_drift.min(self.config.block_time);
