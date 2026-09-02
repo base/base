@@ -33,7 +33,7 @@ jobs:
           - fork: Beryl
             key: beryl
             upgrade: beryl
-            base_std_ref: d5c88cb93b2b863c4c2d4fcc747a76cb17f190b3
+            base_std_ref: 66008b966a5595e3ec49959e5a5454f2789b1af2
           - fork: Cobalt
             key: cobalt
             upgrade: cobalt
