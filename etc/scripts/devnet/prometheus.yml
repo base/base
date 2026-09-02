@@ -27,6 +27,11 @@ scrape_configs:
     static_configs:
       - targets: ['op-conductor-0:6090', 'op-conductor-1:6091', 'op-conductor-2:6092']
 
+  - job_name: 'tips_ingress'
+    scrape_timeout: 2s
+    static_configs:
+      - targets: ['ingress-rpc:9002']
+
   - job_name: 'batcher'
     static_configs:
       - targets: ['base-batcher:6060']
