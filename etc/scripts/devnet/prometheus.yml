@@ -11,6 +11,10 @@ scrape_configs:
     static_configs:
       - targets: ['base-builder:7090']
 
+  - job_name: 'l2_sequencer'
+    static_configs:
+      - targets: ['base-sequencer-1:10090', 'base-sequencer-2:11090']
+
   - job_name: 'l2_client'
     static_configs:
       - targets: ['base-client:8090']
@@ -18,6 +22,10 @@ scrape_configs:
   - job_name: 'l2_base_rpc'
     static_configs:
       - targets: ['base-rpc:8190']
+
+  - job_name: 'conductor'
+    static_configs:
+      - targets: ['op-conductor-0:6090', 'op-conductor-1:6091', 'op-conductor-2:6092']
 
   - job_name: 'batcher'
     static_configs:
