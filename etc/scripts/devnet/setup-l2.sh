@@ -19,6 +19,7 @@ L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb961
 L2_EL_BOOTNODE_ENODE="${L2_EL_BOOTNODE_ENODE:-enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303}"
 L2_CL_BOOTNODE_P2P_KEY="${L2_CL_BOOTNODE_P2P_KEY:-2222222222222222222222222222222222222222222222222222222222222222}"
 L2_CL_BOOTNODE_ENR_PATH="${L2_CL_BOOTNODE_ENR_PATH:-/bootnodes/cl-bootnode.enr}"
+NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS=200
 
 if [ "${SETUP_L2_SKIP_IF_CONFIGURED:-}" = "true" ] && [ -f "$OUTPUT_DIR/.setup-complete" ]; then
   echo "L2 configuration already generated; reusing $OUTPUT_DIR"
@@ -31,6 +32,26 @@ replace_output_file() {
 
   chmod 0644 "$source_file"
   mv "$source_file" "$destination_file"
+}
+
+block_to_timestamp() {
+  local target_block="$1"
+
+  if [ -z "$L2_BASE_DENIM_BLOCK" ] || [ "$target_block" -le "$L2_BASE_DENIM_BLOCK" ]; then
+    echo $((L2_GENESIS_TIME + L2_BLOCK_TIME * target_block))
+  else
+    echo $((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_DENIM_BLOCK + (target_block - L2_BASE_DENIM_BLOCK) * NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS / 1000))
+  fi
+}
+
+validate_activation_block_alignment() {
+  local variable_name="$1"
+  local target_block="$2"
+
+  if [ -n "$L2_BASE_DENIM_BLOCK" ] && [ -n "$target_block" ] && [ "$target_block" -gt "$L2_BASE_DENIM_BLOCK" ] && [ $(((target_block - L2_BASE_DENIM_BLOCK) * NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS % 1000)) -ne 0 ]; then
+    echo "ERROR: $variable_name must align to a whole-second timestamp after L2_BASE_DENIM_BLOCK (post-Denim block offset must be divisible by 5), got: $target_block"
+    exit 1
+  fi
 }
 
 if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; then
@@ -57,6 +78,13 @@ if [ -n "$L2_ISTHMUS_BLOCK" ] && ! [[ "$L2_ISTHMUS_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_ISTHMUS_BLOCK must be a non-negative integer when set, got: $L2_ISTHMUS_BLOCK"
   exit 1
 fi
+
+validate_activation_block_alignment "L2_BASE_AZUL_BLOCK" "$L2_BASE_AZUL_BLOCK"
+validate_activation_block_alignment "L2_BASE_BERYL_BLOCK" "$L2_BASE_BERYL_BLOCK"
+validate_activation_block_alignment "L2_BASE_COBALT_BLOCK" "$L2_BASE_COBALT_BLOCK"
+validate_activation_block_alignment "L2_BASE_DENIM_BLOCK" "$L2_BASE_DENIM_BLOCK"
+validate_activation_block_alignment "L2_BASE_ZENITH_BLOCK" "$L2_BASE_ZENITH_BLOCK"
+validate_activation_block_alignment "L2_ISTHMUS_BLOCK" "$L2_ISTHMUS_BLOCK"
 
 echo "=== L2 Genesis Generator (Live Deployment) ==="
 echo "L1 RPC URL: $L1_RPC_URL"
@@ -211,7 +239,7 @@ echo "Patched activation admin into genesis config"
 L2_BLOCK_TIME=$(jq -re '.block_time' "$OUTPUT_DIR/rollup.json")
 L2_GENESIS_TIME=$(jq -re '.genesis.l2_time' "$OUTPUT_DIR/rollup.json")
 if [ -n "$L2_ISTHMUS_BLOCK" ]; then
-  L2_ISTHMUS_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_ISTHMUS_BLOCK))
+  L2_ISTHMUS_TIME=$(block_to_timestamp "$L2_ISTHMUS_BLOCK")
 
   echo ""
   echo "=== Configuring Isthmus Activation ==="
@@ -246,7 +274,7 @@ else
 fi
 
 if [ -n "$L2_BASE_AZUL_BLOCK" ]; then
-  L2_BASE_AZUL_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_AZUL_BLOCK))
+  L2_BASE_AZUL_TIME=$(block_to_timestamp "$L2_BASE_AZUL_BLOCK")
 
   echo ""
   echo "=== Configuring Base Azul Activation ==="
@@ -282,7 +310,7 @@ else
 fi
 
 if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
-  L2_BASE_BERYL_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_BERYL_BLOCK))
+  L2_BASE_BERYL_TIME=$(block_to_timestamp "$L2_BASE_BERYL_BLOCK")
 
   echo ""
   echo "=== Configuring Base Beryl Activation ==="
@@ -317,7 +345,7 @@ else
 fi
 
 if [ -n "$L2_BASE_COBALT_BLOCK" ]; then
-  L2_BASE_COBALT_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_COBALT_BLOCK))
+  L2_BASE_COBALT_TIME=$(block_to_timestamp "$L2_BASE_COBALT_BLOCK")
 
   echo ""
   echo "=== Configuring Base Cobalt Activation ==="
@@ -352,7 +380,7 @@ else
 fi
 
 if [ -n "$L2_BASE_DENIM_BLOCK" ]; then
-  L2_BASE_DENIM_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_DENIM_BLOCK))
+  L2_BASE_DENIM_TIME=$(block_to_timestamp "$L2_BASE_DENIM_BLOCK")
 
   echo ""
   echo "=== Configuring Base Denim Activation ==="
@@ -389,7 +417,7 @@ fi
 # Zenith is the permanently-off gate used for future hardfork feature testing. It is not
 # contract-backed, so genesis config is the only way to schedule it.
 if [ -n "$L2_BASE_ZENITH_BLOCK" ]; then
-  L2_BASE_ZENITH_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_ZENITH_BLOCK))
+  L2_BASE_ZENITH_TIME=$(block_to_timestamp "$L2_BASE_ZENITH_BLOCK")
 
   echo ""
   echo "=== Configuring Base Zenith Activation ==="
