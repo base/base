@@ -40,6 +40,7 @@ group "rust-services" {
     "audit-archiver",
     "batcher",
     "sidecrush",
+    "load-tester",
     "prover-service",
     "zk-host",
   ]
@@ -184,6 +185,12 @@ target "sidecrush" {
     SCCACHE_CACHE_ID = "rust-services-sidecrush-sccache"
   }
   tags = ["sidecrush:local"]
+}
+
+target "load-tester" {
+  inherits = ["_rust-service-common"]
+  target = "load-tester"
+  tags = ["base-load-tester:local"]
 }
 
 target "prover-service" {
