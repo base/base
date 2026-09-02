@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 import unittest
 from dataclasses import dataclass
@@ -389,16 +390,28 @@ def pin_reth(root: Path, *args: str) -> None:
 
 
 def git_identity_env(root: Path) -> dict[str, str]:
-    """Copy author identity from the base/base checkout into the fork clone."""
+    """Use the operator's git identity for fork squash commits and tags.
+
+    Reads `user.name` and `user.email` from the consumer checkout (local, then
+    global). The last commit on the branch is whoever landed HEAD, not the
+    person running `prepare`.
+    """
     env = os.environ.copy()
-    name = git(root, "log", "-1", "--format=%an").strip()
-    email = git(root, "log", "-1", "--format=%ae").strip()
-    if name:
-        env.setdefault("GIT_AUTHOR_NAME", name)
-        env.setdefault("GIT_COMMITTER_NAME", name)
-    if email:
-        env.setdefault("GIT_AUTHOR_EMAIL", email)
-        env.setdefault("GIT_COMMITTER_EMAIL", email)
+    name = run(
+        ["git", "config", "--get", "user.name"], cwd=root, check=False
+    ).stdout.strip()
+    email = run(
+        ["git", "config", "--get", "user.email"], cwd=root, check=False
+    ).stdout.strip()
+    if not name or not email:
+        raise ReleaseError(
+            "git user.name and user.email must be set so squash commits "
+            "and tags use the identity of the operator running prepare"
+        )
+    env["GIT_AUTHOR_NAME"] = name
+    env["GIT_COMMITTER_NAME"] = name
+    env["GIT_AUTHOR_EMAIL"] = email
+    env["GIT_COMMITTER_EMAIL"] = email
     return env
 
 
@@ -593,3 +606,20 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn(pr.url, text)
         self.assertIn(fork_pr.url, text)
         self.assertNotIn("commit =", text)
+
+    def test_git_identity_env_uses_config_not_head_author(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run(["git", "init"], cwd=root)
+            run(["git", "config", "user.name", "Head Author"], cwd=root)
+            run(["git", "config", "user.email", "head@example.com"], cwd=root)
+            (root / "file").write_text("x\n", encoding="utf-8")
+            run(["git", "add", "file"], cwd=root)
+            run(["git", "commit", "-m", "head"], cwd=root)
+            run(["git", "config", "user.name", "Operator"], cwd=root)
+            run(["git", "config", "user.email", "operator@example.com"], cwd=root)
+            env = git_identity_env(root)
+            self.assertEqual(env["GIT_AUTHOR_NAME"], "Operator")
+            self.assertEqual(env["GIT_COMMITTER_NAME"], "Operator")
+            self.assertEqual(env["GIT_AUTHOR_EMAIL"], "operator@example.com")
+            self.assertEqual(env["GIT_COMMITTER_EMAIL"], "operator@example.com")
