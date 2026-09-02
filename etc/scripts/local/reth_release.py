@@ -11,11 +11,9 @@ or at `--fork` so Base-specific patches do not have to be opened upstream.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import sys
-import tempfile
 import tomllib
 import unittest
 from dataclasses import dataclass
@@ -270,7 +268,7 @@ def non_merge_commits(clone: Path, commits: tuple[str, ...]) -> list[str]:
     return kept
 
 
-def squash_pr(clone: Path, pr: PatchPr, env: dict[str, str]) -> None:
+def squash_pr(clone: Path, pr: PatchPr) -> None:
     """Cherry-pick every non-merge PR commit and squash them into one commit."""
     source = f"https://github.com/{pr.repo}"
     local_ref = f"refs/reths/{pr.repo.replace('/', '-')}-{pr.number}"
@@ -289,7 +287,6 @@ def squash_pr(clone: Path, pr: PatchPr, env: dict[str, str]) -> None:
     result = run(
         ["git", "cherry-pick", "-n", *picks],
         cwd=clone,
-        env=env,
         check=False,
     )
     if result.returncode != 0:
@@ -309,7 +306,7 @@ def squash_pr(clone: Path, pr: PatchPr, env: dict[str, str]) -> None:
         f"{squash_marker(pr)} {pr.title}\n\n"
         f"Squashed {pr.url} at {pr.head}."
     )
-    run(["git", "commit", "-m", message], cwd=clone, env=env)
+    run(["git", "commit", "-m", message], cwd=clone)
 
 
 def current_resolved(root: Path) -> list[tuple[str, str]]:
@@ -389,32 +386,6 @@ def pin_reth(root: Path, *args: str) -> None:
         raise ReleaseError("pin-reth failed")
 
 
-def git_identity_env(root: Path) -> dict[str, str]:
-    """Use the operator's git identity for fork squash commits and tags.
-
-    Reads `user.name` and `user.email` from the consumer checkout (local, then
-    global). The last commit on the branch is whoever landed HEAD, not the
-    person running `prepare`.
-    """
-    env = os.environ.copy()
-    name = run(
-        ["git", "config", "--get", "user.name"], cwd=root, check=False
-    ).stdout.strip()
-    email = run(
-        ["git", "config", "--get", "user.email"], cwd=root, check=False
-    ).stdout.strip()
-    if not name or not email:
-        raise ReleaseError(
-            "git user.name and user.email must be set so squash commits "
-            "and tags use the identity of the operator running prepare"
-        )
-    env["GIT_AUTHOR_NAME"] = name
-    env["GIT_COMMITTER_NAME"] = name
-    env["GIT_AUTHOR_EMAIL"] = email
-    env["GIT_COMMITTER_EMAIL"] = email
-    return env
-
-
 def annotated_tag_message(upstream_tag: str, prs: list[PatchPr]) -> str:
     """Body for the immutable fork tag."""
     lines = [f"Reth {upstream_tag} plus squashed PRs.", ""]
@@ -453,7 +424,6 @@ def prepare_release(
     fork_tag = next_base_tag(upstream_tag, existing_tags(clone))
     backport_branch = f"backport/{upstream_tag}/{line}"
 
-    env = git_identity_env(root)
     remote_backport = run(
         ["git", "ls-remote", "--heads", "origin", backport_branch],
         cwd=clone,
@@ -469,14 +439,13 @@ def prepare_release(
             print(f"already on {backport_branch}: {pr.url}")
             continue
         print(f"squashing {pr.url} ({len(pr.commits)} commits) onto {upstream_tag}")
-        squash_pr(clone, pr, env)
+        squash_pr(clone, pr)
     fork_rev = git(clone, "rev-parse", "HEAD").strip().lower()
     if git(clone, "tag", "--list", fork_tag).strip():
         git(clone, "tag", "-d", fork_tag)
     run(
         ["git", "tag", "-a", fork_tag, "-m", annotated_tag_message(upstream_tag, prs)],
         cwd=clone,
-        env=env,
     )
 
     if not skip_push:
@@ -606,20 +575,3 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn(pr.url, text)
         self.assertIn(fork_pr.url, text)
         self.assertNotIn("commit =", text)
-
-    def test_git_identity_env_uses_config_not_head_author(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            run(["git", "init"], cwd=root)
-            run(["git", "config", "user.name", "Head Author"], cwd=root)
-            run(["git", "config", "user.email", "head@example.com"], cwd=root)
-            (root / "file").write_text("x\n", encoding="utf-8")
-            run(["git", "add", "file"], cwd=root)
-            run(["git", "commit", "-m", "head"], cwd=root)
-            run(["git", "config", "user.name", "Operator"], cwd=root)
-            run(["git", "config", "user.email", "operator@example.com"], cwd=root)
-            env = git_identity_env(root)
-            self.assertEqual(env["GIT_AUTHOR_NAME"], "Operator")
-            self.assertEqual(env["GIT_COMMITTER_NAME"], "Operator")
-            self.assertEqual(env["GIT_AUTHOR_EMAIL"], "operator@example.com")
-            self.assertEqual(env["GIT_COMMITTER_EMAIL"], "operator@example.com")
