@@ -121,6 +121,16 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 
+# `release` and `maxperf` both set `strip = "symbols"` (see above), which makes
+# every CPU profiler produce address-only output. This profile keeps production
+# codegen identical (opt-level=3, lto="fat", codegen-units=1, panic="unwind")
+# while restoring symbols. Debug info is not loaded at runtime, so it costs
+# nothing but binary size.
+[profile.maxperf-symbols]
+inherits = "maxperf"
+debug = "line-tables-only"
+strip = "none"
+
 # `cargo bench` inherits `release`, which strips symbols. iai-callgrind drives Callgrind,
 # which needs the symbol table and debug info to locate the benchmark function it toggles
 # collection on — without them every counter reads zero. Keep optimizations, restore
