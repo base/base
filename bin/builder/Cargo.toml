@@ -25,6 +25,7 @@ base-builder-core.workspace = true
 base-shadow-indexer.workspace = true
 base-builder-multiplex.workspace = true
 base-builder-metering.workspace = true
+base-builder-profiling.workspace = true
 base-observability-events.workspace = true
 
 # reth
