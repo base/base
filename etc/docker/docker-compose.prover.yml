@@ -40,8 +40,11 @@ services:
       prover-service-postgres:
         condition: service_healthy
     ports:
-      # Requester RPC. The worker RPC (9001) and Postgres stay internal.
-      - "${PROVER_SERVICE_RPC_PORT:-9000}:9000"
+      # Requester RPC, loopback-only: the API is unauthenticated and can spend
+      # the requester key's deposited PROVE, so widening this needs the
+      # operator's own authenticated proxy. The override is a bare port number.
+      # The worker RPC (9001) and Postgres stay internal.
+      - "127.0.0.1:${PROVER_SERVICE_RPC_PORT:-9000}:9000"
     environment:
       - RPC_LISTEN_ADDR=0.0.0.0:9000
       - WORKER_RPC_LISTEN_ADDR=0.0.0.0:9001

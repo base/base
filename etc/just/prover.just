@@ -32,6 +32,15 @@ up network:
       exit 1
     fi
 
+    # The compose file publishes the requester RPC as 127.0.0.1:<port>:9000, so
+    # this override fills the host-port position only.
+    if [ -n "${PROVER_SERVICE_RPC_PORT:-}" ] && ! [[ "$PROVER_SERVICE_RPC_PORT" =~ ^[0-9]+$ ]]; then
+      echo "ERROR: PROVER_SERVICE_RPC_PORT must be a bare port number (got '${PROVER_SERVICE_RPC_PORT}')" >&2
+      echo "The requester RPC is unauthenticated and is published to loopback only." >&2
+      echo "To reach it from another host, front it with your own authenticated proxy." >&2
+      exit 1
+    fi
+
     if [ -z "${NETWORK_PRIVATE_KEY:-}" ]; then
       echo "NOTE: NETWORK_PRIVATE_KEY is not set; starting a dry-run-only stack." >&2
       echo "The paid network backend stays disabled until the stack is restarted with a funded requester key." >&2

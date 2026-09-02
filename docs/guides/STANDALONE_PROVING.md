@@ -161,7 +161,26 @@ Stop the stack with `just prover down sepolia`; Postgres data under
 restarts. Stream logs with `just prover logs sepolia`.
 
 The RPC port defaults to 9000 and can be overridden with
-`PROVER_SERVICE_RPC_PORT`.
+`PROVER_SERVICE_RPC_PORT`. Pass a bare port number: the value fills the
+host-port position of a `127.0.0.1:<port>:9000` mapping.
+
+## Requester RPC exposure
+
+The requester RPC is published on `127.0.0.1` only, so it is reachable from the
+machine running the stack and nowhere else. Keep it that way unless you add
+access control yourself.
+
+The API is unauthenticated. Any caller that reaches it can request proofs on
+the paid `network` backend against your deposited PROVE, and can also call
+`deleteProofRequest`, `deleteProofsByTeeSigner`, and `listProofs` to list or
+delete proofs you already paid for. There is no cumulative spending cap: a
+caller supplying fresh session IDs can queue paid requests without bound.
+
+If you need to drive the stack from another host, do not republish port 9000 on
+a public interface. Put your own authenticated, TLS-terminating reverse proxy
+in front of the loopback port, and restrict which callers and which
+`zk_backend` values you allow through it. The same applies to the worker RPC
+(9001) and Postgres, which are not published to the host at all.
 
 ## Splitting propose and submit
 
