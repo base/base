@@ -1,0 +1,29 @@
+[package]
+name = "base-builder-profiling"
+description = "Continuous CPU profiling endpoint for the shadow builder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# errors
+eyre.workspace = true
+thiserror.workspace = true
+
+# tracing
+tracing = { workspace = true, features = ["std"] }
+
+# async
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+
+# http
+axum = { workspace = true, features = ["http1", "tokio", "query"] }
+
+# profiling
+pprof = { workspace = true, features = ["flamegraph", "protobuf-codec"] }

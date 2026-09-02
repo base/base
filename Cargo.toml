@@ -190,6 +190,7 @@ base-builder-core = { path = "crates/builder/core" }
 base-builder-multiplex = { path = "crates/builder/multiplex" }
 base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
+base-builder-profiling = { path = "crates/builder/profiling" }
 
 # Consensus
 base-consensus-cli = { path = "crates/consensus/cli" }
@@ -467,6 +468,9 @@ metrics = { version = "0.24.3", default-features = false }
 metrics-util = { version = "0.20.1", default-features = false }
 metrics-process = { version = "2.4.3", default-features = false }
 metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
+
+# profiling
+pprof = "0.15"
 
 # aws
 aws-nitro-enclaves-nsm-api = "0.4"
