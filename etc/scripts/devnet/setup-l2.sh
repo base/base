@@ -13,6 +13,13 @@ L2_ISTHMUS_BLOCK="${L2_ISTHMUS_BLOCK:-}"
 L2_BASE_COBALT_BLOCK="${L2_BASE_COBALT_BLOCK:-}"
 L2_BASE_DENIM_BLOCK="${L2_BASE_DENIM_BLOCK:-}"
 L2_BASE_ZENITH_BLOCK="${L2_BASE_ZENITH_BLOCK:-}"
+BASE_UPGRADES=(
+  "Beryl beryl L2_BASE_BERYL_BLOCK"
+  "Cobalt cobalt L2_BASE_COBALT_BLOCK"
+  "Denim denim L2_BASE_DENIM_BLOCK"
+  # Zenith is the permanently-off gate used for future hardfork feature testing.
+  "Zenith zenith L2_BASE_ZENITH_BLOCK"
+)
 L2_ACTIVATION_ADMIN_ADDR="${L2_ACTIVATION_ADMIN_ADDR:-$SEQUENCER_ADDR}"
 L2_EL_BOOTNODE_P2P_KEY="${L2_EL_BOOTNODE_P2P_KEY:-1111111111111111111111111111111111111111111111111111111111111111}"
 L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1}"
@@ -54,35 +61,74 @@ validate_activation_block_alignment() {
   fi
 }
 
+configure_base_upgrade() {
+  local name="$1"
+  local key="$2"
+  local block="$3"
+
+  echo ""
+  echo "=== Configuring Base $name Activation ==="
+  if [ -z "$block" ]; then
+    if [ "$name" != "Zenith" ]; then
+      echo "L2 genesis time: $L2_GENESIS_TIME"
+      echo "L2 block time: $L2_BLOCK_TIME"
+    fi
+    echo "Base $name activation block is unset; leaving base.$key unchanged"
+    return
+  fi
+
+  local timestamp
+  timestamp=$(block_to_timestamp "$block")
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base $name activation block: $block"
+  echo "Derived Base $name activation timestamp: $timestamp"
+
+  local tmp_rollup
+  tmp_rollup=$(mktemp)
+  jq \
+    --arg key "$key" \
+    --argjson timestamp "$timestamp" \
+    '.base = ((.base // {}) + {($key): $timestamp})' \
+    "$OUTPUT_DIR/rollup.json" \
+    >"$tmp_rollup"
+  replace_output_file "$tmp_rollup" "$OUTPUT_DIR/rollup.json"
+
+  local tmp_genesis
+  tmp_genesis=$(mktemp)
+  jq \
+    --arg key "$key" \
+    --argjson timestamp "$timestamp" \
+    '.config.base = ((.config.base // {}) + {($key): $timestamp})' \
+    "$OUTPUT_DIR/genesis.json" \
+    >"$tmp_genesis"
+  replace_output_file "$tmp_genesis" "$OUTPUT_DIR/genesis.json"
+
+  echo "Patched Base $name activation into rollup and genesis configs"
+}
+
 if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_BASE_AZUL_BLOCK must be a non-negative integer when set, got: $L2_BASE_AZUL_BLOCK"
   exit 1
 fi
-if [ -n "$L2_BASE_BERYL_BLOCK" ] && ! [[ "$L2_BASE_BERYL_BLOCK" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: L2_BASE_BERYL_BLOCK must be a non-negative integer when set, got: $L2_BASE_BERYL_BLOCK"
-  exit 1
-fi
-if [ -n "$L2_BASE_COBALT_BLOCK" ] && ! [[ "$L2_BASE_COBALT_BLOCK" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: L2_BASE_COBALT_BLOCK must be a non-negative integer when set, got: $L2_BASE_COBALT_BLOCK"
-  exit 1
-fi
-if [ -n "$L2_BASE_DENIM_BLOCK" ] && ! [[ "$L2_BASE_DENIM_BLOCK" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: L2_BASE_DENIM_BLOCK must be a non-negative integer when set, got: $L2_BASE_DENIM_BLOCK"
-  exit 1
-fi
-if [ -n "$L2_BASE_ZENITH_BLOCK" ] && ! [[ "$L2_BASE_ZENITH_BLOCK" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: L2_BASE_ZENITH_BLOCK must be a non-negative integer when set, got: $L2_BASE_ZENITH_BLOCK"
-  exit 1
-fi
+for upgrade in "${BASE_UPGRADES[@]}"; do
+  read -r _ _ variable <<<"$upgrade"
+  block="${!variable}"
+  if [ -n "$block" ] && ! [[ "$block" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: $variable must be a non-negative integer when set, got: $block"
+    exit 1
+  fi
+done
 if [ -n "$L2_ISTHMUS_BLOCK" ] && ! [[ "$L2_ISTHMUS_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_ISTHMUS_BLOCK must be a non-negative integer when set, got: $L2_ISTHMUS_BLOCK"
   exit 1
 fi
 
 validate_activation_block_alignment "L2_BASE_AZUL_BLOCK" "$L2_BASE_AZUL_BLOCK"
-validate_activation_block_alignment "L2_BASE_BERYL_BLOCK" "$L2_BASE_BERYL_BLOCK"
-validate_activation_block_alignment "L2_BASE_COBALT_BLOCK" "$L2_BASE_COBALT_BLOCK"
-validate_activation_block_alignment "L2_BASE_ZENITH_BLOCK" "$L2_BASE_ZENITH_BLOCK"
+for upgrade in "${BASE_UPGRADES[@]}"; do
+  read -r _ _ variable <<<"$upgrade"
+  validate_activation_block_alignment "$variable" "${!variable}"
+done
 validate_activation_block_alignment "L2_ISTHMUS_BLOCK" "$L2_ISTHMUS_BLOCK"
 
 echo "=== L2 Genesis Generator (Live Deployment) ==="
@@ -95,26 +141,11 @@ if [ -n "$L2_BASE_AZUL_BLOCK" ]; then
 else
   echo "Base Azul activation block: <unset>"
 fi
-if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
-  echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
-else
-  echo "Base Beryl activation block: <unset>"
-fi
-if [ -n "$L2_BASE_COBALT_BLOCK" ]; then
-  echo "Base Cobalt activation block: $L2_BASE_COBALT_BLOCK"
-else
-  echo "Base Cobalt activation block: <unset>"
-fi
-if [ -n "$L2_BASE_DENIM_BLOCK" ]; then
-  echo "Base Denim activation block: $L2_BASE_DENIM_BLOCK"
-else
-  echo "Base Denim activation block: <unset>"
-fi
-if [ -n "$L2_BASE_ZENITH_BLOCK" ]; then
-  echo "Base Zenith activation block: $L2_BASE_ZENITH_BLOCK"
-else
-  echo "Base Zenith activation block: <unset>"
-fi
+for upgrade in "${BASE_UPGRADES[@]}"; do
+  read -r name _ variable <<<"$upgrade"
+  block="${!variable}"
+  echo "Base $name activation block: ${block:-<unset>}"
+done
 if [ -n "$L2_ISTHMUS_BLOCK" ]; then
   echo "Isthmus activation block: $L2_ISTHMUS_BLOCK"
 else
@@ -308,145 +339,10 @@ else
   echo "Base Azul activation block is unset; leaving base.azul and osakaTime unchanged"
 fi
 
-if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
-  L2_BASE_BERYL_TIME=$(block_to_timestamp "$L2_BASE_BERYL_BLOCK")
-
-  echo ""
-  echo "=== Configuring Base Beryl Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
-  echo "Derived Base Beryl activation timestamp: $L2_BASE_BERYL_TIME"
-
-  TMP_ROLLUP=$(mktemp)
-  jq \
-    --argjson beryl_time "$L2_BASE_BERYL_TIME" \
-    '.base = ((.base // {}) + {beryl: $beryl_time})' \
-    "$OUTPUT_DIR/rollup.json" \
-    >"$TMP_ROLLUP"
-  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
-
-  TMP_GENESIS=$(mktemp)
-  jq \
-    --argjson beryl_time "$L2_BASE_BERYL_TIME" \
-    '.config.base = ((.config.base // {}) + {beryl: $beryl_time})' \
-    "$OUTPUT_DIR/genesis.json" \
-    >"$TMP_GENESIS"
-  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
-
-  echo "Patched Base Beryl activation into rollup and genesis configs"
-else
-  echo ""
-  echo "=== Configuring Base Beryl Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Beryl activation block is unset; leaving base.beryl unchanged"
-fi
-
-if [ -n "$L2_BASE_COBALT_BLOCK" ]; then
-  L2_BASE_COBALT_TIME=$(block_to_timestamp "$L2_BASE_COBALT_BLOCK")
-
-  echo ""
-  echo "=== Configuring Base Cobalt Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Cobalt activation block: $L2_BASE_COBALT_BLOCK"
-  echo "Derived Base Cobalt activation timestamp: $L2_BASE_COBALT_TIME"
-
-  TMP_ROLLUP=$(mktemp)
-  jq \
-    --argjson cobalt_time "$L2_BASE_COBALT_TIME" \
-    '.base = ((.base // {}) + {cobalt: $cobalt_time})' \
-    "$OUTPUT_DIR/rollup.json" \
-    >"$TMP_ROLLUP"
-  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
-
-  TMP_GENESIS=$(mktemp)
-  jq \
-    --argjson cobalt_time "$L2_BASE_COBALT_TIME" \
-    '.config.base = ((.config.base // {}) + {cobalt: $cobalt_time})' \
-    "$OUTPUT_DIR/genesis.json" \
-    >"$TMP_GENESIS"
-  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
-
-  echo "Patched Base Cobalt activation into rollup and genesis configs"
-else
-  echo ""
-  echo "=== Configuring Base Cobalt Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Cobalt activation block is unset; leaving base.cobalt unchanged"
-fi
-
-if [ -n "$L2_BASE_DENIM_BLOCK" ]; then
-  L2_BASE_DENIM_TIME=$(block_to_timestamp "$L2_BASE_DENIM_BLOCK")
-
-  echo ""
-  echo "=== Configuring Base Denim Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Denim activation block: $L2_BASE_DENIM_BLOCK"
-  echo "Derived Base Denim activation timestamp: $L2_BASE_DENIM_TIME"
-
-  TMP_ROLLUP=$(mktemp)
-  jq \
-    --argjson denim_time "$L2_BASE_DENIM_TIME" \
-    '.base = ((.base // {}) + {denim: $denim_time})' \
-    "$OUTPUT_DIR/rollup.json" \
-    >"$TMP_ROLLUP"
-  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
-
-  TMP_GENESIS=$(mktemp)
-  jq \
-    --argjson denim_time "$L2_BASE_DENIM_TIME" \
-    '.config.base = ((.config.base // {}) + {denim: $denim_time})' \
-    "$OUTPUT_DIR/genesis.json" \
-    >"$TMP_GENESIS"
-  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
-
-  echo "Patched Base Denim activation into rollup and genesis configs"
-else
-  echo ""
-  echo "=== Configuring Base Denim Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Denim activation block is unset; leaving base.denim unchanged"
-fi
-
-# Zenith is the permanently-off gate used for future hardfork feature testing. It is not
-# contract-backed, so genesis config is the only way to schedule it.
-if [ -n "$L2_BASE_ZENITH_BLOCK" ]; then
-  L2_BASE_ZENITH_TIME=$(block_to_timestamp "$L2_BASE_ZENITH_BLOCK")
-
-  echo ""
-  echo "=== Configuring Base Zenith Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Zenith activation block: $L2_BASE_ZENITH_BLOCK"
-  echo "Derived Base Zenith activation timestamp: $L2_BASE_ZENITH_TIME"
-
-  TMP_ROLLUP=$(mktemp)
-  jq \
-    --argjson zenith_time "$L2_BASE_ZENITH_TIME" \
-    '.base = ((.base // {}) + {zenith: $zenith_time})' \
-    "$OUTPUT_DIR/rollup.json" \
-    >"$TMP_ROLLUP"
-  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
-
-  TMP_GENESIS=$(mktemp)
-  jq \
-    --argjson zenith_time "$L2_BASE_ZENITH_TIME" \
-    '.config.base = ((.config.base // {}) + {zenith: $zenith_time})' \
-    "$OUTPUT_DIR/genesis.json" \
-    >"$TMP_GENESIS"
-  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
-
-  echo "Patched Base Zenith activation into rollup and genesis configs"
-else
-  echo ""
-  echo "=== Configuring Base Zenith Activation ==="
-  echo "Base Zenith activation block is unset; leaving base.zenith unchanged"
-fi
+for upgrade in "${BASE_UPGRADES[@]}"; do
+  read -r name key variable <<<"$upgrade"
+  configure_base_upgrade "$name" "$key" "${!variable}"
+done
 
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."
 jq 'del(.base)' "$OUTPUT_DIR/rollup.json" >"$OUTPUT_DIR/rollup-conductor.json"
