@@ -1,10 +1,10 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use base_prover_service_db::{FailExpiredProofJobs, ProofJob, ProofRequestRepo, RetryOutcome};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
-use crate::metrics;
+use crate::{metrics, metrics::PendingArtifactGauge};
 
 /// Server-side worker queue tuning shared by worker claims and the expired-claim reaper.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +38,7 @@ pub struct StatusPoller {
     max_proof_retries: i32,
     worker_queue: WorkerQueueConfig,
     expired_claim_error_message: String,
+    pending_artifact_gauge: Arc<PendingArtifactGauge>,
 }
 
 impl StatusPoller {
@@ -62,6 +63,7 @@ impl StatusPoller {
             max_proof_retries,
             worker_queue,
             expired_claim_error_message,
+            pending_artifact_gauge: Arc::default(),
         }
     }
 
@@ -79,6 +81,14 @@ impl StatusPoller {
     }
 
     async fn poll_once(&self) -> anyhow::Result<()> {
+        // Published before the reaper runs so a queue that never drains — the only
+        // external symptom of an artifact-hash mismatch — is always visible, even if
+        // the stuck-request sweep below fails.
+        match self.repo.pending_depth_by_artifact().await {
+            Ok(depths) => self.pending_artifact_gauge.record(&depths),
+            Err(e) => error!(error = %e, "Failed to read pending queue depth by artifact"),
+        }
+
         let stuck_requests = self.repo.get_stuck_requests(self.stuck_timeout_mins).await?;
 
         if !stuck_requests.is_empty() {

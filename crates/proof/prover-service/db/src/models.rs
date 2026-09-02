@@ -1,5 +1,6 @@
 use std::convert::TryFrom;
 
+use alloy_primitives::B256;
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
     ProofResult as ProtocolProofResult, TeeKind as ProtocolTeeKind, ZkBackend,
@@ -321,6 +322,23 @@ pub enum CreateProofRequestValidationError {
         /// Backend proof type supplied for the request.
         proof_type: ProofType,
     },
+    /// A ZK request omitted the artifact hash required for exact worker routing.
+    #[error("zk_artifact_hash is required for ZK proof requests")]
+    MissingZkArtifactHash,
+}
+
+/// Count of claimable jobs waiting on one exact artifact hash.
+///
+/// Emitted as a queue-depth gauge so an artifact generation with no matching
+/// worker shows up as a growing queue instead of silently stalling.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingArtifactDepth {
+    /// Proof type of the queued jobs.
+    pub api_proof_type: ApiProofType,
+    /// Required artifact hash, or `None` for rows predating migration 018.
+    pub artifact_hash: Option<B256>,
+    /// Number of jobs pending on this artifact hash.
+    pub depth: i64,
 }
 
 /// Legacy SP1 proof-shape discriminator retained for receipt compatibility.
@@ -758,6 +776,8 @@ pub struct CreateProofRequest {
     pub tee_kind: Option<TeeKind>,
     /// Protocol-level ZK proving backend for ZK proofs.
     pub zk_backend: Option<ZkBackend>,
+    /// Exact TEE image or ZK artifact hash required to execute this request.
+    pub artifact_hash: B256,
     /// Backend-specific proof type for current OP Succinct backends.
     pub proof_type: Option<ProofType>,
     /// Starting L2 block number.
@@ -788,6 +808,7 @@ impl CreateProofRequest {
             zk_vm: fields.zk_vm,
             tee_kind: fields.tee_kind,
             zk_backend: fields.zk_backend,
+            artifact_hash: fields.artifact_hash,
             proof_type: fields.proof_type,
             start_block_number: fields.start_block_number,
             number_of_blocks_to_prove: fields.number_of_blocks_to_prove,
@@ -820,6 +841,11 @@ impl CreateProofRequest {
         }
         if self.zk_backend != expected.zk_backend {
             return Err(CreateProofRequestValidationError::FieldMismatch { field: "zk_backend" });
+        }
+        if self.artifact_hash != expected.artifact_hash {
+            return Err(CreateProofRequestValidationError::FieldMismatch {
+                field: "artifact_hash",
+            });
         }
         if self.proof_type != expected.proof_type {
             return Err(CreateProofRequestValidationError::FieldMismatch { field: "proof_type" });
@@ -868,6 +894,8 @@ pub struct DerivedProofRequestFields {
     pub tee_kind: Option<TeeKind>,
     /// Protocol-level ZK proving backend for ZK proofs.
     pub zk_backend: Option<ZkBackend>,
+    /// Exact TEE image or ZK artifact hash required to execute this request.
+    pub artifact_hash: B256,
     /// Backend-specific proof type for current OP Succinct backends.
     pub proof_type: Option<ProofType>,
     /// Starting L2 block number.
@@ -895,6 +923,9 @@ impl DerivedProofRequestFields {
                 zk_vm: Some(protocol_zk_vm(proof.zk_vm)),
                 tee_kind: None,
                 zk_backend: Some(proof.zk_backend),
+                artifact_hash: proof
+                    .zk_artifact_hash
+                    .ok_or(CreateProofRequestValidationError::MissingZkArtifactHash)?,
                 proof_type: Some(ProofType::OpSuccinctSp1ClusterCompressed),
                 start_block_number: proof.start_block_number,
                 number_of_blocks_to_prove: proof.number_of_blocks_to_prove,
@@ -908,6 +939,10 @@ impl DerivedProofRequestFields {
                 zk_vm: Some(protocol_zk_vm(request.proof.zk_vm)),
                 tee_kind: None,
                 zk_backend: Some(request.proof.zk_backend),
+                artifact_hash: request
+                    .proof
+                    .zk_artifact_hash
+                    .ok_or(CreateProofRequestValidationError::MissingZkArtifactHash)?,
                 proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkPlonk),
                 start_block_number: request.proof.start_block_number,
                 number_of_blocks_to_prove: request.proof.number_of_blocks_to_prove,
@@ -921,6 +956,7 @@ impl DerivedProofRequestFields {
                 zk_vm: None,
                 tee_kind: Some(protocol_tee_kind(request.tee_kind)),
                 zk_backend: None,
+                artifact_hash: request.proof.image_hash,
                 proof_type: None,
                 start_block_number: request.proof.claimed_l2_block_number,
                 number_of_blocks_to_prove: 1,
@@ -1011,6 +1047,8 @@ pub struct ClaimProofJob {
     pub zk_vms: Vec<ZkVmKind>,
     /// ZK proving backends this worker can execute (matched for ZK proofs).
     pub zk_backends: Vec<ZkBackend>,
+    /// Exact TEE image or ZK artifact hash supported by this worker.
+    pub supported_artifact_hash: B256,
     /// Lock duration in seconds. Callers must resolve the server default first.
     pub lock_duration_seconds: u32,
     /// Reclaim budget for expired claims.
@@ -1258,7 +1296,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 schedule_l2_block_number: None,
-                zk_artifact_hash: None,
+                zk_artifact_hash: Some(B256::repeat_byte(0x11)),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -1300,6 +1338,20 @@ mod tests {
         req.session_id = "other-session".to_owned();
 
         assert_eq!(req.validate(), Err(CreateProofRequestValidationError::SessionIdMismatch));
+    }
+
+    #[test]
+    fn create_rejects_missing_zk_artifact_hash() {
+        let mut request = compressed_protocol_request("session-1");
+        let ProtocolProofRequestKind::Compressed(proof) = &mut request.request else {
+            unreachable!("helper always builds compressed requests");
+        };
+        proof.zk_artifact_hash = None;
+
+        assert_eq!(
+            CreateProofRequest::new(request).unwrap_err(),
+            CreateProofRequestValidationError::MissingZkArtifactHash
+        );
     }
 
     #[test]

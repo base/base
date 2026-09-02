@@ -278,7 +278,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 schedule_l2_block_number: None,
-                zk_artifact_hash: None,
+                zk_artifact_hash: Some(alloy_primitives::B256::repeat_byte(0x11)),
                 zk_vm: ProtocolZkVm::Sp1,
                 zk_backend: ProtocolZkBackend::Cluster,
             }),

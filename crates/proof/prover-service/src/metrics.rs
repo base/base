@@ -3,8 +3,13 @@
 //! Uses the `metrics` crate facade (`counter!`, `histogram!`) so the exporter
 //! backend is determined by the binary (e.g. Prometheus, `DogStatsD`).
 
-use base_prover_service_db::{ApiProofType, ProofJob, ProofType};
-use metrics::{counter, describe_counter, describe_histogram, histogram};
+use std::{
+    collections::HashSet,
+    sync::{Mutex, PoisonError},
+};
+
+use base_prover_service_db::{ApiProofType, PendingArtifactDepth, ProofJob, ProofType};
+use metrics::{counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram};
 
 // ---------------------------------------------------------------------------
 // Metric name constants
@@ -26,6 +31,11 @@ pub const STUCK_REQUESTS: &str = "prover_service.stuck_requests";
 pub const RETRIED_REQUESTS: &str = "prover_service.retried_requests";
 /// Worker jobs terminally failed by a background reaper. Tags: `reason`, `proof_type`
 pub const WORKER_JOBS_FAILED: &str = "prover_service.worker_jobs_failed";
+/// Pending jobs waiting on one exact artifact hash. Tags: `proof_type`, `artifact_hash`
+///
+/// A generation with no matching worker shows up here as a queue that grows and
+/// never drains, which is the only external symptom of an artifact-hash mismatch.
+pub const PENDING_JOBS_BY_ARTIFACT: &str = "prover_service.pending_jobs_by_artifact";
 
 /// Terminal success status label.
 pub const PROOF_STATUS_SUCCEEDED: &str = "succeeded";
@@ -56,6 +66,10 @@ impl ProverMetrics {
         describe_counter!(
             WORKER_JOBS_FAILED,
             "Worker jobs terminally failed by a background reaper"
+        );
+        describe_gauge!(
+            PENDING_JOBS_BY_ARTIFACT,
+            "Pending jobs waiting on one exact artifact hash"
         );
     }
 }
@@ -130,6 +144,52 @@ pub fn inc_worker_jobs_failed(reason: &str, proof_type: &str) {
         "proof_type" => proof_type.to_string(),
     )
     .increment(1);
+}
+
+/// Publishes per-artifact queue depth, zeroing label sets whose queue has drained.
+///
+/// The backing query groups by artifact hash, and `GROUP BY` omits empty groups.
+/// A hash whose queue drains therefore disappears from the results, and a gauge
+/// keeps its last value until something overwrites it — so without explicitly
+/// zeroing it, a fully drained artifact generation would report its final depth
+/// forever. That would turn the one signal meant to expose a stalled queue into
+/// a permanent false alarm for a healthy one.
+///
+/// Rows predating migration 018 have no hash and can never be claimed; they are
+/// reported under the `none` label so the backfill backlog stays visible.
+#[derive(Debug, Default)]
+pub struct PendingArtifactGauge {
+    published: Mutex<HashSet<(&'static str, String)>>,
+}
+
+impl PendingArtifactGauge {
+    /// Publishes one depth per label set and zeroes any that drained since the last call.
+    pub fn record(&self, depths: &[PendingArtifactDepth]) {
+        let mut current = HashSet::with_capacity(depths.len());
+        for entry in depths {
+            let proof_type = api_proof_type_label(entry.api_proof_type);
+            let artifact_hash =
+                entry.artifact_hash.map_or_else(|| "none".to_owned(), |hash| format!("{hash:#x}"));
+            gauge!(PENDING_JOBS_BY_ARTIFACT,
+                "proof_type" => proof_type,
+                "artifact_hash" => artifact_hash.clone(),
+            )
+            .set(entry.depth as f64);
+            current.insert((proof_type, artifact_hash));
+        }
+
+        let mut published = self.published.lock().unwrap_or_else(PoisonError::into_inner);
+        for (proof_type, artifact_hash) in published.difference(&current) {
+            gauge!(PENDING_JOBS_BY_ARTIFACT,
+                "proof_type" => *proof_type,
+                "artifact_hash" => artifact_hash.clone(),
+            )
+            .set(0.0);
+        }
+        // Drained sets are dropped rather than retained: they now read zero, and
+        // keeping them would grow this set without bound across artifact upgrades.
+        *published = current;
+    }
 }
 
 /// Record terminal outcome and duration metrics for a proof job.
@@ -281,6 +341,94 @@ mod tests {
             }),
             Some(vec![0.0]),
         );
+    }
+
+    #[test]
+    fn pending_depth_labels_null_artifact_hash_as_none() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let hash = alloy_primitives::B256::repeat_byte(0x11);
+        let depths = vec![
+            PendingArtifactDepth {
+                api_proof_type: ApiProofType::Compressed,
+                artifact_hash: Some(hash),
+                depth: 3,
+            },
+            PendingArtifactDepth {
+                api_proof_type: ApiProofType::Tee,
+                artifact_hash: None,
+                depth: 7,
+            },
+        ];
+
+        metrics::with_local_recorder(&recorder, || {
+            PendingArtifactGauge::default().record(&depths);
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        let gauge_for = |artifact_hash: &str| {
+            snapshot.iter().find_map(|(ck, _, _, value)| {
+                if ck.kind() != MetricKind::Gauge
+                    || ck.key().name() != PENDING_JOBS_BY_ARTIFACT
+                    || !ck.key().labels().any(|label| {
+                        label.key() == "artifact_hash" && label.value() == artifact_hash
+                    })
+                {
+                    return None;
+                }
+                match value {
+                    DebugValue::Gauge(value) => Some(value.into_inner()),
+                    _ => None,
+                }
+            })
+        };
+
+        assert_eq!(gauge_for(&format!("{hash:#x}")), Some(3.0));
+        // Unbackfilled rows are unclaimable, so they must stay visible rather than
+        // being dropped for having no hash.
+        assert_eq!(gauge_for("none"), Some(7.0));
+    }
+
+    #[test]
+    fn pending_depth_zeroes_a_drained_artifact_hash() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let draining = alloy_primitives::B256::repeat_byte(0xaa);
+        let busy = alloy_primitives::B256::repeat_byte(0xbb);
+        let depth = |hash, depth| PendingArtifactDepth {
+            api_proof_type: ApiProofType::Compressed,
+            artifact_hash: Some(hash),
+            depth,
+        };
+        let gauge = PendingArtifactGauge::default();
+
+        metrics::with_local_recorder(&recorder, || {
+            gauge.record(&[depth(draining, 5), depth(busy, 2)]);
+            // `draining` has emptied, so GROUP BY no longer returns it at all.
+            gauge.record(&[depth(busy, 3)]);
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        let gauge_for = |artifact_hash: &str| {
+            snapshot.iter().find_map(|(ck, _, _, value)| {
+                if ck.kind() != MetricKind::Gauge
+                    || ck.key().name() != PENDING_JOBS_BY_ARTIFACT
+                    || !ck.key().labels().any(|label| {
+                        label.key() == "artifact_hash" && label.value() == artifact_hash
+                    })
+                {
+                    return None;
+                }
+                match value {
+                    DebugValue::Gauge(value) => Some(value.into_inner()),
+                    _ => None,
+                }
+            })
+        };
+
+        // Without explicit zeroing this would still read 5 and alarm forever.
+        assert_eq!(gauge_for(&format!("{draining:#x}")), Some(0.0));
+        assert_eq!(gauge_for(&format!("{busy:#x}")), Some(3.0));
     }
 
     #[test]

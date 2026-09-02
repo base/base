@@ -5868,6 +5868,7 @@ dependencies = [
 name = "base-prover-service"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "base-prover-service-db",
  "base-prover-service-protocol",

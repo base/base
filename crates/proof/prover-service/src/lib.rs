@@ -2,12 +2,12 @@
 
 mod metrics;
 pub use metrics::{
-    PROOF_REQUEST_DURATION_MS, PROOF_REQUESTS_COMPLETED, PROOF_STATUS_FAILED,
-    PROOF_STATUS_SUCCEEDED, ProverMetrics, REQUESTS, RESPONSE_LATENCY_MS, RETRIED_REQUESTS,
-    STUCK_REQUESTS, WORKER_JOBS_FAILED, api_proof_type_label, inc_proof_requests_completed,
-    inc_requests, inc_retried_requests, inc_stuck_requests, inc_worker_jobs_failed,
-    inc_worker_requests, proof_type_label, record_proof_request_duration, record_response_latency,
-    record_terminal_proof_job,
+    PENDING_JOBS_BY_ARTIFACT, PROOF_REQUEST_DURATION_MS, PROOF_REQUESTS_COMPLETED,
+    PROOF_STATUS_FAILED, PROOF_STATUS_SUCCEEDED, PendingArtifactGauge, ProverMetrics, REQUESTS,
+    RESPONSE_LATENCY_MS, RETRIED_REQUESTS, STUCK_REQUESTS, WORKER_JOBS_FAILED,
+    api_proof_type_label, inc_proof_requests_completed, inc_requests, inc_retried_requests,
+    inc_stuck_requests, inc_worker_jobs_failed, inc_worker_requests, proof_type_label,
+    record_proof_request_duration, record_response_latency, record_terminal_proof_job,
 };
 
 mod metadata;

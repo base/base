@@ -8,6 +8,9 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+# primitives
+alloy-primitives.workspace = true
+
 # protocol
 base-prover-service-protocol.workspace = true
 
@@ -29,7 +32,6 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-alloy-primitives.workspace = true
 base-proof-primitives.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

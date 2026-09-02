@@ -1,3 +1,4 @@
+use alloy_primitives::B256;
 use base_prover_service_protocol::{
     ProofResult as ProtocolProofResult, SnarkPlonkProofResult, ZkBackend, ZkProofResult, ZkVm,
 };
@@ -9,10 +10,10 @@ use crate::{
     ApiProofType, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
     CreateProofRequestError, CreateProofRequestOutcome, CreateProofRequestValidationError,
     CreateProofSession, DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome,
-    HeartbeatProofJob, JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem,
-    ProofRequestPage, ProofSession, ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome,
-    SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt,
-    WorkerSessionUpsert, ZkVmKind, canonical_session_id,
+    HeartbeatProofJob, JobLockState, PendingArtifactDepth, ProofJob, ProofJobStatus, ProofRequest,
+    ProofRequestListItem, ProofRequestPage, ProofSession, ProofStatus, ProofType,
+    RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
+    UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind, canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -38,10 +39,11 @@ impl ProofRequestRepo {
             r#"
             INSERT INTO proof_requests (
                 id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
+                artifact_hash,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
                 prover_address, l1_head, intermediate_root_interval
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             "#,
         )
         .bind(prepared.id)
@@ -51,6 +53,7 @@ impl ProofRequestRepo {
         .bind(prepared.zk_vm.map(|zk_vm| zk_vm.as_str()))
         .bind(prepared.tee_kind.map(|tee_kind| tee_kind.as_str()))
         .bind(prepared.zk_backend.map(|zk_backend| zk_backend.as_str()))
+        .bind(prepared.artifact_hash.as_slice().to_vec())
         .bind(prepared.start_block_number)
         .bind(prepared.number_of_blocks_to_prove)
         .bind(prepared.sequence_window)
@@ -80,10 +83,11 @@ impl ProofRequestRepo {
             r#"
             INSERT INTO proof_requests (
                 id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
+                artifact_hash,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
                 prover_address, l1_head, intermediate_root_interval
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT ((COALESCE(session_id, id::text))) DO NOTHING
             "#,
         )
@@ -94,6 +98,7 @@ impl ProofRequestRepo {
         .bind(prepared.zk_vm.map(|zk_vm| zk_vm.as_str()))
         .bind(prepared.tee_kind.map(|tee_kind| tee_kind.as_str()))
         .bind(prepared.zk_backend.map(|zk_backend| zk_backend.as_str()))
+        .bind(prepared.artifact_hash.as_slice().to_vec())
         .bind(prepared.start_block_number)
         .bind(prepared.number_of_blocks_to_prove)
         .bind(prepared.sequence_window)
@@ -115,6 +120,7 @@ impl ProofRequestRepo {
             r#"
             SELECT id, COALESCE(session_id, id::text) AS session_id,
                    request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
+                   artifact_hash,
                    start_block_number, number_of_blocks_to_prove, sequence_window,
                    proof_type, status, prover_address, l1_head,
                    intermediate_root_interval, retry_count
@@ -141,6 +147,7 @@ impl ProofRequestRepo {
             zk_vm: prepared.zk_vm.map(|zk_vm| zk_vm.as_str()),
             tee_kind: prepared.tee_kind.map(|tee_kind| tee_kind.as_str()),
             zk_backend: prepared.zk_backend.map(|zk_backend| zk_backend.as_str()),
+            artifact_hash: prepared.artifact_hash.as_slice(),
             start_block_number: prepared.start_block_number,
             number_of_blocks_to_prove: prepared.number_of_blocks_to_prove,
             sequence_window: prepared.sequence_window,
@@ -586,12 +593,14 @@ impl ProofRequestRepo {
             ApiProofType::Tee => {
                 let tee_kinds: Vec<String> =
                     req.tee_kinds.iter().map(|kind| kind.as_str().to_owned()).collect();
+                let artifact_hash = req.supported_artifact_hash.as_slice().to_vec();
                 sqlx::query(&sql)
                     .bind(&req.worker_id)
                     .bind(lock_id)
                     .bind(i64::from(req.lock_duration_seconds))
                     .bind(req.api_proof_type.as_str())
                     .bind(&tee_kinds)
+                    .bind(artifact_hash)
                     .bind(i64::from(req.max_attempts))
                     .fetch_optional(&self.pool)
                     .await?
@@ -606,6 +615,7 @@ impl ProofRequestRepo {
                     .chain(req.zk_backends.is_empty().then_some(ZkBackend::Cluster))
                     .map(|backend| backend.as_str().to_owned())
                     .collect();
+                let artifact_hash = req.supported_artifact_hash.as_slice().to_vec();
                 sqlx::query(&sql)
                     .bind(&req.worker_id)
                     .bind(lock_id)
@@ -613,6 +623,7 @@ impl ProofRequestRepo {
                     .bind(req.api_proof_type.as_str())
                     .bind(&zk_vms)
                     .bind(&zk_backends)
+                    .bind(artifact_hash)
                     .bind(i64::from(req.max_attempts))
                     .fetch_optional(&self.pool)
                     .await?
@@ -1305,6 +1316,41 @@ impl ProofRequestRepo {
         rows.iter().map(row_to_proof_request).collect()
     }
 
+    /// Returns the number of pending jobs grouped by proof type and required artifact hash.
+    ///
+    /// Cardinality is bounded by the number of concurrently deployed artifact
+    /// generations (typically two during an upgrade window), so this is safe to
+    /// export as a labelled gauge.
+    pub async fn pending_depth_by_artifact(&self) -> Result<Vec<PendingArtifactDepth>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT api_proof_type, artifact_hash, COUNT(*) AS depth
+            FROM proof_requests
+            WHERE job_status = 'PENDING'
+            GROUP BY api_proof_type, artifact_hash
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                let value = row.get::<&str, _>("api_proof_type");
+                let api_proof_type = ApiProofType::try_from(value).map_err(|e| {
+                    sqlx::Error::Protocol(format!("Unknown api_proof_type '{value}': {e}"))
+                })?;
+                let artifact_hash = row
+                    .get::<Option<Vec<u8>>, _>("artifact_hash")
+                    .and_then(|bytes| B256::try_from(bytes.as_slice()).ok());
+                Ok(PendingArtifactDepth {
+                    api_proof_type,
+                    artifact_hash,
+                    depth: row.get::<i64, _>("depth"),
+                })
+            })
+            .collect()
+    }
+
     /// Get proof requests that are stuck in PENDING without a running session,
     /// or migration-parked RUNNING requests that were never claimed by a worker.
     /// PENDING requests are likely orphaned due to crashes before session creation.
@@ -1686,6 +1732,7 @@ struct PreparedProofRequest {
     zk_vm: Option<ZkVmKind>,
     tee_kind: Option<TeeKind>,
     zk_backend: Option<ZkBackend>,
+    artifact_hash: B256,
     start_block_number: i64,
     number_of_blocks_to_prove: i64,
     sequence_window: Option<i64>,
@@ -1741,6 +1788,7 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
             zk_vm: req.zk_vm,
             tee_kind: req.tee_kind,
             zk_backend: req.zk_backend,
+            artifact_hash: req.artifact_hash,
             start_block_number,
             number_of_blocks_to_prove,
             sequence_window,
@@ -2086,9 +2134,10 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
                 SELECT id FROM proof_requests
                 WHERE api_proof_type = $4
                   AND tee_kind = ANY($5::text[])
+                  AND artifact_hash = $6
                   AND (
                       job_status = 'PENDING'
-                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
+                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $7)
                   )
                 ORDER BY start_block_number ASC, created_at ASC, id ASC
                 FOR UPDATE SKIP LOCKED
@@ -2113,9 +2162,10 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
                 WHERE api_proof_type = $4
                   AND zk_vm = ANY($5::text[])
                   AND COALESCE(zk_backend, 'cluster') = ANY($6::text[])
+                  AND artifact_hash = $7
                   AND (
                       job_status = 'PENDING'
-                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $7)
+                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $8)
                   )
                 ORDER BY start_block_number ASC, created_at ASC, id ASC
                 FOR UPDATE SKIP LOCKED
@@ -2192,6 +2242,7 @@ struct CreateRequestParams<'a> {
     zk_vm: Option<&'a str>,
     tee_kind: Option<&'a str>,
     zk_backend: Option<&'a str>,
+    artifact_hash: &'a [u8],
     start_block_number: i64,
     number_of_blocks_to_prove: i64,
     sequence_window: Option<i64>,
@@ -2228,6 +2279,9 @@ impl CreateRequestParams<'_> {
         }
         if row.get::<Option<i64>, _>("sequence_window") != self.sequence_window {
             return Some("sequence_window");
+        }
+        if row.get::<Option<Vec<u8>>, _>("artifact_hash").as_deref() != Some(self.artifact_hash) {
+            return Some("artifact_hash");
         }
         if row.get::<Option<&str>, _>("proof_type") != self.proof_type {
             return Some("proof_type");
@@ -2347,7 +2401,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: Some(5),
                 schedule_l2_block_number: None,
-                zk_artifact_hash: None,
+                zk_artifact_hash: Some(B256::repeat_byte(0x11)),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -2385,7 +2439,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 schedule_l2_block_number: None,
-                zk_artifact_hash: None,
+                zk_artifact_hash: Some(B256::repeat_byte(0x11)),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),
@@ -2445,7 +2499,10 @@ mod tests {
         let create = CreateProofRequest::new(ProtocolProofRequest {
             session_id: "tee-session".to_owned(),
             request: ProofRequestKind::Tee(TeeProofRequest {
-                proof: Default::default(),
+                proof: base_proof_primitives::ProofRequest {
+                    image_hash: B256::repeat_byte(0x22),
+                    ..Default::default()
+                },
                 tee_kind: ProtocolTeeKind::AwsNitro,
             }),
         })
@@ -2560,7 +2617,10 @@ mod tests {
         ProtocolProofRequest {
             session_id: session_id.to_owned(),
             request: ProofRequestKind::Tee(TeeProofRequest {
-                proof: Default::default(),
+                proof: base_proof_primitives::ProofRequest {
+                    image_hash: B256::repeat_byte(0x22),
+                    ..Default::default()
+                },
                 tee_kind: ProtocolTeeKind::AwsNitro,
             }),
         }
@@ -2576,7 +2636,10 @@ mod tests {
         let mut create = CreateProofRequest::new(ProtocolProofRequest {
             session_id: "bad-tee-session".to_owned(),
             request: ProofRequestKind::Tee(TeeProofRequest {
-                proof: Default::default(),
+                proof: base_proof_primitives::ProofRequest {
+                    image_hash: B256::repeat_byte(0x22),
+                    ..Default::default()
+                },
                 tee_kind: ProtocolTeeKind::AwsNitro,
             }),
         })
@@ -2600,7 +2663,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 schedule_l2_block_number: None,
-                zk_artifact_hash: None,
+                zk_artifact_hash: Some(B256::repeat_byte(0x11)),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }),

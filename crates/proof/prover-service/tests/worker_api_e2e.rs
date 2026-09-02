@@ -13,6 +13,7 @@
 
 use std::{net::SocketAddr, time::Duration};
 
+use alloy_primitives::B256;
 use base_prover_service::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig};
 use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CreateProofRequest, DatabaseConfig, ProofRequestRepo,
@@ -107,6 +108,7 @@ async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
         tee_kinds: Vec::new(),
         zk_vms: vec![ZkVmKind::Sp1],
         zk_backends: vec![ZkBackend::Cluster],
+        supported_artifact_hash: B256::repeat_byte(0x11),
         lock_duration_seconds: 3600,
         max_attempts: u32::MAX,
     };
@@ -129,7 +131,7 @@ fn compressed_request(session_id: &str, start_block_number: u64) -> CreateProofR
             l1_head: None,
             intermediate_root_interval: None,
             schedule_l2_block_number: None,
-            zk_artifact_hash: None,
+            zk_artifact_hash: Some(B256::repeat_byte(0x11)),
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         }),
@@ -145,9 +147,30 @@ fn worker_claim(worker_id: &str) -> GetNextProofRequest {
         zk_vms: vec![ZkVm::Sp1],
         // Omitted by legacy workers; the server defaults this capability to cluster.
         zk_backends: Vec::new(),
-        supported_artifact_hash: None,
+        supported_artifact_hash: Some(B256::repeat_byte(0x11)),
         lock_duration_seconds: 60,
     }
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL)"]
+async fn worker_without_artifact_hash_claims_nothing() {
+    let repo = test_repo().await;
+    drain_claimable_compressed_jobs(&repo).await;
+
+    let session_id = Uuid::new_v4().to_string();
+    repo.create_for_worker_queue(compressed_request(&session_id, 10), TEST_MAX_PROOF_RETRIES, true)
+        .await
+        .expect("seeding the worker queue should succeed");
+
+    let server = RunningServer::spawn(repo).await;
+    let mut claim = worker_claim("worker-without-artifact");
+    claim.supported_artifact_hash = None;
+
+    let response =
+        server.client.get_next_proof(claim).await.expect("get_next_proof should succeed");
+    assert!(response.job.is_none());
+    server.shutdown().await;
 }
 
 #[tokio::test]
