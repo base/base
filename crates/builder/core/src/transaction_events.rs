@@ -126,10 +126,6 @@ impl From<&TxResources> for BuilderTransactionResources {
 pub(crate) struct BuilderConsideredEventData {
     #[serde(flatten)]
     budget: BuilderBudgetFields,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bundle_min_block: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bundle_max_block: Option<u64>,
 }
 
 impl BuilderConsideredEventData {
@@ -139,22 +135,7 @@ impl BuilderConsideredEventData {
         limits: &ResourceLimits,
         resources: Option<&TxResources>,
     ) -> Self {
-        Self {
-            budget: BuilderBudgetFields::new(info, limits, resources),
-            bundle_min_block: None,
-            bundle_max_block: None,
-        }
-    }
-
-    /// Adds the block window associated with a bundle transaction.
-    pub(crate) const fn with_bundle_block_window(
-        mut self,
-        min_block_number: Option<u64>,
-        max_block_number: Option<u64>,
-    ) -> Self {
-        self.bundle_min_block = min_block_number;
-        self.bundle_max_block = max_block_number;
-        self
+        Self { budget: BuilderBudgetFields::new(info, limits, resources) }
     }
 }
 
@@ -166,16 +147,6 @@ pub(crate) struct BuilderRejectedEventData {
     rejection_reason: &'static str,
     rejection_detail: String,
     permanent: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bundle_min_block: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bundle_max_block: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    current_block: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    block_timestamp: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    dry_run: Option<bool>,
 }
 
 impl BuilderRejectedEventData {
@@ -193,11 +164,6 @@ impl BuilderRejectedEventData {
             rejection_reason,
             rejection_detail: rejection_detail.into(),
             permanent,
-            bundle_min_block: None,
-            bundle_max_block: None,
-            current_block: None,
-            block_timestamp: None,
-            dry_run: None,
         }
     }
 
@@ -216,29 +182,6 @@ impl BuilderRejectedEventData {
             limits,
             resources,
         )
-    }
-
-    /// Adds the block window associated with a bundle transaction.
-    pub(crate) const fn with_bundle_block_window(
-        mut self,
-        min_block_number: Option<u64>,
-        max_block_number: Option<u64>,
-    ) -> Self {
-        self.bundle_min_block = min_block_number;
-        self.bundle_max_block = max_block_number;
-        self
-    }
-
-    /// Adds the current block associated with a bundle rejection.
-    pub(crate) const fn with_current_block(mut self, block_number: u64) -> Self {
-        self.current_block = Some(block_number);
-        self
-    }
-
-    /// Adds the block timestamp associated with a bundle rejection.
-    pub(crate) const fn with_block_timestamp(mut self, timestamp: u64) -> Self {
-        self.block_timestamp = Some(timestamp);
-        self
     }
 }
 
