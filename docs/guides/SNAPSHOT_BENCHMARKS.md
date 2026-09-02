@@ -28,9 +28,6 @@ test -f "$BUILDER_DATADIR/db/mdbx.dat"
 test -f "$CLIENT_DATADIR/db/mdbx.dat"
 ```
 
-Do not reuse either restored datadir for another attempt, including a retry. A benchmark
-advances the chain and changes cache and database state.
-
 ## Run One Benchmark
 
 Build and run the snapshot harness from this repository:
