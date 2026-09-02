@@ -11,7 +11,6 @@ or at `--fork` so Base-specific patches do not have to be opened upstream.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import sys
@@ -269,7 +268,7 @@ def non_merge_commits(clone: Path, commits: tuple[str, ...]) -> list[str]:
     return kept
 
 
-def squash_pr(clone: Path, pr: PatchPr, env: dict[str, str]) -> None:
+def squash_pr(clone: Path, pr: PatchPr) -> None:
     """Cherry-pick every non-merge PR commit and squash them into one commit."""
     source = f"https://github.com/{pr.repo}"
     local_ref = f"refs/reths/{pr.repo.replace('/', '-')}-{pr.number}"
@@ -288,7 +287,6 @@ def squash_pr(clone: Path, pr: PatchPr, env: dict[str, str]) -> None:
     result = run(
         ["git", "cherry-pick", "-n", *picks],
         cwd=clone,
-        env=env,
         check=False,
     )
     if result.returncode != 0:
@@ -308,7 +306,7 @@ def squash_pr(clone: Path, pr: PatchPr, env: dict[str, str]) -> None:
         f"{squash_marker(pr)} {pr.title}\n\n"
         f"Squashed {pr.url} at {pr.head}."
     )
-    run(["git", "commit", "-m", message], cwd=clone, env=env)
+    run(["git", "commit", "-m", message], cwd=clone)
 
 
 def current_resolved(root: Path) -> list[tuple[str, str]]:
@@ -388,20 +386,6 @@ def pin_reth(root: Path, *args: str) -> None:
         raise ReleaseError("pin-reth failed")
 
 
-def git_identity_env(root: Path) -> dict[str, str]:
-    """Copy author identity from the base/base checkout into the fork clone."""
-    env = os.environ.copy()
-    name = git(root, "log", "-1", "--format=%an").strip()
-    email = git(root, "log", "-1", "--format=%ae").strip()
-    if name:
-        env.setdefault("GIT_AUTHOR_NAME", name)
-        env.setdefault("GIT_COMMITTER_NAME", name)
-    if email:
-        env.setdefault("GIT_AUTHOR_EMAIL", email)
-        env.setdefault("GIT_COMMITTER_EMAIL", email)
-    return env
-
-
 def annotated_tag_message(upstream_tag: str, prs: list[PatchPr]) -> str:
     """Body for the immutable fork tag."""
     lines = [f"Reth {upstream_tag} plus squashed PRs.", ""]
@@ -440,7 +424,6 @@ def prepare_release(
     fork_tag = next_base_tag(upstream_tag, existing_tags(clone))
     backport_branch = f"backport/{upstream_tag}/{line}"
 
-    env = git_identity_env(root)
     remote_backport = run(
         ["git", "ls-remote", "--heads", "origin", backport_branch],
         cwd=clone,
@@ -456,14 +439,13 @@ def prepare_release(
             print(f"already on {backport_branch}: {pr.url}")
             continue
         print(f"squashing {pr.url} ({len(pr.commits)} commits) onto {upstream_tag}")
-        squash_pr(clone, pr, env)
+        squash_pr(clone, pr)
     fork_rev = git(clone, "rev-parse", "HEAD").strip().lower()
     if git(clone, "tag", "--list", fork_tag).strip():
         git(clone, "tag", "-d", fork_tag)
     run(
         ["git", "tag", "-a", fork_tag, "-m", annotated_tag_message(upstream_tag, prs)],
         cwd=clone,
-        env=env,
     )
 
     if not skip_push:

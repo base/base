@@ -274,10 +274,10 @@ fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
     })
 }
 
-/// Configures `from` as seizable (not authorized by `SeizeHolder`) and `to` as an authorized
+/// Configures `from` as seizable (not authorized by `SeizeExempt`) and `to` as an authorized
 /// `SeizeReceiver`, using two distinct policy ids so the two scopes are independently exercised.
 fn make_seizable(token: &mut B20AssetStorage<'_>) {
-    token.set_policy_id(B20PolicyType::SeizeHolder.id(), POLICY_ID).unwrap();
+    token.set_policy_id(B20PolicyType::SeizeExempt.id(), POLICY_ID).unwrap();
     token.set_policy_id(B20PolicyType::SeizeReceiver.id(), POLICY_ID_2).unwrap();
 }
 
@@ -1079,7 +1079,7 @@ fn golden_seize_reverts_zero_from() {
     let mut s = fresh();
     seed(&mut s, |t| {
         give_role(t, B20TokenRole::Seize.id(), ADMIN);
-        // A non-default `SeizeHolder` treats the zero address as seizable; the `from != 0` guard
+        // A non-default `SeizeExempt` treats the zero address as seizable; the `from != 0` guard
         // still rejects a zero-amount seize that would otherwise emit a mint-like Transfer(0x0,..).
         make_seizable(t);
     });
@@ -1100,8 +1100,8 @@ fn golden_seize_reverts_account_not_seizable() {
     seed(&mut s, |t| {
         fund(t, ALICE, u(100));
         give_role(t, B20TokenRole::Seize.id(), ADMIN);
-        // ALICE authorized under SeizeHolder => not seizable.
-        t.set_policy_id(B20PolicyType::SeizeHolder.id(), POLICY_ID).unwrap();
+        // ALICE authorized under SeizeExempt => not seizable.
+        t.set_policy_id(B20PolicyType::SeizeExempt.id(), POLICY_ID).unwrap();
     });
     let mut policy = FakePolicyAccounting::new();
     policy.allow(POLICY_ID, ALICE);
@@ -1220,7 +1220,7 @@ fn golden_read_seize_role_and_policy_constants() {
     let mut s = fresh();
     let cases: Vec<(Vec<u8>, B256)> = vec![
         (IB20::SEIZE_ROLECall {}.abi_encode(), B20TokenRole::Seize.id()),
-        (IB20::SEIZE_HOLDER_POLICYCall {}.abi_encode(), B20PolicyType::SeizeHolder.id()),
+        (IB20::SEIZE_EXEMPT_POLICYCall {}.abi_encode(), B20PolicyType::SeizeExempt.id()),
         (IB20::SEIZE_RECEIVER_POLICYCall {}.abi_encode(), B20PolicyType::SeizeReceiver.id()),
     ];
     for (calldata, expected) in cases {
@@ -3566,7 +3566,7 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_seize_enforces_receiver_policy,
             golden_seize_privileged_still_enforces_role_and_seizable,
         ]),
-        C::SEIZE_ROLE(_) | C::SEIZE_HOLDER_POLICY(_) | C::SEIZE_RECEIVER_POLICY(_) => {
+        C::SEIZE_ROLE(_) | C::SEIZE_EXEMPT_POLICY(_) | C::SEIZE_RECEIVER_POLICY(_) => {
             covered(&[golden_read_seize_role_and_policy_constants])
         }
 
