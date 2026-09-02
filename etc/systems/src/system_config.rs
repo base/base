@@ -182,8 +182,8 @@ pub struct DevnetSnapshotConfig {
 pub enum DevnetL2State {
     /// Generate a fresh local L2 genesis and empty execution databases.
     Fresh,
-    /// Continue from caller-owned writable Base mainnet datadirs.
-    Snapshot(DevnetSnapshotConfig),
+    /// Continue from caller-owned writable Base snapshot datadirs.
+    Snapshot(Box<DevnetSnapshotConfig>),
 }
 
 /// Stable port assignments for system test components.
@@ -341,7 +341,7 @@ impl DevnetConfig {
             l2_chain_id: resolved.l2_chain_id,
             l1_slot_duration: DEFAULT_SLOT_DURATION,
             l1_mode: DevnetL1Mode::None,
-            l2_state: DevnetL2State::Snapshot(DevnetSnapshotConfig {
+            l2_state: DevnetL2State::Snapshot(Box::new(DevnetSnapshotConfig {
                 chain,
                 builder_datadir,
                 client_datadir,
@@ -349,7 +349,7 @@ impl DevnetConfig {
                 expected_head: None,
                 prefund: None,
                 block_interval: DevnetBlockInterval::default(),
-            }),
+            })),
             stable: StableSystemTestConfig::standard(),
             use_stable_ports: false,
         })
