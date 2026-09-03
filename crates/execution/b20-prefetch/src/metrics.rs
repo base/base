@@ -11,6 +11,6 @@ base_metrics::define_metrics! {
     slots_enqueued_total: counter,
     #[describe("Slot reads dropped because a worker queue was full")]
     slots_dropped_total: counter,
-    #[describe("Prefetch reads that failed with a state-provider error")]
+    #[describe("Hinted slot reads that failed, from a read error or an unavailable state provider")]
     read_errors_total: counter,
 }

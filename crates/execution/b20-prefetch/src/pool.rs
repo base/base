@@ -86,8 +86,14 @@ impl B20PrefetchPool {
             let state = match provider.latest() {
                 Ok(state) => state,
                 Err(error) => {
+                    // The dequeued request is charged to read_errors_total, preserving
+                    // slots_enqueued_total == read_seconds count + read_errors_total.
                     PrefetchMetrics::read_errors_total().increment(1);
-                    trace!(error = %error, "b20 prefetch state provider unavailable");
+                    trace!(
+                        error = %error,
+                        address = %request.0,
+                        "b20 prefetch state provider unavailable"
+                    );
                     continue;
                 }
             };
