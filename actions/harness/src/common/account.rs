@@ -1,4 +1,5 @@
-use alloy_consensus::SignableTransaction;
+use alloy_consensus::{SignableTransaction, TxEip7702};
+use alloy_eips::eip7702::{Authorization, SignedAuthorization};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -90,6 +91,57 @@ impl TestAccount {
             .expect("test account signing must not fail");
         self.nonce += 1;
         BaseTxEnvelope::Eip1559(tx.into_signed(sig))
+    }
+
+    /// Sign an EIP-7702 authorization for `address` at `nonce`.
+    ///
+    /// When the authority is also the `SetCode` sender, `nonce` must be the
+    /// transaction nonce plus one: the sender nonce is incremented before
+    /// authorizations are applied.
+    pub fn sign_authorization(
+        &self,
+        chain_id: u64,
+        address: Address,
+        nonce: u64,
+    ) -> SignedAuthorization {
+        let authorization = Authorization { chain_id: U256::from(chain_id), address, nonce };
+        let sig = self
+            .signer
+            .sign_hash_sync(&authorization.signature_hash())
+            .expect("test account authorization signing must not fail");
+        authorization.into_signed(sig)
+    }
+
+    /// Creates and signs an EIP-7702 `SetCode` transaction, auto-incrementing the nonce.
+    ///
+    /// Chain-level fee caps match [`create_tx`](Self::create_tx). The caller supplies
+    /// the destination, calldata, gas limit, and authorization list.
+    pub fn create_eip7702_tx(
+        &mut self,
+        chain_id: u64,
+        to: Address,
+        input: Bytes,
+        gas_limit: u64,
+        authorization_list: Vec<SignedAuthorization>,
+    ) -> BaseTxEnvelope {
+        let tx = TxEip7702 {
+            chain_id,
+            nonce: self.nonce,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 1_000_000,
+            gas_limit,
+            to,
+            value: U256::ZERO,
+            access_list: Default::default(),
+            authorization_list,
+            input,
+        };
+        let sig = self
+            .signer
+            .sign_hash_sync(&tx.signature_hash())
+            .expect("test account signing must not fail");
+        self.nonce += 1;
+        BaseTxEnvelope::Eip7702(tx.into_signed(sig))
     }
 
     /// Return the current nonce.
