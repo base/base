@@ -45,6 +45,12 @@ const CHUNKED_COMPONENTS: &[(&str, &str)] = &[
     ("storage_changesets", "storage-change-sets"),
 ];
 
+/// Name of the per-run archive containing mutable proofs `RocksDB` metadata and WAL files.
+const PROOFS_METADATA_ARCHIVE: &str = "proofs-metadata.tar.zst";
+
+/// Name of the per-run archive containing mutable index `RocksDB` metadata and WAL files.
+const ROCKSDB_METADATA_ARCHIVE: &str = "rocksdb-indices-metadata.tar.zst";
+
 /// Formats snapshot compression progress for structured logs.
 #[derive(Debug)]
 pub struct ProgressDisplay;
@@ -98,6 +104,73 @@ impl ProgressDisplay {
     /// Formats a duration at whole-second precision.
     pub fn duration(duration: Duration) -> FormattedDuration {
         format_duration(Duration::from_secs(duration.as_secs()))
+    }
+}
+
+/// Base-specific manifest extension describing immutable `RocksDB` SST tables.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RocksDbStaticManifest {
+    /// Version of this extension's schema.
+    pub version: u8,
+    /// Storage engine used by the database.
+    pub database: String,
+    /// One archive per immutable `RocksDB` SST table.
+    pub tables: Vec<SingleArchive>,
+}
+
+impl RocksDbStaticManifest {
+    /// Current version of the static RocksDB extension schema.
+    pub const VERSION: u8 = 1;
+
+    /// Parses the optional proofs extension from a manifest JSON document.
+    pub fn from_manifest_bytes(bytes: &[u8]) -> Result<Option<Self>> {
+        Self::from_named_manifest_bytes(bytes, "proofs_static")
+    }
+
+    /// Parses an optional named extension from a manifest JSON document.
+    pub fn from_named_manifest_bytes(bytes: &[u8], extension: &str) -> Result<Option<Self>> {
+        let value: serde_json::Value = serde_json::from_slice(bytes)?;
+        value.get(extension).cloned().map(serde_json::from_value).transpose().map_err(Into::into)
+    }
+
+    /// Inserts this extension into a serialized snapshot manifest.
+    pub fn insert_into(&self, value: &mut serde_json::Value, extension: &str) -> Result<()> {
+        value[extension] = serde_json::to_value(self)?;
+        Ok(())
+    }
+}
+
+/// Immutable SST metadata for the proofs database.
+pub type ProofsStaticManifest = RocksDbStaticManifest;
+
+/// Immutable SST metadata for the main `RocksDB` index database.
+pub type RocksdbStaticManifest = RocksDbStaticManifest;
+
+/// Result from snapshot archive generation.
+///
+/// The manifest extensions are kept separately because they are Base-specific and not represented
+/// by Reth's [`SnapshotManifest`] type. Call [`Self::manifest_bytes`] when publishing the manifest.
+#[derive(Debug, Clone)]
+pub struct SnapshotGenerationResult {
+    /// Reth-compatible snapshot manifest.
+    pub manifest: SnapshotManifest,
+    /// Immutable proofs SST table archives, when proofs snapshots are enabled.
+    pub proofs_static: Option<ProofsStaticManifest>,
+    /// Immutable main index RocksDB SST table archives, when an index database is present.
+    pub rocksdb_static: Option<RocksdbStaticManifest>,
+}
+
+impl SnapshotGenerationResult {
+    /// Serializes the manifest with Base's immutable-RocksDB extensions.
+    pub fn manifest_bytes(&self) -> Result<Vec<u8>> {
+        let mut value = serde_json::to_value(&self.manifest)?;
+        if let Some(extension) = &self.proofs_static {
+            extension.insert_into(&mut value, "proofs_static")?;
+        }
+        if let Some(extension) = &self.rocksdb_static {
+            extension.insert_into(&mut value, "rocksdb_static")?;
+        }
+        Ok(serde_json::to_vec_pretty(&value)?)
     }
 }
 
@@ -202,7 +275,7 @@ pub struct ManifestGenerationParams<'a> {
     pub remote_static_files: &'a HashMap<String, u64>,
     /// Previously published manifest used to verify reusable archives.
     pub previous_manifest: Option<&'a SnapshotManifest>,
-    /// Whether to package `{source_datadir}/proofs` into `proofs.tar.zst`.
+    /// Whether to package `{source_datadir}/proofs` as a RocksDB snapshot.
     pub upload_proofs: bool,
 }
 
@@ -282,8 +355,8 @@ impl SnapshotGenerator {
             .with_context(|| format!("failed to create output dir {}", output_dir.display()))?;
 
         let sink = DirectoryArchiveSink::new(output_dir);
-        let manifest = Self::generate_manifest_with_sink(params, &sink)?;
-        std::fs::write(output_dir.join("manifest.json"), serde_json::to_string_pretty(&manifest)?)?;
+        let result = Self::generate_manifest_with_sink(params, &sink)?;
+        std::fs::write(output_dir.join("manifest.json"), result.manifest_bytes()?)?;
         let files = Self::collect_output_files(output_dir)?;
         info!(file_count = files.len(), "snapshot generation complete");
         Ok(files)
@@ -297,7 +370,7 @@ impl SnapshotGenerator {
     pub fn generate_manifest_with_sink(
         params: &ManifestGenerationParams<'_>,
         archive_sink: &dyn SnapshotArchiveSink,
-    ) -> Result<SnapshotManifest> {
+    ) -> Result<SnapshotGenerationResult> {
         let blocks_per_file = params.blocks_per_file.unwrap_or(DEFAULT_BLOCKS_PER_FILE);
         let block = match params.block {
             Some(block) => block,
@@ -443,21 +516,8 @@ impl SnapshotGenerator {
             }
         }
 
-        let mut single_components =
+        let single_components =
             vec![("state", "state.tar.zst", state_source_files(params.source_datadir)?)];
-        let rocksdb_files = rocksdb_source_files(params.source_datadir)?;
-        if !rocksdb_files.is_empty() {
-            single_components.push(("rocksdb_indices", "rocksdb_indices.tar.zst", rocksdb_files));
-        }
-
-        let proofs_files = if params.upload_proofs {
-            proofs_source_files(params.source_datadir)?
-        } else {
-            Vec::new()
-        };
-        if !proofs_files.is_empty() {
-            single_components.push(("proofs", "proofs.tar.zst", proofs_files));
-        }
 
         // These source trees and output archives are independent. Package them on the shared
         // Rayon pool so the snapshotter's `--snapshot-threads` limit applies to this work too.
@@ -493,6 +553,37 @@ impl SnapshotGenerator {
             );
         }
 
+        let rocksdb_static = package_rocksdb_database(
+            params,
+            archive_sink,
+            "rocksdb",
+            "rocksdb",
+            "rocksdb_indices",
+            ROCKSDB_METADATA_ARCHIVE,
+            false,
+        )?;
+        if let Some((metadata, _)) = &rocksdb_static {
+            components
+                .insert("rocksdb_indices".to_string(), ComponentManifest::Single(metadata.clone()));
+        }
+
+        let proofs_static = if params.upload_proofs {
+            package_rocksdb_database(
+                params,
+                archive_sink,
+                "proofs",
+                "proofs",
+                "proofs",
+                PROOFS_METADATA_ARCHIVE,
+                true,
+            )?
+        } else {
+            None
+        };
+        if let Some((metadata, _)) = &proofs_static {
+            components.insert("proofs".to_string(), ComponentManifest::Single(metadata.clone()));
+        }
+
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .context("system clock is before UNIX epoch")?
@@ -511,7 +602,11 @@ impl SnapshotGenerator {
         };
 
         info!(block, components = manifest.components.len(), "snapshot manifest generated");
-        Ok(manifest)
+        Ok(SnapshotGenerationResult {
+            manifest,
+            proofs_static: proofs_static.map(|(_, extension)| extension),
+            rocksdb_static: rocksdb_static.map(|(_, extension)| extension),
+        })
     }
 
     /// Collects all files in a snapshot output directory (non-recursive).
@@ -668,20 +763,96 @@ fn state_source_files(source_datadir: &Path) -> Result<Vec<PlannedFile>> {
     bail!("could not find source state DB directory under {}", source_datadir.display())
 }
 
-fn rocksdb_source_files(source_datadir: &Path) -> Result<Vec<PlannedFile>> {
-    let rocksdb_dir = source_datadir.join("rocksdb");
-    if !rocksdb_dir.exists() {
-        return Ok(Vec::new());
+fn package_rocksdb_database(
+    params: &ManifestGenerationParams<'_>,
+    archive_sink: &dyn SnapshotArchiveSink,
+    source_name: &str,
+    static_prefix: &str,
+    component: &str,
+    metadata_archive: &str,
+    required: bool,
+) -> Result<Option<(SingleArchive, RocksDbStaticManifest)>> {
+    let database_dir = params.source_datadir.join(source_name);
+    if !database_dir.exists() {
+        if required {
+            bail!("could not find RocksDB {component} database under {}", database_dir.display());
+        }
+        return Ok(None);
     }
-    collect_files_recursive(&rocksdb_dir, Path::new("rocksdb"))
+    if !database_dir.join("CURRENT").is_file() {
+        bail!(
+            "{component} database at {} is not RocksDB (missing CURRENT)",
+            database_dir.display()
+        );
+    }
+
+    let mut tables = Vec::new();
+    let mut metadata = Vec::new();
+    for file in collect_files_recursive(&database_dir, Path::new(source_name))? {
+        if file.source_path.extension().is_some_and(|extension| extension == "sst") {
+            tables.push(file);
+        } else {
+            metadata.push(file);
+        }
+    }
+    if metadata.is_empty() {
+        bail!("RocksDB {component} database has no metadata files")
+    }
+
+    let mut static_tables = Vec::with_capacity(tables.len());
+    for table in tables {
+        let output_files = compute_output_files_for_planned_files(std::slice::from_ref(&table))?;
+        let output =
+            output_files.first().expect("a planned RocksDB SST always has one output file");
+        let archive_name = rocksdb_table_archive_name(static_prefix, &table, &output.blake3);
+        let remote_name = format!("{static_prefix}/{archive_name}");
+        let size = if let Some(size) = params.remote_static_files.get(&remote_name) {
+            *size
+        } else {
+            write_archive_from_planned_files(
+                archive_sink,
+                &archive_name,
+                std::slice::from_ref(&table),
+                None,
+                Arc::new(AtomicU64::new(0)),
+            )?
+            .size
+        };
+        static_tables.push(SingleArchive {
+            file: format!("static_files/{remote_name}"),
+            size,
+            decompressed_size: output.size,
+            blake3: None,
+            output_files,
+        });
+    }
+
+    let (size, output_files) =
+        package_single_component(archive_sink, component, metadata_archive, &metadata)?;
+    let decompressed_size = output_files.iter().map(|file| file.size).sum();
+    Ok(Some((
+        SingleArchive {
+            file: metadata_archive.to_string(),
+            size,
+            decompressed_size,
+            blake3: None,
+            output_files,
+        },
+        RocksDbStaticManifest {
+            version: RocksDbStaticManifest::VERSION,
+            database: "rocksdb".to_string(),
+            tables: static_tables,
+        },
+    )))
 }
 
-fn proofs_source_files(source_datadir: &Path) -> Result<Vec<PlannedFile>> {
-    let proofs_dir = source_datadir.join("proofs");
-    if !proofs_dir.exists() {
-        return Ok(Vec::new());
-    }
-    collect_files_recursive(&proofs_dir, Path::new("proofs"))
+fn rocksdb_table_archive_name(
+    static_prefix: &str,
+    table: &PlannedFile,
+    contents_hash: &str,
+) -> String {
+    let path_hash = blake3::hash(table.relative_path.to_string_lossy().as_bytes()).to_hex();
+    format!("{static_prefix}-sst-{path_hash}-{contents_hash}.tar.zst")
 }
 
 fn looks_like_db_dir(path: &Path) -> Result<bool> {

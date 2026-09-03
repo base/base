@@ -184,6 +184,12 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                     Some((_component, start, _end)) if start != latest_chunk_start => {
                         key_uploader.static_file_object_key(archive_name)
                     }
+                    _ if archive_name.starts_with("proofs-sst-") => {
+                        key_uploader.static_file_object_key(&format!("proofs/{archive_name}"))
+                    }
+                    _ if archive_name.starts_with("rocksdb-sst-") => {
+                        key_uploader.static_file_object_key(&format!("rocksdb/{archive_name}"))
+                    }
                     _ => key_uploader.run_object_key(run_timestamp, archive_name),
                 };
                 Ok(key)

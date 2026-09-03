@@ -16,6 +16,11 @@ hashes of every uncompressed source file match the previous manifest.
 If the EL is not at tip when a run begins, the snapshot is skipped and both containers are left
 running untouched.
 
+Proof-history snapshots are opt-in with `--upload-proofs` (or
+`SNAPSHOTTER_UPLOAD_PROOFS=1`). When enabled, the sidecar requires a `RocksDB` database at
+`{source_datadir}/proofs`. It uploads immutable SST tables once under the shared static-files
+prefix and publishes mutable `RocksDB` metadata in each timestamped snapshot run.
+
 The Docker socket (`/var/run/docker.sock`) is volume-mounted into the sidecar container, giving
 it control over sibling containers on the host.
 
