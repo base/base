@@ -32,6 +32,7 @@ pub struct HashMapStorageProvider {
     is_static: bool,
     counter_sload: u64,
     counter_sstore: u64,
+    record_sloaded_keys: bool,
     sloaded_keys: Vec<(Address, U256)>,
     gas_deducted: u64,
     counter_keccak256: u64,
@@ -80,6 +81,7 @@ impl HashMapStorageProvider {
             is_static: false,
             counter_sload: 0,
             counter_sstore: 0,
+            record_sloaded_keys: false,
             sloaded_keys: Vec::new(),
             gas_deducted: 0,
             counter_keccak256: 0,
@@ -214,7 +216,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             return Err(BasePrecompileError::Fatal("injected sload failure".into()));
         }
         self.counter_sload += 1;
-        self.sloaded_keys.push((address, key));
+        if self.record_sloaded_keys {
+            self.sloaded_keys.push((address, key));
+        }
         Ok(self.internals.get(&(address, key)).copied().unwrap_or(U256::ZERO))
     }
 
@@ -433,7 +437,17 @@ impl HashMapStorageProvider {
         self.counter_keccak256
     }
 
+    /// Enables or disables SLOAD key recording (test-utils only).
+    ///
+    /// Recording is off by default so the per-`sload` heap traffic never distorts benchmarks
+    /// or unrelated tests built with `test-utils`.
+    pub const fn set_record_sloaded_keys(&mut self, enabled: bool) {
+        self.record_sloaded_keys = enabled;
+    }
+
     /// Returns every (address, slot) pair passed to `sload`, in call order (test-utils only).
+    ///
+    /// Empty unless recording was enabled via [`Self::set_record_sloaded_keys`].
     pub fn sloaded_keys(&self) -> &[(Address, U256)] {
         &self.sloaded_keys
     }

@@ -2730,6 +2730,7 @@ fn golden_transfer_hint_slots_match_sload_footprint() {
         });
         s.set_caller(caller);
         s.reset_counters();
+        s.set_record_sloaded_keys(true);
         StorageCtx::enter(&mut s, |ctx| {
             B20AssetToken::with_storage_and_policy(
                 B20AssetStorage::from_address(TOKEN, ctx),
