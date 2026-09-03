@@ -312,7 +312,7 @@ impl L1BlockInfo {
     }
 
     /// Constructs the engine-neutral fee parameters from this block info.
-    const fn params(&self) -> L1FeeParams {
+    fn params(&self) -> L1FeeParams {
         L1FeeParams {
             l1_base_fee: self.l1_base_fee,
             l1_fee_overhead: self.l1_fee_overhead,
@@ -322,10 +322,7 @@ impl L1BlockInfo {
             operator_fee_scalar: self.operator_fee_scalar,
             operator_fee_constant: self.operator_fee_constant,
             empty_ecotone_scalars: self.empty_ecotone_scalars,
-            da_footprint_gas_scalar: match self.da_footprint_gas_scalar {
-                Some(scalar) => Some(U256::from_limbs([scalar as u64, 0, 0, 0])),
-                None => None,
-            },
+            da_footprint_gas_scalar: self.da_footprint_gas_scalar.map(U256::from),
         }
     }
 
