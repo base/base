@@ -26,7 +26,7 @@ use base_system_tests::{
     SystemTestStack, SystemTestStackBuilder,
 };
 use base_tx_forwarding::TxForwardingConfig;
-use base_txpool_rpc::SendRawTransactionValidityRequest;
+use base_txpool_rpc::SendRawTransactionValidityOptions;
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
@@ -361,7 +361,7 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
     let tx_hash: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest { tx: raw_tx, validity },),
+            (raw_tx, SendRawTransactionValidityOptions { validity }),
         )
         .await?;
 
@@ -403,14 +403,16 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
     let tx_hash: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_tx,
-                validity: vec![ValidityPredicate::Balance {
-                    address: sender,
-                    op: ValidityOperator::GreaterThan,
-                    value: U256::ZERO,
-                }],
-            },),
+            (
+                raw_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![ValidityPredicate::Balance {
+                        address: sender,
+                        op: ValidityOperator::GreaterThan,
+                        value: U256::ZERO,
+                    }],
+                },
+            ),
         )
         .await?;
 
@@ -448,14 +450,16 @@ async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Re
     let tx_hash: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_tx,
-                validity: vec![ValidityPredicate::Balance {
-                    address: sender,
-                    op: ValidityOperator::GreaterThan,
-                    value: U256::ZERO,
-                }],
-            },),
+            (
+                raw_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![ValidityPredicate::Balance {
+                        address: sender,
+                        op: ValidityOperator::GreaterThan,
+                        value: U256::ZERO,
+                    }],
+                },
+            ),
         )
         .await?;
 
@@ -493,14 +497,16 @@ async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() 
     let submitted_hash: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_validity_tx,
-                validity: vec![ValidityPredicate::Balance {
-                    address: watched,
-                    op: ValidityOperator::GreaterThanOrEqual,
-                    value: U256::from(1),
-                }],
-            },),
+            (
+                raw_validity_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![ValidityPredicate::Balance {
+                        address: watched,
+                        op: ValidityOperator::GreaterThanOrEqual,
+                        value: U256::from(1),
+                    }],
+                },
+            ),
         )
         .await?;
     assert_eq!(submitted_hash, validity_tx_hash);
@@ -571,13 +577,15 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     let submitted_future: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_future_tx,
-                validity: vec![ValidityPredicate::BlockNumber {
-                    op: ValidityOperator::GreaterThanOrEqual,
-                    value: U256::from(target_block),
-                }],
-            },),
+            (
+                raw_future_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![ValidityPredicate::BlockNumber {
+                        op: ValidityOperator::GreaterThanOrEqual,
+                        value: U256::from(target_block),
+                    }],
+                },
+            ),
         )
         .await?;
     assert_eq!(submitted_future, future_tx_hash);
@@ -585,19 +593,21 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     let submitted_expiring: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_expiring_tx,
-                validity: vec![
-                    ValidityPredicate::BlockNumber {
-                        op: ValidityOperator::GreaterThanOrEqual,
-                        value: U256::from(target_block + 1),
-                    },
-                    ValidityPredicate::BlockNumber {
-                        op: ValidityOperator::LessThanOrEqual,
-                        value: U256::from(target_block),
-                    },
-                ],
-            },),
+            (
+                raw_expiring_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![
+                        ValidityPredicate::BlockNumber {
+                            op: ValidityOperator::GreaterThanOrEqual,
+                            value: U256::from(target_block + 1),
+                        },
+                        ValidityPredicate::BlockNumber {
+                            op: ValidityOperator::LessThanOrEqual,
+                            value: U256::from(target_block),
+                        },
+                    ],
+                },
+            ),
         )
         .await?;
     assert_eq!(submitted_expiring, expiring_tx_hash);
@@ -605,16 +615,18 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     let submitted_storage: B256 = rpc_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: raw_storage_tx,
-                validity: vec![ValidityPredicate::Storage {
-                    address: recipient,
-                    slot: U256::from(1),
-                    mask: U256::MAX,
-                    op: ValidityOperator::Equal,
-                    value: U256::from(2),
-                }],
-            },),
+            (
+                raw_storage_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![ValidityPredicate::Storage {
+                        address: recipient,
+                        slot: U256::from(1),
+                        mask: U256::MAX,
+                        op: ValidityOperator::Equal,
+                        value: U256::from(2),
+                    }],
+                },
+            ),
         )
         .await?;
     assert_eq!(submitted_storage, storage_tx_hash);
@@ -699,7 +711,7 @@ async fn test_invalid_validity_batches_are_rejected_at_mempool_ingress() -> Resu
         let error = rpc_client
             .request::<_, B256>(
                 "base_sendRawTransactionValidity",
-                (SendRawTransactionValidityRequest { tx: raw_tx.clone(), validity },),
+                (raw_tx.clone(), SendRawTransactionValidityOptions { validity }),
             )
             .await
             .expect_err("invalid validity batch should be rejected");

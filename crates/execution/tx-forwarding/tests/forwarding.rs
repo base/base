@@ -16,7 +16,7 @@ use base_execution_txpool::{
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
-use base_txpool_rpc::{SendRawTransactionValidityExtension, SendRawTransactionValidityRequest};
+use base_txpool_rpc::{SendRawTransactionValidityExtension, SendRawTransactionValidityOptions};
 use eyre::{Result, WrapErr};
 use jsonrpsee::{
     RpcModule,
@@ -177,7 +177,7 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
     let _: alloy_primitives::TxHash = client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest { tx: raw.clone(), validity: expected.clone() },),
+            (raw.clone(), SendRawTransactionValidityOptions { validity: expected.clone() }),
         )
         .await?;
 

@@ -226,7 +226,7 @@ impl LoadRunner {
                 .client()
                 .request(
                     "base_sendRawTransactionValidity",
-                    (serde_json::json!({ "tx": "0x", "validity": [] }),),
+                    (serde_json::json!("0x"), serde_json::json!({ "validity": [] })),
                 )
                 .await;
             if let Err(err) = &result
