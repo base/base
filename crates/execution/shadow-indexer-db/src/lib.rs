@@ -13,3 +13,6 @@ pub use retention::{SHADOW_RETENTION_LOCK_KEY, ShadowRetentionRepo, ShadowRetent
 
 mod models;
 pub use models::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
+
+mod hash;
+pub use hash::ShadowHash;

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use sqlx::{PgPool, Postgres, QueryBuilder, query, query_as, types::Json};
 
-use crate::{ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
+use crate::{ShadowBlockRow, ShadowCanonicalRef, ShadowHash, ShadowWrite};
 
 /// Rows written and rows resolved by a single flush.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -115,7 +115,7 @@ impl ShadowBlockRepo {
         tx: &mut sqlx::Transaction<'_, Postgres>,
         rows: &[&ShadowBlockRow],
     ) -> Result<usize> {
-        // Five binds per row; 4,000 stays below Postgres's 65,535-parameter limit.
+        // Seven binds per row; 4,000 stays below Postgres's 65,535-parameter limit.
         const CHUNK_SIZE: usize = 4_000;
 
         let deduped = Self::dedupe_last_write_wins(rows);
@@ -124,15 +124,19 @@ impl ShadowBlockRepo {
         for chunk in deduped.chunks(CHUNK_SIZE) {
             let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
                 "INSERT INTO shadow_blocks \
-                 (number, hash, canonical_hash, created_at, payload) ",
+                 (number, hash, canonical_hash, created_at, payload, hash_hex, canonical_hash_hex) ",
             );
 
+            // The hex columns are derived from the same `entry` in the same bind, so the two
+            // spellings of a hash cannot drift apart for a row this statement writes.
             query_builder.push_values(chunk, |mut row, entry| {
                 row.push_bind(entry.number)
                     .push_bind(&entry.hash)
                     .push_bind(&entry.canonical_hash)
                     .push_bind(entry.created_at)
-                    .push_bind(Json(&entry.payload));
+                    .push_bind(Json(&entry.payload))
+                    .push_bind(ShadowHash::encode(&entry.hash))
+                    .push_bind(entry.canonical_hash.as_deref().map(ShadowHash::encode));
             });
 
             // A new candidate hash lands wholesale. A same-hash conflict only reaches DO UPDATE to
@@ -144,6 +148,8 @@ impl ShadowBlockRepo {
                 " ON CONFLICT (number) DO UPDATE SET \
                  hash = EXCLUDED.hash, \
                  canonical_hash = EXCLUDED.canonical_hash, \
+                 hash_hex = EXCLUDED.hash_hex, \
+                 canonical_hash_hex = EXCLUDED.canonical_hash_hex, \
                  created_at = CASE WHEN shadow_blocks.hash <> EXCLUDED.hash \
                      THEN EXCLUDED.created_at ELSE shadow_blocks.created_at END, \
                  payload = CASE WHEN shadow_blocks.hash <> EXCLUDED.hash \
@@ -174,17 +180,22 @@ impl ShadowBlockRepo {
         }
 
         let (numbers, hashes) = Self::dedupe_canonical_last_write_wins(canonical);
+        let hex: Vec<String> = hashes.iter().map(|hash| ShadowHash::encode(hash)).collect();
 
         let result = query(
             "UPDATE shadow_blocks AS unresolved \
-             SET canonical_hash = canonical.hash, updated_at = now() \
-             FROM UNNEST($1::BIGINT[], $2::BYTEA[]) AS canonical(number, hash) \
+             SET canonical_hash = canonical.hash, \
+                 canonical_hash_hex = canonical.hash_hex, \
+                 updated_at = now() \
+             FROM UNNEST($1::BIGINT[], $2::BYTEA[], $3::TEXT[]) \
+                  AS canonical(number, hash, hash_hex) \
              WHERE unresolved.number = canonical.number \
                AND unresolved.hash <> canonical.hash \
                AND unresolved.canonical_hash IS NULL",
         )
         .bind(&numbers)
         .bind(&hashes)
+        .bind(&hex)
         .execute(&mut **tx)
         .await
         .context("failed to resolve canonical hashes for shadow blocks")?;
