@@ -278,6 +278,8 @@ impl PrometheusBlockCollector {
             "reth_sync_state_provider_",
             "reth_consensus_engine_beacon_block_insert_",
             "reth_consensus_engine_beacon_new_payload_",
+            "reth_consensus_engine_beacon_backpressure_",
+            "reth_consensus_engine_beacon_failed_",
             "reth_consensus_engine_persistence_save_blocks_",
             "reth_storage_providers_database_save_blocks_",
             "reth_tree_root_sparse_trie_",
@@ -366,6 +368,12 @@ mod tests {
         ));
         assert!(PrometheusBlockCollector::is_diagnostic_metric(
             "reth_sync_execution_execution_duration"
+        ));
+        assert!(PrometheusBlockCollector::is_diagnostic_metric(
+            "reth_consensus_engine_beacon_backpressure_stall_duration_avg"
+        ));
+        assert!(PrometheusBlockCollector::is_diagnostic_metric(
+            "reth_consensus_engine_beacon_failed_new_payload_response_deliveries"
         ));
         assert!(!PrometheusBlockCollector::is_diagnostic_metric(
             "reth_rpc_server_calls_started_total_method_eth_call"

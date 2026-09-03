@@ -71,6 +71,8 @@ pub struct InProcessClientConfig {
     pub metrics_port: Option<u16>,
     /// Optional canonical block persistence threshold.
     pub persistence_threshold: Option<u64>,
+    /// Optional number of unpersisted blocks allowed before Engine API intake is stalled.
+    pub persistence_backpressure_threshold: Option<u64>,
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
@@ -224,6 +226,11 @@ impl InProcessClient {
         }
         if let Some(persistence_threshold) = config.persistence_threshold {
             node_config.engine.persistence_threshold = persistence_threshold;
+        }
+        if let Some(persistence_backpressure_threshold) = config.persistence_backpressure_threshold
+        {
+            node_config.engine.persistence_backpressure_threshold =
+                Some(persistence_backpressure_threshold);
         }
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(data_dir.clone());

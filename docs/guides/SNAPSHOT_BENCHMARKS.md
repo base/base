@@ -116,6 +116,13 @@ Keep maximum-throughput tuning separate from fixed-offered-load comparisons. Rec
 whether runs use a warm or cold page-cache policy; matching restored datadirs alone
 do not make page-cache state equal.
 
+Snapshot roles persist every block so the disposable datadirs remain inspectable. Reth's Engine
+persistence-backpressure threshold is cadence-scaled to preserve the default wall-clock headroom:
+16 blocks at 2 seconds and 160 blocks at 200 milliseconds. Without this scaling, a slow persistence
+flush can stop Engine API intake after only 3.2 seconds at 200 milliseconds, producing empty-block
+runs followed by catch-up bursts. The report artifacts retain the Engine backpressure and failed
+response metrics so this condition is visible rather than misclassified as workload capacity.
+
 ## Compare In Base/benchmark
 
 Place each completed output directory beneath one parent directory, for example:
