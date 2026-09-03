@@ -83,7 +83,9 @@ impl CpuProfiler {
     ///
     /// # Cancel safety
     ///
-    /// Cancelling this future drops the active `pprof` guard and releases the single-flight lock.
+    /// Cancelling during sampling drops the active `pprof` guard and releases the single-flight
+    /// lock. Once report finalization starts, the blocking task runs to completion and releases
+    /// both resources there.
     ///
     /// # Errors
     ///
@@ -108,7 +110,8 @@ impl CpuProfiler {
         let pprof_frequency =
             i32::try_from(hz).map_err(|_| ProfilerError::InvalidFrequency { frequency: hz })?;
 
-        let capture_permit = self.capture_lock.try_lock().map_err(|_| ProfilerError::Busy)?;
+        let capture_permit =
+            Arc::clone(&self.capture_lock).try_lock_owned().map_err(|_| ProfilerError::Busy)?;
         let guard = ProfilerGuardBuilder::default()
             .frequency(pprof_frequency)
             .blocklist(&["libc", "libgcc", "pthread", "vdso"])
@@ -121,17 +124,21 @@ impl CpuProfiler {
         info!(seconds = %secs, frequency = %hz, "cpu profile capture started");
 
         tokio::time::sleep(duration).await;
-        let report = guard.report().build().map_err(ProfilerError::Pprof)?;
-        drop(guard);
-        drop(capture_permit);
+        let bytes = tokio::task::spawn_blocking(move || {
+            let report = guard.report().build().map_err(ProfilerError::Pprof)?;
+            drop(guard);
+            drop(capture_permit);
 
-        let profile = report.pprof().map_err(ProfilerError::Pprof)?;
-        let protobuf = profile
-            .write_to_bytes()
-            .map_err(|error| ProfilerError::ProtobufEncode { message: error.to_string() })?;
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&protobuf).map_err(ProfilerError::Gzip)?;
-        let bytes = encoder.finish().map_err(ProfilerError::Gzip)?;
+            let profile = report.pprof().map_err(ProfilerError::Pprof)?;
+            let protobuf = profile
+                .write_to_bytes()
+                .map_err(|error| ProfilerError::ProtobufEncode { message: error.to_string() })?;
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(&protobuf).map_err(ProfilerError::Gzip)?;
+            encoder.finish().map_err(ProfilerError::Gzip)
+        })
+        .await
+        .map_err(|error| ProfilerError::ProtobufEncode { message: error.to_string() })??;
 
         info!(seconds = %secs, frequency = %hz, bytes = %bytes.len(), "cpu profile capture completed");
         Ok(bytes)
