@@ -15,7 +15,7 @@ use base_execution_txpool::{
 };
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::Account;
-use base_txpool_rpc::{SendRawTransactionValidityExtension, SendRawTransactionValidityRequest};
+use base_txpool_rpc::{SendRawTransactionValidityExtension, SendRawTransactionValidityOptions};
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
 async fn setup(
@@ -231,10 +231,10 @@ async fn test_send_raw_transaction_validity_requires_explicit_opt_in() -> eyre::
     let disabled: Result<TxHash, _> = disabled_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: signed_eip1559_tx(disabled_harness.chain_id()),
-                validity: Vec::new(),
-            },),
+            (
+                signed_eip1559_tx(disabled_harness.chain_id()),
+                SendRawTransactionValidityOptions { validity: Vec::new() },
+            ),
         )
         .await;
     let disabled_error = disabled
@@ -250,14 +250,16 @@ async fn test_send_raw_transaction_validity_requires_explicit_opt_in() -> eyre::
     let enabled: Result<TxHash, _> = enabled_client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: signed_eip1559_tx(enabled_harness.chain_id()),
-                validity: vec![ValidityPredicate::Balance {
-                    address: Account::Alice.address(),
-                    op: ValidityOperator::Equal,
-                    value: U256::ZERO,
-                }],
-            },),
+            (
+                signed_eip1559_tx(enabled_harness.chain_id()),
+                SendRawTransactionValidityOptions {
+                    validity: vec![ValidityPredicate::Balance {
+                        address: Account::Alice.address(),
+                        op: ValidityOperator::Equal,
+                        value: U256::ZERO,
+                    }],
+                },
+            ),
         )
         .await;
     assert!(enabled.is_ok(), "enabled builder should accept validity ingress: {enabled:?}");
@@ -277,10 +279,10 @@ async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre:
     let result: Result<TxHash, _> = client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
-                tx: signed_eip1559_tx(harness.chain_id()),
-                validity: vec![predicate; 2],
-            },),
+            (
+                signed_eip1559_tx(harness.chain_id()),
+                SendRawTransactionValidityOptions { validity: vec![predicate; 2] },
+            ),
         )
         .await;
     let error = result.expect_err("builder should reject validity above its configured limit");

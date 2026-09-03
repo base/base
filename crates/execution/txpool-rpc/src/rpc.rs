@@ -48,11 +48,9 @@ pub struct TransactionStatusResponse {
     pub status: Status,
 }
 
-/// Request for `base_sendRawTransactionValidity`.
+/// Options for `base_sendRawTransactionValidity` accompanying the raw transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
-pub struct SendRawTransactionValidityRequest {
-    /// EIP-2718 encoded signed transaction.
-    pub tx: Bytes,
+pub struct SendRawTransactionValidityOptions {
     /// Experimental predicates transported to builders alongside the transaction.
     pub validity: Vec<ValidityPredicate>,
 }
@@ -72,7 +70,8 @@ pub trait SendRawTransactionValidityApi {
     #[method(name = "sendRawTransactionValidity")]
     async fn send_raw_transaction_validity(
         &self,
-        request: SendRawTransactionValidityRequest,
+        tx: Bytes,
+        options: SendRawTransactionValidityOptions,
     ) -> RpcResult<TxHash>;
 }
 
@@ -208,9 +207,10 @@ where
 {
     async fn send_raw_transaction_validity(
         &self,
-        request: SendRawTransactionValidityRequest,
+        tx: Bytes,
+        options: SendRawTransactionValidityOptions,
     ) -> RpcResult<TxHash> {
-        ValidityPredicate::validate_batch(&request.validity, self.max_validity_predicates)
+        ValidityPredicate::validate_batch(&options.validity, self.max_validity_predicates)
             .map_err(|error| {
                 ErrorObjectOwned::owned(
                     ErrorCode::InvalidParams.code(),
@@ -219,8 +219,8 @@ where
                 )
             })?;
 
-        let transaction = BasePooledTransaction::recover_raw_transaction(request.tx.as_ref())
-            .map_err(|error| {
+        let transaction =
+            BasePooledTransaction::recover_raw_transaction(tx.as_ref()).map_err(|error| {
                 ErrorObjectOwned::owned(
                     ErrorCode::InvalidParams.code(),
                     format!("failed to decode transaction: {error}"),
@@ -246,7 +246,7 @@ where
             tx_hash: tx_hash,
             data: {
                 "rpc_method" => "base_sendRawTransactionValidity",
-                "validity_predicates" => &request.validity,
+                "validity_predicates" => &options.validity,
             },
         );
 
@@ -254,7 +254,7 @@ where
         self.pool
             .add_transaction(
                 TransactionOrigin::Private,
-                transaction.with_validity_predicates(request.validity),
+                transaction.with_validity_predicates(options.validity),
             )
             .await
             .map_err(|error| ErrorObjectOwned::from(RpcPoolError::from(error)))?;
@@ -343,17 +343,19 @@ mod tests {
         NoopTransactionPool::<BasePooledTransaction>::new()
     }
 
-    fn validity_request(tx: Bytes) -> SendRawTransactionValidityRequest {
-        SendRawTransactionValidityRequest {
+    fn validity_request(tx: Bytes) -> (Bytes, SendRawTransactionValidityOptions) {
+        (
             tx,
-            validity: vec![ValidityPredicate::Storage {
-                address: Address::repeat_byte(0xab),
-                slot: U256::from(1),
-                mask: U256::MAX,
-                op: base_execution_txpool::ValidityOperator::Equal,
-                value: U256::from(0x789),
-            }],
-        }
+            SendRawTransactionValidityOptions {
+                validity: vec![ValidityPredicate::Storage {
+                    address: Address::repeat_byte(0xab),
+                    slot: U256::from(1),
+                    mask: U256::MAX,
+                    op: base_execution_txpool::ValidityOperator::Equal,
+                    value: U256::from(0x789),
+                }],
+            },
+        )
     }
 
     fn all_predicate_variants() -> Vec<ValidityPredicate> {
@@ -426,13 +428,18 @@ mod tests {
     }
 
     #[test]
-    fn send_raw_transaction_validity_request_uses_top_level_keys() {
-        let request = validity_request(Bytes::from_static(&[0x02]));
-        let value = serde_json::to_value(request).expect("request should serialize");
+    fn send_raw_transaction_validity_request_uses_positional_params() {
+        let (tx, options) = validity_request(Bytes::from_static(&[0x02]));
 
-        assert_eq!(value["tx"], "0x02");
-        assert_eq!(value["validity"][0]["type"], "storage");
-        assert_eq!(value["validity"][0]["params"]["slot"], "0x1");
+        // The raw transaction is the leading bare param, serialized as a hex string.
+        let tx_value = serde_json::to_value(tx).expect("tx should serialize");
+        assert_eq!(tx_value, "0x02");
+
+        // The options object carries only `validity` alongside the transaction.
+        let options_value = serde_json::to_value(options).expect("options should serialize");
+        assert!(options_value.get("tx").is_none());
+        assert_eq!(options_value["validity"][0]["type"], "storage");
+        assert_eq!(options_value["validity"][0]["params"]["slot"], "0x1");
     }
 
     #[test]
@@ -500,10 +507,9 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
         let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
-        let request =
-            SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
 
-        let tx_hash = rpc.send_raw_transaction_validity(request).await.unwrap_or_else(|_| {
+        let tx_hash = rpc.send_raw_transaction_validity(raw, options).await.unwrap_or_else(|_| {
             capture.events().first().and_then(|event| event.tx_hash).expect(
                 "admission event should fire before pool insertion even if the noop pool rejects",
             )
@@ -538,11 +544,10 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip8130(&signer);
         let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_cobalt_provider());
-        let request =
-            SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_raw_transaction_validity(raw, options)
             .await
             .expect_err("EIP-8130 validity transactions should be rejected before Cobalt");
 
@@ -559,11 +564,10 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
         let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_cobalt_provider());
-        let request =
-            SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_raw_transaction_validity(raw, options)
             .await
             .expect_err("the noop pool rejects insertion after the fork gate is cleared");
 
@@ -582,8 +586,9 @@ mod tests {
     async fn send_raw_transaction_validity_rejects_malformed_transaction() {
         let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
 
+        let (raw, options) = validity_request(Bytes::from_static(&[0xff]));
         let error = rpc
-            .send_raw_transaction_validity(validity_request(Bytes::from_static(&[0xff])))
+            .send_raw_transaction_validity(raw, options)
             .await
             .expect_err("malformed transaction should be rejected");
 
@@ -598,11 +603,11 @@ mod tests {
             cobalt_provider(),
             2,
         );
-        let mut request = validity_request(Bytes::from_static(&[0x02]));
-        request.validity = vec![request.validity[0].clone(); 3];
+        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
+        options.validity = vec![options.validity[0].clone(); 3];
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_raw_transaction_validity(raw, options)
             .await
             .expect_err("oversized validity should be rejected before transaction decoding");
 
@@ -614,11 +619,11 @@ mod tests {
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_empty_predicates() {
         let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
-        let mut request = validity_request(Bytes::from_static(&[0x02]));
-        request.validity.clear();
+        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
+        options.validity.clear();
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_raw_transaction_validity(raw, options)
             .await
             .expect_err("empty validity should be rejected before transaction decoding");
 
@@ -629,8 +634,8 @@ mod tests {
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_storage_value_outside_mask() {
         let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
-        let mut request = validity_request(Bytes::from_static(&[0x02]));
-        request.validity = vec![ValidityPredicate::Storage {
+        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
+        options.validity = vec![ValidityPredicate::Storage {
             address: Address::repeat_byte(0xab),
             slot: U256::from(1),
             mask: U256::from(0xff),
@@ -639,7 +644,7 @@ mod tests {
         }];
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_raw_transaction_validity(raw, options)
             .await
             .expect_err("storage value outside its mask should be rejected");
 
@@ -650,16 +655,16 @@ mod tests {
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_unsatisfiable_flashblock_index() {
         let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
-        let mut request = validity_request(Bytes::from_static(&[0x02]));
+        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         // A flashblock-index predicate that only holds at index 0, which pooled
         // transactions never reach, would park forever if admitted.
-        request.validity = vec![ValidityPredicate::FlashblockIndex {
+        options.validity = vec![ValidityPredicate::FlashblockIndex {
             op: base_execution_txpool::ValidityOperator::Equal,
             value: U256::ZERO,
         }];
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_raw_transaction_validity(raw, options)
             .await
             .expect_err("an unsatisfiable flashblock-index predicate should be rejected");
 
