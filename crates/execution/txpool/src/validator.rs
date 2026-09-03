@@ -1680,6 +1680,15 @@ where
         &self,
         signed: &Eip8130Signed,
     ) -> Result<(), InvalidPoolTransactionError> {
+        let size = signed.encode_2718_len();
+        let limit = self.inner.max_tx_input_bytes();
+        if size > limit {
+            return Err(InvalidPoolTransactionError::OversizedData { size, limit });
+        }
+        if signed.tx().calls.len() > Eip8130Constants::MAX_CALL_PHASES_PER_TX {
+            return Err(Self::eip8130_error("call phase count exceeds maximum"));
+        }
+
         // Single read of the head-block timestamp so the fork gate and the
         // expiry check see the same value even when `on_new_head_block` updates
         // the atomic concurrently.
@@ -2199,6 +2208,21 @@ mod tests {
         build_test_validator_with_spec(chain_spec)
     }
 
+    /// Builds a Cobalt-activated validator with a custom encoded transaction-size limit.
+    fn build_test_validator_with_max_tx_input_bytes(max_tx_input_bytes: usize) -> TestValidator {
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .with_max_tx_input_bytes(max_tx_input_bytes)
+            .build(InMemoryBlobStore::default());
+        BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+    }
+
     /// Builds a Cobalt-activated validator with one canonical account seeded.
     fn build_test_validator_with_account(
         address: Address,
@@ -2517,6 +2541,45 @@ mod tests {
         let validator = build_test_validator();
         let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
         assert!(validator.validate_eip8130_structural(&signed).is_ok());
+    }
+
+    #[test]
+    fn accepts_eip8130_at_encoded_size_limit() {
+        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
+        let validator = build_test_validator_with_max_tx_input_bytes(signed.encode_2718_len());
+
+        assert!(validator.validate_eip8130_structural(&signed).is_ok());
+    }
+
+    #[test]
+    fn rejects_eip8130_over_encoded_size_limit() {
+        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
+        let size = signed.encode_2718_len();
+        let limit = size - 1;
+        let validator = build_test_validator_with_max_tx_input_bytes(limit);
+
+        assert!(matches!(
+            validator.validate_eip8130_structural(&signed),
+            Err(InvalidPoolTransactionError::OversizedData {
+                size: rejected_size,
+                limit: rejected_limit,
+            }) if rejected_size == size && rejected_limit == limit
+        ));
+    }
+
+    #[test]
+    fn rejects_constructed_eip8130_over_call_phase_limit() {
+        let validator = build_test_validator();
+        let tx = TxEip8130 {
+            calls: vec![Vec::new(); Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1],
+            ..minimal_valid_eoa_tx()
+        };
+        let signed = sign_eoa_eip8130(tx);
+
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&signed),
+            "call phase count exceeds maximum",
+        );
     }
 
     #[test]
