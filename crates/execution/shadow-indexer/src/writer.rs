@@ -220,7 +220,7 @@ mod tests {
     fn sample_row(number: i64, created_at: DateTime<Utc>) -> ShadowBlockRow {
         ShadowBlockRow {
             number,
-            hash: b"hash".to_vec(),
+            hash: "0xhash".to_owned(),
             canonical_hash: None,
             created_at,
             updated_at: created_at,
@@ -237,7 +237,7 @@ mod tests {
     }
 
     fn canonical(number: i64) -> ShadowWrite {
-        ShadowWrite::Canonical(ShadowCanonicalRef { number, hash: b"canonical".to_vec() })
+        ShadowWrite::Canonical(ShadowCanonicalRef { number, hash: "0xcanonical".to_owned() })
     }
 
     #[tokio::test]
