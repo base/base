@@ -166,11 +166,21 @@ where
         >,
         ordering: O,
     ) -> Self {
-        let price_bump_config = protocol_pool.config().price_bumps;
+        let config = protocol_pool.config();
+        let price_bump_config = config.price_bumps;
+        // Bound the sidecar by the same budget the protocol pool allots to its
+        // pending and queued subpools. Finite 2D-nonce channels have no time
+        // expiry, so this cap is the sidecar's only defense against unbounded
+        // growth from a sender funding many accounts.
+        let max_sidecar_transactions =
+            config.pending_limit.max_txs.saturating_add(config.queued_limit.max_txs);
         Self {
             protocol_pool,
             ordering,
-            nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
+            nonce_pool: Arc::new(RwLock::new(
+                TwoDNoncePool::new(price_bump_config)
+                    .with_max_transactions(max_sidecar_transactions),
+            )),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
@@ -709,7 +719,23 @@ where
                     }
                     (None, None) => {}
                 }
+                // Shed the lowest-priority transactions if this insertion pushed
+                // the sidecar past its capacity. Release their guard reservations
+                // while the guard lock is still held, then notify listeners.
+                let evicted = nonce_pool.enforce_capacity(outcome.outcome.hash);
+                for transaction in &evicted {
+                    guard.release(transaction.hash());
+                }
                 drop(guard);
+                if !evicted.is_empty() {
+                    debug!(
+                        evicted = evicted.len(),
+                        sidecar_len = nonce_pool.len(),
+                        "sidecar capacity eviction"
+                    );
+                    GuardMetrics::record_capacity_evictions(evicted.len());
+                    listeners.on_discarded(&evicted);
+                }
                 listeners.on_inserted(&nonce_pool, &outcome);
                 if is_validity {
                     ValidityPoolMetrics::record_admission(outcome.replaced.is_some());
