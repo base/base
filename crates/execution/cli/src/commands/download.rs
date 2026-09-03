@@ -5,7 +5,9 @@
 //! same snapshot source and manifest.
 
 use std::{
+    collections::BTreeMap,
     ffi::OsString,
+    io::Read,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -16,10 +18,15 @@ use eyre::Result;
 use futures::StreamExt;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_commands::download::{DownloadCommand, DownloadDefaults};
+use reth_cli_commands::download::{
+    DownloadCommand, DownloadDefaults,
+    manifest::{ComponentManifest, OutputFileChecksum, SingleArchive},
+};
 use reth_node_core::args::DatadirArgs;
+use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
+use url::Url;
 
 /// Download Base node snapshots from R2 storage.
 ///
@@ -27,7 +34,8 @@ use tracing::info;
 /// downloads the expanded trie proof database for fault proof support.
 ///
 /// When `--proofs` is passed, the command runs reth's standard download
-/// then fetches and extracts the proofs archive from the same snapshot source.
+/// then fetches and extracts incremental `RocksDB` proofs artifacts from the
+/// same snapshot source.
 #[derive(Debug, Parser)]
 pub struct BaseDownloadCommand<C: ChainSpecParser> {
     #[command(flatten)]
@@ -35,9 +43,9 @@ pub struct BaseDownloadCommand<C: ChainSpecParser> {
 
     /// Also download the proofs database for fault proof support.
     ///
-    /// After the standard download completes, fetches the proofs archive
-    /// from the same snapshot source and extracts it into the data directory.
-    /// Re-running with `--proofs` will overwrite any existing proofs database.
+    /// After the standard download completes, fetches mutable metadata and
+    /// immutable SST archives from the same snapshot source. Existing SSTs
+    /// with matching BLAKE3 metadata are reused.
     #[arg(long)]
     proofs: bool,
 }
@@ -102,18 +110,36 @@ impl<C: ChainSpecParser> BaseDownloadCommand<C> {
     }
 }
 
-/// Metadata parsed from the manifest's `proofs` component.
+/// A Base-specific top-level manifest extension containing immutable proof SST tables.
+#[derive(Debug, Deserialize)]
+struct ProofsStaticManifest {
+    version: u8,
+    database: String,
+    tables: Vec<SingleArchive>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProofsDownloadManifest {
+    #[serde(default)]
+    base_url: Option<String>,
+    components: BTreeMap<String, ComponentManifest>,
+    #[serde(default)]
+    proofs_static: Option<ProofsStaticManifest>,
+}
+
+/// A concrete proof artifact to fetch and verify.
 #[derive(Debug)]
 struct ProofsManifestEntry {
     file_name: String,
     expected_size: u64,
     archive_url: String,
+    output_files: Vec<OutputFileChecksum>,
 }
 
 /// Downloads the proofs database from a snapshot manifest.
 ///
-/// Encapsulates the full pipeline: manifest fetch → archive download with
-/// resume → size verification → tar+zstd extraction → cache cleanup.
+/// Encapsulates the full pipeline: manifest fetch → artifact reuse or download
+/// with resume → tar+zstd extraction → BLAKE3 output verification.
 #[derive(Debug)]
 struct ProofsDownloader;
 
@@ -130,26 +156,46 @@ impl ProofsDownloader {
 
     /// Runs the full proofs download pipeline from a manifest URL.
     async fn run_from_manifest(target_dir: &Path, manifest_url: &str) -> Result<()> {
-        let entry = Self::fetch_manifest_entry(manifest_url).await?;
+        let entries = Self::fetch_manifest_entries(manifest_url).await?;
 
         let cache_dir = target_dir.join(".snapshot-cache");
         tokio::fs::create_dir_all(&cache_dir).await?;
 
-        let archive_path = Self::download_archive(&entry, &cache_dir).await?;
+        for entry in entries {
+            if Self::verify_outputs(target_dir, &entry.output_files)? {
+                info!(target: "reth::cli", file = %entry.file_name, "Reusing verified proofs snapshot artifact");
+                continue;
+            }
 
-        Self::extract_and_cleanup(&archive_path, target_dir, &cache_dir).await
+            Self::cleanup_outputs(target_dir, &entry.output_files);
+            let archive_path = Self::download_archive(&entry, &cache_dir).await?;
+            Self::extract_tar_zst(&archive_path, target_dir)?;
+            tokio::fs::remove_file(&archive_path).await.ok();
+
+            if !Self::verify_outputs(target_dir, &entry.output_files)? {
+                Self::cleanup_outputs(target_dir, &entry.output_files);
+                eyre::bail!(
+                    "proofs archive extracted but output verification failed: {}",
+                    entry.file_name
+                );
+            }
+        }
+
+        tokio::fs::remove_dir_all(cache_dir).await.ok();
+        info!(target: "reth::cli", "Proofs database download complete");
+        Ok(())
     }
 
-    /// Fetches the manifest and extracts the proofs component metadata.
-    async fn fetch_manifest_entry(manifest_url: &str) -> Result<ProofsManifestEntry> {
-        info!(target: "reth::cli", manifest_url = %manifest_url, "Fetching manifest for proofs component");
+    /// Fetches the manifest and resolves immutable SST tables plus mutable metadata.
+    async fn fetch_manifest_entries(manifest_url: &str) -> Result<Vec<ProofsManifestEntry>> {
+        info!(target: "reth::cli", manifest_url = %manifest_url, "Fetching manifest for proofs components");
 
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(30))
             .timeout(std::time::Duration::from_secs(60))
             .build()?;
 
-        let manifest: serde_json::Value = client
+        let manifest: ProofsDownloadManifest = client
             .get(manifest_url)
             .send()
             .await
@@ -160,40 +206,88 @@ impl ProofsDownloader {
             .await
             .map_err(|e| eyre::eyre!("failed to parse manifest from {manifest_url}: {e}"))?;
 
-        let proofs_component =
-            manifest.get("components").and_then(|c| c.get("proofs")).ok_or_else(|| {
-                eyre::eyre!(
-                    "manifest has no 'proofs' component — this snapshot does not include proofs"
-                )
-            })?;
-
-        let file_name = proofs_component
-            .get("file")
-            .and_then(|f| f.as_str())
-            .ok_or_else(|| eyre::eyre!("proofs component missing 'file' field in manifest"))?
-            .to_string();
-
-        let expected_size = proofs_component
-            .get("size")
-            .and_then(|s| s.as_u64())
-            .ok_or_else(|| eyre::eyre!("proofs component missing 'size' field in manifest"))?;
-
-        let file_path = std::path::Path::new(&file_name);
-        if file_path.is_absolute()
-            || file_name.contains("..")
-            || file_path.components().count() != 1
-        {
-            eyre::bail!("invalid proofs file name in manifest: {file_name}");
+        let proofs_static = manifest.proofs_static.ok_or_else(|| {
+            eyre::eyre!("manifest has no proofs_static extension — this snapshot uses an unsupported proofs format")
+        })?;
+        if proofs_static.version != 1 || proofs_static.database != "rocksdb" {
+            eyre::bail!(
+                "unsupported proofs_static format: version={} database={}",
+                proofs_static.version,
+                proofs_static.database
+            );
         }
 
-        let archive_base_url = manifest_url
-            .rsplit_once('/')
-            .map(|(base, _)| base.to_string())
-            .ok_or_else(|| eyre::eyre!("malformed manifest URL: {manifest_url}"))?;
+        let ComponentManifest::Single(metadata) = manifest
+            .components
+            .get("proofs")
+            .ok_or_else(|| eyre::eyre!("manifest has no proofs metadata component"))?
+        else {
+            eyre::bail!("proofs metadata component must be a single archive");
+        };
 
-        let archive_url = format!("{archive_base_url}/{file_name}");
+        let archive_base_url = manifest.base_url.as_deref().unwrap_or_else(|| {
+            manifest_url.rsplit_once('/').map(|(base, _)| base).unwrap_or(manifest_url)
+        });
+        let mut entries = proofs_static
+            .tables
+            .iter()
+            .map(|table| Self::entry_from_archive(table, archive_base_url))
+            .collect::<Result<Vec<_>>>()?;
+        entries.push(Self::entry_from_archive(metadata, archive_base_url)?);
+        Ok(entries)
+    }
 
-        Ok(ProofsManifestEntry { file_name, expected_size, archive_url })
+    fn entry_from_archive(archive: &SingleArchive, base_url: &str) -> Result<ProofsManifestEntry> {
+        Self::validate_relative_archive_path(&archive.file)?;
+        Self::validate_output_files(&archive.output_files)?;
+        let mut base = Url::parse(base_url)
+            .map_err(|e| eyre::eyre!("invalid proofs archive base URL {base_url}: {e}"))?;
+        if !base.path().ends_with('/') {
+            base.set_path(&format!("{}/", base.path()));
+        }
+        let archive_url = base
+            .join(&archive.file)
+            .map_err(|e| eyre::eyre!("invalid proofs archive URL {}: {e}", archive.file))?
+            .to_string();
+        let file_name = format!("{}.tar.zst", blake3::hash(archive.file.as_bytes()).to_hex());
+        Ok(ProofsManifestEntry {
+            file_name,
+            expected_size: archive.size,
+            archive_url,
+            output_files: archive.output_files.clone(),
+        })
+    }
+
+    fn validate_relative_archive_path(file: &str) -> Result<()> {
+        let path = Path::new(file);
+        if file.is_empty()
+            || path.is_absolute()
+            || !file.ends_with(".tar.zst")
+            || path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            eyre::bail!("invalid proofs archive path in manifest: {file}");
+        }
+        Ok(())
+    }
+
+    fn validate_output_files(files: &[OutputFileChecksum]) -> Result<()> {
+        if files.is_empty() {
+            eyre::bail!("proofs archive is missing output checksum metadata");
+        }
+        for file in files {
+            let path = Path::new(&file.path);
+            if !file.path.starts_with("proofs/")
+                || path.is_absolute()
+                || path
+                    .components()
+                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            {
+                eyre::bail!("invalid proofs output path in manifest: {}", file.path);
+            }
+        }
+        Ok(())
     }
 
     /// Downloads the proofs archive with resume support and size verification.
@@ -295,24 +389,34 @@ impl ProofsDownloader {
         Ok(dest_path)
     }
 
-    /// Extracts the archive and cleans up the cache directory.
-    async fn extract_and_cleanup(
-        archive_path: &Path,
-        target_dir: &Path,
-        cache_dir: &Path,
-    ) -> Result<()> {
-        info!(target: "reth::cli", "Extracting proofs archive");
+    fn verify_outputs(target_dir: &Path, output_files: &[OutputFileChecksum]) -> Result<bool> {
+        for expected in output_files {
+            let path = target_dir.join(&expected.path);
+            let Ok(metadata) = std::fs::metadata(&path) else { return Ok(false) };
+            if metadata.len() != expected.size {
+                return Ok(false);
+            }
+            let mut source = std::fs::File::open(path)?;
+            let mut hasher = blake3::Hasher::new();
+            let mut buffer = [0_u8; 64 * 1024];
+            loop {
+                let read = source.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..read]);
+            }
+            if !hasher.finalize().to_hex().eq_ignore_ascii_case(&expected.blake3) {
+                return Ok(false);
+            }
+        }
+        Ok(!output_files.is_empty())
+    }
 
-        let extract_target = target_dir.to_path_buf();
-        let extract_path = archive_path.to_path_buf();
-        tokio::task::spawn_blocking(move || Self::extract_tar_zst(&extract_path, &extract_target))
-            .await??;
-
-        tokio::fs::remove_file(archive_path).await.ok();
-        tokio::fs::remove_dir_all(cache_dir).await.ok();
-
-        info!(target: "reth::cli", "Proofs database download complete");
-        Ok(())
+    fn cleanup_outputs(target_dir: &Path, output_files: &[OutputFileChecksum]) {
+        for output in output_files {
+            let _ = std::fs::remove_file(target_dir.join(&output.path));
+        }
     }
 
     /// Extracts a `.tar.zst` archive into the target directory.
@@ -328,12 +432,12 @@ impl ProofsDownloader {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{collections::HashMap, path::Path};
 
     use axum::{
         Router,
-        extract::State,
-        http::{HeaderMap, StatusCode},
+        extract::{Path as AxumPath, State},
+        http::StatusCode,
         response::IntoResponse,
         routing::get,
     };
@@ -352,7 +456,6 @@ mod tests {
         let mut buf = Vec::new();
         let encoder = zstd::Encoder::new(&mut buf, 0).unwrap();
         let mut builder = tar::Builder::new(encoder);
-
         for (path, data) in content_pairs {
             let mut header = tar::Header::new_gnu();
             header.set_size(data.len() as u64);
@@ -360,81 +463,50 @@ mod tests {
             header.set_cksum();
             builder.append_data(&mut header, path, *data).unwrap();
         }
-
-        let encoder = builder.into_inner().unwrap();
-        encoder.finish().unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
         buf
     }
 
-    async fn start_test_server(
-        manifest_json: serde_json::Value,
-        archive_bytes: Vec<u8>,
-    ) -> (String, tokio::task::JoinHandle<()>) {
-        let manifest_bytes = serde_json::to_vec(&manifest_json).unwrap();
-        let manifest_clone = manifest_bytes.clone();
-        let archive_clone = archive_bytes.clone();
+    fn output(path: &str, bytes: &[u8]) -> serde_json::Value {
+        serde_json::json!({
+            "path": path,
+            "size": bytes.len(),
+            "blake3": blake3::hash(bytes).to_hex().to_string(),
+        })
+    }
 
+    async fn start_test_server(
+        manifest: serde_json::Value,
+        archives: HashMap<String, Vec<u8>>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        async fn archive_handler(
+            AxumPath(path): AxumPath<String>,
+            State(archives): State<HashMap<String, Vec<u8>>>,
+        ) -> impl IntoResponse {
+            archives.get(&path).map_or_else(
+                || StatusCode::NOT_FOUND.into_response(),
+                |data| (StatusCode::OK, data.clone()).into_response(),
+            )
+        }
+
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
         let app = Router::new()
             .route(
                 "/manifest.json",
                 get(move || {
-                    let data = manifest_clone.clone();
-                    async move { ([(axum::http::header::CONTENT_TYPE, "application/json")], data) }
-                }),
-            )
-            .route(
-                "/proofs.tar.zst",
-                get(move || {
-                    let data = archive_clone.clone();
+                    let data = manifest_bytes.clone();
                     async move { data }
                 }),
-            );
-
+            )
+            .route("/{*path}", get(archive_handler))
+            .with_state(archives);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let manifest_url = format!("http://127.0.0.1:{}/manifest.json", addr.port());
-
         let handle = tokio::spawn(async move {
             axum::serve(listener, app).await.ok();
         });
-
         (manifest_url, handle)
-    }
-
-    async fn start_range_aware_server(
-        archive_bytes: Vec<u8>,
-    ) -> (String, tokio::task::JoinHandle<()>) {
-        let app =
-            Router::new().route("/proofs.tar.zst", get(handle_range)).with_state(archive_bytes);
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base_url = format!("http://127.0.0.1:{}", addr.port());
-
-        let handle = tokio::spawn(async move {
-            axum::serve(listener, app).await.ok();
-        });
-
-        (base_url, handle)
-    }
-
-    async fn handle_range(State(data): State<Vec<u8>>, headers: HeaderMap) -> impl IntoResponse {
-        if let Some(range) = headers.get("Range").and_then(|v| v.to_str().ok())
-            && let Some(start_str) = range.strip_prefix("bytes=")
-            && let Ok(start) = start_str.trim_end_matches('-').parse::<usize>()
-            && start < data.len()
-        {
-            return (
-                StatusCode::PARTIAL_CONTENT,
-                [(
-                    axum::http::header::CONTENT_RANGE,
-                    format!("bytes {}-{}/{}", start, data.len() - 1, data.len()),
-                )],
-                data[start..].to_vec(),
-            )
-                .into_response();
-        }
-        (StatusCode::OK, data).into_response()
     }
 
     #[test]
@@ -479,353 +551,193 @@ mod tests {
             "proofs download should use --datadir=VALUE without adding the chain directory"
         );
     }
-
     #[tokio::test]
-    async fn fetch_manifest_entry_extracts_proofs_metadata() {
-        let archive = create_proofs_archive(&[("proofs/data.mdb", b"data")]);
+    async fn fetch_manifest_entries_requires_rocksdb_static_extension() {
         let manifest = serde_json::json!({
-            "block": 1000000,
-            "chain_id": 8453,
-            "storage_version": 2,
-            "timestamp": 1700000000,
-            "components": {
-                "proofs": {
-                    "file": "proofs.tar.zst",
-                    "size": archive.len(),
-                    "decompressed_size": 0,
-                    "output_files": []
-                }
-            }
+            "components": {"proofs": {"file": "1/proofs-metadata.tar.zst", "size": 1, "output_files": []}}
         });
-
-        let (manifest_url, handle) = start_test_server(manifest, archive.clone()).await;
-        let entry = ProofsDownloader::fetch_manifest_entry(&manifest_url).await.unwrap();
-
-        assert_eq!(entry.file_name, "proofs.tar.zst");
-        assert_eq!(entry.expected_size, archive.len() as u64);
-        assert!(entry.archive_url.ends_with("/proofs.tar.zst"));
-
+        let (url, handle) = start_test_server(manifest, HashMap::new()).await;
+        let error = ProofsDownloader::fetch_manifest_entries(&url).await.unwrap_err();
+        assert!(error.to_string().contains("proofs_static"));
         handle.abort();
     }
 
     #[tokio::test]
-    async fn fetch_manifest_entry_rejects_path_traversal() {
-        let manifest = serde_json::json!({
-            "block": 100,
-            "chain_id": 8453,
-            "storage_version": 2,
-            "timestamp": 1700000000,
-            "components": {
-                "proofs": {
-                    "file": "../../etc/evil.tar.zst",
-                    "size": 100,
-                    "decompressed_size": 0,
-                    "output_files": []
-                }
-            }
-        });
-
-        let (manifest_url, handle) = start_test_server(manifest, vec![]).await;
-        let result = ProofsDownloader::fetch_manifest_entry(&manifest_url).await;
-
-        assert!(result.is_err(), "path traversal should be rejected");
-        assert!(result.unwrap_err().to_string().contains("invalid proofs file name"));
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn fetch_manifest_entry_fails_when_no_proofs() {
-        let manifest = serde_json::json!({
-            "block": 100,
-            "chain_id": 8453,
-            "storage_version": 2,
-            "timestamp": 1700000000,
-            "components": {
-                "state": { "file": "state.tar.zst", "size": 100, "decompressed_size": 500, "output_files": [] }
-            }
-        });
-
-        let (manifest_url, handle) = start_test_server(manifest, vec![]).await;
-        let result = ProofsDownloader::fetch_manifest_entry(&manifest_url).await;
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no 'proofs' component"));
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn fetch_manifest_entry_fails_when_size_missing() {
-        let manifest = serde_json::json!({
-            "block": 100,
-            "chain_id": 8453,
-            "storage_version": 2,
-            "timestamp": 1700000000,
-            "components": {
-                "proofs": { "file": "proofs.tar.zst", "decompressed_size": 0, "output_files": [] }
-            }
-        });
-
-        let (manifest_url, handle) = start_test_server(manifest, vec![]).await;
-        let result = ProofsDownloader::fetch_manifest_entry(&manifest_url).await;
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("missing 'size'"));
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn full_pipeline_downloads_and_extracts() {
-        let archive = create_proofs_archive(&[
-            ("proofs/data.mdb", b"real-proof-data-from-server"),
-            ("proofs/lock.mdb", b"lock-file"),
+    async fn downloads_metadata_and_static_tables_and_reuses_verified_sst() {
+        let table = create_proofs_archive(&[("proofs/000001.sst", b"table")]);
+        let metadata = create_proofs_archive(&[
+            ("proofs/CURRENT", b"MANIFEST-000001\n"),
+            ("proofs/MANIFEST-000001", b"manifest"),
         ]);
-
         let manifest = serde_json::json!({
-            "block": 1000000,
-            "chain_id": 8453,
-            "storage_version": 2,
-            "timestamp": 1700000000,
             "components": {
                 "proofs": {
-                    "file": "proofs.tar.zst",
-                    "size": archive.len(),
+                    "file": "1/proofs-metadata.tar.zst",
+                    "size": metadata.len(),
                     "decompressed_size": 0,
-                    "output_files": []
+                    "output_files": [
+                        output("proofs/CURRENT", b"MANIFEST-000001\n"),
+                        output("proofs/MANIFEST-000001", b"manifest")
+                    ]
                 }
+            },
+            "proofs_static": {
+                "version": 1,
+                "database": "rocksdb",
+                "tables": [{
+                    "file": "static_files/proofs/table.tar.zst",
+                    "size": table.len(),
+                    "decompressed_size": 0,
+                    "output_files": [output("proofs/000001.sst", b"table")]
+                }]
             }
         });
-
-        let (manifest_url, handle) = start_test_server(manifest, archive).await;
+        let mut archives = HashMap::new();
+        archives.insert("static_files/proofs/table.tar.zst".to_string(), table);
+        archives.insert("1/proofs-metadata.tar.zst".to_string(), metadata);
         let target = tempfile::tempdir().unwrap();
+        let (url, handle) = start_test_server(manifest, archives).await;
+        ProofsDownloader::run_from_manifest(target.path(), &url).await.unwrap();
+        assert_eq!(std::fs::read(target.path().join("proofs/000001.sst")).unwrap(), b"table");
+        ProofsDownloader::run_from_manifest(target.path(), &url).await.unwrap();
+        handle.abort();
+    }
 
-        ProofsDownloader::run_from_manifest(target.path(), &manifest_url)
+    #[tokio::test]
+    async fn generated_fake_rocksdb_proofs_snapshot_restores_end_to_end() {
+        use base_snapshotter::{
+            ManifestGenerationParams, ProofsStaticManifest, SnapshotGenerator, SnapshotManifest,
+            SnapshotUploadParams, SnapshotUploader,
+        };
+        use testcontainers::runners::AsyncRunner;
+        use testcontainers_modules::minio::MinIO;
+
+        let source = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(source.path().join("db")).unwrap();
+        std::fs::write(source.path().join("db/mdbx.dat"), b"state").unwrap();
+
+        let proofs = source.path().join("proofs");
+        std::fs::create_dir_all(&proofs).unwrap();
+        std::fs::write(proofs.join("CURRENT"), b"MANIFEST-000001\n").unwrap();
+        std::fs::write(proofs.join("MANIFEST-000001"), b"manifest").unwrap();
+        std::fs::write(proofs.join("000001.sst"), b"immutable-table").unwrap();
+
+        let generated = tempfile::tempdir().unwrap();
+        let remote_static_files = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+            source_datadir: source.path(),
+            output_dir: generated.path(),
+            chain_id: 8453,
+            base_url: None,
+            block: Some(0),
+            blocks_per_file: Some(500_000),
+            remote_static_files: &remote_static_files,
+            previous_manifest: None,
+            upload_proofs: true,
+        })
+        .unwrap();
+
+        let manifest_bytes = std::fs::read(generated.path().join("manifest.json")).unwrap();
+        let local_manifest: SnapshotManifest = serde_json::from_slice(&manifest_bytes).unwrap();
+        let proofs_static = ProofsStaticManifest::from_manifest_bytes(&manifest_bytes)
+            .unwrap()
+            .expect("proofs_static extension");
+
+        let minio = MinIO::default().start().await.unwrap();
+        let endpoint =
+            format!("http://127.0.0.1:{}", minio.get_host_port_ipv4(9000).await.unwrap());
+        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .region("us-east-1")
+            .endpoint_url(endpoint)
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                "minioadmin",
+                "minioadmin",
+                None,
+                None,
+                "test",
+            ))
+            .load()
+            .await;
+        let client = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::config::Builder::from(&config).force_path_style(true).build(),
+        );
+        let bucket = format!("proofs-e2e-{}", std::process::id());
+        client.create_bucket().bucket(&bucket).send().await.unwrap();
+
+        let uploader =
+            SnapshotUploader::new(client.clone(), bucket.clone(), "proofs-e2e".into(), None);
+        uploader
+            .upload(SnapshotUploadParams {
+                output_dir: generated.path(),
+                files: &files,
+                timestamp: 42,
+                retain_runs: 1,
+                local_manifest: &local_manifest,
+                remote_manifest: None,
+                remote_static_files: &remote_static_files,
+                proofs_static: Some(&proofs_static),
+                rocksdb_static: None,
+            })
             .await
-            .expect("full pipeline should succeed");
+            .unwrap();
+
+        async fn fetch_object(client: &aws_sdk_s3::Client, bucket: &str, key: &str) -> Vec<u8> {
+            client
+                .get_object()
+                .bucket(bucket)
+                .key(key)
+                .send()
+                .await
+                .unwrap()
+                .body
+                .collect()
+                .await
+                .unwrap()
+                .into_bytes()
+                .to_vec()
+        }
+
+        let published_manifest =
+            fetch_object(&client, &bucket, "proofs-e2e/42/manifest.json").await;
+        let manifest: serde_json::Value = serde_json::from_slice(&published_manifest).unwrap();
+        let table_path =
+            manifest["proofs_static"]["tables"][0]["file"].as_str().unwrap().to_string();
+        let metadata_path = manifest["components"]["proofs"]["file"].as_str().unwrap().to_string();
+        let mut archives = HashMap::new();
+        archives.insert(
+            table_path.clone(),
+            fetch_object(&client, &bucket, &format!("proofs-e2e/{table_path}")).await,
+        );
+        archives.insert(
+            metadata_path.clone(),
+            fetch_object(&client, &bucket, &format!("proofs-e2e/{metadata_path}")).await,
+        );
+
+        let target = tempfile::tempdir().unwrap();
+        let (url, handle) = start_test_server(manifest, archives).await;
+        ProofsDownloader::run_from_manifest(target.path(), &url).await.unwrap();
 
         assert_eq!(
-            std::fs::read(target.path().join("proofs/data.mdb")).unwrap(),
-            b"real-proof-data-from-server",
-            "extracted content should match"
+            std::fs::read(target.path().join("proofs/000001.sst")).unwrap(),
+            b"immutable-table"
         );
-        assert_eq!(std::fs::read(target.path().join("proofs/lock.mdb")).unwrap(), b"lock-file");
-        assert!(!target.path().join(".snapshot-cache").exists(), "cache should be cleaned up");
-
-        handle.abort();
-    }
-
-    #[test]
-    fn extract_tar_zst_creates_files() {
-        let src = tempfile::tempdir().unwrap();
-        let dest = tempfile::tempdir().unwrap();
-
-        let archive_path = src.path().join("proofs.tar.zst");
-        std::fs::write(
-            &archive_path,
-            create_proofs_archive(&[("proofs/data.mdb", b"proof-data-contents")]),
-        )
-        .unwrap();
-
-        ProofsDownloader::extract_tar_zst(&archive_path, dest.path()).unwrap();
-
-        let extracted = dest.path().join("proofs/data.mdb");
-        assert!(extracted.exists(), "extracted file should exist");
-        assert_eq!(std::fs::read(&extracted).unwrap(), b"proof-data-contents");
-    }
-
-    #[test]
-    fn extract_tar_zst_preserves_directory_structure() {
-        let src = tempfile::tempdir().unwrap();
-        let dest = tempfile::tempdir().unwrap();
-
-        let archive_path = src.path().join("proofs.tar.zst");
-        std::fs::write(
-            &archive_path,
-            create_proofs_archive(&[
-                ("proofs/data.mdb", b"data"),
-                ("proofs/lock.mdb", b"lock"),
-                ("proofs/nested/deep.dat", b"deep"),
-            ]),
-        )
-        .unwrap();
-
-        ProofsDownloader::extract_tar_zst(&archive_path, dest.path()).unwrap();
-
-        assert!(dest.path().join("proofs/data.mdb").exists());
-        assert!(dest.path().join("proofs/lock.mdb").exists());
-        assert!(dest.path().join("proofs/nested/deep.dat").exists());
-        assert_eq!(std::fs::read(dest.path().join("proofs/nested/deep.dat")).unwrap(), b"deep");
-    }
-
-    #[test]
-    fn extract_tar_zst_fails_on_missing_archive() {
-        let dest = tempfile::tempdir().unwrap();
-        let result = ProofsDownloader::extract_tar_zst(
-            &dest.path().join("nonexistent.tar.zst"),
-            dest.path(),
-        );
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn download_archive_resumes_from_partial_file() {
-        let archive = create_proofs_archive(&[("proofs/data.mdb", b"complete-proof-data")]);
-        let (base_url, handle) = start_range_aware_server(archive.clone()).await;
-
-        let cache_dir = tempfile::tempdir().unwrap();
-        let part_path = cache_dir.path().join("proofs.tar.zst.part");
-
-        let half = archive.len() / 2;
-        std::fs::write(&part_path, &archive[..half]).unwrap();
         assert_eq!(
-            std::fs::metadata(&part_path).unwrap().len(),
-            half as u64,
-            "part file should contain first half of archive"
+            std::fs::read(target.path().join("proofs/CURRENT")).unwrap(),
+            b"MANIFEST-000001\n"
         );
-
-        let entry = ProofsManifestEntry {
-            file_name: "proofs.tar.zst".to_string(),
-            expected_size: archive.len() as u64,
-            archive_url: format!("{base_url}/proofs.tar.zst"),
-        };
-
-        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path()).await.unwrap();
-        let downloaded = std::fs::read(&dest).unwrap();
-
-        assert_eq!(downloaded.len(), archive.len(), "resumed download should produce full archive");
-        assert_eq!(downloaded, archive, "resumed archive should match original byte-for-byte");
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn download_archive_restarts_when_server_ignores_range() {
-        let archive = create_proofs_archive(&[("proofs/data.mdb", b"fresh-data")]);
-
-        let (base_url, handle) = {
-            use axum::{Router, routing::get};
-
-            let data = archive.clone();
-            let app = Router::new().route(
-                "/proofs.tar.zst",
-                get(move || {
-                    let d = data.clone();
-                    async move { d }
-                }),
-            );
-
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = listener.local_addr().unwrap();
-            let url = format!("http://127.0.0.1:{}", addr.port());
-            let h = tokio::spawn(async move {
-                axum::serve(listener, app).await.ok();
-            });
-            (url, h)
-        };
-
-        let cache_dir = tempfile::tempdir().unwrap();
-        let part_path = cache_dir.path().join("proofs.tar.zst.part");
-        std::fs::write(&part_path, b"stale-garbage-data-from-old-snapshot").unwrap();
-
-        let entry = ProofsManifestEntry {
-            file_name: "proofs.tar.zst".to_string(),
-            expected_size: archive.len() as u64,
-            archive_url: format!("{base_url}/proofs.tar.zst"),
-        };
-
-        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path()).await.unwrap();
-        let downloaded = std::fs::read(&dest).unwrap();
-
-        assert_eq!(downloaded, archive, "should discard stale .part and download fresh archive");
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn download_archive_uses_completed_part_file_without_requesting_range() {
-        let archive = create_proofs_archive(&[("proofs/data.mdb", b"already-complete")]);
-
-        let (base_url, handle) = {
-            use axum::{Router, routing::get};
-
-            let app = Router::new().route(
-                "/proofs.tar.zst",
-                get(|| async { (StatusCode::RANGE_NOT_SATISFIABLE, Vec::<u8>::new()) }),
-            );
-
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = listener.local_addr().unwrap();
-            let url = format!("http://127.0.0.1:{}", addr.port());
-            let h = tokio::spawn(async move {
-                axum::serve(listener, app).await.ok();
-            });
-            (url, h)
-        };
-
-        let cache_dir = tempfile::tempdir().unwrap();
-        let part_path = cache_dir.path().join("proofs.tar.zst.part");
-        std::fs::write(&part_path, &archive).unwrap();
-
-        let entry = ProofsManifestEntry {
-            file_name: "proofs.tar.zst".to_string(),
-            expected_size: archive.len() as u64,
-            archive_url: format!("{base_url}/proofs.tar.zst"),
-        };
-
-        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path()).await.unwrap();
-
-        assert_eq!(dest, cache_dir.path().join("proofs.tar.zst"));
-        assert_eq!(std::fs::read(&dest).unwrap(), archive);
-        assert!(!Path::new(&part_path).exists(), "completed .part should be renamed into place");
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn download_archive_fails_on_size_mismatch() {
-        let archive = create_proofs_archive(&[("proofs/data.mdb", b"data")]);
-
-        let (base_url, handle) = {
-            use axum::{Router, routing::get};
-
-            let data = archive.clone();
-            let app = Router::new().route(
-                "/proofs.tar.zst",
-                get(move || {
-                    let d = data.clone();
-                    async move { d }
-                }),
-            );
-
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = listener.local_addr().unwrap();
-            let url = format!("http://127.0.0.1:{}", addr.port());
-            let h = tokio::spawn(async move {
-                axum::serve(listener, app).await.ok();
-            });
-            (url, h)
-        };
-
-        let cache_dir = tempfile::tempdir().unwrap();
-        let entry = ProofsManifestEntry {
-            file_name: "proofs.tar.zst".to_string(),
-            expected_size: archive.len() as u64 + 999,
-            archive_url: format!("{base_url}/proofs.tar.zst"),
-        };
-
-        let result = ProofsDownloader::download_archive(&entry, cache_dir.path()).await;
-
-        assert!(result.is_err(), "size mismatch should fail");
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("size mismatch"), "error should mention size mismatch, got: {err}");
-
-        assert!(
-            !cache_dir.path().join("proofs.tar.zst.part").exists(),
-            "corrupt .part file should be deleted on size mismatch"
+        assert_eq!(
+            std::fs::read(target.path().join("proofs/MANIFEST-000001")).unwrap(),
+            b"manifest"
         );
 
         handle.abort();
+    }
+
+    #[test]
+    fn rejects_archive_or_output_path_traversal() {
+        assert!(ProofsDownloader::validate_relative_archive_path("../proofs.tar.zst").is_err());
+        let files =
+            vec![OutputFileChecksum { path: "../bad".to_string(), size: 0, blake3: String::new() }];
+        assert!(ProofsDownloader::validate_output_files(&files).is_err());
     }
 }
