@@ -1255,6 +1255,30 @@ fn golden_permit_reverts_when_expired() {
     assert_eq!(err, BasePrecompileError::revert(IB20::ExpiredSignature { deadline: u(10) }));
 }
 
+/// V1 `permit` is deliberately UNMETERED (Beryl's gas schedule is frozen): it hashes with plain
+/// `keccak256` and recovers without a `deduct_gas` charge, so `gas_deducted()` stays `0`. The V2
+/// golden pins this at `3000`; that metered/unmetered contrast is the point of this pair.
+#[test]
+fn golden_permit_charges_no_recovery_gas() {
+    let mut s = fresh();
+    let owner = anvil_owner();
+    let calldata =
+        signed_permit(domain_separator(&mut fresh()), U256::ZERO, owner, BOB, u(500), U256::MAX)
+            .abi_encode();
+    s.set_caller(owner);
+    s.set_timestamp(U256::ZERO);
+    StorageCtx::enter(&mut s, |ctx| {
+        B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(TOKEN, ctx),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        )
+        .route(ctx, &calldata, AssetVersion::V1, true, NoopPrecompileCallObserver)
+    })
+    .expect("permit must succeed");
+    assert_eq!(s.gas_deducted(), 0, "V1 permit must not charge any recovery gas (unmetered)");
+}
+
 // ============================================================================
 // computed reads
 // ============================================================================
@@ -2678,6 +2702,23 @@ fn golden_gas_footprints() {
                 .abi_encode(),
             ),
         ),
+        (
+            "permit",
+            gas(
+                |_t| {},
+                anvil_owner(),
+                FakePolicyAccounting::new(),
+                signed_permit(
+                    domain_separator(&mut fresh()),
+                    U256::ZERO,
+                    anvil_owner(),
+                    BOB,
+                    u(500),
+                    U256::MAX,
+                )
+                .abi_encode(),
+            ),
+        ),
     ];
 
     let expected: &[(&str, (u64, u64, u64))] = &[
@@ -2701,6 +2742,7 @@ fn golden_gas_footprints() {
         ("batch_mint", (11, 4, 0)),
         ("announce", (1, 1, 0)),
         ("update_extra_metadata", (0, 1, 0)),
+        ("permit", (3, 2, 0)),
     ];
 
     bless_or_assert_gas(&actual, expected);

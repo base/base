@@ -1868,6 +1868,31 @@ fn golden_permit_reverts_when_expired() {
     assert_eq!(err, BasePrecompileError::revert(IB20::ExpiredSignature { deadline: u(10) }));
 }
 
+/// V2 `permit` charges the fixed ECRECOVER-equivalent recovery cost (`PermitArgs::RECOVER_GAS`,
+/// 3000) on the real provider. The `.route(...)` path bills no calldata gas — that lives in
+/// `dispatch_with_observer` — so the observed `gas_deducted()` is exactly the recovery charge. The
+/// V1 golden pins this at `0`; that metered/unmetered contrast is the point of this pair.
+#[test]
+fn golden_permit_charges_recovery_gas() {
+    let mut s = fresh();
+    let owner = anvil_owner();
+    let calldata =
+        signed_permit(domain_separator(&mut fresh()), U256::ZERO, owner, BOB, u(500), U256::MAX)
+            .abi_encode();
+    s.set_caller(owner);
+    s.set_timestamp(U256::ZERO);
+    StorageCtx::enter(&mut s, |ctx| {
+        B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(TOKEN, ctx),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V2,
+        )
+        .route(ctx, &calldata, AssetVersion::V2, true, NoopPrecompileCallObserver)
+    })
+    .expect("permit must succeed");
+    assert_eq!(s.gas_deducted(), 3000, "V2 permit must charge the fixed ECRECOVER-equivalent cost");
+}
+
 // ============================================================================
 // computed + direct + constant reads (behavior-preserving: V1 roots reused)
 // ============================================================================
@@ -3453,6 +3478,23 @@ fn golden_gas_footprints() {
                 .abi_encode(),
             ),
         ),
+        (
+            "permit",
+            gas(
+                |_t| {},
+                anvil_owner(),
+                FakePolicyAccounting::new(),
+                signed_permit(
+                    domain_separator(&mut fresh()),
+                    U256::ZERO,
+                    anvil_owner(),
+                    BOB,
+                    u(500),
+                    U256::MAX,
+                )
+                .abi_encode(),
+            ),
+        ),
     ];
 
     let expected: &[(&str, (u64, u64, u64))] = &[
@@ -3479,6 +3521,7 @@ fn golden_gas_footprints() {
         ("batch_mint", (11, 4, 0)),
         ("announce", (1, 1, 0)),
         ("update_extra_metadata", (1, 1, 0)),
+        ("permit", (3, 2, 5)),
     ];
 
     bless_or_assert_gas(&actual, expected);
