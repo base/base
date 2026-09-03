@@ -38,7 +38,7 @@ impl FromExtensionConfig for ProfilingExtension {
     type Config = ProfilingConfig;
 
     fn from_config(config: Self::Config) -> Self {
-        let profiler = CpuProfiler::new(config.max_seconds, config.default_frequency as i32);
+        let profiler = CpuProfiler::new(config.max_seconds, config.default_frequency);
         Self { cfg: config, profiler }
     }
 }

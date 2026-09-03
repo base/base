@@ -1,5 +1,4 @@
-//! Sampling CPU profiler that drives `pprof` and renders captured reports as either an SVG
-//! flamegraph or a gzipped `pprof` protobuf.
+//! Sampling CPU profiler that drives `pprof` and renders captures as gzipped `pprof` protobufs.
 
 use std::{io::Write, sync::Arc, time::Duration};
 
@@ -8,8 +7,8 @@ use pprof::{ProfilerGuardBuilder, protos::Message};
 use tokio::sync::Mutex;
 use tracing::info;
 
-const MIN_FREQUENCY_HZ: i32 = 1;
-const MAX_FREQUENCY_HZ: i32 = 1_000;
+const MIN_FREQUENCY_HZ: u32 = 1;
+const MAX_FREQUENCY_HZ: u32 = 1_000;
 
 /// Errors returned while capturing a CPU profile.
 #[derive(Debug, thiserror::Error)]
@@ -29,7 +28,7 @@ pub enum ProfilerError {
     #[error("cpu profile frequency {frequency} Hz must be between 1 and 1000 Hz")]
     InvalidFrequency {
         /// Rejected sampling frequency.
-        frequency: i32,
+        frequency: u32,
     },
     /// `pprof` could not start, collect, or build the profile.
     #[error("cpu profiler failed: {0}")]
@@ -50,7 +49,7 @@ pub enum ProfilerError {
 pub struct CpuProfiler {
     capture_lock: Arc<Mutex<()>>,
     max_capture_seconds: u64,
-    default_frequency_hz: i32,
+    default_frequency_hz: u32,
 }
 
 impl Default for CpuProfiler {
@@ -63,7 +62,7 @@ impl Default for CpuProfiler {
 
 impl CpuProfiler {
     /// Creates a profiler with the supplied capture-duration limit and default frequency.
-    pub fn new(max_capture_seconds: u64, default_frequency_hz: i32) -> Self {
+    pub fn new(max_capture_seconds: u64, default_frequency_hz: u32) -> Self {
         Self { capture_lock: Arc::new(Mutex::new(())), max_capture_seconds, default_frequency_hz }
     }
 
@@ -73,7 +72,7 @@ impl CpuProfiler {
     }
 
     /// Returns the configured sampling frequency used when a request omits one.
-    pub const fn default_frequency_hz(&self) -> i32 {
+    pub const fn default_frequency_hz(&self) -> u32 {
         self.default_frequency_hz
     }
 
@@ -93,7 +92,7 @@ impl CpuProfiler {
     pub async fn capture(
         &self,
         duration: Duration,
-        frequency: Option<i32>,
+        frequency: Option<u32>,
     ) -> Result<Vec<u8>, ProfilerError> {
         // The preallocated pprof collector costs 200 MB+ of RSS while its guard is live. Reject
         // longer captures so an unbounded request cannot retain that allocation on a mainnet node.
@@ -106,10 +105,12 @@ impl CpuProfiler {
         if !(MIN_FREQUENCY_HZ..=MAX_FREQUENCY_HZ).contains(&hz) {
             return Err(ProfilerError::InvalidFrequency { frequency: hz });
         }
+        let pprof_frequency =
+            i32::try_from(hz).map_err(|_| ProfilerError::InvalidFrequency { frequency: hz })?;
 
         let capture_permit = self.capture_lock.try_lock().map_err(|_| ProfilerError::Busy)?;
         let guard = ProfilerGuardBuilder::default()
-            .frequency(hz)
+            .frequency(pprof_frequency)
             .blocklist(&["libc", "libgcc", "pthread", "vdso"])
             .build()
             .map_err(|error| match error {
@@ -180,6 +181,19 @@ mod tests {
         let result = runtime.block_on(profiler.capture(Duration::ZERO, None));
 
         assert!(matches!(result, Err(ProfilerError::InvalidFrequency { frequency: 0 })));
+    }
+
+    #[test]
+    fn capture_rejects_u32_frequency_that_pprof_cannot_represent() {
+        let profiler = CpuProfiler::new(60, u32::MAX);
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+
+        let result = runtime.block_on(profiler.capture(Duration::ZERO, None));
+
+        assert!(matches!(
+            result,
+            Err(ProfilerError::InvalidFrequency { frequency }) if frequency == u32::MAX
+        ));
     }
 
     #[test]
