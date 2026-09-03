@@ -1599,10 +1599,13 @@ impl LoadRunner {
         let mut safety_tick = tokio::time::interval(safety_interval);
         safety_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last_block_gas_limit = config.fallback_block_gas_limit;
-        let signal_timeout =
-            config.block_time + (config.block_time / 2).min(Duration::from_millis(250));
+        // Canonical RPC observations are routinely delayed beyond a 200ms block interval. Keep
+        // submitting at the finer safety cadence until one arrives, otherwise a delayed
+        // observation holds the next refill for 300ms and makes transactions miss the payload
+        // build window for the following slot.
+        let fallback_refill_interval = safety_interval;
         let mut last_pulse_at =
-            Instant::now().checked_sub(signal_timeout).unwrap_or_else(Instant::now);
+            Instant::now().checked_sub(fallback_refill_interval).unwrap_or_else(Instant::now);
 
         loop {
             drain_state.drain_run_events();
@@ -1639,7 +1642,7 @@ impl LoadRunner {
                     .await?;
                 }
                 _ = safety_tick.tick() => {
-                    if last_pulse_at.elapsed() >= signal_timeout {
+                    if last_pulse_at.elapsed() >= fallback_refill_interval {
                         Self::run_refill_cycle(
                             enqueue_state,
                             &config.controller,
@@ -2453,7 +2456,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn enqueue_block_aligned_stops_when_duration_deadline_hits_first() {
+    async fn enqueue_block_aligned_refills_at_safety_cadence_when_canonical_pulses_are_late() {
         let sender = Address::repeat_byte(0x22);
         let results_tracker = ResultsTracker::new(&[sender]);
         results_tracker.begin_measurement(10, Some(100));
@@ -2509,7 +2512,11 @@ mod tests {
                     presign_target_gas: 0,
                     max_in_flight_per_sender: 1,
                     max_total_in_flight: 1,
-                    deadline: Some(Instant::now()),
+                    // The 200ms block interval gets a 50ms safety cadence. With no canonical
+                    // pulses, this should perform the immediate safety refill plus a periodic
+                    // refill before the deadline. The old 300ms fallback only
+                    // performed the initial refill here, which allowed 200ms slots to go empty.
+                    deadline: Some(Instant::now() + Duration::from_millis(210)),
                 },
                 &mut pulse_rx,
                 &stop_flag,
@@ -2530,6 +2537,7 @@ mod tests {
 
         let summary = collector.summarize(Duration::from_secs(1), None);
         assert_eq!(summary.pacing.canonical_cycles, 0);
+        assert!(summary.pacing.safety_cycles >= 2);
         assert!(!results_tracker.measurement_finished());
     }
 }
