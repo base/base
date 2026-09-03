@@ -8,7 +8,8 @@ use base_builder_core::{
     ExecutionMeteringMode, RejectionCache, ShadowValidityConfig, SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
-use base_execution_cli::{ProfilingArgs, ShadowIndexerArgs};
+use base_builder_profiling::ProfilingConfig;
+use base_execution_cli::ShadowIndexerArgs;
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -129,6 +130,69 @@ impl TransactionEventsArgs {
             required: self.required,
             producer: TransactionEventProducer::BaseBuilder,
             network: self.network.clone(),
+        }
+    }
+}
+
+const DEFAULT_PROFILING_PORT: u16 = 6061;
+
+/// CLI arguments for the builder's opt-in CPU profiling HTTP server.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct ProfilingArgs {
+    /// Enable the CPU profiling HTTP server.
+    #[arg(long = "enable-profiling", env = "ENABLE_PROFILING")]
+    pub enable_profiling: bool,
+
+    /// TCP port used by the CPU profiling HTTP server.
+    ///
+    /// Port 6061 avoids the builder's WS (8546), RPC (8545), auth RPC (8551), metrics (6060),
+    /// discovery and P2P (30303), and discovery v5 (9200) listeners.
+    #[arg(
+        id = "profiling_port",
+        long = "profiling.port",
+        env = "PROFILING_PORT",
+        default_value_t = DEFAULT_PROFILING_PORT,
+        requires = "enable_profiling"
+    )]
+    pub port: u16,
+
+    /// Maximum requested profile duration in seconds.
+    #[arg(
+        long = "profiling.max-seconds",
+        env = "PROFILING_MAX_SECONDS",
+        default_value_t = 60,
+        requires = "enable_profiling"
+    )]
+    pub max_seconds: u64,
+
+    /// Sampling frequency used when a profiling request omits one.
+    #[arg(
+        long = "profiling.default-frequency",
+        env = "PROFILING_DEFAULT_FREQUENCY",
+        default_value_t = 101,
+        requires = "enable_profiling"
+    )]
+    pub default_frequency: u32,
+}
+
+impl Default for ProfilingArgs {
+    fn default() -> Self {
+        Self {
+            enable_profiling: false,
+            port: DEFAULT_PROFILING_PORT,
+            max_seconds: 60,
+            default_frequency: 101,
+        }
+    }
+}
+
+impl From<&ProfilingArgs> for ProfilingConfig {
+    fn from(args: &ProfilingArgs) -> Self {
+        Self {
+            enabled: args.enable_profiling,
+            port: args.port,
+            max_seconds: args.max_seconds,
+            default_frequency: args.default_frequency,
         }
     }
 }
@@ -746,5 +810,25 @@ mod tests {
 
         assert_eq!(error.kind(), clap::error::ErrorKind::MissingRequiredArgument);
         assert!(error.to_string().contains("--enable-profiling"));
+    }
+
+    #[test]
+    fn profiling_args_map_to_config() {
+        let args = CommandParser::parse_from([
+            "base-builder",
+            "--enable-profiling",
+            "--profiling.port",
+            "6062",
+            "--profiling.max-seconds",
+            "45",
+            "--profiling.default-frequency",
+            "99",
+        ])
+        .args;
+
+        assert_eq!(
+            ProfilingConfig::from(&args.profiling),
+            ProfilingConfig { enabled: true, port: 6062, max_seconds: 45, default_frequency: 99 }
+        );
     }
 }
