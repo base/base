@@ -12,7 +12,13 @@ use super::{
 };
 
 /// Maximum allowed decoded flashblock payload size, in bytes.
-pub const MAX_DECOMPRESSED_FLASHBLOCK_BYTES: usize = 5 * 1024 * 1024;
+///
+/// Flashblock websocket messages JSON-hex-encode transactions (`0x` plus two
+/// characters per byte). A single flashblock can carry nearly a full block's
+/// transactions, and the builder uncompressed-block cap is 5 MiB of EIP-2718
+/// bytes, so the decompressed JSON can exceed 10 MiB. 16 MiB covers that hex
+/// expansion plus envelope and metadata.
+pub const MAX_DECOMPRESSED_FLASHBLOCK_BYTES: usize = 16 * 1024 * 1024;
 
 /// A flashblock containing partial block data.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
