@@ -429,6 +429,8 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
         "direct builder ingress must not alter the signed transaction's state transition"
     );
 
+    system.shutdown().await?;
+
     Ok(())
 }
 
