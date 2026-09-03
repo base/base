@@ -2,7 +2,13 @@
 
 use std::{
     collections::BTreeMap,
+    io::Write as _,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
     time::Duration,
 };
 
@@ -77,6 +83,10 @@ pub struct SnapshotBenchmarkArgs {
     /// Stable build identifier for visualizer comparisons.
     #[arg(long, env = "BASE_BENCH_CLIENT_VERSION")]
     pub client_version: Option<String>,
+    /// Maximum time to wait for graceful in-process stack shutdown after result artifacts have
+    /// been written. Expiry terminates the process because snapshot datadirs are disposable.
+    #[arg(long, default_value_t = 10)]
+    pub shutdown_timeout_seconds: u64,
 }
 
 /// Wei minted to the benchmark's ephemeral funder in the first local descendant (1000 ETH).
@@ -248,50 +258,97 @@ impl SnapshotBenchmarkArgs {
         let run_id =
             self.run_id.clone().unwrap_or_else(|| Self::derived_run_id(&self.benchmark_run));
 
+        eyre::ensure!(
+            self.shutdown_timeout_seconds > 0,
+            "shutdown timeout must be greater than zero"
+        );
         let mut stack = SystemTestStackBuilder::new()
             .with_devnet_config(devnet)
             .build_snapshot_sequencer()
             .await?;
         let benchmark_result =
             self.execute(&mut stack, test_config, block_interval, funder_key).await;
-        let shutdown_result = stack.shutdown().await;
-        let (result, run_error) = benchmark_result?;
-        let encoded = serde_json::to_vec_pretty(&result)?;
-        std::fs::write(&result_path, encoded).wrap_err_with(|| {
-            format!("failed to write benchmark result {}", result_path.display())
-        })?;
-        if let Some(error) = run_error {
-            return Err(error.into());
+
+        // Persist the report before teardown. Reth may have a non-cancellable serial state-root
+        // fallback still running after consensus shutdown, and dropping its runtime waits for
+        // blocking work to finish. The snapshot datadirs are disposable, so teardown is bounded
+        // separately after preserving the useful benchmark output.
+        let output_result = (|| -> Result<()> {
+            let (result, run_error) = benchmark_result?;
+            let encoded = serde_json::to_vec_pretty(&result)?;
+            std::fs::write(&result_path, encoded).wrap_err_with(|| {
+                format!("failed to write benchmark result {}", result_path.display())
+            })?;
+            if let Some(error) = run_error {
+                return Err(error.into());
+            }
+            if result.load_test.throughput.total_confirmed == 0 {
+                eyre::bail!("benchmark completed without confirmed transactions")
+            }
+            if result.load_test.gas.total_gas == 0 {
+                eyre::bail!("benchmark completed without measured gas")
+            }
+            if let Some(expected_blocks) =
+                result.load_test.config.as_ref().and_then(|config| config.measurement_blocks)
+            {
+                eyre::ensure!(
+                    result.load_test.measurement_block_count == expected_blocks,
+                    "benchmark observed {} of {expected_blocks} requested blocks",
+                    result.load_test.measurement_block_count
+                );
+                eyre::ensure!(
+                    result.blocks.len() as u64 == expected_blocks
+                        && result.validator_blocks.len() as u64 == expected_blocks,
+                    "benchmark block metrics do not contain exactly {expected_blocks} blocks"
+                );
+            }
+            self.write_visualizer_bundle(
+                &visualizer_output_dir,
+                &visualizer_output_name,
+                &run_id,
+                &result,
+            )?;
+            println!("benchmark result: {}", result_path.display());
+            std::io::stdout().flush().wrap_err("failed to flush benchmark result output")?;
+            Ok(())
+        })();
+
+        if let Err(error) = &output_result {
+            eprintln!("benchmark result processing failed before shutdown: {error:?}");
+            let _ = std::io::stderr().flush();
         }
-        if result.load_test.throughput.total_confirmed == 0 {
-            eyre::bail!("benchmark completed without confirmed transactions")
-        }
-        if result.load_test.gas.total_gas == 0 {
-            eyre::bail!("benchmark completed without measured gas")
-        }
-        if let Some(expected_blocks) =
-            result.load_test.config.as_ref().and_then(|config| config.measurement_blocks)
-        {
-            eyre::ensure!(
-                result.load_test.measurement_block_count == expected_blocks,
-                "benchmark observed {} of {expected_blocks} requested blocks",
-                result.load_test.measurement_block_count
-            );
-            eyre::ensure!(
-                result.blocks.len() as u64 == expected_blocks
-                    && result.validator_blocks.len() as u64 == expected_blocks,
-                "benchmark block metrics do not contain exactly {expected_blocks} blocks"
-            );
-        }
-        self.write_visualizer_bundle(
-            &visualizer_output_dir,
-            &visualizer_output_name,
-            &run_id,
-            &result,
-        )?;
-        shutdown_result?;
-        println!("benchmark result: {}", result_path.display());
-        Ok(())
+        let forced_exit_code = if output_result.is_ok() { 0 } else { 1 };
+        let shutdown_result =
+            Self::shutdown_with_deadline(stack, self.shutdown_timeout_seconds, forced_exit_code)
+                .await;
+        output_result?;
+        shutdown_result
+    }
+
+    /// Gracefully shuts down the stack, but terminates the process if runtime destruction remains
+    /// blocked after the deadline. A native thread is used because the Tokio runtime itself may be
+    /// the component waiting on a non-cancellable blocking state-root task.
+    async fn shutdown_with_deadline(
+        stack: SnapshotL2Stack,
+        timeout_seconds: u64,
+        forced_exit_code: i32,
+    ) -> Result<()> {
+        let complete = Arc::new(AtomicBool::new(false));
+        let watchdog_complete = Arc::clone(&complete);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(timeout_seconds));
+            if !watchdog_complete.load(Ordering::Acquire) {
+                eprintln!(
+                    "snapshot stack shutdown exceeded {timeout_seconds}s after result output; forcing process exit"
+                );
+                let _ = std::io::stderr().flush();
+                std::process::exit(forced_exit_code);
+            }
+        });
+
+        let result = stack.shutdown().await;
+        complete.store(true, Ordering::Release);
+        result
     }
 
     /// Executes the load test against a running snapshot stack.
@@ -664,6 +721,7 @@ mod tests {
         assert_eq!(args.benchmark_run, "snapshot-throughput");
         assert!(args.run_id.is_none());
         assert!(args.client_version.is_none());
+        assert_eq!(args.shutdown_timeout_seconds, 10);
     }
 
     #[test]
@@ -685,11 +743,14 @@ mod tests {
             "example-scenario",
             "--run-id",
             "manual-run-id",
+            "--shutdown-timeout-seconds",
+            "30",
         ]);
 
         let BenchmarkCommand::Snapshot(args) = cli.command;
         assert_eq!(args.output_dir.to_string_lossy(), "result-dir");
         assert_eq!(args.run_id.as_deref(), Some("manual-run-id"));
+        assert_eq!(args.shutdown_timeout_seconds, 30);
     }
 
     #[test]
