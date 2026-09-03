@@ -8,18 +8,19 @@ base_metrics::define_metrics! {
     #[describe("Maximum possible transaction fee in gwei")]
     #[label(name)]
     tx_max_fee_gwei: histogram,
-    #[describe("Number of gas bump events")]
+    #[describe("Total number of gas bump events")]
     #[label(name)]
-    tx_gas_bump_count: counter,
-    #[describe("Send-loop latency in milliseconds")]
+    tx_gas_bump_total: counter,
+    #[describe("Send-loop latency in milliseconds, by outcome")]
     #[label(name)]
+    #[label(name = "outcome")]
     tx_send_latency_ms: histogram,
     #[describe("Current nonce value")]
     #[label(name)]
     current_nonce: gauge,
-    #[describe("Number of transaction publish errors")]
+    #[describe("Total number of transaction publish errors")]
     #[label(name)]
-    tx_publish_error_count: counter,
+    tx_publish_error_total: counter,
     #[describe("Base fee in gwei")]
     #[label(name)]
     basefee_gwei: gauge,
@@ -28,29 +29,18 @@ base_metrics::define_metrics! {
     tipcap_gwei: gauge,
     #[describe("Blob fee cap in gwei")]
     #[label(name)]
-    blob_fee_gwei: gauge,
-    #[describe("Number of RPC errors")]
+    blob_fee_cap_gwei: gauge,
+    #[describe("Total number of RPC errors")]
     #[label(name)]
-    rpc_error_count: counter,
-    #[describe("Number of confirmed transactions")]
+    rpc_error_total: counter,
+    #[describe("Total number of confirmed transactions")]
     #[label(name)]
-    tx_confirmed_count: counter,
-    #[describe("Number of failed send attempts (includes timeouts where the tx may still confirm)")]
+    tx_confirmed_total: counter,
+    #[describe(
+        "Total failed send attempts, including timeouts where the transaction may still confirm"
+    )]
     #[label(name)]
-    tx_failed_count: counter,
-
-    // ======================================================================
-    // TEMPORARY — shadow base-batcher rollout
-    //
-    // Feeding the shadow batcher Datadog dashboard on Zeronet. Duplicates
-    // `tx_send_latency_ms` above rather than adding a label to it, because this
-    // crate also backs the proposer, challenger and TEE registrar. Revisit once
-    // the rollout ends, either folding it in with the owners or dropping it.
-    // ======================================================================
-    #[describe("Send-loop latency in milliseconds, split by how the send ended")]
-    #[label(name)]
-    #[label(name = "outcome")]
-    tx_send_latency_by_outcome_ms: histogram,
+    tx_failed_total: counter,
 }
 
 /// How a send loop ended.
@@ -99,7 +89,7 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
     fn record_tipcap(&self, tipcap_gwei: f64);
 
     /// Record the blob fee cap in gwei (fractional precision preserved).
-    fn record_blob_fee(&self, blob_fee_gwei: f64);
+    fn record_blob_fee_cap(&self, blob_fee_cap_gwei: f64);
 
     /// Record an RPC error.
     fn record_rpc_error(&self);
@@ -133,7 +123,7 @@ impl TxMetrics for NoopTxMetrics {
     fn record_publish_error(&self) {}
     fn record_basefee(&self, _basefee_gwei: f64) {}
     fn record_tipcap(&self, _tipcap_gwei: f64) {}
-    fn record_blob_fee(&self, _blob_fee_gwei: f64) {}
+    fn record_blob_fee_cap(&self, _blob_fee_cap_gwei: f64) {}
     fn record_rpc_error(&self) {}
     fn record_tx_confirmed(&self) {}
     fn record_tx_failed(&self) {}
@@ -162,15 +152,15 @@ impl BaseTxMetrics {
     /// immediately in the metrics endpoint.
     pub fn new(name: &'static str) -> Self {
         let this = Self { name };
-        TxManagerMetrics::tx_gas_bump_count(name).absolute(0);
+        TxManagerMetrics::tx_gas_bump_total(name).absolute(0);
         TxManagerMetrics::current_nonce(name).set(0.0);
-        TxManagerMetrics::tx_publish_error_count(name).absolute(0);
+        TxManagerMetrics::tx_publish_error_total(name).absolute(0);
         TxManagerMetrics::basefee_gwei(name).set(0.0);
         TxManagerMetrics::tipcap_gwei(name).set(0.0);
-        TxManagerMetrics::blob_fee_gwei(name).set(0.0);
-        TxManagerMetrics::rpc_error_count(name).absolute(0);
-        TxManagerMetrics::tx_confirmed_count(name).absolute(0);
-        TxManagerMetrics::tx_failed_count(name).absolute(0);
+        TxManagerMetrics::blob_fee_cap_gwei(name).set(0.0);
+        TxManagerMetrics::rpc_error_total(name).absolute(0);
+        TxManagerMetrics::tx_confirmed_total(name).absolute(0);
+        TxManagerMetrics::tx_failed_total(name).absolute(0);
         this
     }
 }
@@ -181,13 +171,11 @@ impl TxMetrics for BaseTxMetrics {
     }
 
     fn record_gas_bump(&self) {
-        TxManagerMetrics::tx_gas_bump_count(self.name).increment(1);
+        TxManagerMetrics::tx_gas_bump_total(self.name).increment(1);
     }
 
     fn record_send_latency(&self, latency_ms: u64, outcome: SendOutcome) {
-        TxManagerMetrics::tx_send_latency_ms(self.name).record(latency_ms as f64);
-        TxManagerMetrics::tx_send_latency_by_outcome_ms(self.name, outcome.as_str())
-            .record(latency_ms as f64);
+        TxManagerMetrics::tx_send_latency_ms(self.name, outcome.as_str()).record(latency_ms as f64);
     }
 
     fn record_current_nonce(&self, nonce: u64) {
@@ -195,7 +183,7 @@ impl TxMetrics for BaseTxMetrics {
     }
 
     fn record_publish_error(&self) {
-        TxManagerMetrics::tx_publish_error_count(self.name).increment(1);
+        TxManagerMetrics::tx_publish_error_total(self.name).increment(1);
     }
 
     fn record_basefee(&self, basefee_gwei: f64) {
@@ -206,20 +194,20 @@ impl TxMetrics for BaseTxMetrics {
         TxManagerMetrics::tipcap_gwei(self.name).set(tipcap_gwei);
     }
 
-    fn record_blob_fee(&self, blob_fee_gwei: f64) {
-        TxManagerMetrics::blob_fee_gwei(self.name).set(blob_fee_gwei);
+    fn record_blob_fee_cap(&self, blob_fee_cap_gwei: f64) {
+        TxManagerMetrics::blob_fee_cap_gwei(self.name).set(blob_fee_cap_gwei);
     }
 
     fn record_rpc_error(&self) {
-        TxManagerMetrics::rpc_error_count(self.name).increment(1);
+        TxManagerMetrics::rpc_error_total(self.name).increment(1);
     }
 
     fn record_tx_confirmed(&self) {
-        TxManagerMetrics::tx_confirmed_count(self.name).increment(1);
+        TxManagerMetrics::tx_confirmed_total(self.name).increment(1);
     }
 
     fn record_tx_failed(&self) {
-        TxManagerMetrics::tx_failed_count(self.name).increment(1);
+        TxManagerMetrics::tx_failed_total(self.name).increment(1);
     }
 }
 
@@ -237,7 +225,7 @@ mod tests {
         m.record_publish_error();
         m.record_basefee(30.123);
         m.record_tipcap(2.456);
-        m.record_blob_fee(1.0);
+        m.record_blob_fee_cap(1.0);
         m.record_rpc_error();
         m.record_tx_confirmed();
         m.record_tx_failed();
@@ -253,7 +241,7 @@ mod tests {
         m.record_publish_error();
         m.record_basefee(30.123);
         m.record_tipcap(2.456);
-        m.record_blob_fee(1.0);
+        m.record_blob_fee_cap(1.0);
         m.record_rpc_error();
         m.record_tx_confirmed();
         m.record_tx_failed();

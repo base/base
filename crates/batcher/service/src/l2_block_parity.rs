@@ -161,13 +161,6 @@ pub struct L2BlockParityStats {
     pub missing_blocks: usize,
 }
 
-impl L2BlockParityStats {
-    /// Returns true if this pass found no mismatch or missing block.
-    pub const fn is_aligned(self) -> bool {
-        self.mismatches == 0 && self.missing_blocks == 0
-    }
-}
-
 /// One derived L2 block parity comparison result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum L2BlockParityResult {
@@ -244,9 +237,9 @@ where
     ///
     /// Measured against the common unsafe head because a pass never walks past
     /// `min(sequencer, validator)`: a validator trailing the sequencer is already reported by
-    /// `lag_blocks`, so what is left here is the monitor's own progress. A pass advances by
-    /// at most `max_blocks_per_tick`, so this grows both while the monitor is catching up
-    /// and while the cursor is parked on a block it cannot fetch.
+    /// `validator_unsafe_lag_blocks`, so what is left here is the monitor's own progress. A pass
+    /// advances by at most `max_blocks_per_tick`, so this grows both while the monitor is
+    /// catching up and while the cursor is parked on a block it cannot fetch.
     pub const fn verification_backlog(&self, common_unsafe: u64) -> u64 {
         common_unsafe.saturating_add(1).saturating_sub(self.next_block)
     }
@@ -268,8 +261,7 @@ where
             }
 
             if let Err(error) = self.process_once().await {
-                L2BlockParityMetrics::fetch_errors_total().increment(1);
-                L2BlockParityMetrics::scoped_fetch_errors_total(L2BlockParityMetrics::SCOPE_PASS)
+                L2BlockParityMetrics::fetch_errors_total(L2BlockParityMetrics::SCOPE_PASS)
                     .increment(1);
                 error!(error = %error, "derived L2 block parity pass failed");
             }
@@ -289,9 +281,9 @@ where
         let validator_unsafe = self.validator.unsafe_block_number().await?;
         // Metrics gauges are f64-backed; integer block numbers remain exact
         // through 2^53, far above any realistic L2 height for this monitor.
-        L2BlockParityMetrics::sequencer_latest_l2_block().set(sequencer_unsafe as f64);
-        L2BlockParityMetrics::validator_latest_l2_block().set(validator_unsafe as f64);
-        L2BlockParityMetrics::lag_blocks()
+        L2BlockParityMetrics::sequencer_unsafe_l2_block().set(sequencer_unsafe as f64);
+        L2BlockParityMetrics::validator_unsafe_l2_block().set(validator_unsafe as f64);
+        L2BlockParityMetrics::validator_unsafe_lag_blocks()
             .set(sequencer_unsafe.saturating_sub(validator_unsafe) as f64);
         match self.sequencer.safe_block_number().await {
             Ok(number) => L2BlockParityMetrics::sequencer_safe_l2_block().set(number as f64),
@@ -307,8 +299,6 @@ where
             .set(self.verification_backlog(common_unsafe) as f64);
 
         if common_unsafe < self.next_block {
-            let aligned = if sequencer_unsafe == validator_unsafe { 1.0 } else { 0.0 };
-            L2BlockParityMetrics::aligned().set(aligned);
             debug!(
                 next_block = %self.next_block,
                 sequencer_unsafe = %sequencer_unsafe,
@@ -330,11 +320,8 @@ where
                     self.next_block = next_block;
                 }
                 Err(error) => {
-                    L2BlockParityMetrics::fetch_errors_total().increment(1);
-                    L2BlockParityMetrics::scoped_fetch_errors_total(
-                        L2BlockParityMetrics::SCOPE_BLOCK,
-                    )
-                    .increment(1);
+                    L2BlockParityMetrics::fetch_errors_total(L2BlockParityMetrics::SCOPE_BLOCK)
+                        .increment(1);
                     warn!(
                         error = %error,
                         l2_block = %number,
@@ -347,14 +334,6 @@ where
 
         L2BlockParityMetrics::verification_backlog_blocks()
             .set(self.verification_backlog(common_unsafe) as f64);
-
-        let caught_up = self.next_block > common_unsafe;
-        let aligned = if caught_up && stats.is_aligned() && sequencer_unsafe == validator_unsafe {
-            1.0
-        } else {
-            0.0
-        };
-        L2BlockParityMetrics::aligned().set(aligned);
 
         if stats.checked > 0 || stats.missing_blocks > 0 {
             debug!(

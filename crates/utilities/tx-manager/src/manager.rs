@@ -598,7 +598,7 @@ where
                 let raw_blob_cap = FeeCalculator::calc_blob_fee_cap(raw_blob_base_fee);
                 let blob_base_fee = raw_blob_base_fee.max(self.config.min_blob_fee);
                 let blob_cap = FeeCalculator::calc_blob_fee_cap(blob_base_fee);
-                self.metrics.record_blob_fee(blob_cap as f64 / WEI_PER_GWEI);
+                self.metrics.record_blob_fee_cap(blob_cap as f64 / WEI_PER_GWEI);
                 (Some(blob_cap), Some(raw_blob_cap))
             }
             None => (None, None),

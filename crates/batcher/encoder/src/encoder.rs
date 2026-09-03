@@ -150,7 +150,7 @@ impl BatchEncoder {
             frames_emitted = %frames_emitted,
             encoded_block_range_start = %channel.block_range().start,
             encoded_block_range_end = %channel.block_range().end,
-            close_reason = %close_reason.cause_label(),
+            close_reason = %close_reason.metric_label(),
             duration_blocks = %duration_blocks,
             input_bytes = %input_bytes,
             compressed_bytes = %compressed_bytes,
@@ -158,13 +158,9 @@ impl BatchEncoder {
         );
 
         // Close metrics.
-        BatcherMetrics::channel_closed_total(close_reason.reason_label()).increment(1);
-        BatcherMetrics::channel_close_cause_total(close_reason.cause_label()).increment(1);
+        BatcherMetrics::channel_closed_total(close_reason.metric_label()).increment(1);
         BatcherMetrics::channel_duration_blocks().record(duration_blocks as f64);
         BatcherMetrics::l2_blocks_per_channel().record(blocks_added as f64);
-        BatcherMetrics::input_bytes(BatcherMetrics::STAGE_CLOSED).set(input_bytes as f64);
-        BatcherMetrics::output_bytes().set(compressed_bytes as f64);
-        BatcherMetrics::channel_num_frames().set(frames_emitted as f64);
         BatcherMetrics::input_bytes_total().increment(input_bytes);
         BatcherMetrics::output_bytes_total().increment(compressed_bytes);
         if input_bytes > 0 {
@@ -495,8 +491,6 @@ impl BatchPipeline for BatchEncoder {
 
         match outcome {
             accepted @ (ChannelAddOutcome::Accepted | ChannelAddOutcome::TargetReached) => {
-                BatcherMetrics::input_bytes(BatcherMetrics::STAGE_ADDED)
-                    .set(channel.input_bytes() as f64);
                 // Cursor advances only after accept, so a later reject retries this block.
                 self.block_cursor += 1;
                 if accepted == ChannelAddOutcome::TargetReached {
@@ -511,8 +505,6 @@ impl BatchPipeline for BatchEncoder {
                 if channel.is_empty() {
                     self.channels.pop_back();
                     BatcherMetrics::channel_closed_total(BatcherMetrics::REASON_DISCARD)
-                        .increment(1);
-                    BatcherMetrics::channel_close_cause_total(BatcherMetrics::CAUSE_DISCARD)
                         .increment(1);
                     return Err(StepError::BlockExceedsChannelLimit {
                         cursor: self.block_cursor,
