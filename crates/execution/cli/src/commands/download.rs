@@ -17,7 +17,7 @@ use futures::StreamExt;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::download::{DownloadCommand, DownloadDefaults};
-use reth_node_core::{args::DatadirArgs, dirs::DataDirPath};
+use reth_node_core::args::DatadirArgs;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
@@ -53,8 +53,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
                 .ok_or_else(|| eyre::eyre!("--proofs flag is only on Base"))?
                 .chain();
             let chain_id = chain.id();
-            let dir = reth_node_core::dirs::PlatformPath::<DataDirPath>::default()
-                .with_chain(chain, resolve_datadir_args(std::env::args_os()));
+            let dir = resolve_datadir_args(std::env::args_os()).resolve_datadir(chain);
             info!(target: "reth::cli", datadir = %dir.data_dir().display(), "Resolved datadir for proofs download");
             (Some(dir), Some(chain_id))
         } else {
@@ -451,31 +450,33 @@ mod tests {
     }
 
     #[test]
-    fn resolve_datadir_args_reads_explicit_flag() {
+    fn resolve_datadir_args_uses_explicit_datadir() {
         let datadir = resolve_datadir_args([
             OsString::from("test"),
             OsString::from("--datadir"),
             OsString::from("/tmp/base-download-test"),
-        ]);
+        ])
+        .resolve_datadir(BaseChainSpec::mainnet().chain());
 
         assert_eq!(
-            datadir.datadir,
-            PathBuf::from("/tmp/base-download-test").into(),
-            "resolver should read --datadir VALUE"
+            datadir.data_dir(),
+            Path::new("/tmp/base-download-test"),
+            "proofs download should use --datadir without adding the chain directory"
         );
     }
 
     #[test]
-    fn resolve_datadir_args_reads_equals_syntax() {
+    fn resolve_datadir_args_uses_equals_syntax() {
         let datadir = resolve_datadir_args([
             OsString::from("test"),
             OsString::from("--datadir=/tmp/base-download-test"),
-        ]);
+        ])
+        .resolve_datadir(BaseChainSpec::mainnet().chain());
 
         assert_eq!(
-            datadir.datadir,
-            PathBuf::from("/tmp/base-download-test").into(),
-            "resolver should read --datadir=VALUE"
+            datadir.data_dir(),
+            Path::new("/tmp/base-download-test"),
+            "proofs download should use --datadir=VALUE without adding the chain directory"
         );
     }
 
