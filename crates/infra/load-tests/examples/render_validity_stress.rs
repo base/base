@@ -101,7 +101,7 @@ mod tests {
         assert!(result.contains("target_gps: 600000000"));
         assert!(result.contains("transaction_submission_rpcs:\n  - \"http://localhost:7545\""));
         assert!(result.contains("in_flight_per_sender: 12"));
-        assert!(result.contains("max_total_in_flight: 9600"));
+        assert!(result.contains("max_total_in_flight: 400"));
         assert!(result.contains("ratio: 1.0"));
         assert!(result.contains("priority_lead_ratio: 0.10"));
         assert!(result.contains("priority_lead_multiplier: 2"));

@@ -314,11 +314,13 @@ storage locations that no earlier transaction addressed. The shared final predic
 approximately half the sender streams matching and half parked at either slot value.
 
 All 800 senders target the same contract and attach predicates. Ten percent use twice the baseline
-priority tip while the bulk uses half the baseline tip. The 600M gas/s target fills the controller's
-two-block mempool ceiling with roughly 4,500 validity transactions. An independent devnet account
-mutates slot 0 every 30 seconds while measured transactions increment slot 1, so the two sender
-halves swap between matching and parked. That periodically wakes and rescans the parked set without
-measured transactions self-invalidating the parity gate. Override the cadence with
+priority tip while the bulk uses half the baseline tip. The 600M gas/s target continuously fills an
+explicit 400-transaction aggregate in-flight cap. This keeps hundreds of cold validity candidates
+in contention and maintains predicate-cutoff pressure while bounding each native-builder selection
+scan so 200ms payloads can still seal. An independent devnet account mutates slot 0 every 30 seconds
+while measured transactions increment slot 1, so the two sender halves swap between matching and
+parked. That periodically wakes and rescans the parked set without measured transactions
+self-invalidating the parity gate. Override the cadence with
 `VALIDITY_STRESS_MUTATOR_INTERVAL_SECONDS`.
 
 `just load-test validity-stress-warm [--continuous ...]` retains the original profile as an
