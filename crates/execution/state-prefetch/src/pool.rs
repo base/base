@@ -36,6 +36,10 @@ pub const MAX_PREFETCH_WORKERS: usize = 256;
 /// solely to fault the corresponding database pages into the OS page cache concurrently, ahead of
 /// the serial journaled reads that follow during execution. A slightly stale view is fine — the
 /// pages are the same either way, and the metered read path is untouched.
+///
+/// Once installed as the process-wide prefetcher the pool is never dropped, so its worker
+/// threads live until process exit; [`Self::join`] exists for owners that want a graceful
+/// drain-and-shutdown (tests, tools).
 #[derive(Debug)]
 pub struct StatePrefetchPool {
     senders: Vec<mpsc::SyncSender<PrefetchRequest>>,

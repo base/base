@@ -16,7 +16,7 @@
 //! installed — tests, tools, and `no_std` proof environments — hints are a
 //! no-op atomic load.
 
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 
 use alloy_primitives::{Address, U256};
 use revm::primitives::OnceLock;
@@ -79,15 +79,16 @@ impl PrefetchHint {
     /// Forwards a hint for storage slots of a single address, if a
     /// prefetcher is installed.
     ///
-    /// Converts through a fixed stack buffer so the hot dispatch path stays
-    /// allocation-free; batches larger than the buffer arrive as multiple
-    /// hints.
-    pub fn send_slots(address: Address, slots: &[U256]) {
+    /// The slot set is produced lazily so the hot dispatch path pays nothing
+    /// — not even the closure's allocations — when no prefetcher is
+    /// installed. Requests convert through a fixed stack buffer; batches
+    /// larger than the buffer arrive as multiple hints.
+    pub fn send_slots_with(address: Address, slots: impl FnOnce() -> Vec<U256>) {
         const CHUNK: usize = 8;
         let Some(prefetcher) = PREFETCHER.get() else {
             return;
         };
-        for chunk in slots.chunks(CHUNK) {
+        for chunk in slots().chunks(CHUNK) {
             let mut requests = [PrefetchRequest::Slot { address, slot: U256::ZERO }; CHUNK];
             for (request, &slot) in requests.iter_mut().zip(chunk) {
                 *request = PrefetchRequest::Slot { address, slot };
@@ -125,14 +126,14 @@ mod tests {
         let address = Address::repeat_byte(0xB2);
         let slots = [U256::from(11u64), U256::from(9u64)];
 
-        // Before install: must not panic.
-        PrefetchHint::send_slots(address, &slots);
+        // Before install: must not panic, and must not evaluate the closure.
+        PrefetchHint::send_slots_with(address, || unreachable!("no prefetcher installed"));
         PrefetchHint::send(&[PrefetchRequest::Account { address }]);
 
         let recorder = Arc::new(RecordingPrefetcher::default());
         assert!(PrefetchHint::install(recorder.clone()));
 
-        PrefetchHint::send_slots(address, &slots);
+        PrefetchHint::send_slots_with(address, || slots.to_vec());
         assert_eq!(
             *recorder.calls.lock().unwrap(),
             vec![vec![
@@ -149,7 +150,7 @@ mod tests {
 
         // Second install loses; the original prefetcher keeps receiving.
         assert!(!PrefetchHint::install(Arc::new(RecordingPrefetcher::default())));
-        PrefetchHint::send_slots(address, &slots[..1]);
+        PrefetchHint::send_slots_with(address, || slots[..1].to_vec());
         assert_eq!(recorder.calls.lock().unwrap().len(), 3);
     }
 }
