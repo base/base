@@ -946,12 +946,12 @@ fn is_inspector_opcode_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use clap::{Args as ClapArgs, Parser};
+    use clap::{Args, Parser};
 
     use super::*;
 
     #[derive(Debug, Parser)]
-    struct CommandParser<T: ClapArgs> {
+    struct CommandParser<T: Args> {
         #[command(flatten)]
         args: T,
     }
