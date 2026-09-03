@@ -386,7 +386,8 @@ where
     #[instrument(
         name = "registrar.register_signer",
         skip_all,
-        fields(instance_id = %instance_id, signer = %signer_address)
+        fields(instance_id = %instance_id, signer = %signer_address),
+        err(Display)
     )]
     pub async fn register_signer(
         &self,

@@ -135,7 +135,7 @@ impl ProofDispatcher {
         Ok(l1_head)
     }
 
-    #[instrument(name = "proposer.dispatch_request", skip_all, fields(session_id))]
+    #[instrument(name = "proposer.dispatch_request", skip_all, fields(session_id), err(Display))]
     async fn dispatch_request(&self, request: ProofRequest) -> Result<String, ProposerError> {
         let request = ProposerProofAdapter::tee_prove_block_range_request(request);
         let session_id = request.proof.session_id.clone();

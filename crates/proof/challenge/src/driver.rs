@@ -316,7 +316,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
     #[tracing::instrument(
         name = "challenger.process_fraudulent_zk_challenge",
         skip_all,
-        fields(game = %candidate.factory.proxy, challenged_index)
+        fields(game = %candidate.factory.proxy, challenged_index = challenged_index)
     )]
     async fn process_fraudulent_zk_challenge(
         &mut self,

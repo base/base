@@ -131,16 +131,19 @@ where
     Client: Clone + ProverWorkerProvider + 'static,
 {
     /// Generate a proof for a claimed worker job and spawn proof submission.
+    #[tracing::instrument(
+        name = "zk.generate_and_submit",
+        skip_all,
+        fields(session_id, worker_id, start_block, block_count, zk_backend)
+    )]
     pub async fn generate_and_submit(&self, job: ProofJob) -> Result<(), ProofGeneratorError> {
         let request = ProofGeneratorRequest::try_from(job)?;
-        let span = info_span!(
-            "zk.generate_and_submit",
-            session_id = %request.claim.session_id,
-            worker_id = %request.claim.worker_id,
-            start_block = request.request.start_block_number(),
-            block_count = request.request.number_of_blocks_to_prove(),
-            zk_backend = %request.request.zk_backend(),
-        );
+        tracing::Span::current()
+            .record("session_id", tracing::field::display(&request.claim.session_id))
+            .record("worker_id", tracing::field::display(&request.claim.worker_id))
+            .record("start_block", request.request.start_block_number())
+            .record("block_count", request.request.number_of_blocks_to_prove())
+            .record("zk_backend", tracing::field::display(request.request.zk_backend()));
 
         info!(
             session_id = %request.claim.session_id,
@@ -158,7 +161,6 @@ where
                 let permit = self.tasks.acquire_submission_permit().await;
                 Ok((result, permit))
             })
-            .instrument(span)
             .await
             .inspect_err(|error| match error {
                 ProofGeneratorError::Generate { source, .. } => {

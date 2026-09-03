@@ -88,15 +88,18 @@ where
     Client: Clone + ProverWorkerProvider + 'static,
 {
     /// Generate a proof for a claimed worker job and spawn proof submission.
+    #[tracing::instrument(
+        name = "nitro.generate_and_submit",
+        skip_all,
+        fields(session_id, worker_id, l2_block)
+    )]
     pub async fn generate_and_submit(&self, job: ProofJob) -> Result<(), ProofGeneratorError> {
         let request = ProofGeneratorRequest::try_from(job)?;
         let l2_block = request.proof.claimed_l2_block_number;
-        let span = info_span!(
-            "nitro.generate_and_submit",
-            session_id = %request.claim.session_id,
-            worker_id = %request.claim.worker_id,
-            l2_block,
-        );
+        tracing::Span::current()
+            .record("session_id", tracing::field::display(&request.claim.session_id))
+            .record("worker_id", tracing::field::display(&request.claim.worker_id))
+            .record("l2_block", l2_block);
 
         info!(
             session_id = %request.claim.session_id,
@@ -120,7 +123,6 @@ where
                 let permit = self.tasks.acquire_submission_permit().await;
                 Ok((proof, permit))
             })
-            .instrument(span)
             .await
             .inspect_err(|error| match error {
                 ProofGeneratorError::Generate { source, .. } => {
@@ -251,6 +253,7 @@ where
         let submitter = self.submitter.clone();
         let heartbeat_config = self.heartbeat;
 
+        let span = tracing::Span::current();
         tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -265,7 +268,8 @@ where
                         &request.claim,
                         heartbeat_config,
                         request.lock_expires_at,
-                    ) => Some(source),
+                    )
+                    .instrument(span) => Some(source),
                     () = cancel.cancelled() => None,
                 }
             })
