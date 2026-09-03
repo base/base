@@ -2029,6 +2029,14 @@ mod tests {
         BaseEvmConfig,
     >;
 
+    /// Realistic head-block timestamp (Unix **seconds**, ~Nov 2023) seeded into
+    /// the integration harness. `NOW_MS = NOW_SECS * 1000` is the millisecond
+    /// reference the pool derives from `block.timestamp`; nonce-free validity
+    /// bounds are expressed relative to it so they clear the seconds/ms unit
+    /// guard (`Eip8130Constants::TIMESTAMP_MS_THRESHOLD`).
+    const NOW_SECS: u64 = 1_700_000_000;
+    const NOW_MS: u64 = NOW_SECS * 1_000;
+
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
@@ -2042,7 +2050,13 @@ mod tests {
             .no_cancun()
             .build_with_tasks(Runtime::test(), blob_store.clone())
             .map(|inner| {
-                BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+                // Seed a realistic head-block timestamp (Unix seconds) so
+                // nonce-free millisecond validity bounds (`block.timestamp *
+                // 1000 = NOW_MS`) clear the seconds/ms unit guard
+                // (`Eip8130Constants::TIMESTAMP_MS_THRESHOLD`).
+                let block_info = BaseL1BlockInfo::default();
+                block_info.set_timestamp(NOW_SECS);
+                BaseTransactionValidator::with_block_info(inner, block_info)
                     .require_l1_data_gas_fee(false)
             });
         let ordering = BaseOrdering::default();
@@ -2157,22 +2171,40 @@ mod tests {
 
         let mut admitted = Vec::new();
         for offset in 0..cap {
-            let transaction =
-                self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, offset + 1, 1_000);
+            // Distinct millisecond `valid_before` per member, each inside the
+            // nonce-free window `(NOW_MS, NOW_MS + NONCE_FREE_MAX_EXPIRY_WINDOW]`.
+            let transaction = self_paid_eoa_8130(
+                &signer,
+                Eip8130Constants::NONCE_KEY_MAX,
+                0,
+                NOW_MS + offset + 1,
+                1_000,
+            );
             admitted.push(*transaction.hash());
             assert!(pool.add_transaction(TransactionOrigin::Local, transaction).await.is_ok());
         }
         assert!(admitted.iter().all(|hash| pool.nonce_pool.read().contains(hash)));
 
-        let over = self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, cap + 1, 1_000);
+        let over = self_paid_eoa_8130(
+            &signer,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            NOW_MS + cap + 1,
+            1_000,
+        );
         let over_hash = *over.hash();
         assert!(pool.add_transaction(TransactionOrigin::Local, over).await.is_err());
         assert!(pool.get(&over_hash).is_none());
 
         let removed = pool.remove_transactions(vec![admitted[0]]);
         assert_eq!(removed.len(), 1);
-        let replacement =
-            self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, cap + 2, 1_000);
+        let replacement = self_paid_eoa_8130(
+            &signer,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            NOW_MS + cap + 2,
+            1_000,
+        );
         assert!(pool.add_transaction(TransactionOrigin::Local, replacement).await.is_ok());
     }
 
@@ -2306,7 +2338,7 @@ mod tests {
             &signer,
             Eip8130Constants::NONCE_KEY_MAX,
             0,
-            Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+            NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
             1_000,
         );
         let nonce_free_hash = *nonce_free.hash();
@@ -2353,7 +2385,7 @@ mod tests {
             &signer,
             Eip8130Constants::NONCE_KEY_MAX,
             0,
-            Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+            NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
             1_000,
         );
         let hash = *transaction.hash();

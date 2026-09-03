@@ -661,6 +661,14 @@ impl BaseL1BlockInfo {
     pub fn timestamp(&self) -> u64 {
         self.timestamp.load(Ordering::Relaxed)
     }
+
+    /// Overwrites the tracked block timestamp (Unix seconds). Symmetric with
+    /// [`Self::timestamp`]; used to seed or advance the validator clock in dev
+    /// and test setups without threading a full header through
+    /// [`BaseTransactionValidator::update_l1_block_info`].
+    pub fn set_timestamp(&self, timestamp: u64) {
+        self.timestamp.store(timestamp, Ordering::Relaxed);
+    }
 }
 
 /// Validator for Base transactions.
@@ -1608,6 +1616,9 @@ where
         now: u64,
     ) -> InvalidPoolTransactionError {
         let reason = match error {
+            Eip8130TimestampError::TimestampNotMilliseconds => {
+                "valid_after/valid_before must be Unix milliseconds, not seconds"
+            }
             Eip8130TimestampError::NonceFreeMalformed => {
                 "nonce-free transaction must set a non-zero valid_before and a zero nonce sequence"
             }
@@ -2199,6 +2210,20 @@ mod tests {
         build_test_validator_with_spec(chain_spec)
     }
 
+    /// Realistic head-block timestamp (Unix **seconds**, ~Nov 2023) for
+    /// timestamp-window tests. `NOW_MS = NOW_SECS * 1000` is the millisecond
+    /// reference the pool derives from `block.timestamp`; both millisecond
+    /// validity bounds stay well above the seconds/ms unit guard
+    /// (`Eip8130Constants::TIMESTAMP_MS_THRESHOLD`).
+    const NOW_SECS: u64 = 1_700_000_000;
+    const NOW_MS: u64 = NOW_SECS * 1_000;
+
+    /// Advances a test validator's tracked head-block timestamp to `secs`.
+    fn set_block_timestamp(validator: &TestValidator, secs: u64) {
+        let header = alloy_consensus::Header { timestamp: secs, ..Default::default() };
+        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+    }
+
     /// Builds a Cobalt-activated validator with one canonical account seeded.
     fn build_test_validator_with_account(
         address: Address,
@@ -2593,7 +2618,9 @@ mod tests {
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 1,
-            valid_before: 5,
+            // Millisecond-scale bound so the unit guard passes and the nonzero
+            // sequence is what trips the structural check.
+            valid_before: NOW_MS + 10_000,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
@@ -2605,17 +2632,15 @@ mod tests {
 
     #[test]
     fn rejects_eip8130_nonce_free_already_expired() {
-        // Advance the validator's tracked block timestamp to 100s (now_ms =
-        // 100_000) so that valid_before=50_000 is strictly in the past; the
-        // default fixture sits at timestamp 0 where there is no way to express
-        // "already expired".
+        // Advance the block timestamp to a realistic `now_ms` so a millisecond
+        // `valid_before` strictly in the past expresses "already expired" while
+        // clearing the seconds/ms unit guard.
         let validator = build_test_validator();
-        let header = alloy_consensus::Header { timestamp: 100, ..Default::default() };
-        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        set_block_timestamp(&validator, NOW_SECS);
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            valid_before: 50_000,
+            valid_before: NOW_MS - 1_000,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
@@ -2627,15 +2652,15 @@ mod tests {
 
     #[test]
     fn rejects_eip8130_nonce_free_not_yet_valid() {
-        // Default fixture sits at block timestamp 0 (now_ms = 0). A future
-        // `valid_after` opens the window later, so the nonce-free branch must
-        // reject with `NotYetValid` before the (satisfiable) expiry checks.
+        // A future `valid_after` opens the window later, so the nonce-free branch
+        // must reject with `NotYetValid` before the (satisfiable) expiry checks.
         let validator = build_test_validator();
+        set_block_timestamp(&validator, NOW_SECS);
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            valid_after: 50_000,
-            valid_before: 60_000,
+            valid_after: NOW_MS + 5_000,
+            valid_before: NOW_MS + 10_000,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
@@ -2647,11 +2672,11 @@ mod tests {
 
     #[test]
     fn rejects_eip8130_nonce_bearing_not_yet_valid() {
-        // Sequenced (nonce-bearing) transaction with a future `valid_after` and
-        // now_ms = 0: the else-branch of `validate_timestamp` must reject with
-        // `NotYetValid`.
+        // Sequenced (nonce-bearing) transaction with a future `valid_after`: the
+        // else-branch of `validate_timestamp` must reject with `NotYetValid`.
         let validator = build_test_validator();
-        let tx = TxEip8130 { valid_after: 50_000, ..minimal_valid_eoa_tx() };
+        set_block_timestamp(&validator, NOW_SECS);
+        let tx = TxEip8130 { valid_after: NOW_MS + 50_000, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
             validator.validate_eip8130_structural(&signed),
@@ -2660,13 +2685,39 @@ mod tests {
     }
 
     #[test]
+    fn rejects_eip8130_seconds_denominated_bounds_with_unit_reason() {
+        // A validity bound passed in Unix *seconds* (below TIMESTAMP_MS_THRESHOLD)
+        // is rejected at ingress with an actionable unit error, not a misleading
+        // "not yet valid" / "already elapsed" it would produce when compared
+        // against `block.timestamp * 1000`.
+        let validator = build_test_validator();
+        set_block_timestamp(&validator, NOW_SECS);
+
+        // `valid_before` in seconds (nonce-bearing path).
+        let tx = TxEip8130 { valid_before: NOW_SECS, ..minimal_valid_eoa_tx() };
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&sign_eoa_eip8130(tx)),
+            "valid_after/valid_before must be Unix milliseconds, not seconds",
+        );
+
+        // `valid_after` in seconds.
+        let tx = TxEip8130 { valid_after: NOW_SECS, ..minimal_valid_eoa_tx() };
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&sign_eoa_eip8130(tx)),
+            "valid_after/valid_before must be Unix milliseconds, not seconds",
+        );
+    }
+
+    #[test]
     fn rejects_eip8130_nonce_free_expiry_too_far_in_future() {
         let validator = build_test_validator();
-        // block_timestamp returns 0 by default; cap is NONCE_FREE_MAX_EXPIRY_WINDOW.
+        // Window cap is NONCE_FREE_MAX_EXPIRY_WINDOW past `now_ms`; one past it is
+        // "too far". Realistic `now_ms` keeps the bound above the unit guard.
+        set_block_timestamp(&validator, NOW_SECS);
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            valid_before: Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW + 1,
+            valid_before: NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW + 1,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
@@ -2679,10 +2730,11 @@ mod tests {
     #[test]
     fn accepts_eip8130_nonce_free_at_expiry_window_edge() {
         let validator = build_test_validator();
+        set_block_timestamp(&validator, NOW_SECS);
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            valid_before: Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+            valid_before: NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);

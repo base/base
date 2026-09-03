@@ -278,6 +278,30 @@ impl Eip8130Constants {
     /// `MAX_CODE_SIZE` limit. EIP-8130 places runtime code directly, so the
     /// mempool rejects oversized code before execution.
     pub const MAX_CODE_SIZE: usize = 24_576;
+
+    /// Heuristic unit boundary distinguishing **seconds** from **milliseconds**
+    /// for the transaction validity-window bounds (`valid_after`/`valid_before`),
+    /// per EIP-8130 "Timestamp Normalization": a non-zero bound below this is a
+    /// seconds value, at or above it is milliseconds. A Unix timestamp in seconds
+    /// does not reach `10^11` until the year 5138, while a millisecond Unix
+    /// timestamp has exceeded `10^11` since 1973, so the split is unambiguous for
+    /// every realistic value.
+    ///
+    /// This node currently admits **millisecond**-denominated bounds only and
+    /// uses the threshold to reject seconds-denominated bounds at ingress with an
+    /// actionable error (see [`Self::timestamp_is_seconds`]) instead of silently
+    /// misreading them as long-expired. Full per-value seconds/ms normalization
+    /// (accepting both, per the spec) is a separate consensus-level change.
+    pub const TIMESTAMP_MS_THRESHOLD: u64 = 100_000_000_000;
+
+    /// Whether `value` is a non-zero validity-window bound that appears to be
+    /// denominated in **seconds** rather than milliseconds — i.e. below
+    /// [`Self::TIMESTAMP_MS_THRESHOLD`]. A `0` bound means "no bound" and returns
+    /// `false`.
+    #[must_use]
+    pub const fn timestamp_is_seconds(value: u64) -> bool {
+        value != 0 && value < Self::TIMESTAMP_MS_THRESHOLD
+    }
 }
 
 #[cfg(test)]
@@ -298,6 +322,21 @@ mod tests {
         assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, EIP1559_TX_TYPE);
         assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, EIP7702_TX_TYPE);
         assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, DEPOSIT_TX_TYPE);
+    }
+
+    #[test]
+    fn timestamp_is_seconds_detects_sub_threshold_nonzero_bounds() {
+        // `0` means "no bound" and is never flagged.
+        assert!(!Eip8130Constants::timestamp_is_seconds(0));
+        // Anything non-zero below the threshold is treated as seconds.
+        assert!(Eip8130Constants::timestamp_is_seconds(1));
+        assert!(Eip8130Constants::timestamp_is_seconds(1_700_000_000)); // ~now, in seconds
+        assert!(Eip8130Constants::timestamp_is_seconds(
+            Eip8130Constants::TIMESTAMP_MS_THRESHOLD - 1
+        ));
+        // At and above the threshold is milliseconds.
+        assert!(!Eip8130Constants::timestamp_is_seconds(Eip8130Constants::TIMESTAMP_MS_THRESHOLD));
+        assert!(!Eip8130Constants::timestamp_is_seconds(1_700_000_000_000)); // ~now, in ms
     }
 
     #[test]

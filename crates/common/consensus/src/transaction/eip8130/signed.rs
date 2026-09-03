@@ -135,6 +135,18 @@ pub enum Eip8130StaticError {
 /// same pass keeps the nonce-free rules in one place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Eip8130TimestampError {
+    /// A non-zero `valid_after`/`valid_before` bound appears to be denominated in
+    /// **seconds** rather than milliseconds (below
+    /// [`Eip8130Constants::TIMESTAMP_MS_THRESHOLD`]).
+    ///
+    /// Like [`Self::NonceFreeMalformed`] this is a `now`-independent structural
+    /// check on the transaction's fields, not a timing relationship. This node
+    /// admits millisecond-denominated bounds only; a seconds value compared
+    /// against `block.timestamp * 1000` would otherwise be misread as
+    /// long-expired, so it is rejected up front with an actionable reason
+    /// instead of a misleading [`Self::Expired`]/[`Self::NotYetValid`].
+    #[error("valid_after/valid_before must be Unix milliseconds, not seconds")]
+    TimestampNotMilliseconds,
     /// Nonce-free mode (`nonce_key == NONCE_KEY_MAX`) requires `nonce_sequence
     /// == 0` and a non-zero `valid_before`; one of those invariants is violated.
     ///
@@ -244,6 +256,18 @@ impl Eip8130Signed {
     /// concurrently.
     pub fn validate_timestamp(&self, now: u64) -> Result<(), Eip8130TimestampError> {
         let tx = self.tx();
+        // Unit guard first (field-format, `now`-independent): this node admits
+        // millisecond-denominated bounds only. A non-zero bound below
+        // `TIMESTAMP_MS_THRESHOLD` is almost certainly a seconds value, which —
+        // compared against `block.timestamp * 1000` below — would be misread as
+        // long-expired. Reject it with an actionable reason rather than a
+        // misleading `Expired`/`NotYetValid`. (Full per-value seconds/ms
+        // normalization, accepting both, is a separate consensus-level change.)
+        if Eip8130Constants::timestamp_is_seconds(tx.valid_after)
+            || Eip8130Constants::timestamp_is_seconds(tx.valid_before)
+        {
+            return Err(Eip8130TimestampError::TimestampNotMilliseconds);
+        }
         if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
             // Structural precondition first (independent of `now`).
             if tx.nonce_sequence != 0 || tx.valid_before == 0 {
@@ -783,7 +807,9 @@ mod tests {
 
     #[test]
     fn timestamp_validation_covers_channel_and_nonce_free_rules() {
-        let now = 1_000;
+        // Millisecond-scale reference so the window arithmetic stays above the
+        // seconds/ms unit guard (`TIMESTAMP_MS_THRESHOLD`).
+        let now = 1_700_000_000_000;
         let mut tx = sample_signed(false).into_tx();
         // Nonce-bearing upper bound is inclusive: valid at `now == valid_before`,
         // expired only once `now` is strictly past it.
@@ -823,6 +849,57 @@ mod tests {
         tx.valid_before = now + 1;
         assert_eq!(
             Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_timestamp(now),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn seconds_denominated_bounds_are_rejected_before_window_checks() {
+        // This node admits millisecond bounds only: a non-zero bound below
+        // `TIMESTAMP_MS_THRESHOLD` is treated as seconds and rejected up front
+        // with `TimestampNotMilliseconds`, not the misleading `Expired` /
+        // `NotYetValid` a raw comparison against `block.timestamp * 1000` would
+        // otherwise produce.
+        let now = 1_700_000_000_000;
+        let secs = Eip8130Constants::TIMESTAMP_MS_THRESHOLD - 1; // largest seconds value
+        let base = sample_signed(false).into_tx();
+
+        // `valid_before` in seconds.
+        let mut tx = base.clone();
+        tx.valid_before = secs;
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_timestamp(now),
+            Err(Eip8130TimestampError::TimestampNotMilliseconds)
+        );
+
+        // `valid_after` in seconds (independent of `valid_before`).
+        let mut tx = base.clone();
+        tx.valid_after = secs;
+        tx.valid_before = 0;
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_timestamp(now),
+            Err(Eip8130TimestampError::TimestampNotMilliseconds)
+        );
+
+        // The unit guard precedes the nonce-free structural/window checks: a
+        // seconds `valid_before` reports the unit error, not `NonceFreeExpired`.
+        let mut tx = base.clone();
+        tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+        tx.nonce_sequence = 0;
+        tx.valid_before = secs;
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_timestamp(now),
+            Err(Eip8130TimestampError::TimestampNotMilliseconds)
+        );
+
+        // Boundary: exactly `TIMESTAMP_MS_THRESHOLD` is milliseconds (not
+        // seconds), so it clears the unit guard. Evaluated at `now == valid_before`
+        // it is inclusively valid — proving the threshold value is admitted.
+        let mut tx = base;
+        tx.valid_before = Eip8130Constants::TIMESTAMP_MS_THRESHOLD;
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new())
+                .validate_timestamp(Eip8130Constants::TIMESTAMP_MS_THRESHOLD),
             Ok(())
         );
     }
