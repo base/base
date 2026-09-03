@@ -2,6 +2,11 @@
 
 /// Wraps a stateful native precompile body in the Base storage-provider setup.
 ///
+/// For zero-value calls, the wrapper rejects insufficient calldata gas before
+/// it constructs an EVM storage provider or dispatches the borrowed calldata.
+/// Nonzero-value calls reach dispatch so precompile-specific nonpayable rules
+/// retain their existing precedence.
+///
 /// `storage_features:` is required — every caller must state the fork feature set
 /// the wrapper runs under, so a future feature-sensitive field cannot silently
 /// inherit `StorageFeatures::Legacy`. See [`crate::UpgradeGatedStorageFeatures::from_upgrade`].
@@ -19,7 +24,16 @@ macro_rules! base_precompile {
                     );
                 }
 
-                let $calldata: ::alloy_primitives::Bytes = input.data.to_vec().into();
+                let $calldata = input.data;
+                let calldata_gas = $crate::PrecompileCallRecorder::<
+                    $crate::NoopPrecompileCallObserver,
+                >::calldata_gas_cost($calldata);
+                if input.value.is_zero() && input.gas < calldata_gas {
+                    return ::base_precompile_storage::IntoEnginePrecompileResult::into_revm(
+                        ::base_precompile_storage::BasePrecompileError::OutOfGas
+                            .into_precompile_result(0, 0),
+                    );
+                }
                 let mut provider = ::base_precompile_storage::EvmPrecompileStorageProvider::new_with_storage_features(
                     input,
                     ::revm::context_interface::cfg::GasParams::default(),
@@ -92,10 +106,23 @@ pub(crate) use reject_frozen_selector;
 
 #[cfg(test)]
 mod tests {
-    use alloy_sol_types::SolCall;
-    use base_precompile_storage::{BasePrecompileError, Result};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
-    use crate::IPolicyRegistry;
+    use alloy_evm::{
+        EvmInternals,
+        eth::EthEvmContext,
+        precompiles::{Precompile, PrecompileInput},
+    };
+    use alloy_primitives::{Address, Bytes, U256};
+    use alloy_sol_types::{SolCall, SolError};
+    use base_common_genesis::BaseUpgrade;
+    use base_precompile_storage::{BasePrecompileError, Result, StorageFeatures};
+    use revm::{database::EmptyDB, precompile::PrecompileHalt, primitives::hardfork::SpecId};
+
+    use crate::{B20Factory, IB20Factory, IPolicyRegistry, NoopPrecompileCallObserver};
 
     fn decode_policy_call(calldata: &[u8]) -> Result<IPolicyRegistry::IPolicyRegistryCalls> {
         Ok(decode_precompile_call!(calldata, IPolicyRegistry::IPolicyRegistryCalls,))
@@ -152,5 +179,65 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn base_precompile_rejects_unaffordable_calldata_before_dispatch() {
+        let dispatched = Arc::new(AtomicBool::new(false));
+        let dispatched_by_precompile = Arc::clone(&dispatched);
+        let precompile = base_precompile!(
+            "test",
+            storage_features: StorageFeatures::Legacy,
+            |ctx, _calldata| {
+                dispatched_by_precompile.store(true, Ordering::SeqCst);
+                ctx.result_output(Ok(()), |_| Bytes::new())
+            },
+        );
+        let calldata = vec![0xff; 119_972];
+        let address = Address::repeat_byte(0x42);
+        let mut evm = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+
+        let output = precompile
+            .call(PrecompileInput {
+                data: &calldata,
+                gas: 0,
+                reservoir: 0,
+                caller: Address::ZERO,
+                value: U256::ZERO,
+                target_address: address,
+                is_static: false,
+                bytecode_address: address,
+                internals: EvmInternals::from_context(&mut evm),
+            })
+            .unwrap();
+
+        assert_eq!(output.halt_reason(), Some(&PrecompileHalt::OutOfGas));
+        assert!(!dispatched.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn base_precompile_preserves_nonpayable_precedence_over_calldata_gas() {
+        let precompile =
+            B20Factory::precompile_with_observer(BaseUpgrade::Beryl, NoopPrecompileCallObserver);
+        let calldata = vec![0xff; 119_972];
+        let address = Address::repeat_byte(0x42);
+        let mut evm = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+
+        let output = precompile
+            .call(PrecompileInput {
+                data: &calldata,
+                gas: 0,
+                reservoir: 0,
+                caller: Address::ZERO,
+                value: U256::from(1),
+                target_address: address,
+                is_static: false,
+                bytecode_address: address,
+                internals: EvmInternals::from_context(&mut evm),
+            })
+            .unwrap();
+
+        assert!(output.is_revert());
+        assert_eq!(output.bytes, Bytes::from(IB20Factory::NonPayable {}.abi_encode()));
     }
 }

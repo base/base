@@ -39,7 +39,7 @@ impl B20Factory {
             storage_features: storage_features,
             |ctx, calldata| {
             let observer = observer.clone();
-            B20FactoryStorage::new(ctx).dispatch_with_observer(ctx, &calldata, upgrade, observer)
+            B20FactoryStorage::new(ctx).dispatch_with_observer(ctx, calldata, upgrade, observer)
             }
         )
     }

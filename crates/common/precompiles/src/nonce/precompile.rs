@@ -32,7 +32,7 @@ impl NonceManager {
         base_precompile!(
             "NonceManager",
             storage_features: storage_features,
-            |ctx, calldata| NonceManagerStorage::new(ctx).dispatch(ctx, &calldata),
+            |ctx, calldata| NonceManagerStorage::new(ctx).dispatch(ctx, calldata),
         )
     }
 }

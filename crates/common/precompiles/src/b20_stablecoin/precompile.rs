@@ -47,7 +47,7 @@ impl B20StablecoinPrecompile {
                 PolicyRegistryStorage::new(ctx),
                 version,
             )
-            .dispatch_with_observer(ctx, &calldata, upgrade, observer)
+            .dispatch_with_observer(ctx, calldata, upgrade, observer)
             }
         )
     }

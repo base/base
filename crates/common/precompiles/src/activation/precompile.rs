@@ -76,7 +76,7 @@ impl ActivationRegistry {
             let observer = observer.clone();
             ActivationRegistryStorage::new(ctx).dispatch_with_observer(
                 ctx,
-                &calldata,
+                calldata,
                 admin_config,
                 upgrade,
                 observer,

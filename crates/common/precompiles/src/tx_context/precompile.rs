@@ -32,7 +32,7 @@ impl TxContext {
         base_precompile!(
             "TxContext",
             storage_features: storage_features,
-            |ctx, calldata| TxContextStorage::new(ctx).dispatch(ctx, &calldata),
+            |ctx, calldata| TxContextStorage::new(ctx).dispatch(ctx, calldata),
         )
     }
 }
