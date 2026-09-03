@@ -167,6 +167,35 @@ fn base_time_errors_on_missing_proxy() {
 }
 
 #[test]
+fn base_time_errors_on_codeless_proxy() {
+    // The reserved proxy account exists (non-zero balance) but has no code: activation cannot
+    // link an implementation into a bare account, so it must be rejected.
+    let mut db = InMemoryDB::default();
+    db.insert_account_info(
+        &Predeploys::BASE_TIME,
+        evm2::AccountInfo { balance: U256::from(1), ..Default::default() },
+    );
+    let mut executor = executor(BaseUpgrade::Denim, 1000, db);
+    let err = executor
+        .apply_transition_hooks(&schedule(BaseUpgrade::Denim, 1000))
+        .expect_err("codeless proxy is rejected");
+    assert!(format!("{err}").contains("existing proxy code"), "got: {err}");
+}
+
+#[test]
+fn base_time_errors_on_unexpected_proxy_admin() {
+    // A proxy with code but the wrong EIP-1967 admin is not the canonical predeploy: activation
+    // must reject it rather than link an implementation behind an unexpected admin.
+    let mut db = db_with_valid_proxy();
+    db.insert_account_storage(&Predeploys::BASE_TIME, &ADMIN_SLOT, &U256::from(0xdead_u64));
+    let mut executor = executor(BaseUpgrade::Denim, 1000, db);
+    let err = executor
+        .apply_transition_hooks(&schedule(BaseUpgrade::Denim, 1000))
+        .expect_err("unexpected proxy admin is rejected");
+    assert!(format!("{err}").contains("canonical proxy admin"), "got: {err}");
+}
+
+#[test]
 fn base_time_is_idempotent_when_already_linked() {
     let mut db = db_with_valid_proxy();
     // Pre-link the implementation slot: the transition must be a no-op and preserve it.
