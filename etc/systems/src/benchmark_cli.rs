@@ -133,8 +133,11 @@ pub struct SnapshotBlockMetrics {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct VisualizerBlockMetrics {
-    /// Canonical L2 block number.
-    pub block_number: u64,
+    /// Position in two-second-equivalent blocks.
+    ///
+    /// A 2s block advances this by `1.0`; a 200ms block advances it by `0.1`, so equal-duration
+    /// cadence runs share the same report x-axis.
+    pub block_number: f64,
     /// Canonical L2 timestamp in milliseconds since the Unix epoch.
     pub timestamp: u64,
     /// Named numeric metrics rendered by the visualizer.
@@ -461,7 +464,7 @@ impl SnapshotBenchmarkArgs {
             .iter()
             .enumerate()
             .map(|(index, block)| VisualizerBlockMetrics {
-                block_number: index as u64 + 1,
+                block_number: Self::normalized_block_number(index, result.block_interval_ms),
                 timestamp: block.timestamp_ms,
                 execution_metrics: Self::visualizer_metrics(block, block_seconds),
             })
@@ -471,7 +474,7 @@ impl SnapshotBenchmarkArgs {
             .iter()
             .enumerate()
             .map(|(index, block)| VisualizerBlockMetrics {
-                block_number: index as u64 + 1,
+                block_number: Self::normalized_block_number(index, result.block_interval_ms),
                 timestamp: block.timestamp_ms,
                 execution_metrics: Self::visualizer_metrics(block, block_seconds),
             })
@@ -541,6 +544,12 @@ impl SnapshotBenchmarkArgs {
         };
         std::fs::write(output_dir.join("metadata.json"), serde_json::to_vec_pretty(&metadata)?)?;
         Ok(())
+    }
+
+    /// Converts a zero-based sample index to the equivalent position on a two-second block axis.
+    fn normalized_block_number(index: usize, block_interval_ms: u64) -> f64 {
+        const REFERENCE_BLOCK_INTERVAL_MS: f64 = 2_000.0;
+        (index as f64 + 1.0) * block_interval_ms as f64 / REFERENCE_BLOCK_INTERVAL_MS
     }
 
     /// Combines canonical block totals with metrics scraped while that block was produced.
@@ -624,7 +633,10 @@ mod tests {
     use base_load_tests::{MetricsSummary, TestConfig, ThroughputMetrics};
     use clap::Parser;
 
-    use super::{BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkResult, SnapshotBlockMetrics};
+    use super::{
+        BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs, SnapshotBenchmarkResult,
+        SnapshotBlockMetrics,
+    };
 
     #[test]
     fn parses_snapshot_benchmark_defaults() {
@@ -762,7 +774,7 @@ transactions:
             &std::fs::read(output.path().join("metrics-sequencer.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(metrics[0]["BlockNumber"], 1);
+        assert_eq!(metrics[0]["BlockNumber"], 0.1);
         assert_eq!(metrics[0]["Timestamp"], 1_000);
         assert_eq!(metrics[0]["ExecutionMetrics"]["gas/per_block"], 400_000_000.0);
         assert_eq!(metrics[0]["ExecutionMetrics"]["gas/per_second"], 2_000_000_000.0);
@@ -788,5 +800,14 @@ transactions:
         );
         assert!(output.path().join("metrics-validator.json").is_file());
         assert!(output.path().join("load-test-result.json").is_file());
+    }
+
+    #[test]
+    fn normalizes_block_numbers_to_two_second_equivalents() {
+        assert_eq!(SnapshotBenchmarkArgs::normalized_block_number(0, 2_000), 1.0);
+        assert_eq!(SnapshotBenchmarkArgs::normalized_block_number(1, 2_000), 2.0);
+        assert_eq!(SnapshotBenchmarkArgs::normalized_block_number(0, 200), 0.1);
+        assert_eq!(SnapshotBenchmarkArgs::normalized_block_number(9, 200), 1.0);
+        assert_eq!(SnapshotBenchmarkArgs::normalized_block_number(5_999, 200), 600.0);
     }
 }

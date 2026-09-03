@@ -170,8 +170,10 @@ written before the command returns the error.
 `load-test-result.json`. Set `BASE_BENCH_CLIENT_VERSION` to a stable
 build label when the report should compare commits or releases. The role metrics contain
 `gas/per_block`, `gas/per_second`, `transactions/per_block`, `transactions/per_second`, and selected
-Reth Prometheus diagnostics. `BlockNumber` is relative to the measurement (`1..N`); canonical block
-numbers remain in `load-test-result.json`. `benchmark/prometheus_blocks_per_scrape = 1` identifies
+Reth Prometheus diagnostics. `BlockNumber` uses two-second-equivalent measurement units: each 2s
+block advances by `1.0`, while each 200ms block advances by `0.1`. This aligns equal-duration
+cadence runs on report x-axes; canonical block numbers remain in `load-test-result.json`.
+`benchmark/prometheus_blocks_per_scrape = 1` identifies
 an exact per-block scrape. Values above one mean a fast sequencer advanced multiple blocks during a
 scrape: counter deltas are evenly attributed across those blocks, gauges are repeated, and
 histogram averages describe the whole scrape interval. Collection is intentionally limited to one

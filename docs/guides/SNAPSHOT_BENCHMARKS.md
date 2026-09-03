@@ -152,6 +152,9 @@ Open `http://127.0.0.1:3000/#/run-comparison/snapshot-throughput`. Filter
 `Transaction Payload=blake2f`, choose the desired `Scenario` values and node role,
 then set **Show Line Per** to **Block Time Milliseconds**. This renders the 2-second
 and 200-millisecond series together while preserving their individual scenarios.
+The generated metric files record `BlockNumber` in two-second-equivalent units, so block 1 at
+200 milliseconds is `0.1`, block 10 is `1.0`, and a 6,000-block run ends at `600.0`, matching a
+600-block two-second run directly on the x-axis.
 
 The report server can synthesize additional comparison rows from the source runs.
 Use the original run IDs for raw artifacts; synthetic entries are comparison views,
