@@ -378,7 +378,10 @@ impl SnapshotBenchmarkArgs {
         let builder_rpc = stack.builder_rpc_url()?;
         test_config.transaction_submission_rpcs = vec![builder_rpc.clone()];
         test_config.query_rpc = Some(builder_rpc.clone());
-        test_config.txpool_nodes.clear();
+        // The in-process builder exposes the admin RPC. Clear only the deterministic
+        // load-test sender accounts after it starts and before funding/submission so
+        // a prior interrupted attempt cannot leave nonce-gapped queued work behind.
+        test_config.txpool_nodes = vec![builder_rpc.clone()];
         test_config.flashblocks_ws = (block_interval == DevnetBlockInterval::TwoSeconds)
             .then(|| stack.builder_flashblocks_url())
             .transpose()?;
