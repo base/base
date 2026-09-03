@@ -221,7 +221,6 @@ impl L2Stack {
             enable_experimental_validity_transactions: config
                 .enable_experimental_validity_transactions,
             payload_builder_cutover: config.payload_builder_cutover,
-            basic_payload_builder_only: false,
             extra_extensions: config.extra_builder_extensions,
             block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,

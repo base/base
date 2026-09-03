@@ -60,8 +60,6 @@ pub struct InProcessBuilderConfig {
     pub enable_experimental_validity_transactions: bool,
     /// Whether to run both payload builders and cut over to basic at Denim.
     pub payload_builder_cutover: bool,
-    /// Whether to run only the standard payload builder.
-    pub basic_payload_builder_only: bool,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -200,8 +198,7 @@ impl InProcessBuilder {
                     .with_components(
                         base_node.components().pool(pool_component(&rollup_args)).payload(
                             MultiplexingServiceBuilder::new(builder_config)
-                                .with_cutover_enabled(config.payload_builder_cutover)
-                                .with_basic_only(config.basic_payload_builder_only),
+                                .with_cutover_enabled(config.payload_builder_cutover),
                         ),
                     )
                     .with_add_ons(addons)
