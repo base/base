@@ -172,7 +172,13 @@ fn resolve_slot(slot: &SlotTemplate, nonce: u64, from: Address, to: Option<Addre
         SlotTemplate::Mapping { mapping_slot, key } => {
             mapping_slot_for(resolve_address(key, from, to), *mapping_slot)
         }
-        SlotTemplate::SenderNonce { salt } => sender_nonce_slot(from, nonce, *salt),
+        SlotTemplate::SenderNonce { salt } => {
+            let mut preimage = [0u8; 96];
+            preimage[12..32].copy_from_slice(from.as_slice());
+            preimage[56..64].copy_from_slice(&nonce.to_be_bytes());
+            preimage[64..96].copy_from_slice(&salt.to_be_bytes::<32>());
+            U256::from_be_bytes::<32>(keccak256(preimage).0)
+        }
     }
 }
 
@@ -182,15 +188,6 @@ fn mapping_slot_for(key: Address, mapping_slot: U256) -> U256 {
     let mut preimage = [0u8; 64];
     preimage[12..32].copy_from_slice(key.as_slice());
     preimage[32..64].copy_from_slice(&mapping_slot.to_be_bytes::<32>());
-    U256::from_be_bytes::<32>(keccak256(preimage).0)
-}
-
-/// Computes `keccak256(pad32(sender) ++ pad32(nonce) ++ pad32(salt))`.
-fn sender_nonce_slot(sender: Address, nonce: u64, salt: U256) -> U256 {
-    let mut preimage = [0u8; 96];
-    preimage[12..32].copy_from_slice(sender.as_slice());
-    preimage[56..64].copy_from_slice(&nonce.to_be_bytes());
-    preimage[64..96].copy_from_slice(&salt.to_be_bytes::<32>());
     U256::from_be_bytes::<32>(keccak256(preimage).0)
 }
 
