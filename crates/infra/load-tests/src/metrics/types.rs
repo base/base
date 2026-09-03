@@ -394,6 +394,15 @@ pub struct ConfigSummary {
     /// Number of predicate templates attached to validity transactions.
     #[serde(default)]
     pub validity_predicate_count: usize,
+    /// Fraction of validity senders in the priority-lead cohort.
+    #[serde(default)]
+    pub validity_priority_lead_ratio: f64,
+    /// Priority-tip multiplier for the validity priority-lead cohort.
+    #[serde(default = "ConfigSummary::default_priority_multiplier")]
+    pub validity_priority_lead_multiplier: u128,
+    /// Priority-tip divisor for validity-cohort measured transactions.
+    #[serde(default = "ConfigSummary::default_priority_fee_divisor")]
+    pub validity_priority_fee_divisor: u128,
     /// Address of the precompile looper contract.
     pub looper_contract: Option<String>,
     /// Amount of each swap token per sender (in wei, as string).
@@ -404,4 +413,16 @@ pub struct ConfigSummary {
     /// Real-token setup configuration, when enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub real_token_setup: Option<serde_json::Value>,
+}
+
+impl ConfigSummary {
+    /// Returns the backward-compatible default validity priority multiplier.
+    pub const fn default_priority_multiplier() -> u128 {
+        1
+    }
+
+    /// Returns the backward-compatible default validity priority-fee divisor.
+    pub const fn default_priority_fee_divisor() -> u128 {
+        1
+    }
 }

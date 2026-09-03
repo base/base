@@ -69,6 +69,8 @@ pub enum SubmitCohort {
     Plain,
     /// Validity submission carrying resolved predicates.
     ValidityPass,
+    /// Validity submission priced ahead of the plain cohort.
+    ValidityPassPriorityLead,
 }
 
 impl SubmitCohort {
@@ -82,6 +84,7 @@ impl SubmitCohort {
         match self {
             Self::Plain => "plain",
             Self::ValidityPass => "validity_pass",
+            Self::ValidityPassPriorityLead => "validity_pass_priority_lead",
         }
     }
 
@@ -89,7 +92,9 @@ impl SubmitCohort {
     pub const fn to_metric_label(self) -> crate::metrics::SubmitCohortLabel {
         match self {
             Self::Plain => crate::metrics::SubmitCohortLabel::Plain,
-            Self::ValidityPass => crate::metrics::SubmitCohortLabel::ValidityPass,
+            Self::ValidityPass | Self::ValidityPassPriorityLead => {
+                crate::metrics::SubmitCohortLabel::ValidityPass
+            }
         }
     }
 }
@@ -133,8 +138,26 @@ impl GasPricer {
 
     /// Fees for a measured-load submission at the given base fee.
     pub fn fees_for(&self, base_fee: u128) -> Fees {
+        self.fees_for_cohort(base_fee, SubmitCohort::Plain, 1, 1)
+    }
+
+    /// Fees for measured load, pricing the bulk and priority-lead validity cohorts separately.
+    pub fn fees_for_cohort(
+        &self,
+        base_fee: u128,
+        cohort: SubmitCohort,
+        validity_priority_fee_divisor: u128,
+        validity_priority_lead_multiplier: u128,
+    ) -> Fees {
         let priority_fee =
             (base_fee / 10).max(MIN_PRIORITY_FEE).min(self.max_gas_price.saturating_sub(base_fee));
+        let priority_fee = match cohort {
+            SubmitCohort::Plain => priority_fee,
+            SubmitCohort::ValidityPass => priority_fee / validity_priority_fee_divisor,
+            SubmitCohort::ValidityPassPriorityLead => priority_fee
+                .saturating_mul(validity_priority_lead_multiplier)
+                .min(self.max_gas_price.saturating_sub(base_fee)),
+        };
         let max_fee =
             SubmissionPipeline::submission_max_fee(base_fee, priority_fee, self.max_gas_price);
         Fees { max_fee, priority_fee }
@@ -366,6 +389,10 @@ pub struct SignerContext {
     pub chain_id: u64,
     /// Maximum allowed gas price.
     pub max_gas_price: u128,
+    /// Priority-tip multiplier for the validity priority-lead cohort.
+    pub validity_priority_lead_multiplier: u128,
+    /// Priority-tip divisor for validity-cohort measured transactions.
+    pub validity_priority_fee_divisor: u128,
     /// Sender for signed batches.
     pub signed_batch_tx: mpsc::Sender<SignedBatch>,
     /// Signed queue accounting.
@@ -379,6 +406,8 @@ impl fmt::Debug for SignerContext {
             .field("nonce_managers", &self.nonce_managers.len())
             .field("chain_id", &self.chain_id)
             .field("max_gas_price", &self.max_gas_price)
+            .field("validity_priority_lead_multiplier", &self.validity_priority_lead_multiplier)
+            .field("validity_priority_fee_divisor", &self.validity_priority_fee_divisor)
             .finish_non_exhaustive()
     }
 }
@@ -432,6 +461,10 @@ pub struct PipelineStartConfig {
     pub chain_id: u64,
     /// Maximum allowed gas price.
     pub max_gas_price: u128,
+    /// Priority-tip multiplier for the validity priority-lead cohort.
+    pub validity_priority_lead_multiplier: u128,
+    /// Priority-tip divisor for validity-cohort measured transactions.
+    pub validity_priority_fee_divisor: u128,
     /// Optional cap on concurrent outbound submission RPC requests across all
     /// sender workers and per-batch RPC chunks. `None` leaves those requests
     /// unconstrained by a shared semaphore.
@@ -485,6 +518,8 @@ impl SubmissionPipeline {
                 submit_event_tx: submit_event_tx.clone(),
                 chain_id: config.chain_id,
                 max_gas_price: config.max_gas_price,
+                validity_priority_lead_multiplier: config.validity_priority_lead_multiplier,
+                validity_priority_fee_divisor: config.validity_priority_fee_divisor,
                 signed_batch_tx: signed_batch_tx.clone(),
                 signed_queue: Arc::clone(&signed_queue),
             };
@@ -869,6 +904,22 @@ impl SubmissionPipeline {
         let measured = batch.measured;
         let mut submitted = 0u64;
 
+        // Register deterministic signed hashes before awaiting the RPC response so a very fast
+        // local chain cannot mine a transaction before the block watcher knows about it.
+        ctx.results_tracker.sent_transactions(
+            batch
+                .txs
+                .iter()
+                .map(|signed| SentTransaction {
+                    tx_hash: signed.tx_hash,
+                    from: signed.from,
+                    estimated_gas: signed.estimated_gas,
+                    measured,
+                    cohort: signed.cohort,
+                })
+                .collect(),
+        );
+
         loop {
             if batch.txs.is_empty() {
                 return submitted;
@@ -983,6 +1034,7 @@ impl SubmissionPipeline {
                             if terminal_rejection_error.is_none() {
                                 terminal_rejection_error = Some(message.clone());
                             }
+                            ctx.results_tracker.discard_transaction(signed.tx_hash);
                             Self::return_signed_nonce(&ctx, &signed).await;
                             Self::release_signed(&ctx.submit_event_tx, &signed, false).await;
                             let _ = ctx.submit_event_tx.send(SubmitEvent::Failed(message)).await;
@@ -1086,17 +1138,18 @@ impl SubmissionPipeline {
                 server = %tx_hash,
                 "tx hash mismatch, using server hash"
             );
+            ctx.results_tracker.discard_transaction(signed.tx_hash);
+            ctx.results_tracker.sent_transactions(vec![SentTransaction {
+                tx_hash,
+                from: signed.from,
+                estimated_gas: signed.estimated_gas,
+                measured,
+                cohort: signed.cohort,
+            }]);
             tx_hash
         } else {
             signed.tx_hash
         };
-        ctx.results_tracker.sent_transactions(vec![SentTransaction {
-            tx_hash: tracked_hash,
-            from: signed.from,
-            estimated_gas: signed.estimated_gas,
-            measured,
-            cohort: signed.cohort,
-        }]);
         Self::release_signed(&ctx.submit_event_tx, &signed, true).await;
         let _ = ctx.submit_event_tx.send(SubmitEvent::Submitted(tracked_hash)).await;
         1
@@ -1120,6 +1173,7 @@ impl SubmissionPipeline {
         reason: &'static str,
     ) {
         for signed in signed_txs {
+            ctx.results_tracker.discard_transaction(signed.tx_hash);
             Self::return_signed_nonce(ctx, &signed).await;
             Self::release_signed(submit_event_tx, &signed, false).await;
             let _ = submit_event_tx.send(SubmitEvent::Failed(reason.into())).await;
@@ -1170,7 +1224,12 @@ impl SubmissionPipeline {
         prepared: &PreparedTransaction,
         base_fee: u128,
     ) -> Option<SignedTransaction> {
-        let fees = GasPricer::new(ctx.max_gas_price).fees_for(base_fee);
+        let fees = GasPricer::new(ctx.max_gas_price).fees_for_cohort(
+            base_fee,
+            prepared.cohort,
+            ctx.validity_priority_fee_divisor,
+            ctx.validity_priority_lead_multiplier,
+        );
 
         let Some(signer) = ctx.signers.get(&prepared.from) else {
             warn!(from = %prepared.from, "no signer for sender");
@@ -1376,6 +1435,26 @@ mod tests {
         let fees = capped_pricer.fees_for(1_000_000);
         assert_eq!(fees.max_fee, 500);
         assert_eq!(fees.priority_fee, 0);
+    }
+
+    #[test]
+    fn gas_pricer_divides_only_validity_tip_and_covers_it() {
+        let pricer = GasPricer::new(10_000);
+        let plain = pricer.fees_for_cohort(100, SubmitCohort::Plain, 5, 3);
+        let validity = pricer.fees_for_cohort(100, SubmitCohort::ValidityPass, 5, 3);
+        let priority_lead =
+            pricer.fees_for_cohort(100, SubmitCohort::ValidityPassPriorityLead, 5, 3);
+
+        assert_eq!(plain.priority_fee, 10);
+        assert_eq!(validity.priority_fee, 2);
+        assert_eq!(priority_lead.priority_fee, 30);
+        assert!(validity.max_fee >= 102);
+
+        let capped = GasPricer::new(130).fees_for_cohort(100, SubmitCohort::ValidityPass, 5, 3);
+        assert_eq!(capped, Fees { max_fee: 130, priority_fee: 2 });
+        let capped_lead =
+            GasPricer::new(120).fees_for_cohort(100, SubmitCohort::ValidityPassPriorityLead, 5, 3);
+        assert_eq!(capped_lead, Fees { max_fee: 120, priority_fee: 20 });
     }
 
     #[test]

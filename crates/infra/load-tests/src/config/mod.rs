@@ -16,5 +16,6 @@ pub use test_config::{OsakaTarget, TestConfig, TxTypeConfig, WeightedTxType};
 
 mod validity;
 pub use validity::{
-    PredicateAddressConfig, PredicateSlotConfig, ValidityConfig, ValidityPredicateConfig,
+    PredicateAddressConfig, PredicateSlotConfig, PredicateValueConfig, ValidityConfig,
+    ValidityPredicateConfig,
 };

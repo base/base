@@ -36,6 +36,29 @@ pub enum SlotTemplate {
     },
 }
 
+/// Source for a storage predicate's comparison value, resolved per transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredicateValue {
+    /// A fixed comparison value used by every transaction.
+    Fixed(U256),
+    /// The low bit of the transaction sender's address.
+    ///
+    /// This deterministically splits senders between values zero and one, which
+    /// lets stress profiles keep both matching and parked transactions in the
+    /// pool while a shared one-bit storage value changes.
+    SenderParity,
+}
+
+impl PredicateValue {
+    /// Resolves the comparison value for `sender`.
+    pub fn resolve(self, sender: Address) -> U256 {
+        match self {
+            Self::Fixed(value) => value,
+            Self::SenderParity => U256::from(sender.as_slice()[19] & 1),
+        }
+    }
+}
+
 /// Bound for a `block_number` validity predicate.
 ///
 /// A block-number predicate may target a fixed absolute block height, or an
@@ -78,8 +101,8 @@ pub enum ValidityPredicateTemplate {
         mask: Option<U256>,
         /// Comparison operator.
         op: ValidityOperator,
-        /// Right-hand comparison value.
-        value: U256,
+        /// Comparison value source.
+        value: PredicateValue,
     },
     /// Block-number comparison template.
     ///
@@ -140,6 +163,11 @@ pub enum TxType {
         contract: Address,
         /// Number of storage slots to write per transaction.
         slots_per_tx: u32,
+    },
+    /// Deterministic `DoubleCounter` `increment()` call.
+    DoubleCounter {
+        /// `DoubleCounter` contract address.
+        contract: Address,
     },
     /// Precompile call.
     Precompile {
@@ -271,6 +299,12 @@ pub struct LoadConfig {
     pub validity_ratio: f64,
     /// Predicate templates attached to each validity-bearing transaction.
     pub validity_predicates: Vec<ValidityPredicateTemplate>,
+    /// Fraction of validity senders in the priority-lead cohort.
+    pub validity_priority_lead_ratio: f64,
+    /// Priority-tip multiplier for the validity priority-lead cohort.
+    pub validity_priority_lead_multiplier: u128,
+    /// Priority-tip divisor for validity-cohort measured transactions.
+    pub validity_priority_fee_divisor: u128,
 }
 
 impl LoadConfig {
@@ -303,6 +337,9 @@ impl LoadConfig {
             fresh_recipient_ratio: 0.0,
             validity_ratio: 0.0,
             validity_predicates: Vec::new(),
+            validity_priority_lead_ratio: 0.0,
+            validity_priority_lead_multiplier: 1,
+            validity_priority_fee_divisor: 1,
         }
     }
 
@@ -356,6 +393,19 @@ impl LoadConfig {
         }
         if !(0.0..=1.0).contains(&self.validity_ratio) {
             return Err(BaselineError::Config("validity_ratio must be between 0.0 and 1.0".into()));
+        }
+        if !(0.0..=1.0).contains(&self.validity_priority_lead_ratio) {
+            return Err(BaselineError::Config(
+                "validity_priority_lead_ratio must be between 0.0 and 1.0".into(),
+            ));
+        }
+        if self.validity_priority_lead_multiplier < 1 {
+            return Err(BaselineError::Config(
+                "validity_priority_lead_multiplier must be >= 1".into(),
+            ));
+        }
+        if self.validity_priority_fee_divisor < 1 {
+            return Err(BaselineError::Config("validity_priority_fee_divisor must be >= 1".into()));
         }
         if self.validity_predicates.len() > base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES {
             return Err(BaselineError::Config(format!(

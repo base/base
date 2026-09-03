@@ -1,0 +1,35 @@
+# Local devnet validity-predicate stress profile.
+# Rendered by `just load-test validity-stress`; do not run this template directly.
+
+transaction_submission_rpcs:
+  - "http://localhost:7545"
+query_rpc: "http://localhost:7545"
+txpool_nodes:
+  - "http://localhost:7545"
+  - "http://localhost:8545"
+  - "http://localhost:8645"
+flashblocks_ws: "ws://localhost:7111"
+
+sender_count: 800
+target_gps: 600000000
+block_time: "200ms"
+in_flight_per_sender: 12
+max_total_in_flight: 9600
+max_concurrent_submit_requests: 64
+batch_size: 1
+duration: "90s"
+seed: 8675309
+funding_amount: "1000000000000000000"
+
+transactions:
+  - weight: 100
+    type: double_counter
+    contract: "__DOUBLE_COUNTER__"
+
+validity:
+  ratio: 1.0
+  priority_lead_ratio: 0.10
+  priority_lead_multiplier: 2
+  priority_fee_divisor: 2
+  predicates:
+__VALIDITY_PREDICATES__

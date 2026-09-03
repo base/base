@@ -212,7 +212,7 @@ impl ResultsTracker {
         }
     }
 
-    /// Records transactions accepted by the submission RPC.
+    /// Records signed transactions entering submission.
     pub fn sent_transactions(&self, transactions: Vec<SentTransaction>) {
         let submit_time = Instant::now();
         let mut inner = self.inner.write();
@@ -262,6 +262,19 @@ impl ResultsTracker {
         {
             let _ = pulse_tx.try_send(InclusionPulse::flashblock(Instant::now(), reconciled_gas));
         }
+    }
+
+    /// Removes a transaction that the submission RPC explicitly rejected.
+    pub fn discard_transaction(&self, tx_hash: TxHash) -> bool {
+        let mut inner = self.inner.write();
+        let Some(pending) = inner.pending.remove(&tx_hash) else {
+            return false;
+        };
+        inner.flashblocks.remove(&tx_hash);
+        if !pending.in_flight_released {
+            inner.decrement_in_flight(&pending.from, pending.estimated_gas);
+        }
+        true
     }
 
     /// Records transaction inclusions observed from the flashblock stream.
@@ -661,6 +674,43 @@ mod tests {
             measured,
             cohort: SubmitCohort::Plain,
         }
+    }
+
+    #[test]
+    fn discard_pending_transaction_releases_in_flight_once() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(0xd0);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
+        assert_eq!(tracker.pending_count(), 1);
+        assert_eq!(tracker.total_in_flight(), 1);
+        assert_eq!(tracker.unconfirmed_gas(), 21_000);
+
+        assert!(tracker.discard_transaction(tx_hash));
+        assert_eq!(tracker.pending_count(), 0);
+        assert_eq!(tracker.total_in_flight(), 0);
+        assert_eq!(tracker.unconfirmed_gas(), 0);
+
+        assert!(!tracker.discard_transaction(tx_hash), "second discard must be idempotent");
+        assert_eq!(tracker.total_in_flight(), 0);
+    }
+
+    #[test]
+    fn discard_flashblock_released_transaction_does_not_double_decrement() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(0xd1);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![sent(tx_hash, from, true)]);
+        tracker
+            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
+        assert_eq!(tracker.pending_count(), 1);
+        assert_eq!(tracker.total_in_flight(), 0);
+
+        assert!(tracker.discard_transaction(tx_hash));
+        assert_eq!(tracker.pending_count(), 0);
+        assert_eq!(tracker.total_in_flight(), 0);
     }
 
     #[test]

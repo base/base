@@ -90,6 +90,9 @@ impl BlockClock {
     ) -> Self {
         let block_timestamp = Duration::from_secs(block_timestamp);
         let system_elapsed = system_now.duration_since(UNIX_EPOCH).unwrap_or_default();
+        if block_timestamp > system_elapsed.saturating_add(block_time) {
+            return Self::from_now(block_time, instant_now);
+        }
         let mut next_elapsed = block_timestamp.saturating_add(block_time);
         while next_elapsed.saturating_add(block_time) <= system_elapsed {
             next_elapsed = next_elapsed.saturating_add(block_time);
@@ -810,6 +813,17 @@ mod tests {
             instant_now.saturating_duration_since(clock.expected_boundary()),
             Duration::from_millis(100)
         );
+    }
+
+    #[test]
+    fn clock_uses_monotonic_interval_when_chain_timestamp_is_far_ahead() {
+        let instant_now = Instant::now();
+        let block_time = Duration::from_millis(200);
+        let system_now = UNIX_EPOCH + Duration::from_millis(100_100);
+
+        let clock = BlockClock::from_block_timestamp(block_time, 105, system_now, instant_now);
+
+        assert_eq!(clock.expected_boundary().duration_since(instant_now), block_time);
     }
 
     #[test]

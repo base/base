@@ -21,6 +21,9 @@ pub use erc20::Erc20Payload;
 mod storage;
 pub use storage::StoragePayload;
 
+mod double_counter;
+pub use double_counter::{DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload};
+
 mod precompile;
 pub use precompile::{PrecompilePayload, parse_precompile_id};
 

@@ -7,9 +7,9 @@ use alloy_rpc_types::TransactionRequest;
 use tracing::instrument;
 
 use super::{
-    AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload, OsakaPayload, Payload,
-    PrecompilePayload, SeededRng, StoragePayload, TransferPayload, UniswapV3Payload,
-    chain_prep::ChainPrepContext,
+    AerodromeClPayload, B20TransferPayload, CalldataPayload, DoubleCounterPayload, Erc20Payload,
+    OsakaPayload, Payload, PrecompilePayload, SeededRng, StoragePayload, TransferPayload,
+    UniswapV3Payload, chain_prep::ChainPrepContext,
 };
 use crate::{
     BaselineError,
@@ -82,6 +82,10 @@ impl WorkloadGenerator {
                 TxType::Storage { contract, slots_per_tx } => {
                     generator = generator
                         .with_payload(StoragePayload::new(*contract, *slots_per_tx), weight_pct);
+                }
+                TxType::DoubleCounter { contract } => {
+                    generator =
+                        generator.with_payload(DoubleCounterPayload::new(*contract), weight_pct);
                 }
                 TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
                     let payload = PrecompilePayload::with_options(
