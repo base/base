@@ -18,15 +18,6 @@ impl ShadowHash {
     pub fn encode(bytes: &[u8]) -> String {
         hex::encode_prefixed(bytes)
     }
-
-    /// Formats an absent-or-present hash, preserving absence.
-    ///
-    /// `canonical_hash` is NULL until the chain names a replacement, and the hex mirror has to
-    /// stay NULL with it: an empty string would read as a resolved row that points nowhere.
-    #[must_use]
-    pub fn encode_optional(bytes: Option<&Vec<u8>>) -> Option<String> {
-        bytes.map(|bytes| Self::encode(bytes))
-    }
 }
 
 #[cfg(test)]
@@ -43,11 +34,5 @@ mod tests {
         let encoded = ShadowHash::encode(&[0x0f; 32]);
         assert_eq!(encoded.len(), 66, "0x plus 64 hex digits");
         assert!(encoded.starts_with("0x0f0f"));
-    }
-
-    #[test]
-    fn absent_hashes_stay_absent() {
-        assert_eq!(ShadowHash::encode_optional(None), None);
-        assert_eq!(ShadowHash::encode_optional(Some(&vec![0x01])), Some("0x01".to_string()));
     }
 }

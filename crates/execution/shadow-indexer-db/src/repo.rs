@@ -115,6 +115,7 @@ impl ShadowBlockRepo {
         tx: &mut sqlx::Transaction<'_, Postgres>,
         rows: &[&ShadowBlockRow],
     ) -> Result<usize> {
+        // Seven binds per row; 4,000 stays below Postgres's 65,535-parameter limit.
         const CHUNK_SIZE: usize = 4_000;
 
         let deduped = Self::dedupe_last_write_wins(rows);
@@ -135,7 +136,7 @@ impl ShadowBlockRepo {
                     .push_bind(entry.created_at)
                     .push_bind(Json(&entry.payload))
                     .push_bind(ShadowHash::encode(&entry.hash))
-                    .push_bind(ShadowHash::encode_optional(entry.canonical_hash.as_ref()));
+                    .push_bind(entry.canonical_hash.as_deref().map(ShadowHash::encode));
             });
 
             // A new candidate hash lands wholesale. A same-hash conflict only reaches DO UPDATE to
