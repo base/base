@@ -24,10 +24,10 @@ blocks. Transactions submitted to the builder use its real transaction pool and 
 Interactive `base-devnet` runs the sequencer and validator concurrently.
 
 This is an unsafe-chain development network, not a valid restartable continuation of Base mainnet.
-It has no L1, derivation, batching, or safe/finalized-head advancement. At 200ms it produces full
-canonical blocks with Base/Reth's standard payload service. The 2s case uses the Flashblocks payload
-service, but the 200ms case neither starts nor subscribes to Flashblocks. Treat 200ms results as
-full-block results and do not compare Flashblock latency against the 2s case.
+It has no L1, derivation, batching, or safe/finalized-head advancement. Snapshot continuations activate
+Denim at their first local descendant and use Base/Reth's standard payload service at both 2s and
+200ms. They do not publish or subscribe to Flashblocks; compare canonical blocks, confirmations, gas,
+and throughput instead of Flashblock latency.
 
 ## Prerequisites
 
