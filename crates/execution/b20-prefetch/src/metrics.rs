@@ -3,7 +3,7 @@
 base_metrics::define_metrics! {
     b20.prefetch,
     struct = PrefetchMetrics,
-    #[describe("Wall time in seconds of one prefetch storage read, including state-provider setup")]
+    #[describe("Wall time in seconds of one prefetch storage read")]
     read_seconds: histogram,
     #[describe("Prefetch hint batches received from precompile dispatch")]
     hints_total: counter,

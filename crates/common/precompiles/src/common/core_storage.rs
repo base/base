@@ -99,8 +99,9 @@ pub struct B20CoreStorage {
 
 impl B20CoreStorage {
     /// Storage slots a `transfer` (`spender == None`) or `transferFrom` reads, derivable from
-    /// calldata alone: the paused bitmask, the packed transfer-policy-id word, both balances, and
-    /// the `allowances[from][spender]` entry for the `transferFrom` path.
+    /// calldata alone: the paused bitmask, the packed transfer-policy-id word, both balances
+    /// (deduplicated for self-transfers), and the `allowances[from][spender]` entry for the
+    /// `transferFrom` path.
     ///
     /// Used to issue a [`base_precompile_storage::PrefetchHint`] before dispatching the
     /// operation, so the slots can be paged in concurrently instead of faulting one at a time
@@ -113,8 +114,10 @@ impl B20CoreStorage {
             root.saturating_add(__packing_b20_core_storage::PAUSED),
             root.saturating_add(__packing_b20_core_storage::TRANSFER_SENDER_POLICY_ID),
             from.mapping_slot(balances),
-            to.mapping_slot(balances),
         ];
+        if to != from {
+            slots.push(to.mapping_slot(balances));
+        }
         if let Some(spender) = spender {
             let allowances = root.saturating_add(__packing_b20_core_storage::ALLOWANCES);
             slots.push(spender.mapping_slot(from.mapping_slot(allowances)));
@@ -155,7 +158,7 @@ impl B20CoreStorageHandler<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{U256, uint};
+    use alloy_primitives::{Address, U256, uint};
     use base_precompile_storage::StorableType;
 
     use super::__packing_b20_core_storage;
@@ -163,6 +166,16 @@ mod tests {
 
     const B20_ROOT: U256 =
         uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434000_U256);
+
+    #[test]
+    fn transfer_hint_slots_dedupe_self_transfer_balance() {
+        let account = Address::repeat_byte(0xaa);
+        let spender = Address::repeat_byte(0xbb);
+        // Self-transfer: paused + policy word + one balance slot.
+        assert_eq!(B20CoreStorage::transfer_hint_slots(account, account, None).len(), 3);
+        // Self-transferFrom additionally hints the allowance slot.
+        assert_eq!(B20CoreStorage::transfer_hint_slots(account, account, Some(spender)).len(), 4);
+    }
 
     #[test]
     fn b20_namespaces_match_base_std_roots() {

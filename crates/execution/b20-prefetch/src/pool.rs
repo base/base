@@ -11,7 +11,7 @@ use std::{
 
 use alloy_primitives::{Address, B256, U256};
 use base_precompile_storage::StoragePrefetcher;
-use reth_provider::StateProviderFactory;
+use reth_provider::{StateProvider, StateProviderFactory};
 use tracing::trace;
 
 use crate::PrefetchMetrics;
@@ -20,6 +20,11 @@ use crate::PrefetchMetrics;
 /// execution path that produced them; overflow drops the hint (the journaled read still happens,
 /// it just pays the fault itself).
 const WORKER_QUEUE_CAPACITY: usize = 1024;
+
+/// Maximum reads served by one state-provider handle before a worker refreshes it, bounding
+/// read-transaction lifetime and snapshot staleness while amortizing provider setup across a
+/// drained batch.
+const MAX_READS_PER_PROVIDER: usize = 128;
 
 /// Pool of OS threads that read hinted storage slots through independent state-provider handles.
 ///
@@ -69,18 +74,41 @@ impl B20PrefetchPool {
     }
 
     /// Reads hinted slots until every sender is dropped.
+    ///
+    /// One state-provider handle is amortized across each drained batch instead of created
+    /// per slot, capped at [`MAX_READS_PER_PROVIDER`] so a busy queue can neither pin a
+    /// long-lived read transaction nor serve arbitrarily stale snapshots.
     fn worker_loop<P: StateProviderFactory>(
         provider: P,
         receiver: mpsc::Receiver<(Address, U256)>,
     ) {
-        while let Ok((address, slot)) = receiver.recv() {
-            let started = Instant::now();
-            match provider.latest().and_then(|state| state.storage(address, B256::from(slot))) {
-                Ok(_) => PrefetchMetrics::read_seconds().record(started.elapsed()),
+        while let Ok(request) = receiver.recv() {
+            let state = match provider.latest() {
+                Ok(state) => state,
                 Err(error) => {
                     PrefetchMetrics::read_errors_total().increment(1);
-                    trace!(error = %error, address = %address, "b20 prefetch read failed");
+                    trace!(error = %error, "b20 prefetch state provider unavailable");
+                    continue;
                 }
+            };
+            Self::read_slot(&*state, request);
+            for _ in 1..MAX_READS_PER_PROVIDER {
+                match receiver.try_recv() {
+                    Ok(request) => Self::read_slot(&*state, request),
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+
+    /// Reads one hinted slot and discards the value.
+    fn read_slot<S: StateProvider + ?Sized>(state: &S, (address, slot): (Address, U256)) {
+        let started = Instant::now();
+        match state.storage(address, B256::from(slot)) {
+            Ok(_) => PrefetchMetrics::read_seconds().record(started.elapsed()),
+            Err(error) => {
+                PrefetchMetrics::read_errors_total().increment(1);
+                trace!(error = %error, address = %address, "b20 prefetch read failed");
             }
         }
     }
