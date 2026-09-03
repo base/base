@@ -161,19 +161,19 @@ pub enum TxnExecutionError {
 
 impl TxnExecutionError {
     /// Returns `true` if this rejection is permanent — the transaction will never be includable
-    /// regardless of block/flashblock cumulative state. Permanent rejections are intrinsic to
-    /// the transaction itself (e.g. its size or predicted execution time exceeds the per-tx limit).
+    /// regardless of block/flashblock cumulative state or operator DA throttle changes.
+    /// Permanent rejections are intrinsic to the transaction itself (e.g. predicted execution
+    /// time exceeds the per-tx limit, or gas usage exceeds the configured maximum).
     ///
-    /// Transient rejections depend on cumulative block state (gas used, DA used, etc.) and may
-    /// succeed in a future block or flashblock with different cumulative values.
+    /// Transient rejections may succeed in a future block or flashblock. This includes cumulative
+    /// block-state limits (gas used, block DA used, etc.) and the per-tx DA size cap
+    /// (`max_da_tx_size`), which is a mutable operator/batcher throttle.
     pub const fn is_permanent(&self) -> bool {
         matches!(
             self,
-            Self::TransactionDASizeExceeded(_, _)
-                | Self::ExecutionMeteringLimitExceeded(
-                    ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _),
-                )
-                | Self::MaxGasUsageExceeded
+            Self::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _),
+            ) | Self::MaxGasUsageExceeded
         )
     }
 }
@@ -601,5 +601,82 @@ mod tests {
             TxResources { gas_limit: 21_000, uncompressed_size: 1_000_000, ..Default::default() };
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    // ==================== Permanence Classification ====================
+
+    #[test]
+    fn per_tx_da_size_exceeded_is_not_permanent() {
+        let err = TxnExecutionError::TransactionDASizeExceeded(1001, 1000);
+        assert!(
+            !err.is_permanent(),
+            "max_da_tx_size is a mutable operator throttle; per-tx DA rejects must be re-evaluated"
+        );
+    }
+
+    #[test]
+    fn block_da_size_exceeded_is_not_permanent() {
+        let err = TxnExecutionError::BlockDASizeExceeded {
+            total_da_used: 9500,
+            tx_da_size: 600,
+            block_da_limit: 10_000,
+        };
+        assert!(!err.is_permanent());
+    }
+
+    #[test]
+    fn max_gas_usage_and_execution_time_are_permanent() {
+        assert!(TxnExecutionError::MaxGasUsageExceeded.is_permanent());
+        assert!(
+            TxnExecutionError::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::TransactionExecutionTime(1_500_000, 1_000_000),
+            )
+            .is_permanent()
+        );
+    }
+
+    /// A tx that exceeds the current per-tx DA cap is skipped, but after the cap is raised
+    /// the same resource usage is eligible again. This is the `miner_setMaxDASize` retry path.
+    #[test]
+    fn per_tx_da_reject_retries_after_limit_raised() {
+        let info = ExecutionInfo::with_capacity(10);
+        let tx = TxResources { da_size: 1001, gas_limit: 21_000, ..Default::default() };
+
+        let tight = ResourceLimits { tx_data_limit: Some(1000), ..default_limits() };
+        let err = info.is_tx_over_limits(&tx, &tight).expect_err("tx DA should exceed tight cap");
+        assert!(matches!(err, TxnExecutionError::TransactionDASizeExceeded(1001, 1000)));
+        assert!(!err.is_permanent(), "must not enter the cross-block rejection cache");
+
+        let raised = ResourceLimits { tx_data_limit: Some(2000), ..default_limits() };
+        assert!(
+            info.is_tx_over_limits(&tx, &raised).is_ok(),
+            "same tx must pass once max_da_tx_size is raised above its DA size"
+        );
+    }
+
+    /// A tx that does not exceed the per-tx cap but would overflow remaining block DA can
+    /// still be included later when more block DA remains.
+    #[test]
+    fn block_da_reject_retries_with_more_remaining_da() {
+        let tx = TxResources { da_size: 600, gas_limit: 21_000, ..Default::default() };
+        let limits = ResourceLimits {
+            tx_data_limit: Some(10_000),
+            block_data_limit: Some(10_000),
+            ..default_limits()
+        };
+
+        let mut full = ExecutionInfo::with_capacity(10);
+        full.cumulative_da_bytes_used = 9500;
+        let err = full
+            .is_tx_over_limits(&tx, &limits)
+            .expect_err("should overflow remaining block DA without exceeding per-tx cap");
+        assert!(matches!(err, TxnExecutionError::BlockDASizeExceeded { .. }));
+        assert!(!err.is_permanent());
+
+        let empty = ExecutionInfo::with_capacity(10);
+        assert!(
+            empty.is_tx_over_limits(&tx, &limits).is_ok(),
+            "same tx must fit when the block has enough remaining DA"
+        );
     }
 }

@@ -477,6 +477,8 @@ mod tests {
         assert_eq!(seen_hashes.len(), 1, "only non-rejected tx should appear");
     }
 
+    /// A cache hit for a *true* permanent reject (max gas / execution-time metering, not
+    /// the per-tx DA throttle) excludes the sender's later nonces for this iterator.
     #[test]
     fn rejection_cache_hit_excludes_nonce_descendants() {
         let sender = Address::random();
@@ -503,6 +505,53 @@ mod tests {
             std::iter::from_fn(|| iterator.next(())).map(|tx| *tx.hash()).collect();
 
         assert_eq!(yielded_hashes, vec![other_hash]);
+    }
+
+    /// A per-iterator `mark_invalid` (transient skip, e.g. per-tx DA throttle) excludes nonce
+    /// descendants only for the current flashblock. A later iterator with an empty rejection
+    /// cache still yields the head and its descendants, and a different sender still builds.
+    #[test]
+    fn transient_invalidation_does_not_poison_nonce_descendants() {
+        let sender = Address::random();
+        let other_sender = Address::random();
+        let head =
+            MockTransaction::eip1559().with_sender(sender).with_nonce(0).with_priority_fee(3);
+        let descendant =
+            MockTransaction::eip1559().with_sender(sender).with_nonce(1).with_priority_fee(2);
+        let other =
+            MockTransaction::eip1559().with_sender(other_sender).with_nonce(0).with_priority_fee(1);
+        let head_hash = *head.hash();
+        let descendant_hash = *descendant.hash();
+        let other_hash = *other.hash();
+        let mut factory = MockTransactionFactory::default();
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
+        pool.add_transaction(Arc::new(factory.validated(head)), 0);
+        pool.add_transaction(Arc::new(factory.validated(descendant)), 0);
+        pool.add_transaction(Arc::new(factory.validated(other)), 0);
+
+        let mut iter1 =
+            BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), test_rejection_cache());
+        let first = iter1.next(()).unwrap();
+        assert_eq!(*first.hash(), head_hash);
+        iter1.mark_invalid(first.sender(), first.nonce());
+        let yielded_fb1: Vec<_> =
+            std::iter::from_fn(|| iter1.next(())).map(|tx| *tx.hash()).collect();
+        assert_eq!(
+            yielded_fb1,
+            vec![other_hash],
+            "this flashblock skips the sender's later nonce but still includes a different sender"
+        );
+
+        let mut iter2 =
+            BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), test_rejection_cache());
+        let yielded_fb2: Vec<_> =
+            std::iter::from_fn(|| iter2.next(())).map(|tx| *tx.hash()).collect();
+        assert!(yielded_fb2.contains(&head_hash), "head must be re-selected without a cache insert");
+        assert!(
+            yielded_fb2.contains(&descendant_hash),
+            "later nonce must not stay poisoned after a transient skip"
+        );
+        assert!(yielded_fb2.contains(&other_hash));
     }
 
     /// A rejected transaction becomes eligible again after the cache TTL expires.
