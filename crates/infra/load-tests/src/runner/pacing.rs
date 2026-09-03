@@ -1258,8 +1258,19 @@ impl LoadRunner {
         for (sender_index, from) in config.sender_addresses.iter().copied().enumerate() {
             let sender_pool_recipient = config.sender_addresses[(sender_index + 1) % sender_count];
             let cohort = config.validity_router.cohort_for_sender(from);
+            let start_nonce = config.sender_next_nonces[sender_index];
             let mut prepared_txs = Vec::with_capacity(txs_per_sender);
-            for _ in 0..txs_per_sender {
+            for nonce_offset in 0..txs_per_sender {
+                let nonce_offset = u64::try_from(nonce_offset).map_err(|error| {
+                    BaselineError::Transaction(format!(
+                        "failed to convert nonce offset to u64: {error}"
+                    ))
+                })?;
+                let nonce = start_nonce.checked_add(nonce_offset).ok_or_else(|| {
+                    BaselineError::Transaction(format!(
+                        "nonce overflow for sender {from} at offset {nonce_offset}"
+                    ))
+                })?;
                 let payload = generator.select_payload()?;
                 let to = if payload.uses_runner_recipient() {
                     Self::select_recipient(
@@ -1277,8 +1288,13 @@ impl LoadRunner {
                 let value = tx_request.value.unwrap_or(U256::ZERO);
                 let data = tx_request.input.input().cloned().unwrap_or_default();
                 let gas_limit = tx_request.gas.unwrap_or(21_000);
-                let validity =
-                    config.validity_router.predicates_for(cohort, current_block, from, to_addr);
+                let validity = config.validity_router.predicates_for(
+                    cohort,
+                    current_block,
+                    nonce,
+                    from,
+                    to_addr,
+                );
 
                 prepared_txs.push(PreparedTransaction {
                     from,
@@ -1295,7 +1311,7 @@ impl LoadRunner {
             sender_jobs.push(SenderJob {
                 sender_index,
                 from,
-                start_nonce: config.sender_next_nonces[sender_index],
+                start_nonce,
                 generation: config.sender_generations[sender_index],
                 prepared_txs,
             });

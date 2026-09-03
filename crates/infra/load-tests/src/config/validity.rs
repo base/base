@@ -197,6 +197,12 @@ pub enum PredicateSlotConfig {
         #[serde(default)]
         key: PredicateAddressConfig,
     },
+    /// A transaction-specific slot
+    /// `keccak256(pad32(sender) ++ pad32(nonce) ++ pad32(salt))`.
+    SenderNonce {
+        /// Domain separator that gives each predicate a distinct slot.
+        salt: U256,
+    },
 }
 
 impl ValidityConfig {
@@ -303,6 +309,7 @@ impl PredicateSlotConfig {
             Self::Mapping { mapping_slot, key } => {
                 Ok(SlotTemplate::Mapping { mapping_slot: *mapping_slot, key: key.to_template()? })
             }
+            Self::SenderNonce { salt } => Ok(SlotTemplate::SenderNonce { salt: *salt }),
         }
     }
 }
@@ -393,6 +400,23 @@ mod tests {
                 assert!(matches!(key, PredicateAddress::Sender));
             }
             other => panic!("expected mapping template, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn storage_predicate_parses_sender_nonce_slot_from_yaml() {
+        let config: ValidityPredicateConfig = serde_yaml::from_str(
+            "type: storage\naddress: sender\nslot:\n  kind: sender_nonce\n  salt: \"0x2a\"\nop: \"=\"\nvalue: \"0x0\"\n",
+        )
+        .unwrap();
+
+        match config.to_template().unwrap() {
+            ValidityPredicateTemplate::Storage { slot, .. } => {
+                assert!(
+                    matches!(slot, SlotTemplate::SenderNonce { salt } if salt == U256::from(0x2a))
+                );
+            }
+            other => panic!("expected storage template, got {other:?}"),
         }
     }
 
