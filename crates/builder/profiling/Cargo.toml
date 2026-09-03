@@ -36,7 +36,7 @@ axum = { workspace = true, features = ["http1", "tokio", "query"] }
 flate2 = { workspace = true }
 
 # profiling
-pprof = { workspace = true, features = ["flamegraph", "protobuf-codec"] }
+pprof = { workspace = true, features = ["protobuf-codec"] }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

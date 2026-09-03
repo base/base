@@ -102,7 +102,7 @@ impl ProfilingServer {
 #[derive(Debug, Deserialize)]
 struct ProfileQuery {
     seconds: Option<u64>,
-    frequency: Option<i32>,
+    frequency: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -111,18 +111,24 @@ struct ProfileState<P> {
 }
 
 trait ProfileCapture: Clone + Send + Sync + 'static {
+    fn max_capture_seconds(&self) -> u64;
+
     fn capture(
         &self,
         duration: Duration,
-        frequency: Option<i32>,
+        frequency: Option<u32>,
     ) -> impl Future<Output = Result<Vec<u8>, ProfilerError>> + Send;
 }
 
 impl ProfileCapture for CpuProfiler {
+    fn max_capture_seconds(&self) -> u64 {
+        Self::max_capture_seconds(self)
+    }
+
     fn capture(
         &self,
         duration: Duration,
-        frequency: Option<i32>,
+        frequency: Option<u32>,
     ) -> impl Future<Output = Result<Vec<u8>, ProfilerError>> + Send {
         Self::capture(self, duration, frequency)
     }
@@ -138,7 +144,8 @@ async fn capture_profile<P: ProfileCapture>(
     State(state): State<ProfileState<P>>,
     Query(query): Query<ProfileQuery>,
 ) -> Result<Response, ProfilingServerError> {
-    let duration = Duration::from_secs(query.seconds.unwrap_or(30));
+    let default_seconds = 30.min(state.profiler.max_capture_seconds());
+    let duration = Duration::from_secs(query.seconds.unwrap_or(default_seconds));
     let profile = state.profiler.capture(duration, query.frequency).await?;
 
     Ok((
@@ -179,11 +186,13 @@ mod tests {
     use super::*;
 
     const GZIP_PROFILE: &[u8] = &[0x1f, 0x8b, 0x08, 0x00];
+    type Captures = Arc<StdMutex<Vec<(Duration, Option<u32>)>>>;
 
     #[derive(Debug, Clone)]
     struct FakeProfiler {
         capture_lock: Arc<Mutex<()>>,
-        captures: Arc<StdMutex<Vec<(Duration, Option<i32>)>>>,
+        captures: Captures,
+        max_capture_seconds: u64,
         started: Arc<Notify>,
         release: Option<CancellationToken>,
     }
@@ -193,9 +202,14 @@ mod tests {
             Self {
                 capture_lock: Arc::default(),
                 captures: Arc::default(),
+                max_capture_seconds: 60,
                 started: Arc::default(),
                 release: None,
             }
+        }
+
+        fn with_max_capture_seconds(max_capture_seconds: u64) -> Self {
+            Self { max_capture_seconds, ..Self::immediate() }
         }
 
         fn blocking() -> Self {
@@ -204,10 +218,14 @@ mod tests {
     }
 
     impl ProfileCapture for FakeProfiler {
+        fn max_capture_seconds(&self) -> u64 {
+            self.max_capture_seconds
+        }
+
         fn capture(
             &self,
             duration: Duration,
-            frequency: Option<i32>,
+            frequency: Option<u32>,
         ) -> impl Future<Output = Result<Vec<u8>, ProfilerError>> + Send {
             let capture_lock = Arc::clone(&self.capture_lock);
             let captures = Arc::clone(&self.captures);
@@ -262,6 +280,21 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(profiler.captures.lock().unwrap().as_slice(), &[(Duration::from_secs(1), None)]);
+    }
+
+    #[tokio::test]
+    async fn profile_route_clamps_omitted_seconds_to_profiler_maximum() {
+        let profiler = FakeProfiler::with_max_capture_seconds(10);
+        let app = profile_router(profiler.clone());
+        let request = request("/debug/pprof/profile");
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            profiler.captures.lock().unwrap().as_slice(),
+            &[(Duration::from_secs(10), None)]
+        );
     }
 
     #[tokio::test]
