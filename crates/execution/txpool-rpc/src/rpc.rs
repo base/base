@@ -569,11 +569,9 @@ mod tests {
 
         assert_ne!(error.message(), VALIDITY_TX_PRE_COBALT_RPC_ERROR);
         assert!(
-            capture
-                .events()
-                .iter()
-                .any(|event| event.event_type
-                    == TransactionEventType::TxpoolSendTransactionValidity),
+            capture.events().iter().any(
+                |event| event.event_type == TransactionEventType::TxpoolSendTransactionValidity
+            ),
             "admission event should fire once the Cobalt gate is cleared for EIP-1559"
         );
     }
