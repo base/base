@@ -2910,8 +2910,8 @@ fn golden_transfer_hint_slots_match_sload_footprint() {
         })
         .expect("transfer op must succeed");
 
-        let hints: BTreeSet<U256> =
-            B20CoreStorage::transfer_hint_slots(ALICE, BOB, spender).into_iter().collect();
+        let (slots, slot_count) = B20CoreStorage::transfer_hint_slots(ALICE, BOB, spender);
+        let hints: BTreeSet<U256> = slots[..slot_count].iter().copied().collect();
         let sloaded: BTreeSet<U256> = recorder
             .sloaded_keys
             .iter()
