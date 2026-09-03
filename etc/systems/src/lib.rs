@@ -85,7 +85,8 @@ pub use smoke::{SystemTestStack, SystemTestStackBuilder};
 mod system_config;
 pub use system_config::{
     DevnetBlockInterval, DevnetConfig, DevnetL1Mode, DevnetL2State, DevnetPrefund,
-    DevnetSnapshotConfig, DevnetSnapshotHead, StableSystemTestConfig, SystemTestPorts,
+    DevnetSnapshotConfig, DevnetSnapshotHead, ResolvedSnapshotChain, SnapshotChainConfig,
+    StableSystemTestConfig, SystemTestPorts,
 };
 
 #[cfg(feature = "upgrade-signal")]
