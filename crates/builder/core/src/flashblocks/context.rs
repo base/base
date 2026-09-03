@@ -1218,7 +1218,7 @@ impl BasePayloadBuilderCtx {
                     },
                 );
                 log_txn(Err(err));
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                Self::skip_current(best_txs, tx.signer(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1522,7 +1522,7 @@ impl BasePayloadBuilderCtx {
                         },
                     );
                     log_txn(Err(err));
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    Self::skip_current(best_txs, tx.signer(), tx.nonce(), replay_independent);
                     continue;
                 }
                 pending_resource_usage = decision.committed_usage();

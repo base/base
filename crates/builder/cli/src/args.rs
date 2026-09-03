@@ -11,7 +11,7 @@ use base_builder_core::{
 use base_builder_metering::{
     DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
 };
-use base_execution_cli::{ResourceMeteringArgs, ShadowIndexerArgs};
+use base_execution_cli::ShadowIndexerArgs;
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -180,9 +180,17 @@ pub struct Args {
     #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
     pub execution_metering_mode: ExecutionMeteringMode,
 
-    /// Resource-metering schedule. Evaluated when `--builder.enable-resource-metering` is set.
-    #[command(flatten)]
-    pub resource_metering: ResourceMeteringArgs,
+    /// JSON file containing the startup resource-metering schedule.
+    ///
+    /// Resource metering runs when `--builder.enable-resource-metering` is set
+    /// and this schedule is non-empty. Per-dimension `dryRun` in the file
+    /// observes a budget without excluding transactions.
+    ///
+    /// Uses the same `--payload.resource-metering-schedule` flag as the native
+    /// payload builder so operators can share one schedule path. Builder
+    /// rejection-cache sizing stays on `--builder.rejection-cache-*`.
+    #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
+    pub resource_metering_schedule: Option<PathBuf>,
 
     /// How much extra time to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
@@ -356,7 +364,7 @@ impl Default for Args {
             state_root_gas_coefficient: None,
             state_root_gas_anchor_us: None,
             execution_metering_mode: ExecutionMeteringMode::Off,
-            resource_metering: ResourceMeteringArgs::default(),
+            resource_metering_schedule: None,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             enable_experimental_validity_transactions: false,
@@ -420,7 +428,7 @@ impl Args {
 
         let resource_metering = ResourceMeteringConfig::from_parts(
             self.enable_resource_metering,
-            self.resource_metering.resource_metering_schedule.as_deref(),
+            self.resource_metering_schedule.as_deref(),
             Arc::clone(&metering_provider),
         )?;
 
@@ -732,6 +740,30 @@ mod tests {
         assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
         assert_eq!(args.state_root_gas_coefficient, Some(0.1));
         assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
+    }
+
+    #[test]
+    fn payload_resource_metering_schedule_flag_is_accepted() {
+        let args = CommandParser::parse_from([
+            "builder",
+            "--payload.resource-metering-schedule",
+            "/tmp/schedule.json",
+        ])
+        .args;
+        assert_eq!(
+            args.resource_metering_schedule.as_deref(),
+            Some(std::path::Path::new("/tmp/schedule.json"))
+        );
+    }
+
+    #[test]
+    fn payload_rejection_cache_flags_are_not_builder_cli() {
+        let result = CommandParser::try_parse_from([
+            "builder",
+            "--payload.rejection-cache-max-capacity",
+            "1",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]
