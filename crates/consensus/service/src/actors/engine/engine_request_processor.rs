@@ -1664,8 +1664,14 @@ mod tests {
             EngineProcessor::new(client, Arc::new(RollupConfig::default()), derivation, engine);
         let (unsafe_head_tx, _) = watch::channel(private_unsafe);
         let (request_tx, request_rx) = mpsc::channel(8);
-        let mut coordinator =
-            SequencerEngineRequestCoordinator::new(processor, true, None, false, unsafe_head_tx);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            true,
+            None,
+            false,
+            SequencerSyncMode::default(),
+            unsafe_head_tx,
+        );
         *coordinator.sequencer_state_mut() =
             SequencerEngineState::ShadowActive(Box::new(ShadowReconciliationGate::new(anchor)));
         let mut handle = coordinator.start(request_rx);

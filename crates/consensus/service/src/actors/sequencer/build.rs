@@ -305,6 +305,7 @@ mod tests {
         let mut builder = PayloadBuilder {
             attributes_builder: TestAttributesBuilder {
                 attributes: vec![Ok(BasePayloadAttributes::default())],
+                ..Default::default()
             },
             engine_client: Arc::new(engine_client),
             origin_selector,
@@ -312,7 +313,7 @@ mod tests {
             rollup_config: Arc::new(RollupConfig::default()),
         };
 
-        let outcome = builder.build_on(L2BlockInfo::default()).await.unwrap();
+        let outcome = builder.build_on(L2BlockInfo::default(), None).await.unwrap();
 
         assert!(matches!(outcome, BuildOutcome::Deferred));
     }

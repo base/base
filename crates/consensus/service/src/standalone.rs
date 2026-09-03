@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     ConductorClient, DerivationClientResult, EngineActor, EngineDerivationClient, EngineProcessor,
     L1OriginSelectorError, NodeActor, OriginSelector, PayloadBuilder, QueuedSequencerEngineClient,
-    RecoveryModeGuard, SequencerActor, SequencerEngineRequestCoordinator,
+    RecoveryModeGuard, SequencerActor, SequencerEngineRequestCoordinator, SequencerSyncMode,
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
 
@@ -283,8 +283,14 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             StandaloneDerivationClient,
             engine,
         );
-        let coordinator =
-            SequencerEngineRequestCoordinator::new(processor, false, None, false, unsafe_head_tx);
+        let coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            false,
+            None,
+            false,
+            SequencerSyncMode::default(),
+            unsafe_head_tx,
+        );
         let engine_actor =
             EngineActor::new(cancellation.clone(), engine_actor_request_rx, coordinator);
 
@@ -310,6 +316,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             is_active: true,
             shadow_blocks_per_cycle: None,
             shadow_funding: None,
+            sequencer_sync_mode: SequencerSyncMode::default(),
             recovery_mode,
             rollup_config: Arc::clone(&self.rollup_config),
             unsafe_payload_gossip_client: StandaloneUnsafePayloadGossipClient,
