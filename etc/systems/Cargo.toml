@@ -19,6 +19,7 @@ workspace = true
 # workspace
 base-runtime.workspace = true
 base-test-utils = { workspace = true, optional = true }
+base-load-tests.workspace = true
 base-txpool-rpc.workspace = true
 base-tx-manager.workspace = true
 base-flashblocks.workspace = true
@@ -105,6 +106,7 @@ rand.workspace = true
 eyre.workspace = true
 nanoid.workspace = true
 reqwest.workspace = true
+chrono.workspace = true
 prometheus-scraper = { version = "0.2.0", default-features = false }
 tempfile.workspace = true
 async-trait.workspace = true
@@ -153,8 +155,6 @@ reth-primitives-traits.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 
 # misc
-base-load-tests.workspace = true
-chrono.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 indicatif.workspace = true
