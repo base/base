@@ -8,15 +8,8 @@ use pprof::{ProfilerGuardBuilder, protos::Message};
 use tokio::sync::Mutex;
 use tracing::info;
 
-// The preallocated pprof collector costs 200 MB+ of RSS while its guard is live. Reject longer
-// captures so an unbounded request cannot retain that allocation on a mainnet node.
-const MAX_CAPTURE_DURATION: Duration = Duration::from_secs(60);
 const MIN_FREQUENCY_HZ: i32 = 1;
 const MAX_FREQUENCY_HZ: i32 = 1_000;
-// 100 Hz is exactly harmonic with both the 250 ms flashblock cadence (25 samples/flashblock) and
-// the 1000 ms block cadence, which aliases periodic phases and skews profiles. 101 Hz is prime and
-// non-harmonic. Re-evaluate this default for the 200 ms Denim cadence.
-const DEFAULT_FREQUENCY_HZ: i32 = 101;
 
 /// Errors returned while capturing a CPU profile.
 #[derive(Debug, thiserror::Error)]
@@ -53,16 +46,41 @@ pub enum ProfilerError {
 }
 
 /// On-demand, single-flight CPU profile capture service.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CpuProfiler {
     capture_lock: Arc<Mutex<()>>,
+    max_capture_seconds: u64,
+    default_frequency_hz: i32,
+}
+
+impl Default for CpuProfiler {
+    fn default() -> Self {
+        // 100 Hz aliases the 250 ms flashblock and 1000 ms block cadences. Keep the existing prime,
+        // non-harmonic 101 Hz default when callers do not provide runtime configuration.
+        Self::new(60, 101)
+    }
 }
 
 impl CpuProfiler {
+    /// Creates a profiler with the supplied capture-duration limit and default frequency.
+    pub fn new(max_capture_seconds: u64, default_frequency_hz: i32) -> Self {
+        Self { capture_lock: Arc::new(Mutex::new(())), max_capture_seconds, default_frequency_hz }
+    }
+
+    /// Returns the configured maximum capture duration in seconds.
+    pub const fn max_capture_seconds(&self) -> u64 {
+        self.max_capture_seconds
+    }
+
+    /// Returns the configured sampling frequency used when a request omits one.
+    pub const fn default_frequency_hz(&self) -> i32 {
+        self.default_frequency_hz
+    }
+
     /// Captures one CPU profile and returns a gzip-wrapped pprof protobuf.
     ///
-    /// A missing frequency uses 101 Hz. Captures above 60 seconds and frequencies outside
-    /// 1..=1000 Hz are rejected before starting `pprof`.
+    /// A missing frequency uses the configured default. Captures above the configured maximum and
+    /// frequencies outside 1..=1000 Hz are rejected before starting `pprof`.
     ///
     /// # Cancel safety
     ///
@@ -77,14 +95,14 @@ impl CpuProfiler {
         duration: Duration,
         frequency: Option<i32>,
     ) -> Result<Vec<u8>, ProfilerError> {
-        if duration > MAX_CAPTURE_DURATION {
-            return Err(ProfilerError::DurationTooLong {
-                requested: duration,
-                maximum: MAX_CAPTURE_DURATION,
-            });
+        // The preallocated pprof collector costs 200 MB+ of RSS while its guard is live. Reject
+        // longer captures so an unbounded request cannot retain that allocation on a mainnet node.
+        let maximum = Duration::from_secs(self.max_capture_seconds);
+        if duration > maximum {
+            return Err(ProfilerError::DurationTooLong { requested: duration, maximum });
         }
 
-        let hz = frequency.unwrap_or(DEFAULT_FREQUENCY_HZ);
+        let hz = frequency.unwrap_or(self.default_frequency_hz);
         if !(MIN_FREQUENCY_HZ..=MAX_FREQUENCY_HZ).contains(&hz) {
             return Err(ProfilerError::InvalidFrequency { frequency: hz });
         }
@@ -137,13 +155,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn capture_rejects_duration_above_maximum() {
-        let profiler = CpuProfiler::default();
+    fn capture_rejects_duration_above_configured_maximum() {
+        let maximum = Duration::from_secs(7);
+        let requested = Duration::from_secs(8);
+        let profiler = CpuProfiler::new(maximum.as_secs(), 101);
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
 
-        let result = runtime.block_on(profiler.capture(Duration::from_secs(61), None));
+        let result = runtime.block_on(profiler.capture(requested, None));
 
-        assert!(matches!(result, Err(ProfilerError::DurationTooLong { .. })));
+        assert!(matches!(
+            result,
+            Err(ProfilerError::DurationTooLong {
+                requested: rejected,
+                maximum: configured,
+            }) if rejected == requested && configured == maximum
+        ));
+    }
+
+    #[test]
+    fn capture_uses_configured_default_frequency_when_omitted() {
+        let profiler = CpuProfiler::new(60, 0);
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+
+        let result = runtime.block_on(profiler.capture(Duration::ZERO, None));
+
+        assert!(matches!(result, Err(ProfilerError::InvalidFrequency { frequency: 0 })));
     }
 
     #[test]

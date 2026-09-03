@@ -31,13 +31,15 @@ pub struct ProfilingConfig {
 #[derive(Debug)]
 pub struct ProfilingExtension {
     cfg: ProfilingConfig,
+    profiler: CpuProfiler,
 }
 
 impl FromExtensionConfig for ProfilingExtension {
     type Config = ProfilingConfig;
 
     fn from_config(config: Self::Config) -> Self {
-        Self { cfg: config }
+        let profiler = CpuProfiler::new(config.max_seconds, config.default_frequency as i32);
+        Self { cfg: config, profiler }
     }
 }
 
@@ -48,14 +50,13 @@ impl BaseNodeExtension for ProfilingExtension {
         }
 
         let port = self.cfg.port;
+        let profiler = self.profiler;
 
         #[cfg(test)]
         NODE_STARTED_HOOK_REGISTRATIONS.with(|count| count.set(count.get() + 1));
 
         hooks.add_node_started_hook(move |node| {
             let executor = node.task_executor;
-            let server =
-                ProfilingServer::new(port, CpuProfiler::default(), CancellationToken::new());
             warn!(
                 port = %port,
                 "CPU profiling endpoint ENABLED - do not run this configuration on the main builder"
@@ -63,8 +64,21 @@ impl BaseNodeExtension for ProfilingExtension {
 
             // Unlike shadow-indexer's fail-fast writer, profiling is optional observability. A
             // server failure is logged but must not take the builder down.
-            executor.spawn_task(async move {
-                if let Err(error) = server.serve().await {
+            executor.spawn_with_graceful_shutdown_signal(move |shutdown| async move {
+                let cancel = CancellationToken::new();
+                let server = ProfilingServer::new(port, profiler, cancel.clone());
+                let serving = server.serve();
+                tokio::pin!(serving);
+
+                let result = tokio::select! {
+                    result = &mut serving => result,
+                    guard = shutdown => {
+                        let _guard = guard;
+                        cancel.cancel();
+                        serving.await
+                    }
+                };
+                if let Err(error) = result {
                     error!(error = %error, port = %port, "profiling server failed");
                 }
             });
@@ -95,6 +109,18 @@ mod tests {
 
         NODE_STARTED_HOOK_REGISTRATIONS.with(|count| assert_eq!(count.get(), 1));
         drop(hooks);
+    }
+
+    #[test]
+    fn extension_constructs_profiler_from_configured_values() {
+        let extension = ProfilingExtension::from_config(ProfilingConfig {
+            max_seconds: 7,
+            default_frequency: 307,
+            ..config(true)
+        });
+
+        assert_eq!(extension.profiler.max_capture_seconds(), 7);
+        assert_eq!(extension.profiler.default_frequency_hz(), 307);
     }
 
     #[test]
