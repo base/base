@@ -210,7 +210,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
 
             // --- ERC-20 mutating ---
             C::transfer(c) => {
-                PrefetchHint::send(
+                PrefetchHint::send_slots(
                     self.token_address(),
                     &B20CoreStorage::transfer_hint_slots(caller, c.to, None),
                 );
@@ -218,7 +218,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 true.abi_encode().into()
             }
             C::transferFrom(c) => {
-                PrefetchHint::send(
+                PrefetchHint::send_slots(
                     self.token_address(),
                     &B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller)),
                 );
@@ -230,7 +230,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 true.abi_encode().into()
             }
             C::transferWithMemo(c) => {
-                PrefetchHint::send(
+                PrefetchHint::send_slots(
                     self.token_address(),
                     &B20CoreStorage::transfer_hint_slots(caller, c.to, None),
                 );
@@ -239,7 +239,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 true.abi_encode().into()
             }
             C::transferFromWithMemo(c) => {
-                PrefetchHint::send(
+                PrefetchHint::send_slots(
                     self.token_address(),
                     &B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller)),
                 );

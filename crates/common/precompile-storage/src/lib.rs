@@ -21,7 +21,7 @@ pub use packing::{
 };
 
 mod prefetch;
-pub use prefetch::{PrefetchHint, StoragePrefetcher};
+pub use prefetch::{PrefetchHint, PrefetchRequest, StatePrefetcher};
 
 mod provider;
 pub use provider::{

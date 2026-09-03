@@ -3,7 +3,7 @@
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
-use base_execution_storage_prefetch::{StoragePrefetchConfig, StoragePrefetchExtension};
+use base_execution_state_prefetch::{StatePrefetchConfig, StatePrefetchExtension};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
@@ -35,17 +35,17 @@ use crate::upgrade_signal::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
 
-/// CLI arguments for the storage prefetcher.
+/// CLI arguments for the state prefetcher.
 #[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
-pub struct StoragePrefetchArgs {
-    /// Number of worker threads prefetching hinted storage slots ahead of execution (hints are
+pub struct StatePrefetchArgs {
+    /// Number of worker threads prefetching hinted state ahead of execution (hints are
     /// currently produced by the B20 precompiles). 0 disables prefetching entirely.
     #[arg(
-        long = "storage.prefetch-workers",
-        value_name = "STORAGE_PREFETCH_WORKERS",
+        long = "state.prefetch-workers",
+        value_name = "STATE_PREFETCH_WORKERS",
         default_value_t = 0
     )]
-    pub storage_prefetch_workers: usize,
+    pub state_prefetch_workers: usize,
 }
 
 /// CLI arguments for metering RPC.
@@ -226,9 +226,9 @@ pub struct StandardNodeArgs {
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
 
-    /// Storage prefetcher arguments.
+    /// State prefetcher arguments.
     #[command(flatten)]
-    pub storage_prefetch: StoragePrefetchArgs,
+    pub state_prefetch: StatePrefetchArgs,
 }
 
 /// CLI arguments for a Base execution node embedded by the unified RPC command.
@@ -370,7 +370,7 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
             rpc: args,
             metering: MeteringArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
-            storage_prefetch: StoragePrefetchArgs::default(),
+            state_prefetch: StatePrefetchArgs::default(),
         }
     }
 }
@@ -388,9 +388,9 @@ impl StandardNodeArgs {
         self
     }
 
-    /// Sets the storage prefetcher arguments on this standard node configuration.
-    pub const fn with_storage_prefetch(mut self, storage_prefetch: StoragePrefetchArgs) -> Self {
-        self.storage_prefetch = storage_prefetch;
+    /// Sets the state prefetcher arguments on this standard node configuration.
+    pub const fn with_state_prefetch(mut self, state_prefetch: StatePrefetchArgs) -> Self {
+        self.state_prefetch = state_prefetch;
         self
     }
 }
@@ -648,8 +648,8 @@ impl StandardBaseRethNode {
             MeteringConfig::disabled()
         };
         runner.install_ext::<MeteringExtension>(metering_config);
-        runner.install_ext::<StoragePrefetchExtension>(StoragePrefetchConfig {
-            workers: args.storage_prefetch.storage_prefetch_workers,
+        runner.install_ext::<StatePrefetchExtension>(StatePrefetchConfig {
+            workers: args.state_prefetch.state_prefetch_workers,
         });
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();

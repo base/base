@@ -4247,7 +4247,7 @@ dependencies = [
  "base-execution-consensus",
  "base-execution-eip8130-rpc-node",
  "base-execution-evm",
- "base-execution-storage-prefetch",
+ "base-execution-state-prefetch",
  "base-execution-trie",
  "base-flashblocks",
  "base-flashblocks-node",
@@ -4577,7 +4577,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-storage-prefetch"
+name = "base-execution-state-prefetch"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",

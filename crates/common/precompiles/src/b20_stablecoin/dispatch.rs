@@ -197,7 +197,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 // --- Mutating operations: routed to the active version's logic ---
                 C::transfer(c) => {
                     let caller = ctx.caller();
-                    PrefetchHint::send(
+                    PrefetchHint::send_slots(
                         self.token_address(),
                         &B20CoreStorage::transfer_hint_slots(caller, c.to, None),
                     );
@@ -206,7 +206,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 }
                 C::transferFrom(c) => {
                     let caller = ctx.caller();
-                    PrefetchHint::send(
+                    PrefetchHint::send_slots(
                         self.token_address(),
                         &B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller)),
                     );
@@ -220,7 +220,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 }
                 C::transferWithMemo(c) => {
                     let caller = ctx.caller();
-                    PrefetchHint::send(
+                    PrefetchHint::send_slots(
                         self.token_address(),
                         &B20CoreStorage::transfer_hint_slots(caller, c.to, None),
                     );
@@ -230,7 +230,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 }
                 C::transferFromWithMemo(c) => {
                     let caller = ctx.caller();
-                    PrefetchHint::send(
+                    PrefetchHint::send_slots(
                         self.token_address(),
                         &B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller)),
                     );

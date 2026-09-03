@@ -1,6 +1,6 @@
 [package]
-name = "base-execution-storage-prefetch"
-description = "Background storage prefetch pool serving precompile and contract slot hints"
+name = "base-execution-state-prefetch"
+description = "Background state prefetch pool serving precompile and contract hints"
 
 version.workspace = true
 edition.workspace = true

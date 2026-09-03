@@ -1,4 +1,4 @@
-//! Worker pool that resolves storage prefetch hints against the live state provider.
+//! Worker pool that resolves state prefetch hints against the live state provider.
 
 use std::{
     sync::{
@@ -9,8 +9,8 @@ use std::{
     time::Instant,
 };
 
-use alloy_primitives::{Address, B256, U256};
-use base_precompile_storage::StoragePrefetcher;
+use alloy_primitives::B256;
+use base_precompile_storage::{PrefetchRequest, StatePrefetcher};
 use reth_provider::{StateProvider, StateProviderFactory};
 use tracing::trace;
 
@@ -26,20 +26,20 @@ const WORKER_QUEUE_CAPACITY: usize = 1024;
 /// drained batch.
 const MAX_READS_PER_PROVIDER: usize = 128;
 
-/// Pool of OS threads that read hinted storage slots through independent state-provider handles.
+/// Pool of OS threads that read hinted state through independent state-provider handles.
 ///
-/// Each hinted slot is read once at the latest state and the value discarded: the read exists
-/// solely to fault the slot's database pages into the OS page cache concurrently, ahead of the
-/// serial journaled reads that follow during execution. A slightly stale view is fine — the
-/// slot's pages are the same either way, and the metered read path is untouched.
+/// Each hinted request is read once at the latest state and the value discarded: the read exists
+/// solely to fault the corresponding database pages into the OS page cache concurrently, ahead of
+/// the serial journaled reads that follow during execution. A slightly stale view is fine — the
+/// pages are the same either way, and the metered read path is untouched.
 #[derive(Debug)]
-pub struct StoragePrefetchPool {
-    senders: Vec<mpsc::SyncSender<(Address, U256)>>,
+pub struct StatePrefetchPool {
+    senders: Vec<mpsc::SyncSender<PrefetchRequest>>,
     workers: Vec<thread::JoinHandle<()>>,
     next_worker: AtomicUsize,
 }
 
-impl StoragePrefetchPool {
+impl StatePrefetchPool {
     /// Spawns `workers` prefetch threads reading the latest state from `provider`.
     ///
     /// # Panics
@@ -56,9 +56,9 @@ impl StoragePrefetchPool {
             let (sender, receiver) = mpsc::sync_channel(WORKER_QUEUE_CAPACITY);
             let provider = provider.clone();
             let handle = thread::Builder::new()
-                .name(format!("storage-prefetch-{index}"))
+                .name(format!("state-prefetch-{index}"))
                 .spawn(move || Self::worker_loop(provider, receiver))
-                .expect("failed to spawn storage prefetch worker");
+                .expect("failed to spawn state prefetch worker");
             senders.push(sender);
             handles.push(handle);
         }
@@ -69,65 +69,72 @@ impl StoragePrefetchPool {
     pub fn join(mut self) {
         self.senders.clear();
         for handle in self.workers.drain(..) {
-            handle.join().expect("storage prefetch worker panicked");
+            handle.join().expect("state prefetch worker panicked");
         }
     }
 
-    /// Reads hinted slots until every sender is dropped.
+    /// Reads hinted state until every sender is dropped.
     ///
     /// One state-provider handle is amortized across each drained batch instead of created
-    /// per slot, capped at [`MAX_READS_PER_PROVIDER`] so a busy queue can neither pin a
+    /// per request, capped at [`MAX_READS_PER_PROVIDER`] so a busy queue can neither pin a
     /// long-lived read transaction nor serve arbitrarily stale snapshots.
     fn worker_loop<P: StateProviderFactory>(
         provider: P,
-        receiver: mpsc::Receiver<(Address, U256)>,
+        receiver: mpsc::Receiver<PrefetchRequest>,
     ) {
         while let Ok(request) = receiver.recv() {
             let state = match provider.latest() {
                 Ok(state) => state,
                 Err(error) => {
                     // The dequeued request is charged to read_errors_total, preserving
-                    // slots_enqueued_total == read_seconds count + read_errors_total.
+                    // requests_enqueued_total == read_seconds count + read_errors_total.
                     PrefetchMetrics::read_errors_total().increment(1);
-                    trace!(
-                        error = %error,
-                        address = %request.0,
-                        "prefetch state provider unavailable"
-                    );
+                    trace!(error = %error, request = ?request, "prefetch state provider unavailable");
                     continue;
                 }
             };
-            Self::read_slot(&*state, request);
+            Self::read(&*state, request);
             for _ in 1..MAX_READS_PER_PROVIDER {
                 match receiver.try_recv() {
-                    Ok(request) => Self::read_slot(&*state, request),
+                    Ok(request) => Self::read(&*state, request),
                     Err(_) => break,
                 }
             }
         }
     }
 
-    /// Reads one hinted slot and discards the value.
-    fn read_slot<S: StateProvider + ?Sized>(state: &S, (address, slot): (Address, U256)) {
+    /// Performs one hinted read and discards the value.
+    fn read<S: StateProvider + ?Sized>(state: &S, request: PrefetchRequest) {
         let started = Instant::now();
-        match state.storage(address, B256::from(slot)) {
-            Ok(_) => PrefetchMetrics::read_seconds().record(started.elapsed()),
+        let (kind, result) = match request {
+            PrefetchRequest::Slot { address, slot } => {
+                ("slot", state.storage(address, B256::from(slot)).map(|_| ()))
+            }
+            PrefetchRequest::Account { address } => {
+                ("account", state.basic_account(&address).map(|_| ()))
+            }
+            // `account_code` resolves the account first, warming both the account entry and
+            // its bytecode.
+            PrefetchRequest::Code { address } => ("code", state.account_code(&address).map(|_| ())),
+        };
+        match result {
+            Ok(()) => PrefetchMetrics::read_seconds(kind).record(started.elapsed()),
             Err(error) => {
                 PrefetchMetrics::read_errors_total().increment(1);
-                trace!(error = %error, address = %address, "prefetch read failed");
+                trace!(error = %error, request = ?request, "prefetch read failed");
             }
         }
     }
 }
 
-impl StoragePrefetcher for StoragePrefetchPool {
-    fn prefetch(&self, address: Address, slots: &[U256]) {
+impl StatePrefetcher for StatePrefetchPool {
+    fn prefetch(&self, requests: &[PrefetchRequest]) {
         PrefetchMetrics::hints_total().increment(1);
-        for &slot in slots {
+        for &request in requests {
             let index = self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len();
-            match self.senders[index].try_send((address, slot)) {
-                Ok(()) => PrefetchMetrics::slots_enqueued_total().increment(1),
-                Err(_) => PrefetchMetrics::slots_dropped_total().increment(1),
+            match self.senders[index].try_send(request) {
+                Ok(()) => PrefetchMetrics::requests_enqueued_total().increment(1),
+                Err(_) => PrefetchMetrics::requests_dropped_total().increment(1),
             }
         }
     }
@@ -135,17 +142,24 @@ impl StoragePrefetcher for StoragePrefetchPool {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::{Address, U256};
     use reth_provider::test_utils::MockEthProvider;
 
     use super::*;
 
     #[test]
-    fn drains_all_hinted_slots_and_exits_cleanly() {
-        let pool = StoragePrefetchPool::spawn(MockEthProvider::default(), 4);
+    fn drains_all_hinted_requests_and_exits_cleanly() {
+        let pool = StatePrefetchPool::spawn(MockEthProvider::default(), 4);
         let address = Address::repeat_byte(0x01);
-        let slots: Vec<U256> = (0..64u64).map(U256::from).collect();
-        pool.prefetch(address, &slots);
-        pool.prefetch(Address::repeat_byte(0x02), &slots[..5]);
+        let requests: Vec<PrefetchRequest> = (0..64u64)
+            .map(|slot| PrefetchRequest::Slot { address, slot: U256::from(slot) })
+            .chain([
+                PrefetchRequest::Account { address },
+                PrefetchRequest::Code { address: Address::repeat_byte(0x02) },
+            ])
+            .collect();
+        pool.prefetch(&requests);
+        pool.prefetch(&requests[..5]);
         // Join blocks until every queued read completed; a stuck or panicked
         // worker fails the test.
         pool.join();
