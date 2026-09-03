@@ -765,6 +765,11 @@ impl ResourceThrottlingDecision {
     }
 
     /// Usage to add when this decision is included in the payload.
+    ///
+    /// Dry-run throttles still return usage. Those transactions are included
+    /// (`should_exclude` is false), so later enforce dimensions must see the
+    /// real cumulative remaining budget rather than pretending the over-budget
+    /// transaction was never in the block.
     pub fn committed_usage(self) -> Option<ResourceMeteringUsage> {
         match self {
             Self::Allow(usage) | Self::Throttle { usage, .. } => Some(usage),

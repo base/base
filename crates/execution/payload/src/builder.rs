@@ -10,7 +10,7 @@ use alloy_evm::{
     Evm as AlloyEvm,
     block::{CommitChanges, TxResult},
 };
-use alloy_primitives::{B256, TxHash, U256};
+use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
@@ -794,6 +794,22 @@ where
             .map_err(PayloadBuilderError::other)
     }
 
+    /// Closes the iterator's current candidate.
+    ///
+    /// Replay-ID entries are independent, so they are committed rather than
+    /// invalidating the sender's nonce lane.
+    fn skip_current<B>(best_txs: &mut B, sender: Address, nonce: u64, replay_independent: bool)
+    where
+        B: ParkablePayloadTransactions,
+        B::Transaction: PoolTransaction,
+    {
+        if replay_independent {
+            best_txs.mark_current_committed();
+        } else {
+            best_txs.mark_invalid(sender, nonce);
+        }
+    }
+
     /// Executes all sequencer transactions that are included in the payload attributes.
     ///
     /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
@@ -850,13 +866,20 @@ where
                 Ok(Some(gas_output)) => gas_output,
                 // Resource metering always returns [`CommitChanges::Yes`]. This arm
                 // is the BlockBuilder commit-condition contract, not a metering skip.
-                Ok(None) => {
+                // Under `no_tx_pool` the attribute list is consensus input, so a
+                // refused commit is fatal — same as `InvalidTx` in that mode.
+                Ok(None) if !no_tx_pool => {
                     warn!(
                         target: "payload_builder",
                         tx_hash = %tx_hash,
                         "sequencer transaction commit was refused"
                     );
                     continue;
+                }
+                Ok(None) => {
+                    return Err(PayloadBuilderError::other(
+                        BasePayloadBuilderError::SequencerTransactionCommitRefused,
+                    ));
                 }
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
@@ -1240,6 +1263,7 @@ where
                 continue;
             }
 
+            let replay_independent = tx.eip8130_replay_id().is_some();
             let (simulated, admission) =
                 resource_metering.check_simulated_usage(&tx_hash, &info.resource_metering_usage);
             if admission.should_exclude() {
@@ -1255,11 +1279,7 @@ where
                     tx_hash = %tx_hash,
                     "skipping transaction excluded by simulated resource metering"
                 );
-                if tx.eip8130_replay_id().is_none() {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else {
-                    best_txs.mark_current_committed();
-                }
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1285,13 +1305,13 @@ where
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
                 continue;
             }
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1338,7 +1358,7 @@ where
                         tx_hash = %tx_hash,
                         "skipping transaction excluded by resource metering"
                     );
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
                     continue;
                 }
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
@@ -1350,7 +1370,12 @@ where
                         best_txs.mark_current_committed();
                     } else {
                         trace!(target: "payload_builder", %error, ?tx, "skipping invalid transaction and its descendants");
-                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.signer(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
                     }
                     continue;
                 }
