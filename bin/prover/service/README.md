@@ -25,7 +25,9 @@ cumulative cap. It also exposes `deleteProofRequest`, `deleteProofsByTeeSigner`,
 and `listProofs`, so a reachable port allows deleting proofs already paid for.
 
 The standalone Compose stack therefore publishes the requester port on
-`127.0.0.1` only (see `etc/docker/docker-compose.prover.yml`). Reaching it from
-another host requires putting your own authenticated proxy in front of the
-loopback port, not republishing the port on a public interface. See
+`127.0.0.1` only (see `etc/docker/docker-compose.prover.yml`). It uses a NAT
+bridge network rather than `routed` or `nat-unprotected`, and `just prover up`
+rejects reused networks with direct-routing options. Reaching it from another
+host requires putting your own authenticated proxy in front of the loopback
+port, not republishing the port on a public interface. See
 [docs/guides/STANDALONE_PROVING.md](../../../docs/guides/STANDALONE_PROVING.md).

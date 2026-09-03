@@ -7,6 +7,12 @@ mainnet) using your own RPC endpoints and your own funded
 requester key.
 
 The stack is three containers managed by `just prover up|down|logs <network>`.
+It requires Docker Engine 28.3.3 or later: earlier releases can leak a port
+published on `127.0.0.1` to the local network, which is how this stack keeps
+its unauthenticated requester RPC host-local. `just prover up` checks the
+daemon version and rejects a reused Docker network whose options would permit
+direct routing.
+
 The network label isolates each local control plane and its persisted jobs:
 
 - `prover-service-postgres` — session storage (persisted under `.zk-prover/<network>/`)
@@ -166,9 +172,12 @@ host-port position of a `127.0.0.1:<port>:9000` mapping.
 
 ## Requester RPC exposure
 
-The requester RPC is published on `127.0.0.1` only, so it is reachable from the
-machine running the stack and nowhere else. Keep it that way unless you add
-access control yourself.
+The requester RPC is published on `127.0.0.1` only. The Compose network
+explicitly uses Docker's `nat` gateway mode, so a daemon default of `routed` or
+`nat-unprotected` cannot leave the container address reachable from the local
+network, and `just prover up` rejects a reused network whose options would
+permit direct routing. Run the stack through `just prover up`: invoking Compose
+directly skips the daemon version and network checks.
 
 The API is unauthenticated. Any caller that reaches it can request proofs on
 the paid `network` backend against your deposited PROVE, and can also call

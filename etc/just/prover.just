@@ -19,6 +19,33 @@ up network:
       exit 1
     fi
 
+    docker_engine_version="$(docker version --format '{{ "{{" }}.Server.Version{{ "}}" }}' 2>/dev/null)" || {
+      echo "ERROR: standalone proving requires Docker Engine 28.3.3 or later." >&2
+      echo "Older releases can expose loopback-published ports to the local network." >&2
+      exit 1
+    }
+    if ! [[ "$docker_engine_version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(\+[[:alnum:].-]+)?$ ]] ||
+      (( 10#${BASH_REMATCH[1]} < 28 ||
+         (10#${BASH_REMATCH[1]} == 28 &&
+          (10#${BASH_REMATCH[2]} < 3 ||
+           (10#${BASH_REMATCH[2]} == 3 && 10#${BASH_REMATCH[3]} < 3))) )); then
+      echo "ERROR: Docker Engine 28.3.3 or later is required (found '${docker_engine_version}')." >&2
+      echo "Older releases can expose loopback-published ports to the local network." >&2
+      exit 1
+    fi
+
+    prover_network="base-prover-${network}_default"
+    if docker network inspect "$prover_network" >/dev/null 2>&1; then
+      gateway_mode_v4="$(docker network inspect --format '{{ "{{" }} index .Options "com.docker.network.bridge.gateway_mode_ipv4" {{ "}}" }}' "$prover_network")"
+      gateway_mode_v6="$(docker network inspect --format '{{ "{{" }} index .Options "com.docker.network.bridge.gateway_mode_ipv6" {{ "}}" }}' "$prover_network")"
+      trusted_host_interfaces="$(docker network inspect --format '{{ "{{" }} index .Options "com.docker.network.bridge.trusted_host_interfaces" {{ "}}" }}' "$prover_network")"
+      if [[ "$gateway_mode_v4" != "nat" || "$gateway_mode_v6" != "nat" || -n "$trusted_host_interfaces" ]]; then
+        echo "ERROR: existing Docker network '${prover_network}' does not safely restrict direct routing." >&2
+        echo "Run 'just prover down ${network}' to remove it, then retry." >&2
+        exit 1
+      fi
+    fi
+
     missing=()
     for var in L1_NODE_ADDRESS L1_BEACON_ADDRESS L2_NODE_ADDRESS BASE_CONSENSUS_ADDRESS; do
       if [ -z "${!var:-}" ]; then

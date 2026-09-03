@@ -40,9 +40,8 @@ services:
       prover-service-postgres:
         condition: service_healthy
     ports:
-      # Requester RPC, loopback-only: the API is unauthenticated and can spend
-      # the requester key's deposited PROVE, so widening this needs the
-      # operator's own authenticated proxy. The override is a bare port number.
+      # Requester RPC. Loopback plus the NAT-mode network below keep this
+      # unauthenticated API host-local. The override is a bare port number.
       # The worker RPC (9001) and Postgres stay internal.
       - "127.0.0.1:${PROVER_SERVICE_RPC_PORT:-9000}:9000"
     environment:
@@ -88,3 +87,12 @@ services:
       - RUST_LOG=${RUST_LOG:-}
       - OTEL_SERVICE_NAME=base-prover-zk-host
     restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge
+    enable_ipv6: false
+    driver_opts:
+      # Do not inherit a daemon default of `routed` or `nat-unprotected`.
+      com.docker.network.bridge.gateway_mode_ipv4: nat
+      com.docker.network.bridge.gateway_mode_ipv6: nat
