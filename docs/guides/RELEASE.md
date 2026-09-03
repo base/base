@@ -14,9 +14,11 @@ Releases are managed through two manual workflows and one automatic trigger:
 
 Run the **Start Release** workflow (`Actions → Start Release → Run workflow`):
 
+- Leave **Use workflow from** set to `main` so the latest release automation is used
 - Select the bump type: `minor` (new feature release), `patch` (bug fixes), or `major` (breaking changes)
 - The workflow computes the next version from the latest final tag and creates the `releases/vX.Y.Z` branch
 - For `patch` bumps, the base is the latest existing `releases/vX.Y.*` branch; for `major`/`minor`, the base is `main`
+- Patch branches keep the prior release's application code while syncing release workflows and scripts from `main`
 
 After the branch is created, the **Release Version Sync** workflow fires automatically and opens a PR to update `Cargo.toml` to the new version.
 

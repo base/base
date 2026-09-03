@@ -10,6 +10,18 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 BUMP_TYPE="${1:-}"
 
+# Patch releases inherit application code from the previous patch branch, but
+# release automation must stay current so fixes to the build and publish jobs
+# are not lost when the next patch branch is cut.
+RELEASE_TOOLING_PATHS=(
+    .github/workflows/build-release.yml
+    .github/workflows/create-rc.yml
+    .github/workflows/publish-release.yml
+    .github/workflows/start-release.yml
+    .github/workflows/verify-release.yml
+    etc/scripts/release
+)
+
 if [[ -z "$BUMP_TYPE" ]]; then
     echo "Usage: $0 <bump_type>" >&2
     echo "  bump_type: major, minor, or patch" >&2
@@ -68,8 +80,16 @@ main() {
     fi
 
     configure_git
-    git fetch origin "$base"
+    git fetch origin "$base" main
     git checkout -b "$RELEASE_BRANCH" "origin/$base"
+
+    if [[ "$BUMP_TYPE" == "patch" ]]; then
+        git restore --source origin/main --staged --worktree -- "${RELEASE_TOOLING_PATHS[@]}"
+        if ! git diff --cached --quiet -- "${RELEASE_TOOLING_PATHS[@]}"; then
+            git commit -m "ci(release): sync release tooling from main"
+        fi
+    fi
+
     git push origin "$RELEASE_BRANCH"
 
     # Write outputs for workflow step summary
