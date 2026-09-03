@@ -67,6 +67,9 @@ pub use network::{ensure_network_exists, ensure_network_exists_with_name, networ
 mod prover_service;
 pub use prover_service::InProcessProverService;
 
+mod prometheus_metrics;
+pub use prometheus_metrics::{PrometheusBlockCollector, PrometheusSnapshot};
+
 mod rpc;
 pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
 

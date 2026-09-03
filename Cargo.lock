@@ -1816,7 +1816,7 @@ dependencies = [
  "asn1-rs-derive",
  "asn1-rs-impl",
  "displaydoc",
- "nom",
+ "nom 7.1.3",
  "num-traits",
  "rusticata-macros",
  "thiserror 2.0.19",
@@ -6300,6 +6300,7 @@ dependencies = [
  "k256 0.13.4",
  "libp2p",
  "nanoid",
+ "prometheus-scraper",
  "rand 0.9.5",
  "reqwest 0.13.4",
  "reth-db",
@@ -7362,6 +7363,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "buffa"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf9e6224bc4ee1f189ad257120c156fb05f95b826f5369d620b24984476c200a"
+dependencies = [
+ "bytes",
+ "foldhash 0.1.5",
+ "hashbrown 0.15.5",
+ "once_cell",
+ "rustversion",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "buffa-types"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c7d518783cc611d9f144a71cf7dbc7b5588c5d16ff96ca43e74ac105ea3cb05"
+dependencies = [
+ "buffa",
+ "bytes",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7568,7 +7594,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
 dependencies = [
- "nom",
+ "nom 7.1.3",
 ]
 
 [[package]]
@@ -8616,7 +8642,7 @@ checksum = "07da5016415d5a3c4dd39b11ed26f915f52fc4e0dc197d87908bc916e51bc1a6"
 dependencies = [
  "asn1-rs",
  "displaydoc",
- "nom",
+ "nom 7.1.3",
  "num-bigint 0.4.8",
  "num-traits",
  "rusticata-macros",
@@ -9393,7 +9419,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74fef4569247a5f429d9156b9d0a2599914385dd189c539334c625d8099d90ab"
 dependencies = [
  "futures-core",
- "nom",
+ "nom 7.1.3",
  "pin-project-lite",
 ]
 
@@ -10945,7 +10971,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b1e4910d3a9137442723dfb772c32dc10674c4181ca078d2fd227cd5dce9db0"
 dependencies = [
  "bincode 1.3.3",
- "derive_more 1.0.0",
+ "derive_more 2.1.1",
  "iai-callgrind-macros",
  "iai-callgrind-runner",
 ]
@@ -10956,7 +10982,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d03775318d3f9f01b39ac6612b01464006dc397a654a89dd57df2fd34fb68c3"
 dependencies = [
- "derive_more 1.0.0",
+ "derive_more 2.1.1",
  "proc-macro-error2",
  "proc-macro2",
  "quote",
@@ -13243,6 +13269,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nom"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "nonmax"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15133,6 +15168,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "prometheus-scraper"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27acfa23538fbabf5ad429f1044c213c92dc5cbfd0ee7d8b149ebfb1ae51a3de"
+dependencies = [
+ "buffa",
+ "buffa-types",
+ "bytes",
+ "nom 8.0.0",
 ]
 
 [[package]]
@@ -19363,7 +19410,7 @@ version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf0c4a6ece9950b9abdb62b1cfcf2a68b3b67a10ba445b3bb85be2a293d0632"
 dependencies = [
- "nom",
+ "nom 7.1.3",
 ]
 
 [[package]]
@@ -22115,7 +22162,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4ea810f0692f9f51b382fff5893887bb4580f5fa246fde546e0b13e7fcee662"
 dependencies = [
  "fnv",
- "nom",
+ "nom 7.1.3",
  "phf 0.11.3",
  "phf_codegen",
 ]
@@ -24754,7 +24801,7 @@ dependencies = [
  "data-encoding",
  "der-parser",
  "lazy_static",
- "nom",
+ "nom 7.1.3",
  "oid-registry",
  "rusticata-macros",
  "thiserror 2.0.19",
