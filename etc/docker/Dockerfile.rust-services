@@ -88,6 +88,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package base --bin base && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base /app/base
 
+FROM source AS base-devnet-builder
+ARG PROFILE=release
+ARG SCCACHE_CACHE_ID=rust-services-sccache
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    cargo build --profile $PROFILE --package base-system-tests --bin base-devnet --no-default-features && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-devnet /app/base-devnet
+
 FROM source AS execution-builder
 ARG PROFILE=release
 ARG SCCACHE_CACHE_ID=rust-services-sccache
@@ -248,6 +257,12 @@ ENTRYPOINT ["./base-consensus"]
 FROM runtime-base AS builder
 COPY --from=builder-builder /app/base-builder ./base-builder
 ENTRYPOINT ["./base-builder"]
+
+FROM runtime-base AS devnet
+COPY --from=base-devnet-builder /app/base-devnet ./base-devnet
+COPY etc/scripts/devnet/base-devnet-entrypoint.sh ./base-devnet-entrypoint.sh
+RUN chmod +x ./base-devnet-entrypoint.sh
+ENTRYPOINT ["./base-devnet-entrypoint.sh"]
 
 FROM runtime-base AS basectl
 COPY --from=basectl-builder /app/basectl ./basectl

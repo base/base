@@ -15,11 +15,11 @@ variable "ZK_HOST_PROFILE" {
 }
 
 variable "DEVNET_TARGETS" {
-  default = ["base", "batcher"]
+  default = ["base", "batcher", "devnet"]
 }
 
 variable "INGRESS_TARGETS" {
-  default = ["base", "batcher", "ingress-rpc", "audit-archiver"]
+  default = ["base", "batcher", "devnet", "ingress-rpc", "audit-archiver"]
 }
 
 group "default" {
@@ -32,6 +32,7 @@ group "rust-services" {
     "execution",
     "consensus",
     "builder",
+    "devnet",
     "basectl",
     "snapshotter",
     "proposer",
@@ -104,6 +105,16 @@ target "builder" {
     SCCACHE_CACHE_ID = "rust-services-builder-sccache"
   }
   tags = ["base-builder:local"]
+}
+
+target "devnet" {
+  inherits = ["_rust-service-common"]
+  target = "devnet"
+  args = {
+    CARGO_CHEF_ARGS = "--package base-system-tests --no-default-features"
+    SCCACHE_CACHE_ID = "rust-services-devnet-sccache"
+  }
+  tags = ["base-devnet:local"]
 }
 
 target "basectl" {

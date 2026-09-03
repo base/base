@@ -29,6 +29,9 @@ pub use snapshot_boundary::SnapshotBoundary;
 mod snapshot_stack;
 pub use snapshot_stack::{SnapshotL2Stack, SnapshotL2StackConfig};
 
+mod sequencer_stack;
+pub use sequencer_stack::{SequencerStack, SequencerStackConfig};
+
 mod shadow_sequencer;
 pub use shadow_sequencer::{ShadowSequencer, ShadowSequencerConfig};
 
