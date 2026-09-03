@@ -162,7 +162,10 @@ pub struct ConsensusFollowNodeConfigArgs {
 impl ConsensusFollowNodeArgs {
     /// Loads the configured L2 rollup config.
     pub fn load_rollup_config(&self) -> eyre::Result<RollupConfig> {
-        self.config.l2_config.load(&self.chain.l2_chain_id).map_err(|e| eyre::eyre!(e))
+        let mut config =
+            self.config.l2_config.load(&self.chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
+        self.config.l1_rpc_args.apply_da_batch_inbox_override(&mut config);
+        Ok(config)
     }
 
     /// Builds a follow node with default external endpoint configuration.
@@ -288,6 +291,8 @@ impl ConsensusFollowNodeArgs {
 
 #[cfg(test)]
 mod tests {
+    use alloy_chains::Chain;
+    use alloy_primitives::address;
     use clap::Parser;
 
     use super::*;
@@ -316,6 +321,23 @@ mod tests {
     #[test]
     fn proofs_default_to_disabled() {
         assert!(!parse_config(&[]).proofs);
+    }
+
+    #[test]
+    fn applies_da_batch_inbox_override() {
+        let inbox = address!("3333333333333333333333333333333333333333");
+        let config = parse_config(&[
+            "--l1.dangerously-override-da-batch-inbox",
+            "0x3333333333333333333333333333333333333333",
+        ]);
+        let args = ConsensusFollowNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            config,
+        );
+
+        let config = args.load_rollup_config().unwrap();
+
+        assert_eq!(config.batch_inbox_address, inbox);
     }
 
     #[test]
