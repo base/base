@@ -475,7 +475,7 @@ services:
       - --rpc.gascap=600000000
       - --rpc.eth-proof-window=1209600
       - --flashblocks-url=ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
-      - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --bootnodes=${L2_EL_BOOTNODE_ENODE},${L2_BUILDER_ENODE}
       - --rollup.discovery.v4
       - --rpc.forwarding-endpoint=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --enable-tx-forwarding
@@ -581,7 +581,7 @@ services:
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
       - --rpc.eth-proof-window=1209600
-      - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --bootnodes=${L2_EL_BOOTNODE_ENODE},${L2_BUILDER_ENODE}
       - --rollup.discovery.v4
       - --enable-tx-forwarding
       - --builder-rpc-urls=${VALIDITY_BUILDER_RPC_URLS}

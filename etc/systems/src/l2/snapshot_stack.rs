@@ -1,6 +1,7 @@
 //! L1-free snapshot-backed L2 stack for development and benchmarking.
 
 use std::{
+    net::{IpAddr, Ipv4Addr},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -72,7 +73,11 @@ impl SnapshotL2Stack {
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
             chain_spec: Arc::clone(&chain_spec),
             datadir: Some(config.snapshot.builder_datadir),
+            require_existing_datadir: true,
             jwt_secret,
+            rpc_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            p2p_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            p2p_key: crate::BUILDER.private_key,
             http_port: container.and_then(|value| value.builder_http_port),
             ws_port: container.and_then(|value| value.builder_ws_port),
             auth_port: container.and_then(|value| value.builder_auth_port),
@@ -87,6 +92,7 @@ impl SnapshotL2Stack {
             txpool_max_transactions: Some(150_000),
             txpool_max_size_mb: Some(1_024),
             txpool_max_account_slots: Some(1_024),
+            clear_otel_env: true,
         })
         .await
         .wrap_err("failed to start snapshot builder")?;

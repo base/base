@@ -15,7 +15,11 @@
 //! the next cycle. Accepting the canonical gossip requires the shadow's
 //! `unsafe_block_signer` to match the active sequencer's address.
 
-use std::{num::NonZeroU64, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    num::NonZeroU64,
+    time::Duration,
+};
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256};
@@ -85,7 +89,11 @@ impl ShadowSequencer {
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
             chain_spec,
             datadir: None,
+            require_existing_datadir: false,
             jwt_secret: config.jwt_secret,
+            rpc_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            p2p_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            p2p_key: config.sequencer_key,
             http_port: None,
             ws_port: None,
             auth_port: None,
@@ -100,6 +108,7 @@ impl ShadowSequencer {
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
+            clear_otel_env: true,
         })
         .await
         .wrap_err("Failed to start shadow builder")?;
@@ -114,9 +123,13 @@ impl ShadowSequencer {
             mode: NodeMode::Sequencer,
             sequencer_key: Some(config.sequencer_key),
             p2p_key: None,
+            rpc_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            p2p_listen_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            p2p_advertise_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
             rpc_port: None,
             p2p_tcp_port: None,
             p2p_udp_port: None,
+            bootnodes: Vec::new(),
             unsafe_block_signer: config.active_sequencer_address,
             l1_slot_duration_override: Some(config.l1_slot_duration),
             sequencer_stopped: true,

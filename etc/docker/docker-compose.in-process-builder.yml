@@ -1,0 +1,20 @@
+services:
+  base-builder:
+    image: base-devnet:local
+    build:
+      target: devnet
+    entrypoint: /app/base-devnet-entrypoint.sh
+    command:
+      - fresh
+      - --l1-rpc-url
+      - http://l1-el:${L1_HTTP_PORT}
+      - --l1-beacon-url
+      - ${L1_CONTAINER_BEACON_URL}
+      - --l1-slot-duration
+      - "${L1_SLOT_DURATION_OVERRIDE:-12}"
+      - --p2p-addr
+      - ${L2_BUILDER_ADVERTISE_IP}
+      - --consensus-bootnodes-file
+      - ${L2_CL_BOOTNODE_ENR_PATH}
+      - --experimental-validity-transactions
+      - --payload-builder-cutover

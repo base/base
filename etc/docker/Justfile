@@ -2,8 +2,8 @@ set dotenv-path := "devnet-env"
 set working-directory := '../..'
 
 _ha := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ha.yml"
-_base := "-f etc/docker/docker-compose.yml"
-_anvil := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.anvil-l1.yml"
+_base := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.in-process-builder.yml"
+_anvil := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.in-process-builder.yml -f etc/docker/docker-compose.anvil-l1.yml"
 _env := "--env-file etc/docker/devnet-env"
 
 # Show devnet commands

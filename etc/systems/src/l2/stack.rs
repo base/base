@@ -6,7 +6,12 @@
 //! - Batcher (in-process, submits L2 transaction batches to L1)
 //! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
 
-use std::{num::NonZeroU64, path::PathBuf, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    num::NonZeroU64,
+    path::PathBuf,
+    time::Duration,
+};
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
@@ -30,10 +35,10 @@ use tokio::time::{sleep, timeout};
 use url::Url;
 
 use super::{
-    ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
-    InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
-    InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    L2ContainerConfig, ShadowSequencer, ShadowSequencerConfig,
+    ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder, InProcessClient,
+    InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig, InProcessFollowConsensus,
+    InProcessFollowConsensusConfig, L2ContainerConfig, SequencerStack, SequencerStackConfig,
+    ShadowSequencer, ShadowSequencerConfig,
 };
 use crate::config::{ANVIL_ACCOUNT_1, BATCHER, SEQUENCER};
 
@@ -166,8 +171,7 @@ impl L2ClientConsensus {
 /// 5. Client consensus node connects to client's engine API
 /// 6. Validator-mode client consensus connects to builder consensus via P2P
 pub struct L2Stack {
-    builder: InProcessBuilder,
-    builder_consensus: InProcessConsensus,
+    sequencer: SequencerStack,
     batcher: InProcessBatcher,
     client: InProcessClient,
     client_consensus: L2ClientConsensus,
@@ -177,8 +181,7 @@ pub struct L2Stack {
 impl std::fmt::Debug for L2Stack {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("L2Stack")
-            .field("builder", &self.builder)
-            .field("builder_consensus", &self.builder_consensus)
+            .field("sequencer", &self.sequencer)
             .field("batcher", &self.batcher)
             .field("client", &self.client)
             .field("client_consensus", &self.client_consensus)
@@ -206,62 +209,52 @@ impl L2Stack {
         }
         let l1_chain_config: ChainConfig = serde_json::from_slice(&config.l1_genesis)
             .wrap_err("Failed to parse L1 chain config")?;
-        let builder_chain_spec =
-            InProcessBuilderConfig::chain_spec_from_genesis_json(&config.l2_genesis)
-                .wrap_err("Failed to parse builder L2 chain spec")?;
-
-        // 1. Start the builder (in-process EL).
-        let builder_config = InProcessBuilderConfig {
-            chain_spec: builder_chain_spec,
-            datadir: config.builder_datadir,
+        // 1-2. Start the shared fresh builder and sequencer harness. The sequencer remains
+        // paused until the validator connects so the validator receives every unsafe block.
+        let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let sequencer = SequencerStack::start(SequencerStackConfig {
+            l2_genesis: config.l2_genesis.clone(),
+            builder_datadir: config.builder_datadir,
+            require_existing_datadir: false,
+            rollup_config: serde_json::to_vec(&rollup_config)
+                .wrap_err("Failed to encode sequencer rollup config")?,
+            l1_genesis: config.l1_genesis.clone(),
             jwt_secret: config.jwt_secret,
-            http_port: container_config.and_then(|c| c.builder_http_port),
-            ws_port: container_config.and_then(|c| c.builder_ws_port),
-            auth_port: container_config.and_then(|c| c.builder_auth_port),
-            p2p_port: container_config.and_then(|c| c.builder_p2p_port),
-            flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
-            metrics_port: None,
+            p2p_key: config.p2p_key,
+            sequencer_key: config.sequencer_key,
+            l1_rpc_url: l1_rpc_url.clone(),
+            l1_beacon_url: l1_beacon_url.clone(),
+            l1_slot_duration: config.l1_slot_duration,
+            execution_rpc_addr: localhost,
+            execution_p2p_addr: localhost,
+            builder_http_port: container_config.and_then(|c| c.builder_http_port),
+            builder_ws_port: container_config.and_then(|c| c.builder_ws_port),
+            builder_auth_port: container_config.and_then(|c| c.builder_auth_port),
+            builder_p2p_port: container_config.and_then(|c| c.builder_p2p_port),
+            builder_flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
+            builder_metrics_port: None,
+            consensus_rpc_addr: localhost,
+            consensus_p2p_listen_addr: localhost,
+            consensus_p2p_advertise_addr: localhost,
+            consensus_rpc_port: container_config.and_then(|c| c.builder_consensus_rpc_port),
+            consensus_p2p_tcp_port: container_config.and_then(|c| c.builder_consensus_p2p_tcp_port),
+            consensus_p2p_udp_port: container_config.and_then(|c| c.builder_consensus_p2p_udp_port),
+            consensus_bootnodes: Vec::new(),
+            sequencer_stopped: true,
             enable_experimental_validity_transactions: config
                 .enable_experimental_validity_transactions,
             payload_builder_cutover: config.payload_builder_cutover,
-            extra_extensions: config.extra_builder_extensions,
-            block_time: Duration::from_secs(rollup_config.block_time),
-            persistence_threshold: None,
+            upgrade_signal: config.upgrade_signal.clone(),
+            extra_builder_extensions: config.extra_builder_extensions,
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
-        };
-        let builder = InProcessBuilder::start(builder_config)
-            .await
-            .wrap_err("Failed to start in-process builder")?;
-
-        // 2. Start builder consensus (in-process CL, Sequencer mode).
-        //    The sequencer starts in stopped mode so that blocks are not produced until the
-        //    validator is connected via P2P — otherwise the first blocks would be lost via gossip
-        //    and the validator's EL would be unable to validate later blocks (missing parent).
-        let builder_consensus_config = InProcessConsensusConfig {
-            rollup_config: rollup_config.clone(),
-            l1_chain_config: l1_chain_config.clone(),
-            jwt_secret: config.jwt_secret,
-            l1_rpc_url: l1_rpc_url.clone(),
-            l1_beacon_url: l1_beacon_url.clone(),
-            l2_engine_url: builder.engine_url()?,
-            mode: NodeMode::Sequencer,
-            sequencer_key: Some(config.sequencer_key),
-            p2p_key: Some(config.p2p_key),
-            rpc_port: container_config.and_then(|c| c.builder_consensus_rpc_port),
-            p2p_tcp_port: container_config.and_then(|c| c.builder_consensus_p2p_tcp_port),
-            p2p_udp_port: container_config.and_then(|c| c.builder_consensus_p2p_udp_port),
-            unsafe_block_signer: SEQUENCER.address,
-            l1_slot_duration_override: Some(config.l1_slot_duration),
-            sequencer_stopped: true,
-            verifier_l1_confs: 0,
-            shadow_blocks_per_cycle: None,
-            upgrade_signal: config.upgrade_signal.clone(),
-        };
-        let builder_consensus = InProcessConsensus::start(builder_consensus_config)
-            .await
-            .wrap_err("Failed to start builder consensus")?;
+            clear_otel_env: true,
+        })
+        .await
+        .wrap_err("Failed to start sequencer stack")?;
+        let builder = sequencer.builder();
+        let builder_consensus = sequencer.consensus();
 
         // 3. Start the normal batcher immediately. Delayed-shadow tests instead start a
         // short-lived, deterministic batcher after producing their historical prefix.
@@ -332,9 +325,13 @@ impl L2Stack {
                     mode: NodeMode::Validator,
                     sequencer_key: None,
                     p2p_key: None,
+                    rpc_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    p2p_listen_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    p2p_advertise_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
                     rpc_port: container_config.and_then(|c| c.client_consensus_rpc_port),
                     p2p_tcp_port: container_config.and_then(|c| c.client_consensus_p2p_tcp_port),
                     p2p_udp_port: container_config.and_then(|c| c.client_consensus_p2p_udp_port),
+                    bootnodes: Vec::new(),
                     unsafe_block_signer: SEQUENCER.address,
                     l1_slot_duration_override: Some(config.l1_slot_duration),
                     sequencer_stopped: false,
@@ -532,8 +529,7 @@ impl L2Stack {
         }
 
         Ok(Self {
-            builder,
-            builder_consensus,
+            sequencer,
             batcher: batcher.expect("batcher starts in both shadow startup paths"),
             client,
             client_consensus,
@@ -543,12 +539,12 @@ impl L2Stack {
 
     /// Returns a reference to the in-process builder.
     pub const fn builder(&self) -> &InProcessBuilder {
-        &self.builder
+        self.sequencer.builder()
     }
 
     /// Returns a reference to the builder's consensus node.
     pub const fn builder_consensus(&self) -> &InProcessConsensus {
-        &self.builder_consensus
+        self.sequencer.consensus()
     }
 
     /// Returns a reference to the in-process batcher.
@@ -578,12 +574,12 @@ impl L2Stack {
 
     /// Returns the builder's HTTP RPC URL.
     pub fn rpc_url(&self) -> Result<Url> {
-        self.builder.rpc_url()
+        self.sequencer.builder().rpc_url()
     }
 
     /// Returns the builder's WebSocket URL.
     pub fn ws_url(&self) -> Result<Url> {
-        self.builder.ws_url()
+        self.sequencer.builder().ws_url()
     }
 
     /// Returns the client's HTTP RPC URL.
@@ -593,7 +589,7 @@ impl L2Stack {
 
     /// Returns the builder consensus node's RPC URL.
     pub fn builder_consensus_rpc_url(&self) -> Url {
-        self.builder_consensus.rpc_url()
+        self.sequencer.consensus().rpc_url()
     }
 
     /// Returns the client consensus node's RPC URL.
@@ -608,14 +604,7 @@ impl L2Stack {
 
     /// Stops the in-process L2 services and gracefully shuts down execution runtimes.
     pub async fn shutdown(self) -> Result<()> {
-        let Self {
-            builder,
-            builder_consensus,
-            batcher,
-            client,
-            client_consensus,
-            shadow_sequencers,
-        } = self;
+        let Self { sequencer, batcher, client, client_consensus, shadow_sequencers } = self;
 
         for shadow in shadow_sequencers {
             shadow.shutdown().await.wrap_err("Failed to shut down shadow sequencer")?;
@@ -623,10 +612,9 @@ impl L2Stack {
 
         client_consensus.shutdown().await;
         drop(batcher);
-        drop(builder_consensus);
 
         client.shutdown().await.wrap_err("Failed to shut down L2 client")?;
-        builder.shutdown().await.wrap_err("Failed to shut down L2 builder")?;
+        sequencer.shutdown().await.wrap_err("Failed to shut down L2 sequencer")?;
 
         Ok(())
     }

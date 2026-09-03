@@ -4,10 +4,10 @@
 //! current process instead of using Docker containers. This enables faster test execution
 //! and easier debugging while maintaining the same external interface as [`BuilderContainer`].
 
-use core::net::{Ipv4Addr, SocketAddr};
+use core::net::{IpAddr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
-use alloy_primitives::hex::ToHexExt;
+use alloy_primitives::{B256, hex::ToHexExt};
 use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::{BuilderConfig, test_utils::get_available_port};
 use base_builder_multiplex::MultiplexingServiceBuilder;
@@ -34,7 +34,7 @@ use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
 
-use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
+use crate::setup::BUILDER_ENODE_ID;
 
 /// Configuration for starting an in-process builder.
 #[derive(Debug)]
@@ -43,8 +43,16 @@ pub struct InProcessBuilderConfig {
     pub chain_spec: Arc<BaseChainSpec>,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
     pub datadir: Option<PathBuf>,
+    /// Whether a caller-owned datadir must already contain an initialized database.
+    pub require_existing_datadir: bool,
     /// JWT secret hex for Engine API authentication.
     pub jwt_secret: JwtSecret,
+    /// Address used by RPC, metrics, and Flashblocks listeners.
+    pub rpc_addr: IpAddr,
+    /// Address used by the execution P2P listener and advertised enode.
+    pub p2p_addr: IpAddr,
+    /// Execution P2P private key.
+    pub p2p_key: B256,
     /// Optional fixed HTTP RPC port (uses random if None).
     pub http_port: Option<u16>,
     /// Optional fixed WebSocket port (uses random if None).
@@ -77,6 +85,8 @@ pub struct InProcessBuilderConfig {
     pub txpool_max_size_mb: Option<usize>,
     /// Optional maximum number of transaction slots retained per sender.
     pub txpool_max_account_slots: Option<usize>,
+    /// Whether to remove inherited `OpenTelemetry` environment variables before startup.
+    pub clear_otel_env: bool,
 }
 
 impl InProcessBuilderConfig {
@@ -101,6 +111,7 @@ pub struct InProcessBuilder {
     metrics_addr: SocketAddr,
     flashblocks_port: u16,
     p2p_port: u16,
+    p2p_addr: IpAddr,
     data_dir: PathBuf,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
@@ -124,9 +135,12 @@ impl std::fmt::Debug for InProcessBuilder {
 impl InProcessBuilder {
     /// Starts an in-process builder node with the provided configuration.
     pub async fn start(config: InProcessBuilderConfig) -> Result<Self> {
-        clear_otel_env_vars();
+        if config.clear_otel_env {
+            clear_otel_env_vars();
+        }
 
-        let (data_path, temp_dir) = Self::prepare_datadir(config.datadir.clone())?;
+        let (data_path, temp_dir) =
+            Self::prepare_datadir(config.datadir.clone(), config.require_existing_datadir)?;
         let jwt_path = data_path.join("jwt.hex");
 
         std::fs::create_dir_all(&data_path).wrap_err("Failed to create data directory")?;
@@ -143,13 +157,13 @@ impl InProcessBuilder {
 
         let flashblocks_port = config.flashblocks_port.unwrap_or_else(get_available_port);
         let metrics_addr = SocketAddr::new(
-            Ipv4Addr::LOCALHOST.into(),
+            config.rpc_addr,
             config.metrics_port.unwrap_or_else(get_available_port),
         );
         let builder_config = BuilderConfig {
             block_time: config.block_time,
             block_time_leeway: Duration::from_secs(20),
-            flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
+            flashblocks_ws_addr: SocketAddr::new(config.rpc_addr, flashblocks_port),
             flashblocks_interval: Duration::from_millis(200),
             ..Default::default()
         };
@@ -246,6 +260,7 @@ impl InProcessBuilder {
             metrics_addr,
             flashblocks_port: flashblocks_ws_addr.port(),
             p2p_port,
+            p2p_addr: config.p2p_addr,
             data_dir: data_path,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
@@ -254,13 +269,21 @@ impl InProcessBuilder {
         })
     }
 
-    fn prepare_datadir(datadir: Option<PathBuf>) -> Result<(PathBuf, Option<TempDir>)> {
+    fn prepare_datadir(
+        datadir: Option<PathBuf>,
+        require_existing: bool,
+    ) -> Result<(PathBuf, Option<TempDir>)> {
         if let Some(path) = datadir {
-            eyre::ensure!(path.is_dir(), "caller-owned builder datadir does not exist");
-            eyre::ensure!(
-                path.join("db/mdbx.dat").is_file(),
-                "caller-owned builder datadir does not contain an existing database"
-            );
+            if require_existing {
+                eyre::ensure!(path.is_dir(), "caller-owned builder datadir does not exist");
+                eyre::ensure!(
+                    path.join("db/mdbx.dat").is_file(),
+                    "caller-owned builder datadir does not contain an existing database"
+                );
+            } else {
+                std::fs::create_dir_all(&path)
+                    .wrap_err("Failed to create caller-owned builder datadir")?;
+            }
             return Ok((path, None));
         }
 
@@ -297,7 +320,7 @@ impl InProcessBuilder {
 
     /// Returns the P2P enode URL with actual bound port.
     pub fn p2p_enode(&self) -> String {
-        format!("enode://{BUILDER_ENODE_ID}@127.0.0.1:{}", self.p2p_port)
+        format!("enode://{BUILDER_ENODE_ID}@{}:{}", self.p2p_addr, self.p2p_port)
     }
 
     /// Returns the execution datadir used by this builder.
@@ -385,8 +408,9 @@ fn create_node_config(
             RpcServerArgs::default().with_unused_ports().with_http().with_ws()
         };
 
-    rpc.http_addr = Ipv4Addr::LOCALHOST.into();
-    rpc.ws_addr = Ipv4Addr::LOCALHOST.into();
+    rpc.http_addr = config.rpc_addr;
+    rpc.ws_addr = config.rpc_addr;
+    rpc.auth_addr = config.rpc_addr;
     rpc.auth_jwtsecret = Some(jwt_path.to_path_buf());
     // Match docker-compose `--rpc.eth-proof-window=1209600` (reth default is 0).
     rpc.rpc_eth_proof_window = 1_209_600;
@@ -417,8 +441,9 @@ fn create_node_config(
     } else {
         NetworkArgs::default().with_unused_ports()
     };
-    network.p2p_secret_key_hex = Some(BUILDER.private_key);
+    network.p2p_secret_key_hex = Some(config.p2p_key);
     network.discovery.disable_discovery = true;
+    network.addr = config.p2p_addr;
     if let Some(port) = config.p2p_port {
         network.port = port;
     }
@@ -497,7 +522,8 @@ mod tests {
         let sentinel = datadir.join("caller-owned");
         std::fs::write(&sentinel, []).unwrap();
 
-        let (actual, owner) = InProcessBuilder::prepare_datadir(Some(datadir.clone())).unwrap();
+        let (actual, owner) =
+            InProcessBuilder::prepare_datadir(Some(datadir.clone()), true).unwrap();
         assert_eq!(actual, datadir);
         assert!(owner.is_none());
         drop(owner);
@@ -509,7 +535,7 @@ mod tests {
     fn rejects_empty_caller_owned_datadir() {
         let datadir = TempDir::new().unwrap();
 
-        let error = InProcessBuilder::prepare_datadir(Some(datadir.path().to_path_buf()))
+        let error = InProcessBuilder::prepare_datadir(Some(datadir.path().to_path_buf()), true)
             .expect_err("empty caller-owned datadir should be rejected");
 
         assert!(error.to_string().contains("does not contain an existing database"));
@@ -517,11 +543,24 @@ mod tests {
 
     #[test]
     fn removes_temporary_datadir() {
-        let (datadir, owner) = InProcessBuilder::prepare_datadir(None).unwrap();
+        let (datadir, owner) = InProcessBuilder::prepare_datadir(None, false).unwrap();
         assert!(datadir.exists());
 
         drop(owner);
 
         assert!(!datadir.exists());
+    }
+
+    #[test]
+    fn initializes_fresh_caller_owned_datadir() {
+        let parent = TempDir::new().unwrap();
+        let datadir = parent.path().join("builder");
+
+        let (actual, owner) =
+            InProcessBuilder::prepare_datadir(Some(datadir.clone()), false).unwrap();
+
+        assert_eq!(actual, datadir);
+        assert!(owner.is_none());
+        assert!(actual.is_dir());
     }
 }

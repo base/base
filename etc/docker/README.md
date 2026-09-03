@@ -40,6 +40,12 @@ just devnet logs   # Stream logs from all containers
 just devnet status # Check block numbers and sync status
 ```
 
+The single-sequencer topology (`just devnet up-single`) runs the `base-builder` service through
+`base-devnet fresh`. That command uses the same in-process builder/sequencer harness as system
+tests while continuing to use the Compose-managed L1, batcher, client, and RPC services. The HA
+topology keeps the integrated `base sequencer` command so conductor can manage each sequencer
+independently.
+
 ### Single-Anvil L1 local Nitro proving
 
 The optional single-Anvil variant replaces the Reth execution node and both
