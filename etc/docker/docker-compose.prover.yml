@@ -40,8 +40,10 @@ services:
       prover-service-postgres:
         condition: service_healthy
     ports:
-      # Requester RPC. The worker RPC (9001) and Postgres stay internal.
-      - "${PROVER_SERVICE_RPC_PORT:-9000}:9000"
+      # Requester RPC. Loopback plus the NAT-mode network below keep this
+      # unauthenticated API host-local. The override is a bare port number.
+      # The worker RPC (9001) and Postgres stay internal.
+      - "127.0.0.1:${PROVER_SERVICE_RPC_PORT:-9000}:9000"
     environment:
       - RPC_LISTEN_ADDR=0.0.0.0:9000
       - WORKER_RPC_LISTEN_ADDR=0.0.0.0:9001
@@ -85,3 +87,16 @@ services:
       - RUST_LOG=${RUST_LOG:-}
       - OTEL_SERVICE_NAME=base-prover-zk-host
     restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge
+    enable_ipv6: false
+    driver_opts:
+      # Do not inherit a daemon default of `routed` or `nat-unprotected`.
+      com.docker.network.bridge.gateway_mode_ipv4: nat
+      com.docker.network.bridge.gateway_mode_ipv6: nat
+      # Set explicitly so a daemon `default-network-opts` entry cannot add
+      # trusted interfaces here. Those would let a remote host reach the
+      # requester port at the container address, past the loopback publish.
+      com.docker.network.bridge.trusted_host_interfaces: ""
