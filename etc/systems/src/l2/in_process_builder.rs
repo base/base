@@ -193,6 +193,20 @@ impl InProcessBuilder {
             ))
             .apply(hooks);
         }
+        // Reth's `extend_rpc_modules` is a single-slot hook that silently replaces whatever was
+        // registered before it, and `NodeHooks::apply_to` claims that slot for every extension
+        // RPC module. Registering the builder API here instead keeps both in one closure.
+        let hooks = hooks.add_rpc_module(move |ctx| {
+            let api =
+                BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
+                    ctx.pool().clone(),
+                    accept_validity_transactions,
+                    DEFAULT_MAX_VALIDITY_PREDICATES,
+                );
+            ctx.modules.merge_configured(api.into_rpc())?;
+            Ok(())
+        });
+
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
@@ -210,16 +224,7 @@ impl InProcessBuilder {
                         ),
                     )
                     .with_add_ons(addons)
-                    .on_component_initialized(move |_ctx| Ok(()))
-                    .extend_rpc_modules(move |ctx| {
-                        let api = BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
-                            ctx.pool().clone(),
-                            accept_validity_transactions,
-                            DEFAULT_MAX_VALIDITY_PREDICATES,
-                        );
-                        ctx.modules.merge_configured(api.into_rpc())?;
-                        Ok(())
-                    }),
+                    .on_component_initialized(move |_ctx| Ok(())),
             )
             .launch()
             .await;
