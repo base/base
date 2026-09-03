@@ -1,0 +1,30 @@
+# Load Test Configuration - Local Mainnet Snapshot Account Creation
+#
+# This config is for `base-bench snapshot` against two writable Base mainnet
+# snapshot datadirs. The benchmark launcher replaces the placeholder RPC URLs,
+# generates and prefunds an ephemeral funder key, and skips account draining.
+
+transaction_submission_rpcs:
+  - "http://127.0.0.1:7545"
+query_rpc: "http://127.0.0.1:7545"
+txpool_nodes: []
+flashblocks_ws: "ws://127.0.0.1:7111"
+
+chain_id: 8453
+sender_count: 100
+block_time: "2s"
+in_flight_per_sender: 1024
+max_total_in_flight: 100000
+batch_size: 20
+duration: null
+measurement_blocks: 500
+target_gps: null
+seed: 12345
+
+funding_amount: "10000000000000000"
+fresh_recipient_ratio: 1.0
+skip_drain: true
+
+transactions:
+  - weight: 100
+    type: transfer
