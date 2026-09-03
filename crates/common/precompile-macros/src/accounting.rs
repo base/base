@@ -296,6 +296,17 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
             ) -> ::base_precompile_storage::Result<()> {
                 self.emit_event(log)
             }
+
+            fn metered_keccak256(
+                &self,
+                data: &[u8],
+            ) -> ::base_precompile_storage::Result<::alloy_primitives::B256> {
+                ::base_precompile_storage::ContractStorage::storage(self).metered_keccak256(data)
+            }
+
+            fn deduct_gas(&self, gas: u64) -> ::base_precompile_storage::Result<()> {
+                ::base_precompile_storage::ContractStorage::storage(self).deduct_gas(gas)
+            }
         }
     })
 }
