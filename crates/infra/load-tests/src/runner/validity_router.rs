@@ -16,11 +16,14 @@ use super::{
 
 /// Salt mixed into the per-sender validity routing hash.
 const VALIDITY_SENDER_SALT: u64 = 0x7661_6c69_6469_7479; // "validity"
+/// Salt mixed into the priority-lead validity sub-cohort hash.
+const PRIORITY_LEAD_SENDER_SALT: u64 = 0x6c65_6164_2d74_6970; // "lead-tip"
 
 /// Routes transactions onto submission cohorts and resolves validity predicates.
 #[derive(Debug, Clone)]
 pub struct ValidityRouter {
     ratio: f64,
+    priority_lead_ratio: f64,
     predicates: Vec<ValidityPredicateTemplate>,
     seed: u64,
 }
@@ -30,6 +33,7 @@ impl ValidityRouter {
     pub fn new(config: &LoadConfig) -> Self {
         Self {
             ratio: config.validity_ratio,
+            priority_lead_ratio: config.validity_priority_lead_ratio,
             predicates: config.validity_predicates.clone(),
             seed: config.seed,
         }
@@ -68,7 +72,16 @@ impl ValidityRouter {
         {
             return SubmitCohort::Plain;
         }
-        SubmitCohort::ValidityPass
+        if sender_in_fraction(
+            sender,
+            self.seed,
+            PRIORITY_LEAD_SENDER_SALT,
+            self.priority_lead_ratio,
+        ) {
+            SubmitCohort::ValidityPassPriorityLead
+        } else {
+            SubmitCohort::ValidityPass
+        }
     }
 
     /// Resolves the configured predicate templates into concrete predicates for
@@ -86,7 +99,7 @@ impl ValidityRouter {
         to: Option<Address>,
     ) -> Vec<ValidityPredicate> {
         match cohort {
-            SubmitCohort::ValidityPass => {
+            SubmitCohort::ValidityPass | SubmitCohort::ValidityPassPriorityLead => {
                 self.predicates.iter().map(|t| Self::resolve(t, current_block, from, to)).collect()
             }
             SubmitCohort::Plain => Vec::new(),
@@ -114,7 +127,7 @@ impl ValidityRouter {
                     slot: resolve_slot(slot, from, to),
                     mask: mask.unwrap_or_else(ValidityPredicate::default_mask),
                     op: *op,
-                    value: *value,
+                    value: value.resolve(from),
                 }
             }
             // Position predicates read the build context, not `from`/`to`. An
@@ -191,9 +204,10 @@ mod tests {
     use base_execution_txpool::ValidityOperator;
 
     use super::*;
+    use crate::PredicateValue;
 
     fn router(ratio: f64, predicates: Vec<ValidityPredicateTemplate>) -> ValidityRouter {
-        ValidityRouter { ratio, predicates, seed: 12345 }
+        ValidityRouter { ratio, priority_lead_ratio: 0.0, predicates, seed: 12345 }
     }
 
     #[test]
@@ -238,6 +252,28 @@ mod tests {
             .count();
         let fraction = validity as f64 / total as f64;
         assert!((fraction - 0.3).abs() < 0.05, "fraction {fraction} should be near 0.3");
+    }
+
+    #[test]
+    fn priority_lead_ratio_selects_a_stable_validity_sub_cohort() {
+        let mut r = router(0.8, Vec::new());
+        r.priority_lead_ratio = 0.25;
+        let total = 4_000u32;
+        let cohorts: Vec<SubmitCohort> = (0..total)
+            .map(|i| {
+                let mut bytes = [0u8; 20];
+                bytes[..4].copy_from_slice(&i.to_be_bytes());
+                r.cohort_for_sender(Address::from(bytes))
+            })
+            .collect();
+        let validity = cohorts.iter().filter(|cohort| cohort.is_validity()).count();
+        let priority_lead = cohorts
+            .iter()
+            .filter(|cohort| **cohort == SubmitCohort::ValidityPassPriorityLead)
+            .count();
+
+        assert!((validity as f64 / total as f64 - 0.8).abs() < 0.05);
+        assert!((priority_lead as f64 / validity as f64 - 0.25).abs() < 0.05);
     }
 
     #[test]
@@ -463,7 +499,7 @@ mod tests {
             },
             mask: None,
             op: ValidityOperator::GreaterThanOrEqual,
-            value: U256::ZERO,
+            value: PredicateValue::Fixed(U256::ZERO),
         }];
         let r = router(1.0, templates);
         let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, Address::ZERO, None);
@@ -479,6 +515,28 @@ mod tests {
                 assert_eq!(*mask, ValidityPredicate::default_mask());
             }
             other => panic!("expected storage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sender_parity_value_splits_storage_predicates_by_sender() {
+        let templates = vec![ValidityPredicateTemplate::Storage {
+            address: PredicateAddress::Fixed(Address::repeat_byte(0x99)),
+            slot: SlotTemplate::Fixed(U256::ZERO),
+            mask: Some(U256::from(1)),
+            op: ValidityOperator::Equal,
+            value: PredicateValue::SenderParity,
+        }];
+        let r = router(1.0, templates);
+
+        for (sender, expected) in
+            [(Address::repeat_byte(0x10), U256::ZERO), (Address::repeat_byte(0x11), U256::from(1))]
+        {
+            let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, sender, None);
+            match &predicates[0] {
+                ValidityPredicate::Storage { value, .. } => assert_eq!(*value, expected),
+                other => panic!("expected storage, got {other:?}"),
+            }
         }
     }
 }

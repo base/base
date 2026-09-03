@@ -24,6 +24,9 @@ just load-test run
 # Deploy the devnet WETH/USDC harness and run real-token swaps
 just load-test real-token
 
+# Deploy DoubleCounter and run the 64-predicate validity stress profile
+just load-test validity-stress
+
 # Run real-token swaps against a network with predeployed contracts
 FUNDER_KEY=0x... just load-test real-token sepolia
 
@@ -144,6 +147,7 @@ delay is measured for logging but is no longer included in the JSON output.
 | `devnet.yaml` | Local devnet | Uses Anvil Account #1 |
 | `validity-devnet.yaml` | Local devnet | Validity (conditional) workload; routes half the senders through `base_sendRawTransactionValidity`. Run with `FUNDER_KEY=... just load-test run validity-devnet`. Requires the node validity flags for end-to-end enforcement |
 | `real-token-devnet.yaml.template` | Local devnet | Rendered by `just load-test real-token` after deploying the devnet WETH/USDC harness |
+| `validity-stress.yaml.template` | Local devnet | Rendered by `just load-test validity-stress` with a freshly deployed `DoubleCounter` |
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
 | `real-token-sepolia.yaml` | Base Sepolia | Uses predeployed WETH/USDC and the Uniswap V3 swap router; run with `just load-test real-token sepolia`; recover with `just load-test real-token-recover sepolia` |
 | `real-token-mainnet-snapshot.yaml` | Local/shadow Base mainnet snapshot | Wraps funded ETH into WETH, acquires USDC, then runs random-direction Uniswap V3 and Aerodrome CL swaps; run with `just load-test real-token mainnet-snapshot` |
@@ -296,6 +300,36 @@ Recipient keys are always positioned with a runtime-random seed/offset (never th
 
 #### Validity (Conditional) Transactions
 
+`just load-test validity-stress [--continuous ...]` installs and builds the Foundry fixtures,
+deploys `DoubleCounter` to the already-running devnet on port 7545, renders a temporary config, and
+removes that config on exit. It does not restart the devnet. The profile attaches the maximum 64
+storage predicates: 63 always-true reads of distinct slots 1–63 followed by
+`(slot 0 & 1) == sender_parity`, where `sender_parity` is the low bit of each sender address. This
+keeps approximately half the sender streams matching and half parked at either slot value. All 800
+senders target the same contract and attach predicates. Ten percent use twice the baseline priority
+tip while the bulk uses half the baseline tip. The 600M gas/s target fills the controller's two-block
+mempool ceiling with roughly 4,500 validity transactions. An independent devnet account mutates slot
+0 every 30 seconds while measured transactions increment slot 1, so the two sender halves swap
+between matching and parked. That periodically wakes and rescans the parked set without measured
+transactions self-invalidating the parity gate. Override the cadence with
+`VALIDITY_STRESS_MUTATOR_INTERVAL_SECONDS`. This creates a shared-slot adversary where transactions
+repeatedly park, wake, invalidate, and rescan while each evaluation performs the maximum number of
+distinct storage reads.
+
+With the workload running, verify sustained pressure from the repository root:
+
+```bash
+etc/scripts/devnet/validity-stress-gate.sh --wait
+```
+
+The gate requires cutoff pressure, inclusions, storage reads, parking wakeups, and rescans to hold
+continuously for 60 seconds.
+
+The stress profile submits directly to the builder RPC on port 7545 so ingress forwarding cannot
+become the bottleneck or leave an asynchronous forwarding backlog between runs. To exercise the
+end-to-end forwarding path instead, override `transaction_submission_rpcs` in a rendered copy to
+port 8545. Both nodes still require the experimental validity flags described below.
+
 A configurable fraction of *senders* can route their entire traffic through the
 `base_sendRawTransactionValidity` endpoint, attaching validity predicates to
 every transaction they submit. All four server predicate types are supported:
@@ -316,6 +350,9 @@ approximates the fraction of transactions.
 ```yaml
 validity:
   ratio: 0.25                 # fraction of senders routed to the validity endpoint
+  priority_lead_ratio: 0.10   # fraction of validity senders priced ahead of plain traffic
+  priority_lead_multiplier: 2 # multiply the priority-lead cohort's tip
+  priority_fee_divisor: 2     # lower the remaining validity senders' tips
   predicates:
     - type: balance
       address: sender          # sender | recipient | 0x-literal
@@ -328,7 +365,7 @@ validity:
         value: "0x1"
       mask: "0xff"             # optional; defaults to all ones server-side
       op: "="
-      value: "0x0"
+      value: sender_parity      # or a fixed hex/decimal value
     # balanceOf(sender) against a seeded token's mapping slot:
     - type: storage
       address: "0xTOKEN000000000000000000000000000000000000"
@@ -359,8 +396,10 @@ so `balanceOf(key)` slots are expressible. The `flashblock_index` predicate
 carries an `op` and `value`, and `block_number` carries an `op` plus exactly one
 of `value` (a fixed absolute block number) or `offset` (resolved to
 `current_block + offset` at prepare time); both read the build position rather
-than any address or slot. Values, slots, masks, and offsets accept hex (`0x...`)
-or decimal strings. At most 64 predicates may be attached per transaction.
+than any address or slot. Storage predicate values may also be `sender_parity`,
+which resolves to the low bit of each transaction sender's address. Fixed values,
+slots, masks, and offsets accept hex (`0x...`) or decimal strings. At most 64
+predicates may be attached per transaction.
 
 The final summary's `by_cohort` breakdown reports confirmed transactions split
 across the `plain` and `validity_pass` cohorts, so plain traffic can be compared

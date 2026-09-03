@@ -506,7 +506,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 32
       },
       "id": 101,
       "panels": [],
@@ -576,7 +576,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 27
+        "y": 33
       },
       "id": 7,
       "options": {
@@ -674,7 +674,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 27
+        "y": 33
       },
       "id": 8,
       "options": {
@@ -788,7 +788,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 27
+        "y": 33
       },
       "id": 9,
       "options": {
@@ -829,7 +829,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 41
       },
       "id": 102,
       "panels": [],
@@ -917,7 +917,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 36
+        "y": 42
       },
       "id": 11,
       "options": {
@@ -1027,7 +1027,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 36
+        "y": 42
       },
       "id": 12,
       "options": {
@@ -1126,7 +1126,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 36
+        "y": 42
       },
       "id": 13,
       "options": {
@@ -1225,7 +1225,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 44
+        "y": 50
       },
       "id": 14,
       "options": {
@@ -1845,12 +1845,152 @@
           "type": "timeseries"
         },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Parking-index pressure over the selected window. Wakeups are index buckets revisited per completed build, sampled depth is parked transactions per non-empty bucket, and rescan evaluations show the resulting predicate recheck rate.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/wakeups/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F2B84B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/depth/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#B877D9",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/evaluations/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5794F2",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "cps"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "id": 38,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "10.4.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(reth_base_builder_predicate_bucket_wakeups_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_bucket_wakeups_count{job=\"l2_builder\"}[$window]))",
+          "legendFormat": "bucket wakeups · mean/build",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(reth_base_builder_predicate_bucket_depth_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_bucket_depth_count{job=\"l2_builder\"}[$window]))",
+          "legendFormat": "sampled bucket depth · mean",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=~\"rescan_matched|rescan_not_satisfied|rescan_read_error|rescan_budget_exhausted\"}[$window]))",
+          "legendFormat": "rescan evaluations · rate",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Predicate Parking & Rescan Pressure",
+      "type": "timeseries"
+    },
+    {
       "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 51
+        "y": 57
       },
       "id": 104,
       "panels": [
@@ -2199,7 +2339,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 58
       },
       "id": 105,
       "panels": [
@@ -2585,7 +2725,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 53
+        "y": 59
       },
       "id": 106,
       "panels": [
@@ -2952,7 +3092,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 54
+        "y": 60
       },
       "id": 107,
       "panels": [
@@ -3212,7 +3352,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 61
       },
       "id": 108,
       "panels": [

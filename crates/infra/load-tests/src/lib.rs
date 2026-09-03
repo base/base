@@ -5,8 +5,9 @@
 mod config;
 pub use config::{
     OsakaTarget, PrecompileTarget, PredicateAddressConfig, PredicateSlotConfig,
-    RealTokenAcquisitionConfig, RealTokenPairTokenConfig, RealTokenSetupConfig, TestConfig,
-    TxTypeConfig, ValidityConfig, ValidityPredicateConfig, WeightedTxType, WorkloadConfig,
+    PredicateValueConfig, RealTokenAcquisitionConfig, RealTokenPairTokenConfig,
+    RealTokenSetupConfig, TestConfig, TxTypeConfig, ValidityConfig, ValidityPredicateConfig,
+    WeightedTxType, WorkloadConfig,
 };
 
 mod executor;
@@ -37,10 +38,10 @@ pub use metrics::{
 mod workload;
 pub use workload::{
     AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, ChainPrepContext,
-    ChainPrepOutputs, Erc20Payload, FundedAccount, KeyStream, OsakaPayload, Payload,
-    PrecompileLooper, PrecompilePayload, RealTokenAcquisition, RealTokenPairTokenSetup,
-    RealTokenRecoverySummary, RealTokenSetup, SeededRng, StoragePayload, TransferPayload,
-    UniswapV3Payload, WorkloadGenerator, parse_precompile_id, recover_real_tokens,
+    ChainPrepOutputs, DOUBLE_COUNTER_GAS_LIMIT, DoubleCounterPayload, Erc20Payload, FundedAccount,
+    KeyStream, OsakaPayload, Payload, PrecompileLooper, PrecompilePayload, RealTokenAcquisition,
+    RealTokenPairTokenSetup, RealTokenRecoverySummary, RealTokenSetup, SeededRng, StoragePayload,
+    TransferPayload, UniswapV3Payload, WorkloadGenerator, parse_precompile_id, recover_real_tokens,
 };
 
 mod runner;
@@ -52,9 +53,10 @@ pub use runner::{
     InjectLimit, InjectPlan, LoadConfig, LoadRunner, LoadTestDisplay, LoadTestStage,
     MAX_FEE_BASE_FEE_MULTIPLIER, MAX_SENDER_WORKER_COUNT, MAX_SIGNER_WORKER_COUNT,
     MIN_PRIORITY_FEE, MeasurementWindow, MempoolDepthController, PipelineQueue,
-    PipelineStartConfig, PredicateAddress, PreparedBatch, PreparedTransaction, PresignBuffer,
-    QueuedSubmitFailures, ResultsTracker, SENDER_WORKERS_PER_RPC, SIGNER_WORKERS_PER_RPC,
-    SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS, SenderContext, SentTransaction, SignedBatch,
-    SignedTransaction, SignerContext, SlotTemplate, SubmissionPipeline, SubmitCohort, SubmitEvent,
-    TxConfig, TxType, ValidityPredicateTemplate, ValidityRouter,
+    PipelineStartConfig, PredicateAddress, PredicateValue, PreparedBatch, PreparedTransaction,
+    PresignBuffer, QueuedSubmitFailures, ResultsTracker, SENDER_WORKERS_PER_RPC,
+    SIGNER_WORKERS_PER_RPC, SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS, SenderContext,
+    SentTransaction, SignedBatch, SignedTransaction, SignerContext, SlotTemplate,
+    SubmissionPipeline, SubmitCohort, SubmitEvent, TxConfig, TxType, ValidityPredicateTemplate,
+    ValidityRouter,
 };
