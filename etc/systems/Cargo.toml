@@ -22,6 +22,7 @@ workspace = true
 [dependencies]
 # workspace
 base-runtime.workspace = true
+base-builder-cli.workspace = true
 base-test-utils = { workspace = true, optional = true }
 base-load-tests.workspace = true
 base-txpool-rpc.workspace = true
@@ -49,6 +50,7 @@ base-consensus-sources.workspace = true
 base-consensus-providers.workspace = true
 base-common-genesis.workspace = true
 base-common-chains.workspace = true
+base-observability-events.workspace = true
 
 # reth
 reth-db.workspace = true
