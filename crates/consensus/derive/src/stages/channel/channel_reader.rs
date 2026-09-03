@@ -62,18 +62,10 @@ where
             let channel =
                 self.prev.next_data().await?.ok_or(PipelineError::ChannelReaderEmpty.temp())?;
 
-            let origin = self.prev.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-            let fjord_active = self.cfg.is_fjord_active(origin.timestamp);
-            let max_rlp_bytes_per_channel = if fjord_active {
-                RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD
-            } else {
-                RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
-            };
-
             self.next_batch = Some(BatchReader::new(
                 &channel[..],
-                max_rlp_bytes_per_channel as usize,
-                fjord_active,
+                RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
+                true,
             ));
             Metrics::pipeline_batch_reader_set().set(1);
         }

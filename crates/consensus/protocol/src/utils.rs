@@ -5,9 +5,7 @@ use alloc::{string::ToString, vec::Vec};
 use alloy_consensus::{Transaction, Typed2718};
 use alloy_primitives::{B256, Bytes, U256};
 use alloy_rlp::{Buf, Header};
-use base_common_consensus::{
-    BaseBlock, BaseTxEnvelope, HoloceneExtraData, JovianExtraData, OpTxType,
-};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, JovianExtraData, OpTxType};
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BaseExecutionPayload;
 
@@ -31,13 +29,7 @@ pub fn to_system_config(
         .transactions
         .first()
         .ok_or(BaseBlockConversionError::EmptyTransactions(block_hash))?;
-    system_config_from_transaction(
-        first_tx,
-        block.header.timestamp,
-        block.header.gas_limit,
-        &block.header.extra_data,
-        rollup_config,
-    )
+    system_config_from_transaction(first_tx, block.header.gas_limit, &block.header.extra_data)
 }
 
 /// Converts the [`BaseExecutionPayload`] to a partial [`SystemConfig`].
@@ -56,13 +48,7 @@ pub fn to_system_config_from_payload(
         .next()
         .ok_or(BaseBlockConversionError::EmptyTransactions(block_hash))?
         .map_err(|error| BaseBlockConversionError::InvalidTransactionEncoding(error.to_string()))?;
-    system_config_from_transaction(
-        &first_tx,
-        payload.timestamp(),
-        payload.gas_limit(),
-        &payload.as_v1().extra_data,
-        rollup_config,
-    )
+    system_config_from_transaction(&first_tx, payload.gas_limit(), &payload.as_v1().extra_data)
 }
 
 fn genesis_system_config(
@@ -88,10 +74,8 @@ fn genesis_system_config(
 
 fn system_config_from_transaction(
     first_tx: &BaseTxEnvelope,
-    timestamp: u64,
     gas_limit: u64,
     extra_data: &Bytes,
-    rollup_config: &RollupConfig,
 ) -> Result<SystemConfig, BaseBlockConversionError> {
     let Some(tx) = first_tx.as_deposit() else {
         return Err(BaseBlockConversionError::InvalidTxType(first_tx.ty()));
@@ -119,22 +103,15 @@ fn system_config_from_transaction(
         ..Default::default()
     };
 
-    // After holocene's activation, the EIP-1559 parameters are stored in the block header's nonce.
-    if rollup_config.is_jovian_active(timestamp) {
-        let (elasticity, denominator, min_base_fee) = JovianExtraData::decode(extra_data)?;
-        cfg.eip1559_denominator = Some(denominator);
-        cfg.eip1559_elasticity = Some(elasticity);
-        cfg.min_base_fee = Some(min_base_fee);
-    } else if rollup_config.is_holocene_active(timestamp) {
-        let (elasticity, denominator) = HoloceneExtraData::decode(extra_data)?;
-        cfg.eip1559_denominator = Some(denominator);
-        cfg.eip1559_elasticity = Some(elasticity);
-    }
+    // to_system_config[_from_payload] is only invoked on >= Jovian blocks post-migration, so the
+    // EIP-1559 parameters (and the min base fee) are always read from the Jovian-format extra data.
+    let (elasticity, denominator, min_base_fee) = JovianExtraData::decode(extra_data)?;
+    cfg.eip1559_denominator = Some(denominator);
+    cfg.eip1559_elasticity = Some(elasticity);
+    cfg.min_base_fee = Some(min_base_fee);
 
-    if rollup_config.is_isthmus_active(timestamp) {
-        cfg.operator_fee_scalar = Some(l1_info.operator_fee_scalar());
-        cfg.operator_fee_constant = Some(l1_info.operator_fee_constant());
-    }
+    cfg.operator_fee_scalar = Some(l1_info.operator_fee_scalar());
+    cfg.operator_fee_constant = Some(l1_info.operator_fee_constant());
 
     if let Some(da_footprint) = l1_info.da_footprint() {
         cfg.da_footprint_gas_scalar = Some(da_footprint);
@@ -208,7 +185,7 @@ mod tests {
     use super::*;
     use crate::{
         L1BlockInfoJovian, SpanBatchElement,
-        test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX},
+        test_utils::{RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX},
     };
 
     #[test]
@@ -361,56 +338,12 @@ mod tests {
     }
 
     #[test]
-    fn test_constructs_bedrock_system_config() {
-        let block = BaseBlock {
-            header: alloy_consensus::Header { number: 1, ..Default::default() },
-            body: alloy_consensus::BlockBody {
-                transactions: vec![base_common_consensus::BaseTxEnvelope::Deposit(
-                    alloy_primitives::Sealed::new(base_common_consensus::TxDeposit {
-                        input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
-                        ..Default::default()
-                    }),
-                )],
-                ..Default::default()
-            },
-        };
-        let block_hash = block.header.hash_slow();
-        let rollup_config = RollupConfig {
-            genesis: ChainGenesis {
-                l2: BlockNumHash { hash: block_hash, ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let config = to_system_config(&block, &rollup_config).unwrap();
-        let expected = SystemConfig {
-            batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-            overhead: uint!(188_U256),
-            scalar: uint!(684000_U256),
-            gas_limit: 0,
-            base_fee_scalar: None,
-            blob_base_fee_scalar: None,
-            eip1559_denominator: None,
-            eip1559_elasticity: None,
-            operator_fee_scalar: None,
-            operator_fee_constant: None,
-            min_base_fee: None,
-            da_footprint_gas_scalar: None,
-        };
-        assert_eq!(config, expected);
-
-        let (mut payload, _) = BaseExecutionPayload::from_block_slow(&block);
-        payload.transactions_mut().push(bytes!("ff"));
-        assert_eq!(to_system_config_from_payload(&payload, &rollup_config).unwrap(), config);
-    }
-
-    #[test]
     fn test_constructs_ecotone_system_config() {
         let block = BaseBlock {
             header: alloy_consensus::Header {
                 number: 1,
-                // Holocene EIP1559 parameters stored in the extra data.
-                extra_data: bytes!("000000beef0000babe"),
+                // Jovian EIP1559 parameters (and min base fee) stored in the extra data.
+                extra_data: bytes!("010000beef0000babe0000000000000123"),
                 ..Default::default()
             },
             body: alloy_consensus::BlockBody {
@@ -429,10 +362,14 @@ mod tests {
                 l2: BlockNumHash { hash: block_hash, ..Default::default() },
                 ..Default::default()
             },
-            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig {
+                holocene_time: Some(0),
+                isthmus_time: Some(0),
+                jovian_time: Some(0),
+                ..Default::default()
+            },
             ..Default::default()
         };
-        assert!(rollup_config.is_holocene_active(block.header.timestamp));
         let config = to_system_config(&block, &rollup_config).unwrap();
         let expected = SystemConfig {
             batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
@@ -445,9 +382,9 @@ mod tests {
             blob_base_fee_scalar: None,
             eip1559_denominator: Some(0xbeef),
             eip1559_elasticity: Some(0xbabe),
-            operator_fee_scalar: None,
-            operator_fee_constant: None,
-            min_base_fee: None,
+            operator_fee_scalar: Some(0),
+            operator_fee_constant: Some(0),
+            min_base_fee: Some(0x123),
             da_footprint_gas_scalar: None,
         };
         assert_eq!(config, expected);
@@ -461,8 +398,8 @@ mod tests {
         let block = BaseBlock {
             header: alloy_consensus::Header {
                 number: 1,
-                // Holocene EIP1559 parameters stored in the extra data.
-                extra_data: bytes!("000000beef0000babe"),
+                // Jovian EIP1559 parameters (and min base fee) stored in the extra data.
+                extra_data: bytes!("010000beef0000babe0000000000000123"),
                 ..Default::default()
             },
             body: alloy_consensus::BlockBody {
@@ -484,11 +421,11 @@ mod tests {
             upgrades: UpgradeConfig {
                 holocene_time: Some(0),
                 isthmus_time: Some(0),
+                jovian_time: Some(0),
                 ..Default::default()
             },
             ..Default::default()
         };
-        assert!(rollup_config.is_holocene_active(block.header.timestamp));
         let config = to_system_config(&block, &rollup_config).unwrap();
         let expected = SystemConfig {
             batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
@@ -503,7 +440,7 @@ mod tests {
             eip1559_elasticity: Some(0xbabe),
             operator_fee_scalar: Some(0xabcd),
             operator_fee_constant: Some(0xdcba),
-            min_base_fee: None,
+            min_base_fee: Some(0x123),
             da_footprint_gas_scalar: None,
         };
         assert_eq!(config, expected);

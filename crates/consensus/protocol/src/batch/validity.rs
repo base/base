@@ -10,8 +10,6 @@ pub enum BatchDropReason {
     // === Timestamp-related drops ===
     /// Batch timestamp is in the future (Holocene active).
     FutureTimestampHolocene,
-    /// Batch timestamp is in the past (Holocene inactive).
-    PastTimestampPreHolocene,
 
     // === Parent/origin validation drops ===
     /// Parent hash does not match the L2 safe head.
@@ -40,20 +38,14 @@ pub enum BatchDropReason {
     EmptyTransaction,
     /// Batch contains a deposit transaction (not allowed in batch data).
     DepositTransaction,
-    /// EIP-7702 transaction included before Isthmus activation.
-    Eip7702PreIsthmus,
     /// EIP-8130 transaction included before Cobalt activation.
     Eip8130PreCobalt,
     /// Non-empty batch in Jovian transition block.
     NonEmptyTransitionBlock,
 
     // === Span batch specific drops ===
-    /// Span batch received before Delta upgrade.
-    SpanBatchPreDelta,
     /// Span batch would produce a block after Denim activation.
     SpanBatchPostDenim,
-    /// Span batch has no new blocks after safe head (Holocene inactive).
-    SpanBatchNoNewBlocksPreHolocene,
     /// Span batch timestamp is misaligned with block time.
     SpanBatchMisalignedTimestamp,
     /// Span batch timestamp does not overlap exactly.
@@ -78,9 +70,6 @@ impl core::fmt::Display for BatchDropReason {
             Self::FutureTimestampHolocene => {
                 write!(f, "batch timestamp is in the future (Holocene active)")
             }
-            Self::PastTimestampPreHolocene => {
-                write!(f, "batch timestamp is in the past (Holocene inactive)")
-            }
             Self::ParentHashMismatch => write!(f, "parent hash does not match L2 safe head"),
             Self::IncludedTooLate => write!(f, "batch was included too late"),
             Self::EpochTooOld => write!(f, "batch epoch is too old"),
@@ -96,14 +85,9 @@ impl core::fmt::Display for BatchDropReason {
             }
             Self::EmptyTransaction => write!(f, "batch contains empty transaction"),
             Self::DepositTransaction => write!(f, "batch contains deposit transaction"),
-            Self::Eip7702PreIsthmus => write!(f, "EIP-7702 transaction before Isthmus activation"),
             Self::Eip8130PreCobalt => write!(f, "EIP-8130 transaction before Cobalt activation"),
             Self::NonEmptyTransitionBlock => write!(f, "non-empty batch in transition block"),
-            Self::SpanBatchPreDelta => write!(f, "span batch received before Delta upgrade"),
             Self::SpanBatchPostDenim => write!(f, "span batch received after Denim activation"),
-            Self::SpanBatchNoNewBlocksPreHolocene => {
-                write!(f, "span batch has no new blocks after safe head")
-            }
             Self::SpanBatchMisalignedTimestamp => write!(f, "span batch has misaligned timestamp"),
             Self::SpanBatchNotOverlappedExactly => write!(f, "span batch does not overlap exactly"),
             Self::L1OriginBeforeSafeHead => {

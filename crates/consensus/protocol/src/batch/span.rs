@@ -490,14 +490,6 @@ impl SpanBatch {
                     return BatchValidity::Drop(BatchDropReason::DepositTransaction);
                 }
 
-                // If isthmus is not active yet and the transaction is a 7702, drop the batch.
-                if !cfg.is_isthmus_active(batch.timestamp)
-                    && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
-                {
-                    warn!(target: "batch_span", tx_index = i, "EIP-7702 transactions are not supported pre-isthmus");
-                    return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
-                }
-
                 // If cobalt is not active yet and the transaction is an 8130, drop the batch.
                 if !cfg.is_cobalt_active(batch.timestamp)
                     && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
@@ -606,26 +598,13 @@ impl SpanBatch {
         let next_timestamp = cfg.l2_block_timestamp(next);
 
         let starting_epoch_num = self.starting_epoch_num();
-        let mut batch_origin = epoch;
-        if starting_epoch_num == batch_origin.number + 1 {
-            if l1_origins.len() < 2 {
-                info!(
-                    target: "batch_span",
-                    "eager batch wants to advance current epoch {:?}, but could not without more L1 blocks",
-                    epoch.id()
-                );
-                return (BatchValidity::Undecided, None);
-            }
-            batch_origin = l1_origins[1];
-        }
-        if !cfg.is_delta_active(batch_origin.timestamp) {
-            warn!(
+        if starting_epoch_num == epoch.number + 1 && l1_origins.len() < 2 {
+            info!(
                 target: "batch_span",
-                "received SpanBatch (id {:?}) with L1 origin (timestamp {}) before Delta upgrade",
-                batch_origin.id(),
-                batch_origin.timestamp
+                "eager batch wants to advance current epoch {:?}, but could not without more L1 blocks",
+                epoch.id()
             );
-            return (BatchValidity::Drop(BatchDropReason::SpanBatchPreDelta), None);
+            return (BatchValidity::Undecided, None);
         }
 
         if self.starting_timestamp() > next_timestamp {
@@ -637,20 +616,13 @@ impl SpanBatch {
             );
 
             // After holocene is activated, gaps are disallowed.
-            if cfg.is_holocene_active(inclusion_block.timestamp) {
-                return (BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene), None);
-            }
-            return (BatchValidity::Future, None);
+            return (BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene), None);
         }
 
         // Drop the batch if it has no new blocks after the safe head.
         if self.final_timestamp() < next_timestamp {
             warn!(target: "batch_span", "span batch has no new blocks after safe head");
-            return if cfg.is_holocene_active(inclusion_block.timestamp) {
-                (BatchValidity::Past, None)
-            } else {
-                (BatchValidity::Drop(BatchDropReason::SpanBatchNoNewBlocksPreHolocene), None)
-            };
+            return (BatchValidity::Past, None);
         }
 
         // Find the parent block of the span batch.
@@ -1025,35 +997,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_batch_delta_inactive() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig { delta_time: Some(10), ..Default::default() },
-            ..Default::default()
-        };
-        let block = BlockInfo { number: 10, timestamp: 9, ..Default::default() };
-        let l1_blocks = vec![block];
-        let l2_safe_head = L2BlockInfo::default();
-        let inclusion_block = BlockInfo::default();
-        let mut fetcher: TestBatchValidator = TestBatchValidator::default();
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
-        let batch = SpanBatch { batches: vec![first], ..Default::default() };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::SpanBatchPreDelta)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        let str = alloc::format!(
-            "received SpanBatch (id {:?}) with L1 origin (timestamp {}) before Delta upgrade",
-            block.id(),
-            block.timestamp
-        );
-        assert!(logs[0].contains(&str));
-    }
-
-    #[tokio::test]
     async fn test_check_batch_prefix_rejects_first_denim_block_with_nonzero_genesis() {
         let cfg = RollupConfig {
             block_time: 2,
@@ -1134,7 +1077,7 @@ mod tests {
         let batch = SpanBatch { batches: vec![first], ..Default::default() };
         assert_eq!(
             batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Future
+            BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene)
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
@@ -1165,7 +1108,7 @@ mod tests {
         let batch = SpanBatch { batches: vec![first], ..Default::default() };
         assert_eq!(
             batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::SpanBatchNoNewBlocksPreHolocene)
+            BatchValidity::Past
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
@@ -2101,74 +2044,6 @@ mod tests {
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
         assert!(logs[0].contains("sequencers may not embed any deposits into batch data, but found tx that has one, tx_index: 0"));
-    }
-
-    #[tokio::test]
-    async fn test_check_batch_with_eip7702_tx() {
-        let (trace_store, _guard) = crate::capture_traces!();
-
-        let cfg = RollupConfig {
-            seq_window_size: 100,
-            max_sequencer_drift: 100,
-            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
-            block_time: 10,
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 41, ..Default::default() },
-                l2_time: 10,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
-        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 41,
-                timestamp: 10,
-                hash: parent_hash,
-                ..Default::default()
-            },
-            l1_origin: BlockNumHash { number: 9, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
-        let l2_block = L2BlockInfo {
-            block_info: BlockInfo { number: 40, ..Default::default() },
-            ..Default::default()
-        };
-        let mut fetcher: TestBatchValidator =
-            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let filler_bytes = Bytes::copy_from_slice(&[EIP1559_TX_TYPE_ID]);
-        let first = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![filler_bytes.clone()],
-        };
-        let second = SpanBatchElement {
-            epoch_num: 10,
-            timestamp: 20,
-            transactions: vec![Bytes::copy_from_slice(&[alloy_consensus::TxType::Eip7702 as u8])],
-        };
-        let third =
-            SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![filler_bytes] };
-        let batch = SpanBatch {
-            batches: vec![first, second, third],
-            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
-            l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[0].hash[..20]),
-            txs: SpanBatchTransactions::default(),
-            ..Default::default()
-        };
-        assert_eq!(
-            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus)
-        );
-        let logs = trace_store.get_by_level(Level::WARN);
-        assert_eq!(logs.len(), 1);
-        assert!(
-            logs[0].contains("EIP-7702 transactions are not supported pre-isthmus")
-                && logs[0].contains("tx_index")
-                && logs[0].contains('0')
-        );
     }
 
     #[tokio::test]

@@ -255,7 +255,7 @@ fn base_azul_is_standalone_from_jovian() {
 /// submitted by the derivation fixture must NOT be derived.
 ///
 /// `SpanBatch` validation drops the batch because Delta is not active at the
-/// batch L1 origin (`SpanBatchPreDelta`).
+/// batch L1 origin.
 ///
 /// The net result: zero L2 blocks derived, pipeline returns `Ok(0)`.
 #[tokio::test]

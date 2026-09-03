@@ -29,12 +29,12 @@ pub trait BatchStreamProvider {
 /// [`BatchStream`] stage in the derivation pipeline.
 ///
 /// This stage is introduced in the [`Holocene`] upgrade.
-/// It slots in between the [`ChannelReader`] and [`BatchQueue`]
+/// It slots in between the [`ChannelReader`] and [`BatchValidator`]
 /// stages, buffering span batches until they are validated.
 ///
 /// [`Holocene`]: https://specs.base.org/upgrades/holocene/overview
 /// [`ChannelReader`]: crate::stages::ChannelReader
-/// [`BatchQueue`]: crate::stages::BatchQueue
+/// [`BatchValidator`]: crate::stages::BatchValidator
 #[derive(Debug)]
 pub struct BatchStream<P, BF>
 where
@@ -62,13 +62,6 @@ where
     /// Create a new [`BatchStream`] stage.
     pub const fn new(prev: P, config: Arc<RollupConfig>, fetcher: BF) -> Self {
         Self { prev, span: None, buffer: VecDeque::new(), config, fetcher }
-    }
-
-    /// Returns if the [`BatchStream`] stage is active based on the
-    /// origin timestamp and holocene activation timestamp.
-    pub fn is_active(&self) -> PipelineResult<bool> {
-        let origin = self.prev.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-        Ok(self.config.is_holocene_active(origin.timestamp))
     }
 
     /// Gets a span-derived [`SingleBatch`] from the in-memory buffer and assigns its parent hash.
@@ -112,11 +105,9 @@ where
     BF: L2ChainProvider + Send + Debug,
 {
     fn flush(&mut self) {
-        if self.is_active().unwrap_or(false) {
-            self.prev.flush();
-            self.span = None;
-            self.buffer.clear();
-        }
+        self.prev.flush();
+        self.span = None;
+        self.buffer.clear();
     }
 
     fn span_buffer_size(&self) -> usize {
@@ -128,13 +119,6 @@ where
         parent: L2BlockInfo,
         l1_origins: &[BlockInfo],
     ) -> PipelineResult<Batch> {
-        // If the stage is not active, "pass" the next batch
-        // through this stage to the BatchQueue stage.
-        if !self.is_active()? {
-            trace!(target: "batch_span", "BatchStream stage is inactive, pass-through.");
-            return self.prev.next_batch().await;
-        }
-
         let next = parent.block_info.number + 1;
         if self.config.is_denim_active(self.config.l2_block_timestamp(next))
             && (self.span.is_some() || !self.buffer.is_empty())
@@ -153,7 +137,7 @@ where
             );
 
             // If the next batch is a singular batch, it is immediately
-            // forwarded to the `BatchQueue` stage. Otherwise, we buffer
+            // forwarded to the `BatchValidator` stage. Otherwise, we buffer
             // the span batch in this stage if it passes the validity checks.
             match batch_with_inclusion.batch {
                 Batch::Single(b) => return Ok(Batch::Single(b)),
@@ -179,15 +163,7 @@ where
 
                             return Err(PipelineError::NotEnoughData.temp());
                         }
-                        BatchValidity::Past => {
-                            if !self.is_active()? {
-                                error!(target: "batch_stream", "BatchValidity::Past is not allowed pre-holocene");
-                                return Err(PipelineError::InvalidBatchValidity.crit());
-                            }
-
-                            return Err(PipelineError::NotEnoughData.temp());
-                        }
-                        BatchValidity::Undecided | BatchValidity::Future => {
+                        BatchValidity::Past | BatchValidity::Undecided | BatchValidity::Future => {
                             return Err(PipelineError::NotEnoughData.temp());
                         }
                     }
@@ -334,31 +310,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_batch_stream_inactive() {
-        let (trace_store, _guard) = base_protocol::capture_traces!();
-
-        let data = vec![Ok(Batch::Single(SingleBatch::default()))];
-        let config = Arc::new(RollupConfig {
-            upgrades: UpgradeConfig { holocene_time: Some(100), ..Default::default() },
-            ..Default::default()
-        });
-        let prev = TestBatchStreamProvider::new(data);
-        let mut stream =
-            BatchStream::new(prev, Arc::clone(&config), TestL2ChainProvider::default());
-
-        // The stage should not be active.
-        assert!(!stream.is_active().unwrap());
-
-        // The next batch should be passed through to the [BatchQueue] stage.
-        let batch = stream.next_batch(Default::default(), &[]).await.unwrap();
-        assert_eq!(batch, Batch::Single(SingleBatch::default()));
-
-        let logs = trace_store.get_by_level(tracing::Level::TRACE);
-        assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("BatchStream stage is inactive, pass-through."));
-    }
-
-    #[tokio::test]
     async fn test_span_buffer() {
         let mock_batch = SpanBatch {
             batches: vec![
@@ -382,9 +333,6 @@ mod tests {
         let prev = TestBatchStreamProvider::new(data);
         let provider = TestL2ChainProvider::default();
         let mut stream = BatchStream::new(prev, Arc::clone(&config), provider);
-
-        // The stage should be active.
-        assert!(stream.is_active().unwrap());
 
         // The next batches should be single batches derived from the span batch.
         let batch = stream.next_batch(Default::default(), &mock_origins).await.unwrap();
@@ -578,10 +526,7 @@ mod tests {
         let mut stream =
             BatchStream::new(prev, Arc::clone(&config), TestL2ChainProvider::default());
 
-        // The stage should be active.
-        assert!(stream.is_active().unwrap());
-
-        // The next batch should be passed through to the [BatchQueue] stage.
+        // The next batch should be passed through to the [BatchValidator] stage.
         let batch = stream.next_batch(Default::default(), &[]).await.unwrap();
         assert_eq!(batch, Batch::Single(single));
         assert_eq!(stream.span_buffer_size(), 0);
@@ -607,9 +552,6 @@ mod tests {
         let prev = TestBatchStreamProvider::new(data);
         let mut stream =
             BatchStream::new(prev, Arc::clone(&config), TestL2ChainProvider::default());
-
-        // The stage should be active.
-        assert!(stream.is_active().unwrap());
 
         let parent = L2BlockInfo {
             block_info: BlockInfo { number: 10, timestamp: 100, ..Default::default() },

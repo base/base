@@ -142,7 +142,7 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
 /// submits block 1 as a singular batch in L1 block 1 and block 2 as a span
 /// batch in L1 block 2.
 ///
-/// Prior to Delta, span batches are rejected outright (`SpanBatchPreDelta`).
+/// Prior to Delta, span batches are rejected outright.
 /// After Delta, both formats are valid. The derivation pipeline must derive
 /// all 2 L2 blocks regardless of which format each batch uses.
 #[tokio::test]

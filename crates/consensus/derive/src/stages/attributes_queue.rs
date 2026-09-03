@@ -19,7 +19,7 @@ use crate::{
     types::PipelineResult,
 };
 
-/// [`AttributesQueue`] accepts batches from the [`BatchQueue`] stage
+/// [`AttributesQueue`] accepts batches from the [`BatchValidator`] stage
 /// and transforms them into [`BasePayloadAttributes`].
 ///
 /// The outputted payload attributes cannot be buffered because each batch->attributes
@@ -31,7 +31,7 @@ use crate::{
 /// This stage can be reset by clearing its batch buffer.
 /// This stage does not need to retain any references to L1 blocks.
 ///
-/// [`BatchQueue`]: crate::stages::BatchQueue
+/// [`BatchValidator`]: crate::stages::BatchValidator
 #[derive(Debug)]
 pub struct AttributesQueue<P, AB>
 where

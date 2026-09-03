@@ -7,7 +7,7 @@ use base_common_genesis::RollupConfig;
 use base_protocol::{BlockInfo, DERIVATION_VERSION_0, Frame};
 
 use crate::{
-    FrameQueue, NextFrameProvider, OriginProvider, PipelineError, PipelineErrorKind,
+    FrameQueue, NextFrameProvider, PipelineError, PipelineErrorKind,
     test_utils::TestFrameQueueProvider,
 };
 
@@ -104,16 +104,6 @@ impl FrameQueueAsserter {
         expected_err: PipelineErrorKind,
     ) -> Self {
         Self { inner, expected_frames, expected_err }
-    }
-
-    /// Asserts that holocene is active.
-    pub fn holocene_active(&self, active: bool) {
-        let holocene = self.inner.is_holocene_active(self.inner.origin().unwrap_or_default());
-        if !active {
-            assert!(!holocene);
-        } else {
-            assert!(holocene);
-        }
     }
 
     /// Asserts that the frame queue returns with a missing origin error.

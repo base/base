@@ -779,7 +779,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, Sealed};
+    use alloy_primitives::{B256, Bytes, Sealed};
     use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
     use base_common_genesis::{RollupConfig, SystemConfig};
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
@@ -790,7 +790,15 @@ mod tests {
 
     fn valid_sealer() -> (PayloadSealer, L2BlockInfo, SystemConfig) {
         let block = BaseBlock {
-            header: alloy_consensus::Header { number: 1, ..Default::default() },
+            // Post-Azul blocks carry 17-byte Jovian-format EIP-1559 extra data (version byte + zeroed
+            // params); `to_system_config_from_payload` now always decodes this format.
+            header: alloy_consensus::Header {
+                number: 1,
+                extra_data: Bytes::from_static(&[
+                    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                ]),
+                ..Default::default()
+            },
             body: alloy_consensus::BlockBody {
                 transactions: vec![BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
                     input: L1BlockInfoBedrock::default().encode_calldata(),

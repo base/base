@@ -9,13 +9,13 @@ use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 // Re-export these types used internally to the test pipeline.
 use crate::{
-    AttributesQueue, BatchStream, ChannelProvider, ChannelReader, DerivationPipeline, FrameQueue,
+    AttributesQueue, BatchStream, ChannelAssembler, ChannelReader, DerivationPipeline, FrameQueue,
     L1Retrieval, NextAttributes, OriginAdvancer, OriginProvider, PipelineBuilder, PipelineError,
     PollingTraversal, StageReset,
     test_utils::{TestAttributesBuilder, TestDAP},
 };
 use crate::{
-    BatchProvider, PipelineResult,
+    BatchValidator, PipelineResult,
     test_utils::{TestChainProvider, TestL2ChainProvider},
 };
 
@@ -74,20 +74,20 @@ pub type TestL1Retrieval = L1Retrieval<TestDAP, TestPollingTraversal>;
 /// A [`FrameQueue`] using test providers and sources.
 pub type TestFrameQueue = FrameQueue<TestL1Retrieval>;
 
-/// A [`ChannelProvider`] using test providers and sources.
-pub type TestChannelProvider = ChannelProvider<TestFrameQueue>;
+/// A [`ChannelAssembler`] using test providers and sources.
+pub type TestChannelAssembler = ChannelAssembler<TestFrameQueue>;
 
 /// A [`ChannelReader`] using test providers and sources.
-pub type TestChannelReader = ChannelReader<TestChannelProvider>;
+pub type TestChannelReader = ChannelReader<TestChannelAssembler>;
 
 /// A [`BatchStream`] using test providers and sources.
 pub type TestBatchStream = BatchStream<TestChannelReader, TestL2ChainProvider>;
 
-/// A [`BatchProvider`] using test providers and sources.
-pub type TestBatchProvider = BatchProvider<TestBatchStream, TestL2ChainProvider>;
+/// A [`BatchValidator`] using test providers and sources.
+pub type TestBatchValidator = BatchValidator<TestBatchStream, TestL2ChainProvider>;
 
 /// An [`AttributesQueue`] using test providers and sources.
-pub type TestAttributesQueue = AttributesQueue<TestBatchProvider, TestAttributesBuilder>;
+pub type TestAttributesQueue = AttributesQueue<TestBatchValidator, TestAttributesBuilder>;
 
 /// A [`DerivationPipeline`] using test providers and sources.
 pub type TestPipeline = DerivationPipeline<TestAttributesQueue, TestL2ChainProvider>;

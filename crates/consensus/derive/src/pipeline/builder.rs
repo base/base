@@ -8,9 +8,9 @@ use base_common_genesis::RollupConfig;
 use base_protocol::BlockInfo;
 
 use crate::{
-    AttributesBuilder, AttributesQueue, BatchProvider, BatchStream, ChainProvider, ChannelProvider,
-    ChannelReader, DataAvailabilityProvider, DerivationPipeline, FrameQueue, L1Retrieval,
-    L2ChainProvider, PolledAttributesQueueStage, PollingTraversal,
+    AttributesBuilder, AttributesQueue, BatchStream, BatchValidator, ChainProvider,
+    ChannelAssembler, ChannelReader, DataAvailabilityProvider, DerivationPipeline, FrameQueue,
+    L1Retrieval, L2ChainProvider, PolledAttributesQueueStage, PollingTraversal,
 };
 
 /// The `PipelineBuilder` constructs a [`DerivationPipeline`] using a builder pattern.
@@ -139,14 +139,17 @@ where
         let l1_retrieval = L1Retrieval::new(l1_traversal, dap_source)
             .with_da_batcher_sender_override(builder.da_batcher_sender_override);
         let frame_queue = FrameQueue::new(l1_retrieval, Arc::clone(&rollup_config));
-        let channel_provider = ChannelProvider::new(Arc::clone(&rollup_config), frame_queue);
-        let channel_reader = ChannelReader::new(channel_provider, Arc::clone(&rollup_config));
+        let channel_assembler = ChannelAssembler::new(Arc::clone(&rollup_config), frame_queue);
+        let channel_reader = ChannelReader::new(channel_assembler, Arc::clone(&rollup_config));
         let batch_stream =
             BatchStream::new(channel_reader, Arc::clone(&rollup_config), l2_chain_provider.clone());
-        let batch_provider =
-            BatchProvider::new(Arc::clone(&rollup_config), batch_stream, l2_chain_provider.clone());
+        let batch_validator = BatchValidator::new(
+            Arc::clone(&rollup_config),
+            batch_stream,
+            l2_chain_provider.clone(),
+        );
         let attributes =
-            AttributesQueue::new(Arc::clone(&rollup_config), batch_provider, attributes_builder);
+            AttributesQueue::new(Arc::clone(&rollup_config), batch_validator, attributes_builder);
 
         // Create the pipeline.
         Self::new(attributes, rollup_config, l2_chain_provider)
