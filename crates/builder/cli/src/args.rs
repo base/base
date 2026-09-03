@@ -547,7 +547,7 @@ mod tests {
 
         assert!(parsed.args.enable_resource_metering);
         assert_eq!(
-            parsed.args.resource_metering.resource_metering_schedule.as_deref(),
+            parsed.args.resource_metering_schedule.as_deref(),
             Some(std::path::Path::new("/tmp/resource-metering.json"))
         );
         assert!(parsed.args.build_metering_store().is_enabled());

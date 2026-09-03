@@ -1145,7 +1145,7 @@ impl BasePayloadBuilderCtx {
                     },
                 );
                 log_txn(Err(err));
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                Self::skip_current(best_txs, tx.signer(), tx.nonce(), replay_independent);
                 continue;
             }
 
