@@ -172,13 +172,17 @@ pull-images:
     docker pull ghcr.io/paradigmxyz/reth:v1.11.4
     docker pull sigp/lighthouse:v8.0.1
 
+# Reth's unoptimized node launch overflows the 2 MiB stack libtest gives each test thread,
+# which SIGSEGVs on Linux. Do not move to nextest.toml `[env]`; nextest silently drops it.
+system_test_min_stack := "33554432"
+
 # Runs system tests (requires Docker)
 tests: _install-nextest _build-contracts
-    cargo nextest run -p base-system-tests
+    RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest run -p base-system-tests
 
 # Runs system tests with ci profile for minimal disk usage
 tests-ci: _install-nextest _build-contracts
-    cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci --no-fail-fast
+    RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci --no-fail-fast
 
 # Runs system test benchmarks
 bench name:
