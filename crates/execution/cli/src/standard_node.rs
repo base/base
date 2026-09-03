@@ -22,7 +22,7 @@ use base_tx_forwarding::{
     TxForwardingExtension,
 };
 use base_txpool_rpc::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    DEFAULT_MAX_VALIDITY_PREDICATES, SendTransactionValidityExtension, TxPoolRpcConfig,
     TxPoolRpcExtension,
 };
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
@@ -626,7 +626,7 @@ impl StandardBaseRethNode {
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {
-            runner.install_ext::<SendRawTransactionValidityExtension>(
+            runner.install_ext::<SendTransactionValidityExtension>(
                 args.rpc.experimental_validity_max_predicates,
             );
         }

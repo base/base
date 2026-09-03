@@ -5,8 +5,8 @@ use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, N
 use reth_rpc_server_types::RethRpcModule;
 
 use crate::{
-    AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
-    SendRawTransactionValidityApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
+    AdminTxPoolApiImpl, AdminTxPoolApiServer, SendTransactionValidityApiImpl,
+    SendTransactionValidityApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
 };
 
 /// Configuration for the `TxPool` RPC extension.
@@ -45,21 +45,21 @@ impl BaseNodeExtension for TxPoolRpcExtension {
 
 /// Extension registering local validity-bearing transaction ingress.
 #[derive(Debug)]
-pub struct SendRawTransactionValidityExtension {
+pub struct SendTransactionValidityExtension {
     max_validity_predicates: usize,
 }
 
-impl Default for SendRawTransactionValidityExtension {
+impl Default for SendTransactionValidityExtension {
     fn default() -> Self {
         Self { max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES }
     }
 }
 
-impl BaseNodeExtension for SendRawTransactionValidityExtension {
+impl BaseNodeExtension for SendTransactionValidityExtension {
     fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
         let max_validity_predicates = self.max_validity_predicates;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
-            let api = SendRawTransactionValidityApiImpl::with_max_validity_predicates(
+            let api = SendTransactionValidityApiImpl::with_max_validity_predicates(
                 ctx.pool().clone(),
                 ctx.provider().clone(),
                 max_validity_predicates,
@@ -70,7 +70,7 @@ impl BaseNodeExtension for SendRawTransactionValidityExtension {
     }
 }
 
-impl FromExtensionConfig for SendRawTransactionValidityExtension {
+impl FromExtensionConfig for SendTransactionValidityExtension {
     type Config = usize;
 
     fn from_config(max_validity_predicates: Self::Config) -> Self {

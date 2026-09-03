@@ -214,7 +214,7 @@ impl LoadRunner {
 
     /// Probes each submission endpoint for validity-transaction support.
     ///
-    /// Sends a throwaway `base_sendRawTransactionValidity` request; a
+    /// Sends a throwaway `base_sendTransactionValidity` request; a
     /// method-not-found response means the node was not started with validity
     /// transactions enabled, so the run aborts loudly rather than silently
     /// degrading to plain submission. Any other response (including a rejection
@@ -225,7 +225,7 @@ impl LoadRunner {
             let result: std::result::Result<TxHash, _> = provider
                 .client()
                 .request(
-                    "base_sendRawTransactionValidity",
+                    "base_sendTransactionValidity",
                     (serde_json::json!({ "tx": "0x", "validity": [] }),),
                 )
                 .await;
@@ -234,7 +234,7 @@ impl LoadRunner {
                 && payload.code == JSON_RPC_METHOD_NOT_FOUND
             {
                 return Err(BaselineError::Config(format!(
-                    "submission endpoint {url} does not serve base_sendRawTransactionValidity; \
+                    "submission endpoint {url} does not serve base_sendTransactionValidity; \
                      start the node with --enable-experimental-validity-transactions"
                 )));
             }

@@ -13,7 +13,7 @@ use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
-use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_rpc::{SendTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
 
 type BuilderCli = Cli<Args>;
 
@@ -63,7 +63,7 @@ fn main() {
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
         runner.install_ext::<BuilderApiExtension>(builder_api_config);
         if builder_api_config.accept_experimental_validity_transactions {
-            runner.install_ext::<SendRawTransactionValidityExtension>(
+            runner.install_ext::<SendTransactionValidityExtension>(
                 builder_api_config.max_validity_predicates,
             );
         }

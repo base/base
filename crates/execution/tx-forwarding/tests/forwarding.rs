@@ -16,7 +16,7 @@ use base_execution_txpool::{
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
-use base_txpool_rpc::{SendRawTransactionValidityExtension, SendRawTransactionValidityRequest};
+use base_txpool_rpc::{SendTransactionValidityExtension, SendTransactionValidityRequest};
 use eyre::{Result, WrapErr};
 use jsonrpsee::{
     RpcModule,
@@ -157,7 +157,7 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
     // exercises the flow against a pre-Cobalt genesis.
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
     let harness = TestHarness::builder()
-        .with_ext::<SendRawTransactionValidityExtension>(DEFAULT_MAX_VALIDITY_PREDICATES)
+        .with_ext::<SendTransactionValidityExtension>(DEFAULT_MAX_VALIDITY_PREDICATES)
         .with_ext::<TxForwardingExtension>(config)
         .with_chain_spec(chain_spec)
         .build()
@@ -176,8 +176,8 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
     let client = harness.rpc_client()?;
     let _: alloy_primitives::TxHash = client
         .request(
-            "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest { tx: raw.clone(), validity: expected.clone() },),
+            "base_sendTransactionValidity",
+            (SendTransactionValidityRequest { tx: raw.clone(), validity: expected.clone() },),
         )
         .await?;
 

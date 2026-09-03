@@ -187,7 +187,7 @@ pub struct Args {
 
     /// Enable experimental validity-bearing transactions on this builder.
     ///
-    /// Registers `base_sendRawTransactionValidity` for direct ingress and accepts
+    /// Registers `base_sendTransactionValidity` for direct ingress and accepts
     /// validity metadata on `base_insertValidatedTransaction` from forwarding nodes.
     /// Predicates are preserved and enforced during block construction.
     #[arg(long = "builder.enable-experimental-validity-transactions", default_value = "false")]

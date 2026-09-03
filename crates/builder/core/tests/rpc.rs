@@ -15,7 +15,7 @@ use base_execution_txpool::{
 };
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::Account;
-use base_txpool_rpc::{SendRawTransactionValidityExtension, SendRawTransactionValidityRequest};
+use base_txpool_rpc::{SendTransactionValidityExtension, SendTransactionValidityRequest};
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
 async fn setup(
@@ -54,7 +54,7 @@ async fn setup_with_validity_ingress(
     let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates);
     let mut builder = TestHarness::builder().with_ext::<BuilderApiExtension>(config);
     if accept_validity {
-        builder = builder.with_ext::<SendRawTransactionValidityExtension>(max_validity_predicates);
+        builder = builder.with_ext::<SendTransactionValidityExtension>(max_validity_predicates);
     }
     let harness = builder.build().await?;
     let client = harness.rpc_client()?;
@@ -226,19 +226,19 @@ async fn test_validity_transactions_enforce_configured_limit() -> eyre::Result<(
 
 /// Verifies builders do not expose public validity ingress unless explicitly opted in.
 #[tokio::test]
-async fn test_send_raw_transaction_validity_requires_explicit_opt_in() -> eyre::Result<()> {
+async fn test_send_transaction_validity_requires_explicit_opt_in() -> eyre::Result<()> {
     let (disabled_harness, disabled_client) = setup(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
     let disabled: Result<TxHash, _> = disabled_client
         .request(
-            "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
+            "base_sendTransactionValidity",
+            (SendTransactionValidityRequest {
                 tx: signed_eip1559_tx(disabled_harness.chain_id()),
                 validity: Vec::new(),
             },),
         )
         .await;
     let disabled_error = disabled
-        .expect_err("disabled builder should not expose base_sendRawTransactionValidity")
+        .expect_err("disabled builder should not expose base_sendTransactionValidity")
         .to_string();
     assert!(
         disabled_error.contains("-32601") || disabled_error.to_ascii_lowercase().contains("method"),
@@ -249,8 +249,8 @@ async fn test_send_raw_transaction_validity_requires_explicit_opt_in() -> eyre::
         setup_with_validity_ingress(true, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
     let enabled: Result<TxHash, _> = enabled_client
         .request(
-            "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
+            "base_sendTransactionValidity",
+            (SendTransactionValidityRequest {
                 tx: signed_eip1559_tx(enabled_harness.chain_id()),
                 validity: vec![ValidityPredicate::Balance {
                     address: Account::Alice.address(),
@@ -267,7 +267,7 @@ async fn test_send_raw_transaction_validity_requires_explicit_opt_in() -> eyre::
 
 /// Verifies public validity ingress enforces the builder's configured predicate limit.
 #[tokio::test]
-async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre::Result<()> {
+async fn test_send_transaction_validity_enforces_configured_limit() -> eyre::Result<()> {
     let (harness, client) = setup_with_validity_ingress(true, 1).await?;
     let predicate = ValidityPredicate::Balance {
         address: Account::Alice.address(),
@@ -276,8 +276,8 @@ async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre:
     };
     let result: Result<TxHash, _> = client
         .request(
-            "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest {
+            "base_sendTransactionValidity",
+            (SendTransactionValidityRequest {
                 tx: signed_eip1559_tx(harness.chain_id()),
                 validity: vec![predicate; 2],
             },),

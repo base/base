@@ -324,7 +324,7 @@ async fn postgres_expires_at_lifecycle_events_with_peer_classes() -> anyhow::Res
         event_with_type(&format!("{event_prefix}-admission"), "TXPOOL_SEND_RAW_TRANSACTION"),
         event_with_type(
             &format!("{event_prefix}-validity-admission"),
-            "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY",
+            "TXPOOL_SEND_TRANSACTION_VALIDITY",
         ),
         event_with_type(&format!("{event_prefix}-rejected"), "BUILDER_REJECTED"),
         event_with_type(&format!("{event_prefix}-deferred"), "BUILDER_DEFERRED"),

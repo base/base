@@ -16,7 +16,7 @@ not the long-term archive. A background worker deletes rows by event type:
 high-volume proxy and builder-decision events default to 3 days, ingress and
 forwarding events default to 7 days, and failures, drops, inclusion, and
 flashblock events default to 30 days. Autovacuum reclaims the resulting table
-bloat. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
+bloat. `TXPOOL_SEND_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
 same hot window as the other per-attempt builder decisions; deferral can fire
 once per flashblock for a parked validity transaction.
@@ -192,14 +192,14 @@ Mempool/node:
 - `TXPOOL_REPLACED`
 - `TXPOOL_TRACKING_OVERFLOWED`
 - `TXPOOL_SEND_RAW_TRANSACTION`
-- `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY`
+- `TXPOOL_SEND_TRANSACTION_VALIDITY`
 
-`TXPOOL_SEND_RAW_TRANSACTION` and `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` are
+`TXPOOL_SEND_RAW_TRANSACTION` and `TXPOOL_SEND_TRANSACTION_VALIDITY` are
 one-time RPC-admission events, one per unique submit path. They fire after the
 transaction is decoded and before sequencer forwarding or pool insertion.
 `tx_hash` is the join key. They are distinct from `TXPOOL_PENDING` /
 `TXPOOL_QUEUED`, which record later subpool membership.
-`TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` is the **only** event that records
+`TXPOOL_SEND_TRANSACTION_VALIDITY` is the **only** event that records
 `data.validity_predicates` (the serialized `balance`, `storage`,
 `block_number`, and `flashblock_index` list). Downstream lifecycle events —
 including `BUILDER_DEFERRED`, `BUILDER_EXPIRED`, `BUILDER_ACCEPTED`, and
@@ -372,7 +372,7 @@ Join later park, expiry, accept, and include events by `tx_hash`:
   "event_id": "0x4c6d...",
   "event_time": "2026-06-02T00:00:00.000000000Z",
   "producer": "base-reth-node",
-  "event_type": "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY",
+  "event_type": "TXPOOL_SEND_TRANSACTION_VALIDITY",
   "network": "base-mainnet",
   "tx_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
   "block_hash": null,
@@ -380,7 +380,7 @@ Join later park, expiry, accept, and include events by `tx_hash`:
   "payload_id": null,
   "request_id": null,
   "data": {
-    "rpc_method": "base_sendRawTransactionValidity",
+    "rpc_method": "base_sendTransactionValidity",
     "validity_predicates": [
       {
         "type": "storage",

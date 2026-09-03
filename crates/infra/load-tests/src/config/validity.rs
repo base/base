@@ -11,7 +11,7 @@ use crate::{
 /// Validity-transaction workload configuration.
 ///
 /// A fraction of *senders* route their entire traffic through
-/// `base_sendRawTransactionValidity`, carrying the configured predicates.
+/// `base_sendTransactionValidity`, carrying the configured predicates.
 /// Routing is per sender (not per transaction) so each sender's nonce stream
 /// stays on a single submission origin.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -500,19 +500,19 @@ mod tests {
 
         let result = transaction_event!(
             producer: TransactionEventProducer::BaseRethNode,
-            event_type: TransactionEventType::TxpoolSendRawTransactionValidity,
+            event_type: TransactionEventType::TxpoolSendTransactionValidity,
             tx_hash: tx_hash,
             data: {
-                "rpc_method" => "base_sendRawTransactionValidity",
+                "rpc_method" => "base_sendTransactionValidity",
             },
         );
 
         assert_eq!(result.unwrap(), TransactionEventEmitOutcome::Emitted);
         let events = capture.events();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, TransactionEventType::TxpoolSendRawTransactionValidity);
+        assert_eq!(events[0].event_type, TransactionEventType::TxpoolSendTransactionValidity);
         assert_eq!(events[0].tx_hash, Some(tx_hash));
-        assert_eq!(events[0].data["rpc_method"], "base_sendRawTransactionValidity");
+        assert_eq!(events[0].data["rpc_method"], "base_sendTransactionValidity");
     }
 
     #[test]

@@ -91,7 +91,7 @@ the forwarding path:
 
 - builder: `--builder.enable-experimental-validity-transactions` and
   `--builder.payload-builder-cutover`. The builder flag also registers
-  `base_sendRawTransactionValidity` for direct ingress.
+  `base_sendTransactionValidity` for direct ingress.
 - ingress/client: `--enable-experimental-validity-transactions` and a
   `--builder-rpc-urls` endpoint targeting the builder
 

@@ -267,7 +267,7 @@ pub struct LoadConfig {
     /// Fraction of transactions that draw a fresh recipient address instead of cycling through
     /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
     pub fresh_recipient_ratio: f64,
-    /// Fraction `0.0..=1.0` of senders routed through `base_sendRawTransactionValidity`.
+    /// Fraction `0.0..=1.0` of senders routed through `base_sendTransactionValidity`.
     pub validity_ratio: f64,
     /// Predicate templates attached to each validity-bearing transaction.
     pub validity_predicates: Vec<ValidityPredicateTemplate>,

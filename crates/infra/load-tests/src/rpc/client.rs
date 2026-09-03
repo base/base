@@ -175,21 +175,21 @@ pub const MAX_BATCH_RPC_SIZE: usize = 100;
 /// JSON-RPC standard error code for an unrecognized method (method not found).
 ///
 /// Used to detect when a submission endpoint does not serve
-/// `base_sendRawTransactionValidity`, so the load tester can fail loudly rather
+/// `base_sendTransactionValidity`, so the load tester can fail loudly rather
 /// than silently degrade to plain submission.
 pub const JSON_RPC_METHOD_NOT_FOUND: i64 = -32601;
 
 /// The `eth_sendRawTransaction` JSON-RPC method name.
 const ETH_SEND_RAW_TRANSACTION: &str = "eth_sendRawTransaction";
 
-/// The `base_sendRawTransactionValidity` JSON-RPC method name.
-const BASE_SEND_RAW_TRANSACTION_VALIDITY: &str = "base_sendRawTransactionValidity";
+/// The `base_sendTransactionValidity` JSON-RPC method name.
+const BASE_SEND_TRANSACTION_VALIDITY: &str = "base_sendTransactionValidity";
 
 /// A single transaction to submit within a batch, along with any validity
 /// predicates that determine its submission method.
 ///
 /// An empty `validity` list is submitted via `eth_sendRawTransaction`; a
-/// non-empty list is submitted via `base_sendRawTransactionValidity` carrying
+/// non-empty list is submitted via `base_sendTransactionValidity` carrying
 /// the predicates. Mixed batches are supported: the method is selected
 /// per element, and responses are correlated by JSON-RPC `id`.
 #[derive(Debug, Clone)]
@@ -212,7 +212,7 @@ impl SubmitItem {
         Self { raw, validity }
     }
 
-    /// Returns true when this item submits via `base_sendRawTransactionValidity`.
+    /// Returns true when this item submits via `base_sendTransactionValidity`.
     pub const fn is_validity(&self) -> bool {
         !self.validity.is_empty()
     }
@@ -303,7 +303,7 @@ impl BatchRpcClient {
     ///
     /// Each [`SubmitItem`] selects its own method: items without validity
     /// predicates use `eth_sendRawTransaction`, items carrying predicates use
-    /// `base_sendRawTransactionValidity`. A single HTTP batch may mix both;
+    /// `base_sendTransactionValidity`. A single HTTP batch may mix both;
     /// responses are correlated back to inputs by JSON-RPC `id`.
     ///
     /// Large requests are automatically split into configured sub-batches and
@@ -354,7 +354,7 @@ impl BatchRpcClient {
                     serde_json::json!({
                         "jsonrpc": "2.0",
                         "id": i,
-                        "method": BASE_SEND_RAW_TRANSACTION_VALIDITY,
+                        "method": BASE_SEND_TRANSACTION_VALIDITY,
                         "params": [{ "tx": item.raw, "validity": item.validity }]
                     })
                 } else {
@@ -522,9 +522,9 @@ mod tests {
         assert_eq!(body[0]["method"], ETH_SEND_RAW_TRANSACTION);
         assert_eq!(body[0]["params"][0], "0xaa");
 
-        // Validity element: base_sendRawTransactionValidity with { tx, validity }.
+        // Validity element: base_sendTransactionValidity with { tx, validity }.
         assert_eq!(body[1]["id"], 1);
-        assert_eq!(body[1]["method"], BASE_SEND_RAW_TRANSACTION_VALIDITY);
+        assert_eq!(body[1]["method"], BASE_SEND_TRANSACTION_VALIDITY);
         assert_eq!(body[1]["params"][0]["tx"], "0xbb");
         assert_eq!(body[1]["params"][0]["validity"][0]["type"], "balance");
         assert_eq!(body[1]["params"][0]["validity"][0]["params"]["op"], ">=");

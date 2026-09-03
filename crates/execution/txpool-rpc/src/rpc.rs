@@ -48,9 +48,9 @@ pub struct TransactionStatusResponse {
     pub status: Status,
 }
 
-/// Request for `base_sendRawTransactionValidity`.
+/// Request for `base_sendTransactionValidity`.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
-pub struct SendRawTransactionValidityRequest {
+pub struct SendTransactionValidityRequest {
     /// EIP-2718 encoded signed transaction.
     pub tx: Bytes,
     /// Experimental predicates transported to builders alongside the transaction.
@@ -67,12 +67,12 @@ pub trait TransactionStatusApi {
 
 /// Experimental RPC API for submitting a raw transaction with validity criteria.
 #[rpc(server, namespace = "base")]
-pub trait SendRawTransactionValidityApi {
+pub trait SendTransactionValidityApi {
     /// Submits a raw transaction and transports its currently unenforced validity criteria.
-    #[method(name = "sendRawTransactionValidity")]
-    async fn send_raw_transaction_validity(
+    #[method(name = "sendTransactionValidity")]
+    async fn send_transaction_validity(
         &self,
-        request: SendRawTransactionValidityRequest,
+        request: SendTransactionValidityRequest,
     ) -> RpcResult<TxHash>;
 }
 
@@ -100,13 +100,13 @@ pub struct TransactionStatusApiImpl<Pool: TransactionPool> {
 
 /// Local mempool-ingress implementation for validity-bearing transactions.
 #[derive(Debug, Clone)]
-pub struct SendRawTransactionValidityApiImpl<Pool, Provider> {
+pub struct SendTransactionValidityApiImpl<Pool, Provider> {
     pool: Pool,
     provider: Provider,
     max_validity_predicates: usize,
 }
 
-impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
+impl<Pool, Provider> SendTransactionValidityApiImpl<Pool, Provider> {
     /// Creates a validity transaction ingress backed by the given pool and default predicate limit.
     ///
     /// The provider fork-gates the RPC method on the Cobalt hard fork.
@@ -126,7 +126,7 @@ impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
     }
 }
 
-impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider>
+impl<Pool, Provider> SendTransactionValidityApiImpl<Pool, Provider>
 where
     Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
 {
@@ -200,15 +200,15 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
 }
 
 #[async_trait]
-impl<Pool, Provider> SendRawTransactionValidityApiServer
-    for SendRawTransactionValidityApiImpl<Pool, Provider>
+impl<Pool, Provider> SendTransactionValidityApiServer
+    for SendTransactionValidityApiImpl<Pool, Provider>
 where
     Pool: TransactionPool<Transaction = BasePooledTransaction> + 'static,
     Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades> + 'static,
 {
-    async fn send_raw_transaction_validity(
+    async fn send_transaction_validity(
         &self,
-        request: SendRawTransactionValidityRequest,
+        request: SendTransactionValidityRequest,
     ) -> RpcResult<TxHash> {
         ValidityPredicate::validate_batch(&request.validity, self.max_validity_predicates)
             .map_err(|error| {
@@ -242,10 +242,10 @@ where
         let tx_hash = *transaction.hash();
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseRethNode,
-            event_type: TransactionEventType::TxpoolSendRawTransactionValidity,
+            event_type: TransactionEventType::TxpoolSendTransactionValidity,
             tx_hash: tx_hash,
             data: {
-                "rpc_method" => "base_sendRawTransactionValidity",
+                "rpc_method" => "base_sendTransactionValidity",
                 "validity_predicates" => &request.validity,
             },
         );
@@ -343,8 +343,8 @@ mod tests {
         NoopTransactionPool::<BasePooledTransaction>::new()
     }
 
-    fn validity_request(tx: Bytes) -> SendRawTransactionValidityRequest {
-        SendRawTransactionValidityRequest {
+    fn validity_request(tx: Bytes) -> SendTransactionValidityRequest {
+        SendTransactionValidityRequest {
             tx,
             validity: vec![ValidityPredicate::Storage {
                 address: Address::repeat_byte(0xab),
@@ -426,7 +426,7 @@ mod tests {
     }
 
     #[test]
-    fn send_raw_transaction_validity_request_uses_top_level_keys() {
+    fn send_transaction_validity_request_uses_top_level_keys() {
         let request = validity_request(Bytes::from_static(&[0x02]));
         let value = serde_json::to_value(request).expect("request should serialize");
 
@@ -436,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    fn send_raw_transaction_validity_event_data_serializes_all_predicate_variants() {
+    fn send_transaction_validity_event_data_serializes_all_predicate_variants() {
         assert_eq!(
             serde_json::to_value(all_predicate_variants()).unwrap(),
             json!([
@@ -477,33 +477,33 @@ mod tests {
     }
 
     #[test]
-    fn send_raw_transaction_validity_event_envelope_joins_on_tx_hash() {
+    fn send_transaction_validity_event_envelope_joins_on_tx_hash() {
         let tx_hash = TxHash::repeat_byte(0x11);
         let event = TransactionEventBuilder::new(
             TransactionEventProducer::BaseRethNode,
-            TransactionEventType::TxpoolSendRawTransactionValidity,
+            TransactionEventType::TxpoolSendTransactionValidity,
         )
         .tx_hash(tx_hash)
-        .data_field("rpc_method", json!("base_sendRawTransactionValidity"))
+        .data_field("rpc_method", json!("base_sendTransactionValidity"))
         .data_field("validity_predicates", json!(all_predicate_variants()))
         .build_with_network("base-devnet");
 
         event.validate().expect("admission event should be valid");
-        assert_eq!(event.event_type.to_string(), "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY");
+        assert_eq!(event.event_type.to_string(), "TXPOOL_SEND_TRANSACTION_VALIDITY");
         assert_eq!(event.tx_hash, Some(tx_hash));
         assert!(event.data.contains_key("validity_predicates"));
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_emits_predicate_list_on_admission() {
+    async fn send_transaction_validity_emits_predicate_list_on_admission() {
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+        let rpc = SendTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
         let request =
-            SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
+            SendTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
 
-        let tx_hash = rpc.send_raw_transaction_validity(request).await.unwrap_or_else(|_| {
+        let tx_hash = rpc.send_transaction_validity(request).await.unwrap_or_else(|_| {
             capture.events().first().and_then(|event| event.tx_hash).expect(
                 "admission event should fire before pool insertion even if the noop pool rejects",
             )
@@ -513,12 +513,12 @@ mod tests {
             .events()
             .into_iter()
             .filter(|event| {
-                event.event_type == TransactionEventType::TxpoolSendRawTransactionValidity
+                event.event_type == TransactionEventType::TxpoolSendTransactionValidity
                     && event.tx_hash == Some(tx_hash)
             })
             .collect();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].data["rpc_method"], "base_sendRawTransactionValidity");
+        assert_eq!(events[0].data["rpc_method"], "base_sendTransactionValidity");
         assert_eq!(
             events[0].data["validity_predicates"],
             serde_json::to_value(all_predicate_variants()).unwrap()
@@ -526,23 +526,23 @@ mod tests {
     }
 
     #[test]
-    fn send_raw_transaction_validity_method_is_registered() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
-        let module = SendRawTransactionValidityApiServer::into_rpc(rpc);
+    fn send_transaction_validity_method_is_registered() {
+        let rpc = SendTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+        let module = SendTransactionValidityApiServer::into_rpc(rpc);
 
-        assert!(module.method_names().any(|name| name == "base_sendRawTransactionValidity"));
+        assert!(module.method_names().any(|name| name == "base_sendTransactionValidity"));
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_eip8130_before_cobalt() {
+    async fn send_transaction_validity_rejects_eip8130_before_cobalt() {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip8130(&signer);
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_cobalt_provider());
+        let rpc = SendTransactionValidityApiImpl::new(validity_pool(), pre_cobalt_provider());
         let request =
-            SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
+            SendTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_transaction_validity(request)
             .await
             .expect_err("EIP-8130 validity transactions should be rejected before Cobalt");
 
@@ -551,19 +551,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_accepts_eip1559_before_cobalt() {
+    async fn send_transaction_validity_accepts_eip1559_before_cobalt() {
         // EIP-1559 validity transactions are gated by the experimental flag alone, not by Cobalt,
         // so they clear the fork gate before Cobalt activates. The admission event fires only once
         // the gate is cleared; the noop pool then rejects insertion.
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_cobalt_provider());
+        let rpc = SendTransactionValidityApiImpl::new(validity_pool(), pre_cobalt_provider());
         let request =
-            SendRawTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
+            SendTransactionValidityRequest { tx: raw, validity: all_predicate_variants() };
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_transaction_validity(request)
             .await
             .expect_err("the noop pool rejects insertion after the fork gate is cleared");
 
@@ -573,17 +573,17 @@ mod tests {
                 .events()
                 .iter()
                 .any(|event| event.event_type
-                    == TransactionEventType::TxpoolSendRawTransactionValidity),
+                    == TransactionEventType::TxpoolSendTransactionValidity),
             "admission event should fire once the Cobalt gate is cleared for EIP-1559"
         );
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_malformed_transaction() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+    async fn send_transaction_validity_rejects_malformed_transaction() {
+        let rpc = SendTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
 
         let error = rpc
-            .send_raw_transaction_validity(validity_request(Bytes::from_static(&[0xff])))
+            .send_transaction_validity(validity_request(Bytes::from_static(&[0xff])))
             .await
             .expect_err("malformed transaction should be rejected");
 
@@ -592,8 +592,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_enforces_configured_predicate_limit() {
-        let rpc = SendRawTransactionValidityApiImpl::with_max_validity_predicates(
+    async fn send_transaction_validity_enforces_configured_predicate_limit() {
+        let rpc = SendTransactionValidityApiImpl::with_max_validity_predicates(
             validity_pool(),
             cobalt_provider(),
             2,
@@ -602,7 +602,7 @@ mod tests {
         request.validity = vec![request.validity[0].clone(); 3];
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_transaction_validity(request)
             .await
             .expect_err("oversized validity should be rejected before transaction decoding");
 
@@ -612,13 +612,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_empty_predicates() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+    async fn send_transaction_validity_rejects_empty_predicates() {
+        let rpc = SendTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
         let mut request = validity_request(Bytes::from_static(&[0x02]));
         request.validity.clear();
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_transaction_validity(request)
             .await
             .expect_err("empty validity should be rejected before transaction decoding");
 
@@ -627,8 +627,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_storage_value_outside_mask() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+    async fn send_transaction_validity_rejects_storage_value_outside_mask() {
+        let rpc = SendTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
         let mut request = validity_request(Bytes::from_static(&[0x02]));
         request.validity = vec![ValidityPredicate::Storage {
             address: Address::repeat_byte(0xab),
@@ -639,7 +639,7 @@ mod tests {
         }];
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_transaction_validity(request)
             .await
             .expect_err("storage value outside its mask should be rejected");
 
@@ -648,8 +648,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_unsatisfiable_flashblock_index() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+    async fn send_transaction_validity_rejects_unsatisfiable_flashblock_index() {
+        let rpc = SendTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
         let mut request = validity_request(Bytes::from_static(&[0x02]));
         // A flashblock-index predicate that only holds at index 0, which pooled
         // transactions never reach, would park forever if admitted.
@@ -659,7 +659,7 @@ mod tests {
         }];
 
         let error = rpc
-            .send_raw_transaction_validity(request)
+            .send_transaction_validity(request)
             .await
             .expect_err("an unsatisfiable flashblock-index predicate should be rejected");
 

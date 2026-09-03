@@ -17,7 +17,7 @@ use base_execution_txpool::{
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_txpool_rpc::SendRawTransactionValidityExtension;
+use base_txpool_rpc::SendTransactionValidityExtension;
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -58,7 +58,7 @@ pub struct InProcessBuilderConfig {
     /// Optional fixed Prometheus metrics port (uses random if None).
     pub metrics_port: Option<u16>,
     /// Whether to accept experimental validity-bearing transactions and expose
-    /// `base_sendRawTransactionValidity`.
+    /// `base_sendTransactionValidity`.
     pub enable_experimental_validity_transactions: bool,
     /// Whether to run both payload builders and cut over to basic at Denim.
     pub payload_builder_cutover: bool,
@@ -188,7 +188,7 @@ impl InProcessBuilder {
         let extra_extensions = config.extra_extensions;
         let mut hooks = NodeHooks::new();
         if accept_validity_transactions {
-            hooks = Box::new(SendRawTransactionValidityExtension::from_config(
+            hooks = Box::new(SendTransactionValidityExtension::from_config(
                 DEFAULT_MAX_VALIDITY_PREDICATES,
             ))
             .apply(hooks);

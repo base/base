@@ -142,7 +142,7 @@ delay is measured for logging but is no longer included in the JSON output.
 | Config | Target | Notes |
 |--------|--------|-------|
 | `devnet.yaml` | Local devnet | Uses Anvil Account #1 |
-| `validity-devnet.yaml` | Local devnet | Validity (conditional) workload; routes half the senders through `base_sendRawTransactionValidity`. Run with `FUNDER_KEY=... just load-test run validity-devnet`. Requires the node validity flags for end-to-end enforcement |
+| `validity-devnet.yaml` | Local devnet | Validity (conditional) workload; routes half the senders through `base_sendTransactionValidity`. Run with `FUNDER_KEY=... just load-test run validity-devnet`. Requires the node validity flags for end-to-end enforcement |
 | `real-token-devnet.yaml.template` | Local devnet | Rendered by `just load-test real-token` after deploying the devnet WETH/USDC harness |
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
 | `real-token-sepolia.yaml` | Base Sepolia | Uses predeployed WETH/USDC and the Uniswap V3 swap router; run with `just load-test real-token sepolia`; recover with `just load-test real-token-recover sepolia` |
@@ -297,7 +297,7 @@ Recipient keys are always positioned with a runtime-random seed/offset (never th
 #### Validity (Conditional) Transactions
 
 A configurable fraction of *senders* can route their entire traffic through the
-`base_sendRawTransactionValidity` endpoint, attaching validity predicates to
+`base_sendTransactionValidity` endpoint, attaching validity predicates to
 every transaction they submit. All four server predicate types are supported:
 the state-based `balance` and `storage` conditions, and the build-position
 `block_number` and `flashblock_index` conditions (compared against the block and
@@ -420,11 +420,11 @@ that:
    `--enable-experimental-validity-transactions`. This flag hard-requires
    transaction forwarding, so it must be accompanied by `--enable-tx-forwarding`
    and at least one `--builder-rpc-urls=<url>`; the node refuses to start
-   otherwise. Only with this flag set is the `base_sendRawTransactionValidity`
+   otherwise. Only with this flag set is the `base_sendTransactionValidity`
    endpoint registered.
 2. The builder is started with
    `--builder.enable-experimental-validity-transactions`. That flag both
-   registers `base_sendRawTransactionValidity` on the builder and accepts
+   registers `base_sendTransactionValidity` on the builder and accepts
    forwarded validity metadata. If it is not set, forwarded transactions that
    carry predicates are **rejected** ("transaction extensions are disabled"), so
    a misconfiguration fails loudly rather than silently dropping predicates.
@@ -432,7 +432,7 @@ that:
    the shipped binaries), which is where predicates are evaluated against state.
 
 If `validity.ratio > 0` but the ingress endpoint does not serve
-`base_sendRawTransactionValidity`, the run fails loudly at startup rather than
+`base_sendTransactionValidity`, the run fails loudly at startup rather than
 silently degrading to plain submission.
 
 **Interpreting the results.** There is no validity-specific builder rejection

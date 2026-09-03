@@ -195,7 +195,7 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::TxpoolBuilderConsumed
             | TransactionEventType::TxpoolValidatedInsertAccepted
             | TransactionEventType::TxpoolSendRawTransaction
-            | TransactionEventType::TxpoolSendRawTransactionValidity => Self::Warm,
+            | TransactionEventType::TxpoolSendTransactionValidity => Self::Warm,
             TransactionEventType::ProxyRejected
             | TransactionEventType::ProxyValidationRejected
             | TransactionEventType::ProxyBackendFailure
@@ -1768,7 +1768,7 @@ mod tests {
         );
         assert_eq!(
             TransactionEventRetentionClass::for_event_type(
-                TransactionEventType::TxpoolSendRawTransactionValidity
+                TransactionEventType::TxpoolSendTransactionValidity
             ),
             TransactionEventRetentionClass::Warm
         );
@@ -1916,9 +1916,9 @@ mod tests {
         let state = state(Arc::new(FakeSink::default()));
         let mut admission = event("at-admission");
         admission["producer"] = json!("base-reth-node");
-        admission["event_type"] = json!("TXPOOL_SEND_RAW_TRANSACTION_VALIDITY");
+        admission["event_type"] = json!("TXPOOL_SEND_TRANSACTION_VALIDITY");
         admission["data"] = json!({
-            "rpc_method": "base_sendRawTransactionValidity",
+            "rpc_method": "base_sendTransactionValidity",
             "validity_predicates": [{
                 "type": "block_number",
                 "params": { "op": ">=", "value": "0x64" }
@@ -1941,7 +1941,7 @@ mod tests {
         assert_eq!(response.rejected, 0);
         assert_eq!(
             TransactionEventRetentionClass::for_event_type(
-                TransactionEventType::TxpoolSendRawTransactionValidity
+                TransactionEventType::TxpoolSendTransactionValidity
             ),
             TransactionEventRetentionClass::for_event_type(
                 TransactionEventType::TxpoolSendRawTransaction

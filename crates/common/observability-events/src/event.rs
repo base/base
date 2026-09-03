@@ -155,14 +155,14 @@ pub enum TransactionEventType {
     /// which records later pending-subpool membership.
     #[serde(rename = "TXPOOL_SEND_RAW_TRANSACTION")]
     TxpoolSendRawTransaction,
-    /// A transaction was submitted through `base_sendRawTransactionValidity`.
+    /// A transaction was submitted through `base_sendTransactionValidity`.
     ///
     /// Emitted once per RPC admission after the transaction is decoded and its
     /// predicate list is attached, before pool insertion. Downstream lifecycle
     /// events join back by `tx_hash` and must not repeat
     /// `data.validity_predicates`.
-    #[serde(rename = "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY")]
-    TxpoolSendRawTransactionValidity,
+    #[serde(rename = "TXPOOL_SEND_TRANSACTION_VALIDITY")]
+    TxpoolSendTransactionValidity,
     /// The builder considered a transaction for payload inclusion.
     #[serde(rename = "BUILDER_CONSIDERED")]
     BuilderConsidered,
@@ -238,7 +238,7 @@ impl fmt::Display for TransactionEventType {
             Self::TxpoolValidatedInsertAccepted => "TXPOOL_VALIDATED_INSERT_ACCEPTED",
             Self::TxpoolValidatedInsertRejected => "TXPOOL_VALIDATED_INSERT_REJECTED",
             Self::TxpoolSendRawTransaction => "TXPOOL_SEND_RAW_TRANSACTION",
-            Self::TxpoolSendRawTransactionValidity => "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY",
+            Self::TxpoolSendTransactionValidity => "TXPOOL_SEND_TRANSACTION_VALIDITY",
             Self::BuilderConsidered => "BUILDER_CONSIDERED",
             Self::BuilderAccepted => "BUILDER_ACCEPTED",
             Self::BuilderRejected => "BUILDER_REJECTED",

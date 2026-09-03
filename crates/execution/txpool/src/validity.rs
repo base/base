@@ -378,7 +378,7 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
     /// Applies the predicates to the builder-inbound transaction.
     ///
     /// This is the builder RPC ingress path, distinct from the mempool node's
-    /// `base_sendRawTransactionValidity`. The count bound is enforced separately
+    /// `base_sendTransactionValidity`. The count bound is enforced separately
     /// by [`Self::validate`]; here each predicate's parameters are re-checked as
     /// defense-in-depth against a misbehaving upstream. Unlike the mempool
     /// ingress, an empty predicate set is not rejected: the builder legitimately
