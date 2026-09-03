@@ -20,7 +20,8 @@ base_metrics::define_metrics! {
             "block_expiry",
             "reorg",
             "feed_gap",
-            "reconcile"
+            "reconcile",
+            "capacity"
         ]
     )]
     invalidated: counter,
@@ -78,6 +79,14 @@ impl GuardMetrics {
     pub fn record_bulk_invalidations(count: usize, cause: crate::InvalidationCause) {
         if count > 0 {
             Self::invalidated(cause.as_label()).increment(count as u64);
+        }
+    }
+
+    /// Records transactions shed from the 2D nonce sidecar when an insertion
+    /// pushed it past its capacity bound.
+    pub fn record_capacity_evictions(count: usize) {
+        if count > 0 {
+            Self::invalidated("capacity").increment(count as u64);
         }
     }
 

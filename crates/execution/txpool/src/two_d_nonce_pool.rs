@@ -81,6 +81,13 @@ pub(crate) struct PruneMinedOutcome<T: BasePooledTx> {
 /// Finite channels are kept in ordered `(sender, nonce_key)` lanes. Nonce-free
 /// transactions have no sequencing relationship, so they are stored separately
 /// by replay id and compete independently in the best-transactions iterator.
+///
+/// The sidecar is bounded by `max_transactions`. Unlike the protocol pool,
+/// finite-channel transactions have no time-based expiry, so without a global
+/// cap a sender controlling many funded accounts could grow the sidecar without
+/// bound. When an insertion pushes the sidecar past the cap, the lowest-priority
+/// transactions are evicted to make room, mirroring the protocol pool's
+/// worst-price eviction.
 #[derive(Debug)]
 pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     lanes: HashMap<LaneId, NonceLane<T>>,
@@ -88,10 +95,16 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     hashes: B256Map<Arc<ValidPoolTransaction<T>>>,
     senders: SenderIdentifiers,
     price_bump_config: PriceBumpConfig,
+    max_transactions: usize,
 }
 
 impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Creates a new 2D nonce sidecar pool.
+    ///
+    /// The pool is unbounded by default; call [`with_max_transactions`] to apply
+    /// a capacity limit.
+    ///
+    /// [`with_max_transactions`]: Self::with_max_transactions
     pub(crate) fn new(price_bump_config: PriceBumpConfig) -> Self {
         Self {
             lanes: HashMap::default(),
@@ -99,7 +112,59 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             hashes: B256Map::default(),
             senders: SenderIdentifiers::default(),
             price_bump_config,
+            max_transactions: usize::MAX,
         }
+    }
+
+    /// Sets the maximum number of transactions the sidecar may hold.
+    pub(crate) const fn with_max_transactions(mut self, max_transactions: usize) -> Self {
+        self.max_transactions = max_transactions;
+        self
+    }
+
+    /// Returns the number of transactions currently in the sidecar.
+    pub(crate) fn len(&self) -> usize {
+        self.hashes.len()
+    }
+
+    /// Evicts the lowest-priority transactions until the sidecar holds at most
+    /// `max_transactions`, and returns the evicted transactions so the caller
+    /// can release their guard reservations and notify listeners.
+    ///
+    /// `protected` (the just-inserted hash) is never evicted, so a successful
+    /// admission always sticks. Priority uses `priority_fee_or_price()` — the
+    /// same metric the guard uses for admission — so the cheapest transactions
+    /// are shed first.
+    pub(crate) fn enforce_capacity(
+        &mut self,
+        protected: TxHash,
+    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        let mut evicted = Vec::new();
+        while self.hashes.len() > self.max_transactions {
+            let Some(victim) = self.worst_hash(protected) else {
+                break;
+            };
+            let Some(transaction) = self.remove_hash(victim, false) else {
+                break;
+            };
+            evicted.push(transaction);
+        }
+        evicted
+    }
+
+    /// Returns the hash of the lowest-priority transaction, skipping
+    /// `protected`. Ties break on the hash for deterministic eviction.
+    fn worst_hash(&self, protected: TxHash) -> Option<TxHash> {
+        self.hashes
+            .iter()
+            .filter(|(hash, _)| **hash != protected)
+            .min_by(|(a_hash, a), (b_hash, b)| {
+                a.transaction
+                    .priority_fee_or_price()
+                    .cmp(&b.transaction.priority_fee_or_price())
+                    .then_with(|| a_hash.cmp(b_hash))
+            })
+            .map(|(hash, _)| *hash)
     }
 
     /// Returns true if the sidecar already contains the hash.
@@ -1357,5 +1422,78 @@ mod tests {
 
         let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 10);
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(older_hash));
+    }
+
+    #[test]
+    fn enforce_capacity_evicts_lowest_priority_first() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default()).with_max_transactions(2);
+        let signer = signer();
+
+        // Three independent lanes with distinct tips; the cheapest must be shed.
+        let high =
+            valid_pool_transaction(signed_channel_tx_with_tip(&signer, U256::from(1), 0, 9, 100));
+        let low =
+            valid_pool_transaction(signed_channel_tx_with_tip(&signer, U256::from(2), 0, 1, 100));
+        let mid =
+            valid_pool_transaction(signed_channel_tx_with_tip(&signer, U256::from(3), 0, 5, 100));
+        let low_hash = *low.hash();
+        let mid_hash = *mid.hash();
+
+        pool.insert_validated(high, 0).unwrap();
+        pool.insert_validated(low, 0).unwrap();
+        let mid_outcome = pool.insert_validated(mid, 0).unwrap();
+
+        let evicted = pool.enforce_capacity(mid_outcome.outcome.hash);
+
+        assert_eq!(pool.len(), 2, "pool must be trimmed to the capacity bound");
+        assert_eq!(
+            evicted.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>(),
+            vec![low_hash],
+            "only the lowest-priority transaction is evicted",
+        );
+        assert!(pool.get(&low_hash).is_none(), "evicted transaction is gone");
+        assert!(pool.get(&mid_hash).is_some(), "protected transaction is retained");
+    }
+
+    #[test]
+    fn enforce_capacity_never_evicts_the_protected_transaction() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default()).with_max_transactions(1);
+        let signer = signer();
+
+        // The just-inserted transaction is the cheapest, yet it must survive
+        // while the more expensive existing transaction is shed.
+        let expensive =
+            valid_pool_transaction(signed_channel_tx_with_tip(&signer, U256::from(1), 0, 9, 100));
+        let cheap_new =
+            valid_pool_transaction(signed_channel_tx_with_tip(&signer, U256::from(2), 0, 1, 100));
+        let expensive_hash = *expensive.hash();
+        let cheap_hash = *cheap_new.hash();
+
+        pool.insert_validated(expensive, 0).unwrap();
+        let cheap_outcome = pool.insert_validated(cheap_new, 0).unwrap();
+
+        let evicted = pool.enforce_capacity(cheap_outcome.outcome.hash);
+
+        assert_eq!(
+            evicted.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>(),
+            vec![expensive_hash],
+        );
+        assert!(pool.get(&cheap_hash).is_some(), "protected transaction is never evicted");
+    }
+
+    #[test]
+    fn enforce_capacity_is_a_noop_when_unbounded() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        for nonce_key in 1..=5 {
+            let transaction =
+                valid_pool_transaction(signed_channel_tx(&signer, U256::from(nonce_key), 0, 100));
+            pool.insert_validated(transaction, 0).unwrap();
+        }
+
+        let evicted = pool.enforce_capacity(TxHash::ZERO);
+
+        assert!(evicted.is_empty(), "an unbounded pool never evicts");
+        assert_eq!(pool.len(), 5);
     }
 }
