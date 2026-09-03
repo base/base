@@ -53,12 +53,19 @@ group "ingress" {
   targets = INGRESS_TARGETS
 }
 
+target "profiling-tools" {
+  context = "."
+  dockerfile = "etc/docker/Dockerfile.profiling-tools"
+  tags = ["base-profiling-tools:local"]
+}
+
 target "_rust-service-common" {
   context = "."
   dockerfile = "etc/docker/Dockerfile.rust-services"
   args = {
     PROFILE = "${PROFILE}"
     RUST_VERSION = "${RUST_VERSION}"
+    RUSTFLAGS = PROFILE == "profiling" ? "-C link-arg=-fuse-ld=lld -Cforce-frame-pointers=yes" : "-C link-arg=-fuse-ld=lld"
   }
 }
 
@@ -71,6 +78,7 @@ target "base" {
   target = "base"
   args = {
     CARGO_CHEF_ARGS = "--package base --package base-reth-node --package base-consensus --package base-snapshotter-bin"
+    CARGO_FEATURES = PROFILE == "profiling" ? "--features=base/jemalloc-prof,base-reth-node/jemalloc-prof" : ""
     SCCACHE_CACHE_ID = "rust-services-base-sccache"
   }
   tags = ["base:local"]
@@ -81,6 +89,7 @@ target "execution" {
   target = "execution"
   args = {
     CARGO_CHEF_ARGS = "--package base-reth-node"
+    CARGO_FEATURES = PROFILE == "profiling" ? "--features=jemalloc-prof" : ""
     SCCACHE_CACHE_ID = "rust-services-execution-sccache"
   }
   tags = ["base-execution:local"]
@@ -101,6 +110,7 @@ target "builder" {
   target = "builder"
   args = {
     CARGO_CHEF_ARGS = "--package base-builder-bin"
+    CARGO_FEATURES = PROFILE == "profiling" ? "--features=jemalloc-prof" : ""
     SCCACHE_CACHE_ID = "rust-services-builder-sccache"
   }
   tags = ["base-builder:local"]

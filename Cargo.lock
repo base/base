@@ -2925,6 +2925,7 @@ dependencies = [
  "figment",
  "reth-cli-commands",
  "reth-cli-runner",
+ "reth-cli-util",
  "serde",
  "tokio",
  "tokio-util",

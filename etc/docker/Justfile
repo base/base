@@ -69,9 +69,93 @@ build-anvil-image source='https://github.com/base/base-anvil.git':
       --build-arg RUST_FEATURES=anvil/cli \
       {{ quote(source) }}
 
-# Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
-profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
+# Stops devnet, deletes data, and starts a named profiling run (Pyroscope + optimized builds)
+profiling name='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run_id={{ quote(name) }}
+    if [ -z "$run_id" ]; then
+      run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+    fi
+    [[ "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+      echo "ERROR: profiling run name must start with a letter or number and contain only letters, numbers, dot, underscore, and dash" >&2
+      exit 1
+    }
+    case "$run_id" in
+      current-run|diffs) echo "ERROR: reserved profiling run name: $run_id" >&2; exit 1 ;;
+    esac
+    run_dir="profiling-results/$run_id"
+    [ ! -e "$run_dir" ] || {
+      echo "ERROR: profiling run already exists: $run_dir" >&2
+      exit 1
+    }
+
+    just --justfile {{ source_file() }} down
+    just --justfile {{ source_file() }} _build-setup-image
+    just --justfile {{ source_file() }} _build-rust-images "devnet" "profiling"
+    just --justfile {{ source_file() }} _build-profiling-tools-image
     docker compose {{ _env }} {{ _ha }} --profile profiling up -d --no-build
+    mkdir -p "$run_dir"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$run_dir/started-at"
+    git rev-parse HEAD > "$run_dir/git-revision"
+    printf '%s\n' "$run_id" > profiling-results/current-run
+
+    echo "Profiling run '$run_id' started."
+    echo "  Live UI: http://localhost:3000/a/grafana-pyroscope-app/profiles-explorer"
+    echo "  Capture: just devnet profiling-report $run_id"
+
+# Saves CPU and heap pprof, folded stacks, and flame graph SVGs for a profiling run
+profiling-report run='' service='': _build-profiling-tools-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run_id={{ quote(run) }}
+    service={{ quote(service) }}
+    if [ -z "$run_id" ]; then
+      [ -s profiling-results/current-run ] || {
+        echo "ERROR: no current profiling run; pass a run name" >&2
+        exit 1
+      }
+      run_id="$(cat profiling-results/current-run)"
+    fi
+    [[ "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+      echo "ERROR: invalid profiling run name: $run_id" >&2
+      exit 1
+    }
+    run_dir="profiling-results/$run_id"
+    [ -s "$run_dir/started-at" ] || {
+      echo "ERROR: profiling run not found: $run_dir" >&2
+      exit 1
+    }
+    profile_from="$(cat "$run_dir/started-at")"
+    profile_to="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    docker compose {{ _env }} {{ _ha }} --profile profiling --profile profiling-tools run \
+      --rm --no-deps --user "$(id -u):$(id -g)" \
+      -e PROFILE_RUN_ID="$run_id" \
+      -e PROFILE_FROM="$profile_from" \
+      -e PROFILE_TO="$profile_to" \
+      -e PROFILE_SERVICE="$service" \
+      profiling-tools report
+    printf '%s\n' "$profile_to" > "$run_dir/captured-at"
+    echo "Static profiles written to $run_dir"
+
+# Produces a differential flame graph (red increased, blue decreased) from two runs
+profiling-diff baseline comparison service kind='cpu': _build-profiling-tools-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    baseline={{ quote(baseline) }}
+    comparison={{ quote(comparison) }}
+    service={{ quote(service) }}
+    kind={{ quote(kind) }}
+    for value in "$baseline" "$comparison" "$service"; do
+      [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+        echo "ERROR: invalid profiling name: $value" >&2
+        exit 1
+      }
+    done
+    docker compose {{ _env }} {{ _ha }} --profile profiling --profile profiling-tools run \
+      --rm --no-deps --user "$(id -u):$(id -g)" \
+      profiling-tools diff "$baseline" "$comparison" "$service" "$kind"
 
 # Stops devnet and deletes all data
 down:
@@ -196,6 +280,10 @@ _install-nextest:
 [private]
 _build-setup-image:
     docker build --load -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
+
+[private]
+_build-profiling-tools-image:
+    docker buildx bake -f etc/docker/docker-bake.hcl profiling-tools --load
 
 [private]
 _build-rust-images group profile='dev':

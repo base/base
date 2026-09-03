@@ -30,3 +30,8 @@ clap.workspace = true
 [features]
 default = [ "jemalloc" ]
 jemalloc = [ "base-execution-cli/jemalloc", "reth-cli-util/jemalloc" ]
+jemalloc-prof = [
+	"base-execution-cli/jemalloc-symbols",
+	"jemalloc",
+	"reth-cli-util/jemalloc-prof",
+]
