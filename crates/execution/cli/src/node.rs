@@ -23,7 +23,7 @@ use reth_rpc_server_types::{
 use tracing::info;
 
 use crate::{
-    B20PrefetchArgs, MeteringArgs, RpcStandardNodeArgs, ShadowIndexerArgs, StandardNodeArgs,
+    MeteringArgs, RpcStandardNodeArgs, ShadowIndexerArgs, StandardNodeArgs, StoragePrefetchArgs,
 };
 
 const DEFAULT_BASE_MAX_INBOUND_EL_PEERS: usize = 80;
@@ -181,9 +181,9 @@ pub struct ExecutionNodeArgs {
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
 
-    /// B20 storage prefetcher arguments.
+    /// Storage prefetcher arguments.
     #[command(flatten)]
-    pub b20_prefetch: B20PrefetchArgs,
+    pub storage_prefetch: StoragePrefetchArgs,
 }
 
 impl ExecutionNodeArgs {
@@ -195,7 +195,7 @@ impl ExecutionNodeArgs {
             standard: StandardNodeArgs::from(self.standard)
                 .with_metering(self.metering)
                 .with_shadow_indexer(self.shadow_indexer)
-                .with_b20_prefetch(self.b20_prefetch),
+                .with_storage_prefetch(self.storage_prefetch),
             with_unused_ports: runtime.with_unused_ports,
             upgrade_signal_startup: runtime.upgrade_signal_startup,
         }

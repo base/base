@@ -555,8 +555,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_rpc_b20_prefetch_args() {
-        let cli = BaseCli::parse_from(rpc_args(&["base", "rpc", "--b20.prefetch-workers", "8"]));
+    fn parses_rpc_storage_prefetch_args() {
+        let cli =
+            BaseCli::parse_from(rpc_args(&["base", "rpc", "--storage.prefetch-workers", "8"]));
 
         let BaseCommand::Rpc(rpc) = cli.command else {
             panic!("expected rpc command");
@@ -564,11 +565,11 @@ mod tests {
 
         let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
 
-        assert_eq!(launch_config.standard.b20_prefetch.b20_prefetch_workers, 8);
+        assert_eq!(launch_config.standard.storage_prefetch.storage_prefetch_workers, 8);
     }
 
     #[test]
-    fn b20_prefetch_workers_defaults_to_disabled() {
+    fn storage_prefetch_workers_defaults_to_disabled() {
         let cli = BaseCli::parse_from(rpc_args(&["base", "rpc"]));
 
         let BaseCommand::Rpc(rpc) = cli.command else {
@@ -577,7 +578,7 @@ mod tests {
 
         let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
 
-        assert_eq!(launch_config.standard.b20_prefetch.b20_prefetch_workers, 0);
+        assert_eq!(launch_config.standard.storage_prefetch.storage_prefetch_workers, 0);
     }
 
     #[test]

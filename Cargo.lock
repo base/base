@@ -4206,19 +4206,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-b20-prefetch"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-metrics",
- "base-node-runner",
- "base-precompile-storage",
- "metrics",
- "reth-provider",
- "tracing",
-]
-
-[[package]]
 name = "base-execution-chainspec"
 version = "0.0.0"
 dependencies = [
@@ -4256,11 +4243,11 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-genesis",
- "base-execution-b20-prefetch",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-eip8130-rpc-node",
  "base-execution-evm",
+ "base-execution-storage-prefetch",
  "base-execution-trie",
  "base-flashblocks",
  "base-flashblocks-node",
@@ -4586,6 +4573,19 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tower 0.5.3",
+ "tracing",
+]
+
+[[package]]
+name = "base-execution-storage-prefetch"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-metrics",
+ "base-node-runner",
+ "base-precompile-storage",
+ "metrics",
+ "reth-provider",
  "tracing",
 ]
 

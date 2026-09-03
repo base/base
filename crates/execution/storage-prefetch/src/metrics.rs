@@ -1,11 +1,11 @@
-//! Metrics for the B20 storage prefetch pool.
+//! Metrics for the storage prefetch pool.
 
 base_metrics::define_metrics! {
-    b20.prefetch,
+    storage.prefetch,
     struct = PrefetchMetrics,
     #[describe("Wall time in seconds of one prefetch storage read")]
     read_seconds: histogram,
-    #[describe("Prefetch hint batches received from precompile dispatch")]
+    #[describe("Prefetch hint batches received from producers")]
     hints_total: counter,
     #[describe("Slot reads enqueued to prefetch workers")]
     slots_enqueued_total: counter,

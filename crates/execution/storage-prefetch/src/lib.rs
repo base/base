@@ -4,10 +4,10 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod extension;
-pub use extension::{B20PrefetchConfig, B20PrefetchExtension};
+pub use extension::{StoragePrefetchConfig, StoragePrefetchExtension};
 
 mod metrics;
 pub use metrics::PrefetchMetrics;
 
 mod pool;
-pub use pool::B20PrefetchPool;
+pub use pool::StoragePrefetchPool;
