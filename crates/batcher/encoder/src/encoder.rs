@@ -311,6 +311,7 @@ impl BatchEncoder {
             "confirmed channel exceeded derivation timeout, replaying blocks"
         );
 
+        BatcherMetrics::channel_replay_total().increment(1);
         self.egress.invalidate_artifacts(&affected_artifacts);
         BatcherMetrics::pending_frames().set(self.egress.artifacts().ready_frame_count() as f64);
         self.channels.truncate(replay_idx);

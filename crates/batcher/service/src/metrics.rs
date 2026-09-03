@@ -35,7 +35,9 @@ base_metrics::define_metrics! {
     mismatches_total: counter,
     #[describe("Total derived L2 blocks skipped because one side did not return the block")]
     missing_blocks_total: counter,
-    #[describe("Total RPC fetch errors seen by derived L2 block parity monitoring, by scope")]
+    #[describe(
+        "Total errors that prevent a parity pass or block comparison from completing, by scope"
+    )]
     #[label(name = "scope", default = ["pass", "block"])]
     fetch_errors_total: counter,
     #[describe("Latest L2 block compared by derived block parity monitoring")]
@@ -50,9 +52,9 @@ base_metrics::define_metrics! {
 }
 
 impl L2BlockParityMetrics {
-    /// Chain-head fetch failed, so the pass compared nothing.
+    /// An error aborted the pass before it compared any block.
     pub const SCOPE_PASS: &'static str = "pass";
 
-    /// Block fetch failed mid-pass, leaving the cursor parked on that height.
+    /// An error aborted one block comparison, leaving the cursor parked on that height.
     pub const SCOPE_BLOCK: &'static str = "block";
 }

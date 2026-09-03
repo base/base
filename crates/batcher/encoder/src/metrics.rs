@@ -13,6 +13,10 @@ base_metrics::define_metrics! {
     channel_closed_total: counter,
     #[describe("Total number of channels for which every frame was confirmed on L1")]
     channel_fully_submitted_total: counter,
+    #[describe(
+        "Total channel replay operations caused by an expired derivation confirmation window"
+    )]
+    channel_replay_total: counter,
     #[describe("Total number of batcher pipeline resets, by reason")]
     #[label(
         name = "reason",
