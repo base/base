@@ -100,13 +100,11 @@ target/release/base-bench aggregate \
 ```
 
 The command atomically writes `results/metadata.json`. It retains the latest
-`createdAt` entry for every unique report tag set. The semantic `Scenario` is
-part of that identity, while a final generated ` @ <RFC3339 UTC timestamp>`
-suffix is ignored during comparison. This preserves distinct scenarios and
-versions, but replaces an older repetition with the latest one. The aggregate
-metadata adds the retained run time to `Scenario`, making the report filter and
-chart label identify when that result was last measured. `id` remains the unique
-raw artifact identifier and `BenchmarkRun` remains the report cohort/page key.
+`createdAt` entry for every unique report tag set, including the configured
+scenario and block-time tag. This preserves distinct scenarios, block cadences,
+and client versions, but replaces an older repetition with the latest one. It
+does not modify source metadata or scenario labels. `id` remains the unique raw
+artifact identifier and `BenchmarkRun` remains the report cohort/page key.
 
 ## Choose Comparable Runs
 

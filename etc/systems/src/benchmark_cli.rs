@@ -176,16 +176,8 @@ impl AggregateBenchmarkArgs {
                 run.output_dir,
                 output_name,
             );
-            let base_scenario = Self::base_scenario(&run)?;
-            let identity = Self::identity_key(&run, &base_scenario)?;
+            let identity = Self::identity_key(&run)?;
             let created_at = Self::parse_created_at(&run)?;
-            run.test_config.insert(
-                "Scenario".to_string(),
-                serde_json::Value::String(format!(
-                    "{base_scenario} @ {}",
-                    created_at.to_rfc3339_opts(SecondsFormat::Millis, true)
-                )),
-            );
 
             let replace = selected
                 .get(&identity)
@@ -228,22 +220,9 @@ impl AggregateBenchmarkArgs {
             .wrap_err_with(|| format!("run {} has invalid createdAt {:?}", run.id, run.created_at))
     }
 
-    fn base_scenario(run: &VisualizerRun) -> Result<String> {
-        let scenario =
-            run.test_config.get("Scenario").and_then(serde_json::Value::as_str).ok_or_else(
-                || eyre::eyre!("run {} is missing string testConfig.Scenario", run.id),
-            )?;
-        let (base, suffix) = scenario.rsplit_once(" @ ").unwrap_or((scenario, ""));
-        if !suffix.is_empty() && DateTime::parse_from_rfc3339(suffix).is_ok() {
-            return Ok(base.to_string());
-        }
-        Ok(scenario.to_string())
-    }
-
-    fn identity_key(run: &VisualizerRun, base_scenario: &str) -> Result<String> {
-        let mut tags = run.test_config.clone();
-        tags.insert("Scenario".to_string(), serde_json::Value::String(base_scenario.to_string()));
-        serde_json::to_string(&tags).wrap_err("failed to serialize benchmark tag identity")
+    fn identity_key(run: &VisualizerRun) -> Result<String> {
+        serde_json::to_string(&run.test_config)
+            .wrap_err("failed to serialize benchmark tag identity")
     }
 
     fn write_metadata_atomically(output_dir: &Path, metadata: &VisualizerMetadata) -> Result<()> {
@@ -765,13 +744,10 @@ fn write_aggregate_run(
         assert_eq!(runs[0]["id"], "new-version");
         assert_eq!(runs[1]["id"], "transfer-latest");
         assert_eq!(runs[2]["id"], "swap");
-        assert_eq!(
-            runs[1]["testConfig"]["Scenario"],
-            "transfer-100mgas-200ms @ 2026-09-03T00:02:00.000Z"
-        );
+        assert_eq!(runs[1]["testConfig"]["Scenario"], "transfer-100mgas-200ms");
         assert_eq!(
             runs[2]["testConfig"]["Scenario"],
-            "swap-100mgas-200ms @ 2026-09-03T00:01:00.000Z"
+            "swap-100mgas-200ms @ 2026-09-02T23:00:00.000Z"
         );
         assert!(root.path().join("transfer-early").is_dir());
     }
