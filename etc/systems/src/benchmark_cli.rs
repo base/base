@@ -2,6 +2,7 @@
 
 use std::{
     collections::BTreeMap,
+    fs,
     io::Write as _,
     path::{Path, PathBuf},
     sync::{
@@ -20,14 +21,15 @@ use base_load_tests::{
     BaselineError, LoadTestDisplay, LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions,
     MetricsSummary, TestConfig,
 };
-use chrono::{SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
 
 use crate::{
     DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, PrometheusBlockCollector,
     SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,
-    SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
+    SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder, VisualizerMetadata,
+    VisualizerRun,
 };
 
 /// Base benchmark launcher.
@@ -44,6 +46,21 @@ pub struct BenchmarkCli {
 pub enum BenchmarkCommand {
     /// Run one load test against a Base snapshot continuation.
     Snapshot(SnapshotBenchmarkArgs),
+    /// Aggregate selected snapshot run artifacts into one report metadata file.
+    Aggregate(AggregateBenchmarkArgs),
+}
+
+/// Arguments for aggregating self-contained snapshot benchmark artifacts.
+#[derive(Debug, Args)]
+pub struct AggregateBenchmarkArgs {
+    /// Common parent of the selected direct-child run directories. The command
+    /// atomically writes this directory's metadata.json without moving or
+    /// deleting any raw run artifacts.
+    #[arg(long)]
+    pub output_dir: PathBuf,
+    /// One or more self-contained snapshot run output directories to include.
+    #[arg(required = true, value_name = "RUN_OUTPUT_DIR")]
+    pub run_output_dirs: Vec<PathBuf>,
 }
 
 /// Arguments for one snapshot-backed benchmark case.
@@ -97,7 +114,153 @@ impl BenchmarkCli {
         let _progress = LoadTestDisplay::init_tracing();
         match self.command {
             BenchmarkCommand::Snapshot(args) => args.run().await,
+            BenchmarkCommand::Aggregate(args) => args.run(),
         }
+    }
+}
+
+impl AggregateBenchmarkArgs {
+    /// Builds report metadata from selected raw run directories without modifying
+    /// the source artifacts. One newest run is retained for every tag identity.
+    pub fn run(self) -> Result<()> {
+        let output_dir = fs::canonicalize(&self.output_dir).wrap_err_with(|| {
+            format!("failed to resolve aggregate output directory {}", self.output_dir.display())
+        })?;
+        eyre::ensure!(
+            output_dir.is_dir(),
+            "aggregate output path is not a directory: {}",
+            output_dir.display()
+        );
+
+        let mut selected = BTreeMap::<String, VisualizerRun>::new();
+        for run_output_dir in self.run_output_dirs {
+            let run_output_dir = fs::canonicalize(&run_output_dir).wrap_err_with(|| {
+                format!("failed to resolve run output directory {}", run_output_dir.display())
+            })?;
+            eyre::ensure!(
+                run_output_dir.is_dir(),
+                "run output path is not a directory: {}",
+                run_output_dir.display()
+            );
+            eyre::ensure!(
+                run_output_dir.parent() == Some(output_dir.as_path()),
+                "run output directory {} must be a direct child of aggregate output directory {}",
+                run_output_dir.display(),
+                output_dir.display(),
+            );
+            Self::validate_run_artifacts(&run_output_dir)?;
+            let metadata_path = run_output_dir.join("metadata.json");
+            let metadata: VisualizerMetadata = serde_json::from_slice(
+                &fs::read(&metadata_path)
+                    .wrap_err_with(|| format!("failed to read {}", metadata_path.display()))?,
+            )
+            .wrap_err_with(|| format!("failed to parse {}", metadata_path.display()))?;
+            eyre::ensure!(
+                metadata.runs.len() == 1,
+                "{} must contain exactly one raw benchmark run, found {}",
+                metadata_path.display(),
+                metadata.runs.len(),
+            );
+            let mut run = metadata.runs.into_iter().next().expect("validated metadata run count");
+            let output_name =
+                run_output_dir.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
+                    eyre::eyre!(
+                        "run output directory has no UTF-8 basename: {}",
+                        run_output_dir.display()
+                    )
+                })?;
+            eyre::ensure!(
+                run.output_dir == output_name,
+                "run {} metadata outputDir {} does not match directory {}",
+                run.id,
+                run.output_dir,
+                output_name,
+            );
+            let base_scenario = Self::base_scenario(&run)?;
+            let identity = Self::identity_key(&run, &base_scenario)?;
+            let created_at = Self::parse_created_at(&run)?;
+            run.test_config.insert(
+                "Scenario".to_string(),
+                serde_json::Value::String(format!(
+                    "{base_scenario} @ {}",
+                    created_at.to_rfc3339_opts(SecondsFormat::Millis, true)
+                )),
+            );
+
+            let replace = selected
+                .get(&identity)
+                .map(|existing| {
+                    created_at
+                        >= Self::parse_created_at(existing).expect("existing run was validated")
+                })
+                .unwrap_or(true);
+            if replace {
+                selected.insert(identity, run);
+            }
+        }
+
+        let mut runs = selected.into_values().collect::<Vec<_>>();
+        runs.sort_by(|left, right| {
+            let left_time = Self::parse_created_at(left).expect("selected run was validated");
+            let right_time = Self::parse_created_at(right).expect("selected run was validated");
+            right_time.cmp(&left_time).then_with(|| right.id.cmp(&left.id))
+        });
+        Self::write_metadata_atomically(&output_dir, &VisualizerMetadata { runs })
+    }
+
+    fn validate_run_artifacts(run_output_dir: &Path) -> Result<()> {
+        for file in [
+            "metadata.json",
+            "benchmark-result.json",
+            "load-test-result.json",
+            "metrics-sequencer.json",
+            "metrics-validator.json",
+        ] {
+            let path = run_output_dir.join(file);
+            eyre::ensure!(path.is_file(), "run artifact is missing: {}", path.display());
+        }
+        Ok(())
+    }
+
+    fn parse_created_at(run: &VisualizerRun) -> Result<DateTime<Utc>> {
+        DateTime::parse_from_rfc3339(&run.created_at)
+            .map(|timestamp| timestamp.with_timezone(&Utc))
+            .wrap_err_with(|| format!("run {} has invalid createdAt {:?}", run.id, run.created_at))
+    }
+
+    fn base_scenario(run: &VisualizerRun) -> Result<String> {
+        let scenario =
+            run.test_config.get("Scenario").and_then(serde_json::Value::as_str).ok_or_else(
+                || eyre::eyre!("run {} is missing string testConfig.Scenario", run.id),
+            )?;
+        let (base, suffix) = scenario.rsplit_once(" @ ").unwrap_or((scenario, ""));
+        if !suffix.is_empty() && DateTime::parse_from_rfc3339(suffix).is_ok() {
+            return Ok(base.to_string());
+        }
+        Ok(scenario.to_string())
+    }
+
+    fn identity_key(run: &VisualizerRun, base_scenario: &str) -> Result<String> {
+        let mut tags = run.test_config.clone();
+        tags.insert("Scenario".to_string(), serde_json::Value::String(base_scenario.to_string()));
+        serde_json::to_string(&tags).wrap_err("failed to serialize benchmark tag identity")
+    }
+
+    fn write_metadata_atomically(output_dir: &Path, metadata: &VisualizerMetadata) -> Result<()> {
+        let destination = output_dir.join("metadata.json");
+        let temporary = output_dir.join(format!(".metadata.json.{}.tmp", std::process::id()));
+        fs::write(&temporary, serde_json::to_vec_pretty(metadata)?).wrap_err_with(|| {
+            format!("failed to write aggregate metadata temporary file {}", temporary.display())
+        })?;
+        fs::rename(&temporary, &destination).wrap_err_with(|| {
+            format!("failed to replace aggregate metadata {}", destination.display())
+        })?;
+        println!(
+            "aggregated {} selected benchmark run(s): {}",
+            metadata.runs.len(),
+            destination.display()
+        );
+        Ok(())
     }
 }
 
@@ -414,7 +577,7 @@ mod tests {
 
     use clap::Parser;
 
-    use super::{BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs};
+use super::{AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs};
 
     #[test]
     fn parses_snapshot_benchmark_defaults() {
@@ -435,7 +598,9 @@ mod tests {
             "example-scenario",
         ]);
 
-        let BenchmarkCommand::Snapshot(args) = cli.command;
+        let BenchmarkCommand::Snapshot(args) = cli.command else {
+            panic!("expected snapshot benchmark command");
+        };
         assert_eq!(args.chain, "sepolia");
         assert_eq!(args.output_dir.to_string_lossy(), "results/case-a");
         assert_eq!(args.scenario, "example-scenario");
@@ -468,7 +633,9 @@ mod tests {
             "30",
         ]);
 
-        let BenchmarkCommand::Snapshot(args) = cli.command;
+        let BenchmarkCommand::Snapshot(args) = cli.command else {
+            panic!("expected snapshot benchmark command");
+        };
         assert_eq!(args.output_dir.to_string_lossy(), "result-dir");
         assert_eq!(args.run_id.as_deref(), Some("manual-run-id"));
         assert_eq!(args.shutdown_timeout_seconds, 30);
@@ -484,5 +651,147 @@ mod tests {
 
         assert!(output.path().is_dir());
         assert!(!stale.exists());
+
+fn write_aggregate_run(
+        root: &std::path::Path,
+        id: &str,
+        scenario: &str,
+        client_version: &str,
+        created_at: &str,
+    ) -> std::path::PathBuf {
+        let output = root.join(id);
+        std::fs::create_dir_all(&output).unwrap();
+        for artifact in [
+            "benchmark-result.json",
+            "load-test-result.json",
+            "metrics-sequencer.json",
+            "metrics-validator.json",
+        ] {
+            std::fs::write(output.join(artifact), "{}\n").unwrap();
+        }
+        let metadata = serde_json::json!({
+            "runs": [{
+                "id": id,
+                "sourceFile": "base-sepolia-snapshot",
+                "outputDir": id,
+                "testName": "Base Sepolia snapshot throughput",
+                "testDescription": "test",
+                "testConfig": {
+                    "BenchmarkRun": "sepolia-transfer-100mgas",
+                    "Scenario": scenario,
+                    "ChainId": 84532,
+                    "BlockTimeMilliseconds": 200,
+                    "GasLimit": 400000000,
+                    "NodeType": "base-reth-node",
+                    "TransactionPayload": "transfer",
+                    "ClientVersion": client_version
+                },
+                "result": {
+                    "success": true,
+                    "complete": true,
+                    "clientVersion": client_version,
+                    "sequencerMetrics": {"gasPerSecond": 1.0},
+                    "validatorMetrics": {"gasPerSecond": 1.0},
+                    "artifacts": {"loadTestResult": "load-test-result.json"}
+                },
+                "createdAt": created_at
+            }]
+        });
+        std::fs::write(output.join("metadata.json"), serde_json::to_vec(&metadata).unwrap())
+            .unwrap();
+        output
+    }
+
+    #[test]
+    fn parses_aggregate_benchmark_command() {
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "aggregate",
+            "--output-dir",
+            "results",
+            "results/run-a",
+        ]);
+        let BenchmarkCommand::Aggregate(args) = cli.command else {
+            panic!("expected aggregate benchmark command");
+        };
+        assert_eq!(args.output_dir, std::path::PathBuf::from("results"));
+        assert_eq!(args.run_output_dirs, vec![std::path::PathBuf::from("results/run-a")]);
+    }
+
+    #[test]
+    fn aggregate_keeps_latest_run_per_normalized_tag_set() {
+        let root = tempfile::tempdir().unwrap();
+        let early = write_aggregate_run(
+            root.path(),
+            "transfer-early",
+            "transfer-100mgas-200ms",
+            "base/a",
+            "2026-09-03T00:00:00.000Z",
+        );
+        let latest = write_aggregate_run(
+            root.path(),
+            "transfer-latest",
+            "transfer-100mgas-200ms",
+            "base/a",
+            "2026-09-03T00:02:00.000Z",
+        );
+        let distinct_scenario = write_aggregate_run(
+            root.path(),
+            "swap",
+            "swap-100mgas-200ms @ 2026-09-02T23:00:00.000Z",
+            "base/a",
+            "2026-09-03T00:01:00.000Z",
+        );
+        let distinct_version = write_aggregate_run(
+            root.path(),
+            "new-version",
+            "transfer-100mgas-200ms",
+            "base/b",
+            "2026-09-03T00:03:00.000Z",
+        );
+
+        AggregateBenchmarkArgs {
+            output_dir: root.path().to_path_buf(),
+            run_output_dirs: vec![early, latest, distinct_scenario, distinct_version],
+        }
+        .run()
+        .unwrap();
+
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("metadata.json")).unwrap())
+                .unwrap();
+        let runs = metadata["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0]["id"], "new-version");
+        assert_eq!(runs[1]["id"], "transfer-latest");
+        assert_eq!(runs[2]["id"], "swap");
+        assert_eq!(
+            runs[1]["testConfig"]["Scenario"],
+            "transfer-100mgas-200ms @ 2026-09-03T00:02:00.000Z"
+        );
+        assert_eq!(
+            runs[2]["testConfig"]["Scenario"],
+            "swap-100mgas-200ms @ 2026-09-03T00:01:00.000Z"
+        );
+        assert!(root.path().join("transfer-early").is_dir());
+    }
+
+    #[test]
+    fn aggregate_rejects_invalid_artifacts_without_replacing_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        let prior = b"{\n  \"runs\": [\n    {\"id\": \"preserved\"}\n  ]\n}\n";
+        std::fs::write(root.path().join("metadata.json"), prior).unwrap();
+        let invalid = root.path().join("invalid");
+        std::fs::create_dir_all(&invalid).unwrap();
+        std::fs::write(invalid.join("metadata.json"), "{\"runs\": []}").unwrap();
+
+        let error = AggregateBenchmarkArgs {
+            output_dir: root.path().to_path_buf(),
+            run_output_dirs: vec![invalid],
+        }
+        .run()
+        .unwrap_err();
+        assert!(error.to_string().contains("run artifact is missing"));
+        assert_eq!(std::fs::read(root.path().join("metadata.json")).unwrap(), prior);
     }
 }

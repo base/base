@@ -16,7 +16,9 @@ mod b20;
 pub use b20::{B20CreateConfig, B20PrecompileClient};
 
 mod benchmark_cli;
-pub use benchmark_cli::{BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs};
+pub use benchmark_cli::{
+    AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs,
+};
 
 mod benchmark_report;
 pub use benchmark_report::{
