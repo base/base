@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use base_shadow_indexer_db::{
     PgConnectionParams, SHADOW_RETENTION_LOCK_KEY, ShadowBlockPayload, ShadowBlockRepo,
-    ShadowBlockRow, ShadowDbConfig, ShadowRetentionRepo, ShadowWrite,
+    ShadowBlockRow, ShadowDbConfig, ShadowHash, ShadowRetentionRepo, ShadowWrite,
 };
 use chrono::Utc;
 use reth_primitives_traits::RecoveredBlock;
@@ -91,12 +91,19 @@ impl TestDatabase {
     }
 }
 
+/// A distinct 32-byte hash per height; `shadow_blocks_hash_format` requires the full width.
+fn block_hash_bytes(number: i64) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    bytes[24..].copy_from_slice(&number.to_be_bytes());
+    bytes
+}
+
 fn shadow_row(number: i64) -> ShadowBlockRow {
     let now = Utc::now();
 
     ShadowBlockRow {
         number,
-        hash: number.to_be_bytes().to_vec(),
+        hash: ShadowHash::encode(&block_hash_bytes(number)),
         canonical_hash: None,
         created_at: now,
         updated_at: now,

@@ -8,7 +8,7 @@ use anyhow::Result;
 use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_shadow_indexer_db::{
     PgConnectionParams, ShadowBlockPayload, ShadowBlockRepo, ShadowBlockRow, ShadowCanonicalRef,
-    ShadowDbConfig, ShadowWrite,
+    ShadowDbConfig, ShadowHash, ShadowWrite,
 };
 use chrono::Utc;
 use reth_primitives_traits::RecoveredBlock;
@@ -76,8 +76,8 @@ impl ShadowBlockFixture {
 
         ShadowBlockRow {
             number,
-            hash: vec![hash_seed; 32],
-            canonical_hash: canonical_hash_seed.map(|seed| vec![seed; 32]),
+            hash: ShadowHash::encode(&[hash_seed; 32]),
+            canonical_hash: canonical_hash_seed.map(|seed| ShadowHash::encode(&[seed; 32])),
             created_at: now,
             updated_at: now,
             payload,
@@ -141,7 +141,11 @@ async fn canonical_block_never_clears_an_established_hash() -> Result<()> {
 
     let rows = repo.list_by_number_range(71, 71).await?;
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].canonical_hash, Some(vec![0x92; 32]), "canonical hash is monotonic");
+    assert_eq!(
+        rows[0].canonical_hash,
+        Some(ShadowHash::encode(&[0x92; 32])),
+        "canonical hash is monotonic"
+    );
 
     Ok(())
 }
@@ -156,7 +160,11 @@ async fn a_later_candidate_at_a_height_does_not_inherit_the_replaced_hash() -> R
 
     let rows = repo.list_by_number_range(81, 81).await?;
     assert_eq!(rows.len(), 1, "a height keys one row");
-    assert_eq!(rows[0].hash, vec![0xa3; 32], "the new candidate replaces the old one");
+    assert_eq!(
+        rows[0].hash,
+        ShadowHash::encode(&[0xa3; 32]),
+        "the new candidate replaces the old one"
+    );
     assert_eq!(
         rows[0].canonical_hash, None,
         "the replaced candidate's canonical hash must not carry over to a different block"
@@ -171,13 +179,20 @@ async fn a_canonical_ref_does_not_resolve_a_candidate_stored_after_it() -> Resul
     let repo = ShadowBlockRepo::new(database.pool.clone());
 
     let mut writes = reorged([ShadowBlockFixture::new(91).into_row(0xb1, None)]);
-    writes.extend(canonical([ShadowCanonicalRef { number: 91, hash: vec![0xb2; 32] }]));
+    writes.extend(canonical([ShadowCanonicalRef {
+        number: 91,
+        hash: ShadowHash::encode(&[0xb2; 32]),
+    }]));
     writes.extend(reorged([ShadowBlockFixture::new(91).into_row(0xb3, None)]));
     repo.flush(&writes).await?;
 
     let rows = repo.list_by_number_range(91, 91).await?;
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].hash, vec![0xb3; 32], "the last candidate at the height is stored");
+    assert_eq!(
+        rows[0].hash,
+        ShadowHash::encode(&[0xb3; 32]),
+        "the last candidate at the height is stored"
+    );
     assert_eq!(
         rows[0].canonical_hash, None,
         "the ref replaced the earlier candidate and must not be pinned onto the later one"
@@ -225,7 +240,11 @@ async fn unresolved_backlog_counts_rows_awaiting_a_canonical_block() -> Result<(
     assert_eq!(backlog.count, 1, "only the row without a canonical hash is outstanding");
     assert!(backlog.oldest_age_seconds >= 0.0);
 
-    repo.flush(&canonical([ShadowCanonicalRef { number: 101, hash: vec![0xc4; 32] }])).await?;
+    repo.flush(&canonical([ShadowCanonicalRef {
+        number: 101,
+        hash: ShadowHash::encode(&[0xc4; 32]),
+    }]))
+    .await?;
 
     let drained = repo.unresolved_backlog().await?;
     assert_eq!(drained.count, 0);
@@ -263,10 +282,10 @@ async fn list_recent_returns_resolved_rows_newest_first_and_pages_by_before() ->
     Ok(())
 }
 
-/// Reads the hex mirror columns straight from the table, the way the Snowflake ETL does.
-async fn hex_columns(pool: &PgPool, number: i64) -> Result<(Option<String>, Option<String>)> {
-    let row = sqlx::query_as::<_, (Option<String>, Option<String>)>(
-        "SELECT hash_hex, canonical_hash_hex FROM shadow_blocks WHERE number = $1",
+/// Reads the hash columns as the Snowflake ETL sees them, after the BYTEA columns are gone.
+async fn stored_hashes(pool: &PgPool, number: i64) -> Result<(String, Option<String>)> {
+    let row = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT hash, canonical_hash FROM shadow_blocks WHERE number = $1",
     )
     .bind(number)
     .fetch_one(pool)
@@ -276,85 +295,101 @@ async fn hex_columns(pool: &PgPool, number: i64) -> Result<(Option<String>, Opti
 }
 
 #[tokio::test]
-async fn insert_writes_both_spellings_of_every_hash() -> Result<()> {
+async fn hashes_are_stored_as_text_the_etl_can_read() -> Result<()> {
     let database = TestDatabase::start().await?;
     let repo = ShadowBlockRepo::new(database.pool.clone());
-    repo.flush(&reorged([ShadowBlockFixture::new(400).into_row(0xe1, Some(0xe2))])).await?;
+    repo.flush(&reorged([ShadowBlockFixture::new(500).into_row(0xe1, Some(0xe2))])).await?;
 
-    let (hash_hex, canonical_hash_hex) = hex_columns(&database.pool, 400).await?;
-    assert_eq!(hash_hex, Some(format!("0x{}", "e1".repeat(32))));
-    assert_eq!(canonical_hash_hex, Some(format!("0x{}", "e2".repeat(32))));
+    // Decoding into String is itself the assertion that the column is no longer BYTEA.
+    let (hash, canonical_hash) = stored_hashes(&database.pool, 500).await?;
+    assert_eq!(hash, format!("0x{}", "e1".repeat(32)));
+    assert_eq!(canonical_hash, Some(format!("0x{}", "e2".repeat(32))));
 
     Ok(())
 }
 
 #[tokio::test]
-async fn an_unresolved_row_leaves_its_canonical_hex_null_rather_than_empty() -> Result<()> {
+async fn the_backlog_index_survives_dropping_the_column_its_predicate_named() -> Result<()> {
     let database = TestDatabase::start().await?;
-    let repo = ShadowBlockRepo::new(database.pool.clone());
-    repo.flush(&reorged([ShadowBlockFixture::new(401).into_row(0xe3, None)])).await?;
 
-    let (hash_hex, canonical_hash_hex) = hex_columns(&database.pool, 401).await?;
-    assert_eq!(hash_hex, Some(format!("0x{}", "e3".repeat(32))));
-    assert_eq!(canonical_hash_hex, None, "NULL, not a string that reads as a resolved row");
+    // `idx_shadow_blocks_unresolved` is partial on `WHERE canonical_hash IS NULL`, so dropping
+    // that column in 0015 takes the index with it -- unnamed, unlogged, and with no error. The
+    // query it backs runs on every retention tick, so the loss would surface only as a table
+    // scan that never stops happening. 0013 rebuilds it beforehand; this is the guard that 0013
+    // is still there. Asserted on existence rather than a plan, because on a table this small
+    // the planner would choose a sequential scan either way.
+    let rebuilt = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM pg_indexes \
+         WHERE tablename = 'shadow_blocks' AND indexname = 'idx_shadow_blocks_unresolved'",
+    )
+    .fetch_one(&database.pool)
+    .await?;
+
+    assert_eq!(rebuilt, 1, "the backlog index outlived the column its predicate referenced");
 
     Ok(())
 }
 
 #[tokio::test]
-async fn resolving_a_canonical_hash_fills_its_hex_mirror() -> Result<()> {
+async fn an_unresolved_row_still_registers_in_the_backlog_after_the_contract() -> Result<()> {
     let database = TestDatabase::start().await?;
     let repo = ShadowBlockRepo::new(database.pool.clone());
-    repo.flush(&reorged([ShadowBlockFixture::new(402).into_row(0xe4, None)])).await?;
+    repo.flush(&reorged([ShadowBlockFixture::new(501).into_row(0xf1, None)])).await?;
 
-    repo.flush(&canonical([ShadowCanonicalRef { number: 402, hash: vec![0xe5; 32] }])).await?;
+    assert_eq!(repo.unresolved_backlog().await?.count, 1);
 
-    let (_, canonical_hash_hex) = hex_columns(&database.pool, 402).await?;
+    repo.flush(&canonical([ShadowCanonicalRef {
+        number: 501,
+        hash: ShadowHash::encode(&[0xf2; 32]),
+    }]))
+    .await?;
+
+    assert_eq!(repo.unresolved_backlog().await?.count, 0, "the text predicate resolves the row");
+    let (_, canonical_hash) = stored_hashes(&database.pool, 501).await?;
+    assert_eq!(canonical_hash, Some(format!("0x{}", "f2".repeat(32))));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_row_is_retrievable_by_the_hash_string_it_was_stored_under() -> Result<()> {
+    let database = TestDatabase::start().await?;
+    let repo = ShadowBlockRepo::new(database.pool.clone());
+    repo.flush(&reorged([ShadowBlockFixture::new(502).into_row(0xd1, Some(0xd2))])).await?;
+
+    let found = repo
+        .get_by_block_hash(&ShadowHash::encode(&[0xd1; 32]))
+        .await?
+        .expect("stored row is found by its hash");
+    assert_eq!(found.number, 502);
+
+    let candidates = repo.list_reorged_by_canonical(&ShadowHash::encode(&[0xd2; 32])).await?;
     assert_eq!(
-        canonical_hash_hex,
-        Some(format!("0x{}", "e5".repeat(32))),
-        "the UNNEST resolve path carries the hex mirror with the bytes"
+        candidates.iter().map(|row| row.number).collect::<Vec<_>>(),
+        [502],
+        "by-canonical lookup matches on the text column"
     );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn a_replacement_candidate_replaces_both_hash_spellings() -> Result<()> {
-    let database = TestDatabase::start().await?;
-    let repo = ShadowBlockRepo::new(database.pool.clone());
-    repo.flush(&reorged([ShadowBlockFixture::new(403).into_row(0xe6, Some(0xe7))])).await?;
-
-    repo.flush(&reorged([ShadowBlockFixture::new(403).into_row(0xe8, None)])).await?;
-
-    let (hash_hex, canonical_hash_hex) = hex_columns(&database.pool, 403).await?;
-    assert_eq!(hash_hex, Some(format!("0x{}", "e8".repeat(32))));
-    assert_eq!(
-        canonical_hash_hex, None,
-        "the replaced candidate's canonical hex must not carry over, exactly as its bytes do not"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_database_rejects_a_hash_that_is_not_lowercase_0x_hex() -> Result<()> {
+async fn the_database_still_rejects_a_hash_that_is_not_lowercase_0x_hex() -> Result<()> {
     let database = TestDatabase::start().await?;
 
     let rejected = sqlx::query(
-        "INSERT INTO shadow_blocks (number, hash, created_at, payload, hash_hex) \
-         VALUES ($1, $2, now(), '{}'::jsonb, $3)",
+        "INSERT INTO shadow_blocks (number, hash, created_at, payload) \
+         VALUES ($1, $2, now(), '{}'::jsonb)",
     )
-    .bind(404_i64)
-    .bind(vec![0xe9_u8; 32])
+    .bind(503_i64)
     .bind(format!("0X{}", "E9".repeat(32)))
     .execute(&database.pool)
     .await;
 
     let error = rejected.expect_err("uppercase hex is not the spelling the reader looks up");
     assert!(
-        error.to_string().contains("shadow_blocks_hash_hex_format"),
-        "the format constraint is what rejected it, not something incidental: {error}"
+        error.to_string().contains("shadow_blocks_hash_format"),
+        "the renamed format constraint is what rejected it: {error}"
     );
 
     Ok(())
