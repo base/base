@@ -109,6 +109,7 @@ mod tests {
     //! run. Recording into shared state and asserting from the test body
     //! sidesteps that.
 
+    use core::cell::Cell;
     use std::sync::Mutex;
 
     use super::*;
@@ -129,12 +130,19 @@ mod tests {
         let address = Address::repeat_byte(0xB2);
         let slots = [U256::from(11u64), U256::from(9u64)];
 
-        // Before install: must not panic, and must not evaluate the closure.
-        PrefetchHint::send_slots_with(address, || (slots, slots.len()));
+        // Before install: must not evaluate the closure.
+        let evaluated = Cell::new(false);
+        PrefetchHint::send_slots_with(address, || {
+            evaluated.set(true);
+            (slots, slots.len())
+        });
+        assert!(!evaluated.get());
         PrefetchHint::send(&[PrefetchRequest::Account { address }]);
 
         let recorder = Arc::new(RecordingPrefetcher::default());
-        assert!(PrefetchHint::install(recorder.clone()));
+        let recorder_for_prefetcher = Arc::<RecordingPrefetcher>::clone(&recorder);
+        let prefetcher: Arc<dyn StatePrefetcher> = recorder_for_prefetcher;
+        assert!(PrefetchHint::install(prefetcher));
 
         PrefetchHint::send_slots_with(address, || (slots, slots.len()));
         assert_eq!(
