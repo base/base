@@ -47,6 +47,7 @@ base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true
 base-flashblocks-node.workspace = true
 base-execution-trie.workspace = true
+base-execution-state-prefetch.workspace = true
 base-execution-eip8130-rpc-node.workspace = true
 base-proofs-extension.workspace = true
 base-shadow-indexer.workspace = true

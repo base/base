@@ -4252,6 +4252,7 @@ dependencies = [
  "base-execution-consensus",
  "base-execution-eip8130-rpc-node",
  "base-execution-evm",
+ "base-execution-state-prefetch",
  "base-execution-trie",
  "base-flashblocks",
  "base-flashblocks-node",
@@ -4577,6 +4578,19 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tower 0.5.3",
+ "tracing",
+]
+
+[[package]]
+name = "base-execution-state-prefetch"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-metrics",
+ "base-node-runner",
+ "base-precompile-storage",
+ "metrics",
+ "reth-provider",
  "tracing",
 ]
 

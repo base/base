@@ -1,0 +1,40 @@
+[package]
+name = "base-execution-state-prefetch"
+description = "Background state prefetch pool serving precompile and contract hints"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-metrics.workspace = true
+base-node-runner.workspace = true
+base-precompile-storage = { workspace = true, features = ["std"] }
+
+# reth
+reth-provider.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+
+# misc
+metrics = { workspace = true, optional = true }
+tracing = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+reth-provider = { workspace = true, features = ["test-utils"] }
+
+[features]
+default = [ "metrics" ]
+metrics = [
+	"base-metrics/metrics",
+	"dep:metrics",
+]
