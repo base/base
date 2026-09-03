@@ -96,3 +96,7 @@ networks:
       # Do not inherit a daemon default of `routed` or `nat-unprotected`.
       com.docker.network.bridge.gateway_mode_ipv4: nat
       com.docker.network.bridge.gateway_mode_ipv6: nat
+      # Set explicitly so a daemon `default-network-opts` entry cannot add
+      # trusted interfaces here. Those would let a remote host reach the
+      # requester port at the container address, past the loopback publish.
+      com.docker.network.bridge.trusted_host_interfaces: ""

@@ -172,12 +172,25 @@ host-port position of a `127.0.0.1:<port>:9000` mapping.
 
 ## Requester RPC exposure
 
-The requester RPC is published on `127.0.0.1` only. The Compose network
-explicitly uses Docker's `nat` gateway mode, so a daemon default of `routed` or
-`nat-unprotected` cannot leave the container address reachable from the local
-network, and `just prover up` rejects a reused network whose options would
-permit direct routing. Run the stack through `just prover up`: invoking Compose
-directly skips the daemon version and network checks.
+The requester RPC is published on `127.0.0.1` only. That stops a remote host
+reaching it at one of your host's addresses; Docker separately drops packets
+addressed straight to the container. The Compose network pins the two options
+that would undo the second protection: `nat` gateway mode, so a daemon default
+of `routed` or `nat-unprotected` cannot apply, and an empty
+`trusted_host_interfaces`, so a daemon `default-network-opts` entry cannot name
+interfaces allowed to route directly to the container. `just prover up` rejects
+a reused network carrying either option. Run the stack through `just prover
+up`: invoking Compose directly skips the daemon version and network checks.
+
+One case the stack cannot defend against is a daemon running with
+`allow-direct-routing` (in `daemon.json`, or `--allow-direct-routing`). That
+switches off direct-access filtering for every bridge network on the host. The
+loopback publish still hides port 9000 from your host's addresses, but a remote
+host with a route to the bridge subnet can then reach the requester at the
+container's own address. Docker does not report this setting through
+`docker info`, so `just prover up` cannot check it for you. Do not run this
+stack on such a host without your own authenticated proxy and firewall rules in
+front of it.
 
 The API is unauthenticated. Any caller that reaches it can request proofs on
 the paid `network` backend against your deposited PROVE, and can also call
