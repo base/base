@@ -14,8 +14,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use base_snapshotter::{
     ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
-    ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
-    SnapshotUploadParams, SnapshotUploader, TipChecker, TipStatus,
+    ManifestGenerationParams, OutputFileChecksum, ProofsStaticManifest, SnapshotGenerator,
+    SnapshotManifest, SnapshotUploadParams, SnapshotUploader, TipChecker, TipStatus,
 };
 use bollard::{
     Docker,
@@ -48,6 +48,7 @@ const fn upload_params<'a>(
         local_manifest,
         remote_manifest,
         remote_static_files,
+        proofs_static: None,
     }
 }
 
@@ -411,8 +412,8 @@ async fn upload_artifacts_to_minio() -> Result<()> {
         "manifest should point state at the timestamped run dir"
     );
     assert_eq!(
-        manifest["components"]["proofs"]["file"], "proofs.tar.zst",
-        "proofs must remain a sibling of manifest.json for ProofsDownloader"
+        manifest["components"]["proofs"]["file"], "1700000000/proofs.tar.zst",
+        "proofs should be placed in the timestamped directory"
     );
 
     let components = manifest["components"].as_object().expect("components should be an object");
@@ -508,8 +509,8 @@ async fn upload_with_empty_prefix() -> Result<()> {
         "manifest should point state at the timestamped run dir"
     );
     assert_eq!(
-        manifest["components"]["proofs"]["file"], "proofs.tar.zst",
-        "proofs must remain a sibling of manifest.json for ProofsDownloader"
+        manifest["components"]["proofs"]["file"], "1700000000/proofs.tar.zst",
+        "proofs should be placed in the timestamped directory"
     );
 
     assert_eq!(
@@ -1031,34 +1032,44 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
     })?;
 
     assert!(
-        files.iter().any(|f| f.file_name().is_some_and(|n| n == "proofs.tar.zst")),
-        "generator should produce proofs.tar.zst"
+        files.iter().any(|f| f.file_name().is_some_and(|n| n == "proofs-metadata.tar.zst")),
+        "generator should produce proofs metadata"
     );
 
     let local_manifest = parse_local_manifest(output.path())?;
+    let proofs_static = ProofsStaticManifest::from_manifest_bytes(&std::fs::read(
+        output.path().join("manifest.json"),
+    )?)?
+    .expect("generated proofs snapshot should have proofs_static");
     let upload_prefix = uploader
-        .upload(upload_params(
-            output.path(),
-            &files,
-            1_700_000_000,
-            &local_manifest,
-            None,
-            &HashMap::new(),
-        ))
+        .upload(SnapshotUploadParams {
+            output_dir: output.path(),
+            files: &files,
+            timestamp: 1_700_000_000,
+            retain_runs: 100,
+            local_manifest: &local_manifest,
+            remote_manifest: None,
+            remote_static_files: &HashMap::new(),
+            proofs_static: Some(&proofs_static),
+        })
         .await?;
     assert_eq!(upload_prefix, "proofs-gen/1700000000");
 
     let s3 = &harness.storage_client;
     let bucket = &harness.bucket_name;
 
-    let proofs_body = get_object_bytes(s3, bucket, "proofs-gen/1700000000/proofs.tar.zst").await?;
-    assert!(!proofs_body.is_empty(), "uploaded proofs archive should not be empty");
+    let proofs_body =
+        get_object_bytes(s3, bucket, "proofs-gen/1700000000/proofs-metadata.tar.zst").await?;
+    assert!(!proofs_body.is_empty(), "uploaded proofs metadata archive should not be empty");
+    let table_file = &proofs_static.tables[0].file;
+    let table_body = get_object_bytes(s3, bucket, &format!("proofs-gen/{table_file}")).await?;
+    assert!(!table_body.is_empty(), "uploaded immutable SST archive should not be empty");
 
     let manifest_body = get_object_bytes(s3, bucket, "proofs-gen/1700000000/manifest.json").await?;
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
     assert_eq!(
-        manifest["components"]["proofs"]["file"], "proofs.tar.zst",
-        "published proofs file must be a sibling of manifest.json"
+        manifest["components"]["proofs"]["file"], "1700000000/proofs-metadata.tar.zst",
+        "published proofs metadata should be in the run directory"
     );
     assert_eq!(
         manifest["components"]["state"]["file"], "1700000000/state.tar.zst",
@@ -1072,8 +1083,54 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
     );
     assert_eq!(
         manifest["components"]["proofs"]["output_files"].as_array().map(|a| a.len()),
-        Some(7),
-        "exactly 7 proofs DB files should be recorded in the published manifest"
+        Some(6),
+        "only mutable proofs DB files should be recorded in the metadata archive"
+    );
+    assert_eq!(manifest["proofs_static"]["database"], "rocksdb");
+    assert_eq!(manifest["proofs_static"]["tables"].as_array().map(Vec::len), Some(1));
+
+    // A second run with the same SST must only produce and upload fresh metadata.
+    let second_output = tempfile::tempdir()?;
+    let remote_static_files = uploader.list_remote_static_files().await?;
+    let no_previous_chunk_metadata = HashMap::new();
+    let second_files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+        source_datadir: source.path(),
+        output_dir: second_output.path(),
+        chain_id: 8453,
+        block: Some(0),
+        blocks_per_file: Some(500_000),
+        remote_static_files: &remote_static_files,
+        previous_chunk_output_files: &no_previous_chunk_metadata,
+        upload_proofs: true,
+    })?;
+    let second_manifest_bytes = std::fs::read(second_output.path().join("manifest.json"))?;
+    let second_manifest: SnapshotManifest = serde_json::from_slice(&second_manifest_bytes)?;
+    let second_proofs_static =
+        ProofsStaticManifest::from_manifest_bytes(&second_manifest_bytes)?.expect("proofs_static");
+    let static_archive_name =
+        Path::new(&proofs_static.tables[0].file).file_name().expect("table archive filename");
+    assert!(
+        !second_files
+            .iter()
+            .any(|file| file.file_name().is_some_and(|name| name == static_archive_name)),
+        "existing SST must not be recompressed"
+    );
+    uploader
+        .upload(SnapshotUploadParams {
+            output_dir: second_output.path(),
+            files: &second_files,
+            timestamp: 1_700_000_001,
+            retain_runs: 100,
+            local_manifest: &second_manifest,
+            remote_manifest: None,
+            remote_static_files: &remote_static_files,
+            proofs_static: Some(&second_proofs_static),
+        })
+        .await?;
+    assert!(
+        !get_object_bytes(s3, bucket, "proofs-gen/1700000001/proofs-metadata.tar.zst")
+            .await?
+            .is_empty()
     );
 
     Ok(())

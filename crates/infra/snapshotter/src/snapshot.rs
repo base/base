@@ -19,6 +19,7 @@ use rayon::prelude::*;
 pub use reth_cli_commands::download::manifest::{
     ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive, SnapshotManifest,
 };
+use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::progress::{
@@ -41,6 +42,46 @@ const CHUNKED_COMPONENTS: &[(&str, &str)] = &[
     ("account_changesets", "account-change-sets"),
     ("storage_changesets", "storage-change-sets"),
 ];
+
+/// Name of the per-run archive containing `RocksDB` metadata and WAL files.
+pub(crate) const PROOFS_METADATA_ARCHIVE: &str = "proofs-metadata.tar.zst";
+
+/// Base-specific manifest extension that describes immutable `RocksDB` SST files.
+///
+/// The extension intentionally lives at the top level of the manifest so stock
+/// Reth v2 manifest readers can ignore it. The mutable `RocksDB` files remain in
+/// the normal `components.proofs` single archive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofsStaticManifest {
+    /// Version of this extension's schema.
+    pub version: u8,
+    /// Storage engine used by the proof history database.
+    pub database: String,
+    /// One archive per immutable `RocksDB` SST table.
+    pub tables: Vec<SingleArchive>,
+}
+
+impl ProofsStaticManifest {
+    /// Current version of the proofs-static manifest extension.
+    pub const VERSION: u8 = 1;
+
+    /// Parses the optional extension from a manifest JSON document.
+    pub fn from_manifest_bytes(bytes: &[u8]) -> Result<Option<Self>> {
+        let value: serde_json::Value = serde_json::from_slice(bytes)?;
+        value
+            .get("proofs_static")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(Into::into)
+    }
+
+    pub(crate) fn insert_into_manifest(&self, manifest: &SnapshotManifest) -> Result<Vec<u8>> {
+        let mut value = serde_json::to_value(manifest)?;
+        value["proofs_static"] = serde_json::to_value(self)?;
+        Ok(serde_json::to_vec_pretty(&value)?)
+    }
+}
 
 /// Convenience helpers for snapshotter-specific manifest lookups.
 pub trait SnapshotManifestExt {
@@ -126,7 +167,7 @@ pub struct ManifestGenerationParams<'a> {
     pub remote_static_files: &'a HashMap<String, u64>,
     /// Prior per-file chunk metadata reused for skipped archives.
     pub previous_chunk_output_files: &'a HashMap<String, Vec<OutputFileChecksum>>,
-    /// Whether to package `{source_datadir}/proofs` into `proofs.tar.zst`.
+    /// Whether to package `{source_datadir}/proofs` as a `RocksDB` snapshot.
     pub upload_proofs: bool,
 }
 
@@ -362,33 +403,77 @@ impl SnapshotGenerator {
             );
         }
 
-        let proofs_files = if params.upload_proofs {
-            proofs_source_files(params.source_datadir)?
-        } else {
-            Vec::new()
-        };
-        if !proofs_files.is_empty() {
-            let (proofs_size, proofs_output_files) =
-                package_single_component(params.output_dir, "proofs.tar.zst", &proofs_files)?;
+        let proofs_static = if params.upload_proofs {
+            let (proofs_tables, proofs_metadata) = proofs_source_files(params.source_datadir)?;
+
+            let mut tables = Vec::with_capacity(proofs_tables.len());
+            for table in proofs_tables {
+                // Hash first so the archive name is content-addressed. This lets us avoid both
+                // recompressing and re-uploading a table already present in shared storage.
+                let output_files =
+                    compute_output_files_for_planned_files(std::slice::from_ref(&table))?;
+                let output =
+                    output_files.first().expect("a planned RocksDB SST always has one output file");
+                let archive_name = proofs_table_archive_name(&table, &output.blake3);
+                let remote_name = format!("proofs/{archive_name}");
+                let size = if let Some(size) = params.remote_static_files.get(&remote_name) {
+                    *size
+                } else {
+                    let archive_path = params.output_dir.join(&archive_name);
+                    let written = write_archive_from_planned_files(
+                        &archive_path,
+                        std::slice::from_ref(&table),
+                        None,
+                    )?;
+                    debug_assert_eq!(written, output_files);
+                    std::fs::metadata(archive_path)?.len()
+                };
+
+                tables.push(SingleArchive {
+                    file: format!("static_files/{remote_name}"),
+                    size,
+                    decompressed_size: output.size,
+                    blake3: None,
+                    output_files,
+                });
+            }
+
+            if proofs_metadata.is_empty() {
+                bail!("RocksDB proofs database has no metadata files")
+            }
+
+            let (proofs_size, proofs_output_files) = package_single_component(
+                params.output_dir,
+                PROOFS_METADATA_ARCHIVE,
+                &proofs_metadata,
+            )?;
             let proofs_decompressed_size: u64 = proofs_output_files.iter().map(|f| f.size).sum();
             info!(
                 component = "proofs",
                 compressed_size = proofs_size,
                 decompressed_size = proofs_decompressed_size,
-                file_count = proofs_files.len(),
-                "packaged proofs database"
+                file_count = proofs_metadata.len(),
+                static_tables = tables.len(),
+                "packaged RocksDB proofs metadata"
             );
             components.insert(
                 "proofs".to_string(),
                 ComponentManifest::Single(SingleArchive {
-                    file: "proofs.tar.zst".to_string(),
+                    file: PROOFS_METADATA_ARCHIVE.to_string(),
                     size: proofs_size,
                     decompressed_size: proofs_decompressed_size,
                     blake3: None,
                     output_files: proofs_output_files,
                 }),
             );
-        }
+            Some(ProofsStaticManifest {
+                version: ProofsStaticManifest::VERSION,
+                database: "rocksdb".to_string(),
+                tables,
+            })
+        } else {
+            None
+        };
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -406,7 +491,11 @@ impl SnapshotGenerator {
         };
 
         let manifest_path = params.output_dir.join("manifest.json");
-        std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
+        let manifest_bytes = match &proofs_static {
+            Some(proofs_static) => proofs_static.insert_into_manifest(&manifest)?,
+            None => serde_json::to_vec_pretty(&manifest)?,
+        };
+        std::fs::write(&manifest_path, manifest_bytes)?;
         info!(block, components = manifest.components.len(), "manifest written");
 
         let files = Self::collect_output_files(params.output_dir)?;
@@ -602,12 +691,30 @@ fn rocksdb_source_files(source_datadir: &Path) -> Result<Vec<PlannedFile>> {
     collect_files_recursive(&rocksdb_dir, Path::new("rocksdb"))
 }
 
-fn proofs_source_files(source_datadir: &Path) -> Result<Vec<PlannedFile>> {
+fn proofs_source_files(source_datadir: &Path) -> Result<(Vec<PlannedFile>, Vec<PlannedFile>)> {
     let proofs_dir = source_datadir.join("proofs");
     if !proofs_dir.exists() {
-        return Ok(Vec::new());
+        bail!("could not find RocksDB proofs database under {}", proofs_dir.display());
     }
-    collect_files_recursive(&proofs_dir, Path::new("proofs"))
+    if !proofs_dir.join("CURRENT").is_file() {
+        bail!("proofs database at {} is not RocksDB (missing CURRENT)", proofs_dir.display());
+    }
+
+    let mut tables = Vec::new();
+    let mut metadata = Vec::new();
+    for file in collect_files_recursive(&proofs_dir, Path::new("proofs"))? {
+        if file.source_path.extension().is_some_and(|extension| extension == "sst") {
+            tables.push(file);
+        } else {
+            metadata.push(file);
+        }
+    }
+    Ok((tables, metadata))
+}
+
+fn proofs_table_archive_name(table: &PlannedFile, contents_hash: &str) -> String {
+    let path_hash = blake3::hash(table.relative_path.to_string_lossy().as_bytes()).to_hex();
+    format!("proofs-sst-{path_hash}-{contents_hash}.tar.zst")
 }
 
 fn looks_like_db_dir(path: &Path) -> Result<bool> {
@@ -1052,7 +1159,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_manifest_creates_proofs_archive() {
+    fn generate_manifest_creates_incremental_rocksdb_proofs_archives() {
         let source = tempfile::tempdir().unwrap();
         let output = tempfile::tempdir().unwrap();
         let db_dir = source.path().join("db");
@@ -1082,8 +1189,8 @@ mod tests {
         .unwrap();
 
         assert!(
-            files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
-            "should produce proofs.tar.zst when proofs/ exists"
+            files.iter().any(|f| f.file_name().unwrap() == PROOFS_METADATA_ARCHIVE),
+            "should produce the proofs metadata archive"
         );
 
         let manifest_content =
@@ -1095,24 +1202,54 @@ mod tests {
             panic!("proofs component should be a Single archive");
         };
 
-        assert_eq!(proofs.file, "proofs.tar.zst", "proofs archive filename");
-        assert_eq!(proofs.output_files.len(), 7, "exactly 7 proofs DB files should be packaged");
+        assert_eq!(proofs.file, PROOFS_METADATA_ARCHIVE, "proofs metadata archive filename");
+        assert_eq!(proofs.output_files.len(), 6, "SST files belong in static archives");
         assert!(
             proofs.output_files.iter().all(|f| f.path.starts_with("proofs/")),
             "all proofs output paths should be under proofs/"
         );
         assert!(
-            proofs.output_files.iter().any(|f| f.path == "proofs/000060.sst"),
-            "should include SST file under proofs/"
-        );
-        assert!(
             proofs.output_files.iter().any(|f| f.path == "proofs/CURRENT"),
             "should include CURRENT under proofs/"
+        );
+
+        let proofs_static = ProofsStaticManifest::from_manifest_bytes(manifest_content.as_bytes())
+            .unwrap()
+            .expect("manifest should include proofs_static extension");
+        assert_eq!(proofs_static.version, ProofsStaticManifest::VERSION);
+        assert_eq!(proofs_static.database, "rocksdb");
+        assert_eq!(proofs_static.tables.len(), 1);
+        assert_eq!(proofs_static.tables[0].output_files[0].path, "proofs/000060.sst");
+        assert!(files.iter().any(|file| {
+            file.file_name().is_some_and(|name| name.to_string_lossy().starts_with("proofs-sst-"))
+        }));
+
+        let mut remote = HashMap::new();
+        let remote_name =
+            proofs_static.tables[0].file.strip_prefix("static_files/").unwrap().to_string();
+        remote.insert(remote_name, proofs_static.tables[0].size);
+        let second_output = tempfile::tempdir().unwrap();
+        let second_files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
+            second_output.path(),
+            &remote,
+            &previous_chunk_output_files,
+            Some(0),
+            true,
+        ))
+        .unwrap();
+        assert!(
+            !second_files.iter().any(|file| {
+                file.file_name().is_some_and(|name| {
+                    name == proofs_static.tables[0].file.rsplit('/').next().unwrap()
+                })
+            }),
+            "existing immutable SST should not be recompressed"
         );
     }
 
     #[test]
-    fn generate_manifest_skips_proofs_when_missing() {
+    fn generate_manifest_fails_when_enabled_proofs_database_is_missing() {
         let source = tempfile::tempdir().unwrap();
         let output = tempfile::tempdir().unwrap();
         let db_dir = source.path().join("db");
@@ -1121,7 +1258,7 @@ mod tests {
 
         let remote = HashMap::new();
         let previous_chunk_output_files = HashMap::new();
-        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+        let error = SnapshotGenerator::generate_manifest(&test_manifest_params(
             source.path(),
             output.path(),
             &remote,
@@ -1129,20 +1266,8 @@ mod tests {
             Some(0),
             true,
         ))
-        .unwrap();
-
-        assert!(
-            !files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
-            "should not produce proofs.tar.zst when proofs/ is missing"
-        );
-
-        let manifest_content =
-            std::fs::read_to_string(output.path().join("manifest.json")).unwrap();
-        let manifest: SnapshotManifest = serde_json::from_str(&manifest_content).unwrap();
-        assert!(
-            !manifest.components.contains_key("proofs"),
-            "manifest should omit proofs component when proofs/ is missing"
-        );
+        .unwrap_err();
+        assert!(error.to_string().contains("could not find RocksDB proofs database"));
     }
 
     #[test]
@@ -1170,8 +1295,8 @@ mod tests {
         .unwrap();
 
         assert!(
-            !files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
-            "should not produce proofs.tar.zst when upload_proofs is disabled"
+            !files.iter().any(|f| f.file_name().unwrap() == PROOFS_METADATA_ARCHIVE),
+            "should not produce proof artifacts when upload_proofs is disabled"
         );
 
         let manifest_content =
