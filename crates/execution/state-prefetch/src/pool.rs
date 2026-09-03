@@ -26,6 +26,10 @@ const WORKER_QUEUE_CAPACITY: usize = 1024;
 /// drained batch.
 const MAX_READS_PER_PROVIDER: usize = 128;
 
+/// Maximum number of prefetch worker threads a pool will spawn. Past roughly this point extra
+/// workers add OS threads and MDBX read slots without increasing `NVMe` queue-depth utilization.
+pub const MAX_PREFETCH_WORKERS: usize = 256;
+
 /// Pool of OS threads that read hinted state through independent state-provider handles.
 ///
 /// Each hinted request is read once at the latest state and the value discarded: the read exists

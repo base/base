@@ -10,4 +10,4 @@ mod metrics;
 pub use metrics::PrefetchMetrics;
 
 mod pool;
-pub use pool::StatePrefetchPool;
+pub use pool::{MAX_PREFETCH_WORKERS, StatePrefetchPool};

@@ -6,7 +6,7 @@ use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_precompile_storage::PrefetchHint;
 use tracing::{info, warn};
 
-use crate::StatePrefetchPool;
+use crate::{MAX_PREFETCH_WORKERS, StatePrefetchPool};
 
 /// Configuration for [`StatePrefetchExtension`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -39,6 +39,14 @@ impl BaseNodeExtension for StatePrefetchExtension {
         if workers == 0 {
             info!(message = "state prefetch is disabled");
             return hooks;
+        }
+        let workers = workers.min(MAX_PREFETCH_WORKERS);
+        if workers < self.config.workers {
+            warn!(
+                requested = %self.config.workers,
+                clamped = %workers,
+                "state prefetch workers clamped to maximum"
+            );
         }
         hooks.add_node_started_hook(move |node| {
             let pool = StatePrefetchPool::spawn(node.provider().clone(), workers);

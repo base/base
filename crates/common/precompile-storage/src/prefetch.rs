@@ -16,7 +16,7 @@
 //! installed — tests, tools, and `no_std` proof environments — hints are a
 //! no-op atomic load.
 
-use alloc::{sync::Arc, vec::Vec};
+use alloc::sync::Arc;
 
 use alloy_primitives::{Address, U256};
 use revm::primitives::OnceLock;
@@ -78,11 +78,21 @@ impl PrefetchHint {
 
     /// Forwards a hint for storage slots of a single address, if a
     /// prefetcher is installed.
+    ///
+    /// Converts through a fixed stack buffer so the hot dispatch path stays
+    /// allocation-free; batches larger than the buffer arrive as multiple
+    /// hints.
     pub fn send_slots(address: Address, slots: &[U256]) {
-        if PREFETCHER.get().is_some() {
-            let requests: Vec<PrefetchRequest> =
-                slots.iter().map(|&slot| PrefetchRequest::Slot { address, slot }).collect();
-            Self::send(&requests);
+        const CHUNK: usize = 8;
+        let Some(prefetcher) = PREFETCHER.get() else {
+            return;
+        };
+        for chunk in slots.chunks(CHUNK) {
+            let mut requests = [PrefetchRequest::Slot { address, slot: U256::ZERO }; CHUNK];
+            for (request, &slot) in requests.iter_mut().zip(chunk) {
+                *request = PrefetchRequest::Slot { address, slot };
+            }
+            prefetcher.prefetch(&requests[..chunk.len()]);
         }
     }
 }

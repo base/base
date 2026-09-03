@@ -32,8 +32,6 @@ pub struct HashMapStorageProvider {
     is_static: bool,
     counter_sload: u64,
     counter_sstore: u64,
-    record_sloaded_keys: bool,
-    sloaded_keys: Vec<(Address, U256)>,
     gas_deducted: u64,
     counter_keccak256: u64,
     snapshots: Vec<Snapshot>,
@@ -81,8 +79,6 @@ impl HashMapStorageProvider {
             is_static: false,
             counter_sload: 0,
             counter_sstore: 0,
-            record_sloaded_keys: false,
-            sloaded_keys: Vec::new(),
             gas_deducted: 0,
             counter_keccak256: 0,
             gas_params: GasParams::default(),
@@ -216,9 +212,6 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             return Err(BasePrecompileError::Fatal("injected sload failure".into()));
         }
         self.counter_sload += 1;
-        if self.record_sloaded_keys {
-            self.sloaded_keys.push((address, key));
-        }
         Ok(self.internals.get(&(address, key)).copied().unwrap_or(U256::ZERO))
     }
 
@@ -437,27 +430,11 @@ impl HashMapStorageProvider {
         self.counter_keccak256
     }
 
-    /// Enables or disables SLOAD key recording (test-utils only).
-    ///
-    /// Recording is off by default so the per-`sload` heap traffic never distorts benchmarks
-    /// or unrelated tests built with `test-utils`.
-    pub const fn set_record_sloaded_keys(&mut self, enabled: bool) {
-        self.record_sloaded_keys = enabled;
-    }
-
-    /// Returns every (address, slot) pair passed to `sload`, in call order (test-utils only).
-    ///
-    /// Empty unless recording was enabled via [`Self::set_record_sloaded_keys`].
-    pub fn sloaded_keys(&self) -> &[(Address, U256)] {
-        &self.sloaded_keys
-    }
-
-    /// Resets the SLOAD/SSTORE/keccak256 counters and the recorded SLOAD keys (test-utils only).
-    pub fn reset_counters(&mut self) {
+    /// Resets the SLOAD/SSTORE/keccak256 counters (test-utils only).
+    pub const fn reset_counters(&mut self) {
         self.counter_sload = 0;
         self.counter_sstore = 0;
         self.counter_keccak256 = 0;
-        self.sloaded_keys.clear();
     }
 
     /// Returns an iterator over all stored (address, slot, value) triples (test-utils only).
