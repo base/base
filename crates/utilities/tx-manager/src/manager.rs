@@ -62,8 +62,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     BlobTxBuilder, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps, NonceManager,
-    RpcErrorClassifier, SendHandle, SendResponse, SendState, SignerConfig, TxCandidate, TxManager,
-    TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
+    RpcErrorClassifier, SendHandle, SendOutcome, SendResponse, SendState, SignerConfig,
+    TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
 };
 
 /// Number of wei in one gwei (10^9), as `f64` for fractional-precision
@@ -598,7 +598,7 @@ where
                 let raw_blob_cap = FeeCalculator::calc_blob_fee_cap(raw_blob_base_fee);
                 let blob_base_fee = raw_blob_base_fee.max(self.config.min_blob_fee);
                 let blob_cap = FeeCalculator::calc_blob_fee_cap(blob_base_fee);
-                self.metrics.record_blob_fee(blob_cap as f64 / WEI_PER_GWEI);
+                self.metrics.record_blob_fee_cap(blob_cap as f64 / WEI_PER_GWEI);
                 (Some(blob_cap), Some(raw_blob_cap))
             }
             None => (None, None),
@@ -1012,11 +1012,12 @@ where
 
         let latency_ms =
             u64::try_from(self.runtime.now().saturating_sub(start).as_millis()).unwrap_or(u64::MAX);
-        self.metrics.record_send_latency(latency_ms);
 
         if result.is_ok() {
+            self.metrics.record_send_latency(latency_ms, SendOutcome::Confirmed);
             self.metrics.record_tx_confirmed();
         } else {
+            self.metrics.record_send_latency(latency_ms, SendOutcome::Failed);
             self.metrics.record_tx_failed();
         }
 
