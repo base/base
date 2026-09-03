@@ -39,6 +39,13 @@ pub enum ProfilerError {
         /// Protobuf encoder error message.
         message: String,
     },
+    /// The blocking profile-finalization task failed to run to completion (panicked or the runtime
+    /// shut down).
+    #[error("cpu profile finalization task failed: {message}")]
+    TaskJoin {
+        /// Join error message.
+        message: String,
+    },
     /// Gzip compression failed.
     #[error("failed to gzip cpu profile protobuf: {0}")]
     Gzip(#[source] std::io::Error),
@@ -138,7 +145,7 @@ impl CpuProfiler {
             encoder.finish().map_err(ProfilerError::Gzip)
         })
         .await
-        .map_err(|error| ProfilerError::ProtobufEncode { message: error.to_string() })??;
+        .map_err(|error| ProfilerError::TaskJoin { message: error.to_string() })??;
 
         info!(seconds = %secs, frequency = %hz, bytes = %bytes.len(), "cpu profile capture completed");
         Ok(bytes)

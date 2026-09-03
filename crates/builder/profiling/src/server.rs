@@ -39,6 +39,7 @@ impl From<ProfilerError> for ProfilingServerError {
             | ProfilerError::InvalidFrequency { .. }) => Self::InvalidParameter(error),
             error @ (ProfilerError::Pprof(_)
             | ProfilerError::ProtobufEncode { .. }
+            | ProfilerError::TaskJoin { .. }
             | ProfilerError::Gzip(_)) => Self::Internal(error),
         }
     }
