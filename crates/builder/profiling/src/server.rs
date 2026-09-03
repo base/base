@@ -139,8 +139,7 @@ async fn capture_profile<P: ProfileCapture>(
     Query(query): Query<ProfileQuery>,
 ) -> Result<Response, ProfilingServerError> {
     let duration = Duration::from_secs(query.seconds.unwrap_or(30));
-    let frequency = Some(query.frequency.unwrap_or(101));
-    let profile = state.profiler.capture(duration, frequency).await?;
+    let profile = state.profiler.capture(duration, query.frequency).await?;
 
     Ok((
         StatusCode::OK,
@@ -158,7 +157,11 @@ mod tests {
     //! A hand-rolled profiler fake keeps HTTP tests deterministic because `pprof` permits only one
     //! process-wide capture, so real captures in parallel test threads would contend globally.
 
-    use std::{future::Future, sync::Arc, time::Duration};
+    use std::{
+        future::Future,
+        sync::{Arc, Mutex as StdMutex},
+        time::Duration,
+    };
 
     use axum::{
         body::{Body, to_bytes},
@@ -180,13 +183,19 @@ mod tests {
     #[derive(Debug, Clone)]
     struct FakeProfiler {
         capture_lock: Arc<Mutex<()>>,
+        captures: Arc<StdMutex<Vec<(Duration, Option<i32>)>>>,
         started: Arc<Notify>,
         release: Option<CancellationToken>,
     }
 
     impl FakeProfiler {
         fn immediate() -> Self {
-            Self { capture_lock: Arc::default(), started: Arc::default(), release: None }
+            Self {
+                capture_lock: Arc::default(),
+                captures: Arc::default(),
+                started: Arc::default(),
+                release: None,
+            }
         }
 
         fn blocking() -> Self {
@@ -201,13 +210,13 @@ mod tests {
             frequency: Option<i32>,
         ) -> impl Future<Output = Result<Vec<u8>, ProfilerError>> + Send {
             let capture_lock = Arc::clone(&self.capture_lock);
+            let captures = Arc::clone(&self.captures);
             let started = Arc::clone(&self.started);
             let release = self.release.clone();
 
             async move {
-                assert_eq!(duration, Duration::from_secs(1));
-                assert_eq!(frequency, Some(101));
                 let _permit = capture_lock.try_lock().map_err(|_| ProfilerError::Busy)?;
+                captures.lock().unwrap().push((duration, frequency));
                 started.notify_one();
                 if let Some(release) = release {
                     release.cancelled().await;
@@ -237,6 +246,22 @@ mod tests {
         );
         let body = to_bytes(response.into_body(), 1024).await.unwrap();
         assert_eq!(&body[..2], &[0x1f, 0x8b]);
+        assert_eq!(
+            profiler.captures.lock().unwrap().as_slice(),
+            &[(Duration::from_secs(1), Some(101))]
+        );
+    }
+
+    #[tokio::test]
+    async fn profile_route_leaves_omitted_frequency_unset() {
+        let profiler = FakeProfiler::immediate();
+        let app = profile_router(profiler.clone());
+        let request = request("/debug/pprof/profile?seconds=1");
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(profiler.captures.lock().unwrap().as_slice(), &[(Duration::from_secs(1), None)]);
     }
 
     #[tokio::test]
