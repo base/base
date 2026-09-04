@@ -136,10 +136,10 @@ where
         }
 
         let next = parent.block_info.number + 1;
-        if self.config.is_denim_active(self.config.l2_block_timestamp(next))
+        if self.config.is_cobalt_active(self.config.l2_block_timestamp(next))
             && (self.span.is_some() || !self.buffer.is_empty())
         {
-            warn!(target: "batch_span", next_block_number = next, "Dropping cached span state after Denim activation");
+            warn!(target: "batch_span", next_block_number = next, "Dropping cached span state after Cobalt activation");
             self.flush();
             return Err(PipelineError::NotEnoughData.temp());
         }
@@ -440,7 +440,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_crossing_span_stops_before_first_denim_block() {
+    async fn test_crossing_span_stops_before_first_cobalt_block() {
         let span = SpanBatch {
             batches: vec![
                 SpanBatchElement { epoch_num: 1, timestamp: 2, ..Default::default() },
@@ -456,7 +456,7 @@ mod tests {
             upgrades: UpgradeConfig {
                 delta_time: Some(0),
                 holocene_time: Some(0),
-                base: BaseUpgradeConfig { denim: Some(6), ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: Some(6), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -474,12 +474,12 @@ mod tests {
         let second = stream.next_batch(second_parent, &origins).await.unwrap();
         assert_eq!(second.timestamp(), 4);
 
-        let denim_parent = L2BlockInfo {
+        let cobalt_parent = L2BlockInfo {
             block_info: BlockInfo { number: 2, timestamp: 4, ..Default::default() },
             ..Default::default()
         };
         assert_eq!(
-            stream.next_batch(denim_parent, &origins).await,
+            stream.next_batch(cobalt_parent, &origins).await,
             Err(PipelineError::NotEnoughData.temp())
         );
         assert!(stream.buffer.is_empty());

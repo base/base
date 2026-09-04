@@ -353,12 +353,12 @@ mod tests {
     }
 
     #[test]
-    fn test_check_batch_timestamp_accepts_same_second_in_denim_era() {
+    fn test_check_batch_timestamp_accepts_same_second_in_cobalt_era() {
         let cfg = RollupConfig {
             block_time: 2,
             genesis: ChainGenesis { l2_time: 98, ..Default::default() },
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: Some(102), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -376,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn test_check_batch_timestamp_non_denim_unchanged() {
+    fn test_check_batch_timestamp_pre_cobalt_unchanged() {
         let cfg = RollupConfig {
             block_time: 2,
             genesis: ChainGenesis { l2_time: 98, ..Default::default() },
@@ -648,7 +648,7 @@ mod tests {
             parent_hash: BlockHash::ZERO,
             epoch_num: 1,
             epoch_hash: BlockHash::ZERO,
-            timestamp: 1,
+            timestamp: 0,
             transactions,
         };
 
