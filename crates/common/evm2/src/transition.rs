@@ -1,6 +1,6 @@
 //! Irregular (non-transaction) state transitions for Base block boundaries.
 //!
-//! The Canyon, Denim, and Cobalt block-boundary hooks apply *irregular* state changes — direct
+//! The Canyon and Cobalt block-boundary hooks apply *irregular* state changes — direct
 //! edits to account code and storage that are not the result of executing a transaction. This
 //! module provides the two pieces they share: [`BaseForkActivations`], the revm-free fork-schedule
 //! input used to detect activation blocks, and [`IrregularStateChange`], which persists an edit

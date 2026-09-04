@@ -30,7 +30,7 @@ pub fn validate_base_time_metadata(
     block_number: u64,
     transactions: &[BaseTxEnvelope],
 ) -> Result<(), BaseTimeMetadataError> {
-    if chain_spec.is_denim_active_at_timestamp(timestamp) {
+    if chain_spec.is_cobalt_active_at_timestamp(timestamp) {
         BaseTimeUpdateTx::extract_from_transactions(transactions, block_number)?;
     }
 
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn validates_base_time_metadata_only_after_activation() {
         let mut chain_spec = BaseChainSpec::sepolia();
-        chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(10));
+        chain_spec.set_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(10));
 
         validate_base_time_metadata(&chain_spec, 10, 9, &base_time_transactions(9, 400)).unwrap();
         assert!(matches!(

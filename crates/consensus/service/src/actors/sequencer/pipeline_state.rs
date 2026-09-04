@@ -17,7 +17,7 @@ pub struct BuildPipelineState {
     /// Acknowledged parent whose child build is gated on the parent's timestamp.
     pub pending_build_parent: Option<L2BlockInfo>,
     /// Duration of the most recently completed seal, used as the ticker's lead time for
-    /// pre-Denim blocks only. Denim-active blocks seal at a fixed offset into their slot
+    /// pre-Cobalt blocks only. Cobalt-active blocks seal at a fixed offset into their slot
     /// and ignore this value.
     pub last_seal_duration: Duration,
     /// Wall-clock instant the most recent block finished, used to record

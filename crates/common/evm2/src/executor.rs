@@ -137,7 +137,7 @@ pub struct BlockExecutionResult {
 /// the block's state delta.
 ///
 /// The flow is [`apply_pre_execution`](Self::apply_pre_execution) (block-boundary system calls),
-/// then [`apply_transition_hooks`](Self::apply_transition_hooks) (the Canyon/Denim/Cobalt
+/// then [`apply_transition_hooks`](Self::apply_transition_hooks) (the Canyon/Cobalt
 /// irregular state transitions), then [`execute_transaction`](Self::execute_transaction) per
 /// transaction (running it through the registry, building its receipt with running cumulative gas,
 /// and committing its state into a [`BlockStateAccumulator`]), then [`finish`](Self::finish). The
@@ -210,7 +210,7 @@ impl<'a> BaseBlockExecutor<'a> {
     }
 
     /// Applies the Base transition-block irregular state changes, in the reference order: the
-    /// Canyon create2-deployer force-deploy, the Denim `BaseTime` predeploy install, then the
+    /// Canyon create2-deployer force-deploy, the Cobalt `BaseTime` predeploy install, then the
     /// Cobalt EIP-8130 system-account stub. Each is fork-gated on `chain_spec` at this block's
     /// timestamp and commits its state into the block state. Must run after
     /// [`apply_pre_execution`](Self::apply_pre_execution) and before any transactions.

@@ -169,7 +169,7 @@ where
         let state_updates = state_updates();
         self.validate_isthmus_post_execution(state_updates, parent_state.as_ref(), block.header())?;
 
-        if !self.chain_spec().is_denim_active_at_timestamp(timestamp) {
+        if !self.chain_spec().is_cobalt_active_at_timestamp(timestamp) {
             return Ok(());
         }
 
@@ -178,7 +178,7 @@ where
                 .map_err(ConsensusError::other)?
                 .timestamp_millis_part();
 
-        if !self.chain_spec().is_denim_active_at_timestamp(parent_header.timestamp()) {
+        if !self.chain_spec().is_cobalt_active_at_timestamp(parent_header.timestamp()) {
             // The legacy parent has no millisecond component to anchor the 200ms progression
             // check, so the activation block must claim exactly 0 instead.
             if child_millis != 0 {
@@ -227,7 +227,7 @@ where
         header: &<Self::Block as Block>::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         let timestamp = attributes.timestamp();
-        if !self.chain_spec().is_denim_active_at_timestamp(timestamp) {
+        if !self.chain_spec().is_cobalt_active_at_timestamp(timestamp) {
             return (timestamp > header.timestamp())
                 .then_some(())
                 .ok_or(InvalidPayloadAttributesError::InvalidTimestamp);
@@ -415,7 +415,7 @@ mod tests {
     use super::*;
     use crate::engine;
 
-    const DENIM_TIMESTAMP: u64 = 1_800_000_001;
+    const COBALT_TIMESTAMP: u64 = 1_800_000_001;
 
     fn validator_with_chain_spec(
         chain_spec: BaseChainSpec,
@@ -429,10 +429,10 @@ mod tests {
         validator_with_chain_spec(BaseChainSpec::sepolia())
     }
 
-    fn denim_validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
+    fn cobalt_validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
         validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
-                .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
+                .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(COBALT_TIMESTAMP))
                 .build(),
         )
     }
@@ -477,7 +477,7 @@ mod tests {
         .expect("valid test payload attributes")
     }
 
-    fn denim_attributes(timestamp: u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+    fn cobalt_attributes(timestamp: u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
         get_attributes(Some(b64!("0000000000000000")), Some(1), timestamp)
     }
 
@@ -639,7 +639,7 @@ mod tests {
         timestamp_millis_part: u16,
         parent_timestamp: u64,
     ) -> Result<(), InvalidPayloadAttributesError> {
-        let mut attributes = denim_attributes(timestamp);
+        let mut attributes = cobalt_attributes(timestamp);
         add_base_time_transaction(&mut attributes, timestamp_millis_part);
         let header = Header { number: 8, timestamp: parent_timestamp, ..Default::default() };
 
@@ -648,36 +648,38 @@ mod tests {
     }
 
     #[test]
-    fn test_payload_attributes_post_denim_accept_same_second() {
-        let validator = denim_validator();
-
-        assert!(validate_against_parent(&validator, DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP).is_ok());
-    }
-
-    #[test]
-    fn test_payload_attributes_post_denim_accept_next_second() {
-        let validator = denim_validator();
+    fn test_payload_attributes_post_cobalt_accept_same_second() {
+        let validator = cobalt_validator();
 
         assert!(
-            validate_against_parent(&validator, DENIM_TIMESTAMP + 1, 0, DENIM_TIMESTAMP).is_ok()
+            validate_against_parent(&validator, COBALT_TIMESTAMP, 200, COBALT_TIMESTAMP).is_ok()
         );
     }
 
     #[test]
-    fn test_payload_attributes_post_denim_reject_backwards_seconds() {
-        let validator = denim_validator();
+    fn test_payload_attributes_post_cobalt_accept_next_second() {
+        let validator = cobalt_validator();
+
+        assert!(
+            validate_against_parent(&validator, COBALT_TIMESTAMP + 1, 0, COBALT_TIMESTAMP).is_ok()
+        );
+    }
+
+    #[test]
+    fn test_payload_attributes_post_cobalt_reject_backwards_seconds() {
+        let validator = cobalt_validator();
 
         assert!(matches!(
-            validate_against_parent(&validator, DENIM_TIMESTAMP, 800, DENIM_TIMESTAMP + 1),
+            validate_against_parent(&validator, COBALT_TIMESTAMP, 800, COBALT_TIMESTAMP + 1),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
         ));
     }
 
     #[test]
-    fn test_payload_attributes_post_denim_require_base_time_transaction() {
-        let validator = denim_validator();
-        let attributes = denim_attributes(DENIM_TIMESTAMP);
-        let header = Header { number: 8, timestamp: DENIM_TIMESTAMP, ..Default::default() };
+    fn test_payload_attributes_post_cobalt_require_base_time_transaction() {
+        let validator = cobalt_validator();
+        let attributes = cobalt_attributes(COBALT_TIMESTAMP);
+        let header = Header { number: 8, timestamp: COBALT_TIMESTAMP, ..Default::default() };
 
         let result = <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
             validate_payload_attributes_against_header(&validator, &attributes, &header);
@@ -689,14 +691,14 @@ mod tests {
     }
 
     #[test]
-    fn test_payload_attributes_post_denim_reject_invalid_base_time_transaction() {
-        let validator = denim_validator();
-        let mut attributes = denim_attributes(DENIM_TIMESTAMP);
+    fn test_payload_attributes_post_cobalt_reject_invalid_base_time_transaction() {
+        let validator = cobalt_validator();
+        let mut attributes = cobalt_attributes(COBALT_TIMESTAMP);
         attributes.transactions = vec![
             WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),
             WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),
         ];
-        let header = Header { number: 8, timestamp: DENIM_TIMESTAMP, ..Default::default() };
+        let header = Header { number: 8, timestamp: COBALT_TIMESTAMP, ..Default::default() };
 
         let result = <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
             validate_payload_attributes_against_header(&validator, &attributes, &header);
@@ -710,7 +712,7 @@ mod tests {
     fn post_execution_block(withdrawals_root: B256) -> RecoveredBlock<BaseBlock> {
         let block = BaseBlock {
             header: Header {
-                timestamp: DENIM_TIMESTAMP,
+                timestamp: COBALT_TIMESTAMP,
                 withdrawals_root: Some(withdrawals_root),
                 ..Default::default()
             },
@@ -772,7 +774,7 @@ mod tests {
     ) -> Result<(), InsertBlockErrorKind> {
         let validator = validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
-                .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
+                .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(COBALT_TIMESTAMP))
                 .build(),
         );
         let block = base_time_block(child_timestamp, child_millis_part, withdrawals_root);
@@ -808,13 +810,13 @@ mod tests {
     fn post_execution_skips_base_time_at_activation_but_checks_isthmus() {
         let block = post_execution_block(EMPTY_ROOT_HASH);
         let parent = SealedHeader::seal_slow(Header {
-            timestamp: DENIM_TIMESTAMP - 1,
+            timestamp: COBALT_TIMESTAMP - 1,
             ..Default::default()
         });
         let state_updates = HashedPostState::default();
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
-                &denim_validator(),
+                &cobalt_validator(),
                 || &state_updates,
                 &block,
                 &parent,
@@ -831,11 +833,11 @@ mod tests {
     #[test]
     fn post_execution_validates_exact_200ms_progression() {
         for (parent_seconds, parent_millis, child_seconds, child_millis) in [
-            (DENIM_TIMESTAMP, 0, DENIM_TIMESTAMP, 200),
-            (DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP, 400),
-            (DENIM_TIMESTAMP, 400, DENIM_TIMESTAMP, 600),
-            (DENIM_TIMESTAMP, 600, DENIM_TIMESTAMP, 800),
-            (DENIM_TIMESTAMP, 800, DENIM_TIMESTAMP + 1, 0),
+            (COBALT_TIMESTAMP, 0, COBALT_TIMESTAMP, 200),
+            (COBALT_TIMESTAMP, 200, COBALT_TIMESTAMP, 400),
+            (COBALT_TIMESTAMP, 400, COBALT_TIMESTAMP, 600),
+            (COBALT_TIMESTAMP, 600, COBALT_TIMESTAMP, 800),
+            (COBALT_TIMESTAMP, 800, COBALT_TIMESTAMP + 1, 0),
         ] {
             validate_base_time_progression(
                 parent_seconds,
@@ -848,12 +850,12 @@ mod tests {
         }
 
         for (parent_seconds, parent_millis, child_seconds, child_millis) in [
-            (DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP, 200),
-            (DENIM_TIMESTAMP, 400, DENIM_TIMESTAMP, 200),
-            (DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP, 600),
-            (DENIM_TIMESTAMP, 800, DENIM_TIMESTAMP + 1, 200),
-            (DENIM_TIMESTAMP, 800, DENIM_TIMESTAMP, 800),
-            (DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP + 1, 400),
+            (COBALT_TIMESTAMP, 200, COBALT_TIMESTAMP, 200),
+            (COBALT_TIMESTAMP, 400, COBALT_TIMESTAMP, 200),
+            (COBALT_TIMESTAMP, 200, COBALT_TIMESTAMP, 600),
+            (COBALT_TIMESTAMP, 800, COBALT_TIMESTAMP + 1, 200),
+            (COBALT_TIMESTAMP, 800, COBALT_TIMESTAMP, 800),
+            (COBALT_TIMESTAMP, 200, COBALT_TIMESTAMP + 1, 400),
         ] {
             let error = validate_base_time_progression(
                 parent_seconds,
@@ -873,9 +875,9 @@ mod tests {
     #[test]
     fn post_execution_progression_error_contains_full_timestamps() {
         for (parent_seconds, parent_millis, child_seconds, child_millis) in [
-            (DENIM_TIMESTAMP, 200, DENIM_TIMESTAMP, 600),
-            (DENIM_TIMESTAMP, 800, DENIM_TIMESTAMP + 1, 200),
-            (DENIM_TIMESTAMP, 400, DENIM_TIMESTAMP, 200),
+            (COBALT_TIMESTAMP, 200, COBALT_TIMESTAMP, 600),
+            (COBALT_TIMESTAMP, 800, COBALT_TIMESTAMP + 1, 200),
+            (COBALT_TIMESTAMP, 400, COBALT_TIMESTAMP, 200),
         ] {
             let error = validate_base_time_progression(
                 parent_seconds,
@@ -911,15 +913,15 @@ mod tests {
             ),
         ] {
             let block =
-                base_time_block_with_transactions(DENIM_TIMESTAMP, EMPTY_ROOT_HASH, transactions);
+                base_time_block_with_transactions(COBALT_TIMESTAMP, EMPTY_ROOT_HASH, transactions);
             let parent = SealedHeader::seal_slow(Header {
-                timestamp: DENIM_TIMESTAMP,
+                timestamp: COBALT_TIMESTAMP,
                 ..Default::default()
             });
             let state_updates = HashedPostState::default();
             let error = PayloadValidator::<BaseEngineTypes>::
                 validate_block_post_execution_with_hashed_state(
-                    &denim_validator(),
+                    &cobalt_validator(),
                     || &state_updates,
                     &block,
                     &parent,
@@ -933,15 +935,15 @@ mod tests {
 
     #[test]
     fn post_execution_accepts_zero_claim_on_first_active_block() {
-        let block = base_time_block(DENIM_TIMESTAMP, 0, EMPTY_ROOT_HASH);
+        let block = base_time_block(COBALT_TIMESTAMP, 0, EMPTY_ROOT_HASH);
         let parent = SealedHeader::seal_slow(Header {
-            timestamp: DENIM_TIMESTAMP - 1,
+            timestamp: COBALT_TIMESTAMP - 1,
             ..Default::default()
         });
         let state_updates = HashedPostState::default();
 
         PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
-            &denim_validator(),
+            &cobalt_validator(),
             || &state_updates,
             &block,
             &parent,
@@ -953,15 +955,15 @@ mod tests {
     #[test]
     fn post_execution_rejects_nonzero_claim_on_first_active_block() {
         for millis_part in [200, 400, 600, 800] {
-            let block = base_time_block(DENIM_TIMESTAMP, millis_part, EMPTY_ROOT_HASH);
+            let block = base_time_block(COBALT_TIMESTAMP, millis_part, EMPTY_ROOT_HASH);
             let parent = SealedHeader::seal_slow(Header {
-                timestamp: DENIM_TIMESTAMP - 1,
+                timestamp: COBALT_TIMESTAMP - 1,
                 ..Default::default()
             });
             let state_updates = HashedPostState::default();
             let error = PayloadValidator::<BaseEngineTypes>::
                 validate_block_post_execution_with_hashed_state(
-                    &denim_validator(),
+                    &cobalt_validator(),
                     || &state_updates,
                     &block,
                     &parent,
@@ -981,18 +983,18 @@ mod tests {
     #[test]
     fn post_execution_requires_claim_on_first_active_block() {
         let block = base_time_block_with_transactions(
-            DENIM_TIMESTAMP,
+            COBALT_TIMESTAMP,
             EMPTY_ROOT_HASH,
             vec![TxDeposit::default().seal_slow().into()],
         );
         let parent = SealedHeader::seal_slow(Header {
-            timestamp: DENIM_TIMESTAMP - 1,
+            timestamp: COBALT_TIMESTAMP - 1,
             ..Default::default()
         });
         let state_updates = HashedPostState::default();
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
-                &denim_validator(),
+                &cobalt_validator(),
                 || &state_updates,
                 &block,
                 &parent,
@@ -1006,9 +1008,9 @@ mod tests {
     #[test]
     fn post_execution_validates_isthmus_before_base_time() {
         let error = validate_base_time_progression(
-            DENIM_TIMESTAMP,
+            COBALT_TIMESTAMP,
             200,
-            DENIM_TIMESTAMP + 1,
+            COBALT_TIMESTAMP + 1,
             400,
             B256::ZERO,
         )

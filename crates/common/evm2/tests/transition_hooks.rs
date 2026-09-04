@@ -1,6 +1,6 @@
 //! Transition-block hook tests for `base-common-evm2`.
 //!
-//! Validates the Canyon create2-deployer, Denim `BaseTime`, and Cobalt EIP-8130 system-account
+//! Validates the Canyon create2-deployer and Cobalt `BaseTime`/EIP-8130 system-account
 //! irregular state transitions applied by [`BaseBlockExecutor::apply_transition_hooks`]: their
 //! fork gating, the state they install, and their idempotency. Each hook's parity with the revm
 //! reference (`base-common-evm`'s `canyon`/`cobalt`/`base_time` modules) is in the shape of the
@@ -89,21 +89,26 @@ fn canyon_is_skipped_after_the_activation_block() {
 }
 
 #[test]
-fn cobalt_plants_stub_on_codeless_nonce_manager() {
-    let mut executor = executor(BaseUpgrade::Cobalt, 1000, InMemoryDB::default());
+fn cobalt_installs_base_time_and_plants_stub_on_codeless_nonce_manager() {
+    let mut executor = executor(BaseUpgrade::Cobalt, 1000, db_with_valid_proxy());
     executor.apply_transition_hooks(&schedule(BaseUpgrade::Cobalt, 1000)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
 
     let stub_hash = Bytecode::new_legacy(Bytes::from_static(&[0xEF])).hash_slow();
     assert_eq!(code_hash(&mut evm, NONCE_MANAGER), stub_hash, "the 0xEF stub is planted");
     assert_ne!(stub_hash, KECCAK256_EMPTY);
+    assert_eq!(
+        code_hash(&mut evm, BaseTime::IMPLEMENTATION_ADDRESS),
+        BaseTime::IMPLEMENTATION_CODE_HASH,
+        "BaseTime is installed before transactions at the same Cobalt boundary",
+    );
 }
 
 #[test]
 fn cobalt_does_not_overwrite_existing_code() {
     let real = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]));
     let real_hash = real.hash_slow();
-    let mut db = InMemoryDB::default();
+    let mut db = db_with_valid_proxy();
     db.insert_account_info(&NONCE_MANAGER, evm2::AccountInfo::new(U256::ZERO, 0, real_hash, real));
     let mut executor = executor(BaseUpgrade::Cobalt, 1000, db);
     executor.apply_transition_hooks(&schedule(BaseUpgrade::Cobalt, 1000)).expect("hooks apply");
@@ -140,9 +145,9 @@ fn db_with_valid_proxy() -> InMemoryDB {
 }
 
 #[test]
-fn base_time_installs_and_links_implementation_on_denim() {
-    let mut executor = executor(BaseUpgrade::Denim, 1000, db_with_valid_proxy());
-    executor.apply_transition_hooks(&schedule(BaseUpgrade::Denim, 1000)).expect("hooks apply");
+fn base_time_installs_and_links_implementation_on_cobalt() {
+    let mut executor = executor(BaseUpgrade::Cobalt, 1000, db_with_valid_proxy());
+    executor.apply_transition_hooks(&schedule(BaseUpgrade::Cobalt, 1000)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
 
     // The implementation runtime is installed at its code-namespace address.
@@ -159,9 +164,9 @@ fn base_time_installs_and_links_implementation_on_denim() {
 
 #[test]
 fn base_time_errors_on_missing_proxy() {
-    let mut executor = executor(BaseUpgrade::Denim, 1000, InMemoryDB::default());
+    let mut executor = executor(BaseUpgrade::Cobalt, 1000, InMemoryDB::default());
     let err = executor
-        .apply_transition_hooks(&schedule(BaseUpgrade::Denim, 1000))
+        .apply_transition_hooks(&schedule(BaseUpgrade::Cobalt, 1000))
         .expect_err("missing proxy is rejected");
     assert!(format!("{err}").contains("reserved proxy account"), "got: {err}");
 }
@@ -175,9 +180,9 @@ fn base_time_errors_on_codeless_proxy() {
         &Predeploys::BASE_TIME,
         evm2::AccountInfo { balance: U256::from(1), ..Default::default() },
     );
-    let mut executor = executor(BaseUpgrade::Denim, 1000, db);
+    let mut executor = executor(BaseUpgrade::Cobalt, 1000, db);
     let err = executor
-        .apply_transition_hooks(&schedule(BaseUpgrade::Denim, 1000))
+        .apply_transition_hooks(&schedule(BaseUpgrade::Cobalt, 1000))
         .expect_err("codeless proxy is rejected");
     assert!(format!("{err}").contains("existing proxy code"), "got: {err}");
 }
@@ -188,9 +193,9 @@ fn base_time_errors_on_unexpected_proxy_admin() {
     // must reject it rather than link an implementation behind an unexpected admin.
     let mut db = db_with_valid_proxy();
     db.insert_account_storage(&Predeploys::BASE_TIME, &ADMIN_SLOT, &U256::from(0xdead_u64));
-    let mut executor = executor(BaseUpgrade::Denim, 1000, db);
+    let mut executor = executor(BaseUpgrade::Cobalt, 1000, db);
     let err = executor
-        .apply_transition_hooks(&schedule(BaseUpgrade::Denim, 1000))
+        .apply_transition_hooks(&schedule(BaseUpgrade::Cobalt, 1000))
         .expect_err("unexpected proxy admin is rejected");
     assert!(format!("{err}").contains("canonical proxy admin"), "got: {err}");
 }
@@ -205,8 +210,8 @@ fn base_time_is_idempotent_when_already_linked() {
         &IMPLEMENTATION_SLOT,
         &U256::from_be_slice(existing.as_slice()),
     );
-    let mut executor = executor(BaseUpgrade::Denim, 1000, db);
-    executor.apply_transition_hooks(&schedule(BaseUpgrade::Denim, 1000)).expect("hooks apply");
+    let mut executor = executor(BaseUpgrade::Cobalt, 1000, db);
+    executor.apply_transition_hooks(&schedule(BaseUpgrade::Cobalt, 1000)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
 
     assert_eq!(

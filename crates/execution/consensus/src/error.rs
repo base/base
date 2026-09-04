@@ -17,9 +17,9 @@ pub enum BaseConsensusError {
         /// The child's full-millisecond timestamp.
         child_timestamp_ms: u128,
     },
-    /// The first Denim-active block claimed a non-zero millisecond component.
+    /// The first Cobalt-active block claimed a non-zero millisecond component.
     #[error(
-        "invalid BaseTime activation claim: first Denim block must have millisecond part 0, got {timestamp_millis_part}"
+        "invalid BaseTime activation claim: first Cobalt block must have millisecond part 0, got {timestamp_millis_part}"
     )]
     BaseTimeActivationMillisNonZero {
         /// The claimed sub-second millisecond component.
