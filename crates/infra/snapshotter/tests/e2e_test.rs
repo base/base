@@ -599,12 +599,13 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
         .send()
         .await?;
 
+    let old_bytes = vec![b'o'; 100];
     for &component in DIFF_TEST_COMPONENTS {
         let key = format!("diff-match/static_files/{component}-0-499999.tar.zst");
         s3.put_object()
             .bucket(bucket)
             .key(&key)
-            .body(aws_sdk_s3::primitives::ByteStream::from(b"old-bytes".to_vec()))
+            .body(aws_sdk_s3::primitives::ByteStream::from(old_bytes.clone()))
             .send()
             .await?;
     }
@@ -639,7 +640,7 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
         let finalized_body = get_object_bytes(s3, bucket, &finalized_key).await?;
         assert_eq!(
             finalized_body.as_slice(),
-            b"old-bytes",
+            old_bytes.as_slice(),
             "{component} finalized chunk should be skipped when blake3 matches"
         );
 
