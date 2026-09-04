@@ -29,7 +29,7 @@ use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
     ValidityMetrics,
 };
-use base_execution_txpool::AccountStateDiff;
+use base_execution_txpool::{AccountStateDiff, BaseTransactionIdentity};
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
@@ -69,6 +69,22 @@ use crate::{
         emit_builder_payload_event, emit_builder_transaction_event,
     },
 };
+
+fn record_executed_protocol_nonce(
+    executed_sender_nonces: &mut HashMap<Address, u64>,
+    sender: Address,
+    identity: BaseTransactionIdentity,
+    nonce: u64,
+) {
+    if !identity.is_protocol() {
+        return;
+    }
+
+    executed_sender_nonces
+        .entry(sender)
+        .and_modify(|current| *current = (*current).max(nonce))
+        .or_insert(nonce);
+}
 
 type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     <Pool as TransactionPool>::Transaction,
@@ -682,10 +698,12 @@ where
             .iter()
             .zip(info.executed_senders[info.extra.last_flashblock_index..].iter())
         {
-            executed_sender_nonces
-                .entry(*sender)
-                .and_modify(|n| *n = (*n).max(tx.nonce()))
-                .or_insert_with(|| tx.nonce());
+            record_executed_protocol_nonce(
+                executed_sender_nonces,
+                *sender,
+                BaseTransactionIdentity::new(*sender, tx.nonce(), tx.as_eip8130()),
+                tx.nonce(),
+            );
         }
 
         // We got block cancelled, we won't need anything from the block at this point
@@ -1384,13 +1402,14 @@ mod tests {
     use base_common_consensus::BaseReceipt;
     use base_common_flashblocks::{FlashblockId, Metadata};
     use base_execution_chainspec::BaseChainSpec;
+    use base_execution_txpool::{BaseTransactionIdentity, BaseTransactionLane};
     use reth_chainspec::ChainSpec;
     use reth_execution_cache::{CachedStateProvider, CachedStatus, ExecutionCache, SavedCache};
     use reth_primitives_traits::SealedHeader;
     use reth_provider::{StateProviderBox, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
 
-    use super::{FlashblocksMetadata, build_block};
+    use super::{FlashblocksMetadata, build_block, record_executed_protocol_nonce};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
     /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
@@ -1417,6 +1436,33 @@ mod tests {
     fn genesis_header() -> Arc<SealedHeader> {
         let header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
         Arc::new(SealedHeader::seal_slow(header))
+    }
+
+    #[test]
+    fn channel_execution_does_not_advance_protocol_nonce_tracking() {
+        let sender = Address::random();
+        let mut executed_sender_nonces = HashMap::default();
+
+        record_executed_protocol_nonce(
+            &mut executed_sender_nonces,
+            sender,
+            BaseTransactionIdentity::Nonce {
+                lane: BaseTransactionLane::Protocol { sender },
+                nonce: 3,
+            },
+            3,
+        );
+        record_executed_protocol_nonce(
+            &mut executed_sender_nonces,
+            sender,
+            BaseTransactionIdentity::Nonce {
+                lane: BaseTransactionLane::Channel { sender, nonce_key: U256::from(1) },
+                nonce: 50,
+            },
+            50,
+        );
+
+        assert_eq!(executed_sender_nonces.get(&sender), Some(&3));
     }
 
     #[test]

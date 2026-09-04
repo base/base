@@ -706,7 +706,7 @@ impl BasePayloadBuilderCtx {
 
     /// [`Self::skip_current`] using the pooled transaction's sender, nonce, and replay ID.
     fn skip_pooled_current<B: PayloadTxsBounds>(best_txs: &mut B, tx: &B::Transaction) {
-        Self::skip_current(best_txs, tx.sender(), tx.nonce(), tx.eip8130_replay_id().is_some());
+        Self::skip_current(best_txs, tx.sender(), tx.nonce(), tx.identity().is_replay());
     }
 
     fn emit_considered(&self, cx: &DecisionContext<'_>, tx_hash: TxHash, ordering_position: u64) {
@@ -871,7 +871,7 @@ impl BasePayloadBuilderCtx {
             num_txs_considered += 1;
             let ordering_position = num_txs_considered;
             let tx_hash = *tx.hash();
-            let replay_independent = tx.eip8130_replay_id().is_some();
+            let replay_independent = tx.identity().is_replay();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
             let coinbase_tip =
                 tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()));
