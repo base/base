@@ -14,10 +14,19 @@ use base_common_consensus::{Call, Eip8130Constants, Eip8130Signed, TxEip8130};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
+use base_protocol::BaseTimeUpdateTx;
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis_cobalt};
 
 /// EIP-8130 transaction type byte.
 const EIP8130_TX_TYPE: u8 = 0x79;
+
+fn base_time_deposit() -> Bytes {
+    BaseTimeUpdateTx::new(0)
+        .expect("zero millisecond component must be valid")
+        .into_deposit_tx(1)
+        .encoded_2718()
+        .into()
+}
 
 /// Mines a minimal EOA-path EIP-8130 transaction and asserts its receipt is a
 /// successful type `0x79` receipt.
@@ -60,7 +69,9 @@ async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
     assert_eq!(raw[0], EIP8130_TX_TYPE, "encoded transaction must carry the 0x79 type byte");
 
     // The L1 block-info deposit must lead every block.
-    harness.build_block_from_transactions(vec![L1_BLOCK_INFO_DEPOSIT_TX, raw]).await?;
+    harness
+        .build_block_from_transactions(vec![L1_BLOCK_INFO_DEPOSIT_TX, base_time_deposit(), raw])
+        .await?;
 
     let receipt = provider
         .get_transaction_receipt(tx_hash)
@@ -130,7 +141,9 @@ async fn eip8130_receipt_reports_phase_statuses() -> eyre::Result<()> {
     let tx_hash = *signed.hash();
     let raw: Bytes = signed.encoded_2718().into();
 
-    harness.build_block_from_transactions(vec![L1_BLOCK_INFO_DEPOSIT_TX, raw]).await?;
+    harness
+        .build_block_from_transactions(vec![L1_BLOCK_INFO_DEPOSIT_TX, base_time_deposit(), raw])
+        .await?;
 
     let receipt = provider
         .get_transaction_receipt(tx_hash)
@@ -199,7 +212,9 @@ async fn eip8130_sponsored_receipt_reports_declared_payer() -> eyre::Result<()> 
     let tx_hash = *signed.hash();
     let raw: Bytes = signed.encoded_2718().into();
 
-    harness.build_block_from_transactions(vec![L1_BLOCK_INFO_DEPOSIT_TX, raw]).await?;
+    harness
+        .build_block_from_transactions(vec![L1_BLOCK_INFO_DEPOSIT_TX, base_time_deposit(), raw])
+        .await?;
 
     let receipt = provider
         .get_transaction_receipt(tx_hash)
@@ -298,8 +313,15 @@ async fn two_eip8130_transactions_in_one_block_attribute_phase_statuses() -> eyr
     let raw_2: Bytes = signed_2.encoded_2718().into();
 
     // Both EIP-8130 transactions ride in the same block, behind the mandatory
-    // L1 block-info deposit.
-    harness.build_block_from_transactions(vec![L1_BLOCK_INFO_DEPOSIT_TX, raw_1, raw_2]).await?;
+    // L1 block-info and BaseTime metadata deposits.
+    harness
+        .build_block_from_transactions(vec![
+            L1_BLOCK_INFO_DEPOSIT_TX,
+            base_time_deposit(),
+            raw_1,
+            raw_2,
+        ])
+        .await?;
 
     let receipt_1 = provider
         .get_transaction_receipt(tx1_hash)
