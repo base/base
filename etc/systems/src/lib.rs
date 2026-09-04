@@ -15,6 +15,13 @@ pub use utils::unique_name;
 mod b20;
 pub use b20::{B20CreateConfig, B20PrecompileClient};
 
+mod benchmark_report;
+pub use benchmark_report::{
+    SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,
+    VisualizerBlockMetrics, VisualizerMetadata, VisualizerRun, VisualizerRunResult,
+    VisualizerSequencerMetrics, VisualizerValidatorMetrics,
+};
+
 mod config;
 pub use config::{
     ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4,
