@@ -31,6 +31,8 @@ alloy-primitives.workspace = true
 # and alloy crates the tests use are already in [dependencies]; Cargo unifies features across both
 # sections, so only the dev-only crates are listed here.
 base-common-evm = { workspace = true, features = ["blst", "c-kzg", "portable", "secp256k1", "std"] }
+# base — the revm precompile set, as the source of truth for the precompile-cap parity test.
+base-common-precompiles.workspace = true
 # base — the revm transition hooks + fork schedule, for the transition-parity harness.
 base-common-chains.workspace = true
 
