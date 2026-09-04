@@ -69,7 +69,8 @@ where
             let mut txs_sent: u64 = 0;
             let mut txs_ignored: u64 = 0;
 
-            let best_txs = self.pool.best_transactions();
+            let mut best_txs = self.pool.best_transactions();
+            best_txs.no_updates();
 
             let mut queue_full = false;
             for tx in best_txs {

@@ -1,6 +1,6 @@
 //! Transaction forwarding service lifecycle.
 
-use std::{sync::Arc, time::Duration};
+use std::{mem, sync::Arc, time::Duration};
 
 use alloy_eips::Encodable2718;
 use base_execution_txpool::{NoExtensions, ValidatedTransactionExtensions};
@@ -202,14 +202,15 @@ impl TxForwardingHandle {
     }
 
     /// Stops pool readers, drains each destination queue, and reports task outcomes.
-    pub async fn shutdown(self) -> ShutdownReport {
+    pub async fn shutdown(mut self) -> ShutdownReport {
         self.reader_cancel.cancel();
 
-        let reader_results = join_all(self.reader_tasks).await;
+        let reader_results = join_all(mem::take(&mut self.reader_tasks)).await;
         let readers_completed = reader_results.iter().filter(|result| result.is_ok()).count();
         let mut task_failures = reader_results.len() - readers_completed;
 
-        let mut forwarders: FuturesUnordered<_> = self.forwarder_tasks.into_iter().collect();
+        let mut forwarders: FuturesUnordered<_> =
+            mem::take(&mut self.forwarder_tasks).into_iter().collect();
         let deadline = tokio::time::Instant::now() + self.shutdown_timeout;
         let mut forwarders_completed = 0;
         let mut timed_out = false;
@@ -239,6 +240,15 @@ impl TxForwardingHandle {
     }
 }
 
+impl Drop for TxForwardingHandle {
+    fn drop(&mut self) {
+        self.reader_cancel.cancel();
+        for task in self.reader_tasks.iter().chain(&self.forwarder_tasks) {
+            task.abort();
+        }
+    }
+}
+
 impl std::fmt::Debug for TxForwardingHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TxForwardingHandle")
@@ -264,7 +274,7 @@ pub struct ShutdownReport {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, sync::Mutex, time::Duration};
+    use std::{net::SocketAddr, sync::Mutex, thread, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes};
     use base_execution_txpool::ValidatedTransaction;
@@ -353,7 +363,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_cancels_readers_before_waiting_for_forwarders() {
+    async fn dropping_handle_cancels_a_running_blocking_reader() {
+        let reader_cancel = CancellationToken::new();
+        let reader_signal = reader_cancel.child_token();
+        let (started, reader_started) = oneshot::channel();
+        let (stopped, reader_stopped) = oneshot::channel();
+        let reader_task = tokio::task::spawn_blocking(move || {
+            started.send(()).unwrap();
+            while !reader_signal.is_cancelled() {
+                thread::sleep(Duration::from_millis(1));
+            }
+            stopped.send(()).unwrap();
+        });
+        let handle = TxForwardingHandle {
+            reader_cancel,
+            reader_tasks: vec![reader_task],
+            forwarder_tasks: Vec::new(),
+            shutdown_timeout: TxForwardingHandle::DEFAULT_SHUTDOWN_TIMEOUT,
+        };
+        reader_started.await.unwrap();
+
+        drop(handle);
+
+        tokio::time::timeout(Duration::from_secs(1), reader_stopped)
+            .await
+            .expect("reader must observe cancellation promptly")
+            .expect("blocking reader must exit cleanly");
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_cancels_readers_then_drains_forwarders() {
         let reader_cancel = CancellationToken::new();
         let reader_signal = reader_cancel.child_token();
         let (reader_stopped, wait_for_reader) = oneshot::channel();
