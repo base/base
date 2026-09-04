@@ -304,53 +304,11 @@ impl SnapshotGenerator {
             }
         }
 
-        let state_files = state_source_files(params.source_datadir)?;
-        let (state_size, state_output_files) =
-            package_single_component(params.output_dir, "state.tar.zst", &state_files)?;
-        let state_decompressed_size: u64 = state_output_files.iter().map(|f| f.size).sum();
-        info!(
-            component = "state",
-            compressed_size = state_size,
-            decompressed_size = state_decompressed_size,
-            file_count = state_files.len(),
-            "packaged mdbx state database"
-        );
-        components.insert(
-            "state".to_string(),
-            ComponentManifest::Single(SingleArchive {
-                file: "state.tar.zst".to_string(),
-                size: state_size,
-                decompressed_size: state_decompressed_size,
-                blake3: None,
-                output_files: state_output_files,
-            }),
-        );
-
+        let mut single_components =
+            vec![("state", "state.tar.zst", state_source_files(params.source_datadir)?)];
         let rocksdb_files = rocksdb_source_files(params.source_datadir)?;
         if !rocksdb_files.is_empty() {
-            let (rocksdb_size, rocksdb_output_files) = package_single_component(
-                params.output_dir,
-                "rocksdb_indices.tar.zst",
-                &rocksdb_files,
-            )?;
-            let rocksdb_decompressed_size: u64 = rocksdb_output_files.iter().map(|f| f.size).sum();
-            info!(
-                component = "rocksdb_indices",
-                compressed_size = rocksdb_size,
-                decompressed_size = rocksdb_decompressed_size,
-                file_count = rocksdb_files.len(),
-                "packaged rocksdb indices"
-            );
-            components.insert(
-                "rocksdb_indices".to_string(),
-                ComponentManifest::Single(SingleArchive {
-                    file: "rocksdb_indices.tar.zst".to_string(),
-                    size: rocksdb_size,
-                    decompressed_size: rocksdb_decompressed_size,
-                    blake3: None,
-                    output_files: rocksdb_output_files,
-                }),
-            );
+            single_components.push(("rocksdb_indices", "rocksdb_indices.tar.zst", rocksdb_files));
         }
 
         let proofs_files = if params.upload_proofs {
@@ -359,24 +317,39 @@ impl SnapshotGenerator {
             Vec::new()
         };
         if !proofs_files.is_empty() {
-            let (proofs_size, proofs_output_files) =
-                package_single_component(params.output_dir, "proofs.tar.zst", &proofs_files)?;
-            let proofs_decompressed_size: u64 = proofs_output_files.iter().map(|f| f.size).sum();
+            single_components.push(("proofs", "proofs.tar.zst", proofs_files));
+        }
+
+        // These source trees and output archives are independent. Package them on the shared
+        // Rayon pool so the snapshotter's `--snapshot-threads` limit applies to this work too.
+        let packaged_single_components = single_components
+            .into_par_iter()
+            .map(|(component, archive_name, files)| {
+                let (size, output_files) =
+                    package_single_component(params.output_dir, archive_name, &files)?;
+                let decompressed_size = output_files.iter().map(|file| file.size).sum();
+                Ok((component, archive_name, files.len(), size, decompressed_size, output_files))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (component, archive_name, file_count, size, decompressed_size, output_files) in
+            packaged_single_components
+        {
             info!(
-                component = "proofs",
-                compressed_size = proofs_size,
-                decompressed_size = proofs_decompressed_size,
-                file_count = proofs_files.len(),
-                "packaged proofs database"
+                component,
+                compressed_size = size,
+                decompressed_size,
+                file_count,
+                "packaged database component"
             );
             components.insert(
-                "proofs".to_string(),
+                component.to_string(),
                 ComponentManifest::Single(SingleArchive {
-                    file: "proofs.tar.zst".to_string(),
-                    size: proofs_size,
-                    decompressed_size: proofs_decompressed_size,
+                    file: archive_name.to_string(),
+                    size,
+                    decompressed_size,
                     blake3: None,
-                    output_files: proofs_output_files,
+                    output_files,
                 }),
             );
         }
