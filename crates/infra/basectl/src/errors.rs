@@ -514,6 +514,38 @@ pub enum SequencerCommandError {
         /// The parsed zero hash requested by the caller.
         requested_hash: B256,
     },
+    /// EL readiness status required before sequencing could not be observed.
+    #[error("execution-layer readiness for {node} is unavailable: missing {field}")]
+    ExecutionLayerStatusUnavailable {
+        /// The target node name.
+        node: String,
+        /// The missing status field.
+        field: &'static str,
+    },
+    /// The target EL is still syncing.
+    #[error(
+        "execution layer for {node} is still syncing at block {el_block}; required unsafe L2 block is {required_l2_block}"
+    )]
+    ExecutionLayerSyncing {
+        /// The target node name.
+        node: String,
+        /// The latest observed EL block.
+        el_block: u64,
+        /// The unsafe L2 block that the EL must contain before sequencing.
+        required_l2_block: u64,
+    },
+    /// The target EL has stopped syncing but has not reached the required unsafe head.
+    #[error(
+        "execution layer for {node} is at block {el_block}, behind required unsafe L2 block {required_l2_block}"
+    )]
+    ExecutionLayerBehind {
+        /// The target node name.
+        node: String,
+        /// The latest observed EL block.
+        el_block: u64,
+        /// The unsafe L2 block that the EL must contain before sequencing.
+        required_l2_block: u64,
+    },
     /// The sequencer active state did not converge after the command RPC succeeded.
     #[error("{0}")]
     StateConvergenceTimeout(#[source] Box<StateConvergenceTimeoutError>),
