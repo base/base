@@ -116,10 +116,11 @@ where
     }
 
     async fn resolve_bootstrap_role(&self) -> BootstrapRole {
-        if self.sequencer_stopped || self.is_shadow_sequencer() {
+        if self.is_shadow_sequencer() {
             return BootstrapRole::ConductorFollower;
         }
         match &self.conductor {
+            None if self.sequencer_stopped => BootstrapRole::ConductorFollower,
             None => BootstrapRole::ActiveSequencer,
             Some(conductor) => match conductor.leader().await {
                 Ok(true) => BootstrapRole::ActiveSequencer,
@@ -470,7 +471,28 @@ where
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
                         match &mut self.sequencer_state {
                             SequencerEngineState::CatchingUp { catchup, .. } => {
-                                catchup.buffer_payload(*envelope);
+                                if self.sequencer_sync_mode.is_el()
+                                    && !self.processor.engine_state().el_sync_finished
+                                {
+                                    // A restarting follower may be missing the payload's parent.
+                                    // newPayload plus FCU gives reth the canonical target needed
+                                    // to fetch that gap while catch-up retains the payload for
+                                    // ordered reconciliation after EL sync. The deep clone is
+                                    // limited to this startup window and consumed by the immediate
+                                    // drain; steady-state catch-up retains the original allocation.
+                                    let sync_target = (*envelope).clone();
+                                    catchup.buffer_payload(*envelope);
+                                    self.processor.enqueue_unsafe_payload_insert(
+                                        sync_target,
+                                        None,
+                                        false,
+                                    );
+                                    if self.processor.drain().await? == ResetOutcome::Reset {
+                                        *catchup = CanonicalUnsafeCatchup::default();
+                                    }
+                                } else {
+                                    catchup.buffer_payload(*envelope);
+                                }
                             }
                             SequencerEngineState::ShadowActive(gate) => {
                                 gate.buffer_payload(*envelope);
@@ -821,11 +843,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stopped_sequencer_skips_conductor_check() {
-        let mut conductor = MockConductor::new();
-        conductor.expect_leader().never();
-        let coordinator = coordinator(false, true, Some(Arc::new(conductor)));
+    async fn stopped_standalone_sequencer_is_follower() {
+        let coordinator = coordinator(false, true, None);
         assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ConductorFollower);
+    }
+
+    #[tokio::test]
+    async fn stopped_sequencer_uses_conductor_role_for_bootstrap() {
+        let mut conductor = MockConductor::new();
+        conductor.expect_leader().once().returning(|| Ok(true));
+        let coordinator = coordinator(false, true, Some(Arc::new(conductor)));
+        assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ActiveSequencer);
     }
 
     #[tokio::test]

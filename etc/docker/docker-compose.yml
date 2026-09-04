@@ -349,6 +349,8 @@ services:
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --sequencer.l1-confs
       - "0"
+      - --sequencer.sync-mode
+      - "${BASE_NODE_SEQUENCER_SYNC_MODE}"
       - --p2p.sequencer.key
       - ${SEQUENCER_KEY}
       - --p2p.scoring

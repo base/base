@@ -29,6 +29,11 @@ user-provided RPC endpoints — including a running devnet's. Run it as
 see the `just prover` recipes and
 [docs/guides/STANDALONE_PROVING.md](../../docs/guides/STANDALONE_PROVING.md).
 
+The local devnet sets `BASE_NODE_SEQUENCER_SYNC_MODE=el`, so `base-builder` and the HA
+`base-sequencer-*` services complete sequencer startup from the execution layer's canonical head.
+Change that variable to `cl` in `devnet-env` to exercise the runtime default and legacy
+gossip-driven sequencer sync path.
+
 ## Usage
 
 The easiest way to interact with Docker is through the Justfile recipes:

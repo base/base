@@ -541,10 +541,9 @@ where
 
     /// Bootstrap path for conductor followers and stopped sequencers.
     ///
-    /// Probes the EL with reth's current head as unsafe, but zeroed safe/finalized, so
-    /// that `el_sync_finished` can be set when reth responds `Valid`.  Unlike pure
-    /// validators, conductor followers must have derivation running so they are ready
-    /// for leadership transfer; the zeroed safe/finalized avoids disrupting EL sync.
+    /// In EL sync mode, seeds reth's current head and waits for authenticated unsafe gossip to
+    /// provide a canonical sync target. In CL sync mode, probes with reth's current head as unsafe
+    /// and zeroed safe/finalized so the follower is immediately ready for leadership transfer.
     pub async fn bootstrap_conductor_follower(
         &mut self,
         head: Option<L2BlockInfo>,
@@ -556,12 +555,13 @@ where
         let follower_update =
             EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
 
-        if at_genesis && el_sync_mode {
+        if el_sync_mode {
             self.engine.seed_state(follower_update);
             info!(
                 target: "engine",
                 unsafe_head = %head.block_info.number,
-                "Bootstrap: conductor follower seeded genesis head, awaiting EL sync"
+                at_genesis,
+                "Bootstrap: conductor follower seeded current head, awaiting canonical EL sync target"
             );
             return;
         }
@@ -606,17 +606,8 @@ where
         el_sync_mode: bool,
     ) {
         if at_genesis {
-            if el_sync_mode && self.el_reports_syncing().await {
-                if let Some(head) = head {
-                    self.engine.seed_state(EngineSyncStateUpdate {
-                        unsafe_head: Some(head),
-                        ..Default::default()
-                    });
-                }
-                info!(target: "engine", "Bootstrap: EL sync pending at genesis");
-                return;
-            }
-
+            // The active sequencer must initialize genesis even if reth reports syncing. On a
+            // fresh network there is no L2 tip to sync from until the leader produces block one.
             match self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await {
                 Ok(_) => {}
                 Err(err) => {
@@ -733,7 +724,9 @@ where
         })
     }
 
-    /// Re-probes the execution layer while a sequencer is waiting for EL sync to complete.
+    /// Re-probes the execution layer while an EL-mode sequencer is waiting for sync to complete.
+    ///
+    /// This is called only by the coordinator's EL sync probe interval.
     pub async fn probe_sequencer_el_sync(&mut self, active_sequencer: bool) {
         if self.engine.state().el_sync_finished {
             return;
@@ -751,7 +744,10 @@ where
             }
         };
 
-        if head.block_info.hash == self.rollup.genesis.l2.hash && self.el_reports_syncing().await {
+        // Followers must not confirm their own stale head while reth reports syncing; authenticated
+        // unsafe gossip supplies the canonical target. The active sequencer is exempt so a fresh
+        // network can break the genesis deadlock and produce block one.
+        if !active_sequencer && self.el_reports_syncing().await {
             self.engine.seed_state(EngineSyncStateUpdate {
                 unsafe_head: Some(head),
                 ..Default::default()
@@ -1377,19 +1373,80 @@ mod tests {
         );
     }
 
-    /// Verifies that a conductor follower sequencer (conductor reports `leader() = false`)
-    /// probes reth and sets `el_sync_finished` so it is ready for leadership transfer.
+    #[tokio::test]
+    async fn active_sequencer_probe_breaks_fresh_network_genesis_deadlock() {
+        let genesis_hash = B256::with_last_byte(1);
+        let genesis = L2BlockInfo {
+            block_info: BlockInfo { hash: genesis_hash, ..Default::default() },
+            ..Default::default()
+        };
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, genesis)
+                .with_block_info_by_tag(BlockNumberOrTag::Safe, genesis)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, genesis)
+                .with_el_syncing(true)
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+        let config = Arc::new(RollupConfig {
+            genesis: ChainGenesis {
+                l2: BlockNumHash { hash: genesis_hash, number: 0 },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let mut processor =
+            EngineProcessor::new(client, config, MockEngineDerivationClient::new(), engine);
+
+        processor.probe_sequencer_el_sync(true).await;
+
+        assert!(
+            processor.engine_state().el_sync_finished,
+            "the active sequencer must confirm genesis so it can produce the first L2 block"
+        );
+    }
+
+    #[tokio::test]
+    async fn follower_probe_does_not_confirm_stale_head_while_el_reports_syncing() {
+        let head = test_block_info(100);
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_el_syncing(true)
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let mut processor = EngineProcessor::new(
+            client,
+            Arc::new(RollupConfig::default()),
+            MockEngineDerivationClient::new(),
+            engine,
+        );
+
+        processor.probe_sequencer_el_sync(false).await;
+
+        assert_eq!(processor.engine_state().sync_state.unsafe_head(), head);
+        assert!(
+            !processor.engine_state().el_sync_finished,
+            "a follower's local head is not proof that it reached the canonical sequencer tip"
+        );
+    }
+
+    /// Verifies that a conductor follower eventually sets `el_sync_finished` once reth confirms
+    /// its head, making the node ready for leadership transfer.
     ///
-    /// Unlike pure validators, conductor followers must have derivation running to be
-    /// eligible for leadership transfer.  They probe with zeroed safe/finalized (not
-    /// reth's labels), and when reth responds `Valid`, `el_sync_finished` is set.
-    ///
-    /// This test catches a regression where conductor followers were incorrectly treated
-    /// as pure validators (seed-only, no probe), leaving `el_sync_finished = false`
-    /// permanently and breaking conductor leadership transfer.
+    /// CL mode probes during bootstrap. EL mode first seeds its local head, then the periodic probe
+    /// confirms it after reth no longer reports syncing.
     #[rstest]
     #[tokio::test]
-    async fn bootstrap_beyond_genesis_conductor_follower_probes_and_sets_el_sync_finished(
+    async fn conductor_follower_probe_sets_el_sync_finished(
         #[values(SequencerSyncMode::Cl, SequencerSyncMode::El)] sync_mode: SequencerSyncMode,
     ) {
         let head = test_block_info(100);
