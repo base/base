@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    io::Read,
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{
@@ -15,7 +16,7 @@ use async_trait::async_trait;
 use base_snapshotter::{
     ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
     ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
-    SnapshotUploadParams, SnapshotUploader, TipChecker, TipStatus,
+    SnapshotUploadParams, SnapshotUploader, StreamingS3ArchiveSink, TipChecker, TipStatus,
 };
 use bollard::{
     Docker,
@@ -574,6 +575,126 @@ const DIFF_TEST_COMPONENTS: &[&str] = &[
     "storage_changesets",
     "transaction_senders",
 ];
+
+/// Verifies the synchronous tar/zstd producer can send an archive straight to a multipart S3
+/// object. The test intentionally has no local archive path: the only copy of the compressed
+/// bytes is the bounded in-memory multipart buffer before MinIO acknowledges each part.
+#[tokio::test]
+#[serial]
+async fn streams_tar_zstd_archive_to_minio_multipart_upload() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "streaming".to_string(),
+        None,
+    );
+    let key = "streaming/state.tar.zst";
+    let stream = uploader.start_streaming_multipart_upload(key).await?;
+
+    let (stream, expected_contents) = tokio::task::spawn_blocking(move || -> Result<_> {
+        let mut stream = stream;
+        let expected_contents = b"snapshot archive content written directly to S3".to_vec();
+
+        {
+            let mut encoder = zstd::Encoder::new(&mut stream, 0)?;
+            encoder.include_checksum(true)?;
+            let mut archive = tar::Builder::new(encoder);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(expected_contents.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            archive.append_data(&mut header, "db/mdbx.dat", expected_contents.as_slice())?;
+            let encoder = archive.into_inner()?;
+            encoder.finish()?;
+        }
+
+        // This must be after `encoder.finish()`: zstd writes the frame trailer and checksum
+        // during finalization, and the multipart consumer only completes after this signal.
+        stream.finish()?;
+        Ok((stream, expected_contents))
+    })
+    .await??;
+
+    let compressed_size = stream.bytes_written();
+    assert!(compressed_size > 0, "the zstd stream should contain bytes");
+    assert_eq!(stream.complete().await?, compressed_size);
+
+    let uploaded = get_object_bytes(&harness.storage_client, &harness.bucket_name, key).await?;
+    assert_eq!(uploaded.len() as u64, compressed_size);
+
+    let decoder = zstd::Decoder::new(uploaded.as_slice())?;
+    let mut archive = tar::Archive::new(decoder);
+    let mut entries = archive.entries()?;
+    let mut entry = entries.next().expect("archive should contain its input file")?;
+    assert_eq!(entry.path()?.as_ref(), Path::new("db/mdbx.dat"));
+    let mut actual_contents = Vec::new();
+    entry.read_to_end(&mut actual_contents)?;
+    assert_eq!(actual_contents, expected_contents);
+    assert!(entries.next().is_none(), "archive should contain exactly one input file");
+
+    Ok(())
+}
+
+/// Verifies the adapter implements Reth's pluggable `SnapshotArchiveSink`, rather than merely
+/// accepting manually-created tar/zstd streams. Reth owns compression and calls `finish` only
+/// after the zstd frame is complete; the adapter then waits for S3 completion before returning to
+/// Reth's synchronous generator.
+#[tokio::test]
+#[serial]
+async fn reth_snapshot_sink_streams_generated_archive_to_minio() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "reth-streaming".to_string(),
+        None,
+    );
+    let sink = StreamingS3ArchiveSink::new(
+        uploader,
+        tokio::runtime::Handle::current(),
+        1,
+        |archive_name| Ok::<_, eyre::Report>(format!("reth-streaming/{archive_name}")),
+    )
+    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+
+    let source = tempfile::tempdir()?;
+    let db_dir = source.path().join("db");
+    std::fs::create_dir_all(&db_dir)?;
+    std::fs::write(db_dir.join("mdbx.dat"), b"reth-generated-state")?;
+    let source_path = source.path().to_owned();
+
+    tokio::task::spawn_blocking(move || {
+        reth_cli_commands::download::manifest::generate_manifest_with_sink(
+            &source_path,
+            &sink,
+            None,
+            0,
+            8453,
+            500_000,
+        )
+    })
+    .await?
+    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+
+    let uploaded = get_object_bytes(
+        &harness.storage_client,
+        &harness.bucket_name,
+        "reth-streaming/state.tar.zst",
+    )
+    .await?;
+    let decoder = zstd::Decoder::new(uploaded.as_slice())?;
+    let mut archive = tar::Archive::new(decoder);
+    let mut entries = archive.entries()?;
+    let mut entry = entries.next().expect("state archive should contain mdbx.dat")?;
+    assert_eq!(entry.path()?.as_ref(), Path::new("db/mdbx.dat"));
+    let mut contents = Vec::new();
+    entry.read_to_end(&mut contents)?;
+    assert_eq!(contents, b"reth-generated-state");
+    assert!(entries.next().is_none());
+
+    Ok(())
+}
 
 #[tokio::test]
 #[serial]
