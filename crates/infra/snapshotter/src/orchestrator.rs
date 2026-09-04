@@ -13,8 +13,8 @@ use crate::{
     SnapshotterConfig,
     container::ContainerManager,
     snapshot::{
-        ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
-        SnapshotManifestExt,
+        ManifestGenerationParams, OutputFileChecksum, ProofsStaticManifest, SnapshotGenerator,
+        SnapshotManifest, SnapshotManifestExt,
     },
     tip::TipChecker,
     upload::{SnapshotUploadParams, SnapshotUploader},
@@ -283,6 +283,8 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             .context("failed to read run manifest.json")?;
         let local_manifest: SnapshotManifest =
             serde_json::from_slice(&manifest_bytes).context("failed to parse run manifest.json")?;
+        let proofs_static = ProofsStaticManifest::from_manifest_bytes(&manifest_bytes)
+            .context("failed to parse proofs_static manifest extension")?;
 
         self.uploader
             .upload(SnapshotUploadParams {
@@ -293,6 +295,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 local_manifest: &local_manifest,
                 remote_manifest,
                 remote_static_files,
+                proofs_static: proofs_static.as_ref(),
             })
             .await
             .with_context(|| {

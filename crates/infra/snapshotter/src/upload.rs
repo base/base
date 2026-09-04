@@ -6,7 +6,7 @@
 //!   compares the per-file BLAKE3 hashes recorded in the previous run's `manifest.json`
 //!   against the freshly generated manifest, and skips chunks whose hashes match.
 //!
-//! - `{prefix}/{date}/` — per-run directory for mdbx state, rocksdb indices, proofs, the
+//! - `{prefix}/{date}/` — per-run directory for mdbx state, rocksdb indices, proof metadata, the
 //!   manifest, and the latest static-file chunk for every component. Keeping the mutable chunk
 //!   beside the manifest prevents it from being overwritten while a downloader uses that manifest.
 
@@ -29,7 +29,10 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     progress::{UploadProgress, UploadStage},
-    snapshot::{ChunkFilename, ComponentManifest, SnapshotManifest, SnapshotManifestExt},
+    snapshot::{
+        ChunkFilename, ComponentManifest, ProofsStaticManifest, SnapshotManifest,
+        SnapshotManifestExt,
+    },
 };
 
 /// Maximum number of concurrent file uploads.
@@ -77,6 +80,8 @@ pub struct SnapshotUploadParams<'a> {
     pub remote_manifest: Option<&'a SnapshotManifest>,
     /// Shared `static_files/` listing from [`SnapshotUploader::list_remote_static_files`].
     pub remote_static_files: &'a HashMap<String, u64>,
+    /// Immutable `RocksDB` proof-table archives declared by the local manifest.
+    pub proofs_static: Option<&'a ProofsStaticManifest>,
 }
 
 /// Determines whether a snapshot component is re-uploaded every run
@@ -311,6 +316,22 @@ impl SnapshotUploader {
         let mut run_uploads = Vec::new();
         let mut skipped = 0u64;
 
+        let proof_static_keys: HashMap<String, String> = params
+            .proofs_static
+            .map(|proofs| {
+                proofs
+                    .tables
+                    .iter()
+                    .filter_map(|table| {
+                        let local_name =
+                            Path::new(&table.file).file_name()?.to_string_lossy().to_string();
+                        let remote_name = table.file.strip_prefix("static_files/")?.to_string();
+                        Some((local_name, remote_name))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         for file in params.files {
             if file == &manifest_path {
                 continue;
@@ -321,6 +342,16 @@ impl SnapshotUploader {
                 .ok_or_else(|| anyhow::anyhow!("invalid file path: {}", file.display()))?
                 .to_string_lossy()
                 .to_string();
+
+            if let Some(remote_name) = proof_static_keys.get(&file_name) {
+                if params.remote_static_files.contains_key(remote_name) {
+                    debug!(file = %file_name, remote_name, "skipping immutable proofs SST already in shared storage");
+                    skipped += 1;
+                } else {
+                    static_uploads.push((file.clone(), format!("{static_prefix}/{remote_name}")));
+                }
+                continue;
+            }
 
             let strategy =
                 UploadStrategy::classify_with_manifest(&file_name, params.local_manifest);
@@ -349,7 +380,7 @@ impl SnapshotUploader {
                             debug!(file = %file_name, "re-uploading static file (no prior hash available)");
                         }
                     }
-                    static_uploads.push(file.clone());
+                    static_uploads.push((file.clone(), format!("{static_prefix}/{file_name}")));
                 }
                 UploadStrategy::LatestChunk | UploadStrategy::AlwaysUpload => {
                     run_uploads.push(file.clone());
@@ -367,16 +398,18 @@ impl SnapshotUploader {
         let static_upload_count = static_uploads.len();
         let run_upload_count = run_uploads.len();
 
-        let progress = UploadProgress::new(&static_uploads, &run_uploads, &manifest_path).await?;
+        let static_upload_paths: Vec<PathBuf> =
+            static_uploads.iter().map(|(path, _)| path.clone()).collect();
+        let progress =
+            UploadProgress::new(&static_upload_paths, &run_uploads, &manifest_path).await?;
         let progress_logger = progress.spawn_logger();
 
         let manifest_key = format!("{run_prefix}/manifest.json");
         let upload_result = async {
-            let static_prefix_ref = &static_prefix;
             let progress_ref = &progress;
             stream::iter(static_uploads)
-                .map(|file| async move {
-                    self.upload_file(&file, static_prefix_ref, progress_ref).await
+                .map(|(file, key)| async move {
+                    self.upload_file_to_key(&file, &key, progress_ref).await
                 })
                 .buffer_unordered(MAX_CONCURRENT_UPLOADS)
                 .try_collect::<Vec<()>>()
@@ -385,7 +418,16 @@ impl SnapshotUploader {
             let run_prefix_ref = &run_prefix;
             stream::iter(run_uploads)
                 .map(|file| async move {
-                    self.upload_file(&file, run_prefix_ref, progress_ref).await
+                    let file_name = file
+                        .file_name()
+                        .ok_or_else(|| anyhow::anyhow!("invalid file path: {}", file.display()))?
+                        .to_string_lossy();
+                    self.upload_file_to_key(
+                        &file,
+                        &format!("{run_prefix_ref}/{file_name}"),
+                        progress_ref,
+                    )
+                    .await
                 })
                 .buffer_unordered(MAX_CONCURRENT_UPLOADS)
                 .try_collect::<Vec<()>>()
@@ -393,6 +435,7 @@ impl SnapshotUploader {
 
             let published_manifest = build_published_manifest(
                 params.local_manifest,
+                params.proofs_static,
                 self.public_snapshot_base_url().as_deref(),
                 params.timestamp,
             )?;
@@ -585,20 +628,14 @@ impl SnapshotUploader {
         Ok(keys.len())
     }
 
-    /// Uploads a single file, using multipart upload for files above the threshold.
+    /// Uploads a single file to a complete object key, using multipart upload for large files.
     /// On success, adds the uploaded byte count to `progress` for progress tracking.
-    async fn upload_file(
+    async fn upload_file_to_key(
         &self,
         file_path: &Path,
-        dest_prefix: &str,
+        key: &str,
         progress: &UploadProgress,
     ) -> Result<()> {
-        let file_name = file_path
-            .file_name()
-            .ok_or_else(|| anyhow::anyhow!("invalid file path: {}", file_path.display()))?
-            .to_string_lossy();
-
-        let key = format!("{dest_prefix}/{file_name}");
         let file_size = tokio::fs::metadata(file_path).await?.len();
 
         if file_size > MULTIPART_THRESHOLD {
@@ -609,24 +646,24 @@ impl SnapshotUploader {
                 parts = file_size.div_ceil(MULTIPART_PART_SIZE),
                 "starting multipart upload"
             );
-            progress.start_file(key.clone(), file_size, UploadStage::CreatingMultipart);
-            match self.upload_multipart(file_path, &key, file_size, progress).await {
-                Ok(()) => progress.finish_file(&key),
+            progress.start_file(key.to_string(), file_size, UploadStage::CreatingMultipart);
+            match self.upload_multipart(file_path, key, file_size, progress).await {
+                Ok(()) => progress.finish_file(key),
                 Err(error) => {
-                    progress.fail_file(&key);
+                    progress.fail_file(key);
                     return Err(error);
                 }
             }
         } else {
             debug!(key = %key, size = file_size, "uploading file");
-            progress.start_file(key.clone(), file_size, UploadStage::Uploading);
-            match self.upload_single(file_path, &key).await {
+            progress.start_file(key.to_string(), file_size, UploadStage::Uploading);
+            match self.upload_single(file_path, key).await {
                 Ok(()) => {
-                    progress.add_for_file(&key, file_size);
-                    progress.finish_file(&key);
+                    progress.add_for_file(key, file_size);
+                    progress.finish_file(key);
                 }
                 Err(error) => {
-                    progress.fail_file(&key);
+                    progress.fail_file(key);
                     return Err(error);
                 }
             }
@@ -1042,10 +1079,11 @@ fn retry_delay_secs(attempt: usize) -> u64 {
 ///
 /// `base_url` points at the snapshot root (`{public_base}/{prefix}`). Finalized static-file
 /// chunks use `static_files/{archive}` in [`ChunkedArchive::chunk_files`]; tip chunks and
-/// state/rocksdb use `{timestamp}/{archive}`. Proofs stays a bare sibling filename for
-/// `ProofsDownloader`.
+/// state/rocksdb/proofs metadata use `{timestamp}/{archive}`. Immutable proof SST archives are
+/// already content-addressed under `static_files/proofs/` in the proofs-static extension.
 fn build_published_manifest(
     local_manifest: &SnapshotManifest,
+    proofs_static: Option<&ProofsStaticManifest>,
     public_snapshot_base_url: Option<&str>,
     timestamp: u64,
 ) -> Result<Vec<u8>> {
@@ -1055,7 +1093,7 @@ fn build_published_manifest(
     for (component_name, component) in &mut manifest.components {
         match component {
             ComponentManifest::Single(single)
-                if matches!(component_name.as_str(), "state" | "rocksdb_indices") =>
+                if matches!(component_name.as_str(), "state" | "rocksdb_indices" | "proofs") =>
             {
                 single.file = format!("{timestamp}/{}", single.file);
             }
@@ -1084,12 +1122,16 @@ fn build_published_manifest(
         }
     }
 
-    Ok(serde_json::to_vec_pretty(&manifest)?)
+    match proofs_static {
+        Some(proofs_static) => proofs_static.insert_into_manifest(&manifest),
+        None => Ok(serde_json::to_vec_pretty(&manifest)?),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::snapshot::PROOFS_METADATA_ARCHIVE;
 
     #[test]
     fn static_file_chunks_are_diff_eligible() {
@@ -1126,13 +1168,13 @@ mod tests {
             UploadStrategy::classify("rocksdb_indices.tar.zst"),
             UploadStrategy::AlwaysUpload
         );
-        assert_eq!(UploadStrategy::classify("proofs.tar.zst"), UploadStrategy::AlwaysUpload);
+        assert_eq!(UploadStrategy::classify(PROOFS_METADATA_ARCHIVE), UploadStrategy::AlwaysUpload);
         assert_eq!(UploadStrategy::classify("manifest.json"), UploadStrategy::AlwaysUpload);
         assert_eq!(UploadStrategy::classify("random-file.txt"), UploadStrategy::AlwaysUpload);
     }
 
     #[test]
-    fn build_published_manifest_sets_chunk_files_and_leaves_proofs_as_sibling() {
+    fn build_published_manifest_sets_chunk_files_and_places_proofs_metadata_in_run() {
         use std::collections::BTreeMap;
 
         use crate::snapshot::{ChunkedArchive, SingleArchive};
@@ -1151,7 +1193,7 @@ mod tests {
         components.insert(
             "proofs".to_string(),
             ComponentManifest::Single(SingleArchive {
-                file: "proofs.tar.zst".to_string(),
+                file: PROOFS_METADATA_ARCHIVE.to_string(),
                 size: 50,
                 decompressed_size: 80,
                 blake3: None,
@@ -1180,9 +1222,18 @@ mod tests {
             components,
         };
 
-        let published =
-            build_published_manifest(&local, Some("https://example.com/mainnet"), 1_700_000_000)
-                .unwrap();
+        let proofs_static = ProofsStaticManifest {
+            version: ProofsStaticManifest::VERSION,
+            database: "rocksdb".to_string(),
+            tables: vec![],
+        };
+        let published = build_published_manifest(
+            &local,
+            Some(&proofs_static),
+            Some("https://example.com/mainnet"),
+            1_700_000_000,
+        )
+        .unwrap();
         let manifest: serde_json::Value = serde_json::from_slice(&published).unwrap();
 
         assert_eq!(
@@ -1194,9 +1245,10 @@ mod tests {
             "state should be rewritten under the timestamp directory"
         );
         assert_eq!(
-            manifest["components"]["proofs"]["file"], "proofs.tar.zst",
-            "proofs must remain a sibling of manifest.json for ProofsDownloader"
+            manifest["components"]["proofs"]["file"], "1700000000/proofs-metadata.tar.zst",
+            "proofs metadata should be placed in the timestamped run directory"
         );
+        assert_eq!(manifest["proofs_static"]["database"], "rocksdb");
         assert_eq!(
             manifest["components"]["headers"]["chunk_files"],
             serde_json::json!([
