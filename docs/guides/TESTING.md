@@ -165,9 +165,8 @@ merge queue (not pull requests) so PR feedback stays fast; they are a required s
 the queue will not merge if they fail.
 
 `action-tests.yml`, despite the name, is unrelated to testing GitHub Actions workflows — it runs
-the [action tests](#action-tests) described above (`just actions::lint-ci` and
-`just actions::test-ci`) on every PR and merge-queue run. Action tests are also a required
-status check.
+the [action tests](#action-tests) described above (`just actions::test-ci`) on every PR and
+merge-queue run. Action tests are also a required status check.
 
 
 ## Guidelines
