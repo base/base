@@ -1,15 +1,13 @@
-//! Snapshot archive generation with selective compression.
+//! Snapshot manifest command and archive generation with selective compression.
 //!
 //! Archive creation, BLAKE3 hashing, and manifest structure are derived from
 //! [reth](https://github.com/paradigmxyz/reth) (`crates/cli/commands/src/download/manifest.rs`,
 //! commit `d58c6e3`, tag `v2.1.0`), licensed under Apache-2.0.
 //!
-//! Modified to support skipping compression of finalized static file chunks
-//! that already exist in remote storage. Only the tip chunk and a configurable
-//! buffer of recent chunks are compressed.
+//! Modified to reuse archives whose uncompressed source files match a previous manifest.
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     io::Read,
     path::{Path, PathBuf},
 };
@@ -20,10 +18,6 @@ pub use reth_cli_commands::download::manifest::{
     ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive, SnapshotManifest,
 };
 use tracing::info;
-
-use crate::progress::{
-    ArchiveProgressReporter, ComponentProgressLogger, ComponentProgressReporter,
-};
 
 /// Default blocks per static file segment.
 const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;
@@ -61,6 +55,9 @@ pub trait SnapshotManifestExt {
     /// Returns the full per-file metadata for a static-file chunk archive.
     fn chunk_output_files_for_file(&self, filename: &str) -> Option<Vec<OutputFileChecksum>>;
 
+    /// Returns the compressed size recorded for a static-file chunk archive.
+    fn chunk_size_for_file(&self, filename: &str) -> Option<u64>;
+
     /// Returns whether `filename` is the latest chunk for its component.
     fn is_latest_chunk_file(&self, filename: &str) -> bool;
 }
@@ -94,6 +91,15 @@ impl SnapshotManifestExt for SnapshotManifest {
         Some(entries.clone())
     }
 
+    fn chunk_size_for_file(&self, filename: &str) -> Option<u64> {
+        let (component, start, _end) = ChunkFilename::parse(filename)?;
+        let ComponentManifest::Chunked(meta) = self.components.get(&component)? else {
+            return None;
+        };
+        let chunk_index = usize::try_from(start / meta.blocks_per_file).ok()?;
+        meta.chunk_sizes.get(chunk_index).copied()
+    }
+
     fn is_latest_chunk_file(&self, filename: &str) -> bool {
         let Some((component, start, end)) = ChunkFilename::parse(filename) else {
             return false;
@@ -118,22 +124,25 @@ pub struct ManifestGenerationParams<'a> {
     pub output_dir: &'a Path,
     /// Chain ID recorded in the manifest.
     pub chain_id: u64,
+    /// Optional base URL recorded in the manifest.
+    pub base_url: Option<&'a str>,
     /// Snapshot block height. Inferred from header static files when `None`.
     pub block: Option<u64>,
     /// Blocks per static-file chunk archive. Defaults to `500_000` when `None`.
     pub blocks_per_file: Option<u64>,
-    /// Remote static-file chunk filenames and sizes used for skip-range computation.
+    /// Remote static-file chunk filenames and sizes used to verify reusable archives.
     pub remote_static_files: &'a HashMap<String, u64>,
-    /// Prior per-file chunk metadata reused for skipped archives.
-    pub previous_chunk_output_files: &'a HashMap<String, Vec<OutputFileChecksum>>,
+    /// Previously published manifest used to verify reusable archives.
+    pub previous_manifest: Option<&'a SnapshotManifest>,
     /// Whether to package `{source_datadir}/proofs` into `proofs.tar.zst`.
     pub upload_proofs: bool,
 }
 
 /// Generates snapshot archives with selective compression.
 ///
-/// Static file chunks whose block ranges are in `skip_ranges` are not
-/// compressed or written to the output directory.
+/// Static-file chunks are not compressed or written locally when their current
+/// uncompressed file metadata matches a previous manifest and the corresponding
+/// remote archive has the expected compressed size.
 #[derive(Debug)]
 pub struct SnapshotGenerator;
 
@@ -155,17 +164,12 @@ impl SnapshotGenerator {
             None => infer_block_from_headers(params.source_datadir)?,
         };
 
-        let remote_filenames: HashSet<&str> =
-            params.remote_static_files.keys().map(String::as_str).collect();
-        let skip_ranges = Self::compute_skip_ranges(&remote_filenames, block, blocks_per_file)?;
-
         info!(
             source = %params.source_datadir.display(),
             output = %params.output_dir.display(),
             chain_id = params.chain_id,
             block,
             blocks_per_file,
-            skip_count = skip_ranges.len(),
             "generating snapshot archives"
         );
 
@@ -189,7 +193,7 @@ impl SnapshotGenerator {
 
         for &(key, segment_name) in CHUNKED_COMPONENTS {
             let mut planned = Vec::new();
-            let mut planned_hash_only = Vec::new();
+            let mut reuse_candidates = Vec::new();
             let mut found_any = false;
             let mut chunk_sizes = vec![0u64; num_chunks as usize];
             let mut chunk_decompressed = vec![0u64; num_chunks as usize];
@@ -209,35 +213,32 @@ impl SnapshotGenerator {
                 }
                 found_any = true;
 
-                if skip_ranges.contains(&(start, end)) {
-                    let archive_name = ChunkFilename::format(key, start, end);
-                    chunk_sizes[i as usize] =
-                        params.remote_static_files.get(&archive_name).copied().ok_or_else(
-                            || {
-                                anyhow::anyhow!(
-                                    "missing remote size for skipped archive {archive_name}"
-                                )
-                            },
-                        )?;
-
-                    if let Some(output_files) =
-                        params.previous_chunk_output_files.get(&archive_name)
+                let archive_name = ChunkFilename::format(key, start, end);
+                if let (Some(&remote_size), Some(previous_manifest)) =
+                    (params.remote_static_files.get(&archive_name), params.previous_manifest)
+                {
+                    let previous_size = previous_manifest.chunk_size_for_file(&archive_name);
+                    if previous_size == Some(remote_size)
+                        && let Some(previous_output_files) =
+                            previous_manifest.chunk_output_files_for_file(&archive_name)
                     {
-                        chunk_decompressed[i as usize] = output_files.iter().map(|f| f.size).sum();
-                        chunk_output_files[i as usize] = output_files.clone();
-                    } else {
-                        planned_hash_only.push(PlannedChunk {
-                            chunk_idx: i,
-                            archive_path: params.output_dir.join(&archive_name),
-                            source_files,
+                        reuse_candidates.push(ReuseCandidate {
+                            chunk: PlannedChunk {
+                                chunk_idx: i,
+                                archive_path: params.output_dir.join(&archive_name),
+                                source_files,
+                            },
+                            archive_name,
+                            remote_size,
+                            previous_output_files,
                         });
+                        continue;
                     }
-                    continue;
                 }
 
                 planned.push(PlannedChunk {
                     chunk_idx: i,
-                    archive_path: params.output_dir.join(ChunkFilename::format(key, start, end)),
+                    archive_path: params.output_dir.join(archive_name),
                     source_files,
                 });
             }
@@ -245,44 +246,34 @@ impl SnapshotGenerator {
             if !found_any {
                 info!(component = key, "no static files found, skipping component");
             } else {
-                let hashed_only: Vec<PackagedChunk> = planned_hash_only
+                let checked_candidates = reuse_candidates
                     .into_par_iter()
-                    .map(|p| {
-                        let output_files = chunk_output_files_for_source_files(&p.source_files)?;
-                        Ok(PackagedChunk { chunk_idx: p.chunk_idx, size: 0, output_files })
+                    .map(|candidate| {
+                        let output_files =
+                            chunk_output_files_for_source_files(&candidate.chunk.source_files)?;
+                        Ok((candidate, output_files))
                     })
                     .collect::<Result<Vec<_>>>()?;
-
-                for p in hashed_only {
-                    let idx = p.chunk_idx as usize;
-                    chunk_decompressed[idx] = p.output_files.iter().map(|f| f.size).sum();
-                    chunk_output_files[idx] = p.output_files;
+                for (candidate, output_files) in checked_candidates {
+                    if output_files == candidate.previous_output_files {
+                        let idx = candidate.chunk.chunk_idx as usize;
+                        chunk_sizes[idx] = candidate.remote_size;
+                        chunk_decompressed[idx] = output_files.iter().map(|file| file.size).sum();
+                        chunk_output_files[idx] = output_files;
+                        info!(archive = %candidate.archive_name, "reusing existing snapshot archive");
+                    } else {
+                        planned.push(candidate.chunk);
+                    }
                 }
 
-                let progress_logger = if planned.is_empty() {
-                    None
-                } else {
-                    Some(ComponentProgressLogger::new(
-                        key.to_string(),
-                        planned_chunks_total_bytes(&planned)?,
-                        planned.len(),
-                    ))
-                };
-                let progress_reporter =
-                    progress_logger.as_ref().map(ComponentProgressLogger::reporter);
                 let packaged: Vec<PackagedChunk> = planned
                     .into_par_iter()
                     .map(|p| {
-                        let output_files = write_chunk_archive(
-                            &p.archive_path,
-                            &p.source_files,
-                            progress_reporter.clone(),
-                        )?;
+                        let output_files = write_chunk_archive(&p.archive_path, &p.source_files)?;
                         let size = std::fs::metadata(&p.archive_path)?.len();
                         Ok(PackagedChunk { chunk_idx: p.chunk_idx, size, output_files })
                     })
                     .collect::<Result<Vec<_>>>()?;
-                drop(progress_logger);
 
                 for p in packaged {
                     let idx = p.chunk_idx as usize;
@@ -400,8 +391,10 @@ impl SnapshotGenerator {
             chain_id: params.chain_id,
             storage_version: 2,
             timestamp,
-            base_url: None,
-            reth_version: None,
+            base_url: params.base_url.map(str::to_owned),
+            reth_version: Some(
+                reth_node_core::version::version_metadata().short_version.to_string(),
+            ),
             components,
         };
 
@@ -427,39 +420,6 @@ impl SnapshotGenerator {
         }
         files.sort_unstable();
         Ok(files)
-    }
-
-    /// Determines which finalized chunk ranges can be skipped based on what already
-    /// exists remotely. Keeps only the latest chunk in the timestamped run directory.
-    pub fn compute_skip_ranges(
-        remote_filenames: &HashSet<&str>,
-        block: u64,
-        blocks_per_file: u64,
-    ) -> Result<HashSet<(u64, u64)>> {
-        let num_chunks = block.div_ceil(blocks_per_file);
-        let latest_chunk = num_chunks.saturating_sub(1);
-
-        let mut skip = HashSet::new();
-        for i in 0..num_chunks {
-            if i >= latest_chunk {
-                continue;
-            }
-            let start = i * blocks_per_file;
-            let end = start
-                .checked_add(blocks_per_file - 1)
-                .context("block range overflow in skip computation")?;
-
-            let dominated_by_remote = CHUNKED_COMPONENTS.iter().all(|&(key, _)| {
-                let filename = ChunkFilename::format(key, start, end);
-                remote_filenames.contains(filename.as_str())
-            });
-
-            if dominated_by_remote {
-                skip.insert((start, end));
-            }
-        }
-
-        Ok(skip)
     }
 }
 
@@ -533,6 +493,13 @@ struct PlannedChunk {
     chunk_idx: u64,
     archive_path: PathBuf,
     source_files: Vec<PathBuf>,
+}
+
+struct ReuseCandidate {
+    chunk: PlannedChunk,
+    archive_name: String,
+    remote_size: u64,
+    previous_output_files: Vec<OutputFileChecksum>,
 }
 
 struct PackagedChunk {
@@ -668,29 +635,12 @@ fn package_single_component(
         bail!("cannot package empty archive: {archive_name}");
     }
     let archive_path = output_dir.join(archive_name);
-    let output_files = write_archive_from_planned_files(&archive_path, files, None)?;
+    let output_files = write_archive_from_planned_files(&archive_path, files)?;
     let size = std::fs::metadata(&archive_path)?.len();
     Ok((size, output_files))
 }
 
-fn write_chunk_archive(
-    path: &Path,
-    source_files: &[PathBuf],
-    progress: Option<ComponentProgressReporter>,
-) -> Result<Vec<OutputFileChecksum>> {
-    let archive_progress = match progress.as_ref() {
-        Some(progress) => Some(
-            progress.start_archive(
-                path.file_name()
-                    .ok_or_else(|| anyhow::anyhow!("invalid archive path: {}", path.display()))?
-                    .to_string_lossy()
-                    .to_string(),
-                source_files_total_bytes(source_files)?,
-            ),
-        ),
-        None => None,
-    };
-
+fn write_chunk_archive(path: &Path, source_files: &[PathBuf]) -> Result<Vec<OutputFileChecksum>> {
     let planned: Vec<PlannedFile> = source_files
         .iter()
         .map(|p| {
@@ -703,21 +653,7 @@ fn write_chunk_archive(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let result = write_archive_from_planned_files(path, &planned, archive_progress.clone());
-    match result {
-        Ok(output_files) => {
-            if let Some(archive_progress) = archive_progress.as_ref() {
-                archive_progress.finish();
-            }
-            Ok(output_files)
-        }
-        Err(error) => {
-            if let Some(archive_progress) = archive_progress.as_ref() {
-                archive_progress.fail();
-            }
-            Err(error)
-        }
-    }
+    write_archive_from_planned_files(path, &planned)
 }
 
 fn chunk_output_files_for_source_files(
@@ -741,15 +677,13 @@ fn chunk_output_files_for_source_files(
 fn write_archive_from_planned_files(
     path: &Path,
     files: &[PlannedFile],
-    progress: Option<ArchiveProgressReporter>,
 ) -> Result<Vec<OutputFileChecksum>> {
     let file = std::fs::File::create(path)?;
     let mut encoder = zstd::Encoder::new(file, 0)?;
     encoder.include_checksum(true)?;
     let mut builder = tar::Builder::new(encoder);
 
-    let output_files =
-        compute_output_files_and_archive(files, Some((&mut builder, path)), progress)?;
+    let output_files = compute_output_files_and_archive(files, Some((&mut builder, path)))?;
 
     let encoder = builder.into_inner()?;
     encoder.finish()?;
@@ -760,20 +694,19 @@ fn write_archive_from_planned_files(
 fn compute_output_files_for_planned_files(
     files: &[PlannedFile],
 ) -> Result<Vec<OutputFileChecksum>> {
-    compute_output_files_and_archive(files, None, None)
+    compute_output_files_and_archive(files, None)
 }
 
 fn compute_output_files_and_archive(
     files: &[PlannedFile],
     mut archive: Option<(&mut tar::Builder<zstd::Encoder<'_, std::fs::File>>, &Path)>,
-    progress: Option<ArchiveProgressReporter>,
 ) -> Result<Vec<OutputFileChecksum>> {
     let mut output_files = Vec::with_capacity(files.len());
     for planned in files {
         let expected_size = std::fs::metadata(&planned.source_path)?.len();
 
         let source_file = std::fs::File::open(&planned.source_path)?;
-        let mut reader = HashingReader::new(source_file, progress.clone());
+        let mut reader = HashingReader::new(source_file);
 
         if let Some((builder, archive_path)) = archive.as_mut() {
             let mut header = tar::Header::new_gnu();
@@ -815,12 +748,11 @@ struct HashingReader<R> {
     inner: R,
     hasher: blake3::Hasher,
     bytes_read: u64,
-    progress: Option<ArchiveProgressReporter>,
 }
 
 impl<R: Read> HashingReader<R> {
-    fn new(inner: R, progress: Option<ArchiveProgressReporter>) -> Self {
-        Self { inner, hasher: blake3::Hasher::new(), bytes_read: 0, progress }
+    fn new(inner: R) -> Self {
+        Self { inner, hasher: blake3::Hasher::new(), bytes_read: 0 }
     }
 
     fn finalize(self) -> String {
@@ -834,25 +766,9 @@ impl<R: Read> Read for HashingReader<R> {
         if n > 0 {
             self.bytes_read += n as u64;
             self.hasher.update(&buf[..n]);
-            if let Some(progress) = self.progress.as_ref() {
-                progress.record(n as u64);
-            }
         }
         Ok(n)
     }
-}
-
-fn planned_chunks_total_bytes(chunks: &[PlannedChunk]) -> Result<u64> {
-    chunks.iter().try_fold(0u64, |acc, chunk| {
-        let chunk_bytes = source_files_total_bytes(&chunk.source_files)?;
-        Ok(acc + chunk_bytes)
-    })
-}
-
-fn source_files_total_bytes(source_files: &[PathBuf]) -> Result<u64> {
-    source_files.iter().try_fold(0u64, |chunk_acc, path| {
-        std::fs::metadata(path).map(|m| chunk_acc + m.len()).map_err(Into::into)
-    })
 }
 
 #[cfg(test)]
@@ -863,7 +779,7 @@ mod tests {
         source_datadir: &'a Path,
         output_dir: &'a Path,
         remote_static_files: &'a HashMap<String, u64>,
-        previous_chunk_output_files: &'a HashMap<String, Vec<OutputFileChecksum>>,
+        previous_manifest: Option<&'a SnapshotManifest>,
         block: Option<u64>,
         upload_proofs: bool,
     ) -> ManifestGenerationParams<'a> {
@@ -871,11 +787,37 @@ mod tests {
             source_datadir,
             output_dir,
             chain_id: 8453,
+            base_url: None,
             block,
             blocks_per_file: Some(500_000),
             remote_static_files,
-            previous_chunk_output_files,
+            previous_manifest,
             upload_proofs,
+        }
+    }
+
+    fn previous_headers_manifest(
+        output_files: Vec<OutputFileChecksum>,
+        size: u64,
+    ) -> SnapshotManifest {
+        SnapshotManifest {
+            block: 2_000_000,
+            chain_id: 8453,
+            storage_version: 2,
+            timestamp: 0,
+            base_url: None,
+            reth_version: None,
+            components: BTreeMap::from([(
+                "headers".to_string(),
+                ComponentManifest::Chunked(ChunkedArchive {
+                    blocks_per_file: 500_000,
+                    total_blocks: 2_000_000,
+                    chunk_sizes: vec![size, 0, 0, 0],
+                    chunk_decompressed_sizes: vec![],
+                    chunk_output_files: vec![output_files, vec![], vec![], vec![]],
+                    chunk_files: vec![],
+                }),
+            )]),
         }
     }
 
@@ -920,63 +862,6 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("static_files")).unwrap();
 
         assert!(infer_block_from_headers(dir.path()).is_err());
-    }
-
-    #[test]
-    fn compute_skip_ranges_skips_finalized_chunks() {
-        let mut remote = HashSet::new();
-        for &(key, _) in CHUNKED_COMPONENTS {
-            remote.insert(ChunkFilename::format(key, 0, 499_999));
-            remote.insert(ChunkFilename::format(key, 500_000, 999_999));
-            remote.insert(ChunkFilename::format(key, 1_000_000, 1_499_999));
-            remote.insert(ChunkFilename::format(key, 1_500_000, 1_999_999));
-        }
-
-        // block=2_000_000, blocks_per_file=500_000 → 4 chunks (indices 0-3).
-        // Only chunk 3 remains mutable; chunks 0, 1, and 2 are finalized.
-        let refs: HashSet<&str> = remote.iter().map(String::as_str).collect();
-        let skip = SnapshotGenerator::compute_skip_ranges(&refs, 2_000_000, 500_000).unwrap();
-
-        assert!(skip.contains(&(0, 499_999)), "chunk 0 should be skipped");
-        assert!(skip.contains(&(500_000, 999_999)), "chunk 1 should be skipped");
-        assert!(skip.contains(&(1_000_000, 1_499_999)), "chunk 2 should be skipped");
-        assert!(!skip.contains(&(1_500_000, 1_999_999)), "chunk 3 (tip) should not be skipped");
-    }
-
-    #[test]
-    fn compute_skip_ranges_keeps_only_latest_chunk_when_few_chunks() {
-        let mut remote = HashSet::new();
-        for &(key, _) in CHUNKED_COMPONENTS {
-            remote.insert(ChunkFilename::format(key, 0, 499_999));
-            remote.insert(ChunkFilename::format(key, 500_000, 999_999));
-        }
-
-        // block=1_000_000 → 2 chunks; only chunk 1 remains mutable.
-        let refs: HashSet<&str> = remote.iter().map(String::as_str).collect();
-        let skip = SnapshotGenerator::compute_skip_ranges(&refs, 1_000_000, 500_000).unwrap();
-        assert_eq!(skip, HashSet::from([(0, 499_999)]), "only the latest chunk should be kept");
-    }
-
-    #[test]
-    fn compute_skip_ranges_skips_nothing_when_remote_empty() {
-        let remote = HashSet::new();
-        let refs: HashSet<&str> = remote.iter().map(String::as_str).collect();
-        let skip = SnapshotGenerator::compute_skip_ranges(&refs, 5_000_000, 500_000).unwrap();
-        assert!(skip.is_empty(), "nothing to skip when remote is empty");
-    }
-
-    #[test]
-    fn compute_skip_ranges_requires_all_components_present() {
-        let mut remote = HashSet::new();
-        // Only add headers, not other components
-        remote.insert(ChunkFilename::format("headers", 0, 499_999));
-
-        let refs: HashSet<&str> = remote.iter().map(String::as_str).collect();
-        let skip = SnapshotGenerator::compute_skip_ranges(&refs, 5_000_000, 500_000).unwrap();
-        assert!(
-            !skip.contains(&(0, 499_999)),
-            "should not skip range if not all components are present remotely"
-        );
     }
 
     #[test]
@@ -1030,12 +915,11 @@ mod tests {
         std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
 
         let remote = HashMap::new();
-        let previous_chunk_output_files = HashMap::new();
         let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
             source.path(),
             output.path(),
             &remote,
-            &previous_chunk_output_files,
+            None,
             Some(0),
             false,
         ))
@@ -1070,12 +954,11 @@ mod tests {
         std::fs::write(proofs_dir.join("000801.log"), b"wal-data").unwrap();
 
         let remote = HashMap::new();
-        let previous_chunk_output_files = HashMap::new();
         let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
             source.path(),
             output.path(),
             &remote,
-            &previous_chunk_output_files,
+            None,
             Some(0),
             true,
         ))
@@ -1120,12 +1003,11 @@ mod tests {
         std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
 
         let remote = HashMap::new();
-        let previous_chunk_output_files = HashMap::new();
         let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
             source.path(),
             output.path(),
             &remote,
-            &previous_chunk_output_files,
+            None,
             Some(0),
             true,
         ))
@@ -1158,12 +1040,11 @@ mod tests {
         std::fs::write(proofs_dir.join("CURRENT"), b"MANIFEST-000014\n").unwrap();
 
         let remote = HashMap::new();
-        let previous_chunk_output_files = HashMap::new();
         let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
             source.path(),
             output.path(),
             &remote,
-            &previous_chunk_output_files,
+            None,
             Some(0),
             false,
         ))
@@ -1184,7 +1065,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_manifest_skips_finalized_ranges_via_remote() {
+    fn generate_manifest_reuses_archive_when_source_hashes_match() {
         let source = tempfile::tempdir().unwrap();
         let output = tempfile::tempdir().unwrap();
 
@@ -1192,8 +1073,7 @@ mod tests {
         std::fs::create_dir_all(&db_dir).unwrap();
         std::fs::write(db_dir.join("mdbx.dat"), b"state").unwrap();
 
-        // 4 header chunks → block=2M, bpf=500k
-        // tip=chunk3, buffer=2 → keep 1,2,3 → skip chunk 0
+        // Four header chunks, with the first already present remotely.
         let sf = source.path().join("static_files");
         std::fs::create_dir_all(&sf).unwrap();
         for i in 0..4u64 {
@@ -1202,18 +1082,20 @@ mod tests {
             std::fs::write(sf.join(format!("static_file_headers_{start}_{end}")), b"data").unwrap();
         }
 
-        // Simulate all chunked components existing remotely for range 0-499999
-        let mut remote = HashMap::new();
-        for &(key, _) in CHUNKED_COMPONENTS {
-            remote.insert(ChunkFilename::format(key, 0, 499_999), 0u64);
-        }
-
-        let previous_chunk_output_files = HashMap::new();
+        let remote = HashMap::from([("headers-0-499999.tar.zst".to_string(), 123)]);
+        let previous_manifest = previous_headers_manifest(
+            vec![OutputFileChecksum {
+                path: "static_files/static_file_headers_0_499999".to_string(),
+                size: 4,
+                blake3: blake3::hash(b"data").to_hex().to_string(),
+            }],
+            123,
+        );
         let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
             source.path(),
             output.path(),
             &remote,
-            &previous_chunk_output_files,
+            Some(&previous_manifest),
             Some(2_000_000),
             false,
         ))
@@ -1226,7 +1108,7 @@ mod tests {
 
         assert!(
             !filenames.contains(&"headers-0-499999.tar.zst".to_string()),
-            "finalized range 0 should be skipped (all components exist remotely)"
+            "matching remote archive should not be recreated"
         );
         assert!(
             filenames.contains(&"headers-500000-999999.tar.zst".to_string()),
@@ -1238,12 +1120,12 @@ mod tests {
         );
         assert!(
             filenames.contains(&"headers-1500000-1999999.tar.zst".to_string()),
-            "tip range should be compressed"
+            "range without a remote archive should be compressed"
         );
     }
 
     #[test]
-    fn manifest_includes_output_metadata_for_skipped_chunks() {
+    fn source_hash_mismatch_recreates_archive() {
         let source = tempfile::tempdir().unwrap();
         let output = tempfile::tempdir().unwrap();
 
@@ -1251,7 +1133,7 @@ mod tests {
         std::fs::create_dir_all(&db_dir).unwrap();
         std::fs::write(db_dir.join("mdbx.dat"), b"state").unwrap();
 
-        // 4 header chunks → skip chunk 0
+        // Four header chunks, with stale metadata for the first archive.
         let sf = source.path().join("static_files");
         std::fs::create_dir_all(&sf).unwrap();
         for i in 0..4u64 {
@@ -1260,31 +1142,36 @@ mod tests {
             std::fs::write(sf.join(format!("static_file_headers_{start}_{end}")), b"data").unwrap();
         }
 
-        let mut remote = HashMap::new();
-        for &(key, _) in CHUNKED_COMPONENTS {
-            remote.insert(ChunkFilename::format(key, 0, 499_999), 0u64);
-        }
+        let remote = HashMap::from([("headers-0-499999.tar.zst".to_string(), 123)]);
 
-        let previous_chunk_output_files = HashMap::from([(
-            "headers-0-499999.tar.zst".to_string(),
+        let previous_manifest = previous_headers_manifest(
             vec![OutputFileChecksum {
                 path: "static_files/static_file_headers_0_499999".to_string(),
-                size: 777,
-                blake3: "reused-from-previous-manifest".to_string(),
+                size: 4,
+                blake3: blake3::hash(b"different").to_hex().to_string(),
             }],
-        )]);
+            123,
+        );
 
-        SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+        let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
             source_datadir: source.path(),
             output_dir: output.path(),
             chain_id: 8453,
+            base_url: None,
             block: Some(2_000_000),
             blocks_per_file: Some(500_000),
             remote_static_files: &remote,
-            previous_chunk_output_files: &previous_chunk_output_files,
+            previous_manifest: Some(&previous_manifest),
             upload_proofs: false,
         })
         .unwrap();
+
+        assert!(
+            files.iter().any(|path| path
+                .file_name()
+                .is_some_and(|name| name == "headers-0-499999.tar.zst")),
+            "hash mismatch must recreate the archive"
+        );
 
         let manifest_content =
             std::fs::read_to_string(output.path().join("manifest.json")).unwrap();
@@ -1298,11 +1185,12 @@ mod tests {
         assert_eq!(chunk_output_files.len(), 4, "should have 4 chunk entries");
         assert!(
             chunk_output_files[0].as_array().is_some_and(|files| !files.is_empty()),
-            "skipped chunk should still retain output-file metadata"
+            "generated chunk should include output-file metadata"
         );
         assert_eq!(
-            chunk_output_files[0][0]["blake3"], "reused-from-previous-manifest",
-            "skipped chunk should reuse previous manifest metadata when available"
+            chunk_output_files[0][0]["blake3"],
+            blake3::hash(b"data").to_hex().to_string(),
+            "manifest must describe the newly generated archive"
         );
         assert!(
             headers.get("chunk_skipped").is_none(),

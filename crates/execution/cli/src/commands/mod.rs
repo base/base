@@ -5,9 +5,7 @@ use std::{fmt, sync::Arc};
 use base_execution_chainspec::BaseChainSpec;
 use clap::Subcommand;
 use reth_cli_commands::{
-    config_cmd, db,
-    download::manifest_cmd::SnapshotManifestCommand,
-    dump_genesis, init_cmd,
+    config_cmd, db, dump_genesis, init_cmd,
     node::{self, NoArgs},
     prune, re_execute, stage,
 };
@@ -20,6 +18,8 @@ mod genesis_output_root;
 pub use genesis_output_root::GenesisOutputRootCommand;
 pub mod init_state;
 pub mod p2p;
+mod snapshot_manifest;
+pub use snapshot_manifest::SnapshotManifestCommand;
 
 #[cfg(feature = "dev")]
 pub mod test_vectors;

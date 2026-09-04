@@ -7,15 +7,12 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use base_reth_cli::{ManifestGenerationParams, SnapshotGenerator, SnapshotManifest};
 use tracing::{error, info, warn};
 
 use crate::{
     SnapshotterConfig,
     container::ContainerManager,
-    snapshot::{
-        ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
-        SnapshotManifestExt,
-    },
     tip::TipChecker,
     upload::{SnapshotUploadParams, SnapshotUploader},
 };
@@ -177,27 +174,13 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             "fetched previous manifest for blake3 diff"
         );
 
-        let previous_chunk_output_files: HashMap<String, Vec<OutputFileChecksum>> = remote_manifest
-            .as_ref()
-            .map(|manifest| {
-                remote_static_files
-                    .keys()
-                    .filter_map(|filename| {
-                        manifest
-                            .chunk_output_files_for_file(filename)
-                            .map(|output_files| (filename.clone(), output_files))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
         let source_datadir = self.config.source_datadir.clone();
         let output_dir_for_gen = run_output_dir.clone();
         let chain_id = self.config.chain_id;
         let block = Some(self.config.block.unwrap_or(latest_block));
         let blocks_per_file = self.config.blocks_per_file;
         let remote_for_gen = remote_static_files.clone();
-        let previous_chunk_output_files_for_gen = previous_chunk_output_files;
+        let previous_manifest_for_gen = remote_manifest.clone();
         let upload_proofs = self.config.upload_proofs;
 
         let files = tokio::task::spawn_blocking(move || {
@@ -205,10 +188,11 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 source_datadir: &source_datadir,
                 output_dir: &output_dir_for_gen,
                 chain_id,
+                base_url: None,
                 block,
                 blocks_per_file,
                 remote_static_files: &remote_for_gen,
-                previous_chunk_output_files: &previous_chunk_output_files_for_gen,
+                previous_manifest: previous_manifest_for_gen.as_ref(),
                 upload_proofs,
             };
             SnapshotGenerator::generate_manifest(&params)

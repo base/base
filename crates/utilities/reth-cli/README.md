@@ -5,6 +5,9 @@ Reth-specific CLI utilities for Base execution layer binaries.
 ## Overview
 
 - **`init_reth!`**: Initializes Reth's global version metadata for P2P identification and logging.
+- **Snapshot manifests**: Provides the Base-owned archive generator shared by the execution node's
+  `snapshot-manifest` command and the snapshotter sidecar. Existing archives can be reused without
+  recompression after verifying their uncompressed BLAKE3 hashes.
 
 ## Usage
 

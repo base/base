@@ -23,14 +23,12 @@ use aws_sdk_s3::{
     primitives::ByteStream,
     types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
 };
+use base_reth_cli::{ChunkFilename, ComponentManifest, SnapshotManifest, SnapshotManifestExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    progress::{UploadProgress, UploadStage},
-    snapshot::{ChunkFilename, ComponentManifest, SnapshotManifest, SnapshotManifestExt},
-};
+use crate::progress::{UploadProgress, UploadStage};
 
 /// Maximum number of concurrent file uploads.
 const MAX_CONCURRENT_UPLOADS: usize = 10;
@@ -330,11 +328,13 @@ impl SnapshotUploader {
                     let local_hashes = params.local_manifest.chunk_hashes_for_file(&file_name);
                     let remote_hashes =
                         params.remote_manifest.and_then(|m| m.chunk_hashes_for_file(&file_name));
+                    let remote_size_matches = params
+                        .remote_manifest
+                        .and_then(|manifest| manifest.chunk_size_for_file(&file_name))
+                        .zip(params.remote_static_files.get(&file_name).copied())
+                        .is_some_and(|(manifest_size, object_size)| manifest_size == object_size);
                     match (&local_hashes, &remote_hashes) {
-                        (Some(local), Some(remote))
-                            if local == remote
-                                && params.remote_static_files.contains_key(&file_name) =>
-                        {
+                        (Some(local), Some(remote)) if local == remote && remote_size_matches => {
                             debug!(file = %file_name, "skipping finalized static file (blake3 matches shared object)");
                             skipped += 1;
                             continue;
@@ -1135,7 +1135,7 @@ mod tests {
     fn build_published_manifest_sets_chunk_files_and_leaves_proofs_as_sibling() {
         use std::collections::BTreeMap;
 
-        use crate::snapshot::{ChunkedArchive, SingleArchive};
+        use base_reth_cli::{ChunkedArchive, SingleArchive};
 
         let mut components = BTreeMap::new();
         components.insert(

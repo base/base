@@ -925,7 +925,6 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         }
     }
 
-    // Simulate all chunked components existing remotely for every finalized range.
     let chunk_components = [
         "headers",
         "transactions",
@@ -934,12 +933,31 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         "account_changesets",
         "storage_changesets",
     ];
+    let baseline = tempfile::tempdir()?;
+    SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+        source_datadir: source.path(),
+        output_dir: baseline.path(),
+        chain_id: 8453,
+        base_url: None,
+        block: Some(2_000_000),
+        blocks_per_file: Some(500_000),
+        remote_static_files: &HashMap::new(),
+        previous_manifest: None,
+        upload_proofs: false,
+    })?;
+    let previous_manifest = parse_local_manifest(baseline.path())?;
+
+    // Simulate the first three chunks of every component existing remotely.
     let mut remote: HashMap<String, u64> = HashMap::new();
     for component in chunk_components {
+        let ComponentManifest::Chunked(metadata) = &previous_manifest.components[component] else {
+            unreachable!("test components are chunked")
+        };
         for chunk_idx in 0..3u64 {
             let start = chunk_idx * 500_000;
             let end = start + 499_999;
-            remote.insert(format!("{component}-{start}-{end}.tar.zst"), 0);
+            let archive = format!("{component}-{start}-{end}.tar.zst");
+            remote.insert(archive, metadata.chunk_sizes[chunk_idx as usize]);
         }
     }
 
@@ -948,10 +966,11 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         source_datadir: source.path(),
         output_dir: output.path(),
         chain_id: 8453,
+        base_url: None,
         block: Some(2_000_000),
         blocks_per_file: Some(500_000),
         remote_static_files: &remote,
-        previous_chunk_output_files: &HashMap::new(),
+        previous_manifest: Some(&previous_manifest),
         upload_proofs: false,
     })?;
 
@@ -1023,10 +1042,11 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
         source_datadir: source.path(),
         output_dir: output.path(),
         chain_id: 8453,
+        base_url: None,
         block: Some(0),
         blocks_per_file: Some(500_000),
         remote_static_files: &empty_remote,
-        previous_chunk_output_files: &HashMap::new(),
+        previous_manifest: None,
         upload_proofs: true,
     })?;
 

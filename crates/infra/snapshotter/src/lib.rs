@@ -11,10 +11,7 @@ mod config;
 pub use config::{DEFAULT_TIP_THRESHOLD_SECS, S3ConfigType, SnapshotterConfig};
 
 mod progress;
-pub use progress::{
-    ActiveArchiveState, ArchiveProgress, ComponentProgressLogger, ComponentProgressReporter,
-    ComponentProgressState, ProgressDisplay, UploadProgress,
-};
+pub use progress::{ProgressDisplay, UploadProgress};
 
 mod container;
 pub use container::{ContainerManager, DockerContainerManager};
@@ -22,8 +19,7 @@ pub use container::{ContainerManager, DockerContainerManager};
 mod tip;
 pub use tip::{RpcTipChecker, TipChecker, TipStatus};
 
-mod snapshot;
-pub use snapshot::{
+pub use base_reth_cli::{
     ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
     SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
 };
