@@ -25,13 +25,19 @@ use aws_sdk_s3::{
 };
 use base_reth_cli::{ChunkFilename, ComponentManifest, SnapshotManifest, SnapshotManifestExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
-use tokio::time::sleep;
+use tokio::{sync::Semaphore, time::sleep};
 use tracing::{debug, error, info, warn};
 
 use crate::progress::{UploadProgress, UploadStage};
 
 /// Maximum number of concurrent file uploads.
-const MAX_CONCURRENT_UPLOADS: usize = 10;
+const MAX_CONCURRENT_FILE_UPLOADS: usize = 10;
+
+/// Maximum number of multipart upload parts in flight across all files.
+///
+/// This matches the previous worst case of ten files with ten parts each, while allowing a
+/// smaller number of remaining files to use the available request capacity.
+const MAX_CONCURRENT_MULTIPART_PARTS: usize = 100;
 
 /// Files larger than this threshold use multipart upload.
 /// S3 `put_object` has a 5 `GiB` limit; we switch well below that.
@@ -119,6 +125,7 @@ pub struct SnapshotUploader {
     bucket: String,
     prefix: String,
     public_base_url: Option<String>,
+    multipart_part_permits: Semaphore,
 }
 
 impl SnapshotUploader {
@@ -129,7 +136,13 @@ impl SnapshotUploader {
         prefix: String,
         public_base_url: Option<String>,
     ) -> Self {
-        Self { client, bucket, prefix, public_base_url }
+        Self {
+            client,
+            bucket,
+            prefix,
+            public_base_url,
+            multipart_part_permits: Semaphore::const_new(MAX_CONCURRENT_MULTIPART_PARTS),
+        }
     }
 
     /// Lists remote static files with their sizes. Call once and pass the result
@@ -378,7 +391,7 @@ impl SnapshotUploader {
                 .map(|file| async move {
                     self.upload_file(&file, static_prefix_ref, progress_ref).await
                 })
-                .buffer_unordered(MAX_CONCURRENT_UPLOADS)
+                .buffer_unordered(MAX_CONCURRENT_FILE_UPLOADS)
                 .try_collect::<Vec<()>>()
                 .await?;
 
@@ -387,7 +400,7 @@ impl SnapshotUploader {
                 .map(|file| async move {
                     self.upload_file(&file, run_prefix_ref, progress_ref).await
                 })
-                .buffer_unordered(MAX_CONCURRENT_UPLOADS)
+                .buffer_unordered(MAX_CONCURRENT_FILE_UPLOADS)
                 .try_collect::<Vec<()>>()
                 .await?;
 
@@ -862,7 +875,7 @@ impl SnapshotUploader {
                     Ok::<CompletedPart, anyhow::Error>(part)
                 }
             })
-            .buffer_unordered(MAX_CONCURRENT_UPLOADS)
+            .buffer_unordered(MAX_CONCURRENT_MULTIPART_PARTS)
             .try_collect()
             .await?;
 
@@ -881,6 +894,11 @@ impl SnapshotUploader {
     ) -> Result<CompletedPart> {
         retry_upload(
             || async {
+                let _permit = self
+                    .multipart_part_permits
+                    .acquire()
+                    .await
+                    .map_err(|error| UploadAttemptError::fatal(error.into()))?;
                 let body = ByteStream::read_from()
                     .path(file_path)
                     .offset(offset)
