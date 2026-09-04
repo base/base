@@ -33,10 +33,6 @@ affected-ci base="main": contracts
 elfs:
     just succinct build-elfs
 
-# Builds the workspace with maxperf
-maxperf:
-    cargo build --workspace --profile maxperf --features jemalloc
-
 # Builds the base node binary
 node:
     cargo build --bin base-reth-node

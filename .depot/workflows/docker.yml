@@ -50,7 +50,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
       - name: Build and push Docker image
         env:
-          PROFILE: maxperf
+          PROFILE: release
           TARGET: base
         run: |
           tag_args=()

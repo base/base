@@ -42,7 +42,7 @@ Once you are satisfied with an RC, run the **Publish Release** workflow (`Action
 - Enter the version number (e.g., `0.6.0` — no `v` prefix, no `releases/` prefix)
 - The workflow validates that the release branch exists and `Cargo.toml` is not `0.0.0`
 - Creates the final tag `vX.Y.Z` on the release branch
-- Builds the `base` image once (`PROFILE=maxperf`) and tags it as `vX.Y.Z`, `X.Y`, `X`, and `latest` on `ghcr.io/base/node`
+- Builds the `base` image once (`PROFILE=release`) and tags it as `vX.Y.Z`, `X.Y`, `X`, and `latest` on `ghcr.io/base/node`
 - Creates a draft GitHub release with auto-generated changelog and uploads binaries
 - Review and publish the draft release on GitHub
 
