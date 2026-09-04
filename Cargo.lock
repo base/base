@@ -6166,6 +6166,7 @@ dependencies = [
  "blake3",
  "bollard",
  "clap",
+ "eyre",
  "futures",
  "human_bytes",
  "humantime",
