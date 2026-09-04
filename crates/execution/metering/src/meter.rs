@@ -22,7 +22,7 @@ use reth_revm::{
     database::StateProviderDatabase, db::State, primitives::KECCAK_EMPTY,
     revm::context_interface::cfg::GasParams,
 };
-use revm::primitives::hardfork::SpecId;
+use revm::{primitives::hardfork::SpecId, state::EvmState};
 use revm_bytecode::opcode::OpCode;
 
 use crate::{inspector::MeteringInspector, transaction::validate_tx};
@@ -93,6 +93,16 @@ pub enum PseudoOpcode {
     TxEffectEthTransferToExistingAccount,
     /// Successful top-level ETH self-transfer.
     TxEffectEthSelfTransfer,
+    /// Zero-to-nonzero storage transitions in post-tx `EvmState`.
+    StateNewStorageSlot,
+    /// Storage slots whose present value differs from the original value.
+    StateChangedStorageSlot,
+    /// Nonzero-to-zero storage transitions in post-tx `EvmState`.
+    StateClearedStorageSlot,
+    /// Accounts marked touched in post-tx `EvmState`.
+    StateTouchedAccount,
+    /// Accounts whose balance, nonce, or code changed from the original info.
+    StateChangedAccount,
 }
 
 impl PseudoOpcode {
@@ -122,6 +132,11 @@ impl PseudoOpcode {
                 "TX_EFFECT_ETH_TRANSFER_TO_EXISTING_ACCOUNT"
             }
             Self::TxEffectEthSelfTransfer => "TX_EFFECT_ETH_SELF_TRANSFER",
+            Self::StateNewStorageSlot => "STATE_NEW_STORAGE_SLOT",
+            Self::StateChangedStorageSlot => "STATE_CHANGED_STORAGE_SLOT",
+            Self::StateClearedStorageSlot => "STATE_CLEARED_STORAGE_SLOT",
+            Self::StateTouchedAccount => "STATE_TOUCHED_ACCOUNT",
+            Self::StateChangedAccount => "STATE_CHANGED_ACCOUNT",
         }
     }
 
@@ -132,6 +147,21 @@ impl PseudoOpcode {
             Self::TxEffectEthTransferToNonexistentAccount
                 | Self::TxEffectEthTransferToExistingAccount
                 | Self::TxEffectEthSelfTransfer
+        )
+    }
+
+    /// Returns whether this pseudo-opcode is a net post-state effect.
+    ///
+    /// These names match the executed overlay in
+    /// `base-execution-payload-builder::ResourceSample`.
+    pub const fn is_state_effect(self) -> bool {
+        matches!(
+            self,
+            Self::StateNewStorageSlot
+                | Self::StateChangedStorageSlot
+                | Self::StateClearedStorageSlot
+                | Self::StateTouchedAccount
+                | Self::StateChangedAccount
         )
     }
 }
@@ -226,6 +256,12 @@ const PSEUDO_OPCODES: &[PseudoOpcode] = &[
     PseudoOpcode::TxEffectEthTransferToNonexistentAccount,
     PseudoOpcode::TxEffectEthTransferToExistingAccount,
     PseudoOpcode::TxEffectEthSelfTransfer,
+    // Net post-state effects from post-tx `EvmState`. These are not opcodes.
+    PseudoOpcode::StateNewStorageSlot,
+    PseudoOpcode::StateChangedStorageSlot,
+    PseudoOpcode::StateClearedStorageSlot,
+    PseudoOpcode::StateTouchedAccount,
+    PseudoOpcode::StateChangedAccount,
 ];
 
 impl MeteredOpcodes {
@@ -301,8 +337,12 @@ impl MeteredOpcodes {
     /// Parses opcode and precompile name strings into a [`MeteredOpcodes`] filter.
     ///
     /// Recognizes EVM opcode names (e.g., `SSTORE`, `CALL`), fixed precompile
-    /// names (e.g., `ECREC`, `BLAKE2F`, `BERYL_B20_FACTORY`), and dynamic Beryl
-    /// B-20 token address family names (`BERYL_B20_ASSET`, `BERYL_B20_STABLECOIN`).
+    /// names (e.g., `ECREC`, `BLAKE2F`, `BERYL_B20_FACTORY`), dynamic Beryl
+    /// B-20 token address family names (`BERYL_B20_ASSET`, `BERYL_B20_STABLECOIN`),
+    /// and transaction-level pseudo-opcodes including post-state effects
+    /// (`STATE_NEW_STORAGE_SLOT`, `STATE_CHANGED_STORAGE_SLOT`,
+    /// `STATE_CLEARED_STORAGE_SLOT`, `STATE_TOUCHED_ACCOUNT`,
+    /// `STATE_CHANGED_ACCOUNT`).
     /// Matching is case-insensitive.
     pub fn parse(names: &[String]) -> EyreResult<Self> {
         let opcode_lookup: HashMap<&str, OpCode> =
@@ -526,6 +566,56 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
     entries
 }
 
+fn state_effect_entries(state: &EvmState, metered: &MeteredOpcodes) -> Vec<OpcodeGas> {
+    if !metered.pseudo_opcodes.iter().any(|opcode| opcode.is_state_effect()) {
+        return Vec::new();
+    }
+
+    let mut new_slots = 0u64;
+    let mut changed_slots = 0u64;
+    let mut cleared_slots = 0u64;
+    let mut touched_accounts = 0u64;
+    let mut changed_accounts = 0u64;
+    for account in state.values() {
+        if account.is_touched() {
+            touched_accounts = touched_accounts.saturating_add(1);
+        }
+        if account.is_changed() {
+            changed_accounts = changed_accounts.saturating_add(1);
+        }
+        for slot in account.storage.values() {
+            if !slot.is_changed() {
+                continue;
+            }
+            changed_slots = changed_slots.saturating_add(1);
+            if slot.original_value().is_zero() {
+                new_slots = new_slots.saturating_add(1);
+            } else if slot.present_value().is_zero() {
+                cleared_slots = cleared_slots.saturating_add(1);
+            }
+        }
+    }
+
+    let requested = |opcode: PseudoOpcode| metered.pseudo_opcodes.contains(&opcode);
+    let mut entries = Vec::new();
+    let mut push = |opcode: PseudoOpcode, count: u64| {
+        if requested(opcode) && count > 0 {
+            entries.push(OpcodeGas {
+                contract_address: Address::ZERO,
+                opcode: opcode.as_str().to_string(),
+                count,
+                gas_used: 0,
+            });
+        }
+    };
+    push(PseudoOpcode::StateNewStorageSlot, new_slots);
+    push(PseudoOpcode::StateChangedStorageSlot, changed_slots);
+    push(PseudoOpcode::StateClearedStorageSlot, cleared_slots);
+    push(PseudoOpcode::StateTouchedAccount, touched_accounts);
+    push(PseudoOpcode::StateChangedAccount, changed_accounts);
+    entries
+}
+
 /// Inputs for [`meter_bundle`].
 #[derive(Debug)]
 pub struct MeterBundleInput<SP> {
@@ -690,9 +780,17 @@ where
                 .map_err(|e| eyre!("Transaction {tx_hash} validation failed: {e}"))?;
 
             let mut tx_succeeded = false;
+            let mut state_effects = Vec::new();
             let gas_used = builder
                 .execute_transaction_with_result_closure(tx.clone(), |result| {
-                    tx_succeeded = result.result().result.is_success();
+                    let result_and_state = result.result();
+                    tx_succeeded = result_and_state.result.is_success();
+                    // Count net post-state even when the call reverts. Revm still
+                    // commits gas payment, nonce, and coinbase balance; rolled-back
+                    // storage writes are already absent from `EvmState`. Gating on
+                    // success would undercount committed account effects that resource
+                    // admission prices.
+                    state_effects = state_effect_entries(&result_and_state.state, &metered_opcodes);
                 })
                 .map_err(|e| eyre!("Transaction {tx_hash} execution failed: {e}"))?
                 .tx_gas_used();
@@ -714,6 +812,7 @@ where
 
             let mut opcode_gas =
                 intrinsic_gas_entries(tx, recipient_is_dead, tx_succeeded, &metered_opcodes, spec);
+            opcode_gas.extend(state_effects);
             opcode_gas.extend(opcode_data.iter().filter(|(_, usage)| usage.count > 0).map(
                 |(&(contract_address, opcode), usage)| OpcodeGas {
                     contract_address,
@@ -779,6 +878,7 @@ mod tests {
     use eyre::Context;
     use reth_provider::StateProviderFactory;
     use reth_transaction_pool::test_utils::TransactionBuilder;
+    use revm::state::{Account as RevmAccount, EvmStorageSlot, TransactionId};
 
     use super::*;
 
@@ -831,6 +931,77 @@ mod tests {
 
         assert!(entry.count > 0, "{opcode} count should be non-zero");
         assert!(entry.gas_used > 0, "{opcode} gas_used should be non-zero");
+    }
+
+    fn opcode_count(entries: &[OpcodeGas], name: &str) -> Option<u64> {
+        entries.iter().find(|entry| entry.opcode == name).map(|entry| entry.count)
+    }
+
+    fn state_effect_names() -> [String; 5] {
+        [
+            "STATE_NEW_STORAGE_SLOT".to_string(),
+            "STATE_CHANGED_STORAGE_SLOT".to_string(),
+            "STATE_CLEARED_STORAGE_SLOT".to_string(),
+            "STATE_TOUCHED_ACCOUNT".to_string(),
+            "STATE_CHANGED_ACCOUNT".to_string(),
+        ]
+    }
+
+    #[test]
+    fn parse_accepts_state_effect_pseudo_opcodes() {
+        let metered = MeteredOpcodes::parse(&state_effect_names()).unwrap();
+        assert!(metered.pseudo_opcodes.contains(&PseudoOpcode::StateNewStorageSlot));
+        assert!(metered.pseudo_opcodes.contains(&PseudoOpcode::StateChangedStorageSlot));
+        assert!(metered.pseudo_opcodes.contains(&PseudoOpcode::StateClearedStorageSlot));
+        assert!(metered.pseudo_opcodes.contains(&PseudoOpcode::StateTouchedAccount));
+        assert!(metered.pseudo_opcodes.contains(&PseudoOpcode::StateChangedAccount));
+    }
+
+    #[test]
+    fn state_effect_entries_count_net_original_to_present() {
+        let mut account = RevmAccount::default();
+        account.mark_touch();
+        account.storage.insert(
+            U256::from(1),
+            EvmStorageSlot::new_changed(U256::ZERO, U256::from(7), TransactionId::ZERO),
+        );
+        account.storage.insert(
+            U256::from(2),
+            EvmStorageSlot::new_changed(U256::from(4), U256::ZERO, TransactionId::ZERO),
+        );
+        account
+            .storage
+            .insert(U256::from(3), EvmStorageSlot::new(U256::from(5), TransactionId::ZERO));
+        let mut state = EvmState::default();
+        state.insert(Address::ZERO, account);
+
+        let metered = MeteredOpcodes::parse(&state_effect_names()).unwrap();
+        let entries = state_effect_entries(&state, &metered);
+        assert_eq!(opcode_count(&entries, "STATE_NEW_STORAGE_SLOT"), Some(1));
+        assert_eq!(opcode_count(&entries, "STATE_CHANGED_STORAGE_SLOT"), Some(2));
+        assert_eq!(opcode_count(&entries, "STATE_CLEARED_STORAGE_SLOT"), Some(1));
+        assert_eq!(opcode_count(&entries, "STATE_TOUCHED_ACCOUNT"), Some(1));
+        assert!(opcode_count(&entries, "STATE_CHANGED_ACCOUNT").is_none());
+    }
+
+    fn sstore_then_revert_initcode() -> Bytes {
+        // Runtime: SSTORE(0, 42); REVERT(0, 0)
+        let runtime = [0x60, 0x2a, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xfd];
+        let runtime_len = runtime.len() as u8;
+        let mut initcode = vec![
+            0x60,
+            runtime_len,
+            0x60,
+            0x0a,
+            0x5f,
+            0x39, // CODECOPY(0, 10, runtime_len)
+            0x60,
+            runtime_len,
+            0x5f,
+            0xf3, // RETURN(0, runtime_len)
+        ];
+        initcode.extend_from_slice(&runtime);
+        Bytes::from(initcode)
     }
 
     fn value_call_contract_initcode(target: Address) -> Bytes {
@@ -1134,6 +1305,99 @@ mod tests {
         assert_eq!(sstore.contract_address, contract_address);
         assert!(sstore.count > 0, "SSTORE count should be non-zero");
         assert!(sstore.gas_used > 0, "SSTORE gas_used should be non-zero");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_state_effects_for_storage_write_and_clear() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let (deployment_tx, contract_address, _deployment_hash) =
+            Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
+        harness.build_block_from_transactions(vec![deployment_tx]).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+        let write_tx = create_call_tx(
+            harness.chain_id(),
+            0,
+            contract_address,
+            SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode(),
+            100_000,
+        );
+        let clear_tx = create_call_tx(
+            harness.chain_id(),
+            1,
+            contract_address,
+            SimpleStorage::setValueCall { v: U256::ZERO }.abi_encode(),
+            100_000,
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+        let metered = MeteredOpcodes::parse(&state_effect_names())?;
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: create_parsed_bundle(vec![write_tx, clear_tx])?,
+            header,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        assert_eq!(output.results.len(), 2);
+        let write = &output.results[0].opcode_gas;
+        assert_eq!(opcode_count(write, "STATE_NEW_STORAGE_SLOT"), Some(1));
+        assert_eq!(opcode_count(write, "STATE_CHANGED_STORAGE_SLOT"), Some(1));
+        assert!(opcode_count(write, "STATE_CLEARED_STORAGE_SLOT").is_none());
+        assert!(opcode_count(write, "STATE_TOUCHED_ACCOUNT").unwrap_or(0) >= 1);
+        assert!(opcode_count(write, "STATE_CHANGED_ACCOUNT").unwrap_or(0) >= 1);
+
+        let clear = &output.results[1].opcode_gas;
+        assert!(opcode_count(clear, "STATE_NEW_STORAGE_SLOT").is_none());
+        assert_eq!(opcode_count(clear, "STATE_CHANGED_STORAGE_SLOT"), Some(1));
+        assert_eq!(opcode_count(clear, "STATE_CLEARED_STORAGE_SLOT"), Some(1));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_state_effects_omit_rolled_back_storage_on_revert() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let (deployment_tx, contract_address, _) =
+            Account::Deployer.create_deployment_tx(sstore_then_revert_initcode(), 0)?;
+        harness.build_block_from_transactions(vec![deployment_tx]).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+        let revert_tx =
+            create_call_tx(harness.chain_id(), 0, contract_address, Bytes::new(), 100_000);
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+        let metered = MeteredOpcodes::parse(&state_effect_names())?;
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: create_parsed_bundle(vec![revert_tx])?,
+            header,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        assert_eq!(output.results.len(), 1);
+        let effects = &output.results[0].opcode_gas;
+        assert!(opcode_count(effects, "STATE_NEW_STORAGE_SLOT").is_none());
+        assert!(opcode_count(effects, "STATE_CHANGED_STORAGE_SLOT").is_none());
+        assert!(opcode_count(effects, "STATE_CLEARED_STORAGE_SLOT").is_none());
+        assert!(opcode_count(effects, "STATE_TOUCHED_ACCOUNT").unwrap_or(0) >= 1);
+        assert!(opcode_count(effects, "STATE_CHANGED_ACCOUNT").unwrap_or(0) >= 1);
 
         Ok(())
     }
