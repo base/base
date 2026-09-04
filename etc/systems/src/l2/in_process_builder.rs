@@ -71,6 +71,8 @@ pub struct InProcessBuilderConfig {
     pub block_time: Duration,
     /// Optional canonical block persistence threshold.
     pub persistence_threshold: Option<u64>,
+    /// Optional number of unpersisted blocks allowed before Engine API intake is stalled.
+    pub persistence_backpressure_threshold: Option<u64>,
     /// Optional pending/basefee/queued transaction count limit for benchmark workloads.
     pub txpool_max_transactions: Option<usize>,
     /// Optional pending/basefee/queued transaction size limit in megabytes.
@@ -439,9 +441,16 @@ fn create_node_config(
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network);
+    if config.datadir.is_some() {
+        node_config.debug.startup_sync_state_idle = true;
+    }
 
     if let Some(persistence_threshold) = config.persistence_threshold {
         node_config.engine.persistence_threshold = persistence_threshold;
+    }
+    if let Some(persistence_backpressure_threshold) = config.persistence_backpressure_threshold {
+        node_config.engine.persistence_backpressure_threshold =
+            Some(persistence_backpressure_threshold);
     }
     if let Some(max_transactions) = config.txpool_max_transactions {
         node_config.txpool.pending_max_count = max_transactions;

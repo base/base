@@ -558,7 +558,11 @@ impl SystemTestStackBuilder {
             }
         });
 
-        SnapshotL2Stack::start_sequencer(SnapshotL2StackConfig { snapshot, container_config }).await
+        SnapshotL2Stack::start_sequencer(SnapshotL2StackConfig {
+            snapshot: *snapshot,
+            container_config,
+        })
+        .await
     }
 
     /// Builds and starts the system test stack.

@@ -2,9 +2,17 @@
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
+use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
+use base_common_chains::ChainConfig;
+use base_common_genesis::RollupConfig;
+use base_execution_chainspec::BaseChainSpec;
 use clap::ValueEnum;
 use eyre::{Result, WrapErr, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -66,12 +74,96 @@ impl DevnetBlockInterval {
     }
 }
 
-/// Writable execution datadirs used to continue a Base mainnet snapshot.
+/// Chain inputs used to continue a Base snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotChainConfig {
+    /// Built-in Base chain name or path to a Base genesis JSON file.
+    pub chain: String,
+    /// Rollup configuration JSON required for a custom genesis whose chain ID is not built in.
+    pub rollup_config: Option<PathBuf>,
+}
+
+impl Default for SnapshotChainConfig {
+    fn default() -> Self {
+        Self { chain: "mainnet".to_string(), rollup_config: None }
+    }
+}
+
+/// Fully resolved chain configuration used by a snapshot stack.
+#[derive(Debug, Clone)]
+pub struct ResolvedSnapshotChain {
+    /// Execution chain specification.
+    pub chain_spec: Arc<BaseChainSpec>,
+    /// Rollup configuration used to validate and continue the snapshot.
+    pub rollup_config: Arc<RollupConfig>,
+    /// L1 chain ID.
+    pub l1_chain_id: u64,
+    /// L2 chain ID.
+    pub l2_chain_id: u64,
+}
+
+impl SnapshotChainConfig {
+    /// Resolves a built-in chain name or a Base genesis JSON plus its rollup configuration.
+    pub fn resolve(&self) -> Result<ResolvedSnapshotChain> {
+        if let Some(config) =
+            ChainConfig::from_base_chain(&self.chain).or_else(|| ChainConfig::by_name(&self.chain))
+        {
+            return Ok(ResolvedSnapshotChain {
+                chain_spec: Arc::new(BaseChainSpec::try_from(config)?),
+                rollup_config: Arc::new(config.rollup_config()),
+                l1_chain_id: config.l1_chain_id,
+                l2_chain_id: config.chain_id,
+            });
+        }
+
+        let path = Path::new(&self.chain);
+        let contents = std::fs::read(path)
+            .wrap_err_with(|| format!("failed to read snapshot chain JSON {}", path.display()))?;
+        let genesis: Genesis = serde_json::from_slice(&contents)
+            .wrap_err_with(|| format!("failed to parse snapshot chain JSON {}", path.display()))?;
+        let chain_spec = BaseChainSpec::try_from_genesis(genesis)
+            .wrap_err_with(|| format!("invalid Base genesis JSON {}", path.display()))?;
+        let l2_chain_id = chain_spec.chain.id();
+        let rollup_config = if let Some(config) = ChainConfig::by_chain_id(l2_chain_id) {
+            config.rollup_config()
+        } else {
+            let rollup_path = self.rollup_config.as_ref().ok_or_else(|| {
+                eyre::eyre!(
+                    "custom snapshot chain JSON {} requires --rollup-config",
+                    path.display()
+                )
+            })?;
+            let contents = std::fs::read(rollup_path).wrap_err_with(|| {
+                format!("failed to read snapshot rollup config {}", rollup_path.display())
+            })?;
+            let config: RollupConfig = serde_json::from_slice(&contents).wrap_err_with(|| {
+                format!("failed to parse snapshot rollup config {}", rollup_path.display())
+            })?;
+            ensure!(
+                config.l2_chain_id.id() == l2_chain_id,
+                "rollup config L2 chain ID {} does not match chain JSON ID {l2_chain_id}",
+                config.l2_chain_id.id()
+            );
+            config
+        };
+
+        Ok(ResolvedSnapshotChain {
+            chain_spec: Arc::new(chain_spec),
+            l1_chain_id: rollup_config.l1_chain_id,
+            l2_chain_id,
+            rollup_config: Arc::new(rollup_config),
+        })
+    }
+}
+
+/// Writable execution datadirs used to continue a Base snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DevnetSnapshotConfig {
-    /// Writable Base mainnet datadir used by the builder.
+    /// Built-in chain name or custom chain JSON plus optional rollup configuration.
+    pub chain: SnapshotChainConfig,
+    /// Writable snapshot datadir used by the builder.
     pub builder_datadir: PathBuf,
-    /// Writable Base mainnet datadir used by the client.
+    /// Writable snapshot datadir used by the client.
     pub client_datadir: PathBuf,
     /// Expected L2 chain ID stored in both datadirs.
     pub expected_chain_id: u64,
@@ -90,8 +182,8 @@ pub struct DevnetSnapshotConfig {
 pub enum DevnetL2State {
     /// Generate a fresh local L2 genesis and empty execution databases.
     Fresh,
-    /// Continue from caller-owned writable Base mainnet datadirs.
-    Snapshot(DevnetSnapshotConfig),
+    /// Continue from caller-owned writable Base snapshot datadirs.
+    Snapshot(Box<DevnetSnapshotConfig>),
 }
 
 /// Stable port assignments for system test components.
@@ -237,24 +329,30 @@ impl DevnetConfig {
         }
     }
 
-    /// Returns an L1-free Base mainnet snapshot configuration.
-    pub fn base_mainnet_snapshot(builder_datadir: PathBuf, client_datadir: PathBuf) -> Self {
-        Self {
-            l1_chain_id: 1,
-            l2_chain_id: 8453,
+    /// Returns an L1-free Base snapshot configuration for a resolved chain input.
+    pub fn snapshot(
+        builder_datadir: PathBuf,
+        client_datadir: PathBuf,
+        chain: SnapshotChainConfig,
+    ) -> Result<Self> {
+        let resolved = chain.resolve()?;
+        Ok(Self {
+            l1_chain_id: resolved.l1_chain_id,
+            l2_chain_id: resolved.l2_chain_id,
             l1_slot_duration: DEFAULT_SLOT_DURATION,
             l1_mode: DevnetL1Mode::None,
-            l2_state: DevnetL2State::Snapshot(DevnetSnapshotConfig {
+            l2_state: DevnetL2State::Snapshot(Box::new(DevnetSnapshotConfig {
+                chain,
                 builder_datadir,
                 client_datadir,
-                expected_chain_id: 8453,
+                expected_chain_id: resolved.l2_chain_id,
                 expected_head: None,
                 prefund: None,
                 block_interval: DevnetBlockInterval::default(),
-            }),
+            })),
             stable: StableSystemTestConfig::standard(),
             use_stable_ports: false,
-        }
+        })
     }
 
     /// Validates mode combinations and snapshot identity expectations.
@@ -314,9 +412,13 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
 
+    use alloy_genesis::Genesis;
+    use base_common_genesis::RollupConfig;
     use tempfile::TempDir;
 
-    use super::{DEFAULT_SLOT_DURATION, DevnetConfig, DevnetL1Mode, DevnetL2State};
+    use super::{
+        DEFAULT_SLOT_DURATION, DevnetConfig, DevnetL1Mode, DevnetL2State, SnapshotChainConfig,
+    };
 
     #[test]
     fn standard_config_matches_developer_devnet() {
@@ -341,13 +443,14 @@ mod tests {
     }
 
     #[test]
-    fn base_mainnet_snapshot_is_l1_free() {
+    fn snapshot_is_l1_free() {
         let parent = TempDir::new().unwrap();
         let builder = parent.path().join("builder");
         let client = parent.path().join("client");
         std::fs::create_dir_all(&builder).unwrap();
         std::fs::create_dir_all(&client).unwrap();
-        let config = DevnetConfig::base_mainnet_snapshot(builder, client);
+        let config =
+            DevnetConfig::snapshot(builder, client, SnapshotChainConfig::default()).unwrap();
 
         assert_eq!(config.l1_chain_id, 1);
         assert_eq!(config.l2_chain_id, 8453);
@@ -356,10 +459,53 @@ mod tests {
     }
 
     #[test]
+    fn resolves_builtin_sepolia_snapshot_chain() {
+        let chain = SnapshotChainConfig { chain: "sepolia".to_string(), rollup_config: None }
+            .resolve()
+            .expect("Base Sepolia should resolve as a built-in snapshot chain");
+
+        assert_eq!(chain.l1_chain_id, 11_155_111);
+        assert_eq!(chain.l2_chain_id, 84_532);
+        assert_eq!(chain.rollup_config.l2_chain_id.id(), 84_532);
+        assert_eq!(chain.chain_spec.chain.id(), 84_532);
+    }
+
+    #[test]
+    fn resolves_custom_genesis_with_rollup_config() {
+        const CHAIN_ID: u64 = 123_456;
+        let directory = TempDir::new().unwrap();
+        let chain_path = directory.path().join("genesis.json");
+        let rollup_path = directory.path().join("rollup.json");
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = CHAIN_ID;
+        std::fs::write(&chain_path, serde_json::to_vec(&genesis).unwrap()).unwrap();
+        let rollup = RollupConfig {
+            l1_chain_id: 11_155_111,
+            l2_chain_id: CHAIN_ID.into(),
+            ..Default::default()
+        };
+        std::fs::write(&rollup_path, serde_json::to_vec(&rollup).unwrap()).unwrap();
+
+        let chain = SnapshotChainConfig {
+            chain: chain_path.to_string_lossy().into_owned(),
+            rollup_config: Some(rollup_path),
+        }
+        .resolve()
+        .expect("custom genesis and matching rollup config should resolve");
+
+        assert_eq!(chain.l1_chain_id, 11_155_111);
+        assert_eq!(chain.l2_chain_id, CHAIN_ID);
+        assert_eq!(chain.rollup_config.l2_chain_id.id(), CHAIN_ID);
+        assert_eq!(chain.chain_spec.chain.id(), CHAIN_ID);
+    }
+
+    #[test]
     fn snapshot_datadirs_must_be_distinct() {
         let datadir = TempDir::new().unwrap();
         let datadir = datadir.path().to_path_buf();
-        let config = DevnetConfig::base_mainnet_snapshot(datadir.clone(), datadir);
+        let config =
+            DevnetConfig::snapshot(datadir.clone(), datadir, SnapshotChainConfig::default())
+                .unwrap();
 
         let error = config.validate().expect_err("shared snapshot datadir should be rejected");
         assert!(error.to_string().contains("must be distinct"));
@@ -372,7 +518,12 @@ mod tests {
         let alias_parent = TempDir::new().unwrap();
         let alias = alias_parent.path().join("alias");
         symlink(datadir.path(), &alias).unwrap();
-        let config = DevnetConfig::base_mainnet_snapshot(datadir.path().to_path_buf(), alias);
+        let config = DevnetConfig::snapshot(
+            datadir.path().to_path_buf(),
+            alias,
+            SnapshotChainConfig::default(),
+        )
+        .unwrap();
 
         let error = config.validate().expect_err("aliased snapshot datadir should be rejected");
         assert!(error.to_string().contains("resolve to the same directory"));
