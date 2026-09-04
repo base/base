@@ -264,3 +264,192 @@ impl<T: BasePooledTx> LaneEventHubInner<T> {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Instant};
+
+    use alloy_consensus::transaction::Recovered;
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::B256;
+    use base_common_chains::ChainConfig;
+    use base_common_consensus::BaseTransactionSigned;
+    use base_test_utils::Account;
+    use futures::StreamExt;
+    use reth_transaction_pool::{
+        FullTransactionEvent, SubPool, TransactionEvent, TransactionListenerKind,
+        TransactionOrigin,
+        identifier::{SenderId, TransactionId},
+        pool::QueuedReason,
+        test_utils::TransactionBuilder,
+    };
+
+    use super::*;
+    use crate::{BasePooledTransaction, LaneGap, LaneTerminalEvent, LaneTransitionCause};
+
+    fn transaction(
+        account: Account,
+        nonce: u64,
+        max_fee_per_gas: u128,
+    ) -> Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>> {
+        let signed = TransactionBuilder::default()
+            .signer(account.signer_b256())
+            .chain_id(ChainConfig::mainnet().chain_id)
+            .nonce(nonce)
+            .to(Account::Bob.address())
+            .value(1_000)
+            .gas_limit(21_000)
+            .max_priority_fee_per_gas(max_fee_per_gas / 10)
+            .max_fee_per_gas(max_fee_per_gas)
+            .into_eip1559();
+        let transaction = BaseTransactionSigned::Eip1559(
+            signed.as_eip1559().expect("EIP-1559 transaction").clone(),
+        );
+        let recovered = Recovered::new_unchecked(transaction, account.address());
+        let encoded_length = recovered.encode_2718_len();
+        let transaction = BasePooledTransaction::new(recovered, encoded_length);
+        Arc::new(reth_transaction_pool::ValidPoolTransaction {
+            transaction_id: TransactionId::new(SenderId::from(1), nonce),
+            transaction,
+            propagate: false,
+            timestamp: Instant::now(),
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        })
+    }
+
+    fn batch(
+        transaction: Arc<reth_transaction_pool::ValidPoolTransaction<BasePooledTransaction>>,
+        previous_state: Option<LaneTransactionState>,
+        current_state: Option<LaneTransactionState>,
+        terminal: Option<LaneTerminalEvent>,
+    ) -> LaneTransitionBatch<BasePooledTransaction> {
+        LaneTransitionBatch {
+            cause: LaneTransitionCause::Insert,
+            transitions: vec![LaneTransactionTransition {
+                transaction,
+                previous_state,
+                current_state,
+                previous_funding: None,
+                current_funding: None,
+                terminal,
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn listener_mapping_matches_reth_subpool_and_terminal_events() {
+        let hub = LaneEventHub::default();
+        let mut all = hub.all_transactions_event_listener();
+        let mut pending_all = hub.pending_transactions_listener_for(TransactionListenerKind::All);
+        let mut pending_propagate =
+            hub.pending_transactions_listener_for(TransactionListenerKind::PropagateOnly);
+        let mut new_all = hub.new_transactions_listener_for(TransactionListenerKind::All);
+        let pending_tx = transaction(Account::Alice, 0, 100);
+        let hash = *pending_tx.hash();
+
+        hub.publish(&batch(
+            Arc::clone(&pending_tx),
+            None,
+            Some(LaneTransactionState::Pending),
+            None,
+        ));
+        assert!(
+            matches!(all.next().await, Some(FullTransactionEvent::Pending(event)) if event == hash)
+        );
+        assert_eq!(pending_all.recv().await, Some(hash));
+        assert!(pending_propagate.try_recv().is_err());
+        assert_eq!(new_all.recv().await.unwrap().subpool, SubPool::Pending);
+
+        hub.publish(&batch(
+            Arc::clone(&pending_tx),
+            Some(LaneTransactionState::Pending),
+            Some(LaneTransactionState::BaseFee),
+            None,
+        ));
+        assert!(matches!(
+            all.next().await,
+            Some(FullTransactionEvent::Queued(event, Some(QueuedReason::InsufficientBaseFee)))
+                if event == hash
+        ));
+        assert!(new_all.try_recv().is_err());
+
+        hub.publish(&batch(
+            pending_tx,
+            Some(LaneTransactionState::BaseFee),
+            Some(LaneTransactionState::Pending),
+            None,
+        ));
+        assert!(
+            matches!(all.next().await, Some(FullTransactionEvent::Pending(event)) if event == hash)
+        );
+        assert_eq!(pending_all.recv().await, Some(hash));
+        assert_eq!(new_all.recv().await.unwrap().subpool, SubPool::Pending);
+
+        let expired = transaction(Account::Bob, 0, 100);
+        let expired_hash = *expired.hash();
+        hub.publish(&batch(
+            expired,
+            Some(LaneTransactionState::Pending),
+            None,
+            Some(LaneTerminalEvent::Expired),
+        ));
+        assert!(matches!(
+            all.next().await,
+            Some(FullTransactionEvent::Discarded(event)) if event == expired_hash
+        ));
+
+        let committed = transaction(Account::Charlie, 0, 100);
+        let committed_hash = *committed.hash();
+        hub.publish(&batch(
+            committed,
+            Some(LaneTransactionState::Queued(LaneGap::Missing { expected: 0, found: 1 })),
+            None,
+            Some(LaneTerminalEvent::Committed),
+        ));
+        assert!(matches!(
+            all.next().await,
+            Some(FullTransactionEvent::Discarded(event)) if event == committed_hash
+        ));
+    }
+
+    #[tokio::test]
+    async fn bounded_listener_backpressure_drops_only_the_full_channel_event() {
+        let hub = LaneEventHub::new(1);
+        let mut listener = hub.new_transactions_listener_for(TransactionListenerKind::All);
+        let first = transaction(Account::Alice, 0, 100);
+        let first_hash = *first.hash();
+        let second = transaction(Account::Bob, 0, 100);
+        let third = transaction(Account::Charlie, 0, 100);
+        let third_hash = *third.hash();
+
+        hub.publish(&batch(first, None, Some(LaneTransactionState::Pending), None));
+        hub.publish(&batch(second, None, Some(LaneTransactionState::Pending), None));
+        assert_eq!(*listener.recv().await.unwrap().transaction.hash(), first_hash);
+
+        hub.publish(&batch(third, None, Some(LaneTransactionState::Pending), None));
+        assert_eq!(*listener.recv().await.unwrap().transaction.hash(), third_hash);
+        assert!(listener.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn by_hash_terminal_event_closes_the_listener() {
+        let hub = LaneEventHub::default();
+        let original = transaction(Account::Alice, 0, 100);
+        let original_hash = *original.hash();
+        let replacement_hash = B256::repeat_byte(0xa1);
+        let mut listener = hub.transaction_event_listener(original_hash);
+
+        hub.publish(&batch(Arc::clone(&original), None, Some(LaneTransactionState::Pending), None));
+        hub.publish(&batch(
+            original,
+            Some(LaneTransactionState::Pending),
+            None,
+            Some(LaneTerminalEvent::Replaced { by: replacement_hash }),
+        ));
+
+        assert_eq!(listener.next().await, Some(TransactionEvent::Pending));
+        assert_eq!(listener.next().await, Some(TransactionEvent::Replaced(replacement_hash)));
+        assert_eq!(listener.next().await, None);
+    }
+}

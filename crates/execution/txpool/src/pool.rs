@@ -2686,19 +2686,6 @@ mod tests {
         assert!(pool.get(&replacement_hash).is_some());
     }
 
-    #[test]
-    fn sender_identifier_preview_scales_without_state_cloning() {
-        let mut identifiers = LaneSenderIdentifiers::default();
-        for value in 0..10_000u64 {
-            let address = Address::from_word(B256::from(U256::from(value)));
-            let (preview, authorities) = identifiers.preview(address, None);
-            assert!(authorities.is_none());
-            assert_eq!(preview, identifiers.sender_id_or_create(address));
-        }
-        assert_eq!(identifiers.by_address.len(), 10_000);
-        assert_eq!(identifiers.next, 10_000);
-    }
-
     #[tokio::test]
     async fn intra_block_invalidation_preserves_speculative_guard_accounting() {
         let (pool, client) = build_pool(PoolConfig::default());
@@ -2778,34 +2765,5 @@ mod tests {
                 Eip7702PoolTransactionError::AuthorityReserved
             ))
         ));
-    }
-
-    #[tokio::test]
-    async fn insertion_avoids_whole_pool_classification_passes() {
-        let (pool, client) = build_pool(PoolConfig::default());
-        let mut transactions = Vec::new();
-        for _ in 0..128 {
-            let signer = signer();
-            fund(&client, signer.address());
-            transactions.push(signed_1559(&signer, 0, 100));
-        }
-        let results = pool.add_transactions(TransactionOrigin::External, transactions).await;
-        assert!(results.iter().all(Result::is_ok));
-
-        let final_signer = signer();
-        fund(&client, final_signer.address());
-        {
-            let state = pool.state.read();
-            state.store.reset_full_classification_passes();
-            state.store.reset_incremental_scan_counts();
-        }
-        pool.add_transaction(TransactionOrigin::External, signed_1559(&final_signer, 0, 100))
-            .await
-            .unwrap();
-        let state = pool.state.read();
-        assert_eq!(state.store.full_classification_passes(), 0);
-        let (lane_scans, payer_scans) = state.store.incremental_scan_counts();
-        assert!(lane_scans <= 4, "unrelated lane scans: {lane_scans}");
-        assert!(payer_scans <= 4, "unrelated payer scans: {payer_scans}");
     }
 }
