@@ -25,9 +25,14 @@ pub use limits::{InflightCounters, PayerBook};
 mod lane_store;
 pub use lane_store::{
     BestLaneTransactions, FundingTransition, FundingWaitReason, LaneCommitOutcome,
-    LaneFeeUpdateOutcome, LaneGap, LaneInsertOutcome, LaneStoreSize, LaneTransactionState,
-    LaneTransactionStore, LaneUpdateOutcome, PayerBalanceUpdateOutcome, TransactionFundingState,
+    LaneFeeUpdateOutcome, LaneGap, LaneInsertOutcome, LaneRemovalOutcome, LaneRemovalReason,
+    LaneStoreSize, LaneTerminalEvent, LaneTransactionState, LaneTransactionStore,
+    LaneTransactionTransition, LaneTransitionBatch, LaneTransitionCause, LaneUpdateOutcome,
+    PayerBalanceUpdateOutcome, TransactionFundingState,
 };
+
+mod lane_events;
+pub use lane_events::{DEFAULT_LANE_EVENT_CHANNEL_CAPACITY, LaneEventHub};
 
 mod validator;
 pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, LimitClassCache};
