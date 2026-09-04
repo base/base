@@ -12,6 +12,10 @@ repository.workspace = true
 name = "base-devnet"
 path = "src/bin/base_devnet.rs"
 
+[[bin]]
+name = "base-bench"
+path = "src/bin/base_bench.rs"
+
 [lints]
 workspace = true
 

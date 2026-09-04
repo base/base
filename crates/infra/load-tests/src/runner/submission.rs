@@ -633,6 +633,7 @@ impl SubmissionPipeline {
 
     /// Closes both queues and summarizes queued-but-not-started batch failures.
     pub async fn close_and_fail_queued(&self, reason: &'static str) -> QueuedSubmitFailures {
+        self.shutdown.cancel();
         let mut failures = QueuedSubmitFailures::new(reason);
         let abandoned_prepared = {
             let mut receiver = self.prepared_queue.receiver.lock().await;
@@ -672,8 +673,15 @@ impl SubmissionPipeline {
     pub async fn shutdown_and_join(&mut self, timeout: Duration) {
         self.shutdown.cancel();
 
+        let deadline = Instant::now() + timeout;
         for mut worker in self.signer_workers.drain(..).chain(self.sender_workers.drain(..)) {
-            match tokio::time::timeout(timeout, &mut worker).await {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                warn!("submission worker shutdown deadline elapsed, aborting");
+                worker.abort();
+                continue;
+            }
+            match tokio::time::timeout(remaining, &mut worker).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) if e.is_cancelled() => {}
                 Ok(Err(e)) => warn!(error = %e, "submission worker panicked"),
@@ -1308,7 +1316,7 @@ mod tests {
 
     use alloy_primitives::{Address, Bytes, TxHash, U256};
     use alloy_signer_local::PrivateKeySigner;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, oneshot};
     use tokio_util::sync::CancellationToken;
 
     use super::{
@@ -1573,6 +1581,64 @@ mod tests {
         assert_eq!(pipeline.pending_batches(), 0);
         assert!(matches!(submit_event_rx.try_recv(), Ok(SubmitEvent::Failed(_))));
         assert!(submit_event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn close_and_fail_queued_cancels_workers_before_locking_receivers() {
+        let (_prepared_tx, prepared_rx) = mpsc::channel(1);
+        let (_signed_tx, signed_rx) = mpsc::channel(1);
+        let prepared_queue = Arc::new(PipelineQueue::new(prepared_rx));
+        let signed_queue = Arc::new(PipelineQueue::new(signed_rx));
+        let shutdown = CancellationToken::new();
+        let queue = Arc::clone(&signed_queue);
+        let worker_shutdown = shutdown.clone();
+        let (locked_tx, locked_rx) = oneshot::channel();
+        let holder = tokio::spawn(async move {
+            let _receiver = queue.receiver.lock().await;
+            let _ = locked_tx.send(());
+            worker_shutdown.cancelled().await;
+        });
+        locked_rx.await.expect("receiver holder must start");
+
+        let pipeline = SubmissionPipeline {
+            prepared_batch_tx: None,
+            signed_batch_tx: None,
+            prepared_queue,
+            signed_queue,
+            shutdown,
+            signer_workers: Vec::new(),
+            sender_workers: Vec::new(),
+        };
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            pipeline.close_and_fail_queued("submit queue abandoned"),
+        )
+        .await
+        .expect("queue close must release receiver holders before acquiring their locks");
+        holder.await.expect("receiver holder must stop cleanly");
+    }
+
+    #[tokio::test]
+    async fn shutdown_timeout_is_shared_across_all_workers() {
+        let (_prepared_tx, prepared_rx) = mpsc::channel(1);
+        let (_signed_tx, signed_rx) = mpsc::channel(1);
+        let blocked_worker = || tokio::spawn(std::future::pending::<()>());
+        let mut pipeline = SubmissionPipeline {
+            prepared_batch_tx: None,
+            signed_batch_tx: None,
+            prepared_queue: Arc::new(PipelineQueue::new(prepared_rx)),
+            signed_queue: Arc::new(PipelineQueue::new(signed_rx)),
+            shutdown: CancellationToken::new(),
+            signer_workers: vec![blocked_worker(), blocked_worker()],
+            sender_workers: vec![blocked_worker(), blocked_worker()],
+        };
+
+        tokio::time::timeout(
+            Duration::from_millis(250),
+            pipeline.shutdown_and_join(Duration::from_millis(100)),
+        )
+        .await
+        .expect("worker shutdown must use one shared timeout");
     }
 
     #[test]
