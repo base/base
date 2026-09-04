@@ -161,7 +161,7 @@ impl AggregateBenchmarkArgs {
                 metadata_path.display(),
                 metadata.runs.len(),
             );
-            let mut run = metadata.runs.into_iter().next().expect("validated metadata run count");
+            let run = metadata.runs.into_iter().next().expect("validated metadata run count");
             let output_name =
                 run_output_dir.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
                     eyre::eyre!(
@@ -378,10 +378,10 @@ impl SnapshotBenchmarkArgs {
         let builder_rpc = stack.builder_rpc_url()?;
         test_config.transaction_submission_rpcs = vec![builder_rpc.clone()];
         test_config.query_rpc = Some(builder_rpc.clone());
-        // The in-process builder exposes the admin RPC. Clear only the deterministic
-        // load-test sender accounts after it starts and before funding/submission so
-        // a prior interrupted attempt cannot leave nonce-gapped queued work behind.
-        test_config.txpool_nodes = vec![builder_rpc.clone()];
+        // Each snapshot benchmark starts a fresh in-process builder, so its txpool
+        // is not persisted in the snapshot datadir. Do not require optional admin
+        // txpool RPC wiring during setup; nonce recovery remains load-test-owned.
+        test_config.txpool_nodes.clear();
         test_config.flashblocks_ws = (block_interval == DevnetBlockInterval::TwoSeconds)
             .then(|| stack.builder_flashblocks_url())
             .transpose()?;
@@ -559,7 +559,7 @@ mod tests {
 
     use clap::Parser;
 
-use super::{AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs};
+    use super::{AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs};
 
     #[test]
     fn parses_snapshot_benchmark_defaults() {
@@ -633,8 +633,9 @@ use super::{AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenc
 
         assert!(output.path().is_dir());
         assert!(!stale.exists());
+    }
 
-fn write_aggregate_run(
+    fn write_aggregate_run(
         root: &std::path::Path,
         id: &str,
         scenario: &str,
