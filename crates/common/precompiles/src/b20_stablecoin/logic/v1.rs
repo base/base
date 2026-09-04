@@ -1423,6 +1423,18 @@ mod tests {
     }
 
     #[test]
+    fn permit_reverts_on_zero_spender() {
+        let mut tok = token();
+        let owner = anvil_owner();
+        let args = signed_permit(&tok, owner, Address::ZERO, U256::from(1u64), U256::MAX);
+        let err = LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidSpender { spender: Address::ZERO })
+        );
+    }
+
+    #[test]
     fn permit_replay_is_rejected() {
         let mut tok = token();
         let owner = anvil_owner();
