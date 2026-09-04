@@ -400,7 +400,7 @@ mod tests {
             l1_origin: BlockNumHash { number: 0, ..Default::default() },
             ..Default::default()
         };
-        assert_eq!(cfg.cobalt_activation_block_offset(), Some(23));
+        assert_eq!(cfg.cobalt_activation_block_number(), Some(23));
         assert_eq!(cfg.l2_block_timestamp(298), cfg.l2_block_timestamp(301));
         let valid = SingleBatch {
             parent_hash: parent.block_info.hash,

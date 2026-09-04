@@ -366,7 +366,7 @@ impl RollupConfig {
     /// Returns the L2 block offset from genesis at which Cobalt activates.
     ///
     /// If Cobalt is not configured, returns [`None`].
-    pub fn cobalt_activation_block_offset(&self) -> Option<u64> {
+    pub fn cobalt_activation_block_number(&self) -> Option<u64> {
         let cobalt_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Cobalt)?;
 
         if self.block_time == 0 {
@@ -374,19 +374,6 @@ impl RollupConfig {
         }
 
         Some(cobalt_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
-    }
-
-    /// Returns the L2 block offset from genesis at which Denim activates.
-    ///
-    /// If Denim is not configured, returns [`None`].
-    pub fn denim_activation_block_number(&self) -> Option<u64> {
-        let denim_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Denim)?;
-
-        if self.block_time == 0 {
-            panic!("rollup config: block time cannot be 0");
-        }
-
-        Some(denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
     }
 
     /// Returns the L2 block number at which the genesis-only Zenith testing gate activates.
@@ -419,7 +406,7 @@ impl RollupConfig {
             .saturating_add(blocks_since_genesis.saturating_mul(self.block_time));
         let legacy_millis = legacy_seconds.saturating_mul(1_000);
 
-        let Some(cobalt_activation_block) = self.cobalt_activation_block_offset() else {
+        let Some(cobalt_activation_block) = self.cobalt_activation_block_number() else {
             return legacy_millis;
         };
 
@@ -1154,7 +1141,7 @@ mod tests {
     #[test]
     fn l2_block_full_millis_matches_legacy_before_cobalt_activation() {
         let cfg = rollup_config_with_cobalt(10, 2, Some(15));
-        assert_eq!(cfg.cobalt_activation_block_offset(), Some(3));
+        assert_eq!(cfg.cobalt_activation_block_number(), Some(3));
 
         for block_number in 0..3 {
             let expected = (10 + block_number * 2) * 1_000;
@@ -1168,7 +1155,7 @@ mod tests {
     fn l2_block_full_millis_respects_cobalt_activation_boundary() {
         let cfg = rollup_config_with_cobalt(10, 2, Some(15));
 
-        assert_eq!(cfg.cobalt_activation_block_offset(), Some(3));
+        assert_eq!(cfg.cobalt_activation_block_number(), Some(3));
         assert_eq!(cfg.l2_block_timestamp_millis(3), 16_000);
         assert_eq!(cfg.l2_block_timestamp_parts(3), (16, 0));
     }
@@ -1207,7 +1194,7 @@ mod tests {
     fn l2_block_full_millis_without_cobalt_uses_legacy_formula() {
         let cfg = rollup_config_with_cobalt(11, 3, None);
 
-        assert_eq!(cfg.cobalt_activation_block_offset(), None);
+        assert_eq!(cfg.cobalt_activation_block_number(), None);
         for block_number in [0_u64, 1, 2, 10, 100] {
             let expected =
                 11u64.saturating_add(block_number.saturating_mul(3)).saturating_mul(1_000);
@@ -1219,8 +1206,8 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "rollup config: block time cannot be 0")]
-    fn cobalt_activation_block_offset_rejects_zero_block_time() {
-        rollup_config_with_cobalt(100, 0, Some(101)).cobalt_activation_block_offset();
+    fn cobalt_activation_block_number_rejects_zero_block_time() {
+        rollup_config_with_cobalt(100, 0, Some(101)).cobalt_activation_block_number();
     }
 
     #[test]
@@ -1228,7 +1215,7 @@ mod tests {
         let mut cfg = rollup_config_with_cobalt(10, 2, Some(15));
         cfg.genesis.l2.number = 50;
 
-        assert_eq!(cfg.cobalt_activation_block_offset(), Some(3));
+        assert_eq!(cfg.cobalt_activation_block_number(), Some(3));
         assert_eq!(cfg.l2_block_timestamp_millis(52), 14_000);
         assert_eq!(cfg.l2_block_timestamp_millis(53), 16_000);
         assert_eq!(cfg.l2_block_timestamp_millis(54), 16_200);
@@ -1257,7 +1244,7 @@ mod tests {
         };
         crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 15);
 
-        assert_eq!(cfg.cobalt_activation_block_offset(), Some(3));
+        assert_eq!(cfg.cobalt_activation_block_number(), Some(3));
         assert_eq!(cfg.l2_block_timestamp_millis(3), 16_000);
         assert_eq!(cfg.l2_block_timestamp_millis(4), 16_200);
 
