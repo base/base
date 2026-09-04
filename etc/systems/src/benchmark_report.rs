@@ -6,7 +6,7 @@ use alloy_primitives::{Address, B256};
 use base_load_tests::MetricsSummary;
 use chrono::{SecondsFormat, Utc};
 use eyre::{Result, WrapErr};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 /// Machine-readable result from one snapshot benchmark case.
@@ -68,14 +68,14 @@ pub struct VisualizerBlockMetrics {
 }
 
 /// Top-level metadata document consumed by the base/benchmark report service.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisualizerMetadata {
     /// Exactly one completed benchmark run.
     pub runs: Vec<VisualizerRun>,
 }
 
 /// Metadata for one visualizer benchmark run.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualizerRun {
     /// Unique run ID.
@@ -89,7 +89,7 @@ pub struct VisualizerRun {
     /// Human-readable benchmark description.
     pub test_description: String,
     /// Stable filter and comparison dimensions.
-    pub test_config: BTreeMap<&'static str, serde_json::Value>,
+    pub test_config: BTreeMap<String, serde_json::Value>,
     /// Completion status and headline metrics.
     pub result: VisualizerRunResult,
     /// RFC3339 creation timestamp.
@@ -97,7 +97,7 @@ pub struct VisualizerRun {
 }
 
 /// Headline metrics and artifacts for a visualizer run.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualizerRunResult {
     /// Whether the load test completed without a fatal error.
@@ -111,11 +111,11 @@ pub struct VisualizerRunResult {
     /// Validator headline metrics.
     pub validator_metrics: VisualizerValidatorMetrics,
     /// Additional result artifacts.
-    pub artifacts: BTreeMap<&'static str, &'static str>,
+    pub artifacts: BTreeMap<String, String>,
 }
 
 /// Sequencer summary fields understood by base/benchmark.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualizerSequencerMetrics {
     /// Average measured gas per second.
@@ -123,7 +123,7 @@ pub struct VisualizerSequencerMetrics {
 }
 
 /// Validator summary fields understood by base/benchmark.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualizerValidatorMetrics {
     /// Average propagated measured gas per second.
@@ -212,14 +212,14 @@ impl SnapshotBenchmarkReportConfig {
         let gas_limit = result.blocks.first().map(|block| block.gas_limit).unwrap_or_default();
         let transaction_payload = Self::transaction_payload(result);
         let test_config = BTreeMap::from([
-            ("BenchmarkRun", serde_json::Value::String(self.benchmark_run.clone())),
-            ("Scenario", serde_json::Value::String(self.scenario.clone())),
-            ("ChainId", result.chain_id.into()),
-            ("BlockTimeMilliseconds", result.block_interval_ms.into()),
-            ("GasLimit", gas_limit.into()),
-            ("NodeType", serde_json::Value::String("base-reth-node".to_string())),
-            ("TransactionPayload", serde_json::Value::String(transaction_payload)),
-            ("ClientVersion", serde_json::Value::String(self.client_version.clone())),
+            ("BenchmarkRun".to_string(), serde_json::Value::String(self.benchmark_run.clone())),
+            ("Scenario".to_string(), serde_json::Value::String(self.scenario.clone())),
+            ("ChainId".to_string(), result.chain_id.into()),
+            ("BlockTimeMilliseconds".to_string(), result.block_interval_ms.into()),
+            ("GasLimit".to_string(), gas_limit.into()),
+            ("NodeType".to_string(), serde_json::Value::String("base-reth-node".to_string())),
+            ("TransactionPayload".to_string(), serde_json::Value::String(transaction_payload)),
+            ("ClientVersion".to_string(), serde_json::Value::String(self.client_version.clone())),
         ]);
         let metadata = VisualizerMetadata {
             runs: vec![VisualizerRun {
@@ -242,7 +242,10 @@ impl SnapshotBenchmarkReportConfig {
                     validator_metrics: VisualizerValidatorMetrics {
                         gas_per_second: validator_gas_per_second,
                     },
-                    artifacts: BTreeMap::from([("loadTestResult", "load-test-result.json")]),
+                    artifacts: BTreeMap::from([(
+                        "loadTestResult".to_string(),
+                        "load-test-result.json".to_string(),
+                    )]),
                 },
                 created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             }],

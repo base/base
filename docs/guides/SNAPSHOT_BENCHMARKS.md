@@ -86,6 +86,26 @@ Each `--output-dir` is a self-contained `base/benchmark` input directory:
 `metadata.json` is the completion signal when publishing results. Write or upload
 the metrics and artifacts before it.
 
+## Aggregate selected runs into one report
+
+Raw result directories are immutable inputs. Build a compact report index without
+moving, deleting, or rewriting those artifacts by passing the report root and a
+selected list of its direct-child run directories:
+
+```sh
+target/release/base-bench aggregate \
+  --output-dir /absolute/path/to/results \
+  /absolute/path/to/results/run-a \
+  /absolute/path/to/results/run-b
+```
+
+The command atomically writes `results/metadata.json`. It retains the latest
+`createdAt` entry for every unique report tag set, including the configured
+scenario and block-time tag. This preserves distinct scenarios, block cadences,
+and client versions, but replaces an older repetition with the latest one. It
+does not modify source metadata or scenario labels. `id` remains the unique raw
+artifact identifier and `BenchmarkRun` remains the report cohort/page key.
+
 ## Choose Comparable Runs
 
 Use the fields below consistently. They have different purposes.
