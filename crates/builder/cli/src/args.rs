@@ -1,13 +1,16 @@
 //! Builder CLI arguments and config conversion helpers.
 
 use core::{net::SocketAddr, time::Duration};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    ExecutionMeteringMode, RejectionCache, ShadowValidityConfig, SharedMeteringProvider,
+    ExecutionMeteringMode, RejectionCache, ResourceMeteringConfig, ShadowValidityConfig,
+    SharedMeteringProvider,
 };
-use base_builder_metering::MeteringStore;
+use base_builder_metering::{
+    DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
+};
 use base_execution_cli::ShadowIndexerArgs;
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
@@ -177,11 +180,24 @@ pub struct Args {
     #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
     pub execution_metering_mode: ExecutionMeteringMode,
 
+    /// JSON file containing the startup resource-metering schedule.
+    ///
+    /// Resource metering runs when `--builder.enable-resource-metering` is set
+    /// and this schedule is non-empty. Per-dimension `dryRun` in the file
+    /// observes a budget without excluding transactions.
+    ///
+    /// Uses the same `--payload.resource-metering-schedule` flag as the native
+    /// payload builder so operators can share one schedule path. Builder
+    /// rejection-cache sizing stays on `--builder.rejection-cache-*`.
+    #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
+    pub resource_metering_schedule: Option<PathBuf>,
+
     /// How much extra time to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
 
-    /// Whether to enable TIPS Resource Metering
+    /// Whether to enable TIPS resource metering and payload resource-metering
+    /// schedule evaluation.
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,
 
@@ -242,21 +258,38 @@ pub struct Args {
     #[arg(long = "builder.max-rejected-txs-per-block", default_value = "500")]
     pub max_rejected_txs_per_block: usize,
 
-    /// Buffer size for tx data store (LRU eviction when full)
-    #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
+    /// Buffer size for tx data store (LRU eviction when full).
+    ///
+    /// Also used as the [`MeteringStore`] capacity. Default matches
+    /// [`DEFAULT_METERING_STORE_MAX_CAPACITY`].
+    #[arg(
+        long = "builder.tx-data-store-buffer-size",
+        default_value_t = DEFAULT_METERING_STORE_MAX_CAPACITY as usize
+    )]
     pub tx_data_store_buffer_size: usize,
 
     /// TTL in seconds for entries in the metering store cache.
     /// Stale entries are evicted after this duration.
-    #[arg(long = "builder.metering-store-ttl-secs", default_value = "30")]
+    #[arg(
+        long = "builder.metering-store-ttl-secs",
+        default_value_t = DEFAULT_METERING_STORE_TTL_SECS
+    )]
     pub metering_store_ttl_secs: u64,
 
     /// Maximum number of entries in the rejection cache for permanently rejected transactions
-    #[arg(long = "builder.rejection-cache-max-capacity", default_value = "100000")]
+    #[arg(
+        long = "builder.rejection-cache-max-capacity",
+        default_value = "100000",
+        id = "builder_rejection_cache_max_capacity"
+    )]
     pub rejection_cache_max_capacity: u64,
 
     /// TTL in seconds for entries in the rejection cache
-    #[arg(long = "builder.rejection-cache-ttl-secs", default_value = "1800")]
+    #[arg(
+        long = "builder.rejection-cache-ttl-secs",
+        default_value = "1800",
+        id = "builder_rejection_cache_ttl_secs"
+    )]
     pub rejection_cache_ttl_secs: u64,
 
     /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
@@ -331,6 +364,7 @@ impl Default for Args {
             state_root_gas_coefficient: None,
             state_root_gas_anchor_us: None,
             execution_metering_mode: ExecutionMeteringMode::Off,
+            resource_metering_schedule: None,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             enable_experimental_validity_transactions: false,
@@ -343,8 +377,8 @@ impl Default for Args {
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
-            tx_data_store_buffer_size: 10000,
-            metering_store_ttl_secs: 30,
+            tx_data_store_buffer_size: DEFAULT_METERING_STORE_MAX_CAPACITY as usize,
+            metering_store_ttl_secs: DEFAULT_METERING_STORE_TTL_SECS,
             rejection_cache_max_capacity: 100_000,
             rejection_cache_ttl_secs: 1800,
             sampling_ratio: 100,
@@ -392,6 +426,12 @@ impl Args {
             warn!("deprecated builder resource limit flags are ignored");
         }
 
+        let resource_metering = ResourceMeteringConfig::from_parts(
+            self.enable_resource_metering,
+            self.resource_metering_schedule.as_deref(),
+            Arc::clone(&metering_provider),
+        )?;
+
         let flashblocks_ws_addr = SocketAddr::new(
             self.flashblocks.flashblocks_addr.parse()?,
             self.flashblocks.flashblocks_port,
@@ -415,6 +455,7 @@ impl Args {
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             metering_provider,
+            resource_metering,
             rejection_cache: RejectionCache::new(
                 self.rejection_cache_max_capacity,
                 Duration::from_secs(self.rejection_cache_ttl_secs),
@@ -699,6 +740,30 @@ mod tests {
         assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
         assert_eq!(args.state_root_gas_coefficient, Some(0.1));
         assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
+    }
+
+    #[test]
+    fn payload_resource_metering_schedule_flag_is_accepted() {
+        let args = CommandParser::parse_from([
+            "builder",
+            "--payload.resource-metering-schedule",
+            "/tmp/schedule.json",
+        ])
+        .args;
+        assert_eq!(
+            args.resource_metering_schedule.as_deref(),
+            Some(std::path::Path::new("/tmp/schedule.json"))
+        );
+    }
+
+    #[test]
+    fn payload_rejection_cache_flags_are_not_builder_cli() {
+        let result = CommandParser::try_parse_from([
+            "builder",
+            "--payload.rejection-cache-max-capacity",
+            "1",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]
