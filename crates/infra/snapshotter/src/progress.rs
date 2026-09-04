@@ -1,4 +1,4 @@
-//! Shared progress-reporting helpers used across snapshot generation and upload.
+//! Progress-reporting helpers for snapshot uploads.
 
 use std::{
     collections::HashMap,
@@ -17,14 +17,13 @@ use human_bytes::human_bytes as format_bytes;
 use humantime::{FormattedDuration, format_duration};
 use tracing::{info, warn};
 
-/// Interval between periodic progress logs during long-running snapshot operations
-/// (archive compression and artifact upload).
+/// Interval between periodic progress logs during snapshot artifact uploads.
 pub(crate) const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(3);
 
 const UPLOAD_STALL_WARNING_AFTER: Duration = Duration::from_secs(5 * 60);
 const MAX_STALLED_UPLOADS_IN_LOG: usize = 5;
 
-/// Formats snapshot compression and upload progress for structured logs.
+/// Formats snapshot upload progress for structured logs.
 #[derive(Debug)]
 pub struct ProgressDisplay;
 
@@ -43,217 +42,6 @@ impl ProgressDisplay {
     pub fn duration(duration: Duration) -> FormattedDuration {
         format_duration(Duration::from_secs(duration.as_secs()))
     }
-}
-
-/// Cumulative compression progress shared across every file in a single archive,
-/// emitting a throttled log so large single-file archives report progress mid-stream.
-#[derive(Debug)]
-pub struct ArchiveProgress {
-    archive_name: String,
-    total_bytes: u64,
-    started: Instant,
-    last_log: Instant,
-    bytes_done: u64,
-}
-
-impl ArchiveProgress {
-    /// Creates a new tracker for an archive of `total_bytes` total uncompressed bytes.
-    pub fn new(archive_name: String, total_bytes: u64) -> Self {
-        let now = Instant::now();
-        Self { archive_name, total_bytes, started: now, last_log: now, bytes_done: 0 }
-    }
-
-    /// Adds `n` newly-compressed bytes, emitting a progress log once per interval.
-    pub fn record(&mut self, n: u64) {
-        self.bytes_done += n;
-        if self.last_log.elapsed() >= PROGRESS_LOG_INTERVAL {
-            info!(
-                archive = %self.archive_name,
-                bytes = %ProgressDisplay::human_byte_progress(self.bytes_done, self.total_bytes),
-                progress = %format!("{}%", ProgressDisplay::percent(self.bytes_done, self.total_bytes)),
-                elapsed = %ProgressDisplay::duration(self.started.elapsed()),
-                "compressing archive"
-            );
-            self.last_log = Instant::now();
-        }
-    }
-}
-
-/// Shared compression progress for a whole chunked snapshot component such as
-/// `transactions`, aggregating bytes across every archive compressed in parallel.
-#[derive(Clone, Debug)]
-pub struct ComponentProgressReporter {
-    state: Arc<ComponentProgressState>,
-}
-
-impl ComponentProgressReporter {
-    /// Registers an active archive within the component and returns a reporter
-    /// that streams byte progress into that archive's row.
-    pub(crate) fn start_archive(
-        &self,
-        archive_name: impl Into<String>,
-        total_bytes: u64,
-    ) -> ArchiveProgressReporter {
-        let archive_name = archive_name.into();
-        if let Ok(mut active_archives) = self.state.active_archives.lock() {
-            active_archives
-                .insert(archive_name.clone(), ActiveArchiveState { total_bytes, bytes_done: 0 });
-        }
-        ArchiveProgressReporter { component: self.clone(), archive_name }
-    }
-
-    /// Adds `n` compressed source bytes to the component-wide total.
-    pub fn record(&self, n: u64) {
-        self.state.bytes_done.fetch_add(n, Ordering::Relaxed);
-    }
-
-    /// Adds `n` source bytes to one active archive and the component total.
-    pub(crate) fn record_archive_bytes(&self, archive_name: &str, n: u64) {
-        self.record(n);
-        if let Ok(mut active_archives) = self.state.active_archives.lock()
-            && let Some(state) = active_archives.get_mut(archive_name)
-        {
-            state.bytes_done = state.bytes_done.saturating_add(n).min(state.total_bytes);
-        }
-    }
-
-    /// Marks one archive within the component as fully packaged.
-    pub(crate) fn archive_completed(&self, archive_name: &str) {
-        if let Ok(mut active_archives) = self.state.active_archives.lock()
-            && let Some(state) = active_archives.remove(archive_name)
-        {
-            let remaining = state.total_bytes.saturating_sub(state.bytes_done);
-            if remaining > 0 {
-                self.record(remaining);
-            }
-        }
-        self.state.archives_done.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Removes a failed archive from the active set without counting it complete.
-    pub(crate) fn archive_failed(&self, archive_name: &str) {
-        if let Ok(mut active_archives) = self.state.active_archives.lock() {
-            active_archives.remove(archive_name);
-        }
-    }
-}
-
-/// Per-archive reporter backed by a shared component progress state.
-#[derive(Clone, Debug)]
-pub(crate) struct ArchiveProgressReporter {
-    component: ComponentProgressReporter,
-    archive_name: String,
-}
-
-impl ArchiveProgressReporter {
-    /// Adds `n` source bytes to this archive and the parent component total.
-    pub(crate) fn record(&self, n: u64) {
-        self.component.record_archive_bytes(&self.archive_name, n);
-    }
-
-    /// Marks this archive as fully packaged and removes it from the active set.
-    pub(crate) fn finish(&self) {
-        self.component.archive_completed(&self.archive_name);
-    }
-
-    /// Removes this archive from the active set after a failure.
-    pub(crate) fn fail(&self) {
-        self.component.archive_failed(&self.archive_name);
-    }
-}
-
-/// Owns a background logger that periodically reports one progress line for an
-/// entire chunked component while its archives are being compressed.
-pub struct ComponentProgressLogger {
-    stop_tx: Option<mpsc::Sender<()>>,
-    join_handle: Option<StdJoinHandle<()>>,
-    reporter: ComponentProgressReporter,
-}
-
-impl std::fmt::Debug for ComponentProgressLogger {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ComponentProgressLogger")
-            .field("reporter", &self.reporter)
-            .finish_non_exhaustive()
-    }
-}
-
-impl ComponentProgressLogger {
-    /// Starts a periodic logger for one chunked component.
-    pub fn new(component_name: String, total_bytes: u64, total_archives: usize) -> Self {
-        let state = Arc::new(ComponentProgressState {
-            component_name,
-            total_bytes,
-            total_archives,
-            started: Instant::now(),
-            bytes_done: AtomicU64::new(0),
-            archives_done: AtomicU64::new(0),
-            active_archives: Mutex::new(HashMap::new()),
-        });
-        let reporter = ComponentProgressReporter { state: Arc::clone(&state) };
-        let (stop_tx, stop_rx) = mpsc::channel();
-        let join_handle = std::thread::spawn(move || {
-            while stop_rx.recv_timeout(PROGRESS_LOG_INTERVAL).is_err() {
-                let bytes_done = state.bytes_done.load(Ordering::Relaxed);
-                let archives_done = state.archives_done.load(Ordering::Relaxed);
-                let active_archives = state.active_archives.lock().map_or(0, |active| active.len());
-                info!(
-                    component = %state.component_name,
-                    archives = %format!("{archives_done}/{}", state.total_archives),
-                    progress = %format!("{}%", ProgressDisplay::percent(bytes_done, state.total_bytes)),
-                    bytes = %ProgressDisplay::human_byte_progress(bytes_done, state.total_bytes),
-                    elapsed = %ProgressDisplay::duration(state.started.elapsed()),
-                    active_archives,
-                    "compressing component"
-                );
-            }
-        });
-        Self { stop_tx: Some(stop_tx), join_handle: Some(join_handle), reporter }
-    }
-
-    /// Returns a cloneable reporter that worker threads can update concurrently.
-    pub fn reporter(&self) -> ComponentProgressReporter {
-        self.reporter.clone()
-    }
-}
-
-impl Drop for ComponentProgressLogger {
-    fn drop(&mut self) {
-        if let Some(stop_tx) = self.stop_tx.take() {
-            let _ = stop_tx.send(());
-        }
-        if let Some(join_handle) = self.join_handle.take() {
-            let _ = join_handle.join();
-        }
-    }
-}
-
-/// Shared immutable metadata and atomics backing one component-wide compression logger.
-#[derive(Debug)]
-pub struct ComponentProgressState {
-    /// Snapshot component name such as `headers` or `receipts`.
-    pub component_name: String,
-    /// Total uncompressed source bytes scheduled for this component.
-    pub total_bytes: u64,
-    /// Number of archives that will be produced for this component.
-    pub total_archives: usize,
-    /// Monotonic timestamp when component compression started.
-    pub started: Instant,
-    /// Aggregate uncompressed source bytes processed across all archives.
-    pub bytes_done: AtomicU64,
-    /// Number of archives that have fully completed compression.
-    pub archives_done: AtomicU64,
-    /// Currently active archives used for completion accounting and progress logs.
-    pub active_archives: Mutex<HashMap<String, ActiveArchiveState>>,
-}
-
-/// Live progress state for one in-flight archive within a component.
-#[derive(Debug)]
-pub struct ActiveArchiveState {
-    /// Total uncompressed source bytes for this archive.
-    pub total_bytes: u64,
-    /// Uncompressed source bytes processed so far for this archive.
-    pub bytes_done: u64,
 }
 
 /// Cumulative upload progress shared across concurrent artifact uploads. A spawned

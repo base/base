@@ -4262,6 +4262,7 @@ dependencies = [
  "base-node-runner",
  "base-observability-events",
  "base-proofs-extension",
+ "base-reth-cli",
  "base-shadow-indexer",
  "base-shadow-indexer-db",
  "base-tx-forwarding",
@@ -4281,6 +4282,7 @@ dependencies = [
  "reth-cli-runner",
  "reth-cli-util",
  "reth-db",
+ "reth-db-api",
  "reth-discv4",
  "reth-discv5",
  "reth-ethereum-forks",
@@ -4293,6 +4295,7 @@ dependencies = [
  "reth-node-metrics",
  "reth-provider",
  "reth-rpc-server-types",
+ "reth-stages-types",
  "reth-tasks",
  "reth-tracing",
  "rstest",
@@ -5977,9 +5980,17 @@ dependencies = [
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "blake3",
+ "rayon",
  "reth-cli-commands",
  "reth-node-core",
  "reth-prune-types",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -6163,24 +6174,20 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
- "blake3",
+ "base-reth-cli",
  "bollard",
  "clap",
  "futures",
  "human_bytes",
  "humantime",
- "rayon",
- "reth-cli-commands",
  "serde_json",
  "serial_test",
- "tar",
  "tempfile",
  "testcontainers",
  "testcontainers-modules",
  "tokio",
  "tracing",
  "url",
- "zstd",
 ]
 
 [[package]]
