@@ -96,7 +96,7 @@ pub struct SnapshotterConfig {
 
     /// Maximum number of threads for snapshot archive creation.
     ///
-    /// Defaults to half the available CPUs.
+    /// Defaults to Rayon's global thread count, normally the available CPU count.
     #[arg(long)]
     pub snapshot_threads: Option<usize>,
 
