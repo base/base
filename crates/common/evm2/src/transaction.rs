@@ -1,5 +1,6 @@
 //! Base transaction envelope for EVM2.
 
+use alloy_consensus::Transaction;
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::Bytes;
 use base_common_consensus::TxDeposit;
@@ -27,9 +28,10 @@ impl BaseTxEnvelope {
     /// encoded bytes.
     pub fn standard(tx: TxEnvelope, enveloped: Bytes) -> Self {
         // Empty enveloped bytes would make L1FeeParams::is_fee_exempt treat the transaction as
-        // fee-exempt, silently zeroing the L1 data fee and operator fee. Catch that misuse at
-        // construction rather than producing incorrect fees downstream.
-        debug_assert!(!enveloped.is_empty(), "standard tx must carry non-empty enveloped bytes");
+        // fee-exempt, silently zeroing the L1 data fee and operator fee — a consensus-level fee
+        // miscalculation once this crate is wired into the node. This is an internal invariant that
+        // must always hold, so enforce it in every build (not just debug) with a runtime assert.
+        assert!(!enveloped.is_empty(), "standard tx must carry non-empty enveloped bytes");
         Self::Standard { tx, enveloped }
     }
 
@@ -44,6 +46,14 @@ impl BaseTxEnvelope {
     /// Returns whether this envelope is a deposit transaction.
     pub const fn is_deposit(&self) -> bool {
         matches!(self, Self::Deposit(_))
+    }
+
+    /// Returns the transaction's gas limit.
+    pub fn gas_limit(&self) -> u64 {
+        match self {
+            Self::Standard { tx, .. } => tx.gas_limit(),
+            Self::Deposit(tx) => tx.gas_limit,
+        }
     }
 
     /// Returns the standard Ethereum transaction, if this envelope is not a deposit.

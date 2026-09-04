@@ -3612,7 +3612,9 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.4.1",
  "alloy-eips 2.4.1",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
+ "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
  "base-common-genesis",

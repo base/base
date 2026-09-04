@@ -119,3 +119,191 @@ fn executes_block_of_deposit_then_standard_tx() {
     // The standard transaction's L1 data fee was collected into the vault (the deposit is exempt).
     assert!(balance(&mut evm, Predeploys::L1_FEE_VAULT) > U256::ZERO);
 }
+
+/// Builds an executor over a block whose gas limit is `block_gas_limit`, with `SENDER` funded.
+fn executor_with_block_gas_limit(
+    spec: BaseSpecId,
+    block_gas_limit: u64,
+) -> BaseBlockExecutor<'static> {
+    let mut db = InMemoryDB::default();
+    db.insert_account_info(
+        &SENDER,
+        evm2::AccountInfo { balance: U256::from(10u128.pow(18)), nonce: 0, ..Default::default() },
+    );
+    let block = BlockEnv::<BaseEvmTypes> {
+        beneficiary: COINBASE,
+        gas_limit: U256::from(block_gas_limit),
+        ..Default::default()
+    };
+    let evm =
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+    BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default())
+}
+
+#[test]
+fn rejects_standard_tx_over_block_gas_limit() {
+    // Block allows 50k gas; the transaction reserves its 100k gas limit.
+    let mut executor = executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Ecotone), 50_000);
+    let standard = TxEnvelope::Eip1559(TxEip1559 {
+        chain_id: 1,
+        nonce: 0,
+        gas_limit: 100_000,
+        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: 100,
+        to: TxKind::Call(TARGET),
+        value: U256::ZERO,
+        input: Bytes::new(),
+        access_list: Default::default(),
+    });
+    let err = executor
+        .execute_transaction(&Recovered::new_unchecked(
+            BaseTxEnvelope::standard(standard, Bytes::from(vec![0x02u8; 120])),
+            SENDER,
+        ))
+        .expect_err("tx over the block gas limit is rejected");
+    assert!(format!("{err}").contains("more than the block's available gas"), "got: {err}");
+}
+
+#[test]
+fn rejects_post_regolith_deposit_over_block_gas_limit() {
+    // Post-Regolith deposits ARE subject to the block-gas check.
+    let mut executor =
+        executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Regolith), 50_000);
+    let deposit = TxDeposit {
+        from: SENDER,
+        to: TxKind::Call(TARGET),
+        gas_limit: 100_000,
+        ..Default::default()
+    };
+    executor
+        .execute_transaction(&Recovered::new_unchecked(BaseTxEnvelope::Deposit(deposit), SENDER))
+        .expect_err("post-Regolith deposit over the block gas limit is rejected");
+}
+
+/// Builds a Jovian executor with the given block gas limit and DA-footprint gas scalar.
+fn jovian_executor(block_gas_limit: u64, da_scalar: u128) -> BaseBlockExecutor<'static> {
+    let mut db = InMemoryDB::default();
+    db.insert_account_info(
+        &SENDER,
+        evm2::AccountInfo { balance: U256::from(10u128.pow(18)), nonce: 0, ..Default::default() },
+    );
+    let block = BlockEnv::<BaseEvmTypes> {
+        beneficiary: COINBASE,
+        gas_limit: U256::from(block_gas_limit),
+        ext: L1FeeParams {
+            da_footprint_gas_scalar: Some(U256::from(da_scalar)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let spec = BaseSpecId::new(BaseUpgrade::Jovian);
+    let evm =
+        Evm::new(spec, block, BaseEvmTypes::tx_registry(), db, Precompiles::base(spec.into()));
+    BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default())
+}
+
+fn jovian_transfer() -> Recovered<BaseTxEnvelope> {
+    let standard = TxEnvelope::Eip1559(TxEip1559 {
+        chain_id: 1,
+        nonce: 0,
+        gas_limit: 100_000,
+        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: 100,
+        to: TxKind::Call(TARGET),
+        value: U256::ZERO,
+        input: Bytes::new(),
+        access_list: Default::default(),
+    });
+    Recovered::new_unchecked(
+        BaseTxEnvelope::standard(standard, Bytes::from(vec![0x02u8; 120])),
+        SENDER,
+    )
+}
+
+#[test]
+fn jovian_rejects_tx_over_da_footprint_budget() {
+    // A large DA scalar makes even a minimal transaction's DA footprint exceed the block budget.
+    let mut executor = jovian_executor(60_000_000, 1_000_000);
+    let err = executor
+        .execute_transaction(&jovian_transfer())
+        .expect_err("a tx over the block DA footprint budget is rejected");
+    assert!(format!("{err}").contains("DA footprint"), "got: {err}");
+}
+
+#[test]
+fn jovian_accumulates_blob_gas_used() {
+    // A modest DA scalar keeps the footprint within budget; it is surfaced as blob_gas_used.
+    let mut executor = jovian_executor(60_000_000, 1_000);
+    executor.execute_transaction(&jovian_transfer()).expect("tx within DA budget executes");
+    let (_evm, result, _) = executor.finish();
+    assert!(result.blob_gas_used > 0, "the DA footprint is surfaced as blob_gas_used");
+}
+
+#[test]
+fn pre_jovian_block_has_no_da_footprint() {
+    // Before Jovian, the DA footprint is not metered and blob_gas_used stays zero.
+    let mut executor =
+        executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Isthmus), 60_000_000);
+    executor.execute_transaction(&jovian_transfer()).expect("tx executes");
+    let (_evm, result, _) = executor.finish();
+    assert_eq!(result.blob_gas_used, 0, "no DA footprint before Jovian");
+}
+
+#[test]
+fn azul_enforces_eip7825_per_tx_gas_cap() {
+    // Azul maps to the Osaka EVM spec, which caps a transaction's gas limit at 2^24 (EIP-7825).
+    // The block has ample room, so the block-gas pre-check passes and the standard handler's cap
+    // check is what rejects the transaction.
+    const OSAKA_TX_GAS_CAP: u64 = 1 << 24;
+    let mut executor =
+        executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Azul), 60_000_000);
+    let standard = TxEnvelope::Eip1559(TxEip1559 {
+        chain_id: 1,
+        nonce: 0,
+        gas_limit: OSAKA_TX_GAS_CAP + 1,
+        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: 100,
+        to: TxKind::Call(TARGET),
+        value: U256::ZERO,
+        input: Bytes::new(),
+        access_list: Default::default(),
+    });
+    executor
+        .execute_transaction(&Recovered::new_unchecked(
+            BaseTxEnvelope::standard(standard, Bytes::from(vec![0x02u8; 120])),
+            SENDER,
+        ))
+        .expect_err("a standard tx over the Osaka per-tx gas cap is rejected at Azul");
+}
+
+#[test]
+fn azul_exempts_deposits_from_the_per_tx_gas_cap() {
+    // Deposits are funded on L1 and are never subject to the EIP-7825 per-tx gas cap.
+    const OSAKA_TX_GAS_CAP: u64 = 1 << 24;
+    let mut executor =
+        executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Azul), 60_000_000);
+    let deposit = TxDeposit {
+        from: SENDER,
+        to: TxKind::Call(TARGET),
+        gas_limit: OSAKA_TX_GAS_CAP + 1,
+        ..Default::default()
+    };
+    executor
+        .execute_transaction(&Recovered::new_unchecked(BaseTxEnvelope::Deposit(deposit), SENDER))
+        .expect("a deposit over the Osaka per-tx gas cap is exempt");
+}
+
+#[test]
+fn exempts_pre_regolith_deposit_from_block_gas_limit() {
+    // Pre-Regolith (Bedrock) deposits are exempt from the block-gas check.
+    let mut executor = executor_with_block_gas_limit(BaseSpecId::new(BaseUpgrade::Bedrock), 50_000);
+    let deposit = TxDeposit {
+        from: SENDER,
+        to: TxKind::Call(TARGET),
+        gas_limit: 100_000,
+        ..Default::default()
+    };
+    executor
+        .execute_transaction(&Recovered::new_unchecked(BaseTxEnvelope::Deposit(deposit), SENDER))
+        .expect("pre-Regolith deposit is exempt from the block gas limit");
+}

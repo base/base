@@ -11,7 +11,9 @@ use evm2::{
     registry::{HandlerError, HandlerResult},
 };
 
-use crate::{BaseEvmTypes, transaction::BaseTxEnvelope};
+use crate::{
+    BaseEvmTypes, BaseForkActivations, BaseTime, Canyon, Cobalt, transaction::BaseTxEnvelope,
+};
 
 /// Error returned when a block's cumulative gas used would overflow `u64`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +57,58 @@ impl core::fmt::Display for PreExecutionError {
 
 impl core::error::Error for PreExecutionError {}
 
+/// Error returned when a transaction's reserved gas exceeds the block's remaining gas.
+///
+/// Mirrors the reference `BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas`: a
+/// transaction whose gas limit is larger than the block's unused gas cannot be included. The
+/// reserved gas is the transaction's gas limit (EIP-8130's additional payer-auth reservation does
+/// not apply here, as that transaction type is not yet supported).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockGasLimitExceeded {
+    /// The transaction's reserved gas (its gas limit).
+    pub transaction_gas_limit: u64,
+    /// The block's remaining available gas (block gas limit minus cumulative gas used).
+    pub block_available_gas: u64,
+}
+
+impl core::fmt::Display for BlockGasLimitExceeded {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "transaction gas limit {} is more than the block's available gas {}",
+            self.transaction_gas_limit, self.block_available_gas
+        )
+    }
+}
+
+impl core::error::Error for BlockGasLimitExceeded {}
+
+/// Error returned when a transaction's Jovian DA footprint exceeds the block's remaining DA
+/// footprint budget.
+///
+/// Mirrors the reference `BaseBlockExecutionError::TransactionDaFootprintAboveGasLimit`: from
+/// Jovian, each non-deposit transaction's DA footprint (its FastLZ-estimated compressed size times
+/// the DA-footprint gas scalar) is metered against the block gas limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DaFootprintAboveGasLimit {
+    /// The transaction's DA footprint.
+    pub transaction_da_footprint: u64,
+    /// The block's remaining DA footprint budget (block gas limit minus accumulated DA footprint).
+    pub available_block_da_footprint: u64,
+}
+
+impl core::fmt::Display for DaFootprintAboveGasLimit {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "transaction DA footprint {} is more than the block's available DA footprint {}",
+            self.transaction_da_footprint, self.available_block_da_footprint
+        )
+    }
+}
+
+impl core::error::Error for DaFootprintAboveGasLimit {}
+
 /// Block-boundary context for pre-execution system calls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BaseBlockExecutionCtx {
@@ -74,17 +128,20 @@ pub struct BlockExecutionResult {
     pub receipts: Vec<BaseReceiptEnvelope>,
     /// The block's cumulative gas used (the last receipt's cumulative gas, or zero).
     pub gas_used: u64,
+    /// The block's accumulated Jovian DA footprint (zero before Jovian). Surfaced in the block
+    /// result as `blob_gas_used`, mirroring the reference.
+    pub blob_gas_used: u64,
 }
 
 /// Executes a Base block's transactions on an EVM2 [`Evm`], building receipts and accumulating
 /// the block's state delta.
 ///
 /// The flow is [`apply_pre_execution`](Self::apply_pre_execution) (block-boundary system calls),
-/// then [`execute_transaction`](Self::execute_transaction) per transaction (running it through
-/// the registry, building its receipt with running cumulative gas, and committing its state into
-/// a [`BlockStateAccumulator`]), then [`finish`](Self::finish). The Canyon create2-deployer and
-/// Cobalt system-account transition hooks, the EIP-8130 path, and the Jovian DA-footprint checks
-/// are layered on in follow-up work.
+/// then [`apply_transition_hooks`](Self::apply_transition_hooks) (the Canyon/Denim/Cobalt
+/// irregular state transitions), then [`execute_transaction`](Self::execute_transaction) per
+/// transaction (running it through the registry, building its receipt with running cumulative gas,
+/// and committing its state into a [`BlockStateAccumulator`]), then [`finish`](Self::finish). The
+/// EIP-8130 path and the Jovian DA-footprint checks are layered on in follow-up work.
 #[derive(Debug)]
 pub struct BaseBlockExecutor<'a> {
     evm: Evm<'a, BaseEvmTypes>,
@@ -92,6 +149,7 @@ pub struct BaseBlockExecutor<'a> {
     block_state: BlockStateAccumulator,
     receipts: Vec<BaseReceiptEnvelope>,
     gas_used: u64,
+    da_footprint_used: u64,
 }
 
 impl<'a> BaseBlockExecutor<'a> {
@@ -103,6 +161,7 @@ impl<'a> BaseBlockExecutor<'a> {
             block_state: BlockStateAccumulator::new(),
             receipts: Vec::new(),
             gas_used: 0,
+            da_footprint_used: 0,
         }
     }
 
@@ -150,6 +209,32 @@ impl<'a> BaseBlockExecutor<'a> {
         Ok(())
     }
 
+    /// Applies the Base transition-block irregular state changes, in the reference order: the
+    /// Canyon create2-deployer force-deploy, the Denim `BaseTime` predeploy install, then the
+    /// Cobalt EIP-8130 system-account stub. Each is fork-gated on `chain_spec` at this block's
+    /// timestamp and commits its state into the block state. Must run after
+    /// [`apply_pre_execution`](Self::apply_pre_execution) and before any transactions.
+    pub fn apply_transition_hooks(
+        &mut self,
+        chain_spec: &impl BaseForkActivations,
+    ) -> HandlerResult<()> {
+        let timestamp = self.evm.block().timestamp.saturating_to::<u64>();
+        Canyon::ensure_create2_deployer(
+            chain_spec,
+            timestamp,
+            &mut self.evm,
+            &mut self.block_state,
+        )?;
+        BaseTime::ensure_predeploy(chain_spec, timestamp, &mut self.evm, &mut self.block_state)?;
+        Cobalt::ensure_eip8130_system_accounts(
+            chain_spec,
+            timestamp,
+            &mut self.evm,
+            &mut self.block_state,
+        )?;
+        Ok(())
+    }
+
     /// Returns the EVM.
     pub const fn evm(&self) -> &Evm<'a, BaseEvmTypes> {
         &self.evm
@@ -166,6 +251,40 @@ impl<'a> BaseBlockExecutor<'a> {
         let ty = tx.ty();
         let is_deposit = tx.is_deposit();
         let signer = tx.signer();
+
+        // Reject a transaction whose gas limit exceeds the block's remaining gas, before executing
+        // it. Pre-Regolith deposits are exempt (matching the reference's `is_regolith || !is_deposit`
+        // guard); every other transaction — including post-Regolith deposits — is checked.
+        let gas_limit = tx.gas_limit();
+        let block_gas_limit = self.evm.block().gas_limit.saturating_to::<u64>();
+        let block_available_gas = block_gas_limit.saturating_sub(self.gas_used);
+        let is_regolith =
+            (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Regolith as u8);
+        if gas_limit > block_available_gas && (is_regolith || !is_deposit) {
+            return Err(HandlerError::external(BlockGasLimitExceeded {
+                transaction_gas_limit: gas_limit,
+                block_available_gas,
+            }));
+        }
+
+        // From Jovian, meter each non-deposit transaction's DA footprint against the block's DA
+        // footprint budget (the block gas limit less what earlier transactions consumed). Deposits
+        // are exempt. Accumulated below into `da_footprint_used` (surfaced as `blob_gas_used`).
+        let is_jovian = (self.evm.config_spec_id().upgrade() as u8) >= (BaseUpgrade::Jovian as u8);
+        let tx_da_footprint = if is_jovian && !is_deposit {
+            let enveloped = tx.enveloped().map(|bytes| bytes.as_ref()).unwrap_or_default();
+            let footprint = self.evm.block().ext.jovian_da_footprint(enveloped);
+            let available = block_gas_limit.saturating_sub(self.da_footprint_used);
+            if footprint > available {
+                return Err(HandlerError::external(DaFootprintAboveGasLimit {
+                    transaction_da_footprint: footprint,
+                    available_block_da_footprint: available,
+                }));
+            }
+            footprint
+        } else {
+            0
+        };
 
         // The deposit receipt records the depositor's nonce *before* the deposit executes (and
         // bumps it), read untracked so it does not perturb execution. Matches the reference.
@@ -187,13 +306,15 @@ impl<'a> BaseBlockExecutor<'a> {
         let success = result.status;
         let logs = result.logs.clone();
         // Fail on overflow rather than silently saturating, which would corrupt this and every
-        // later receipt's cumulative gas. Practically unreachable under block gas limits, but
-        // this executor has no pre-execution block-gas-limit guard yet.
+        // later receipt's cumulative gas. Practically unreachable given the block-gas pre-check
+        // above, but kept as a hard guard against a corrupted cumulative total.
         self.gas_used = self
             .gas_used
             .checked_add(result.tx_gas_used())
             .ok_or_else(|| HandlerError::external(CumulativeGasOverflow))?;
         let cumulative_gas_used = self.gas_used;
+        // Accumulate the DA footprint metered above (zero for deposits and before Jovian).
+        self.da_footprint_used = self.da_footprint_used.saturating_add(tx_da_footprint);
         let _ = executed.commit_to(&mut self.block_state);
 
         let receipt = Receipt { status: Eip658Value::Eip658(success), cumulative_gas_used, logs };
@@ -229,7 +350,11 @@ impl<'a> BaseBlockExecutor<'a> {
     /// Finalizes the block, returning the EVM, the execution result (receipts + gas used), and
     /// the accumulated block-state delta.
     pub fn finish(self) -> (Evm<'a, BaseEvmTypes>, BlockExecutionResult, BlockStateAccumulator) {
-        let result = BlockExecutionResult { receipts: self.receipts, gas_used: self.gas_used };
+        let result = BlockExecutionResult {
+            receipts: self.receipts,
+            gas_used: self.gas_used,
+            blob_gas_used: self.da_footprint_used,
+        };
         (self.evm, result, self.block_state)
     }
 }
