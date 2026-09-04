@@ -11,9 +11,9 @@ use revm::state::EvmState;
 use tracing::{debug, warn};
 
 use crate::{
-    MeteringProvider, NoopMeteringProvider, ResourceMeteringError, ResourceMeteringMetrics,
-    ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision,
-    SharedMeteringProvider,
+    MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringError,
+    ResourceMeteringMetrics, ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample,
+    ResourceThrottlingDecision, SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -28,6 +28,15 @@ pub struct BaseBuilderConfig {
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,
+    /// Resource metering and throttling configuration for payload admission.
+    pub resource_metering: ResourceMeteringConfig,
+    /// Shared, cross-job cache of permanently rejected transaction hashes.
+    ///
+    /// Native payload jobs skip hashes already in this cache even if the
+    /// transaction is re-gossiped into the pool. Nonce-lane descendants are
+    /// skipped for the current scan via `PayloadTransactions::mark_invalid`;
+    /// skipping those descendants across later jobs is Flashblocks-only.
+    pub rejection_cache: RejectionCache,
 }
 
 impl Default for BaseBuilderConfig {
@@ -37,13 +46,15 @@ impl Default for BaseBuilderConfig {
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
     }
 }
 
 impl BaseBuilderConfig {
     /// Creates a new Base payload builder configuration.
-    pub const fn new(
+    pub fn new(
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
         manifest_precheck_enabled: bool,
@@ -53,7 +64,15 @@ impl BaseBuilderConfig {
             gas_limit_config,
             manifest_precheck_enabled,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
+    }
+
+    /// Sets resource metering and throttling for payload admission.
+    pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
+        self.resource_metering = resource_metering;
+        self
     }
 
     /// Returns the data availability configuration for the Base payload builder, if it has

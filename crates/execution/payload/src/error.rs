@@ -20,4 +20,13 @@ pub enum BasePayloadBuilderError {
     /// Thrown when a blob transaction is included in a sequencer's block.
     #[error("blob transaction included in sequencer block")]
     BlobTransactionRejected,
+    /// Thrown when `BlockBuilder` refuses to commit a sequencer transaction.
+    ///
+    /// Resource metering always returns [`alloy_evm::block::CommitChanges::Yes`]
+    /// for sequencer transactions. This error is the `Ok(None)` contract of
+    /// `execute_transaction_with_commit_condition` under `no_tx_pool`, where
+    /// skipping a sequencer transaction would diverge the EL from the proof
+    /// executor.
+    #[error("sequencer transaction commit was refused")]
+    SequencerTransactionCommitRefused,
 }
