@@ -203,8 +203,8 @@ async fn mixed_singular_and_span_batches_after_delta() {
 
 /// A historical Span fixture may derive its pre-Denim prefix, but the cached
 /// tail must be discarded before the first Denim block. Resubmitting that tail
-/// through the production `SingleBatch` batcher must derive across Denim's 200ms
-/// block cadence.
+/// through the production `SingleBatch` batcher must derive across Cobalt's 200ms
+/// block cadence when both upgrades activate together.
 #[tokio::test]
 async fn span_batch_stops_at_denim_and_recovers_with_single_batches() {
     let batcher_cfg = BatcherConfig {
@@ -224,7 +224,7 @@ async fn span_batch_stops_at_denim_and_recovers_with_single_batches() {
         base: BaseUpgradeConfig {
             azul: Some(0),
             beryl: Some(0),
-            cobalt: Some(0),
+            cobalt: Some(6),
             denim: Some(6),
             ..Default::default()
         },
