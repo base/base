@@ -15,6 +15,7 @@ use std::{
     future::Future,
     io,
     path::{Path, PathBuf},
+    sync::{Arc, Condvar, Mutex},
     time::Duration,
 };
 
@@ -25,7 +26,8 @@ use aws_sdk_s3::{
     types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
 };
 use futures::stream::{self, StreamExt, TryStreamExt};
-use tokio::{sync::mpsc, task::JoinHandle, time::sleep};
+use reth_cli_commands::download::manifest::{SnapshotArchiveSink, SnapshotArchiveWriter};
+use tokio::{runtime::Handle, sync::mpsc, task::JoinHandle, time::sleep};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -271,6 +273,149 @@ impl io::Write for StreamingMultipartUpload {
         // zstd may call flush while it is still writing its frame. A multipart part smaller than
         // 5 MiB is only valid as the final part, so only `finish` may flush `buffered`.
         Ok(())
+    }
+}
+
+/// Bridges Reth's synchronous [`SnapshotArchiveSink`] API to direct S3 multipart uploads.
+///
+/// `create_archive` may be called from Reth's Rayon workers. It uses the supplied Tokio runtime
+/// handle only to start the async S3 upload; [`SnapshotArchiveWriter::finish`] waits for that
+/// archive to complete before returning. This preserves Reth's guarantee that a finished writer
+/// represents a valid, published archive and bounds the number of simultaneously buffered
+/// archive streams.
+pub struct StreamingS3ArchiveSink {
+    uploader: SnapshotUploader,
+    runtime: Handle,
+    destination: Arc<dyn Fn(&str) -> eyre::Result<String> + Send + Sync>,
+    limiter: Arc<StreamingUploadLimiter>,
+}
+
+impl std::fmt::Debug for StreamingS3ArchiveSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamingS3ArchiveSink").finish_non_exhaustive()
+    }
+}
+
+impl StreamingS3ArchiveSink {
+    /// Creates an S3 archive sink.
+    ///
+    /// `destination` maps Reth's relative archive name to its complete S3 object key. The
+    /// closure runs before compression starts, so callers can place immutable chunks under
+    /// `static_files/` and the current tip/state archives under a timestamped run prefix.
+    ///
+    /// `max_active_archives` bounds both concurrent uploads and memory consumed by compressed
+    /// multipart buffers. It must be non-zero. A value of one is recommended for large state
+    /// archives.
+    pub fn new<F>(
+        uploader: SnapshotUploader,
+        runtime: Handle,
+        max_active_archives: usize,
+        destination: F,
+    ) -> eyre::Result<Self>
+    where
+        F: Fn(&str) -> eyre::Result<String> + Send + Sync + 'static,
+    {
+        if max_active_archives == 0 {
+            eyre::bail!("max_active_archives must be greater than zero");
+        }
+        Ok(Self {
+            uploader,
+            runtime,
+            destination: Arc::new(destination),
+            limiter: Arc::new(StreamingUploadLimiter::new(max_active_archives)),
+        })
+    }
+}
+
+impl SnapshotArchiveSink for StreamingS3ArchiveSink {
+    fn create_archive(
+        &self,
+        archive_file_name: &str,
+    ) -> eyre::Result<Box<dyn SnapshotArchiveWriter>> {
+        // Reth invokes this from synchronous archive-generation threads. The runtime handle must
+        // therefore be captured by the async caller before it enters `spawn_blocking`.
+        let permit = self.limiter.acquire();
+        let key = (self.destination)(archive_file_name)?;
+        let upload = self
+            .runtime
+            .block_on(self.uploader.start_streaming_multipart_upload(key))
+            .map_err(|error| eyre::eyre!(error.to_string()))?;
+
+        Ok(Box::new(StreamingS3ArchiveWriter {
+            runtime: self.runtime.clone(),
+            upload: Some(upload),
+            _permit: permit,
+        }))
+    }
+}
+
+struct StreamingS3ArchiveWriter {
+    runtime: Handle,
+    upload: Option<StreamingMultipartUpload>,
+    // Drop the permit only after `finish` has waited for multipart completion (or after an error
+    // drops the incomplete upload and triggers its abort path).
+    _permit: StreamingUploadPermit,
+}
+
+impl io::Write for StreamingS3ArchiveWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.upload
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "archive writer is finished"))?
+            .write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.upload
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "archive writer is finished"))?
+            .flush()
+    }
+}
+
+impl SnapshotArchiveWriter for StreamingS3ArchiveWriter {
+    fn finish(mut self: Box<Self>) -> eyre::Result<()> {
+        let mut upload = self.upload.take().expect("archive writer can only finish once");
+        upload.finish().map_err(|error| eyre::eyre!(error.to_string()))?;
+        self.runtime
+            .block_on(upload.complete())
+            .map(|_| ())
+            .map_err(|error| eyre::eyre!(error.to_string()))
+    }
+}
+
+#[derive(Debug)]
+struct StreamingUploadLimiter {
+    max_active: usize,
+    active: Mutex<usize>,
+    available: Condvar,
+}
+
+impl StreamingUploadLimiter {
+    const fn new(max_active: usize) -> Self {
+        Self { max_active, active: Mutex::new(0), available: Condvar::new() }
+    }
+
+    fn acquire(self: &Arc<Self>) -> StreamingUploadPermit {
+        let mut active = self.active.lock().expect("streaming upload limiter mutex poisoned");
+        while *active >= self.max_active {
+            active = self.available.wait(active).expect("streaming upload limiter mutex poisoned");
+        }
+        *active += 1;
+        StreamingUploadPermit { limiter: Arc::clone(self) }
+    }
+}
+
+struct StreamingUploadPermit {
+    limiter: Arc<StreamingUploadLimiter>,
+}
+
+impl Drop for StreamingUploadPermit {
+    fn drop(&mut self) {
+        let mut active =
+            self.limiter.active.lock().expect("streaming upload limiter mutex poisoned");
+        *active = active.checked_sub(1).expect("streaming upload limiter released without acquire");
+        self.limiter.available.notify_one();
     }
 }
 

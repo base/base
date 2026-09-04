@@ -15,6 +15,7 @@ tar = { workspace = true }
 url = { workspace = true }
 zstd = { workspace = true }
 anyhow = { workspace = true }
+eyre = { workspace = true }
 blake3 = { workspace = true }
 rayon = { workspace = true }
 bollard = { workspace = true }

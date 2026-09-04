@@ -30,7 +30,8 @@ pub use snapshot::{
 
 mod upload;
 pub use upload::{
-    SnapshotRun, SnapshotUploadParams, SnapshotUploader, StreamingMultipartUpload, UploadStrategy,
+    SnapshotRun, SnapshotUploadParams, SnapshotUploader, StreamingMultipartUpload,
+    StreamingS3ArchiveSink, UploadStrategy,
 };
 
 mod orchestrator;
