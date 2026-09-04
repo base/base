@@ -24,11 +24,13 @@ pub use limits::{InflightCounters, PayerBook};
 
 mod lane_store;
 pub use lane_store::{
-    BestLaneTransactions, FundingTransition, FundingWaitReason, LaneCommitOutcome,
-    LaneFeeUpdateOutcome, LaneGap, LaneInsertOutcome, LaneRemovalOutcome, LaneRemovalReason,
-    LaneStoreSize, LaneTerminalEvent, LaneTransactionState, LaneTransactionStore,
-    LaneTransactionTransition, LaneTransitionBatch, LaneTransitionCause, LaneUpdateOutcome,
-    PayerBalanceUpdateOutcome, TransactionFundingState,
+    BestLaneTransactions, FundingTransition, FundingWaitReason, LaneCanonicalAccountUpdate,
+    LaneCanonicalUpdateOutcome, LaneCommitOutcome, LaneFeeUpdateOutcome, LaneGap,
+    LaneInsertOutcome, LaneMutationJournal, LaneRawInsertOutcome, LaneRemovalOutcome,
+    LaneRemovalReason, LaneRestoreOutcome, LaneStoreSize, LaneStoreSnapshot, LaneTerminalEvent,
+    LaneTerminalTransition, LaneTransactionState, LaneTransactionStore, LaneTransactionTransition,
+    LaneTransitionBatch, LaneTransitionCause, LaneUpdateOutcome, PayerBalanceUpdateOutcome,
+    TransactionFundingState,
 };
 
 mod lane_events;
@@ -36,8 +38,6 @@ pub use lane_events::{DEFAULT_LANE_EVENT_CHANNEL_CAPACITY, LaneEventHub};
 
 mod validator;
 pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, LimitClassCache};
-
-mod best;
 
 mod validity;
 pub use validity::{
@@ -51,7 +51,7 @@ pub use block_expiry::BlockExpiryIndex;
 mod transaction;
 pub use transaction::{
     BasePooledTransaction, BasePooledTx, BaseTransactionIdentity, BaseTransactionLane,
-    TimestampedTransaction, ValidatedFunding, unix_time_millis,
+    TimestampedTransaction, ValidatedFunding, ValidatedFundingMismatch, unix_time_millis,
 };
 
 mod ordering;
@@ -71,7 +71,7 @@ pub use pool::{AccountStateDiff, BaseTransactionPool};
 
 mod state_diff_maintain;
 pub use state_diff_maintain::{
-    InvalidationCause, StateDiffInvalidation, maintain_state_diff_invalidation,
+    InvalidationCause, StateDiffInvalidation, StateDiffOrigin, maintain_state_diff_invalidation,
 };
 
 mod pool_error_label;
@@ -85,6 +85,7 @@ pub use wire::{
     ExtensionError, NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions,
 };
 
+#[cfg(test)]
 mod two_d_nonce_pool;
 
 mod metrics;

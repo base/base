@@ -1,17 +1,17 @@
 //! Listener publication for lane-store lifecycle transitions.
 
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 use alloy_primitives::{TxHash, map::HashMap};
 use parking_lot::Mutex;
 use reth_transaction_pool::{
-    AllTransactionsEvents, FullTransactionEvent, NewTransactionEvent, SubPool, TransactionEvent,
-    TransactionEvents, TransactionListenerKind, pool::QueuedReason,
+    AllTransactionsEvents, FullTransactionEvent, NewTransactionEvent, PropagatedTransactions,
+    SubPool, TransactionEvent, TransactionEvents, TransactionListenerKind, pool::QueuedReason,
 };
 use tokio::sync::mpsc::{self, error::TrySendError};
 
 use crate::{
-    BasePooledTx, LaneTerminalEvent, LaneTransactionState, LaneTransactionTransition,
+    BasePooledTx, LaneGap, LaneTerminalEvent, LaneTransactionState, LaneTransactionTransition,
     LaneTransitionBatch,
 };
 
@@ -91,6 +91,37 @@ impl<T: BasePooledTx> LaneEventHub<T> {
             inner.publish_transition(transition);
         }
     }
+
+    /// Publishes a terminal invalid event for a transaction rejected during validation.
+    pub fn publish_invalid(&self, hash: TxHash) {
+        let mut inner = self.inner.lock();
+        inner.broadcast_hash(hash, TransactionEvent::Invalid);
+        inner.broadcast_all(FullTransactionEvent::Invalid(hash));
+    }
+
+    /// Publishes a terminal discarded event for a transaction that could not be validated.
+    pub fn publish_discarded(&self, hash: TxHash) {
+        let mut inner = self.inner.lock();
+        inner.broadcast_hash(hash, TransactionEvent::Discarded);
+        inner.broadcast_all(FullTransactionEvent::Discarded(hash));
+    }
+
+    /// Publishes propagation metadata for known transaction hashes.
+    pub fn publish_propagated(&self, propagated: PropagatedTransactions) {
+        let mut inner = self.inner.lock();
+        for (hash, peers) in propagated {
+            let peers = Arc::new(peers);
+            inner.broadcast_hash(hash, TransactionEvent::Propagated(Arc::clone(&peers)));
+            inner.broadcast_all(FullTransactionEvent::Propagated(peers));
+        }
+    }
+
+    /// Publishes mining for a transaction that was speculatively pruned earlier.
+    pub fn publish_mined(&self, hash: TxHash, block_hash: alloy_primitives::B256) {
+        let mut inner = self.inner.lock();
+        inner.broadcast_hash(hash, TransactionEvent::Mined(block_hash));
+        inner.broadcast_all(FullTransactionEvent::Mined { tx_hash: hash, block_hash });
+    }
 }
 
 #[derive(Debug)]
@@ -101,7 +132,6 @@ struct LaneEventHubInner<T: BasePooledTx> {
     pending_propagate: Vec<mpsc::Sender<TxHash>>,
     new_all: Vec<mpsc::Sender<NewTransactionEvent<T>>>,
     new_propagate: Vec<mpsc::Sender<NewTransactionEvent<T>>>,
-    terminated: HashSet<TxHash>,
 }
 
 impl<T: BasePooledTx> Default for LaneEventHubInner<T> {
@@ -113,7 +143,6 @@ impl<T: BasePooledTx> Default for LaneEventHubInner<T> {
             pending_propagate: Vec::new(),
             new_all: Vec::new(),
             new_propagate: Vec::new(),
-            terminated: HashSet::new(),
         }
     }
 }
@@ -121,13 +150,7 @@ impl<T: BasePooledTx> Default for LaneEventHubInner<T> {
 impl<T: BasePooledTx> LaneEventHubInner<T> {
     fn publish_transition(&mut self, transition: &LaneTransactionTransition<T>) {
         let hash = *transition.transaction.hash();
-        if transition.previous_state.is_none() && transition.current_state.is_some() {
-            self.terminated.remove(&hash);
-        }
-
-        if let Some(terminal) = transition.terminal
-            && self.terminated.insert(hash)
-        {
+        if let Some(terminal) = transition.terminal {
             self.publish_terminal(transition, terminal);
             return;
         }
@@ -150,10 +173,10 @@ impl<T: BasePooledTx> LaneEventHubInner<T> {
                 TransactionEvent::Queued,
                 FullTransactionEvent::Queued(hash, Some(QueuedReason::InsufficientBalance)),
             ),
-            LaneTransactionState::Queued(_) => (
+            LaneTransactionState::Queued(gap) => (
                 SubPool::Queued,
                 TransactionEvent::Queued,
-                FullTransactionEvent::Queued(hash, Some(QueuedReason::ParkedAncestors)),
+                FullTransactionEvent::Queued(hash, Some(Self::queued_reason(gap))),
             ),
         };
         self.broadcast_hash(hash, event);
@@ -166,11 +189,27 @@ impl<T: BasePooledTx> LaneEventHubInner<T> {
             }
         }
 
-        let new_event =
-            NewTransactionEvent { subpool, transaction: Arc::clone(&transition.transaction) };
-        Self::send_bounded(&mut self.new_all, new_event.clone());
-        if transition.transaction.propagate {
-            Self::send_bounded(&mut self.new_propagate, new_event);
+        let initial = transition.previous_state.is_none();
+        let pending_promotion = subpool == SubPool::Pending
+            && transition
+                .previous_state
+                .is_some_and(|state| state != LaneTransactionState::Pending);
+        if initial || pending_promotion {
+            let new_event =
+                NewTransactionEvent { subpool, transaction: Arc::clone(&transition.transaction) };
+            Self::send_bounded(&mut self.new_all, new_event.clone());
+            if transition.transaction.propagate {
+                Self::send_bounded(&mut self.new_propagate, new_event);
+            }
+        }
+    }
+
+    const fn queued_reason(gap: LaneGap) -> QueuedReason {
+        match gap {
+            LaneGap::Missing { .. } => QueuedReason::NonceGap,
+            LaneGap::BlockedByBaseFee { .. } | LaneGap::BlockedByFunding { .. } => {
+                QueuedReason::ParkedAncestors
+            }
         }
     }
 

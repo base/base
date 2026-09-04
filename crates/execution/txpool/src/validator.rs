@@ -929,10 +929,15 @@ where
                 matches!(origin, TransactionOrigin::External | TransactionOrigin::Local);
             transaction.set_watch_set(state.watch_set.clone());
             transaction.set_watch_manifest(state.manifest.clone());
-            transaction.set_validated_funding(crate::ValidatedFunding::new(
+            if let Err(error) = transaction.set_validated_funding(crate::ValidatedFunding::new(
                 state.payer,
                 state.payer_max_cost,
-            ));
+            )) {
+                return TransactionValidationOutcome::Invalid(
+                    transaction,
+                    InvalidPoolTransactionError::other(error),
+                );
+            }
             transaction.set_limit_class(LimitClass {
                 sender: state.sender,
                 payer: state.payer,
@@ -2066,11 +2071,17 @@ where
         } = outcome
         {
             if !self.requires_l1_data_gas_fee() {
-                if valid_tx.transaction().validated_funding().is_none() {
-                    valid_tx.transaction().set_validated_funding(crate::ValidatedFunding::new(
-                        valid_tx.transaction().sender(),
-                        *valid_tx.transaction().cost(),
-                    ));
+                if valid_tx.transaction().as_eip8130().is_none()
+                    && let Err(error) =
+                        valid_tx.transaction().set_validated_funding(crate::ValidatedFunding::new(
+                            valid_tx.transaction().sender(),
+                            *valid_tx.transaction().cost(),
+                        ))
+                {
+                    return TransactionValidationOutcome::Invalid(
+                        valid_tx.into_transaction(),
+                        InvalidPoolTransactionError::other(error),
+                    );
                 }
                 return TransactionValidationOutcome::Valid {
                     balance,
@@ -2131,11 +2142,15 @@ where
                 );
             }
 
-            if valid_tx.transaction().validated_funding().is_none() {
-                valid_tx.transaction().set_validated_funding(crate::ValidatedFunding::new(
-                    valid_tx.transaction().sender(),
-                    cost,
-                ));
+            if valid_tx.transaction().as_eip8130().is_none()
+                && let Err(error) = valid_tx.transaction().set_validated_funding(
+                    crate::ValidatedFunding::new(valid_tx.transaction().sender(), cost),
+                )
+            {
+                return TransactionValidationOutcome::Invalid(
+                    valid_tx.into_transaction(),
+                    InvalidPoolTransactionError::other(error),
+                );
             }
 
             return TransactionValidationOutcome::Valid {
