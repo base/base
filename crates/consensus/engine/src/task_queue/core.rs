@@ -517,6 +517,13 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     /// never observe zeros during the bootstrap window. `el_sync_finished` is left unchanged —
     /// the engine has not confirmed validity via FCU and the existing reset-deferral logic must
     /// continue to gate on it.
+    ///
+    /// The update is merged via [`EngineSyncState::apply_update`](crate::EngineSyncState::apply_update),
+    /// which preserves the current
+    /// value of any `None` field. Callers seeding after a `Syncing` probe therefore pass only
+    /// `unsafe_head` (safe/finalized left `None`) to keep the watch channel current without
+    /// advancing safe/finalized past what the EL has actually validated. This convention is
+    /// shared by the bootstrap paths and the periodic sequencer EL-sync probe loop.
     pub fn seed_state(&mut self, update: EngineSyncStateUpdate) {
         self.state.sync_state = self.state.sync_state.apply_update(update);
         self.state_sender.send_replace(self.state);
@@ -549,12 +556,14 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         Ok(self.state.el_sync_finished)
     }
 
-    /// Clears the task queue.
-    pub fn clear(&mut self) {
+    /// Clears the task queue and returns the number of removed tasks.
+    pub fn clear(&mut self) -> usize {
+        let cleared = self.tasks.len();
         self.tasks.clear();
         self.next_task_sequence = 0;
         self.task_queue_length.send_replace(0);
         Metrics::engine_task_queue_depth().set(0.0);
+        cleared
     }
 
     /// Attempts to drain the queue by executing all [`EngineTask`]s in-order. If any task returns
@@ -726,7 +735,7 @@ mod tests {
         ))));
         assert_eq!(*queue_rx.borrow(), 1);
 
-        engine.clear();
+        assert_eq!(engine.clear(), 1);
 
         assert_eq!(*queue_rx.borrow(), 0);
     }

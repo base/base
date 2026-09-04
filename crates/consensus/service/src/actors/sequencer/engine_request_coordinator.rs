@@ -1,16 +1,21 @@
 //! Sequencer ownership and serialized routing of engine requests.
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_eips::BlockNumberOrTag;
 use base_consensus_engine::{
-    ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
-    EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics, SealTaskError,
+    BuildTaskError, ConsolidateTask, EngineBuildError, EngineClient, EngineTask, EngineTaskError,
+    EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics,
+    SealTaskError,
 };
 use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
+    time::{self, Instant as TokioInstant, MissedTickBehavior},
 };
 use tracing::{debug, error, info, warn};
 
@@ -18,11 +23,12 @@ use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowRecon
 use crate::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
     EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
-    ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome,
+    ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome, SequencerSyncMode,
     actors::engine::ResetOutcome,
 };
 
 const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
+const SEQUENCER_EL_SYNC_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BootstrapRole {
@@ -42,6 +48,7 @@ where
     sequencer_state: SequencerEngineState,
     conductor: Option<Arc<dyn Conductor>>,
     sequencer_stopped: bool,
+    sequencer_sync_mode: SequencerSyncMode,
     unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
 }
 
@@ -57,6 +64,7 @@ where
         shadow_mode: bool,
         conductor: Option<Arc<dyn Conductor>>,
         sequencer_stopped: bool,
+        sequencer_sync_mode: SequencerSyncMode,
         unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
     ) -> Self {
         let sequencer_state = if shadow_mode {
@@ -67,7 +75,14 @@ where
         } else {
             SequencerEngineState::Regular
         };
-        Self { processor, sequencer_state, conductor, sequencer_stopped, unsafe_head_tx }
+        Self {
+            processor,
+            sequencer_state,
+            conductor,
+            sequencer_stopped,
+            sequencer_sync_mode,
+            unsafe_head_tx,
+        }
     }
 
     /// Returns the coordinator's sequencer routing state.
@@ -218,12 +233,33 @@ where
             }
             match bootstrap_role {
                 BootstrapRole::ConductorFollower => {
-                    self.processor.bootstrap_conductor_follower(opt_head).await
+                    self.processor
+                        .bootstrap_conductor_follower(
+                            opt_head,
+                            at_genesis,
+                            self.sequencer_sync_mode.is_el(),
+                        )
+                        .await;
                 }
                 BootstrapRole::ActiveSequencer => {
-                    self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await
+                    self.processor
+                        .bootstrap_active_sequencer(
+                            opt_head,
+                            at_genesis,
+                            self.sequencer_sync_mode.is_el(),
+                        )
+                        .await;
                 }
             }
+
+            let mut el_sync_probe_interval = self.sequencer_sync_mode.is_el().then(|| {
+                let mut interval = time::interval_at(
+                    TokioInstant::now() + SEQUENCER_EL_SYNC_PROBE_INTERVAL,
+                    SEQUENCER_EL_SYNC_PROBE_INTERVAL,
+                );
+                interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                interval
+            });
 
             loop {
                 // Full processor iteration window: drain + recv wait + request handling.
@@ -234,14 +270,27 @@ where
 
                 // Attempt to drain all outstanding tasks from the engine queue before adding new
                 // ones.
-                let drain_outcome = base_metrics::time!(
-                    EngineMetrics::engine_processor_drain_duration_seconds(),
-                    {
-                        self.processor.drain().await.inspect_err(
-                            |err| error!(target: "engine", ?err, "Failed to drain engine tasks"),
-                        )
+                let el_sync_pending = self.sequencer_sync_mode.is_el()
+                    && !self.processor.engine_state().el_sync_finished;
+                let drain_outcome = if el_sync_pending {
+                    // Derivation and gossip may enqueue tasks while reth is snap syncing. Those
+                    // tasks carry stale forkchoice state and must not be drained: a reset-severity
+                    // failure would issue an FCU that can abort snap sync.
+                    let cleared = self.processor.engine_mut().clear();
+                    if cleared > 0 {
+                        debug!(target: "engine", cleared, "Cleared stale engine tasks during EL sync");
                     }
-                )?;
+                    ResetOutcome::NotReset
+                } else {
+                    base_metrics::time!(
+                        EngineMetrics::engine_processor_drain_duration_seconds(),
+                        {
+                            self.processor.drain().await.inspect_err(
+                                |err| error!(target: "engine", ?err, "Failed to drain engine tasks"),
+                            )
+                        }
+                    )?
+                };
                 // A genuine drain reset invalidates shadow reconciliation state and is fatal. The
                 // one-time `InitialELSyncReset` (a cold-start bootstrap reset) is deliberately
                 // tolerated: it carries no reconciliation state and cannot recur.
@@ -255,7 +304,11 @@ where
                     *catchup = CanonicalUnsafeCatchup::default();
                 }
 
-                self.advance_canonical_catchup().await?;
+                // Canonical catch-up inserts payloads and sends FCUs directly, bypassing the task
+                // queue cleared above. Keep buffered payloads untouched until snap sync completes.
+                if !el_sync_pending {
+                    self.advance_canonical_catchup().await?;
+                }
 
                 // If the unsafe head has updated, propagate it to the outbound channels.
                 self.unsafe_head_tx.send_if_modified(|val| {
@@ -264,10 +317,31 @@ where
                 });
 
                 // Wait for the next processing request.
-                let recv_result = base_metrics::time!(
-                    EngineMetrics::engine_processor_recv_wait_duration_seconds(),
-                    { request_channel.recv().await }
+                let recv_wait_timer = base_metrics::timed!(
+                    EngineMetrics::engine_processor_recv_wait_duration_seconds()
                 );
+                let recv_result = if self.sequencer_sync_mode.is_el()
+                    && !self.processor.engine_state().el_sync_finished
+                {
+                    tokio::select! {
+                        request = request_channel.recv() => request,
+                        _ = el_sync_probe_interval
+                            .as_mut()
+                            .expect("EL sync mode initializes probe interval")
+                            .tick() => {
+                            drop(recv_wait_timer);
+                            let active_sequencer =
+                                self.resolve_bootstrap_role().await == BootstrapRole::ActiveSequencer;
+                            self.processor
+                                .probe_sequencer_el_sync(active_sequencer)
+                                .await;
+                            continue;
+                        }
+                    }
+                } else {
+                    request_channel.recv().await
+                };
+                drop(recv_wait_timer);
                 let Some(request) = recv_result else {
                     error!(target: "engine", "Engine processing request receiver closed unexpectedly");
                     return Err(EngineError::ChannelClosed);
@@ -276,6 +350,18 @@ where
                 match request {
                     EngineActorRequest::BuildRequest(build_request) => {
                         let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
+                        if self.sequencer_sync_mode.is_el()
+                            && !self.processor.engine_state().el_sync_finished
+                        {
+                            warn!(target: "engine", "Deferring sequencer build: EL sync not yet complete");
+                            result_tx
+                                .send(Err(BuildTaskError::EngineBuildError(
+                                    EngineBuildError::EngineSyncing,
+                                )))
+                                .await
+                                .map_err(|_| EngineError::ChannelClosed)?;
+                            continue;
+                        }
                         let client = Arc::clone(self.processor.client());
                         let rollup = Arc::clone(self.processor.rollup());
                         let build_result = self
@@ -409,6 +495,15 @@ where
                                     );
                                     self.processor
                                         .enqueue_unsafe_payload_insert(*envelope, None, false);
+                                    if self.sequencer_sync_mode.is_el()
+                                        && !self.processor.engine_state().el_sync_finished
+                                    {
+                                        // External unsafe payloads provide reth with the target it
+                                        // needs to begin EL sync. Drain this payload immediately;
+                                        // the normal loop intentionally clears queued derivation
+                                        // work while EL sync is pending.
+                                        self.processor.drain().await?;
+                                    }
                                 } else {
                                     info!(
                                         target: "engine",
@@ -690,6 +785,7 @@ mod tests {
     use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
         Conductor, ConductorError, EngineProcessor, MockConductor, MockEngineDerivationClient,
+        SequencerSyncMode,
     };
 
     fn coordinator(
@@ -712,6 +808,7 @@ mod tests {
             shadow,
             conductor,
             stopped,
+            SequencerSyncMode::Cl,
             unsafe_head_tx,
         )
     }

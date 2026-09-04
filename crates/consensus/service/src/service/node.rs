@@ -312,6 +312,7 @@ impl RollupNode {
                 shadow_sequencer,
                 conductor,
                 self.sequencer_config.sequencer_stopped,
+                self.sequencer_config.sequencer_sync_mode,
                 unsafe_head_tx,
             ))
         };
@@ -614,6 +615,7 @@ impl RollupNode {
                     conductor,
                     engine_client,
                     is_active: self.sequencer_config.sequencer_stopped.not(),
+                    sequencer_sync_mode: self.sequencer_config.sequencer_sync_mode,
                     shadow_blocks_per_cycle: self.sequencer_config.shadow_blocks_per_cycle,
                     shadow_funding: self.sequencer_config.shadow_funding,
                     recovery_mode,

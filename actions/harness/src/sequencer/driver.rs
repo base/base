@@ -11,7 +11,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_derive::StatefulAttributesBuilder;
 use base_consensus_node::{
     Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,
-    SequencerActorError, SequencerAdminQuery, SequencerEngineClient,
+    SequencerActorError, SequencerAdminQuery, SequencerEngineClient, SequencerSyncMode,
 };
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{BlockInfo, L2BlockInfo};
@@ -284,6 +284,7 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
             unsafe_payload_gossip_client: ActionUnsafePayloadGossipClient,
             sealer: None,
             pending_stop: None,
+            sequencer_sync_mode: SequencerSyncMode::Cl,
         };
 
         self.admin_api_tx = Some(admin_api_tx);

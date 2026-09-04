@@ -374,6 +374,11 @@ impl MockEngineClient {
         self.storage.write().await.block_info_by_tag.insert(tag, info);
     }
 
+    /// Sets the `eth_syncing` response.
+    pub async fn set_el_syncing(&self, syncing: bool) {
+        self.storage.write().await.el_syncing = syncing;
+    }
+
     /// Sets the `new_payload_v2` response.
     pub async fn set_new_payload_v2_response(&self, status: PayloadStatus) {
         self.storage.write().await.new_payload_v2_response = Some(status);

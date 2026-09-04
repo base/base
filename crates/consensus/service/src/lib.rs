@@ -51,10 +51,11 @@ pub use actors::{
     RecoveryModeGuard, ResetOrigin, ResetOutcome, ResetReason, ResetRequest, ResetRequestOutcome,
     RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
     SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
-    SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle,
-    ShadowFunding, ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
-    UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
-    UpgradeSignalMetricsActor, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState,
+    SequencerSyncMode, ShadowCycle, ShadowFunding, ShadowReconciliationGate,
+    ShadowReconciliationTask, ShadowSequencingState, UnsafePayloadGossipClient,
+    UnsafePayloadGossipClientError, UnsealedPayloadHandle, UpgradeSignalMetricsActor,
+    UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
 };
 
 mod metrics;

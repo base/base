@@ -22,7 +22,8 @@ use super::{
 use crate::{
     DerivationActor, DerivationActorRequest, DerivationState, EngineActorRequest, EngineProcessor,
     EngineRequestReceiver, NodeActor, NodeMode, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, SequencerEngineRequestCoordinator, ValidatorEngineRequestHandler,
+    QueuedEngineDerivationClient, SequencerEngineRequestCoordinator, SequencerSyncMode,
+    ValidatorEngineRequestHandler,
 };
 
 /// Live actor-system harness assembled by [`HarnessBuilder`].
@@ -278,6 +279,7 @@ impl HarnessBuilder {
                         false,
                         None,
                         false,
+                        SequencerSyncMode::Cl,
                         unsafe_head_tx,
                     )
                     .start(engine_actor_request_rx)

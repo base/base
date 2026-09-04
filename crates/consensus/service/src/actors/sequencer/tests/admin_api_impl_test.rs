@@ -351,6 +351,46 @@ async fn test_start_sequencer_unsafe_head_mismatch(#[values(true, false)] via_ch
     assert!(!actor.is_active);
 }
 
+/// EL sync incomplete: sequencer refuses to activate even when leadership and hash checks pass.
+#[rstest]
+#[tokio::test]
+async fn test_start_sequencer_el_sync_incomplete(#[values(true, false)] via_channel: bool) {
+    let test_hash = B256::from([1u8; 32]);
+    let engine_head = L2BlockInfo {
+        block_info: BlockInfo { hash: test_hash, ..Default::default() },
+        ..Default::default()
+    };
+
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(engine_head));
+    client.expect_el_sync_finished().times(1).return_once(|| Ok(false));
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+    actor.is_active = false;
+    actor.sequencer_sync_mode = crate::SequencerSyncMode::El;
+
+    let result = async {
+        match via_channel {
+            false => actor.start_sequencer(test_hash).await,
+            true => {
+                let (tx, rx) = oneshot::channel();
+                actor
+                    .handle_admin_query(
+                        &mut None,
+                        SequencerAdminQuery::StartSequencer(test_hash, tx),
+                    )
+                    .await;
+                rx.await.unwrap()
+            }
+        }
+    }
+    .await;
+
+    assert!(matches!(result.unwrap_err(), SequencerAdminAPIError::RequestError(_)));
+    assert!(!actor.is_active);
+}
+
 /// Engine client returns an error when fetching the unsafe head: sequencer refuses to activate.
 #[rstest]
 #[tokio::test]

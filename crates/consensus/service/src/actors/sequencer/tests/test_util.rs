@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    SequencerActor,
+    SequencerActor, SequencerSyncMode,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
@@ -41,6 +41,7 @@ pub(in crate::actors::sequencer) fn test_actor() -> SequencerActor<
         conductor: None,
         engine_client,
         is_active: true,
+        sequencer_sync_mode: SequencerSyncMode::Cl,
         shadow_blocks_per_cycle: None,
         shadow_funding: None,
         recovery_mode,

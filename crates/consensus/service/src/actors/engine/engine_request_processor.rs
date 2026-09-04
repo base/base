@@ -545,11 +545,26 @@ where
     /// that `el_sync_finished` can be set when reth responds `Valid`.  Unlike pure
     /// validators, conductor followers must have derivation running so they are ready
     /// for leadership transfer; the zeroed safe/finalized avoids disrupting EL sync.
-    pub async fn bootstrap_conductor_follower(&mut self, head: Option<L2BlockInfo>) {
+    pub async fn bootstrap_conductor_follower(
+        &mut self,
+        head: Option<L2BlockInfo>,
+        at_genesis: bool,
+        el_sync_mode: bool,
+    ) {
         let Some(head) = head else { return };
 
         let follower_update =
             EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
+
+        if at_genesis && el_sync_mode {
+            self.engine.seed_state(follower_update);
+            info!(
+                target: "engine",
+                unsafe_head = %head.block_info.number,
+                "Bootstrap: conductor follower seeded genesis head, awaiting EL sync"
+            );
+            return;
+        }
 
         let el_confirmed = match self
             .engine
@@ -588,8 +603,20 @@ where
         &mut self,
         head: Option<L2BlockInfo>,
         at_genesis: bool,
+        el_sync_mode: bool,
     ) {
         if at_genesis {
+            if el_sync_mode && self.el_reports_syncing().await {
+                if let Some(head) = head {
+                    self.engine.seed_state(EngineSyncStateUpdate {
+                        unsafe_head: Some(head),
+                        ..Default::default()
+                    });
+                }
+                info!(target: "engine", "Bootstrap: EL sync pending at genesis");
+                return;
+            }
+
             match self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await {
                 Ok(_) => {}
                 Err(err) => {
@@ -597,26 +624,15 @@ where
                 }
             }
         } else if let Some(head) = head {
-            let safe = self
-                .client
-                .l2_block_info_by_label(BlockNumberOrTag::Safe)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_default();
-            let finalized = self
-                .client
-                .l2_block_info_by_label(BlockNumberOrTag::Finalized)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_default();
-
-            let probe_update = EngineSyncStateUpdate {
-                unsafe_head: Some(head),
-                local_safe_head: Some(safe),
-                safe_head: Some(safe),
-                finalized_head: Some(finalized),
+            // Preserve CL mode's historical behavior of silently defaulting failed label queries
+            // to zeroed heads because it has no periodic probe. EL mode retries instead.
+            let Some(probe_update) = self.active_sequencer_probe_update(head, !el_sync_mode).await
+            else {
+                self.engine.seed_state(EngineSyncStateUpdate {
+                    unsafe_head: Some(head),
+                    ..Default::default()
+                });
+                return;
             };
 
             let el_confirmed = match self
@@ -636,7 +652,13 @@ where
             };
 
             if !el_confirmed {
-                self.engine.seed_state(probe_update);
+                let seed = if el_sync_mode {
+                    EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() }
+                } else {
+                    // CL mode keeps the pre-EL-sync-mode behavior of publishing reth's labels.
+                    probe_update
+                };
+                self.engine.seed_state(seed);
             }
 
             if el_confirmed {
@@ -654,11 +676,134 @@ where
             }
         }
     }
+
+    async fn el_reports_syncing(&self) -> bool {
+        match self.client.el_syncing().await {
+            Ok(syncing) => syncing,
+            Err(err) => {
+                warn!(target: "engine", error = %err, "EL sync-status query failed, treating EL as syncing");
+                true
+            }
+        }
+    }
+
+    async fn active_sequencer_probe_update(
+        &self,
+        head: L2BlockInfo,
+        use_default_on_error: bool,
+    ) -> Option<EngineSyncStateUpdate> {
+        let safe = match self.client.l2_block_info_by_label(BlockNumberOrTag::Safe).await {
+            Ok(Some(safe)) => safe,
+            Ok(None) if use_default_on_error => L2BlockInfo::default(),
+            Ok(None) => {
+                debug!(target: "engine", "Sequencer EL sync probe skipped: safe head unavailable");
+                return None;
+            }
+            Err(err) if use_default_on_error => {
+                warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query safe head, using default");
+                L2BlockInfo::default()
+            }
+            Err(err) => {
+                warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query safe head");
+                return None;
+            }
+        };
+        let finalized = match self.client.l2_block_info_by_label(BlockNumberOrTag::Finalized).await
+        {
+            Ok(Some(finalized)) => finalized,
+            Ok(None) if use_default_on_error => L2BlockInfo::default(),
+            Ok(None) => {
+                debug!(target: "engine", "Sequencer EL sync probe skipped: finalized head unavailable");
+                return None;
+            }
+            Err(err) if use_default_on_error => {
+                warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query finalized head, using default");
+                L2BlockInfo::default()
+            }
+            Err(err) => {
+                warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query finalized head");
+                return None;
+            }
+        };
+        Some(EngineSyncStateUpdate {
+            unsafe_head: Some(head),
+            local_safe_head: Some(safe),
+            safe_head: Some(safe),
+            finalized_head: Some(finalized),
+        })
+    }
+
+    /// Re-probes the execution layer while a sequencer is waiting for EL sync to complete.
+    pub async fn probe_sequencer_el_sync(&mut self, active_sequencer: bool) {
+        if self.engine.state().el_sync_finished {
+            return;
+        }
+
+        let head = match self.client.l2_block_info_by_label(BlockNumberOrTag::Latest).await {
+            Ok(Some(head)) => head,
+            Ok(None) => {
+                debug!(target: "engine", "Sequencer EL sync probe skipped: latest head unavailable");
+                return;
+            }
+            Err(err) => {
+                warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query latest head");
+                return;
+            }
+        };
+
+        if head.block_info.hash == self.rollup.genesis.l2.hash && self.el_reports_syncing().await {
+            self.engine.seed_state(EngineSyncStateUpdate {
+                unsafe_head: Some(head),
+                ..Default::default()
+            });
+            return;
+        }
+
+        // A genesis EL that reports sync complete still needs an FCU probe to confirm the engine
+        // transition and mark sequencer EL sync finished.
+        let update = if active_sequencer {
+            let Some(update) = self.active_sequencer_probe_update(head, false).await else {
+                self.engine.seed_state(EngineSyncStateUpdate {
+                    unsafe_head: Some(head),
+                    ..Default::default()
+                });
+                return;
+            };
+            update
+        } else {
+            EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() }
+        };
+
+        let confirmed = match self
+            .engine
+            .probe_el_sync(Arc::clone(&self.client), Arc::clone(&self.rollup), update)
+            .await
+        {
+            Ok(confirmed) => confirmed,
+            Err(err) => {
+                warn!(target: "engine", error = ?err, "Sequencer EL sync probe failed");
+                false
+            }
+        };
+
+        if !confirmed {
+            self.engine.seed_state(EngineSyncStateUpdate {
+                unsafe_head: Some(head),
+                ..Default::default()
+            });
+        } else {
+            info!(
+                target: "engine",
+                unsafe_head = %head.block_info.number,
+                "Sequencer EL sync probe confirmed sync complete"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
@@ -693,8 +838,9 @@ mod tests {
     use crate::{
         BuildRequest, EngineActorRequest, EngineClientError, EngineProcessor,
         EngineRequestReceiver, MockConductor, NodeMode, NoopCheckpointWriter, ResetRequest,
-        SequencerEngineRequestCoordinator, SequencerEngineState, ShadowReconciliationGate,
-        ValidatorEngineRequestHandler, actors::engine::client::MockEngineDerivationClient,
+        SequencerEngineRequestCoordinator, SequencerEngineState, SequencerSyncMode,
+        ShadowReconciliationGate, ValidatorEngineRequestHandler,
+        actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Test-only [`ForkchoiceCheckpointReader`] that returns pre-seeded safe/finalized heads.
@@ -986,13 +1132,16 @@ mod tests {
     }
 
     /// Verifies that when a standalone sequencer (no conductor) is beyond genesis and reth
-    /// responds Valid to the bootstrap FCU probe, `el_sync_finished` is set immediately so
-    /// that `schedule_initial_reset` is not permanently blocked by the `ELSyncing` guard.
+    /// responds Valid to the bootstrap FCU probe, `el_sync_finished` is set immediately in both
+    /// sync modes so that the default CL mode preserves its existing startup behavior.
     ///
     /// The active-sequencer path probes reth with its own safe/finalized heads, so
     /// `el_sync_finished` is set to true without waiting for a P2P unsafe block.
+    #[rstest]
     #[tokio::test]
-    async fn bootstrap_beyond_genesis_valid_fcu_sets_el_sync_finished() {
+    async fn bootstrap_beyond_genesis_valid_fcu_sets_el_sync_finished(
+        #[values(SequencerSyncMode::Cl, SequencerSyncMode::El)] sync_mode: SequencerSyncMode,
+    ) {
         let head = test_block_info(100);
         let safe = test_block_info(90);
         let finalized = test_block_info(80);
@@ -1029,9 +1178,15 @@ mod tests {
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle =
-            SequencerEngineRequestCoordinator::new(processor, false, None, false, unsafe_head_tx)
-                .start(req_rx);
+        let handle = SequencerEngineRequestCoordinator::new(
+            processor,
+            false,
+            None,
+            false,
+            sync_mode,
+            unsafe_head_tx,
+        )
+        .start(req_rx);
 
         // probe_el_sync calls state_sender.send_replace with el_sync_finished=true during
         // the bootstrap, before the main loop starts. wait_for resolves as soon as the watch
@@ -1055,8 +1210,11 @@ mod tests {
     /// stays false and a subsequent Reset request is correctly deferred with `ELSyncing`.
     ///
     /// Tests the standalone sequencer path (`unsafe_head_tx` = Some, no conductor).
+    #[rstest]
     #[tokio::test]
-    async fn bootstrap_beyond_genesis_syncing_fcu_defers_reset() {
+    async fn bootstrap_beyond_genesis_syncing_fcu_defers_reset(
+        #[values(SequencerSyncMode::Cl, SequencerSyncMode::El)] sync_mode: SequencerSyncMode,
+    ) {
         let head = test_block_info(100);
         let safe = test_block_info(90);
         let finalized = test_block_info(80);
@@ -1071,10 +1229,10 @@ mod tests {
         );
 
         let mut mock_derivation = MockEngineDerivationClient::new();
-        // In the Syncing path, seed_state advances safe_head (block_90) so
-        // send_derivation_actor_safe_head_if_updated fires after seed.
-        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
-        // notify_sync_completed must NOT be called: el_sync_finished is still false.
+        if !sync_mode.is_el() {
+            // CL mode preserves the historical behavior of publishing reth's safe label.
+            mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        }
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
@@ -1091,9 +1249,15 @@ mod tests {
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle =
-            SequencerEngineRequestCoordinator::new(processor, false, None, false, unsafe_head_tx)
-                .start(req_rx);
+        let handle = SequencerEngineRequestCoordinator::new(
+            processor,
+            false,
+            None,
+            false,
+            sync_mode,
+            unsafe_head_tx,
+        )
+        .start(req_rx);
 
         // In the Syncing path, seed_state sets unsafe_head to reth's reported latest block.
         // Wait for that state to be published before sending the Reset.
@@ -1124,6 +1288,95 @@ mod tests {
         let _ = handle.await;
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn periodic_probe_completes_sequencer_el_sync() {
+        let head = test_block_info(100);
+        let safe = test_block_info(90);
+        let finalized = test_block_info(80);
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_block_info_by_tag(BlockNumberOrTag::Safe, safe)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, finalized)
+                .with_fork_choice_updated_v3_response(syncing_fcu())
+                .build(),
+        );
+
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        mock_derivation.expect_send_new_engine_safe_head().once().returning(|_| Ok(()));
+        mock_derivation.expect_notify_sync_completed().once().returning(|_| Ok(()));
+
+        let (state_tx, state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+        );
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = SequencerEngineRequestCoordinator::new(
+            processor,
+            false,
+            None,
+            false,
+            SequencerSyncMode::El,
+            unsafe_head_tx,
+        )
+        .start(req_rx);
+
+        state_rx
+            .clone()
+            .wait_for(|state| state.sync_state.unsafe_head() == head)
+            .await
+            .expect("bootstrap did not publish the unsafe head");
+        assert!(!state_rx.borrow().el_sync_finished);
+
+        client.storage().write().await.fork_choice_updated_v3_response = Some(valid_fcu());
+        tokio::time::advance(Duration::from_secs(5)).await;
+        state_rx
+            .clone()
+            .wait_for(|state| state.el_sync_finished)
+            .await
+            .expect("periodic probe did not complete EL sync");
+        tokio::task::yield_now().await;
+
+        drop(req_tx);
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn active_sequencer_probe_waits_for_safe_label() {
+        let head = test_block_info(100);
+        let finalized = test_block_info(80);
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, finalized)
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let mut processor = EngineProcessor::new(
+            client,
+            Arc::new(RollupConfig::default()),
+            MockEngineDerivationClient::new(),
+            engine,
+        );
+
+        processor.probe_sequencer_el_sync(true).await;
+
+        assert_eq!(processor.engine_state().sync_state.unsafe_head(), head);
+        assert!(
+            !processor.engine_state().el_sync_finished,
+            "the active probe must wait until reth exposes a safe label"
+        );
+    }
+
     /// Verifies that a conductor follower sequencer (conductor reports `leader() = false`)
     /// probes reth and sets `el_sync_finished` so it is ready for leadership transfer.
     ///
@@ -1134,8 +1387,11 @@ mod tests {
     /// This test catches a regression where conductor followers were incorrectly treated
     /// as pure validators (seed-only, no probe), leaving `el_sync_finished = false`
     /// permanently and breaking conductor leadership transfer.
+    #[rstest]
     #[tokio::test]
-    async fn bootstrap_beyond_genesis_conductor_follower_probes_and_sets_el_sync_finished() {
+    async fn bootstrap_beyond_genesis_conductor_follower_probes_and_sets_el_sync_finished(
+        #[values(SequencerSyncMode::Cl, SequencerSyncMode::El)] sync_mode: SequencerSyncMode,
+    ) {
         let head = test_block_info(100);
 
         // Conductor follower probes with zeroed safe/finalized — needs a Valid FCU response.
@@ -1174,6 +1430,7 @@ mod tests {
             false,
             Some(Arc::new(mock_conductor)),
             false,
+            sync_mode,
             unsafe_head_tx,
         )
         .start(req_rx);
@@ -1249,6 +1506,7 @@ mod tests {
             true,
             Some(Arc::new(mock_conductor)),
             false,
+            SequencerSyncMode::El,
             unsafe_head_tx,
         )
         .start(req_rx);
@@ -1310,8 +1568,14 @@ mod tests {
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
         let processor = EngineProcessor::new(Arc::clone(&client), cfg, mock_derivation, engine);
         let (req_tx, req_rx) = mpsc::channel(8);
-        let mut handler =
-            SequencerEngineRequestCoordinator::new(processor, true, None, false, unsafe_head_tx);
+        let mut handler = SequencerEngineRequestCoordinator::new(
+            processor,
+            true,
+            None,
+            false,
+            SequencerSyncMode::El,
+            unsafe_head_tx,
+        );
         *handler.sequencer_state_mut() = SequencerEngineState::ShadowActive(Box::new(
             ShadowReconciliationGate::new(genesis_l2_info),
         ));
@@ -1400,8 +1664,14 @@ mod tests {
             EngineProcessor::new(client, Arc::new(RollupConfig::default()), derivation, engine);
         let (unsafe_head_tx, _) = watch::channel(private_unsafe);
         let (request_tx, request_rx) = mpsc::channel(8);
-        let mut coordinator =
-            SequencerEngineRequestCoordinator::new(processor, true, None, false, unsafe_head_tx);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            true,
+            None,
+            false,
+            SequencerSyncMode::default(),
+            unsafe_head_tx,
+        );
         *coordinator.sequencer_state_mut() =
             SequencerEngineState::ShadowActive(Box::new(ShadowReconciliationGate::new(anchor)));
         let mut handle = coordinator.start(request_rx);
