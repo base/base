@@ -1,12 +1,14 @@
 //! Generalized lane-aware storage for validated pool transactions.
 
 use std::{
+    cmp::Reverse,
     collections::{BTreeMap, BinaryHeap, HashSet},
     sync::Arc,
+    time::Instant,
 };
 
 use alloy_primitives::{
-    Address, B256, TxHash,
+    Address, B256, TxHash, U256,
     map::{B256Map, HashMap},
 };
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
@@ -17,7 +19,10 @@ use reth_transaction_pool::{
     pool::{AddedTransactionState, QueuedReason},
 };
 
-use crate::{BasePooledTx, BaseTransactionIdentity, BaseTransactionLane, BestTransactionPriority};
+use crate::{
+    BasePooledTx, BaseTransactionIdentity, BaseTransactionLane, BestTransactionPriority,
+    ValidatedFunding,
+};
 
 type StoredTransaction<T> = Arc<ValidPoolTransaction<T>>;
 type DemotedTransaction<T> = (StoredTransaction<T>, SubPool);
@@ -37,6 +42,64 @@ pub enum LaneGap {
         /// Nonce of the fee-blocked ancestor.
         ancestor: u64,
     },
+    /// An earlier transaction does not currently have an execution-funding reservation.
+    BlockedByFunding {
+        /// Nonce of the unfunded ancestor.
+        ancestor: u64,
+    },
+}
+
+/// The reason a transaction does not currently hold an execution-funding reservation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FundingWaitReason {
+    /// Validation did not attach funding metadata.
+    MissingValidatedFunding,
+    /// No current balance is known for the validated payer.
+    UnknownPayerBalance {
+        /// Account responsible for the transaction's maximum cost.
+        payer: Address,
+    },
+    /// The payer's unreserved balance cannot cover this transaction.
+    InsufficientPayerBalance {
+        /// Account responsible for the transaction's maximum cost.
+        payer: Address,
+        /// Complete validated maximum cost.
+        required: U256,
+        /// Current balance not already reserved by incumbents.
+        available: U256,
+    },
+    /// A missing nonce prevents this transaction from extending the reserved lane prefix.
+    LaneGap {
+        /// First nonce required by the reserved prefix.
+        expected: u64,
+        /// First transaction nonce observed after the gap.
+        found: u64,
+    },
+    /// An earlier transaction prevents this transaction from extending the reserved lane prefix.
+    BlockedByLaneFunding {
+        /// Nonce of the first unfunded ancestor.
+        ancestor: u64,
+    },
+}
+
+/// Current execution-funding classification of a stored transaction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransactionFundingState {
+    /// The validated maximum cost is reserved against the payer's known balance.
+    Reserved(ValidatedFunding),
+    /// The transaction is waiting for a reservation.
+    Waiting(FundingWaitReason),
+}
+
+/// A transaction whose funding state changed during a store operation.
+#[derive(Debug)]
+pub struct FundingTransition<T: BasePooledTx> {
+    /// Transaction whose funding state changed.
+    pub transaction: Arc<ValidPoolTransaction<T>>,
+    /// Funding state before the operation, or `None` for a newly inserted transaction.
+    pub previous: Option<TransactionFundingState>,
+    /// Funding state after the operation.
+    pub current: TransactionFundingState,
 }
 
 /// Current executable-state classification of a stored transaction.
@@ -46,6 +109,8 @@ pub enum LaneTransactionState {
     Pending,
     /// The transaction is next in its lane but its fee cap is below the base fee.
     BaseFee,
+    /// The transaction is sequenced and priced for execution but lacks funding.
+    Funding(FundingWaitReason),
     /// The transaction is blocked by a lane dependency.
     Queued(LaneGap),
 }
@@ -78,6 +143,8 @@ pub struct LaneInsertOutcome<T: BasePooledTx> {
     pub replaced: Option<Arc<ValidPoolTransaction<T>>>,
     /// Existing transactions newly promoted to pending by this insertion.
     pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
+    /// Reservation changes caused by this insertion.
+    pub funding_transitions: Vec<FundingTransition<T>>,
 }
 
 /// State changes caused by updating a lane cursor.
@@ -89,6 +156,8 @@ pub struct LaneUpdateOutcome<T: BasePooledTx> {
     pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
     /// Transactions moved out of pending.
     pub demoted: Vec<(Arc<ValidPoolTransaction<T>>, SubPool)>,
+    /// Reservation changes caused by the cursor update.
+    pub funding_transitions: Vec<FundingTransition<T>>,
 }
 
 /// State changes caused by updating the store's base fee.
@@ -107,6 +176,39 @@ pub struct LaneCommitOutcome<T: BasePooledTx> {
     pub removed: Vec<Arc<ValidPoolTransaction<T>>>,
     /// Remaining transactions newly promoted to pending.
     pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
+    /// Reservation changes among transactions retained by the commit.
+    pub funding_transitions: Vec<FundingTransition<T>>,
+}
+
+/// State changes caused by updating or removing a payer's known balance.
+#[derive(Debug)]
+pub struct PayerBalanceUpdateOutcome<T: BasePooledTx> {
+    /// Payer whose balance changed.
+    pub payer: Address,
+    /// Previously known balance.
+    pub previous_balance: Option<U256>,
+    /// Newly known balance, or `None` when the cached balance was removed.
+    pub balance: Option<U256>,
+    /// Transactions newly made executable.
+    pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
+    /// Transactions moved out of the pending subpool.
+    pub demoted: Vec<(Arc<ValidPoolTransaction<T>>, SubPool)>,
+    /// Reservation changes caused by the balance update.
+    pub funding_transitions: Vec<FundingTransition<T>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FundingReservation {
+    payer: Address,
+    max_cost: U256,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct FundingPriority {
+    tip: u128,
+    fee_cap: u128,
+    timestamp: Reverse<Instant>,
+    hash: TxHash,
 }
 
 #[derive(Debug)]
@@ -171,6 +273,9 @@ pub struct LaneTransactionStore<T: BasePooledTx> {
     identities: HashMap<BaseTransactionIdentity, Arc<ValidPoolTransaction<T>>>,
     hashes: B256Map<Arc<ValidPoolTransaction<T>>>,
     senders: HashMap<Address, HashSet<TxHash>>,
+    payer_balances: HashMap<Address, U256>,
+    payer_reserved: HashMap<Address, U256>,
+    funding_reservations: B256Map<FundingReservation>,
     config: PoolConfig,
     base_fee: u64,
 }
@@ -184,6 +289,9 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
             identities: HashMap::default(),
             hashes: B256Map::default(),
             senders: HashMap::default(),
+            payer_balances: HashMap::default(),
+            payer_reserved: HashMap::default(),
+            funding_reservations: B256Map::default(),
             config,
             base_fee,
         }
@@ -230,6 +338,25 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
     /// Returns the cursor for a sequential lane.
     pub fn lane_cursor(&self, lane: &BaseTransactionLane) -> Option<u64> {
         self.lanes.get(lane).map(|lane| lane.cursor)
+    }
+
+    /// Returns the currently known balance for a payer.
+    pub fn payer_balance(&self, payer: Address) -> Option<U256> {
+        self.payer_balances.get(&payer).copied()
+    }
+
+    /// Returns the amount currently reserved against a payer's known balance.
+    pub fn payer_reserved(&self, payer: Address) -> U256 {
+        self.payer_reserved.get(&payer).copied().unwrap_or_default()
+    }
+
+    /// Returns the execution-funding classification for a stored identity.
+    pub fn funding_state(
+        &self,
+        identity: &BaseTransactionIdentity,
+    ) -> Option<TransactionFundingState> {
+        let transaction = self.identities.get(identity)?;
+        Some(self.funding_state_for(transaction))
     }
 
     /// Returns all stored transactions in deterministic hash order.
@@ -287,24 +414,9 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
 
     /// Returns the current classification for an identity.
     pub fn state(&self, identity: &BaseTransactionIdentity) -> Option<LaneTransactionState> {
-        match *identity {
-            BaseTransactionIdentity::Replay { replay_id } => {
-                self.replays.get(&replay_id).map(|transaction| {
-                    if transaction.transaction.max_fee_per_gas() < u128::from(self.base_fee) {
-                        LaneTransactionState::BaseFee
-                    } else {
-                        LaneTransactionState::Pending
-                    }
-                })
-            }
-            BaseTransactionIdentity::Nonce { lane, .. } => {
-                self.lanes.get(&lane)?.classified(self.base_fee).into_iter().find_map(
-                    |(state, transaction)| {
-                        (transaction.transaction.identity() == *identity).then_some(state)
-                    },
-                )
-            }
-        }
+        self.classified_transactions().find_map(|(state, transaction)| {
+            (transaction.transaction.identity() == *identity).then_some(state)
+        })
     }
 
     /// Returns aggregate counts and encoded sizes for each state.
@@ -321,7 +433,7 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
                     size.basefee += 1;
                     size.basefee_size += transaction.encoded_length();
                 }
-                LaneTransactionState::Queued(_) => {
+                LaneTransactionState::Funding(_) | LaneTransactionState::Queued(_) => {
                     size.queued += 1;
                     size.queued_size += transaction.encoded_length();
                 }
@@ -344,7 +456,9 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
     pub fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut transactions = self
             .classified_transactions()
-            .filter(|(state, _)| matches!(state, LaneTransactionState::Queued(_)))
+            .filter(|(state, _)| {
+                matches!(state, LaneTransactionState::Funding(_) | LaneTransactionState::Queued(_))
+            })
             .map(|(_, transaction)| Arc::clone(transaction))
             .collect::<Vec<_>>();
         transactions.sort_unstable_by_key(|transaction| *transaction.hash());
@@ -389,6 +503,7 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         self.ensure_sender_capacity(&transaction, replaced.is_some())?;
 
         let before = self.states_by_hash();
+        let funding_before = self.funding_states_by_hash();
         if let Some(existing) = &replaced {
             self.remove_indexed(existing.transaction.identity());
         }
@@ -408,6 +523,10 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
             }
         }
         self.index(identity, Arc::clone(&transaction));
+        if replaced.is_some() && self.is_funding_head(identity) {
+            self.try_reserve(&transaction);
+        }
+        self.rebalance_funding();
 
         let state = self.state(&identity).expect("inserted transaction is classified");
         let promoted = self
@@ -425,6 +544,7 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
             outcome: AddedTransactionOutcome { hash, state: Self::added_state(state) },
             replaced,
             promoted,
+            funding_transitions: self.funding_transitions(&funding_before),
         })
     }
 
@@ -435,6 +555,7 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         cursor: u64,
     ) -> LaneUpdateOutcome<T> {
         let before = self.states_by_hash();
+        let funding_before = self.funding_states_by_hash();
         let stale = {
             let lane = self.lanes.entry(lane).or_default();
             lane.cursor = cursor;
@@ -444,8 +565,10 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
                 .collect::<Vec<_>>()
         };
         let removed = self.remove_exact(&stale);
+        self.rebalance_funding();
         let (promoted, demoted) = self.pending_changes(&before);
-        LaneUpdateOutcome { removed, promoted, demoted }
+        let funding_transitions = self.funding_transitions(&funding_before);
+        LaneUpdateOutcome { removed, promoted, demoted, funding_transitions }
     }
 
     /// Updates the base fee and reports transactions entering or leaving pending.
@@ -456,9 +579,23 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         LaneFeeUpdateOutcome { promoted, demoted }
     }
 
+    /// Sets a payer's known balance and reconciles reservations deterministically.
+    pub fn set_payer_balance(
+        &mut self,
+        payer: Address,
+        balance: U256,
+    ) -> PayerBalanceUpdateOutcome<T> {
+        self.update_payer_balance(payer, Some(balance))
+    }
+
+    /// Removes a payer's known balance and releases reservations backed by it.
+    pub fn remove_payer_balance(&mut self, payer: Address) -> PayerBalanceUpdateOutcome<T> {
+        self.update_payer_balance(payer, None)
+    }
+
     /// Removes exact hashes without advancing lane cursors.
     pub fn remove_exact(&mut self, hashes: &[TxHash]) -> Vec<Arc<ValidPoolTransaction<T>>> {
-        hashes
+        let removed = hashes
             .iter()
             .filter_map(|hash| {
                 self.hashes.get(hash).map(|transaction| transaction.transaction.identity())
@@ -466,7 +603,9 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
             .collect::<Vec<_>>()
             .into_iter()
             .filter_map(|identity| self.remove_indexed(identity))
-            .collect()
+            .collect();
+        self.rebalance_funding();
+        removed
     }
 
     /// Removes exact hashes and every nonce descendant in the same lane.
@@ -494,7 +633,10 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         }
         identities.sort_unstable_by_key(|identity| Self::identity_sort_key(*identity));
         identities.dedup();
-        identities.into_iter().filter_map(|identity| self.remove_indexed(identity)).collect()
+        let removed =
+            identities.into_iter().filter_map(|identity| self.remove_indexed(identity)).collect();
+        self.rebalance_funding();
+        removed
     }
 
     /// Prunes known mined hashes while preserving executable descendants.
@@ -518,6 +660,7 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
                 removed.push(transaction);
             }
         }
+        self.rebalance_funding();
         removed
     }
 
@@ -527,6 +670,7 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
     /// nonce. Committing a replay identity removes only that replay entry.
     pub fn commit(&mut self, identities: &[BaseTransactionIdentity]) -> LaneCommitOutcome<T> {
         let before = self.states_by_hash();
+        let funding_before = self.funding_states_by_hash();
         let mut removed = Vec::new();
         for identity in identities {
             match *identity {
@@ -555,8 +699,10 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
                 }
             }
         }
+        self.rebalance_funding();
         let (promoted, _) = self.pending_changes(&before);
-        LaneCommitOutcome { removed, promoted }
+        let funding_transitions = self.funding_transitions(&funding_before);
+        LaneCommitOutcome { removed, promoted, funding_transitions }
     }
 
     /// Removes every transaction belonging to a physical sender.
@@ -666,6 +812,7 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         identity: BaseTransactionIdentity,
     ) -> Option<Arc<ValidPoolTransaction<T>>> {
         let transaction = self.identities.remove(&identity)?;
+        self.release_reservation(transaction.hash());
         match identity {
             BaseTransactionIdentity::Nonce { lane, nonce } => {
                 self.lanes.get_mut(&lane)?.transactions.remove(&nonce);
@@ -685,20 +832,355 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
         Some(transaction)
     }
 
+    fn update_payer_balance(
+        &mut self,
+        payer: Address,
+        balance: Option<U256>,
+    ) -> PayerBalanceUpdateOutcome<T> {
+        let before = self.states_by_hash();
+        let funding_before = self.funding_states_by_hash();
+        let previous_balance = match balance {
+            Some(balance) => self.payer_balances.insert(payer, balance),
+            None => self.payer_balances.remove(&payer),
+        };
+        self.rebalance_funding();
+        let (promoted, demoted) = self.pending_changes(&before);
+        let funding_transitions = self.funding_transitions(&funding_before);
+        PayerBalanceUpdateOutcome {
+            payer,
+            previous_balance,
+            balance,
+            promoted,
+            demoted,
+            funding_transitions,
+        }
+    }
+
+    fn funding_state_for(
+        &self,
+        transaction: &Arc<ValidPoolTransaction<T>>,
+    ) -> TransactionFundingState {
+        if self.funding_reservations.contains_key(transaction.hash()) {
+            return TransactionFundingState::Reserved(
+                *transaction
+                    .transaction
+                    .validated_funding()
+                    .expect("reservations require validated funding"),
+            );
+        }
+        TransactionFundingState::Waiting(self.funding_wait_reason(transaction))
+    }
+
+    fn funding_wait_reason(&self, transaction: &Arc<ValidPoolTransaction<T>>) -> FundingWaitReason {
+        if let BaseTransactionIdentity::Nonce { lane, nonce } = transaction.transaction.identity()
+            && let Some(reason) = self.lane_funding_blocker(lane, nonce)
+        {
+            return reason;
+        }
+        let Some(funding) = transaction.transaction.validated_funding() else {
+            return FundingWaitReason::MissingValidatedFunding;
+        };
+        let payer = funding.payer();
+        let Some(balance) = self.payer_balances.get(&payer).copied() else {
+            return FundingWaitReason::UnknownPayerBalance { payer };
+        };
+        FundingWaitReason::InsufficientPayerBalance {
+            payer,
+            required: funding.max_cost(),
+            available: balance.saturating_sub(self.payer_reserved(payer)),
+        }
+    }
+
+    fn lane_funding_blocker(
+        &self,
+        lane: BaseTransactionLane,
+        target_nonce: u64,
+    ) -> Option<FundingWaitReason> {
+        let lane = self.lanes.get(&lane)?;
+        let mut expected = lane.cursor;
+        for (&nonce, transaction) in lane.transactions.range(lane.cursor..) {
+            if nonce != expected {
+                return (target_nonce >= nonce)
+                    .then_some(FundingWaitReason::LaneGap { expected, found: nonce });
+            }
+            if nonce == target_nonce {
+                return None;
+            }
+            if !self.funding_reservations.contains_key(transaction.hash()) {
+                return (target_nonce > nonce)
+                    .then_some(FundingWaitReason::BlockedByLaneFunding { ancestor: nonce });
+            }
+            expected = expected.saturating_add(1);
+        }
+        None
+    }
+
+    fn is_funding_head(&self, identity: BaseTransactionIdentity) -> bool {
+        match identity {
+            BaseTransactionIdentity::Replay { .. } => true,
+            BaseTransactionIdentity::Nonce { lane, nonce } => {
+                self.lane_funding_blocker(lane, nonce).is_none()
+            }
+        }
+    }
+
+    fn try_reserve(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) -> bool {
+        if self.funding_reservations.contains_key(transaction.hash()) {
+            return true;
+        }
+        let Some(funding) = transaction.transaction.validated_funding().copied() else {
+            return false;
+        };
+        let payer = funding.payer();
+        let Some(balance) = self.payer_balances.get(&payer).copied() else {
+            return false;
+        };
+        let reserved = self.payer_reserved(payer);
+        let Some(updated) = reserved.checked_add(funding.max_cost()) else {
+            return false;
+        };
+        if updated > balance {
+            return false;
+        }
+        if !updated.is_zero() {
+            self.payer_reserved.insert(payer, updated);
+        }
+        self.funding_reservations.insert(
+            *transaction.hash(),
+            FundingReservation { payer, max_cost: funding.max_cost() },
+        );
+        true
+    }
+
+    fn release_reservation(&mut self, hash: &TxHash) -> bool {
+        let Some(reservation) = self.funding_reservations.remove(hash) else {
+            return false;
+        };
+        let reserved = self.payer_reserved(reservation.payer);
+        debug_assert!(reserved >= reservation.max_cost);
+        let updated = reserved.saturating_sub(reservation.max_cost);
+        if updated.is_zero() {
+            self.payer_reserved.remove(&reservation.payer);
+        } else {
+            self.payer_reserved.insert(reservation.payer, updated);
+        }
+        true
+    }
+
+    fn release_lane_suffix(&mut self, hash: TxHash) {
+        let Some(transaction) = self.hashes.get(&hash) else { return };
+        let BaseTransactionIdentity::Nonce { lane, nonce } = transaction.transaction.identity()
+        else {
+            self.release_reservation(&hash);
+            return;
+        };
+        let hashes = self
+            .lanes
+            .get(&lane)
+            .into_iter()
+            .flat_map(|stored| stored.transactions.range(nonce..))
+            .map(|(_, transaction)| *transaction.hash())
+            .collect::<Vec<_>>();
+        for hash in hashes {
+            self.release_reservation(&hash);
+        }
+    }
+
+    fn rebalance_funding(&mut self) {
+        let invalid = self
+            .funding_reservations
+            .iter()
+            .filter_map(|(hash, reservation)| {
+                self.hashes
+                    .get(hash)
+                    .and_then(|transaction| transaction.transaction.validated_funding())
+                    .is_none_or(|funding| {
+                        funding.payer() != reservation.payer
+                            || funding.max_cost() != reservation.max_cost
+                    })
+                    .then_some(*hash)
+            })
+            .collect::<Vec<_>>();
+        for hash in invalid {
+            self.release_reservation(&hash);
+        }
+
+        let mut invalid_suffixes = Vec::new();
+        for lane in self.lanes.values() {
+            let mut expected = lane.cursor;
+            let mut blocked = false;
+            for (&nonce, transaction) in lane.transactions.range(lane.cursor..) {
+                if blocked || nonce != expected {
+                    blocked = true;
+                    if self.funding_reservations.contains_key(transaction.hash()) {
+                        invalid_suffixes.push(*transaction.hash());
+                    }
+                    continue;
+                }
+                if !self.funding_reservations.contains_key(transaction.hash()) {
+                    blocked = true;
+                }
+                expected = expected.saturating_add(1);
+            }
+        }
+        for hash in invalid_suffixes {
+            self.release_reservation(&hash);
+        }
+
+        loop {
+            let overdrawn = self
+                .payer_reserved
+                .iter()
+                .filter_map(|(payer, reserved)| {
+                    let balance = self.payer_balances.get(payer).copied().unwrap_or_default();
+                    (*reserved > balance).then_some(*payer)
+                })
+                .min();
+            let Some(payer) = overdrawn else { break };
+            let victim = self
+                .funding_reservations
+                .iter()
+                .filter(|(_, reservation)| reservation.payer == payer)
+                .filter_map(|(hash, _)| self.hashes.get(hash))
+                .min_by_key(|transaction| Self::funding_priority(transaction))
+                .map(|transaction| *transaction.hash())
+                .expect("an overdrawn payer has reservations");
+            self.release_lane_suffix(victim);
+        }
+
+        let mut blocked = HashSet::new();
+        loop {
+            let candidate = self
+                .funding_candidates()
+                .into_iter()
+                .filter(|transaction| !blocked.contains(transaction.hash()))
+                .max_by_key(|transaction| Self::funding_priority(transaction));
+            let Some(transaction) = candidate else { break };
+            if !self.try_reserve(&transaction) {
+                blocked.insert(*transaction.hash());
+            }
+        }
+    }
+
+    fn funding_candidates(&self) -> Vec<StoredTransaction<T>> {
+        let mut candidates = self
+            .replays
+            .values()
+            .filter(|transaction| !self.funding_reservations.contains_key(transaction.hash()))
+            .cloned()
+            .collect::<Vec<_>>();
+        for lane in self.lanes.values() {
+            let mut expected = lane.cursor;
+            for (&nonce, transaction) in lane.transactions.range(lane.cursor..) {
+                if nonce != expected {
+                    break;
+                }
+                if !self.funding_reservations.contains_key(transaction.hash()) {
+                    candidates.push(Arc::clone(transaction));
+                    break;
+                }
+                expected = expected.saturating_add(1);
+            }
+        }
+        candidates
+    }
+
+    fn funding_priority(transaction: &Arc<ValidPoolTransaction<T>>) -> FundingPriority {
+        FundingPriority {
+            tip: transaction.transaction.priority_fee_or_price(),
+            fee_cap: transaction.transaction.max_fee_per_gas(),
+            timestamp: Reverse(transaction.timestamp),
+            hash: *transaction.hash(),
+        }
+    }
+
+    fn funding_states_by_hash(&self) -> B256Map<TransactionFundingState> {
+        self.hashes
+            .iter()
+            .map(|(hash, transaction)| (*hash, self.funding_state_for(transaction)))
+            .collect()
+    }
+
+    fn funding_transitions(
+        &self,
+        before: &B256Map<TransactionFundingState>,
+    ) -> Vec<FundingTransition<T>> {
+        let mut transitions = self
+            .hashes
+            .values()
+            .filter_map(|transaction| {
+                let current = self.funding_state_for(transaction);
+                let previous = before.get(transaction.hash()).copied();
+                (previous != Some(current)).then(|| FundingTransition {
+                    transaction: Arc::clone(transaction),
+                    previous,
+                    current,
+                })
+            })
+            .collect::<Vec<_>>();
+        transitions.sort_unstable_by_key(|transition| *transition.transaction.hash());
+        transitions
+    }
+
     fn classified_transactions(
         &self,
     ) -> impl Iterator<Item = (LaneTransactionState, &Arc<ValidPoolTransaction<T>>)> {
-        self.lanes.values().flat_map(|lane| lane.classified(self.base_fee)).chain(
+        self.lanes.values().flat_map(|lane| self.classified_lane(lane)).chain(
             self.replays.values().map(|transaction| {
                 let state = if transaction.transaction.max_fee_per_gas() < u128::from(self.base_fee)
                 {
                     LaneTransactionState::BaseFee
+                } else if let TransactionFundingState::Waiting(reason) =
+                    self.funding_state_for(transaction)
+                {
+                    LaneTransactionState::Funding(reason)
                 } else {
                     LaneTransactionState::Pending
                 };
                 (state, transaction)
             }),
         )
+    }
+
+    fn classified_lane<'a>(
+        &'a self,
+        lane: &'a NonceLane<T>,
+    ) -> Vec<(LaneTransactionState, &'a Arc<ValidPoolTransaction<T>>)> {
+        let mut expected = lane.cursor;
+        let mut blocker = None;
+        lane.live()
+            .map(|transaction| {
+                let BaseTransactionIdentity::Nonce { nonce, .. } =
+                    transaction.transaction.identity()
+                else {
+                    unreachable!("nonce lanes contain nonce identities")
+                };
+                let state = match blocker {
+                    Some(gap) => LaneTransactionState::Queued(gap),
+                    None if nonce != expected => {
+                        let gap = LaneGap::Missing { expected, found: nonce };
+                        blocker = Some(gap);
+                        LaneTransactionState::Queued(gap)
+                    }
+                    None if transaction.transaction.max_fee_per_gas()
+                        < u128::from(self.base_fee) =>
+                    {
+                        let gap = LaneGap::BlockedByBaseFee { ancestor: nonce };
+                        blocker = Some(gap);
+                        LaneTransactionState::BaseFee
+                    }
+                    None => match self.funding_state_for(transaction) {
+                        TransactionFundingState::Reserved(_) => LaneTransactionState::Pending,
+                        TransactionFundingState::Waiting(reason) => {
+                            blocker = Some(LaneGap::BlockedByFunding { ancestor: nonce });
+                            LaneTransactionState::Funding(reason)
+                        }
+                    },
+                };
+                expected = expected.saturating_add(1);
+                (state, transaction)
+            })
+            .collect()
     }
 
     fn states_by_hash(&self) -> B256Map<LaneTransactionState> {
@@ -723,7 +1205,10 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
                 (Some(LaneTransactionState::Pending), LaneTransactionState::BaseFee) => {
                     demoted.push((Arc::clone(transaction), SubPool::BaseFee));
                 }
-                (Some(LaneTransactionState::Pending), LaneTransactionState::Queued(_)) => {
+                (
+                    Some(LaneTransactionState::Pending),
+                    LaneTransactionState::Funding(_) | LaneTransactionState::Queued(_),
+                ) => {
                     demoted.push((Arc::clone(transaction), SubPool::Queued));
                 }
                 _ => {}
@@ -761,6 +1246,9 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
             (left, right),
             (LaneTransactionState::Pending, LaneTransactionState::Pending)
                 | (LaneTransactionState::BaseFee, LaneTransactionState::BaseFee)
+                | (LaneTransactionState::Funding(_), LaneTransactionState::Funding(_))
+                | (LaneTransactionState::Funding(_), LaneTransactionState::Queued(_))
+                | (LaneTransactionState::Queued(_), LaneTransactionState::Funding(_))
                 | (LaneTransactionState::Queued(_), LaneTransactionState::Queued(_))
         )
     }
@@ -770,6 +1258,9 @@ impl<T: BasePooledTx> LaneTransactionStore<T> {
             LaneTransactionState::Pending => AddedTransactionState::Pending,
             LaneTransactionState::BaseFee => {
                 AddedTransactionState::Queued(QueuedReason::InsufficientBaseFee)
+            }
+            LaneTransactionState::Funding(_) => {
+                AddedTransactionState::Queued(QueuedReason::InsufficientBalance)
             }
             LaneTransactionState::Queued(_) => {
                 AddedTransactionState::Queued(QueuedReason::NonceGap)
@@ -817,7 +1308,10 @@ where
                 let transactions = lane
                     .classified(base_fee)
                     .into_iter()
-                    .take_while(|(state, _)| *state == LaneTransactionState::Pending)
+                    .take_while(|(state, transaction)| {
+                        *state == LaneTransactionState::Pending
+                            && store.funding_reservations.contains_key(transaction.hash())
+                    })
                     .map(|(_, transaction)| Arc::clone(transaction))
                     .collect::<Vec<_>>();
                 (!transactions.is_empty()).then_some(CandidateLane {
@@ -834,6 +1328,7 @@ where
                 .iter()
                 .filter(|(_, transaction)| {
                     transaction.transaction.max_fee_per_gas() >= u128::from(base_fee)
+                        && store.funding_reservations.contains_key(transaction.hash())
                 })
                 .map(|(replay_id, transaction)| CandidateLane {
                     identity: CandidateIdentity::Replay(*replay_id),
@@ -1006,6 +1501,17 @@ mod tests {
         sender_id: u64,
         timestamp: Instant,
     ) -> ValidPoolTransaction<BasePooledTransaction> {
+        validated_with_funding(transaction, sender_id, timestamp, Address::ZERO, U256::ZERO)
+    }
+
+    fn validated_with_funding(
+        transaction: BasePooledTransaction,
+        sender_id: u64,
+        timestamp: Instant,
+        payer: Address,
+        max_cost: U256,
+    ) -> ValidPoolTransaction<BasePooledTransaction> {
+        transaction.set_validated_funding(ValidatedFunding::new(payer, max_cost));
         ValidPoolTransaction {
             transaction_id: TransactionId::new(SenderId::from(sender_id), transaction.nonce()),
             transaction,
@@ -1017,10 +1523,12 @@ mod tests {
     }
 
     fn store(base_fee: u64) -> LaneTransactionStore<BasePooledTransaction> {
-        LaneTransactionStore::new(
+        let mut store = LaneTransactionStore::new(
             PoolConfig { max_account_slots: usize::MAX, ..PoolConfig::default() },
             base_fee,
-        )
+        );
+        store.set_payer_balance(Address::ZERO, U256::ZERO);
+        store
     }
 
     fn hashes(
@@ -1063,6 +1571,41 @@ mod tests {
             }
         }
         assert_eq!(store.senders.values().map(HashSet::len).sum::<usize>(), store.len());
+        let mut reserved = HashMap::<Address, U256>::default();
+        for (hash, reservation) in &store.funding_reservations {
+            let transaction = store.hashes.get(hash).expect("reservation transaction");
+            let funding = transaction.transaction.validated_funding().expect("funding metadata");
+            assert_eq!(reservation.payer, funding.payer());
+            assert_eq!(reservation.max_cost, funding.max_cost());
+            if !reservation.max_cost.is_zero() {
+                *reserved.entry(reservation.payer).or_default() += reservation.max_cost;
+            }
+        }
+        assert_eq!(reserved, store.payer_reserved);
+        for (payer, reserved) in &store.payer_reserved {
+            assert!(*reserved <= store.payer_balance(*payer).expect("known payer balance"));
+        }
+        for transaction in store.pending_transactions() {
+            assert!(matches!(
+                store.funding_state(&transaction.transaction.identity()),
+                Some(TransactionFundingState::Reserved(_))
+            ));
+        }
+        for lane in store.lanes.values() {
+            let mut expected = lane.cursor;
+            let mut funding_blocked = false;
+            for (&nonce, transaction) in lane.transactions.range(lane.cursor..) {
+                if nonce != expected {
+                    funding_blocked = true;
+                }
+                let is_reserved = store.funding_reservations.contains_key(transaction.hash());
+                assert!(!funding_blocked || !is_reserved, "reservations must form a lane prefix");
+                if !is_reserved {
+                    funding_blocked = true;
+                }
+                expected = expected.saturating_add(1);
+            }
+        }
     }
 
     #[test]
@@ -1251,6 +1794,336 @@ mod tests {
             .collect::<Vec<_>>();
         let theirs = reth.best().map(|transaction| *transaction.hash()).collect::<Vec<_>>();
         assert_eq!(ours, theirs);
+    }
+
+    #[test]
+    fn protocol_lane_supports_mixed_self_paid_and_sponsored_funding() {
+        let now = Instant::now();
+        let sponsor_one = Address::repeat_byte(0x11);
+        let sponsor_two = Address::repeat_byte(0x22);
+        let mut store = store(0);
+        store.set_payer_balance(Account::Alice.address(), U256::from(40));
+        store.set_payer_balance(sponsor_one, U256::from(60));
+        store.set_payer_balance(sponsor_two, U256::from(70));
+
+        let transactions = [
+            validated_with_funding(
+                protocol_transaction(Account::Alice, 0, 30, 100),
+                1,
+                now,
+                Account::Alice.address(),
+                U256::from(40),
+            ),
+            validated_with_funding(
+                protocol_transaction(Account::Alice, 1, 20, 100),
+                1,
+                now + Duration::from_millis(1),
+                sponsor_one,
+                U256::from(60),
+            ),
+            validated_with_funding(
+                protocol_transaction(Account::Alice, 2, 10, 100),
+                1,
+                now + Duration::from_millis(2),
+                sponsor_two,
+                U256::from(70),
+            ),
+        ];
+        for transaction in transactions {
+            store.insert_validated(transaction, 0).unwrap();
+        }
+
+        assert_eq!(store.size().pending, 3);
+        assert_eq!(store.payer_reserved(Account::Alice.address()), U256::from(40));
+        assert_eq!(store.payer_reserved(sponsor_one), U256::from(60));
+        assert_eq!(store.payer_reserved(sponsor_two), U256::from(70));
+        assert_consistent(&store);
+    }
+
+    #[test]
+    fn shared_payer_insertion_preserves_incumbent_and_removal_promotes_waiter() {
+        let now = Instant::now();
+        let payer = Address::repeat_byte(0x33);
+        let mut store = store(0);
+        store.set_payer_balance(payer, U256::from(60));
+        let incumbent = validated_with_funding(
+            protocol_transaction(Account::Alice, 0, 10, 100),
+            1,
+            now,
+            payer,
+            U256::from(60),
+        );
+        let incumbent_hash = *incumbent.hash();
+        let waiter = validated_with_funding(
+            protocol_transaction(Account::Bob, 0, 100, 200),
+            2,
+            now + Duration::from_millis(1),
+            payer,
+            U256::from(60),
+        );
+        let waiter_id = waiter.transaction.identity();
+        store.insert_validated(incumbent, 0).unwrap();
+        store.insert_validated(waiter, 0).unwrap();
+
+        assert_eq!(store.size().pending, 1);
+        assert!(matches!(
+            store.funding_state(&waiter_id),
+            Some(TransactionFundingState::Waiting(
+                FundingWaitReason::InsufficientPayerBalance { .. }
+            ))
+        ));
+
+        store.remove_exact(&[incumbent_hash]);
+        assert_eq!(store.state(&waiter_id), Some(LaneTransactionState::Pending));
+        assert_eq!(store.payer_reserved(payer), U256::from(60));
+        assert_consistent(&store);
+    }
+
+    #[test]
+    fn balance_increase_promotes_waiting_heads_by_stable_priority() {
+        let now = Instant::now();
+        let payer = Address::repeat_byte(0x44);
+        let mut store = store(0);
+        store.set_payer_balance(payer, U256::ZERO);
+        let lower = validated_with_funding(
+            protocol_transaction(Account::Alice, 0, 10, 100),
+            1,
+            now,
+            payer,
+            U256::from(50),
+        );
+        let lower_id = lower.transaction.identity();
+        let higher = validated_with_funding(
+            protocol_transaction(Account::Bob, 0, 20, 100),
+            2,
+            now + Duration::from_millis(1),
+            payer,
+            U256::from(50),
+        );
+        let higher_id = higher.transaction.identity();
+        store.insert_validated(lower, 0).unwrap();
+        store.insert_validated(higher, 0).unwrap();
+
+        let outcome = store.set_payer_balance(payer, U256::from(50));
+        assert_eq!(hashes(outcome.promoted), hashes([store.get_by_identity(&higher_id).unwrap()]));
+        assert_eq!(store.state(&higher_id), Some(LaneTransactionState::Pending));
+        assert!(matches!(store.state(&lower_id), Some(LaneTransactionState::Funding(_))));
+        assert_eq!(outcome.funding_transitions.len(), 1);
+        assert_consistent(&store);
+    }
+
+    #[test]
+    fn replacement_cost_increase_atomically_reallocates_lane_funding() {
+        let now = Instant::now();
+        let payer = Address::repeat_byte(0x55);
+        let mut store = store(0);
+        store.set_payer_balance(payer, U256::from(100));
+        let original = validated_with_funding(
+            protocol_transaction(Account::Alice, 0, 10, 100),
+            1,
+            now,
+            payer,
+            U256::from(40),
+        );
+        let original_hash = *original.hash();
+        let descendant = validated_with_funding(
+            protocol_transaction(Account::Alice, 1, 10, 100),
+            1,
+            now + Duration::from_millis(1),
+            payer,
+            U256::from(50),
+        );
+        let descendant_id = descendant.transaction.identity();
+        store.insert_validated(original, 0).unwrap();
+        store.insert_validated(descendant, 0).unwrap();
+
+        let replacement = validated_with_funding(
+            protocol_transaction(Account::Alice, 0, 12, 120),
+            1,
+            now + Duration::from_millis(2),
+            payer,
+            U256::from(80),
+        );
+        let replacement_id = replacement.transaction.identity();
+        let outcome = store.insert_validated(replacement, 0).unwrap();
+
+        assert_eq!(outcome.replaced.map(|transaction| *transaction.hash()), Some(original_hash));
+        assert_eq!(store.state(&replacement_id), Some(LaneTransactionState::Pending));
+        assert!(matches!(
+            store.state(&descendant_id),
+            Some(LaneTransactionState::Funding(FundingWaitReason::InsufficientPayerBalance { .. }))
+        ));
+        assert_eq!(store.payer_reserved(payer), U256::from(80));
+        assert_consistent(&store);
+    }
+
+    #[test]
+    fn balance_decrease_demotes_selected_reservation_and_lane_suffix() {
+        let now = Instant::now();
+        let constrained = Address::repeat_byte(0x66);
+        let suffix_payer = Address::repeat_byte(0x77);
+        let mut store = store(0);
+        store.set_payer_balance(constrained, U256::from(100));
+        store.set_payer_balance(suffix_payer, U256::from(40));
+        let alice_head = validated_with_funding(
+            protocol_transaction(Account::Alice, 0, 5, 100),
+            1,
+            now,
+            constrained,
+            U256::from(60),
+        );
+        let alice_head_id = alice_head.transaction.identity();
+        let alice_suffix = validated_with_funding(
+            protocol_transaction(Account::Alice, 1, 50, 100),
+            1,
+            now + Duration::from_millis(1),
+            suffix_payer,
+            U256::from(40),
+        );
+        let alice_suffix_id = alice_suffix.transaction.identity();
+        let bob_head = validated_with_funding(
+            protocol_transaction(Account::Bob, 0, 20, 100),
+            2,
+            now + Duration::from_millis(2),
+            constrained,
+            U256::from(40),
+        );
+        let bob_head_id = bob_head.transaction.identity();
+        for transaction in [alice_head, alice_suffix, bob_head] {
+            store.insert_validated(transaction, 0).unwrap();
+        }
+
+        let decreased = store.set_payer_balance(constrained, U256::from(40));
+        assert_eq!(decreased.demoted.len(), 2);
+        assert!(matches!(store.state(&alice_head_id), Some(LaneTransactionState::Funding(_))));
+        assert!(matches!(
+            store.state(&alice_suffix_id),
+            Some(LaneTransactionState::Queued(LaneGap::BlockedByFunding { ancestor: 0 }))
+        ));
+        assert_eq!(store.state(&bob_head_id), Some(LaneTransactionState::Pending));
+        assert_eq!(store.payer_reserved(suffix_payer), U256::ZERO);
+
+        let increased = store.set_payer_balance(constrained, U256::from(100));
+        assert_eq!(increased.promoted.len(), 2);
+        assert_eq!(store.size().pending, 3);
+        assert_consistent(&store);
+    }
+
+    #[test]
+    fn replay_reservations_compete_independently() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let payer = Address::repeat_byte(0x88);
+        let mut store = store(0);
+        store.set_payer_balance(payer, U256::ZERO);
+        let lower = validated_with_funding(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 1, 10, 100),
+            1,
+            now,
+            payer,
+            U256::from(30),
+        );
+        let lower_id = lower.transaction.identity();
+        let higher = validated_with_funding(
+            sidecar_transaction(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, 2, 20, 100),
+            1,
+            now + Duration::from_millis(1),
+            payer,
+            U256::from(30),
+        );
+        let higher_id = higher.transaction.identity();
+        store.insert_validated(lower, 0).unwrap();
+        store.insert_validated(higher, 0).unwrap();
+
+        store.set_payer_balance(payer, U256::from(30));
+        assert_eq!(store.state(&higher_id), Some(LaneTransactionState::Pending));
+        assert!(matches!(store.state(&lower_id), Some(LaneTransactionState::Funding(_))));
+        assert_consistent(&store);
+    }
+
+    #[test]
+    fn randomized_funding_operations_preserve_reservation_invariants() {
+        let signer = PrivateKeySigner::random();
+        let now = Instant::now();
+        let payers =
+            [Address::repeat_byte(0x91), Address::repeat_byte(0x92), Address::repeat_byte(0x93)];
+        let mut store = store(0);
+        for payer in payers {
+            store.set_payer_balance(payer, U256::from(150));
+        }
+        let mut seed = 0xa076_1d64_78bd_642f_u64;
+
+        for step in 0..350_u64 {
+            seed = seed.rotate_left(17).wrapping_mul(0xe703_7ed1_a0b4_28db).wrapping_add(step);
+            match seed % 10 {
+                0..=4 => {
+                    let nonce = (seed >> 8) % 6;
+                    let fee = 1_000 + u128::from(step) * 20;
+                    let transaction = match (seed >> 16) % 4 {
+                        0 => protocol_transaction(Account::Alice, nonce, fee / 10, fee),
+                        1 => protocol_transaction(Account::Bob, nonce, fee / 10, fee),
+                        2 => sidecar_transaction(
+                            &signer,
+                            U256::from(((seed >> 24) % 2) + 1),
+                            nonce,
+                            0,
+                            fee / 10,
+                            fee,
+                        ),
+                        _ => sidecar_transaction(
+                            &signer,
+                            Eip8130Constants::NONCE_KEY_MAX,
+                            0,
+                            nonce + 1,
+                            fee / 10,
+                            fee,
+                        ),
+                    };
+                    let payer = payers[((seed >> 32) as usize) % payers.len()];
+                    let cost = U256::from(((seed >> 40) % 90) + 1);
+                    let _ = store.insert_validated(
+                        validated_with_funding(
+                            transaction,
+                            seed & 3,
+                            now + Duration::from_millis(step),
+                            payer,
+                            cost,
+                        ),
+                        0,
+                    );
+                }
+                5 => {
+                    if let Some(transaction) =
+                        store.all_transactions().get((seed as usize) % store.len().max(1))
+                    {
+                        store.remove_exact(&[*transaction.hash()]);
+                    }
+                }
+                6 => {
+                    if let Some(transaction) =
+                        store.all_transactions().get((seed as usize) % store.len().max(1))
+                    {
+                        store.remove_with_descendants(&[*transaction.hash()]);
+                    }
+                }
+                7 => {
+                    let payer = payers[((seed >> 20) as usize) % payers.len()];
+                    store.set_payer_balance(payer, U256::from((seed >> 28) % 220));
+                }
+                8 => {
+                    let payer = payers[((seed >> 20) as usize) % payers.len()];
+                    store.remove_payer_balance(payer);
+                }
+                _ => {
+                    let payer = payers[((seed >> 20) as usize) % payers.len()];
+                    if store.payer_balance(payer).is_none() {
+                        store.set_payer_balance(payer, U256::from((seed >> 28) % 220));
+                    }
+                }
+            }
+
+            assert_consistent(&store);
+        }
     }
 
     #[test]

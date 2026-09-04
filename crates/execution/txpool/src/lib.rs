@@ -24,8 +24,9 @@ pub use limits::{InflightCounters, PayerBook};
 
 mod lane_store;
 pub use lane_store::{
-    BestLaneTransactions, LaneCommitOutcome, LaneFeeUpdateOutcome, LaneGap, LaneInsertOutcome,
-    LaneStoreSize, LaneTransactionState, LaneTransactionStore, LaneUpdateOutcome,
+    BestLaneTransactions, FundingTransition, FundingWaitReason, LaneCommitOutcome,
+    LaneFeeUpdateOutcome, LaneGap, LaneInsertOutcome, LaneStoreSize, LaneTransactionState,
+    LaneTransactionStore, LaneUpdateOutcome, PayerBalanceUpdateOutcome, TransactionFundingState,
 };
 
 mod validator;
