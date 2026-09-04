@@ -116,21 +116,6 @@ strip = "symbols"
 panic = "unwind"
 codegen-units = 16
 
-[profile.maxperf]
-inherits = "release"
-lto = "fat"
-codegen-units = 1
-
-# `release` and `maxperf` both set `strip = "symbols"` (see above), which makes
-# every CPU profiler produce address-only output. This profile keeps production
-# codegen identical (opt-level=3, lto="fat", codegen-units=1, panic="unwind")
-# while restoring symbols. Debug info is not loaded at runtime, so it costs
-# nothing but binary size.
-[profile.maxperf-symbols]
-inherits = "maxperf"
-debug = "line-tables-only"
-strip = "none"
-
 # `release` sets `strip = "symbols"` (see above). This profile keeps `release` codegen identical
 # (opt-level=3, lto="thin", codegen-units=16, panic="unwind") while restoring
 # symbols. Debug info is not loaded at runtime, so it costs nothing but binary

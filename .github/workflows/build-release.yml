@@ -98,11 +98,11 @@ jobs:
           if [ "${{ matrix.target.triple }}" = "aarch64-unknown-linux-gnu" ]; then
             case "${{ matrix.binary }}" in
               base|base-consensus|basectl)
-                cargo rustc --locked --profile maxperf -p "${{ matrix.binary }}" --bin "${{ matrix.binary }}" -- -C link-arg=-lblst
+                cargo rustc --locked --release -p "${{ matrix.binary }}" --bin "${{ matrix.binary }}" -- -C link-arg=-lblst
                 exit
             esac
           fi
-          cargo build --locked --profile maxperf --bin "${{ matrix.binary }}"
+          cargo build --locked --release --bin "${{ matrix.binary }}"
 
       - name: Package binary
         run: |
@@ -110,7 +110,7 @@ jobs:
           TARGET="${{ matrix.target.triple }}"
           BIN="${{ matrix.binary }}"
           ARCHIVE="${BIN}-${TAG}-${TARGET}.tar.gz"
-          tar -czf "$ARCHIVE" -C target/maxperf "$BIN"
+          tar -czf "$ARCHIVE" -C target/release "$BIN"
           if command -v sha256sum &>/dev/null; then
             sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
           else
@@ -208,7 +208,7 @@ jobs:
         env:
           IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}
           TARGET: ${{ matrix.image.target }}
-          PROFILE: maxperf
+          PROFILE: release
         run: |
           depot bake --project "${{ vars.DEPOT_PROJECT_ID }}" -f etc/docker/docker-bake.hcl "$TARGET" \
             --set "${TARGET}.tags=${IMAGE}" \
