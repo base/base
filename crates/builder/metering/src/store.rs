@@ -125,10 +125,6 @@ impl MeteringProvider for MeteringStore {
         self.needed_at.entry_by_ref(tx_hash).or_insert(Instant::now());
     }
 
-    fn skip(&self, tx_hash: &TxHash) {
-        self.needed_at.invalidate(tx_hash);
-    }
-
     fn remove(&self, tx_hashes: &[TxHash]) {
         for hash in tx_hashes {
             self.cache.invalidate(hash);
@@ -266,22 +262,6 @@ mod tests {
         store.run_pending_tasks();
         assert!(!store.needed_at.contains_key(&tx_hash));
         assert!(store.get(&tx_hash).is_none(), "late arrival should not re-enter cache");
-    }
-
-    #[test]
-    fn test_skip_clears_needed_at() {
-        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
-        let tx_hash = TxHash::random();
-
-        store.mark_included_without_metering(&tx_hash);
-        assert!(store.needed_at.contains_key(&tx_hash));
-
-        store.skip(&tx_hash);
-        assert!(!store.needed_at.contains_key(&tx_hash));
-
-        // Data arrives after skip — normal insert, not a late arrival
-        store.insert(tx_hash, create_test_metering(21000));
-        assert!(store.get(&tx_hash).is_some());
     }
 
     #[test]

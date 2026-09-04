@@ -642,7 +642,6 @@ where
             block_data_limit: target_da_for_batch,
             da_footprint_gas_scalar: info.da_footprint_scalar,
             block_da_footprint_limit: target_da_footprint_for_batch,
-            tx_execution_time_limit_us: ctx.builder_config.max_execution_time_per_tx_us,
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
         };
         let diag = ctx
