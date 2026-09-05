@@ -29,6 +29,11 @@ impl SelectedPayload {
     pub(crate) fn uses_runner_recipient(&self) -> bool {
         self.payload.uses_runner_recipient()
     }
+
+    /// Returns true when the runner recipient should be this sender's pair partner.
+    pub(crate) fn uses_pair_recipient(&self) -> bool {
+        self.payload.uses_pair_recipient()
+    }
 }
 
 /// Generates transaction workloads from configured payloads.

@@ -78,6 +78,15 @@ impl LoadRunner {
         )
     )]
     pub fn new(config: LoadConfig) -> Result<Self> {
+        let requested_account_count = config.account_count;
+        let config = Self::with_b20_pair_accounts(config);
+        if config.account_count != requested_account_count {
+            info!(
+                requested = requested_account_count,
+                account_count = config.account_count,
+                "B-20 pairs senders; added one funded partner account"
+            );
+        }
         config.validate()?;
 
         let client = RpcProviders::query(config.query_rpc.clone())?;
@@ -265,7 +274,11 @@ impl LoadRunner {
                 self.b20_run_salt,
             )?;
             let sender_index = type_index % accounts.len();
-            let recipient_index = (sender_index + 1) % accounts.len();
+            let recipient_index = if matches!(tx_config.tx_type, TxType::B20) {
+                Self::b20_partner_index(sender_index, accounts.len())
+            } else {
+                (sender_index + 1) % accounts.len()
+            };
             let account = &accounts[sender_index];
             let from = account.address;
             let to = accounts[recipient_index].address;
@@ -413,6 +426,29 @@ impl LoadRunner {
         self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
     }
 
+    /// Ensures B-20 workloads have even sender count so every alice has a funded bob.
+    fn with_b20_pair_accounts(mut config: LoadConfig) -> LoadConfig {
+        if config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
+            && config.account_count % 2 == 1
+        {
+            config.account_count = config.account_count.saturating_add(1);
+        }
+        config
+    }
+
+    /// Index of the paired B-20 counterparty (`0<->1`, `2<->3`, ...).
+    ///
+    /// Odd leftover senders pair with the previous account so the index stays in range.
+    pub(super) const fn b20_partner_index(sender_index: usize, sender_count: usize) -> usize {
+        if sender_count < 2 {
+            sender_index
+        } else if (sender_index ^ 1) < sender_count {
+            sender_index ^ 1
+        } else {
+            sender_index - 1
+        }
+    }
+
     /// Recovers real-token balances before native ETH drain.
     pub async fn recover_real_tokens(
         &self,
@@ -516,6 +552,47 @@ impl std::fmt::Debug for LoadRunner {
 #[cfg(test)]
 mod tests {
     use super::{LoadConfig, LoadRunner};
+    use crate::runner::{TxConfig, TxType};
+
+    #[test]
+    fn b20_odd_sender_count_adds_funded_partner() {
+        let config = LoadConfig {
+            account_count: 1,
+            transactions: vec![TxConfig { weight: 100, tx_type: TxType::B20 }],
+            ..LoadConfig::devnet()
+        };
+        let runner = LoadRunner::new(config).expect("valid config");
+        assert_eq!(runner.accounts.len(), 2, "single B-20 sender must get a funded bob");
+        assert_eq!(runner.config.account_count, 2);
+    }
+
+    #[test]
+    fn b20_even_sender_count_unchanged() {
+        let config = LoadConfig {
+            account_count: 10,
+            transactions: vec![TxConfig { weight: 100, tx_type: TxType::B20 }],
+            ..LoadConfig::devnet()
+        };
+        let runner = LoadRunner::new(config).expect("valid config");
+        assert_eq!(runner.accounts.len(), 10, "even B-20 sender count must stay unchanged");
+    }
+
+    #[test]
+    fn non_b20_odd_sender_count_unchanged() {
+        let config = LoadConfig { account_count: 1, ..LoadConfig::devnet() };
+        let runner = LoadRunner::new(config).expect("valid config");
+        assert_eq!(runner.accounts.len(), 1, "ETH transfer workloads must not add a partner");
+    }
+
+    #[test]
+    fn b20_partner_index_pairs_neighbors() {
+        assert_eq!(LoadRunner::b20_partner_index(0, 1), 0, "lone sender has no partner");
+        assert_eq!(LoadRunner::b20_partner_index(0, 2), 1, "alice -> bob");
+        assert_eq!(LoadRunner::b20_partner_index(1, 2), 0, "bob -> alice");
+        assert_eq!(LoadRunner::b20_partner_index(2, 4), 3);
+        assert_eq!(LoadRunner::b20_partner_index(3, 4), 2);
+        assert_eq!(LoadRunner::b20_partner_index(2, 3), 1, "odd leftover pairs with previous");
+    }
 
     #[test]
     fn fresh_recipient_seed_mode_randomizes_across_runs_even_below_ratio_one() {

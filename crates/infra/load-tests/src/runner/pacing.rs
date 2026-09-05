@@ -1256,11 +1256,15 @@ impl LoadRunner {
         }
         let mut sender_jobs = Vec::with_capacity(sender_count);
         for (sender_index, from) in config.sender_addresses.iter().copied().enumerate() {
-            let sender_pool_recipient = config.sender_addresses[(sender_index + 1) % sender_count];
+            let ring_recipient = config.sender_addresses[(sender_index + 1) % sender_count];
+            let pair_index = Self::b20_partner_index(sender_index, sender_count);
+            let pair_recipient = config.sender_addresses[pair_index];
             let cohort = config.validity_router.cohort_for_sender(from);
             let mut prepared_txs = Vec::with_capacity(txs_per_sender);
             for _ in 0..txs_per_sender {
                 let payload = generator.select_payload()?;
+                let sender_pool_recipient =
+                    if payload.uses_pair_recipient() { pair_recipient } else { ring_recipient };
                 let to = if payload.uses_runner_recipient() {
                     Self::select_recipient(
                         recipient_keys,

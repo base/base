@@ -243,13 +243,14 @@ The `PrecompileLooper` contract enables batch testing by calling a precompile mu
 B-20 precompile tokens can be load-tested to benchmark the precompile's `transfer` performance.
 Each sender creates and owns its own B-20 token: during setup every sender sends one `createB20`
 factory tx (in parallel) whose privileged init calls grant the sender `BURN_ROLE` and mint its
-supply, during the load phase each sender transfers its own token, and during teardown each sender
-burns its remaining balance. A fresh per-run salt keeps each run's token addresses distinct.
+supply, during the load phase each sender transfers its own token to its pair partner (alice <-> bob;
+odd sender counts get one extra funded account so nobody self-transfers), and during teardown each
+sender burns its remaining balance. A fresh per-run salt keeps each run's token addresses distinct.
 
 Requires Beryl activation (B-20 factory and token features must be active on the target chain).
 
 ```yaml
-# Each sender creates and transfers its own B-20 token per run
+# Each sender creates its own B-20 token and transfers it to its pair partner
 transactions:
   - weight: 100
     type: b20
