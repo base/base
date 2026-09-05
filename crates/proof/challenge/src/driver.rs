@@ -234,6 +234,11 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
     }
 
     /// Validates an invalid proposal and starts its proof lifecycle.
+    #[tracing::instrument(
+        name = "challenger.process_invalid_proposal",
+        skip_all,
+        fields(game = %candidate.factory.proxy, intent = ?intent)
+    )]
     async fn process_invalid_proposal(
         &mut self,
         candidate: CandidateGame,
@@ -308,6 +313,11 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
     }
 
     /// Validates a challenged TEE root and nullifies a fraudulent ZK challenge.
+    #[tracing::instrument(
+        name = "challenger.process_fraudulent_zk_challenge",
+        skip_all,
+        fields(game = %candidate.factory.proxy, challenged_index = challenged_index)
+    )]
     async fn process_fraudulent_zk_challenge(
         &mut self,
         candidate: CandidateGame,

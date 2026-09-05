@@ -22,7 +22,7 @@ use base_prover_service_protocol::{
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
-use tracing::{debug, info, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     ProofSessionHandle, ProofSubmitterRequest, ZkProofRequestKind, ZkProver, ZkProverError,
@@ -131,8 +131,19 @@ where
     Client: Clone + ProverWorkerProvider + 'static,
 {
     /// Generate a proof for a claimed worker job and spawn proof submission.
+    #[tracing::instrument(
+        name = "zk.generate_and_submit",
+        skip_all,
+        fields(session_id, worker_id, start_block, block_count, zk_backend)
+    )]
     pub async fn generate_and_submit(&self, job: ProofJob) -> Result<(), ProofGeneratorError> {
         let request = ProofGeneratorRequest::try_from(job)?;
+        tracing::Span::current()
+            .record("session_id", tracing::field::display(&request.claim.session_id))
+            .record("worker_id", tracing::field::display(&request.claim.worker_id))
+            .record("start_block", request.request.start_block_number())
+            .record("block_count", request.request.number_of_blocks_to_prove())
+            .record("zk_backend", tracing::field::display(request.request.zk_backend()));
 
         info!(
             session_id = %request.claim.session_id,
@@ -302,7 +313,16 @@ where
             }
         };
 
-        self.poll_to_completion(request, handle, session_type, prover, backend_session_id).await
+        let span = info_span!(
+            "zk.prove_stage",
+            session_id = %request.claim.session_id,
+            session_type = ?session_type,
+            zk_backend = %request.request.zk_backend(),
+            backend_session_id = %backend_session_id,
+        );
+        self.poll_to_completion(request, handle, session_type, prover, backend_session_id)
+            .instrument(span)
+            .await
     }
 
     /// Poll a running backend session until it reaches a terminal state.

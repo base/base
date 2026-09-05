@@ -8,7 +8,7 @@ use base_optimism_rpc::{L1BlockRef, SyncStatus};
 use base_proof_primitives::ProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::{
     Metrics,
@@ -135,9 +135,11 @@ impl ProofDispatcher {
         Ok(l1_head)
     }
 
+    #[instrument(name = "proposer.dispatch_request", skip_all, fields(session_id), err(Display))]
     async fn dispatch_request(&self, request: ProofRequest) -> Result<String, ProposerError> {
         let request = ProposerProofAdapter::tee_prove_block_range_request(request);
         let session_id = request.proof.session_id.clone();
+        tracing::Span::current().record("session_id", session_id.as_str());
         match self.proof_requester.prove_block_range(request).await {
             Ok(response) if response.session_id == session_id => Ok(response.session_id),
             Ok(response) => Err(ProposerError::Prover(format!(

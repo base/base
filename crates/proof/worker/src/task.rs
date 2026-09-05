@@ -10,7 +10,7 @@ use tokio::{
     time::{Duration, timeout},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{Instrument, warn};
 
 use crate::{DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS, ProofSubmitter, ProofSubmitterError};
 
@@ -122,12 +122,13 @@ impl ProofTaskController {
     {
         let cancel = self.submission_cancel.clone();
         let submitter = submitter.clone();
+        let span = tracing::Span::current();
 
         let mut submissions = self.submissions.lock().await;
         Self::drain_finished_submissions(&mut submissions);
         submissions.spawn(async move {
             let _permit = permit;
-            submitter.submit_until_delivered_or_cancelled(request, &cancel).await
+            submitter.submit_until_delivered_or_cancelled(request, &cancel).instrument(span).await
         });
     }
 

@@ -624,6 +624,8 @@ services:
     container_name: jaeger
     ports:
       - "3001:16686"  # Jaeger UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
     environment:
       - COLLECTOR_OTLP_ENABLED=true
       - MEMORY_MAX_TRACES=1000

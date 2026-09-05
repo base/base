@@ -25,5 +25,8 @@ use uuid as _;
 mod cli;
 
 fn main() {
+    let _ = reth_node_core::args::DefaultTraceValues::default()
+        .with_service_name("base-prover-nitro-host")
+        .try_init();
     base_cli_utils::run_cli_main!(cli::Cli);
 }

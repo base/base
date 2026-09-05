@@ -261,6 +261,11 @@ where
         }
     }
 
+    #[tracing::instrument(
+        name = "proposer.collect_submit",
+        skip_all,
+        fields(target_block = target_block, session_id = %session_id)
+    )]
     async fn submit_proof(
         &self,
         target_block: u64,

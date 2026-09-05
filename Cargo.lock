@@ -3466,6 +3466,7 @@ dependencies = [
  "base-cli-utils",
  "clap",
  "eyre",
+ "reth-node-core",
 ]
 
 [[package]]
@@ -5589,6 +5590,7 @@ dependencies = [
  "clap",
  "eyre",
  "humantime",
+ "reth-node-core",
  "serde",
  "tokio",
  "url",
@@ -5803,6 +5805,7 @@ dependencies = [
  "base-proposer",
  "clap",
  "eyre",
+ "reth-node-core",
  "tokio",
 ]
 
@@ -5867,6 +5870,7 @@ dependencies = [
  "base-prover-service-client",
  "clap",
  "eyre",
+ "reth-node-core",
  "serde",
  "tokio",
  "tokio-util",
@@ -5903,6 +5907,7 @@ dependencies = [
  "clap",
  "eyre",
  "jsonrpsee",
+ "reth-node-core",
  "serde",
  "tokio",
  "tracing",
@@ -5968,6 +5973,7 @@ dependencies = [
  "base-prover-service-client",
  "clap",
  "eyre",
+ "reth-node-core",
  "serde",
  "tokio",
  "tokio-util",
