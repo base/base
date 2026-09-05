@@ -10,16 +10,12 @@ use tracing::{debug, info, warn};
 
 use crate::{
     driver::RecoveredState, error::ProposerError, proof_target::ProofTarget,
-    proposal_intervals::ProposalIntervals,
+    proposal_intervals::IntervalResolver,
 };
 
 /// Runtime settings for proposer recovery.
 #[derive(Debug, Clone, Copy)]
 pub struct ProofRecoveryConfig {
-    /// Number of L2 blocks between output proposals.
-    pub block_interval: u64,
-    /// Number of L2 blocks between intermediate output roots.
-    pub intermediate_block_interval: u64,
     /// Dispute game type used for proposals.
     pub game_type: u32,
     /// Address used as the parent sentinel when the anchor has no game.
@@ -43,6 +39,7 @@ pub struct ProofRecovery {
     rollup_client: Arc<dyn RollupProvider>,
     anchor_registry: Arc<dyn AnchorStateRegistryClient>,
     factory_client: Arc<dyn DisputeGameFactoryClient>,
+    intervals: Arc<IntervalResolver>,
 }
 
 impl std::fmt::Debug for ProofRecovery {
@@ -58,8 +55,9 @@ impl ProofRecovery {
         rollup_client: Arc<dyn RollupProvider>,
         anchor_registry: Arc<dyn AnchorStateRegistryClient>,
         factory_client: Arc<dyn DisputeGameFactoryClient>,
+        intervals: Arc<IntervalResolver>,
     ) -> Self {
-        Self { config, rollup_client, anchor_registry, factory_client }
+        Self { config, rollup_client, anchor_registry, factory_client, intervals }
     }
 
     /// Attempts to recover onchain state and fetch the finalized head.
@@ -80,13 +78,23 @@ impl ProofRecovery {
         let finalized_head = sync_status.finalized_l2.number;
 
         if let Some(cached) = cache.as_ref() {
+            let block_interval = match self
+                .intervals
+                .for_starting_block(cached.state.l2_block_number)
+                .await
+            {
+                Ok(intervals) => intervals.block_interval,
+                Err(e) => {
+                    warn!(error = %e, "Failed to resolve proposal intervals, retrying next tick");
+                    return None;
+                }
+            };
             let Some(next_proposal_block) =
-                ProofTarget::next_block(cached.state.l2_block_number, self.config.block_interval)
+                ProofTarget::next_block(cached.state.l2_block_number, block_interval)
             else {
                 warn!(
                     cached_block = cached.state.l2_block_number,
-                    block_interval = self.config.block_interval,
-                    "Cannot compute next proposal block, skipping recovery"
+                    block_interval, "Cannot compute next proposal block, skipping recovery"
                 );
                 return None;
             };
@@ -143,8 +151,14 @@ impl ProofRecovery {
         // cursor over games that already existed (game_count unchanged).
         if let Some(cached) = usable_cache
             && cached.game_count == count
-            && ProofTarget::next_block(cached.state.l2_block_number, self.config.block_interval)
-                .is_none_or(|next_block| next_block > finalized_head)
+            && ProofTarget::next_block(
+                cached.state.l2_block_number,
+                self.intervals
+                    .for_starting_block(cached.state.l2_block_number)
+                    .await?
+                    .block_interval,
+            )
+            .is_none_or(|next_block| next_block > finalized_head)
         {
             debug!(game_count = count, "No changes since last recovery, returning cached state");
             return Ok(cached.state);
@@ -191,9 +205,17 @@ impl ProofRecovery {
     ) -> Result<RecoveredState, ProposerError> {
         let mut state = *start;
 
-        while let Some(expected_block) =
-            ProofTarget::next_block(state.l2_block_number, self.config.block_interval)
-        {
+        loop {
+            // Resolved per step so the walk keeps reconstructing games across the
+            // Denim activation block, where the verifier switches cadence.
+            let intervals = self.intervals.for_starting_block(state.l2_block_number).await?;
+
+            let Some(expected_block) =
+                ProofTarget::next_block(state.l2_block_number, intervals.block_interval)
+            else {
+                break;
+            };
+
             if expected_block > finalized_head {
                 debug!(expected_block, finalized_head, "Reached finalized head, ending walk");
                 break;
@@ -201,11 +223,8 @@ impl ProofRecovery {
 
             // Fetch all intermediate roots, including the canonical root for
             // `expected_block`, from the rollup node in one batch.
-            let intermediate_blocks = ProposalIntervals::intermediate_block_numbers(
-                self.config.block_interval,
-                self.config.intermediate_block_interval,
-                state.l2_block_number,
-            )?;
+            let intermediate_blocks =
+                intervals.intermediate_block_numbers(state.l2_block_number)?;
             let rollup = &self.rollup_client;
             let intermediate_roots = match stream::iter(intermediate_blocks.iter().copied())
                 .map(|block_number| async move {
@@ -241,8 +260,8 @@ impl ProofRecovery {
             let key = game_lookup_key(
                 state.l2_block_number,
                 state.parent_address,
-                self.config.block_interval,
-                self.config.intermediate_block_interval,
+                intervals.block_interval,
+                intervals.intermediate_block_interval,
                 &intermediate_roots,
             )
             .map_err(|e| ProposerError::Config(e.to_string()))?;
@@ -295,9 +314,13 @@ mod tests {
     use base_proof_contracts::AnchorRoot;
 
     use super::*;
-    use crate::test_utils::{
-        MockAnchorStateRegistry, MockDisputeGameFactory, MockRollupClient, test_anchor_root,
-        test_sync_status,
+    use crate::{
+        proposal_intervals::Intervals,
+        test_utils::{
+            MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory,
+            MockRollupClient, test_anchor_root, test_fixed_interval_resolver,
+            test_interval_resolver, test_sync_status,
+        },
     };
 
     const TEST_GAME_TYPE: u32 = 42;
@@ -325,18 +348,15 @@ mod tests {
             let block = anchor_block + block_interval * (i as u64 + 1);
             let root_claim = B256::repeat_byte((i as u8) + 1);
             let parent_block = block - block_interval;
-            let intermediate_roots = ProposalIntervals::intermediate_block_numbers(
-                block_interval,
-                intermediate_block_interval,
-                parent_block,
-            )
-            .unwrap()
-            .into_iter()
-            .map(|intermediate_block| match intermediate_block {
-                n if n == block => root_claim,
-                n => B256::repeat_byte(n as u8),
-            })
-            .collect::<Vec<_>>();
+            let intermediate_roots = Intervals { block_interval, intermediate_block_interval }
+                .intermediate_block_numbers(parent_block)
+                .unwrap()
+                .into_iter()
+                .map(|intermediate_block| match intermediate_block {
+                    n if n == block => root_claim,
+                    n => B256::repeat_byte(n as u8),
+                })
+                .collect::<Vec<_>>();
             output_roots.insert(block, root_claim);
             let key = game_lookup_key(
                 parent_block,
@@ -383,10 +403,26 @@ mod tests {
         intermediate_block_interval: u64,
         max_safe_block: Option<u64>,
     ) -> ProofRecovery {
+        recovery_with_intervals(
+            factory,
+            output_roots,
+            anchor_root,
+            anchor_game,
+            test_fixed_interval_resolver(block_interval, intermediate_block_interval),
+            max_safe_block,
+        )
+    }
+
+    fn recovery_with_intervals(
+        factory: MockDisputeGameFactory,
+        output_roots: HashMap<u64, B256>,
+        anchor_root: AnchorRoot,
+        anchor_game: Address,
+        intervals: Arc<IntervalResolver>,
+        max_safe_block: Option<u64>,
+    ) -> ProofRecovery {
         ProofRecovery::new(
             ProofRecoveryConfig {
-                block_interval,
-                intermediate_block_interval,
                 game_type: TEST_GAME_TYPE,
                 anchor_state_registry_address: Address::ZERO,
                 scan_concurrency: 8,
@@ -398,6 +434,7 @@ mod tests {
             }),
             Arc::new(MockAnchorStateRegistry { anchor_root, anchor_game }),
             Arc::new(factory),
+            intervals,
         )
     }
 
@@ -474,6 +511,107 @@ mod tests {
             assert_eq!(state.output_root, B256::repeat_byte((expected_proxy_index + 1) as u8));
             assert!(cache.is_some());
         }
+    }
+
+    /// The verifier switches to the Denim interval pair at
+    /// `DENIM_ACTIVATION_BLOCK`, so the walk has to reconstruct 100-block games
+    /// before it and 200-block games after it. A proposer that resolved the
+    /// interval once at startup would look for a 100-block game at 400, find
+    /// `Address::ZERO`, and re-propose over three games that already exist.
+    #[tokio::test]
+    async fn test_recovery_forward_walk_crosses_denim_activation_block() {
+        const PRE_DENIM_INTERVAL: u64 = 100;
+        const PRE_DENIM_INTERMEDIATE: u64 = 50;
+        const DENIM_ACTIVATION_BLOCK: u64 = 300;
+        const DENIM_INTERVAL: u64 = 200;
+        const DENIM_INTERMEDIATE: u64 = 100;
+
+        // Starting blocks either side of the boundary: 0/100/200 are pre-Denim,
+        // 300/500 are Denim.
+        let mut uuid_games = HashMap::new();
+        let mut output_roots = HashMap::new();
+        let mut parent = Address::ZERO;
+        let mut starting_block = TEST_ANCHOR_BLOCK;
+        for index in 0..5u64 {
+            let intervals = if starting_block < DENIM_ACTIVATION_BLOCK {
+                Intervals {
+                    block_interval: PRE_DENIM_INTERVAL,
+                    intermediate_block_interval: PRE_DENIM_INTERMEDIATE,
+                }
+            } else {
+                Intervals {
+                    block_interval: DENIM_INTERVAL,
+                    intermediate_block_interval: DENIM_INTERMEDIATE,
+                }
+            };
+            let target_block = starting_block + intervals.block_interval;
+            let root_claim = B256::repeat_byte((index + 1) as u8);
+            let intermediate_roots = intervals
+                .intermediate_block_numbers(starting_block)
+                .unwrap()
+                .into_iter()
+                .map(|block| {
+                    if block == target_block { root_claim } else { B256::repeat_byte(block as u8) }
+                })
+                .collect::<Vec<_>>();
+            for (block, root) in intervals
+                .intermediate_block_numbers(starting_block)
+                .unwrap()
+                .into_iter()
+                .zip(intermediate_roots.iter().copied())
+            {
+                output_roots.insert(block, root);
+            }
+
+            let key = game_lookup_key(
+                starting_block,
+                parent,
+                intervals.block_interval,
+                intervals.intermediate_block_interval,
+                &intermediate_roots,
+            )
+            .unwrap();
+            let proxy = proxy_addr(index);
+            uuid_games.insert((TEST_GAME_TYPE, key.root_claim, key.extra_data), proxy);
+
+            parent = proxy;
+            starting_block = target_block;
+        }
+        assert_eq!(starting_block, 700, "fixture should span both interval regimes");
+
+        let fixture = |intervals| {
+            recovery_with_intervals(
+                MockDisputeGameFactory {
+                    game_count: 5,
+                    uuid_games: uuid_games.clone(),
+                    ..Default::default()
+                },
+                output_roots.clone(),
+                test_anchor_root(TEST_ANCHOR_BLOCK),
+                Address::ZERO,
+                intervals,
+                None,
+            )
+        };
+
+        let denim_aware = fixture(test_interval_resolver(MockAggregateVerifier {
+            block_interval: PRE_DENIM_INTERVAL,
+            intermediate_block_interval: PRE_DENIM_INTERMEDIATE,
+            denim_activation_block: DENIM_ACTIVATION_BLOCK,
+            denim_block_interval: DENIM_INTERVAL,
+            denim_intermediate_block_interval: DENIM_INTERMEDIATE,
+            ..Default::default()
+        }));
+        let (state, _) = recover_uncached(&denim_aware).await;
+        assert_eq!(state.l2_block_number, 700, "walk must not stall at the Denim boundary");
+        assert_eq!(state.parent_address, proxy_addr(4));
+
+        // The pre-Denim pair applied everywhere is the bug this guards against:
+        // the walk looks for a 100-block game at 400 and stops at the boundary.
+        let stale =
+            fixture(test_fixed_interval_resolver(PRE_DENIM_INTERVAL, PRE_DENIM_INTERMEDIATE));
+        let (state, _) = recover_uncached(&stale).await;
+        assert_eq!(state.l2_block_number, DENIM_ACTIVATION_BLOCK);
     }
 
     #[tokio::test]
