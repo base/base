@@ -159,13 +159,6 @@ impl BaseChainSpecBuilder {
         self
     }
 
-    /// Enable Zenith at genesis.
-    pub fn zenith_activated(mut self) -> Self {
-        self = self.cobalt_activated();
-        self.inner = self.inner.with_fork(BaseUpgrade::Zenith, ForkCondition::Timestamp(0));
-        self
-    }
-
     /// Tries to build the resulting [`BaseChainSpec`].
     ///
     /// # Panics

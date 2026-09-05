@@ -312,6 +312,7 @@ mod tests {
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
         TransactionEventType,
     };
+    use base_test_utils::build_test_genesis_zenith;
     use httpmock::prelude::*;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
@@ -325,10 +326,10 @@ mod tests {
 
     /// Provider whose latest header sits after Zenith activation, so the fork gate is open.
     fn zenith_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
+        let mut genesis = build_test_genesis_zenith();
+        genesis.config.chain_id = ChainConfig::mainnet().chain_id;
         MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::new(
-                BaseChainSpecBuilder::base_mainnet().zenith_activated().build(),
-            ))
+            .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
             .with_genesis_block()
     }
 

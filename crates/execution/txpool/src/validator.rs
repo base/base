@@ -2170,7 +2170,7 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;
-    use base_test_utils::Account;
+    use base_test_utils::{Account, build_test_genesis_zenith};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_transaction_pool::{
         TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,
@@ -2186,6 +2186,12 @@ mod tests {
         BaseEvmConfig,
     >;
 
+    fn zenith_chain_spec() -> Arc<BaseChainSpec> {
+        let mut genesis = build_test_genesis_zenith();
+        genesis.config.chain_id = test_chain_id();
+        Arc::new(BaseChainSpec::from_genesis(genesis))
+    }
+
     /// Builds a [`BaseTransactionValidator`] configured against the given chain spec with
     /// no accounts seeded.
     fn build_test_validator_with_spec(chain_spec: Arc<BaseChainSpec>) -> TestValidator {
@@ -2200,17 +2206,16 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
-    /// Builds a [`BaseTransactionValidator`] against a Zenith-activated mainnet chain spec with
+    /// Builds a [`BaseTransactionValidator`] against a Zenith-activated test chain spec with
     /// no accounts seeded. EIP-8130 admission is fork-gated on Zenith, so the structural-gate
     /// tests run with Zenith active (at genesis) to exercise the checks past the fork gate.
     fn build_test_validator() -> TestValidator {
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().zenith_activated().build());
-        build_test_validator_with_spec(chain_spec)
+        build_test_validator_with_spec(zenith_chain_spec())
     }
 
     /// Builds a Zenith-activated validator with a custom encoded transaction-size limit.
     fn build_test_validator_with_max_tx_input_bytes(max_tx_input_bytes: usize) -> TestValidator {
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().zenith_activated().build());
+        let chain_spec = zenith_chain_spec();
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -2228,7 +2233,7 @@ mod tests {
         address: Address,
         account: ExtendedAccount,
     ) -> TestValidator {
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().zenith_activated().build());
+        let chain_spec = zenith_chain_spec();
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -3517,7 +3522,7 @@ mod tests {
     #[test]
     fn eip8130_payer_max_cost_includes_l1_and_operator_fees() {
         let chain_config = ChainConfig::mainnet();
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().zenith_activated().build());
+        let chain_spec = zenith_chain_spec();
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
         // Headroom above the worst-case intrinsic: admission pins the sender policy
@@ -3577,7 +3582,7 @@ mod tests {
 
     #[test]
     fn nonce_free_manifest_uses_transaction_validity_window() {
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().zenith_activated().build());
+        let chain_spec = zenith_chain_spec();
         let signer = PrivateKeySigner::random();
         let now = 100;
         // `valid_before` is in milliseconds; at the admission-window edge it is

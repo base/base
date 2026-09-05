@@ -42,6 +42,7 @@ tracing.workspace = true
 base-observability-events = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-execution-chainspec.workspace = true
+base-test-utils.workspace = true
 
 eyre.workspace = true
 tokio.workspace = true

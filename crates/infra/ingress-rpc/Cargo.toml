@@ -16,7 +16,6 @@ alloy-eips.workspace = true
 base-common-evm.workspace = true
 async-trait.workspace = true
 base-bundles.workspace = true
-base-common-chains.workspace = true
 base-observability-events.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-signer-local.workspace = true
@@ -44,6 +43,7 @@ base-common-consensus = { workspace = true, features = ["std", "k256", "serde"] 
 
 [dev-dependencies]
 wiremock.workspace = true
+alloy-signer.workspace = true
 alloy-network.workspace = true
 base-bundles = { workspace = true, features = ["test-utils"] }
 
