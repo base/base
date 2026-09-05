@@ -14,8 +14,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    Metrics, ProofSubmitter, ProofTarget, ProposerError, ProposerProofAdapter, RecoveredState,
-    SubmitAction,
+    IntervalResolver, Metrics, ProofSubmitter, ProofTarget, ProposerError, ProposerProofAdapter,
+    RecoveredState, SubmitAction,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +33,7 @@ where
     proof_requester: Arc<dyn ProofRequesterProvider>,
     rollup_client: Arc<R>,
     submitter: ProofSubmitter,
-    block_interval: u64,
+    intervals: Arc<IntervalResolver>,
     submit_timeout: Option<Duration>,
 }
 
@@ -43,7 +43,6 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProofCollector")
-            .field("block_interval", &self.block_interval)
             .field("submit_timeout", &self.submit_timeout)
             .finish_non_exhaustive()
     }
@@ -58,10 +57,10 @@ where
         proof_requester: Arc<dyn ProofRequesterProvider>,
         rollup_client: Arc<R>,
         submitter: ProofSubmitter,
-        block_interval: u64,
+        intervals: Arc<IntervalResolver>,
         submit_timeout: Option<Duration>,
     ) -> Self {
-        Self { proof_requester, rollup_client, submitter, block_interval, submit_timeout }
+        Self { proof_requester, rollup_client, submitter, intervals, submit_timeout }
     }
 
     /// Runs one collector tick.
@@ -87,9 +86,23 @@ where
                 return false;
             }
 
-            let Some(target_block) =
-                ProofTarget::next_block(current.l2_block_number, self.block_interval)
-            else {
+            // Resolved per target: the interval changes at the Denim activation
+            // block, so the cursor's own starting block picks the cadence.
+            let starting_block = current.l2_block_number;
+            let block_interval = match self.intervals.for_starting_block(starting_block).await {
+                Ok(intervals) => intervals.block_interval,
+                Err(error) => {
+                    Metrics::errors_total(error.metric_label()).increment(1);
+                    warn!(
+                        starting_block,
+                        error = %error,
+                        "Failed to resolve proposal intervals, retrying next tick"
+                    );
+                    return false;
+                }
+            };
+
+            let Some(target_block) = ProofTarget::next_block(starting_block, block_interval) else {
                 return false;
             };
 
@@ -132,7 +145,14 @@ where
             };
 
             match self
-                .submit_proof(target_block, &session_id, proof, current.parent_address, cancel)
+                .submit_proof(
+                    starting_block,
+                    target_block,
+                    &session_id,
+                    proof,
+                    current.parent_address,
+                    cancel,
+                )
                 .await
             {
                 SubmitOutcome::Advanced(next) => *current = next,
@@ -263,6 +283,7 @@ where
 
     async fn submit_proof(
         &self,
+        starting_block: u64,
         target_block: u64,
         session_id: &str,
         proof: TeeProofResult,
@@ -281,6 +302,7 @@ where
                 let submit = self.submitter.submit(
                     &proof.aggregate_proposal,
                     &proof.proposals,
+                    starting_block,
                     target_block,
                     parent_address,
                 );
@@ -443,7 +465,7 @@ mod tests {
         DriverConfig, OutputProposer,
         test_utils::{
             MockAggregateVerifier, MockDisputeGameFactory, MockOutputProposer, MockProofRequester,
-            MockRollupClient, test_proposal, test_sync_status,
+            MockRollupClient, test_fixed_interval_resolver, test_proposal, test_sync_status,
         },
     };
 
@@ -485,24 +507,21 @@ mod tests {
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
     ) -> ProofCollector<MockRollupClient> {
+        let intervals = test_fixed_interval_resolver(BLOCK_INTERVAL, BLOCK_INTERVAL);
         let submitter = ProofSubmitter::new(
             output_proposer,
             Arc::<MockRollupClient>::clone(&rollup_client),
             factory_client,
             verifier_client,
-            &DriverConfig {
-                block_interval: BLOCK_INTERVAL,
-                intermediate_block_interval: BLOCK_INTERVAL,
-                recovery_scan_concurrency: 1,
-                ..Default::default()
-            },
+            Arc::clone(&intervals),
+            &DriverConfig { recovery_scan_concurrency: 1, ..Default::default() },
         );
 
         ProofCollector::new(
             proof_requester,
             rollup_client,
             submitter,
-            BLOCK_INTERVAL,
+            intervals,
             Some(std::time::Duration::from_secs(60)),
         )
     }
@@ -756,6 +775,7 @@ mod tests {
         aggregate_proposal.output_root = stale_root;
         let outcome = collector
             .submit_proof(
+                target_block - BLOCK_INTERVAL,
                 target_block,
                 &session_id,
                 TeeProofResult {

@@ -39,6 +39,7 @@ use crate::{
     proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
     proof_recovery::{ProofRecovery, ProofRecoveryConfig},
     proof_submitter::ProofSubmitter,
+    proposal_intervals::IntervalResolver,
 };
 
 const SUBMIT_TIMEOUT_SLACK: Duration = Duration::from_mins(2);
@@ -126,25 +127,8 @@ impl ProposerService {
                 config.game_type
             ));
         }
-        let (block_interval, intermediate_block_interval, init_bond) = tokio::try_join!(
-            verifier_client.read_block_interval(impl_address),
-            verifier_client.read_intermediate_block_interval(impl_address),
-            factory_client.init_bonds(config.game_type),
-        )?;
-        if block_interval < 2 {
-            return Err(eyre::eyre!(
-                "BLOCK_INTERVAL ({block_interval}) must be at least 2; single-block proposals are not supported"
-            ));
-        }
-        if block_interval % intermediate_block_interval != 0 {
-            return Err(eyre::eyre!(
-                "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
-            ));
-        }
+        let init_bond = factory_client.init_bonds(config.game_type).await?;
         info!(
-            block_interval,
-            intermediate_block_interval,
-            intermediate_roots_count = block_interval / intermediate_block_interval,
             init_bond = %init_bond,
             impl_address = %impl_address,
             game_type = config.game_type,
@@ -153,6 +137,14 @@ impl ProposerService {
 
         let factory_client: Arc<dyn DisputeGameFactoryClient> = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
+
+        // The proposal intervals change at the Denim activation block, so they are
+        // resolved from each game's starting block instead of being read once here.
+        let intervals = Arc::new(IntervalResolver::new(
+            Arc::clone(&verifier_client),
+            Arc::clone(&factory_client),
+            config.game_type,
+        ));
         let submit_timeout =
             config.tx_manager.as_ref().map_or(Some(DEFAULT_SUBMIT_TIMEOUT), |tx| {
                 (!tx.tx_send_timeout.is_zero())
@@ -220,8 +212,6 @@ impl ProposerService {
             poll_interval: config.poll_interval,
             recovery_scan_concurrency: config.recovery_scan_concurrency,
             submit_timeout,
-            block_interval,
-            intermediate_block_interval,
             game_type: config.game_type,
             proposer_address: proposer_address.unwrap_or_default(),
             anchor_state_registry_address: config.anchor_state_registry_addr,
@@ -231,6 +221,7 @@ impl ProposerService {
             Arc::<L1Client>::clone(&l1_client),
             Arc::<L2Client>::clone(&l2_client),
             Arc::<RollupClient>::clone(&rollup_client),
+            Arc::clone(&intervals),
             ProofDispatcherConfig::from(&driver_config),
         );
         let proof_submitter = ProofSubmitter::new(
@@ -238,12 +229,11 @@ impl ProposerService {
             Arc::<RollupClient>::clone(&rollup_client),
             Arc::clone(&factory_client),
             Arc::clone(&verifier_client),
+            Arc::clone(&intervals),
             &driver_config,
         );
         let proof_recovery = Arc::new(ProofRecovery::new(
             ProofRecoveryConfig {
-                block_interval: driver_config.block_interval,
-                intermediate_block_interval: driver_config.intermediate_block_interval,
                 game_type: driver_config.game_type,
                 anchor_state_registry_address: driver_config.anchor_state_registry_address,
                 scan_concurrency: driver_config.recovery_scan_concurrency,
@@ -251,12 +241,13 @@ impl ProposerService {
             Arc::<RollupClient>::clone(&rollup_client),
             anchor_registry,
             factory_client,
+            Arc::clone(&intervals),
         ));
         let proof_collector = ProofCollector::new(
             Arc::clone(&proof_requester),
             Arc::clone(&rollup_client),
             proof_submitter,
-            driver_config.block_interval,
+            Arc::clone(&intervals),
             driver_config.submit_timeout,
         );
         let pipeline =
@@ -290,7 +281,6 @@ impl ProposerService {
         Metrics::record_startup();
         info!(
             poll_interval = ?config.poll_interval,
-            block_interval,
             game_type = config.game_type,
             "Service is ready"
         );

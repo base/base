@@ -341,6 +341,15 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         Ok(5)
     }
 
+    async fn read_intervals_for_starting_block(
+        &self,
+        impl_address: Address,
+        _starting_block: u64,
+    ) -> Result<(u64, u64), ContractError> {
+        self.intermediate_block_interval_reads.lock().unwrap().push(impl_address);
+        Ok((10, 5))
+    }
+
     async fn intermediate_output_roots(
         &self,
         game_address: Address,

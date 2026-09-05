@@ -37,11 +37,11 @@ pub struct DriverConfig {
     /// Optional maximum duration for a single inline submit (validation + L1
     /// transaction). `None` disables the outer pipeline timeout.
     pub submit_timeout: Option<Duration>,
-    /// Number of L2 blocks between proposals (read from `AggregateVerifier` at startup).
-    pub block_interval: u64,
-    /// Number of L2 blocks between intermediate output root checkpoints.
-    pub intermediate_block_interval: u64,
     /// Game type ID for `AggregateVerifier` dispute games.
+    ///
+    /// The proposal intervals are deliberately absent: they change at the Denim
+    /// activation block and are resolved per game by
+    /// [`crate::IntervalResolver`].
     pub game_type: u32,
     /// Address of the proposer that submits proof transactions onchain.
     /// Included in the proof journal so the enclave signs over the correct `msg.sender`.
@@ -57,8 +57,6 @@ impl Default for DriverConfig {
             poll_interval: Duration::from_secs(12),
             recovery_scan_concurrency: 8,
             submit_timeout: None,
-            block_interval: 512,
-            intermediate_block_interval: 512,
             game_type: 0,
             proposer_address: Address::ZERO,
             anchor_state_registry_address: Address::ZERO,
@@ -225,7 +223,7 @@ mod tests {
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
-            test_sync_status,
+            test_fixed_interval_resolver, test_sync_status,
         },
     };
 
@@ -254,16 +252,16 @@ mod tests {
             poll_interval: Duration::from_secs(3600),
             submit_timeout: Some(std::time::Duration::from_secs(60)),
             recovery_scan_concurrency: 8,
-            block_interval: 512,
-            intermediate_block_interval: 512,
             ..Default::default()
         };
+        let intervals = test_fixed_interval_resolver(512, 512);
 
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
             Arc::<MockL1>::clone(&l1),
             l2,
             Arc::<MockRollupClient>::clone(&rollup),
+            Arc::clone(&intervals),
             ProofDispatcherConfig::from(&config),
         );
         let proof_submitter = ProofSubmitter::new(
@@ -271,12 +269,11 @@ mod tests {
             Arc::<MockRollupClient>::clone(&rollup),
             Arc::clone(&factory),
             verifier,
+            Arc::clone(&intervals),
             &config,
         );
         let proof_recovery = Arc::new(ProofRecovery::new(
             ProofRecoveryConfig {
-                block_interval: config.block_interval,
-                intermediate_block_interval: config.intermediate_block_interval,
                 game_type: config.game_type,
                 anchor_state_registry_address: config.anchor_state_registry_address,
                 scan_concurrency: config.recovery_scan_concurrency,
@@ -284,12 +281,13 @@ mod tests {
             Arc::<MockRollupClient>::clone(&rollup),
             anchor_registry,
             factory,
+            Arc::clone(&intervals),
         ));
         let proof_collector = ProofCollector::new(
             Arc::clone(&proof_requester),
             Arc::clone(&rollup),
             proof_submitter,
-            config.block_interval,
+            intervals,
             config.submit_timeout,
         );
         let pipeline =

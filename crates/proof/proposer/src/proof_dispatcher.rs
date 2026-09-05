@@ -16,26 +16,19 @@ use crate::{
     error::ProposerError,
     proof_adapter::ProposerProofAdapter,
     proof_target::ProofTarget,
+    proposal_intervals::{IntervalResolver, Intervals},
 };
 
 /// Static parameters needed to build and dispatch proposer proof requests.
 #[derive(Debug, Clone, Copy)]
 pub struct ProofDispatcherConfig {
-    /// Number of L2 blocks between proof targets.
-    pub block_interval: u64,
     /// Address of the proposer that will submit the proof onchain.
     pub proposer_address: Address,
-    /// Number of L2 blocks between intermediate output root checkpoints.
-    pub intermediate_block_interval: u64,
 }
 
 impl From<&DriverConfig> for ProofDispatcherConfig {
     fn from(config: &DriverConfig) -> Self {
-        Self {
-            block_interval: config.block_interval,
-            proposer_address: config.proposer_address,
-            intermediate_block_interval: config.intermediate_block_interval,
-        }
+        Self { proposer_address: config.proposer_address }
     }
 }
 
@@ -45,6 +38,7 @@ pub struct ProofDispatcher {
     l1_client: Arc<dyn L1Provider>,
     l2_client: Arc<dyn L2Provider>,
     rollup_client: Arc<dyn RollupProvider>,
+    intervals: Arc<IntervalResolver>,
     config: ProofDispatcherConfig,
 }
 
@@ -61,9 +55,10 @@ impl ProofDispatcher {
         l1_client: Arc<dyn L1Provider>,
         l2_client: Arc<dyn L2Provider>,
         rollup_client: Arc<dyn RollupProvider>,
+        intervals: Arc<IntervalResolver>,
         config: ProofDispatcherConfig,
     ) -> Self {
-        Self { proof_requester, l1_client, l2_client, rollup_client, config }
+        Self { proof_requester, l1_client, l2_client, rollup_client, intervals, config }
     }
 
     /// Builds a proof request for `target_block` using `recovered` as the agreed parent.
@@ -72,6 +67,7 @@ impl ProofDispatcher {
         target_block: u64,
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
+        intervals: Intervals,
     ) -> Result<ProofRequest, ProposerError> {
         let (sync_status, agreed_l2_head) = tokio::try_join!(
             self.rollup_client.sync_status(),
@@ -106,7 +102,7 @@ impl ProofDispatcher {
             claimed_l2_output_root,
             claimed_l2_block_number: target_block,
             proposer: self.config.proposer_address,
-            intermediate_block_interval: self.config.intermediate_block_interval,
+            intermediate_block_interval: intervals.intermediate_block_interval,
             l1_head_number: l1_header.number,
             schedule_l2_block_number: None,
         })
@@ -157,9 +153,28 @@ impl ProofDispatcher {
 
     /// Dispatches every target from the current dispatcher cursor up to `finalized_head`.
     pub async fn tick(&self, current: &mut RecoveredState, finalized_head: u64) {
-        while let Some(target_block) =
-            ProofTarget::next_block(current.l2_block_number, self.config.block_interval)
-        {
+        loop {
+            // Resolved per target: the interval changes at the Denim activation
+            // block, so the cursor's own starting block picks the cadence.
+            let intervals = match self.intervals.for_starting_block(current.l2_block_number).await {
+                Ok(intervals) => intervals,
+                Err(error) => {
+                    Metrics::errors_total(error.metric_label()).increment(1);
+                    warn!(
+                        starting_block = current.l2_block_number,
+                        error = %error,
+                        "Failed to resolve proposal intervals, stopping tick at current cursor"
+                    );
+                    break;
+                }
+            };
+
+            let Some(target_block) =
+                ProofTarget::next_block(current.l2_block_number, intervals.block_interval)
+            else {
+                break;
+            };
+
             if target_block > finalized_head {
                 debug!(
                     current_block = current.l2_block_number,
@@ -176,20 +191,22 @@ impl ProofDispatcher {
                 break;
             };
 
-            let request =
-                match self.build_request(target_block, current, claimed_l2_output_root).await {
-                    Ok(request) => request,
-                    Err(error) => {
-                        Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED)
-                            .increment(1);
-                        warn!(
-                            target_block,
-                            error = %error,
-                            "Failed to build proof request, will retry next iteration"
-                        );
-                        break;
-                    }
-                };
+            let request = match self
+                .build_request(target_block, current, claimed_l2_output_root, intervals)
+                .await
+            {
+                Ok(request) => request,
+                Err(error) => {
+                    Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED)
+                        .increment(1);
+                    warn!(
+                        target_block,
+                        error = %error,
+                        "Failed to build proof request, will retry next iteration"
+                    );
+                    break;
+                }
+            };
 
             match self.dispatch_request(request).await {
                 Ok(session_id) => {
@@ -227,8 +244,8 @@ mod tests {
 
     use super::*;
     use crate::test_utils::{
-        MockL1, MockL2, MockProofRequester, MockRollupClient, test_l1_block_ref, test_l1_header,
-        test_l2_block_ref, test_sync_status,
+        MockL1, MockL2, MockProofRequester, MockRollupClient, test_fixed_interval_resolver,
+        test_l1_block_ref, test_l1_header, test_l2_block_ref, test_sync_status,
     };
 
     fn dispatcher(requester: Arc<MockProofRequester>) -> ProofDispatcher {
@@ -242,10 +259,8 @@ mod tests {
                 output_roots: Default::default(),
                 max_safe_block: None,
             }),
-            ProofDispatcherConfig::from(&DriverConfig {
-                block_interval: 100,
-                ..Default::default()
-            }),
+            test_fixed_interval_resolver(100, 100),
+            ProofDispatcherConfig::from(&DriverConfig::default()),
         )
     }
 
@@ -302,11 +317,8 @@ mod tests {
                 output_roots: Default::default(),
                 max_safe_block: None,
             }),
-            ProofDispatcherConfig {
-                block_interval: 100,
-                proposer_address: Address::repeat_byte(0x04),
-                intermediate_block_interval: 300,
-            },
+            test_fixed_interval_resolver(100, 100),
+            ProofDispatcherConfig { proposer_address: Address::repeat_byte(0x04) },
         );
         let recovered = RecoveredState {
             parent_address: Address::ZERO,
@@ -315,7 +327,12 @@ mod tests {
         };
 
         let err = dispatcher
-            .build_request(200, &recovered, B256::repeat_byte(0xaa))
+            .build_request(
+                200,
+                &recovered,
+                B256::repeat_byte(0xaa),
+                Intervals { block_interval: 100, intermediate_block_interval: 100 },
+            )
             .await
             .expect_err("L1 RPC header must match rollup-selected L1 head");
 

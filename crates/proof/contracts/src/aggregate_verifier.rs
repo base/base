@@ -60,6 +60,13 @@ sol! {
         /// Returns the intermediate block interval for intermediate output root checkpoints.
         function INTERMEDIATE_BLOCK_INTERVAL() external view returns (uint256);
 
+        /// Returns the `(blockInterval, intermediateBlockInterval)` pair the verifier
+        /// applies to a game whose range starts at `startingBlock`.
+        function intervalsForStartingBlock(uint256 startingBlock)
+            external
+            view
+            returns (uint256, uint256);
+
         /// Returns the game type.
         function gameType() external view returns (uint32);
 
@@ -238,6 +245,19 @@ pub trait AggregateVerifierClient: Send + Sync {
         &self,
         impl_address: Address,
     ) -> Result<u64, ContractError>;
+
+    /// Reads the `(block_interval, intermediate_block_interval)` pair the
+    /// `AggregateVerifier` implementation applies to a game whose range starts
+    /// at `starting_block`.
+    ///
+    /// Denim switches the verifier to a shorter cadence at a fixed L2 block, so
+    /// the pair is a function of the game's starting block. Callers must resolve
+    /// it per game rather than reading `BLOCK_INTERVAL` once at startup.
+    async fn read_intervals_for_starting_block(
+        &self,
+        impl_address: Address,
+        starting_block: u64,
+    ) -> Result<(u64, u64), ContractError>;
 
     /// Returns the intermediate output roots for the given game.
     ///
@@ -459,6 +479,44 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         }
 
         Ok(interval)
+    }
+
+    async fn read_intervals_for_starting_block(
+        &self,
+        impl_address: Address,
+        starting_block: u64,
+    ) -> Result<(u64, u64), ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
+        let result = contract_call!(
+            contract.intervalsForStartingBlock(U256::from(starting_block)).call(),
+            "intervalsForStartingBlock failed"
+        )?;
+
+        let block_interval: u64 = result
+            ._0
+            .try_into()
+            .map_err(|_| ContractError::validation("BLOCK_INTERVAL overflows u64"))?;
+        let intermediate_block_interval: u64 = result
+            ._1
+            .try_into()
+            .map_err(|_| ContractError::validation("INTERMEDIATE_BLOCK_INTERVAL overflows u64"))?;
+
+        if block_interval < 2 {
+            return Err(ContractError::validation(
+                "BLOCK_INTERVAL must be at least 2 (single-block proposals are not supported)",
+            ));
+        }
+        if intermediate_block_interval == 0 {
+            return Err(ContractError::validation("INTERMEDIATE_BLOCK_INTERVAL cannot be 0"));
+        }
+        if !block_interval.is_multiple_of(intermediate_block_interval) {
+            return Err(ContractError::validation(format!(
+                "BLOCK_INTERVAL ({block_interval}) is not divisible by                  INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
+            )));
+        }
+
+        Ok((block_interval, intermediate_block_interval))
     }
 
     async fn intermediate_output_roots(

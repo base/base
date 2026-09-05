@@ -21,7 +21,7 @@ mod proof_adapter;
 pub use proof_adapter::ProposerProofAdapter;
 
 mod proposal_intervals;
-pub use proposal_intervals::ProposalIntervals;
+pub use proposal_intervals::{IntervalResolver, Intervals};
 
 mod proof_target;
 pub use proof_target::ProofTarget;
