@@ -45,7 +45,7 @@ pub struct IngressService {
     builder_tx: broadcast::Sender<MeteringForwardMessage>,
     bundle_cache: Cache<B256, ()>,
     send_to_builder: bool,
-    cobalt_timestamp: Option<u64>,
+    zenith_timestamp: Option<u64>,
 }
 
 impl std::fmt::Debug for IngressService {
@@ -62,8 +62,8 @@ impl IngressService {
         builder_tx: broadcast::Sender<MeteringForwardMessage>,
         config: Config,
     ) -> Self {
-        let cobalt_timestamp = ChainConfig::by_chain_id(config.chain_id)
-            .and_then(|chain_config| chain_config.cobalt_timestamp);
+        let zenith_timestamp = ChainConfig::by_chain_id(config.chain_id)
+            .and_then(|chain_config| chain_config.zenith_timestamp);
         let simulation_provider = Arc::new(simulation_provider);
 
         // A TTL cache to deduplicate bundles with the same Bundle ID
@@ -77,7 +77,7 @@ impl IngressService {
             builder_tx,
             bundle_cache,
             send_to_builder: config.send_to_builder,
-            cobalt_timestamp,
+            zenith_timestamp,
         }
     }
 }
@@ -205,7 +205,7 @@ impl IngressService {
 
         let envelope = BaseTxEnvelope::decode_2718_exact(data.iter().as_slice())
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
-        self.ensure_cobalt_active_for_eip8130(&envelope).await?;
+        self.ensure_zenith_active_for_eip8130(&envelope).await?;
 
         let transaction = envelope
             .try_into_recovered()
@@ -213,14 +213,14 @@ impl IngressService {
         Ok(transaction)
     }
 
-    async fn ensure_cobalt_active_for_eip8130(&self, envelope: &BaseTxEnvelope) -> RpcResult<()> {
+    async fn ensure_zenith_active_for_eip8130(&self, envelope: &BaseTxEnvelope) -> RpcResult<()> {
         if !envelope.is_eip8130() {
             return Ok(());
         }
-        let Some(cobalt_timestamp) = self.cobalt_timestamp else {
-            return Err(Self::eip8130_pre_cobalt_error());
+        let Some(zenith_timestamp) = self.zenith_timestamp else {
+            return Err(Self::eip8130_pre_zenith_error());
         };
-        if cobalt_timestamp == 0 {
+        if zenith_timestamp == 0 {
             return Ok(());
         }
 
@@ -229,21 +229,21 @@ impl IngressService {
             .get_block(BlockId::Number(BlockNumberOrTag::Latest))
             .await
             .map_err(|error| {
-                warn!(error = %error, "failed to fetch latest block for EIP-8130 Cobalt gate");
+                warn!(error = %error, "failed to fetch latest block for EIP-8130 Zenith gate");
                 EthApiError::InternalEthError.into_rpc_err()
             })?
             .ok_or_else(|| {
-                warn!("latest block missing for EIP-8130 Cobalt gate");
+                warn!("latest block missing for EIP-8130 Zenith gate");
                 EthApiError::InternalEthError.into_rpc_err()
             })?;
 
-        if block.header.timestamp < cobalt_timestamp {
-            return Err(Self::eip8130_pre_cobalt_error());
+        if block.header.timestamp < zenith_timestamp {
+            return Err(Self::eip8130_pre_zenith_error());
         }
         Ok(())
     }
 
-    fn eip8130_pre_cobalt_error() -> jsonrpsee::types::ErrorObjectOwned {
+    fn eip8130_pre_zenith_error() -> jsonrpsee::types::ErrorObjectOwned {
         rpc_err(EthRpcErrorCode::TransactionRejected.code(), EIP8130_REJECTION_MSG, None)
     }
 

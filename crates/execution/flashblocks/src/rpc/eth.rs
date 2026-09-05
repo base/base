@@ -63,7 +63,7 @@ use alloy_rpc_types_eth::Filter;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_network::Base;
 use base_common_rpc_types::{BaseLogResponse, BaseRpcTypes, BaseTransactionRequest};
-use base_execution_eip8130_rpc::{ChannelNonceReader, Eip8130CobaltGate, Eip8130GasEstimator};
+use base_execution_eip8130_rpc::{ChannelNonceReader, Eip8130GasEstimator, Eip8130ZenithGate};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -296,7 +296,7 @@ where
         if let Some(key) = nonce_key
             && key != U256::ZERO
         {
-            Eip8130CobaltGate::check(&self.eth_api, block_id)?;
+            Eip8130ZenithGate::check(&self.eth_api, block_id)?;
             Metrics::rpc_get_transaction_count().increment(1);
             let (resolved_block, overrides) = if block_id.is_pending() {
                 let pending_blocks = self.flashblocks_state.get_pending_blocks();
@@ -494,11 +494,11 @@ where
         let final_overrides = state_overrides_builder.build();
 
         // EIP-8130 request: estimate via a single read-only simulation against
-        // the (pending-merged) block state, gated on the Cobalt fork. The
+        // the (pending-merged) block state, gated on the Zenith fork. The
         // deterministic, signature-independent EIP-8130 gas charge means no
         // gas-limit binary search is needed.
         if transaction.as_eip8130().is_some() {
-            Eip8130CobaltGate::check(&self.eth_api, block_id)?;
+            Eip8130ZenithGate::check(&self.eth_api, block_id)?;
             return Eip8130GasEstimator::estimate(
                 &self.eth_api,
                 transaction,

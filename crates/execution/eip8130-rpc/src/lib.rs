@@ -3,8 +3,8 @@
 mod nonce_reader;
 pub use nonce_reader::ChannelNonceReader;
 
-mod cobalt_gate;
-pub use cobalt_gate::Eip8130CobaltGate;
+mod zenith_gate;
+pub use zenith_gate::Eip8130ZenithGate;
 
 mod estimate;
 pub use estimate::Eip8130GasEstimator;

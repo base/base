@@ -5,7 +5,7 @@
 //! (protocol-nonce delegation for `nonce_key == 0`, `INVALID_PARAMS` for the
 //! `NONCE_KEY_MAX` sentinel, and a real 2D-channel read) and the EIP-8130
 //! `eth_estimateGas` path, by exercising the full RPC stack against a test
-//! harness. Both the channel read and the estimate are gated on the Cobalt fork.
+//! harness. Both the channel read and the estimate are gated on the Zenith fork.
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -17,7 +17,7 @@ use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_node_runner::test_utils::TestHarness;
-use base_test_utils::{Account, build_test_genesis_azul, build_test_genesis_cobalt};
+use base_test_utils::{Account, build_test_genesis_cobalt, build_test_genesis_zenith};
 use serde_json::json;
 
 /// Launches a harness with the standalone EIP-8130 override registered over the
@@ -33,9 +33,9 @@ async fn setup_with(genesis: Genesis) -> eyre::Result<(TestHarness, RpcClient)> 
     Ok((harness, client))
 }
 
-/// Cobalt-activated harness (the common case for EIP-8130 RPC reads).
+/// Zenith-activated harness (the common case for EIP-8130 RPC reads).
 async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
-    setup_with(build_test_genesis_cobalt()).await
+    setup_with(build_test_genesis_zenith()).await
 }
 
 /// A hex (`0x`) authentication blob for an `eth_estimateGas` request: a 20-byte
@@ -92,7 +92,7 @@ async fn nonce_key_reads_seeded_channel_value() -> eyre::Result<()> {
 
     // Seed `nonces[alice][7] = 42` into the Nonce Manager precompile's storage.
     let slot = NonceManagerStorage::nonce_slot(alice, nonce_key).expect("non-protocol nonce key");
-    let mut genesis = build_test_genesis_cobalt();
+    let mut genesis = build_test_genesis_zenith();
     genesis.alloc.insert(
         NonceManagerStorage::ADDRESS,
         GenesisAccount {
@@ -114,18 +114,18 @@ async fn nonce_key_reads_seeded_channel_value() -> eyre::Result<()> {
     Ok(())
 }
 
-/// A non-zero `nonce_key` read before the Cobalt fork must be rejected: EIP-8130
-/// RPC features are gated on Cobalt, mirroring the txpool's pre-activation
+/// A non-zero `nonce_key` read before the Zenith fork must be rejected: EIP-8130
+/// RPC features are gated on Zenith, mirroring the txpool's pre-activation
 /// rejection of EIP-8130 transactions.
 #[tokio::test]
-async fn nonce_key_pre_cobalt_is_rejected() -> eyre::Result<()> {
-    let (_harness, client) = setup_with(build_test_genesis_azul()).await?;
+async fn nonce_key_pre_zenith_is_rejected() -> eyre::Result<()> {
+    let (_harness, client) = setup_with(build_test_genesis_cobalt()).await?;
     let alice: Address = Account::Alice.address();
 
     let result: Result<U256, _> =
         client.request("eth_getTransactionCount", (alice, "latest", U256::from(7u64))).await;
 
-    let err = result.expect_err("pre-Cobalt nonce_key read must error");
+    let err = result.expect_err("pre-Zenith nonce_key read must error");
     let err_str = err.to_string();
     assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
     Ok(())
@@ -256,7 +256,7 @@ async fn estimate_gas_for_eip8130_request_with_reverting_call_fails() -> eyre::R
     let alice: Address = Account::Alice.address();
     // `PUSH1 0x00, PUSH1 0x00, REVERT` — always reverts with empty data.
     let revert_addr = address!("0x00000000000000000000000000000000000000fd");
-    let mut genesis = build_test_genesis_cobalt();
+    let mut genesis = build_test_genesis_zenith();
     genesis.alloc.insert(
         revert_addr,
         GenesisAccount { code: Some(bytes!("60006000fd")), ..Default::default() },
@@ -305,17 +305,17 @@ async fn estimate_gas_for_plain_request_delegates() -> eyre::Result<()> {
     Ok(())
 }
 
-/// An EIP-8130 `eth_estimateGas` request before the Cobalt fork must be
+/// An EIP-8130 `eth_estimateGas` request before the Zenith fork must be
 /// rejected, matching the `nonce_key` read gate.
 #[tokio::test]
-async fn estimate_gas_for_eip8130_request_pre_cobalt_is_rejected() -> eyre::Result<()> {
-    let (_harness, client) = setup_with(build_test_genesis_azul()).await?;
+async fn estimate_gas_for_eip8130_request_pre_zenith_is_rejected() -> eyre::Result<()> {
+    let (_harness, client) = setup_with(build_test_genesis_cobalt()).await?;
     let alice: Address = Account::Alice.address();
 
     let request = json!({ "from": alice, "calls": [] });
     let result: Result<U256, _> = client.request("eth_estimateGas", (request, "latest")).await;
 
-    let err = result.expect_err("pre-Cobalt EIP-8130 estimate must error");
+    let err = result.expect_err("pre-Zenith EIP-8130 estimate must error");
     let err_str = err.to_string();
     assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
     Ok(())

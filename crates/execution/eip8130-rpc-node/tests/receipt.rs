@@ -15,7 +15,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
 use base_protocol::BaseTimeUpdateTx;
-use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis_cobalt};
+use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis_zenith};
 
 /// EIP-8130 transaction type byte.
 const EIP8130_TX_TYPE: u8 = 0x79;
@@ -32,7 +32,7 @@ fn base_time_deposit() -> Bytes {
 /// successful type `0x79` receipt.
 #[tokio::test]
 async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_cobalt()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_zenith()));
     let harness = TestHarness::builder()
         .with_chain_spec(chain_spec)
         .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
@@ -108,7 +108,7 @@ async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
 /// its receipt reports `phaseStatuses == [0x01]`.
 #[tokio::test]
 async fn eip8130_receipt_reports_phase_statuses() -> eyre::Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_cobalt()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_zenith()));
     let harness = TestHarness::builder()
         .with_chain_spec(chain_spec)
         .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
@@ -173,7 +173,7 @@ async fn eip8130_receipt_reports_phase_statuses() -> eyre::Result<()> {
 /// locking the `tx.payer.unwrap_or(sender)` precedence at RPC.
 #[tokio::test]
 async fn eip8130_sponsored_receipt_reports_declared_payer() -> eyre::Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_cobalt()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_zenith()));
     let harness = TestHarness::builder()
         .with_chain_spec(chain_spec)
         .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
@@ -247,7 +247,7 @@ async fn two_eip8130_transactions_in_one_block_attribute_phase_statuses() -> eyr
     // `PUSH1 0x00, PUSH1 0x00, REVERT` — a contract that always reverts with
     // empty data, seeded into genesis so a phase can be made to revert.
     let revert_addr = address!("0x00000000000000000000000000000000000000fd");
-    let mut genesis = build_test_genesis_cobalt();
+    let mut genesis = build_test_genesis_zenith();
     genesis.alloc.insert(
         revert_addr,
         GenesisAccount { code: Some(bytes!("60006000fd")), ..Default::default() },

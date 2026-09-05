@@ -34,6 +34,7 @@ const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
 const COBALT_ACTIVATION_BLOCK: u64 = 0;
 const DENIM_ACTIVATION_BLOCK: u64 = 1;
+const ZENITH_ACTIVATION_BLOCK: u64 = 1;
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const PENDING_TX_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -59,6 +60,7 @@ async fn start_validity_system() -> Result<SystemTestStack> {
         .with_l2_chain_id(L2_CHAIN_ID)
         .with_base_cobalt_activation_block(COBALT_ACTIVATION_BLOCK)
         .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
+        .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK)
         .with_tx_forwarding(
             TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
         )
@@ -434,7 +436,7 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
     Ok(())
 }
 
-/// Verifies a Cobalt EIP-8130 transaction can carry validity predicates through forwarding and be
+/// Verifies a Zenith EIP-8130 transaction can carry validity predicates through forwarding and be
 /// included by the native Denim payload builder.
 #[tokio::test]
 async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Result<()> {

@@ -884,7 +884,7 @@ where
     /// This behaves the same as [`EthTransactionValidator::validate_one_with_state`], but in
     /// addition applies Base-specific validity checks:
     /// - ensures tx is not eip4844
-    /// - for eip8130 (account abstraction): rejects submissions before the Cobalt upgrade is
+    /// - for eip8130 (account abstraction): rejects submissions before the Zenith upgrade is
     ///   active, runs structural checks, then runs EIP-8130-specific stateful validation for
     ///   actor authorization, nonce/replay state, intrinsic gas, create/delegation safety, and
     ///   payer funding instead of using the inner Eth validator
@@ -1674,7 +1674,7 @@ where
 
     /// Runs the mempool admission checks that apply to EIP-8130 (account
     /// abstraction) transactions without requiring authenticator dispatch or account
-    /// state lookups. Enforces the Cobalt fork gate and the structural
+    /// state lookups. Enforces the Zenith fork gate and the structural
     /// invariants listed in EIP-8130 § Validation and § Nonce-Free Mode.
     fn validate_eip8130_structural(
         &self,
@@ -1694,8 +1694,8 @@ where
         // the atomic concurrently.
         let now = self.block_timestamp();
         // Fork gate: EIP-8130 (account abstraction) transactions are only
-        // admissible to the pool once the Cobalt upgrade is active.
-        if !self.chain_spec().is_cobalt_active_at_timestamp(now) {
+        // admissible to the pool once the Zenith upgrade is active.
+        if !self.chain_spec().is_zenith_active_at_timestamp(now) {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
@@ -2200,17 +2200,17 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
-    /// Builds a [`BaseTransactionValidator`] against a Cobalt-activated mainnet chain spec with
-    /// no accounts seeded. EIP-8130 admission is fork-gated on Cobalt, so the structural-gate
-    /// tests run with Cobalt active (at genesis) to exercise the checks past the fork gate.
+    /// Builds a [`BaseTransactionValidator`] against a Zenith-activated mainnet chain spec with
+    /// no accounts seeded. EIP-8130 admission is fork-gated on Zenith, so the structural-gate
+    /// tests run with Zenith active (at genesis) to exercise the checks past the fork gate.
     fn build_test_validator() -> TestValidator {
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().zenith_activated().build());
         build_test_validator_with_spec(chain_spec)
     }
 
-    /// Builds a Cobalt-activated validator with a custom encoded transaction-size limit.
+    /// Builds a Zenith-activated validator with a custom encoded transaction-size limit.
     fn build_test_validator_with_max_tx_input_bytes(max_tx_input_bytes: usize) -> TestValidator {
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().zenith_activated().build());
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -2223,12 +2223,12 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
-    /// Builds a Cobalt-activated validator with one canonical account seeded.
+    /// Builds a Zenith-activated validator with one canonical account seeded.
     fn build_test_validator_with_account(
         address: Address,
         account: ExtendedAccount,
     ) -> TestValidator {
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().zenith_activated().build());
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -2583,10 +2583,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_before_cobalt_activation() {
-        // Mainnet leaves Cobalt unscheduled, so the fork gate rejects an otherwise
-        // structurally valid EIP-8130 transaction regardless of its contents.
-        let validator = build_test_validator_with_spec(Arc::new(BaseChainSpec::mainnet()));
+    fn rejects_eip8130_before_zenith_activation() {
+        // Cobalt alone does not open the EIP-8130 gate.
+        let chain_spec = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
+        let validator = build_test_validator_with_spec(Arc::new(chain_spec));
         let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
         assert_unsupported(validator.validate_eip8130_structural(&signed));
     }
@@ -3517,7 +3517,7 @@ mod tests {
     #[test]
     fn eip8130_payer_max_cost_includes_l1_and_operator_fees() {
         let chain_config = ChainConfig::mainnet();
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().zenith_activated().build());
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
         // Headroom above the worst-case intrinsic: admission pins the sender policy
@@ -3577,7 +3577,7 @@ mod tests {
 
     #[test]
     fn nonce_free_manifest_uses_transaction_validity_window() {
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().zenith_activated().build());
         let signer = PrivateKeySigner::random();
         let now = 100;
         // `valid_before` is in milliseconds; at the admission-window edge it is

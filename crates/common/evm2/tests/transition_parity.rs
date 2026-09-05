@@ -1,13 +1,12 @@
 //! Differential parity harness for the transition-block hooks.
 //!
-//! Runs each Base transition hook (Canyon create2-deployer, Cobalt EIP-8130 system-account stub,
+//! Runs each Base transition hook (Canyon create2-deployer, Zenith EIP-8130 system-account stub,
 //! Cobalt `BaseTime` predeploy) through the `base-common-evm2` executor and, on an equivalent
 //! database, through the revm-based `base-common-evm` reference function, asserting the two engines
 //! install byte-identical state (the affected account code hashes and, for `BaseTime`, the linked
 //! EIP-1967 implementation slot).
 
 use alloy_primitives::{Address, B256, Bytes, U256, address, uint};
-use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
 use base_common_consensus::Predeploys;
 use base_common_evm::{
     BaseTime as RevmBaseTime, ensure_create2_deployer, ensure_eip8130_system_accounts,
@@ -15,7 +14,7 @@ use base_common_evm::{
 use base_common_evm2::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmTypes, BaseSpecId, BaseTime,
 };
-use base_common_genesis::{BaseUpgrade, UpgradeConfig};
+use base_common_genesis::{BaseUpgrade, RollupConfig, UpgradeConfig};
 use evm2::{Evm, Precompiles, env::BlockEnv, evm::InMemoryDB};
 use revm::{
     Database as _,
@@ -43,16 +42,11 @@ fn evm2_schedule(target: BaseUpgrade) -> UpgradeConfig {
     config
 }
 
-/// The revm fork schedule matching [`evm2_schedule`]: `target` at `ACTIVATION_TS`, others as devnet
-/// (activated at 0), so both engines agree on when `target` activates.
-fn revm_schedule(target: BaseUpgrade) -> ChainUpgrades {
-    ChainUpgrades::new(BaseUpgrade::devnet().into_iter().map(move |(fork, cond)| {
-        if fork == target {
-            (fork, alloy_hardforks::ForkCondition::Timestamp(ACTIVATION_TS))
-        } else {
-            (fork, cond)
-        }
-    }))
+/// The revm fork schedule matching [`evm2_schedule`]: `target` at `ACTIVATION_TS`.
+fn revm_schedule(target: BaseUpgrade) -> RollupConfig {
+    let mut config = RollupConfig::default();
+    config.set_upgrade_activation_timestamp(target, ACTIVATION_TS);
+    config
 }
 
 /// Builds an evm2 executor at `upgrade` with the block timestamp at `ACTIVATION_TS` over `db`.
@@ -110,18 +104,18 @@ fn canyon_create2_deployer_matches_revm() {
 }
 
 #[test]
-fn cobalt_system_account_stub_matches_revm() {
-    // evm2 (Canyon active-at-0 so it does not re-fire; both Cobalt hooks do).
-    let mut schedule = evm2_schedule(BaseUpgrade::Cobalt);
+fn zenith_system_account_stub_matches_revm() {
+    // evm2 (Canyon active-at-0 so it does not re-fire; only Zenith does).
+    let mut schedule = evm2_schedule(BaseUpgrade::Zenith);
     schedule.set_activation_timestamp(BaseUpgrade::Canyon, 0);
-    let mut executor = evm2_executor(BaseUpgrade::Cobalt, evm2_db_with_valid_base_time_proxy());
+    let mut executor = evm2_executor(BaseUpgrade::Zenith, evm2_db_with_valid_base_time_proxy());
     executor.apply_transition_hooks(&schedule).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
     let evm2_hash = evm2_code_hash(&mut evm, NONCE_MANAGER);
 
     // revm reference.
     let mut db = RevmDb::default();
-    ensure_eip8130_system_accounts(revm_schedule(BaseUpgrade::Cobalt), ACTIVATION_TS, &mut db)
+    ensure_eip8130_system_accounts(revm_schedule(BaseUpgrade::Zenith), ACTIVATION_TS, &mut db)
         .expect("reference applies");
     let revm_hash = revm_code_hash(&mut db, NONCE_MANAGER);
 

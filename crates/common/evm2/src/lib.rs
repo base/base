@@ -6,8 +6,8 @@ pub use spec::BaseSpecId;
 mod canyon;
 pub use canyon::Canyon;
 
-mod cobalt;
-pub use cobalt::Cobalt;
+mod zenith;
+pub use zenith::Zenith;
 
 mod base_time;
 pub use base_time::{BaseTime, BaseTimeTransitionError};
