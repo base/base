@@ -239,8 +239,16 @@ pub struct MockAggregateVerifier {
     pub status_reads: Mutex<Vec<Address>>,
     /// Addresses passed to `delayed_weth`, used by tests that assert cached reads.
     pub delayed_weth_reads: Mutex<Vec<Address>>,
-    /// Addresses passed to `read_intermediate_block_interval`, used by cache tests.
+    /// Addresses passed to the interval reads, used by tests that assert read counts.
     pub intermediate_block_interval_reads: Mutex<Vec<Address>>,
+    /// `(block_interval, intermediate_block_interval)` returned for starting blocks
+    /// below `denim_activation_block`.
+    pub intervals: (u64, u64),
+    /// First starting block that resolves to `denim_intervals`.
+    pub denim_activation_block: u64,
+    /// `(block_interval, intermediate_block_interval)` returned at or after
+    /// `denim_activation_block`.
+    pub denim_intervals: (u64, u64),
 }
 
 impl MockAggregateVerifier {
@@ -252,7 +260,36 @@ impl MockAggregateVerifier {
             status_reads: Mutex::new(Vec::new()),
             delayed_weth_reads: Mutex::new(Vec::new()),
             intermediate_block_interval_reads: Mutex::new(Vec::new()),
+            intervals: (10, 5),
+            denim_activation_block: u64::MAX,
+            denim_intervals: (10, 5),
         }
+    }
+
+    /// Sets the interval pair returned for every starting block before Denim.
+    #[must_use]
+    pub const fn with_intervals(
+        mut self,
+        block_interval: u64,
+        intermediate_block_interval: u64,
+    ) -> Self {
+        self.intervals = (block_interval, intermediate_block_interval);
+        self
+    }
+
+    /// Makes the verifier switch to `(block_interval, intermediate_block_interval)` for
+    /// games whose range starts at or after `activation_block`, as the Denim-aware
+    /// `AggregateVerifier` does.
+    #[must_use]
+    pub const fn with_denim_intervals(
+        mut self,
+        activation_block: u64,
+        block_interval: u64,
+        intermediate_block_interval: u64,
+    ) -> Self {
+        self.denim_activation_block = activation_block;
+        self.denim_intervals = (block_interval, intermediate_block_interval);
+        self
     }
 
     /// Updates the state for a specific game address.
@@ -330,7 +367,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn read_block_interval(&self, _impl_address: Address) -> Result<u64, ContractError> {
-        Ok(10)
+        Ok(self.intervals.0)
     }
 
     async fn read_intermediate_block_interval(
@@ -338,16 +375,20 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         impl_address: Address,
     ) -> Result<u64, ContractError> {
         self.intermediate_block_interval_reads.lock().unwrap().push(impl_address);
-        Ok(5)
+        Ok(self.intervals.1)
     }
 
     async fn read_intervals_for_starting_block(
         &self,
         impl_address: Address,
-        _starting_block: u64,
+        starting_block: u64,
     ) -> Result<(u64, u64), ContractError> {
         self.intermediate_block_interval_reads.lock().unwrap().push(impl_address);
-        Ok((10, 5))
+        if starting_block < self.denim_activation_block {
+            Ok(self.intervals)
+        } else {
+            Ok(self.denim_intervals)
+        }
     }
 
     async fn intermediate_output_roots(

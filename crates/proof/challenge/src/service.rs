@@ -100,27 +100,12 @@ impl ChallengerService {
                 config.game_type
             ));
         }
-        let (block_interval, intermediate_block_interval) = tokio::try_join!(
-            verifier_client.read_block_interval(impl_address),
-            verifier_client.read_intermediate_block_interval(impl_address),
-        )?;
-        if block_interval == 0 || intermediate_block_interval == 0 {
-            return Err(eyre::eyre!(
-                "BLOCK_INTERVAL ({block_interval}) and INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval}) must be non-zero"
-            ));
-        }
-        if block_interval % intermediate_block_interval != 0 {
-            return Err(eyre::eyre!(
-                "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
-            ));
-        }
+        // The intervals are not read here: they change at the Denim activation block, so
+        // every consumer resolves them from the starting block of the game it is handling.
         info!(
-            block_interval,
-            intermediate_block_interval,
-            intermediate_roots_count = block_interval / intermediate_block_interval,
             impl_address = %impl_address,
             game_type = config.game_type,
-            "Read onchain config from AggregateVerifier"
+            "Resolved AggregateVerifier implementation"
         );
 
         let anchor_registry_client = AnchorStateRegistryContractClient::new(
@@ -161,8 +146,6 @@ impl ChallengerService {
             Arc::clone(&l2_client) as Arc<dyn L2Provider>,
             config.anchor_state_registry_addr,
             config.game_type,
-            block_interval,
-            intermediate_block_interval,
         );
 
         let bond_manager = if !config.bond_claim_addresses.is_empty() {

@@ -6,7 +6,7 @@ use alloy_primitives::Address;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorRoot, AnchorSnapshot, AnchorStateRegistryClient,
     DisputeGameFactoryClient, GameStatus, encode_set_anchor_state_calldata, game_lookup_blocks,
-    game_lookup_key,
+    game_lookup_key, resolve_intervals,
 };
 use base_proof_rpc::L2Provider;
 use base_tx_manager::TxManager;
@@ -23,8 +23,6 @@ pub struct AnchorUpdater {
     cached_next_game: Option<(AnchorSnapshot, Address)>,
     anchor_state_registry_address: Address,
     game_type: u32,
-    block_interval: u64,
-    intermediate_block_interval: u64,
 }
 
 impl std::fmt::Debug for AnchorUpdater {
@@ -32,8 +30,6 @@ impl std::fmt::Debug for AnchorUpdater {
         f.debug_struct("AnchorUpdater")
             .field("anchor_state_registry_address", &self.anchor_state_registry_address)
             .field("game_type", &self.game_type)
-            .field("block_interval", &self.block_interval)
-            .field("intermediate_block_interval", &self.intermediate_block_interval)
             .finish_non_exhaustive()
     }
 }
@@ -46,8 +42,6 @@ impl AnchorUpdater {
         l2_provider: Arc<dyn L2Provider>,
         anchor_state_registry_address: Address,
         game_type: u32,
-        block_interval: u64,
-        intermediate_block_interval: u64,
     ) -> Self {
         Self {
             factory_client,
@@ -56,8 +50,6 @@ impl AnchorUpdater {
             cached_next_game: None,
             anchor_state_registry_address,
             game_type,
-            block_interval,
-            intermediate_block_interval,
         }
     }
 
@@ -79,7 +71,8 @@ impl AnchorUpdater {
             Some((cached_anchor, address)) if cached_anchor == anchor => address,
             _ => {
                 self.cached_next_game = None;
-                let Some(address) = self.next_game(anchor.anchor_root, anchor.anchor_game).await
+                let Some(address) =
+                    self.next_game(verifier_client, anchor.anchor_root, anchor.anchor_game).await
                 else {
                     return;
                 };
@@ -114,11 +107,34 @@ impl AnchorUpdater {
         }
     }
 
-    async fn next_game(&self, anchor_root: AnchorRoot, anchor_game: Address) -> Option<Address> {
+    async fn next_game(
+        &self,
+        verifier_client: &dyn AggregateVerifierClient,
+        anchor_root: AnchorRoot,
+        anchor_game: Address,
+    ) -> Option<Address> {
+        // Resolved from the anchor block, which is where the next game's range starts:
+        // the verifier switches to a shorter cadence at the Denim activation block, so a
+        // pair cached at startup silently stops matching any game past the boundary.
+        let (block_interval, intermediate_block_interval) = match resolve_intervals(
+            self.factory_client.as_ref(),
+            verifier_client,
+            self.game_type,
+            anchor_root.l2_block_number,
+        )
+        .await
+        {
+            Ok(intervals) => intervals,
+            Err(e) => {
+                warn!(error = %e, "failed to resolve anchor update intervals");
+                return None;
+            }
+        };
+
         let blocks = match game_lookup_blocks(
             anchor_root.l2_block_number,
-            self.block_interval,
-            self.intermediate_block_interval,
+            block_interval,
+            intermediate_block_interval,
         ) {
             Ok(blocks) => blocks,
             Err(e) => {
@@ -154,8 +170,8 @@ impl AnchorUpdater {
         let key = match game_lookup_key(
             anchor_root.l2_block_number,
             parent,
-            self.block_interval,
-            self.intermediate_block_interval,
+            block_interval,
+            intermediate_block_interval,
             &intermediate_roots,
         ) {
             Ok(key) => key,
@@ -309,14 +325,18 @@ mod tests {
 
     use super::*;
     use crate::test_utils::{
-        MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL2Provider,
-        MockTxManager, addr, build_test_header_and_account, mock_state, receipt_with_status,
+        MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockGameState,
+        MockL2Provider, MockTxManager, addr, build_test_header_and_account, mock_state,
+        receipt_with_status,
     };
 
     const ASR_ADDRESS: Address = Address::new([0xAA; 20]);
     const GAME_TYPE: u32 = 1;
     const BLOCK_INTERVAL: u64 = 100;
     const INTERMEDIATE_BLOCK_INTERVAL: u64 = 100;
+    const DENIM_ACTIVATION_BLOCK: u64 = 200;
+    const DENIM_BLOCK_INTERVAL: u64 = 50;
+    const DENIM_INTERMEDIATE_BLOCK_INTERVAL: u64 = 25;
 
     fn insert_l2_block(l2: &mut MockL2Provider, block: u64) -> B256 {
         let storage_hash = B256::repeat_byte(block as u8);
@@ -338,6 +358,12 @@ mod tests {
                 .unwrap()
                 .extra_data;
         factory.insert_uuid_game(GAME_TYPE, output_root, extra_data, game);
+    }
+
+    /// The mock verifier resolves the intervals the anchor tests build their games with.
+    fn verifier(games: HashMap<Address, MockGameState>) -> MockAggregateVerifier {
+        MockAggregateVerifier::new(games)
+            .with_intervals(BLOCK_INTERVAL, INTERMEDIATE_BLOCK_INTERVAL)
     }
 
     fn tx_success(tx_hash: B256) -> base_tx_manager::SendResponse {
@@ -362,8 +388,6 @@ mod tests {
             l2 as Arc<dyn L2Provider>,
             ASR_ADDRESS,
             GAME_TYPE,
-            BLOCK_INTERVAL,
-            INTERMEDIATE_BLOCK_INTERVAL,
         )
     }
 
@@ -379,7 +403,7 @@ mod tests {
         let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.anchor_state_registry = ASR_ADDRESS;
 
-        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
+        let verifier = verifier(HashMap::from([(game, state)]));
         let (submitter, tx_manager) = submitter(vec![tx_success(tx_hash)]);
         let mut updater = updater(factory, anchor_registry, Arc::new(l2));
 
@@ -401,7 +425,7 @@ mod tests {
         insert_next_game(&factory, ASR_ADDRESS, output_root, game);
         let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
 
-        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
+        let verifier = verifier(HashMap::from([(game, state)]));
         let (submitter, tx_manager) = submitter(vec![]);
         let mut updater = updater(factory, anchor_registry, Arc::new(l2));
 
@@ -421,7 +445,7 @@ mod tests {
         insert_next_game(&factory, ASR_ADDRESS, output_root, game);
         let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
 
-        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state.clone())]));
+        let verifier = verifier(HashMap::from([(game, state.clone())]));
         let (submitter, tx_manager) = submitter(vec![tx_success(tx_hash)]);
         let mut updater = updater(Arc::clone(&factory), anchor_registry, Arc::new(l2));
 
@@ -452,7 +476,7 @@ mod tests {
         let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.anchor_state_registry = ASR_ADDRESS;
 
-        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
+        let verifier = verifier(HashMap::from([(game, state)]));
         let (submitter, tx_manager) = submitter(vec![tx_success(tx_hash), tx_success(tx_hash)]);
         let mut updater = updater(Arc::clone(&factory), anchor_registry, Arc::new(l2));
 
@@ -474,7 +498,7 @@ mod tests {
         let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
         insert_next_game(&factory, ASR_ADDRESS, output_root, challenger_win);
 
-        let verifier = MockAggregateVerifier::new(HashMap::from([(
+        let verifier = verifier(HashMap::from([(
             challenger_win,
             mock_state(GameStatus::ChallengerWins, Address::ZERO, 100),
         )]));
@@ -502,7 +526,7 @@ mod tests {
         let mut next_state = mock_state(GameStatus::DefenderWins, Address::ZERO, 200);
         next_state.anchor_state_registry = ASR_ADDRESS;
 
-        let verifier = MockAggregateVerifier::new(HashMap::from([
+        let verifier = verifier(HashMap::from([
             (anchor_game, mock_state(GameStatus::DefenderWins, Address::ZERO, 100)),
             (next_game, next_state),
         ]));
@@ -528,12 +552,83 @@ mod tests {
         state.anchor_state_registry = ASR_ADDRESS;
         state.is_finalized = false;
 
-        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
+        let verifier = verifier(HashMap::from([(game, state)]));
         let (submitter, tx_manager) = submitter(vec![]);
         let mut updater = updater(factory, anchor_registry, Arc::new(l2));
 
         updater.poll(&verifier, &submitter).await;
 
         assert!(tx_manager.recorded_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn poll_finds_next_game_built_with_denim_intervals() {
+        // The anchor sits exactly at the Denim activation block, so the next game
+        // spans DENIM_BLOCK_INTERVAL and carries two intermediate roots instead of
+        // one. Its UUID is only reproducible with the post-activation pair.
+        let game = addr(1);
+        let tx_hash = B256::repeat_byte(0xDD);
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
+        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
+        anchor_registry.snapshot.lock().unwrap().anchor_root.l2_block_number =
+            DENIM_ACTIVATION_BLOCK;
+
+        let mut l2 = MockL2Provider::default();
+        let roots: Vec<B256> = (1..=DENIM_BLOCK_INTERVAL / DENIM_INTERMEDIATE_BLOCK_INTERVAL)
+            .map(|i| {
+                insert_l2_block(
+                    &mut l2,
+                    DENIM_ACTIVATION_BLOCK + i * DENIM_INTERMEDIATE_BLOCK_INTERVAL,
+                )
+            })
+            .collect();
+        // Present so the pre-Denim run fails on a UUID mismatch rather than on a
+        // missing output root.
+        insert_l2_block(&mut l2, DENIM_ACTIVATION_BLOCK + BLOCK_INTERVAL);
+        let l2 = Arc::new(l2);
+
+        let extra_data = game_lookup_key(
+            DENIM_ACTIVATION_BLOCK,
+            ASR_ADDRESS,
+            DENIM_BLOCK_INTERVAL,
+            DENIM_INTERMEDIATE_BLOCK_INTERVAL,
+            &roots,
+        )
+        .unwrap()
+        .extra_data;
+        factory.insert_uuid_game(GAME_TYPE, *roots.last().unwrap(), extra_data, game);
+
+        let mut state = mock_state(
+            GameStatus::DefenderWins,
+            Address::ZERO,
+            DENIM_ACTIVATION_BLOCK + DENIM_BLOCK_INTERVAL,
+        );
+        state.anchor_state_registry = ASR_ADDRESS;
+        let games = HashMap::from([(game, state)]);
+
+        let denim_verifier = verifier(games.clone()).with_denim_intervals(
+            DENIM_ACTIVATION_BLOCK,
+            DENIM_BLOCK_INTERVAL,
+            DENIM_INTERMEDIATE_BLOCK_INTERVAL,
+        );
+        let (denim_submitter, tx_manager) = submitter(vec![tx_success(tx_hash)]);
+        let mut denim_updater =
+            updater(Arc::clone(&factory), Arc::clone(&anchor_registry), Arc::clone(&l2));
+        denim_updater.poll(&denim_verifier, &denim_submitter).await;
+
+        let calls = tx_manager.recorded_calls();
+        assert_eq!(calls.len(), 1, "anchor should advance to the post-activation game");
+        assert_eq!(calls[0].tx_data, encode_set_anchor_state_calldata(game));
+
+        // Same fixture against a verifier that never switches cadence — the pair the
+        // old startup-cached updater would have used. It must not find the game.
+        let (stale_submitter, tx_manager) = submitter(vec![tx_success(tx_hash)]);
+        let mut stale_updater = updater(factory, anchor_registry, l2);
+        stale_updater.poll(&verifier(games), &stale_submitter).await;
+
+        assert!(
+            tx_manager.recorded_calls().is_empty(),
+            "pre-Denim intervals build a different UUID, so no game is found"
+        );
     }
 }
