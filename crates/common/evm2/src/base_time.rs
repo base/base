@@ -1,4 +1,4 @@
-//! Denim `BaseTime` predeploy install transition.
+//! Cobalt `BaseTime` predeploy install transition.
 
 use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, uint};
 use base_common_consensus::Predeploys;
@@ -45,7 +45,7 @@ impl core::fmt::Display for BaseTimeTransitionError {
 
 impl core::error::Error for BaseTimeTransitionError {}
 
-/// The Denim `BaseTime` predeploy transition.
+/// The Cobalt `BaseTime` predeploy transition.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BaseTime;
 
@@ -79,7 +79,7 @@ impl BaseTime {
     /// [`Predeploys::PROXY_ADMIN`] in its EIP-1967 admin slot. This transition validates that
     /// historical invariant; it does not install or repair proxy state.
     ///
-    /// The transition is staged behind the `Denim` activation. The implementation slot is the
+    /// The transition is staged behind the `Cobalt` activation. The implementation slot is the
     /// durable migration marker: any existing linkage is preserved so later execution cannot
     /// rewrite the initial deployment or undo a governance upgrade.
     pub fn ensure_predeploy(
@@ -88,7 +88,7 @@ impl BaseTime {
         evm: &mut Evm<'_, BaseEvmTypes>,
         block_state: &mut BlockStateAccumulator,
     ) -> HandlerResult<()> {
-        if !chain_spec.is_active_at_timestamp(BaseUpgrade::Denim, timestamp) {
+        if !chain_spec.is_active_at_timestamp(BaseUpgrade::Cobalt, timestamp) {
             return Ok(());
         }
 

@@ -93,7 +93,7 @@ impl BaseTime {
     /// [`Predeploys::PROXY_ADMIN`] in its EIP-1967 admin slot. This transition validates that
     /// historical invariant; it does not install or repair proxy state.
     ///
-    /// The transition is staged behind the `Denim` activation condition. The implementation slot
+    /// The transition is staged behind the `Cobalt` activation condition. The implementation slot
     /// is the durable migration marker: any existing linkage is preserved so later execution cannot
     /// rewrite the initial deployment or undo a governance upgrade.
     pub fn ensure_predeploy<DB>(
@@ -104,7 +104,7 @@ impl BaseTime {
     where
         DB: Database + DatabaseCommit,
     {
-        if !chain_spec.is_denim_active_at_timestamp(timestamp) {
+        if !chain_spec.is_cobalt_active_at_timestamp(timestamp) {
             return Ok(());
         }
 
@@ -416,7 +416,7 @@ mod tests {
 
     impl Upgrades for TestUpgrades {
         fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {
-            if fork == BaseUpgrade::Denim && self.0 {
+            if fork == BaseUpgrade::Cobalt && self.0 {
                 ForkCondition::Timestamp(100)
             } else {
                 ForkCondition::Never

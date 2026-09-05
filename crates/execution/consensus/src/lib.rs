@@ -230,8 +230,8 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
         validate_against_parent_hash_number(header.header(), parent)?;
 
         let allows_same_timestamp =
-            self.chain_spec.is_denim_active_at_timestamp(header.timestamp())
-                && self.chain_spec.is_denim_active_at_timestamp(parent.timestamp());
+            self.chain_spec.is_cobalt_active_at_timestamp(header.timestamp())
+                && self.chain_spec.is_cobalt_active_at_timestamp(parent.timestamp());
         let timestamp_is_invalid = header.timestamp() < parent.timestamp()
             || (header.timestamp() == parent.timestamp() && !allows_same_timestamp);
         if self.chain_spec.is_bedrock_active_at_block(header.number()) && timestamp_is_invalid {
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn activated_parent_validation_allows_same_second_headers() {
         let mut chain_spec = BaseChainSpec::mainnet();
-        chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(10));
+        chain_spec.set_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(10));
         let parent_header = Header {
             number: 8,
             timestamp: 10,
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn activated_parent_validation_rejects_timestamp_in_past() {
         let mut chain_spec = BaseChainSpec::mainnet();
-        chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(10));
+        chain_spec.set_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(10));
         let parent_header = Header {
             number: 8,
             timestamp: 11,

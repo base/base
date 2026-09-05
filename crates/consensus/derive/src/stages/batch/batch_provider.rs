@@ -379,13 +379,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_denim_validator_skips_same_second_stale_batch() {
+    async fn test_cobalt_validator_skips_same_second_stale_batch() {
         let origin = BlockInfo { number: 1, hash: B256::repeat_byte(0x11), ..Default::default() };
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
             upgrades: UpgradeConfig {
                 holocene_time: Some(0),
-                base: BaseUpgradeConfig { denim: Some(46), ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: Some(46), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -400,7 +400,7 @@ mod tests {
             l1_origin: BlockNumHash { number: 0, ..Default::default() },
             ..Default::default()
         };
-        assert_eq!(cfg.denim_activation_block_number(), Some(23));
+        assert_eq!(cfg.cobalt_activation_block_number(), Some(23));
         assert_eq!(cfg.l2_block_timestamp(298), cfg.l2_block_timestamp(301));
         let valid = SingleBatch {
             parent_hash: parent.block_info.hash,

@@ -89,10 +89,10 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
 
         let mut transactions = vec![Bytes::from(encoded_l1_info)];
         // Sub-second progression is conveyed solely by a `BaseTimeUpdateTx` deposit in the
-        // transactions list (the payload attributes no longer carry a millis field). Denim is the
+        // transactions list (the payload attributes no longer carry a millis field). Cobalt is the
         // upgrade that activates the native sub-second block cadence, matching the production
         // stateful attributes builder.
-        if self.rollup_config.is_denim_active(next_l2_time) {
+        if self.rollup_config.is_cobalt_active(next_l2_time) {
             let base_time =
                 BaseTimeUpdateTx::new(next_l2_timestamp_millis_part).map_err(|error| {
                     PipelineError::AttributesBuilder(BuilderError::BaseTimeUpdate(error)).crit()
@@ -431,7 +431,7 @@ mod tests {
     async fn subsecond_descendants_include_base_time_progression() {
         let (l1_info, parent) = snapshot_boundary();
         let mut rollup = anchored_rollup(parent, 2_002);
-        rollup.set_upgrade_activation_timestamp(base_common_genesis::BaseUpgrade::Denim, 2_002);
+        rollup.set_upgrade_activation_timestamp(base_common_genesis::BaseUpgrade::Cobalt, 2_002);
         let mut builder = StandaloneAttributesBuilder::new(
             std::sync::Arc::new(rollup),
             l1_info,

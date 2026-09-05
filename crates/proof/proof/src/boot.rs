@@ -966,7 +966,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pins_schedule_using_denim_block_timestamp() {
+    async fn pins_schedule_using_cobalt_block_timestamp() {
         const GENESIS_BLOCK: u64 = 1_000;
         const CLAIM_BLOCK: u64 = 1_003;
 
@@ -975,7 +975,7 @@ mod tests {
         rollup_config.genesis.l2_time = 1_000;
         rollup_config.block_time = 2;
         rollup_config.upgrades = UpgradeConfig {
-            base: BaseUpgradeConfig { denim: Some(1_004), ..Default::default() },
+            base: BaseUpgradeConfig { cobalt: Some(1_004), ..Default::default() },
             ..Default::default()
         };
 
@@ -1003,7 +1003,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gates_zenith_using_denim_claim_timestamp() {
+    async fn gates_zenith_using_cobalt_claim_timestamp() {
         const GENESIS_BLOCK: u64 = 1_000;
 
         let mut rollup_config = BaseChainConfig::MAINNET.rollup_config();
@@ -1012,7 +1012,7 @@ mod tests {
         rollup_config.block_time = 2;
         rollup_config.upgrades = UpgradeConfig {
             base: BaseUpgradeConfig {
-                denim: Some(1_004),
+                cobalt: Some(1_004),
                 zenith: Some(1_005),
                 ..Default::default()
             },
@@ -1028,7 +1028,7 @@ mod tests {
         oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
 
         let boot_info =
-            BootInfo::load(&oracle).await.expect("Zenith activates after the claimed Denim block");
+            BootInfo::load(&oracle).await.expect("Zenith activates after the claimed Cobalt block");
         assert_eq!(boot_info.rollup_config.upgrades.base.zenith, None);
 
         let mut oracle = MockOracle::new();
@@ -1038,8 +1038,9 @@ mod tests {
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 1_007u64.to_be_bytes().to_vec());
         oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
 
-        let err =
-            BootInfo::load(&oracle).await.expect_err("Zenith is active at the claimed Denim block");
+        let err = BootInfo::load(&oracle)
+            .await
+            .expect_err("Zenith is active at the claimed Cobalt block");
         assert!(matches!(err, OracleProviderError::UncommittedZenithUpgrade));
     }
 

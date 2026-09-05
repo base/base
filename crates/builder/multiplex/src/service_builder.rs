@@ -44,7 +44,7 @@ impl MultiplexingServiceBuilder {
         self
     }
 
-    /// Enables or disables the Denim payload-builder cutover.
+    /// Enables or disables the Cobalt payload-builder cutover.
     pub const fn with_cutover_enabled(mut self, cutover_enabled: bool) -> Self {
         self.routing_config.cutover_enabled = cutover_enabled;
         self

@@ -80,7 +80,7 @@ pub struct SequencerActor<
     /// The rollup configuration.
     pub rollup_config: Arc<RollupConfig>,
     /// Fixed offset into each subsecond slot at which the sealed payload is requested from
-    /// the engine once Denim is active. See [`SequencerConfig::seal_offset`].
+    /// the engine once Cobalt is active. See [`SequencerConfig::seal_offset`].
     ///
     /// [`SequencerConfig::seal_offset`]: crate::SequencerConfig::seal_offset
     pub seal_offset: Duration,
@@ -327,12 +327,12 @@ where
 
     /// Wall-clock time at which `block_number` should be sealed.
     ///
-    /// Denim-active blocks seal at a fixed offset into their 200ms slot, computed as
-    /// `T_N − (interval − seal_offset)` so the first Denim block still seals relative to
+    /// Cobalt-active blocks seal at a fixed offset into their 200ms slot, computed as
+    /// `T_N − (interval − seal_offset)` so the first Cobalt block still seals relative to
     /// its own timestamp. The target ignores how long the previous seal took: lateness
     /// shrinks the current build window instead of shifting the schedule.
     ///
-    /// Pre-Denim blocks compensate for the previous seal duration, capped at half the
+    /// Pre-Cobalt blocks compensate for the previous seal duration, capped at half the
     /// block interval so one slow seal cannot collapse the next build window to zero and
     /// trigger a fat/thin block oscillation.
     pub(super) fn block_seal_target(
@@ -342,7 +342,8 @@ where
     ) -> SystemTime {
         let target = UNIX_EPOCH
             + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number));
-        if self.rollup_config.is_denim_active(self.rollup_config.l2_block_timestamp(block_number)) {
+        if self.rollup_config.is_cobalt_active(self.rollup_config.l2_block_timestamp(block_number))
+        {
             let interval =
                 Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS);
             return target - interval.saturating_sub(self.seal_offset);

@@ -418,7 +418,7 @@ impl<Txs> Builder<'_, Txs> {
             }
 
             // check if the new payload is even more valuable
-            if !ctx.is_denim_active() && !ctx.is_better_payload(info.total_fees) {
+            if !ctx.is_cobalt_active() && !ctx.is_better_payload(info.total_fees) {
                 // can skip building the block
                 return Ok(BuildOutcomeKind::Aborted { fees: info.total_fees });
             }
@@ -484,11 +484,11 @@ impl<Txs> Builder<'_, Txs> {
         );
         BuilderMetrics::record_inclusion(&info.inclusion);
 
-        if no_tx_pool || ctx.is_denim_active() {
+        if no_tx_pool || ctx.is_cobalt_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
             // in the payload. In other words, the payload is deterministic and we can
             // freeze it once we've successfully built it.
-            // Denim-active sequencer builds are one-shot, so this payload is also final.
+            // Cobalt-active sequencer builds are one-shot, so this payload is also final.
             Ok(BuildOutcomeKind::Freeze(payload))
         } else {
             Ok(BuildOutcomeKind::Better { payload })
@@ -708,9 +708,9 @@ where
         &self.config.attributes
     }
 
-    /// Returns `true` if Denim is active at this payload's timestamp.
-    pub fn is_denim_active(&self) -> bool {
-        self.chain_spec.is_denim_active_at_timestamp(self.attributes().timestamp())
+    /// Returns `true` if Cobalt is active at this payload's timestamp.
+    pub fn is_cobalt_active(&self) -> bool {
+        self.chain_spec.is_cobalt_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns the current fee settings for transactions from the mempool
@@ -852,7 +852,7 @@ where
         let mut predicate_eval_cutoff_hit = false;
 
         let block_timestamp = self.attributes().timestamp();
-        let can_finalize_early = self.is_denim_active();
+        let can_finalize_early = self.is_cobalt_active();
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
@@ -1319,8 +1319,8 @@ where
         );
 
         // A cancellation that raced the finalization break (or an empty iterator) must still
-        // win, so re-check it before the finalized payload is assembled. Gated on Denim so
-        // pre-Denim control flow is unchanged.
+        // win, so re-check it before the finalized payload is assembled. Gated on Cobalt so
+        // pre-Cobalt control flow is unchanged.
         if can_finalize_early && self.cancel.is_cancelled() {
             return Ok(Some(()));
         }
@@ -1459,12 +1459,12 @@ mod tests {
         assert_eq!(build_empty_payload(state_root_handle()), B256::repeat_byte(0x42));
     }
 
-    const DENIM_TIMESTAMP: u64 = 1;
+    const COBALT_TIMESTAMP: u64 = 1;
 
     fn pool_payload_context(timestamp: u64) -> BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
         let chain_spec = Arc::new(
             BaseChainSpecBuilder::base_mainnet()
-                .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
+                .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(COBALT_TIMESTAMP))
                 .build(),
         );
         let parent = Arc::new(SealedHeader::seal_slow(Header {
@@ -1649,8 +1649,8 @@ mod tests {
     }
 
     #[test]
-    fn pre_denim_ignores_finalization_requests() {
-        let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+    fn pre_cobalt_ignores_finalization_requests() {
+        let ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.cancel.request_finalization();
         let transactions = FinalizeAfterFirstTransaction {
             transactions: vec![pool_transaction(0)].into_iter(),
@@ -1659,14 +1659,14 @@ mod tests {
         };
 
         let BuildOutcomeKind::Better { payload } = build_pool_payload(ctx, transactions) else {
-            panic!("pre-Denim payload must remain eligible for improvement")
+            panic!("pre-Cobalt payload must remain eligible for improvement")
         };
         assert_eq!(payload.block().body().transactions.len(), 1);
     }
 
     #[test]
-    fn denim_finalization_preserves_completed_pool_transactions() {
-        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+    fn cobalt_finalization_preserves_completed_pool_transactions() {
+        let ctx = pool_payload_context(COBALT_TIMESTAMP);
         let transactions = FinalizeAfterFirstTransaction {
             transactions: vec![pool_transaction(0), pool_transaction(1)].into_iter(),
             calls: 0,
@@ -1674,7 +1674,7 @@ mod tests {
         };
 
         let BuildOutcomeKind::Freeze(payload) = build_pool_payload(ctx, transactions) else {
-            panic!("Denim payload must freeze")
+            panic!("Cobalt payload must freeze")
         };
         assert_eq!(payload.block().body().transactions.len(), 1);
     }
@@ -1691,11 +1691,11 @@ mod tests {
         let transaction_hash = *transaction.hash();
 
         let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
-            pool_payload_context(DENIM_TIMESTAMP),
+            pool_payload_context(COBALT_TIMESTAMP),
             TestParkableTransactions::new(vec![transaction]),
             &[sender],
         ) else {
-            panic!("Denim payload must freeze")
+            panic!("Cobalt payload must freeze")
         };
 
         assert_eq!(payload.block().body().transactions.len(), 1);
@@ -1725,11 +1725,11 @@ mod tests {
         let sender = transaction.sender();
 
         let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
-            pool_payload_context(DENIM_TIMESTAMP),
+            pool_payload_context(COBALT_TIMESTAMP),
             TestParkableTransactions::new(vec![transaction]),
             &[sender],
         ) else {
-            panic!("Denim payload must freeze")
+            panic!("Cobalt payload must freeze")
         };
 
         assert!(payload.block().body().transactions.is_empty());
@@ -1745,11 +1745,11 @@ mod tests {
         let sender = transaction.sender();
 
         let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
-            pool_payload_context(DENIM_TIMESTAMP),
+            pool_payload_context(COBALT_TIMESTAMP),
             TestParkableTransactions::new(vec![transaction]),
             &[sender],
         ) else {
-            panic!("Denim payload must freeze")
+            panic!("Cobalt payload must freeze")
         };
 
         assert!(payload.block().body().transactions.is_empty());
@@ -1770,11 +1770,11 @@ mod tests {
         let trigger_hash = *trigger.hash();
 
         let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
-            pool_payload_context(DENIM_TIMESTAMP),
+            pool_payload_context(COBALT_TIMESTAMP),
             TestParkableTransactions::new(vec![gated, trigger]),
             &funded_senders,
         ) else {
-            panic!("Denim payload must freeze")
+            panic!("Cobalt payload must freeze")
         };
 
         let included_hashes = payload
@@ -1804,7 +1804,7 @@ mod tests {
         let trigger = pool_transaction_to(0, watched_address, U256::ONE);
         let funded_senders = [gated.sender(), matching.sender(), trigger.sender()];
         let trigger_hash = *trigger.hash();
-        let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let mut ctx = pool_payload_context(COBALT_TIMESTAMP);
         ctx.builder_config.predicate_eval_hard_cutoff = Duration::from_nanos(1);
 
         let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
@@ -1812,7 +1812,7 @@ mod tests {
             TestParkableTransactions::new(vec![gated, matching, trigger]),
             &funded_senders,
         ) else {
-            panic!("Denim payload must freeze")
+            panic!("Cobalt payload must freeze")
         };
 
         let included_hashes = payload
@@ -1827,7 +1827,7 @@ mod tests {
 
     #[test]
     fn cancellation_takes_precedence_over_finalization() {
-        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let ctx = pool_payload_context(COBALT_TIMESTAMP);
         ctx.cancel.request_finalization();
         drop(ctx.cancel.clone());
 

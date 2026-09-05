@@ -183,8 +183,8 @@ where
         )
         .map_err(BlockExecutionError::other)?;
 
-        // Install BaseTime before transactions so the activation block's metadata deposit can
-        // call it.
+        // Install BaseTime before the Cobalt system-account transition and transactions so the
+        // activation block's metadata deposit can call it.
         BaseTime::ensure_predeploy(
             &self.spec,
             self.evm.block().timestamp().saturating_to(),

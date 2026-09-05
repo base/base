@@ -4,7 +4,6 @@ use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use alloy_consensus::{Block, BlockBody, Header, SignableTransaction, TxEip1559};
 use alloy_primitives::{Address, Signature, StorageKey, StorageValue, U256, address, b256, bytes};
-use base_common_chains::BaseUpgrade;
 use base_common_consensus::{
     BaseReceipt, BaseTransactionSigned, Predeploys, SystemAddresses, TxDeposit,
 };
@@ -12,7 +11,7 @@ use base_common_evm::BaseTime;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_protocol::BaseTimeUpdateTx;
-use reth_chainspec::{ForkCondition, MIN_TRANSACTION_GAS};
+use reth_chainspec::MIN_TRANSACTION_GAS;
 use reth_evm::execute::{BasicBlockExecutor, Executor};
 use reth_primitives_traits::{Account, RecoveredBlock};
 use reth_revm::{database::StateProviderDatabase, test_utils::StateProviderTest};
@@ -86,12 +85,7 @@ fn execute_same_block_base_time_read(getter_selector: [u8; 4]) -> U256 {
         HashMap::default(),
     );
 
-    let chain_spec = Arc::new(
-        BaseChainSpecBuilder::base_mainnet()
-            .cobalt_activated()
-            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(0))
-            .build(),
-    );
+    let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
 
     let l1_info_tx: BaseTransactionSigned = TxDeposit {
         from: SystemAddresses::DEPOSITOR_ACCOUNT,

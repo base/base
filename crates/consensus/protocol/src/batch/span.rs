@@ -597,9 +597,9 @@ impl SpanBatch {
             return (BatchValidity::Undecided, None);
         }
         let next = l2_safe_head.block_info.number + 1;
-        if cfg.is_denim_active(cfg.l2_block_timestamp(next)) {
-            warn!(target: "batch_span", next_block_number = next, "Dropping span batch after Denim activation");
-            return (BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim), None);
+        if cfg.is_cobalt_active(cfg.l2_block_timestamp(next)) {
+            warn!(target: "batch_span", next_block_number = next, "Dropping span batch after Cobalt activation");
+            return (BatchValidity::Drop(BatchDropReason::SpanBatchPostCobalt), None);
         }
 
         let epoch = l1_origins[0];
@@ -1054,7 +1054,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_batch_prefix_rejects_first_denim_block_with_nonzero_genesis() {
+    async fn test_check_batch_prefix_rejects_first_cobalt_block_with_nonzero_genesis() {
         let cfg = RollupConfig {
             block_time: 2,
             genesis: ChainGenesis {
@@ -1063,7 +1063,7 @@ mod tests {
                 ..Default::default()
             },
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { denim: Some(104), ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: Some(104), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -1075,7 +1075,7 @@ mod tests {
         let mut fetcher = TestBatchValidator::default();
         let l1_origins = [BlockInfo::default()];
 
-        let pre_denim_parent = L2BlockInfo {
+        let pre_cobalt_parent = L2BlockInfo {
             block_info: BlockInfo { number: 40, timestamp: 100, ..Default::default() },
             ..Default::default()
         };
@@ -1084,16 +1084,16 @@ mod tests {
                 .check_batch_prefix(
                     &cfg,
                     &l1_origins,
-                    pre_denim_parent,
+                    pre_cobalt_parent,
                     &BlockInfo::default(),
                     &mut fetcher,
                 )
                 .await
                 .0,
-            BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim)
+            BatchValidity::Drop(BatchDropReason::SpanBatchPostCobalt)
         );
 
-        let denim_parent = L2BlockInfo {
+        let cobalt_parent = L2BlockInfo {
             block_info: BlockInfo { number: 41, timestamp: 102, ..Default::default() },
             ..Default::default()
         };
@@ -1102,13 +1102,13 @@ mod tests {
                 .check_batch_prefix(
                     &cfg,
                     &l1_origins,
-                    denim_parent,
+                    cobalt_parent,
                     &BlockInfo::default(),
                     &mut fetcher,
                 )
                 .await
                 .0,
-            BatchValidity::Drop(BatchDropReason::SpanBatchPostDenim)
+            BatchValidity::Drop(BatchDropReason::SpanBatchPostCobalt)
         );
     }
 
@@ -2240,10 +2240,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_batch_accept_eip8130_post_cobalt() {
-        // Mirror of `test_check_batch_with_eip8130_tx` with Cobalt active: the same
-        // span batch carrying an EIP-8130 transaction is accepted once the fork gate
-        // opens, exercising the post-Cobalt side for symmetry with the single-batch tests.
+    async fn test_check_batch_rejects_eip8130_span_post_cobalt() {
+        // Cobalt enables EIP-8130 but simultaneously disables Span batches, so
+        // EIP-8130 transactions must use singular batches.
         let cfg = RollupConfig {
             seq_window_size: 100,
             max_sequencer_drift: 100,
@@ -2301,7 +2300,7 @@ mod tests {
         };
         assert_eq!(
             batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Accept
+            BatchValidity::Drop(BatchDropReason::SpanBatchPostCobalt)
         );
     }
 

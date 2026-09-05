@@ -198,15 +198,15 @@ async fn mixed_singular_and_span_batches_after_delta() {
 }
 
 // ---------------------------------------------------------------------------
-// C. Span batches stop at Denim and recover through production SingleBatch
+// C. Span batches stop at Cobalt and recover through production SingleBatch
 // ---------------------------------------------------------------------------
 
-/// A historical Span fixture may derive its pre-Denim prefix, but the cached
-/// tail must be discarded before the first Denim block. Resubmitting that tail
-/// through the production `SingleBatch` batcher must derive across Denim's 200ms
+/// A historical Span fixture may derive its pre-Cobalt prefix, but the cached
+/// tail must be discarded before the first Cobalt block. Resubmitting that tail
+/// through the production `SingleBatch` batcher must derive across Cobalt's 200ms
 /// block cadence.
 #[tokio::test]
-async fn span_batch_stops_at_denim_and_recovers_with_single_batches() {
+async fn span_batch_stops_at_cobalt_and_recovers_with_single_batches() {
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
@@ -224,8 +224,7 @@ async fn span_batch_stops_at_denim_and_recovers_with_single_batches() {
         base: BaseUpgradeConfig {
             azul: Some(0),
             beryl: Some(0),
-            cobalt: Some(0),
-            denim: Some(6),
+            cobalt: Some(6),
             ..Default::default()
         },
         ..Default::default()
@@ -259,7 +258,7 @@ async fn span_batch_stops_at_denim_and_recovers_with_single_batches() {
     assert_eq!(
         node.l2_safe_number(),
         2,
-        "only blocks before Denim activation at block 3 may derive from the span"
+        "only blocks before Cobalt activation at block 3 may derive from the span"
     );
 
     let mut source = ActionL2Source::new();
@@ -270,8 +269,8 @@ async fn span_batch_stops_at_denim_and_recovers_with_single_batches() {
     chain.push(h.l1.tip().clone());
 
     let recovered = node.run_until_idle().await;
-    assert_eq!(recovered, 6, "the SingleBatch path must recover all post-Denim blocks");
-    assert_eq!(node.l2_safe_number(), 8, "safe head must advance across Denim");
+    assert_eq!(recovered, 6, "the SingleBatch path must recover all post-Cobalt blocks");
+    assert_eq!(node.l2_safe_number(), 8, "safe head must advance across Cobalt");
 }
 
 // ---------------------------------------------------------------------------

@@ -363,17 +363,17 @@ impl RollupConfig {
         }
     }
 
-    /// Returns the L2 block number at which Denim activates.
+    /// Returns the L2 block offset from genesis at which Cobalt activates.
     ///
-    /// If Denim is not configured, returns [`None`].
-    pub fn denim_activation_block_number(&self) -> Option<u64> {
-        let denim_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Denim)?;
+    /// If Cobalt is not configured, returns [`None`].
+    pub fn cobalt_activation_block_number(&self) -> Option<u64> {
+        let cobalt_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Cobalt)?;
 
         if self.block_time == 0 {
             panic!("rollup config: block time cannot be 0");
         }
 
-        Some(denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
+        Some(cobalt_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
     }
 
     /// Returns the L2 block number at which the genesis-only Zenith testing gate activates.
@@ -391,8 +391,8 @@ impl RollupConfig {
 
     /// Returns the deterministic timestamp of an L2 block in milliseconds.
     ///
-    /// Before Denim activation, this matches the legacy whole-second schedule exactly.
-    /// After Denim activation, this advances by a fixed 200ms cadence from the activation block.
+    /// Before Cobalt activation, this matches the legacy whole-second schedule exactly.
+    /// After Cobalt activation, this advances by a fixed 200ms cadence from the activation block.
     ///
     /// `block_number` is an absolute L2 block number; it is measured relative to the L2 genesis
     /// block number (`self.genesis.l2.number`), which is non-zero for chains whose L2 genesis
@@ -406,22 +406,22 @@ impl RollupConfig {
             .saturating_add(blocks_since_genesis.saturating_mul(self.block_time));
         let legacy_millis = legacy_seconds.saturating_mul(1_000);
 
-        let Some(denim_activation_block) = self.denim_activation_block_number() else {
+        let Some(cobalt_activation_block) = self.cobalt_activation_block_number() else {
             return legacy_millis;
         };
 
-        if blocks_since_genesis < denim_activation_block {
+        if blocks_since_genesis < cobalt_activation_block {
             return legacy_millis;
         }
 
-        let denim_activation_seconds = self
+        let cobalt_activation_seconds = self
             .genesis
             .l2_time
-            .saturating_add(denim_activation_block.saturating_mul(self.block_time));
-        let denim_activation_full_millis = denim_activation_seconds.saturating_mul(1_000);
-        denim_activation_full_millis.saturating_add(
+            .saturating_add(cobalt_activation_block.saturating_mul(self.block_time));
+        let cobalt_activation_full_millis = cobalt_activation_seconds.saturating_mul(1_000);
+        cobalt_activation_full_millis.saturating_add(
             blocks_since_genesis
-                .saturating_sub(denim_activation_block)
+                .saturating_sub(cobalt_activation_block)
                 .saturating_mul(Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS),
         )
     }
@@ -486,8 +486,8 @@ impl RollupConfig {
     /// The fixed cadence once subsecond blocks activates.
     pub const NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS: u64 = 200;
 
-    /// The number of Denim blocks produced in one legacy two-second block interval.
-    pub const DENIM_GAS_PARAMETER_SCALING_FACTOR: u32 = 10;
+    /// The number of Cobalt blocks produced in one legacy two-second block interval.
+    pub const COBALT_GAS_PARAMETER_SCALING_FACTOR: u32 = 10;
 
     /// Helper method for deserializing a default granite channel timeout.
     #[cfg(feature = "serde")]
@@ -1122,16 +1122,16 @@ mod tests {
         assert!(cfg.is_zenith_active(u64::MAX));
     }
 
-    fn rollup_config_with_denim(
+    fn rollup_config_with_cobalt(
         genesis_l2_time: u64,
         block_time: u64,
-        denim_time: Option<u64>,
+        cobalt_time: Option<u64>,
     ) -> RollupConfig {
         RollupConfig {
             genesis: ChainGenesis { l2_time: genesis_l2_time, ..Default::default() },
             block_time,
             upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { denim: denim_time, ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: cobalt_time, ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -1139,9 +1139,9 @@ mod tests {
     }
 
     #[test]
-    fn l2_block_full_millis_matches_legacy_before_denim_activation() {
-        let cfg = rollup_config_with_denim(10, 2, Some(15));
-        assert_eq!(cfg.denim_activation_block_number(), Some(3));
+    fn l2_block_full_millis_matches_legacy_before_cobalt_activation() {
+        let cfg = rollup_config_with_cobalt(10, 2, Some(15));
+        assert_eq!(cfg.cobalt_activation_block_number(), Some(3));
 
         for block_number in 0..3 {
             let expected = (10 + block_number * 2) * 1_000;
@@ -1152,17 +1152,17 @@ mod tests {
     }
 
     #[test]
-    fn l2_block_full_millis_respects_denim_activation_boundary() {
-        let cfg = rollup_config_with_denim(10, 2, Some(15));
+    fn l2_block_full_millis_respects_cobalt_activation_boundary() {
+        let cfg = rollup_config_with_cobalt(10, 2, Some(15));
 
-        assert_eq!(cfg.denim_activation_block_number(), Some(3));
+        assert_eq!(cfg.cobalt_activation_block_number(), Some(3));
         assert_eq!(cfg.l2_block_timestamp_millis(3), 16_000);
         assert_eq!(cfg.l2_block_timestamp_parts(3), (16, 0));
     }
 
     #[test]
     fn l2_block_full_millis_advances_by_200ms_after_activation() {
-        let cfg = rollup_config_with_denim(10, 2, Some(15));
+        let cfg = rollup_config_with_cobalt(10, 2, Some(15));
 
         let activation = cfg.l2_block_timestamp_millis(3);
         let next = cfg.l2_block_timestamp_millis(4);
@@ -1175,8 +1175,8 @@ mod tests {
     }
 
     #[test]
-    fn l2_block_full_millis_keeps_fixed_200ms_cadence_in_denim_era() {
-        let cfg = rollup_config_with_denim(10, 2, Some(15));
+    fn l2_block_full_millis_keeps_fixed_200ms_cadence_in_cobalt_era() {
+        let cfg = rollup_config_with_cobalt(10, 2, Some(15));
 
         let start_block = 3;
         let mut previous = cfg.l2_block_timestamp_millis(start_block);
@@ -1191,10 +1191,10 @@ mod tests {
     }
 
     #[test]
-    fn l2_block_full_millis_without_denim_uses_legacy_formula() {
-        let cfg = rollup_config_with_denim(11, 3, None);
+    fn l2_block_full_millis_without_cobalt_uses_legacy_formula() {
+        let cfg = rollup_config_with_cobalt(11, 3, None);
 
-        assert_eq!(cfg.denim_activation_block_number(), None);
+        assert_eq!(cfg.cobalt_activation_block_number(), None);
         for block_number in [0_u64, 1, 2, 10, 100] {
             let expected =
                 11u64.saturating_add(block_number.saturating_mul(3)).saturating_mul(1_000);
@@ -1206,8 +1206,49 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "rollup config: block time cannot be 0")]
-    fn denim_activation_block_number_rejects_zero_block_time() {
-        rollup_config_with_denim(100, 0, Some(101)).denim_activation_block_number();
+    fn cobalt_activation_block_number_rejects_zero_block_time() {
+        rollup_config_with_cobalt(100, 0, Some(101)).cobalt_activation_block_number();
+    }
+
+    #[test]
+    fn l2_block_full_millis_is_relative_to_nonzero_genesis_block() {
+        let mut cfg = rollup_config_with_cobalt(10, 2, Some(15));
+        cfg.genesis.l2.number = 50;
+
+        assert_eq!(cfg.cobalt_activation_block_number(), Some(3));
+        assert_eq!(cfg.l2_block_timestamp_millis(52), 14_000);
+        assert_eq!(cfg.l2_block_timestamp_millis(53), 16_000);
+        assert_eq!(cfg.l2_block_timestamp_millis(54), 16_200);
+    }
+
+    #[test]
+    fn later_denim_activation_does_not_change_cobalt_cadence() {
+        let mut with_denim = rollup_config_with_cobalt(10, 2, Some(15));
+        with_denim.upgrades.base.denim = Some(20);
+        let without_denim = rollup_config_with_cobalt(10, 2, Some(15));
+
+        for block_number in 0..20 {
+            assert_eq!(
+                with_denim.l2_block_timestamp_millis(block_number),
+                without_denim.l2_block_timestamp_millis(block_number)
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_cobalt_reschedule_moves_native_cadence_boundary() {
+        let chain_id = 9_100_099;
+        let cfg = RollupConfig {
+            l2_chain_id: Chain::from_id(chain_id),
+            ..rollup_config_with_cobalt(10, 2, Some(20))
+        };
+        crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 15);
+
+        assert_eq!(cfg.cobalt_activation_block_number(), Some(3));
+        assert_eq!(cfg.l2_block_timestamp_millis(3), 16_000);
+        assert_eq!(cfg.l2_block_timestamp_millis(4), 16_200);
+
+        crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     fn rollup_config_with_zenith(
@@ -1243,7 +1284,7 @@ mod tests {
 
     #[test]
     fn l2_block_full_millis_saturates() {
-        let saturating = rollup_config_with_denim(u64::MAX, u64::MAX, None);
+        let saturating = rollup_config_with_cobalt(u64::MAX, u64::MAX, None);
         assert_eq!(saturating.l2_block_timestamp_millis(1), u64::MAX);
     }
 
