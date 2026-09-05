@@ -106,6 +106,42 @@ impl BaseTimeUpdateTx {
         Ok(timestamp.wrapping_mul(1_000).wrapping_add(u64::from(base_time.timestamp_millis_part())))
     }
 
+    /// Validates a Cobalt block's timestamp against the absolute rollup schedule.
+    pub fn validate_block_timestamp<T: BaseTransaction>(
+        rollup_config: &RollupConfig,
+        transactions: &[T],
+        block_number: u64,
+        timestamp: u64,
+    ) -> Result<(), BaseTimeScheduleError> {
+        let Some(cobalt_activation_block) = rollup_config.cobalt_activation_block_number() else {
+            return Ok(());
+        };
+        let blocks_since_genesis = block_number.saturating_sub(rollup_config.genesis.l2.number);
+        if blocks_since_genesis < cobalt_activation_block {
+            return Ok(());
+        }
+
+        let (expected_timestamp, expected_millis_part) =
+            rollup_config.l2_block_timestamp_parts(block_number);
+        if timestamp != expected_timestamp {
+            return Err(BaseTimeScheduleError::InvalidTimestamp {
+                expected: expected_timestamp,
+                actual: timestamp,
+            });
+        }
+
+        let actual_millis_part =
+            Self::extract_from_transactions(transactions, block_number)?.timestamp_millis_part();
+        if actual_millis_part != expected_millis_part {
+            return Err(BaseTimeScheduleError::InvalidTimestampMillisPart {
+                expected: expected_millis_part,
+                actual: actual_millis_part,
+            });
+        }
+
+        Ok(())
+    }
+
     /// Validates and decodes a `BaseTime` metadata deposit.
     pub fn validate_deposit(
         deposit: &TxDeposit,
@@ -225,6 +261,30 @@ pub enum BaseTimeMetadataError {
     InvalidCalldata(BaseTimeUpdateDecodeError),
 }
 
+/// An error validating a Cobalt block timestamp against the rollup schedule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum BaseTimeScheduleError {
+    /// The whole-second timestamp does not match the scheduled timestamp.
+    #[error("invalid L2 block timestamp: expected {expected}, got {actual}")]
+    InvalidTimestamp {
+        /// The scheduled timestamp.
+        expected: u64,
+        /// The block's timestamp.
+        actual: u64,
+    },
+    /// The `BaseTime` metadata deposit is invalid.
+    #[error(transparent)]
+    InvalidMetadata(#[from] BaseTimeMetadataError),
+    /// The millisecond component does not match the scheduled timestamp.
+    #[error("invalid BaseTime timestamp millis part: expected {expected}, got {actual}")]
+    InvalidTimestampMillisPart {
+        /// The scheduled millisecond component.
+        expected: u16,
+        /// The block's millisecond component.
+        actual: u16,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{Sealable, TxLegacy};
@@ -232,9 +292,11 @@ mod tests {
     use base_common_consensus::{
         BaseTransactionSigned, BaseTypedTransaction, Predeploys, SystemAddresses, TxDeposit,
     };
+    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
 
     use super::{
-        BaseTimeMetadataError, BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx,
+        BaseTimeMetadataError, BaseTimeScheduleError, BaseTimeUpdateDecodeError,
+        BaseTimeUpdateError, BaseTimeUpdateTx,
     };
     use crate::REGOLITH_SYSTEM_TX_GAS;
 
@@ -334,6 +396,73 @@ mod tests {
         ];
 
         assert_eq!(BaseTimeUpdateTx::extract_timestamp_ms(&transactions, 9, 42), Ok(42_600));
+    }
+
+    #[test]
+    fn validates_cobalt_block_timestamp_against_absolute_schedule() {
+        let config = RollupConfig {
+            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { cobalt: Some(14), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let transactions = |block_number, millis_part| -> Vec<BaseTransactionSigned> {
+            vec![
+                TxDeposit::default().seal_slow().into(),
+                base_time_deposit(block_number, millis_part).seal_slow().into(),
+            ]
+        };
+
+        assert_eq!(
+            BaseTimeUpdateTx::validate_block_timestamp(&config, &transactions(2, 0), 2, 14),
+            Ok(())
+        );
+        assert_eq!(
+            BaseTimeUpdateTx::validate_block_timestamp(&config, &transactions(3, 200), 3, 14),
+            Ok(())
+        );
+        assert_eq!(
+            BaseTimeUpdateTx::validate_block_timestamp(&config, &transactions(7, 0), 7, 15),
+            Ok(())
+        );
+        assert_eq!(
+            BaseTimeUpdateTx::validate_block_timestamp(&config, &transactions(3, 200), 3, 15),
+            Err(BaseTimeScheduleError::InvalidTimestamp { expected: 14, actual: 15 })
+        );
+        assert_eq!(
+            BaseTimeUpdateTx::validate_block_timestamp(&config, &transactions(3, 400), 3, 14),
+            Err(BaseTimeScheduleError::InvalidTimestampMillisPart { expected: 200, actual: 400 })
+        );
+        assert_eq!(
+            BaseTimeUpdateTx::validate_block_timestamp(&config, &transactions(7, 800), 7, 15),
+            Err(BaseTimeScheduleError::InvalidTimestampMillisPart { expected: 0, actual: 800 })
+        );
+    }
+
+    #[test]
+    fn skips_schedule_validation_before_cobalt() {
+        let config = RollupConfig {
+            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { cobalt: Some(14), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(
+            BaseTimeUpdateTx::validate_block_timestamp::<BaseTransactionSigned>(
+                &config,
+                &[],
+                1,
+                u64::MAX,
+            ),
+            Ok(())
+        );
     }
 
     #[test]

@@ -37,6 +37,7 @@ The engine implements a task-driven architecture where operations are queued and
 ```
 
 - **Automatic Forkchoice Handling**: [`Engine::build`](crate::Engine::build) automatically performs forkchoice updates during block building, eliminating the need for explicit forkchoice management in user code.
+- **Rollup Schedule Validation**: [`InsertTask`](crate::InsertTask) validates Cobalt payload timestamps against the absolute rollup schedule before calling `engine_newPayload`.
 - **Internal Synchronization**: [`SynchronizeTask`](crate::SynchronizeTask) handles internal execution layer synchronization and is primarily used by other tasks rather than directly by users.
 - **Priority-Based Execution**: Tasks are executed in priority order to ensure optimal sequencer performance and block processing efficiency.
 

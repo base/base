@@ -7,24 +7,6 @@ use reth_storage_errors::provider::ProviderError;
 /// Base consensus error.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BaseConsensusError {
-    /// Consecutive blocks did not advance by exactly one 200ms slot.
-    #[error(
-        "invalid BaseTime progression from {parent_timestamp_ms}ms to {child_timestamp_ms}ms; expected exactly 200ms"
-    )]
-    BaseTimeProgressionInvalid {
-        /// The parent's full-millisecond timestamp.
-        parent_timestamp_ms: u128,
-        /// The child's full-millisecond timestamp.
-        child_timestamp_ms: u128,
-    },
-    /// The first Cobalt-active block claimed a non-zero millisecond component.
-    #[error(
-        "invalid BaseTime activation claim: first Cobalt block must have millisecond part 0, got {timestamp_millis_part}"
-    )]
-    BaseTimeActivationMillisNonZero {
-        /// The claimed sub-second millisecond component.
-        timestamp_millis_part: u16,
-    },
     /// Block body has non-empty withdrawals list (l1 withdrawals).
     #[error("non-empty block body withdrawals list")]
     WithdrawalsNonEmpty,

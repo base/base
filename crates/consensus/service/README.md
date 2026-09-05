@@ -91,6 +91,12 @@ The `L2Finalizer` struct tracks finalization by maintaining a `BTreeMap<u64, u64
 
 The delegation variants differ significantly. `DelegateDerivationActor` polls an external sync-status endpoint every 4 seconds, validates the reported safe and finalized L2 blocks' L1 origins against its local L1 provider for hash consistency, and then forwards the safe and finalized L2 heads to the engine. It does not run a pipeline at all. `DelegateL2DerivationActor` is used by `FollowNode`; it polls the source L2 node's head by block number every 2 seconds, fetches each missing payload, sends them to the engine as `ProcessUnsafeL2BlockRequest` one at a time, and then issues a delegated forkchoice update after the batch is complete.
 
+Delegated derivation is a trusted mode. A delegated safe head contains block metadata but no body,
+so the local node cannot independently validate its `BaseTime` transaction against the absolute
+rollup schedule before marking it safe. The local node trusts the delegate to have validated the
+schedule; its execution layer only enforces canonical `BaseTime` transaction structure. Follow
+nodes fetch full payloads and validate them through the normal insertion path.
+
 ## Sequencer Actor
 
 The sequencer actor owns the block production loop. It runs a `tokio::select!` with five arms in priority order: cancellation, admin queries, the seal pipeline step, the build ticker (gated on `sealer.is_none()`), and initial reset retries before the main loop starts.
