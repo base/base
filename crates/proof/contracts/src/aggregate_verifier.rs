@@ -15,7 +15,37 @@ use async_trait::async_trait;
 use crate::{
     ContractError,
     anchor_state_registry::{AnchorPreflight, AnchorRoot, IAnchorStateRegistry},
+    dispute_game_factory::DisputeGameFactoryClient,
 };
+
+/// Resolves the `(block_interval, intermediate_block_interval)` pair that applies to a
+/// game of `game_type` whose range starts at `starting_block`.
+///
+/// Denim switches the verifier to a shorter cadence at a fixed L2 block, so the pair is
+/// a function of the starting block and must be resolved per game rather than read once
+/// at startup.
+///
+/// The implementation address is read from the factory on every call so a governance
+/// `setImplementation` is picked up without a restart. The implementation — not the game
+/// proxy — is queried on purpose: callers also resolve intervals for games that do not
+/// exist yet, and games created before the Denim-aware implementation was deployed run
+/// bytecode that has no `intervalsForStartingBlock`. For pre-Denim starting blocks the
+/// Denim-aware implementation returns the same pair the old one had.
+pub async fn resolve_intervals(
+    factory_client: &dyn DisputeGameFactoryClient,
+    verifier_client: &dyn AggregateVerifierClient,
+    game_type: u32,
+    starting_block: u64,
+) -> Result<(u64, u64), ContractError> {
+    let impl_address = factory_client.game_impls(game_type).await?;
+    if impl_address.is_zero() {
+        return Err(ContractError::validation(format!(
+            "no AggregateVerifier implementation registered for game type {game_type}"
+        )));
+    }
+
+    verifier_client.read_intervals_for_starting_block(impl_address, starting_block).await
+}
 
 sol! {
     /// `AggregateVerifier` (dispute game) contract interface.
