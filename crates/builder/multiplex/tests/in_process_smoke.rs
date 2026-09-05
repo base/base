@@ -55,21 +55,13 @@ impl RunningNode {
 
     async fn launch_multiplex() -> eyre::Result<Self> {
         let service_builder = MultiplexingServiceBuilder::new(test_builder_config());
-        let chain_spec = BaseChainSpecBuilder::base_mainnet()
-            .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(u64::MAX))
-            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(u64::MAX))
-            .build();
-        Self::launch(service_builder, chain_spec).await
+        Self::launch(service_builder, BaseChainSpec::mainnet()).await
     }
 
     async fn launch_basic() -> eyre::Result<Self> {
         let service_builder =
             MultiplexingServiceBuilder::new(test_builder_config()).with_basic_only(true);
-        let chain_spec = BaseChainSpecBuilder::base_mainnet()
-            .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(u64::MAX))
-            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(u64::MAX))
-            .build();
-        Self::launch(service_builder, chain_spec).await
+        Self::launch(service_builder, BaseChainSpec::mainnet()).await
     }
 
     async fn launch<SB>(service_builder: SB, chain_spec: BaseChainSpec) -> eyre::Result<Self>
@@ -96,6 +88,8 @@ impl RunningNode {
         std::fs::create_dir_all(&data_path)?;
         std::fs::create_dir_all(&rocksdb_path)?;
         std::fs::create_dir_all(&pprof_path)?;
+        node_config.rpc.ipcpath = data_path.join("rpc.ipc").to_string_lossy().into_owned();
+        node_config.rpc.auth_ipc_path = data_path.join("engine.ipc").to_string_lossy().into_owned();
         node_config = node_config.with_datadir_args(reth_node_core::args::DatadirArgs {
             datadir: data_path.to_string_lossy().parse()?,
             static_files_path: None,
