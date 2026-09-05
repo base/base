@@ -101,8 +101,6 @@ fn test_driver_with_l1_provider(
             l2_provider as Arc<dyn base_proof_rpc::L2Provider>,
             Address::repeat_byte(0xAA),
             1,
-            100,
-            100,
         ),
         poll_interval: Duration::from_millis(10),
         max_proof_duration: Duration::from_secs(4 * 60 * 60),

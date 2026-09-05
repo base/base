@@ -32,15 +32,12 @@
 //! Games that are not `IN_PROGRESS` or have been fully nullified (both
 //! provers zero) are skipped.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, GameAtIndex,
-    GameInfo, GameStatus,
+    GameInfo, GameStatus, resolve_intervals,
 };
 use eyre::Result;
 use futures::stream::{self, StreamExt};
@@ -131,10 +128,6 @@ pub struct GameScanner {
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
-    /// Cache of `impl_address → intermediate_block_interval` to avoid repeated RPC calls.
-    /// A governance `setImplementation` call changes the address and automatically causes a
-    /// cache miss.
-    interval_cache: Mutex<HashMap<Address, u64>>,
     /// Cached `(anchor_game, factory_index)` for the current anchor game.
     anchor_index: Option<(Address, u64)>,
 }
@@ -158,13 +151,7 @@ impl GameScanner {
         verifier_client: Arc<dyn AggregateVerifierClient>,
         anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
     ) -> Self {
-        Self {
-            factory_client,
-            verifier_client,
-            anchor_registry_client,
-            interval_cache: Mutex::new(HashMap::new()),
-            anchor_index: None,
-        }
+        Self { factory_client, verifier_client, anchor_registry_client, anchor_index: None }
     }
 
     /// Scans for candidate games that need validation.
@@ -393,17 +380,22 @@ impl GameScanner {
         };
 
         // Fetch remaining fields only for actionable games.
-        let ((info, starting_block_number, l1_head), intermediate_block_interval) = tokio::try_join!(
-            async {
-                tokio::try_join!(
-                    self.verifier_client.game_info(factory.proxy),
-                    self.verifier_client.starting_block_number(factory.proxy),
-                    self.verifier_client.l1_head(factory.proxy),
-                )
-                .map_err(Into::into)
-            },
-            self.resolve_intermediate_block_interval(factory.game_type),
+        let (info, starting_block_number, l1_head) = tokio::try_join!(
+            self.verifier_client.game_info(factory.proxy),
+            self.verifier_client.starting_block_number(factory.proxy),
+            self.verifier_client.l1_head(factory.proxy),
         )?;
+
+        // Resolved from this game's own starting block: the verifier switches to a
+        // shorter cadence at the Denim activation block, so one interval per
+        // implementation is wrong once a single implementation serves both sides of it.
+        let (_, intermediate_block_interval) = resolve_intervals(
+            self.factory_client.as_ref(),
+            self.verifier_client.as_ref(),
+            factory.game_type,
+            starting_block_number,
+        )
+        .await?;
 
         Ok(Some(CandidateGame {
             index,
@@ -485,42 +477,6 @@ impl GameScanner {
                 None
             }
         }
-    }
-
-    /// Resolves the intermediate block interval for a game type, using a cache
-    /// to avoid repeated RPC calls for the same implementation address.
-    ///
-    /// The impl address is always fetched from the factory so that a governance
-    /// `setImplementation` call (which changes the address) automatically
-    /// invalidates the cached value.
-    async fn resolve_intermediate_block_interval(&self, game_type: u32) -> Result<u64> {
-        let impl_address = self.factory_client.game_impls(game_type).await?;
-        if impl_address == Address::ZERO {
-            return Err(eyre::eyre!(
-                "no game implementation registered in DisputeGameFactory for game type {game_type}"
-            ));
-        }
-
-        {
-            let cache = self.interval_cache.lock().expect("interval_cache lock poisoned");
-            if let Some(&interval) = cache.get(&impl_address) {
-                return Ok(interval);
-            }
-        }
-
-        let interval = self.verifier_client.read_intermediate_block_interval(impl_address).await?;
-
-        debug!(
-            game_type = game_type,
-            interval = interval,
-            impl_address = %impl_address,
-            "resolved intermediate block interval"
-        );
-
-        let mut cache = self.interval_cache.lock().expect("interval_cache lock poisoned");
-        cache.insert(impl_address, interval);
-
-        Ok(interval)
     }
 }
 
@@ -654,9 +610,11 @@ mod tests {
         assert_eq!(candidates[3].index, 4);
         assert_eq!(candidates[3].factory.game_type, 1);
         assert_eq!(candidates[3].info.l2_block_number, 400);
+        // One interval read per candidate: the pair depends on the game's own starting
+        // block, so it cannot be resolved once per implementation.
         assert_eq!(
             verifier.intermediate_block_interval_reads.lock().unwrap().as_slice(),
-            &[Address::repeat_byte(0x11)],
+            &[Address::repeat_byte(0x11); 4],
         );
     }
 
@@ -1096,6 +1054,38 @@ mod tests {
             game_zero.category,
             GameCategory::FraudulentZkChallenge { challenged_index: 1 },
             "old game should now classify under its late state transition"
+        );
+    }
+
+    /// Two games straddling the Denim activation block resolve different intervals.
+    #[tokio::test]
+    async fn test_scan_resolves_intervals_per_game_across_denim_activation() {
+        let factory =
+            Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1), factory_game(1, 1)]));
+
+        let mut verifier_games = HashMap::new();
+        // starting_block_number is l2_block_number - 10 in the mock.
+        verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, Address::ZERO, 100));
+        verifier_games.insert(addr(1), mock_state(GameStatus::InProgress, Address::ZERO, 400));
+
+        let verifier =
+            Arc::new(MockAggregateVerifier::new(verifier_games).with_denim_intervals(300, 4, 2));
+
+        let mut scanner = GameScanner::new(
+            factory,
+            Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
+            mock_anchor_registry(Address::ZERO),
+        );
+
+        let candidates = scanner.scan().await.unwrap();
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].starting_block_number, 90);
+        assert_eq!(candidates[0].intermediate_block_interval, 5, "pre-Denim game");
+        assert_eq!(candidates[1].starting_block_number, 390);
+        assert_eq!(
+            candidates[1].intermediate_block_interval, 2,
+            "post-Denim game must not inherit the pre-Denim interval"
         );
     }
 }
