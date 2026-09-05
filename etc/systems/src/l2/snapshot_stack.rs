@@ -81,7 +81,6 @@ impl SnapshotL2Stack {
             metrics_port: None,
             block_time: block_interval.duration(),
             enable_experimental_validity_transactions: false,
-            payload_builder_cutover: block_interval == DevnetBlockInterval::TwoHundredMilliseconds,
             extra_extensions: Vec::new(),
             persistence_threshold: Some(0),
             txpool_max_transactions: Some(150_000),

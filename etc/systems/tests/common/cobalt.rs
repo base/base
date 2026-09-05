@@ -30,7 +30,6 @@ pub(crate) async fn start_cobalt_stack(
         .with_base_azul_activation_block(BASE_AZUL_ACTIVATION_BLOCK)
         .with_base_beryl_activation_block(BASE_BERYL_ACTIVATION_BLOCK)
         .with_base_cobalt_activation_block(BASE_COBALT_ACTIVATION_BLOCK)
-        .with_payload_builder_cutover()
         .build()
         .await?;
     let provider = system.l2_builder_provider()?;

@@ -74,6 +74,16 @@ pub trait Upgrades: EthereumHardforks {
         self.fork_condition(BaseUpgrade::Beryl).active_at_timestamp(timestamp)
     }
 
+    /// Returns `true` if any upgrade chronologically after [`Beryl`](BaseUpgrade::Beryl) is
+    /// active at the given block timestamp.
+    fn is_post_beryl_active_at_timestamp(&self, timestamp: u64) -> bool {
+        BaseUpgrade::VARIANTS
+            .iter()
+            .skip_while(|upgrade| **upgrade != BaseUpgrade::Beryl)
+            .skip(1)
+            .any(|upgrade| self.fork_condition(*upgrade).active_at_timestamp(timestamp))
+    }
+
     /// Returns `true` if [`Cobalt`](BaseUpgrade::Cobalt) is active at given block timestamp.
     fn is_cobalt_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.fork_condition(BaseUpgrade::Cobalt).active_at_timestamp(timestamp)

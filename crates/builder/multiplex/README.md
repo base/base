@@ -1,25 +1,26 @@
 # `base-builder-multiplex`
 
-Runs Base flashblocks and Base basic payload builders in parallel behind a single routing
-`PayloadBuilderHandle`, cutting the selected builder over when Denim activates.
+Runs Base Flashblocks and native (basic) payload builders behind a single routing
+`PayloadBuilderHandle`. Flashblocks is eligible through Beryl; any active upgrade after Beryl
+selects the native builder.
 
 ## Overview
 
-- with cutover mode enabled, fans out every `BuildNewPayload` request to both builders,
-- selects flashblocks before Denim and basic at and after Denim,
+- starts both services by default, regardless of the current or scheduled fork,
+- before the first post-Beryl upgrade, selects Flashblocks and runs the native builder as a
+  `no_tx_pool` shadow,
+- at and after activation, sends build requests only to the native builder: the Flashblocks
+  service stays running but does not build or publish post-Beryl payloads,
 - routes reads (`BestPayload`, `PayloadTimestamp`, `Resolve`, `Subscribe`) to the builder
   selected for each payload,
-- with basic-only mode enabled, starts only the basic payload builder for operation after the
-  cutover is complete,
-- allows the default Flashblocks-only mode only when neither Cobalt nor Denim is scheduled.
+- with basic-only mode enabled, starts only the native payload builder.
 
 ## Startup configuration
 
-When Cobalt or Denim is scheduled (including future activation), startup requires
-`--builder.payload-builder-cutover` or `--builder.basic-payload-builder`. The check uses the
-execution chain spec after startup upgrade signals have been applied and rejects Flashblocks-only
-mode before starting a payload service. Cutover mode still selects the basic builder at Denim;
-this configuration requirement does not change fork activation behavior.
+No cutover flag or restart-time configuration change is required. The legacy
+`--builder.payload-builder-cutover` flag is accepted but has no effect.
 
-For chains that receive upgrade schedules at runtime, enable cutover mode before starting the
-node even if neither fork is scheduled yet. The startup check does not monitor later schedules.
+Routing checks the effective fork schedule for each payload timestamp, including runtime upgrade
+signals. All upgrades ordered after Beryl are considered, even if Cobalt itself is unscheduled.
+Already-created payloads retain their recorded route. This changes builder eligibility, not the
+consensus block-time schedule.

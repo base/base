@@ -70,7 +70,6 @@ impl SequencerCommand {
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
         let builder_api_config = builder.builder_api_config()?;
-        let payload_builder_cutover = builder.payload_builder_cutover;
         let basic_payload_builder = builder.basic_payload_builder;
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
@@ -109,7 +108,6 @@ impl SequencerCommand {
                 .with_manifest_precheck_enabled(manifest_precheck_enabled)
                 .with_service_builder(
                     MultiplexingServiceBuilder::new(builder_config)
-                        .with_cutover_enabled(payload_builder_cutover)
                         .with_basic_only(basic_payload_builder),
                 );
             runner.install_ext::<MeteringStoreExtension>(metering_provider);

@@ -1,6 +1,4 @@
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, NodeBounds, PoolBounds};
-use base_common_chains::Upgrades;
-use base_common_genesis::BaseUpgrade;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::config::BaseBuilderConfig;
 use base_node_core::{
@@ -11,7 +9,6 @@ use base_node_runner::{
     BaseNode, BaseNodeTypes, PayloadServiceBuilder as BasePayloadServiceBuilder,
 };
 use reth_basic_payload_builder::{BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig};
-use reth_ethereum_forks::ForkCondition;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{
     BuilderContext,
@@ -22,35 +19,21 @@ use reth_provider::CanonStateSubscriptions;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use crate::{HealthState, MultiplexRouter, RoutingConfig};
+use crate::{HealthState, MultiplexRouter};
 
 /// Spawns flashblocks + basic payload services and returns one routing handle.
 #[derive(Debug, Clone)]
 pub struct MultiplexingServiceBuilder {
     /// Flashblocks/shared builder config.
     pub builder_config: BuilderConfig,
-    /// Multiplexer settings.
-    pub routing_config: RoutingConfig,
     /// Whether to run only the basic payload builder.
     pub basic_only: bool,
 }
 
 impl MultiplexingServiceBuilder {
     /// Creates a new multiplexing service builder.
-    pub fn new(builder_config: BuilderConfig) -> Self {
-        Self { builder_config, routing_config: RoutingConfig::default(), basic_only: false }
-    }
-
-    /// Configures multiplexer runtime config.
-    pub const fn with_routing_config(mut self, routing_config: RoutingConfig) -> Self {
-        self.routing_config = routing_config;
-        self
-    }
-
-    /// Enables or disables the Denim payload-builder cutover.
-    pub const fn with_cutover_enabled(mut self, cutover_enabled: bool) -> Self {
-        self.routing_config.cutover_enabled = cutover_enabled;
-        self
+    pub const fn new(builder_config: BuilderConfig) -> Self {
+        Self { builder_config, basic_only: false }
     }
 
     /// Configures the service to run only the basic payload builder.
@@ -71,24 +54,6 @@ where
         pool: Pool,
         evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        eyre::ensure!(
-            !(self.routing_config.cutover_enabled && self.basic_only),
-            "payload builder cutover and basic-only modes are mutually exclusive"
-        );
-
-        if !self.routing_config.cutover_enabled && !self.basic_only {
-            for upgrade in [BaseUpgrade::Cobalt, BaseUpgrade::Denim] {
-                eyre::ensure!(
-                    ctx.chain_spec().fork_condition(upgrade) == ForkCondition::Never,
-                    "Flashblocks-only mode cannot start with scheduled {upgrade:?}; enable \
-                     --builder.payload-builder-cutover or --builder.basic-payload-builder"
-                );
-            }
-            return FlashblocksServiceBuilder::new(self.builder_config)
-                .spawn_payload_builder_service(ctx, pool, evm_config)
-                .await;
-        }
-
         let payload_builder =
             base_execution_payload_builder::BasePayloadBuilder::with_builder_config(
                 pool.clone(),

@@ -310,7 +310,6 @@ services:
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --builder.enable-resource-metering
       - --builder.enable-experimental-validity-transactions
-      - --builder.payload-builder-cutover
       - --builder.max-rejected-txs-per-block=${BUILDER_MAX_REJECTED_TXS_PER_BLOCK}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768

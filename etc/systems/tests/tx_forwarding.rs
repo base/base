@@ -63,7 +63,6 @@ async fn start_validity_system() -> Result<SystemTestStack> {
             TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
         )
         .with_experimental_validity_transactions()
-        .with_payload_builder_cutover()
         .build()
         .await?;
 

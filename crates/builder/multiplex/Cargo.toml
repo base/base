@@ -18,7 +18,6 @@ base-node-core.workspace = true
 base-node-runner.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
-base-common-genesis.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
 
@@ -26,7 +25,6 @@ base-execution-payload-builder.workspace = true
 reth-provider.workspace = true
 reth-node-api.workspace = true
 reth-node-builder.workspace = true
-reth-ethereum-forks.workspace = true
 reth-payload-builder.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-payload-builder-primitives.workspace = true
@@ -58,8 +56,10 @@ alloy-provider.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
+base-protocol.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-network.workspace = true
+base-common-genesis.workspace = true
 base-common-rpc-types-engine.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-rpc = { workspace = true, features = ["client"] }
@@ -68,4 +68,6 @@ reth-db.workspace = true
 reth-ipc.workspace = true
 reth-node-core.workspace = true
 reth-tasks.workspace = true
+reth-ethereum-forks.workspace = true
+tokio-tungstenite.workspace = true
 tokio = { workspace = true, features = ["macros"] }

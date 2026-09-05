@@ -277,20 +277,12 @@ pub struct Args {
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
 
-    /// Runs both payload builders and selects the basic builder when Denim activates.
-    #[arg(
-        long = "builder.payload-builder-cutover",
-        default_value = "false",
-        conflicts_with = "basic_payload_builder"
-    )]
+    /// Deprecated compatibility flag; post-Beryl payload-builder cutover is always enabled.
+    #[arg(long = "builder.payload-builder-cutover", default_value = "false", hide = true)]
     pub payload_builder_cutover: bool,
 
     /// Runs only the basic payload builder after the cutover is complete.
-    #[arg(
-        long = "builder.basic-payload-builder",
-        default_value = "false",
-        conflicts_with = "payload_builder_cutover"
-    )]
+    #[arg(long = "builder.basic-payload-builder", default_value = "false")]
     pub basic_payload_builder: bool,
 
     /// Transaction event journal configuration
@@ -525,14 +517,13 @@ mod tests {
     }
 
     #[test]
-    fn payload_builder_cutover_defaults_to_disabled() {
+    fn basic_payload_builder_defaults_to_disabled() {
         let parsed = CommandParser::parse_from(["test"]);
-        assert!(!parsed.args.payload_builder_cutover);
         assert!(!parsed.args.basic_payload_builder);
     }
 
     #[test]
-    fn payload_builder_cutover_requires_explicit_opt_in() {
+    fn legacy_payload_builder_cutover_flag_is_accepted() {
         let parsed = CommandParser::parse_from(["test", "--builder.payload-builder-cutover"]);
         assert!(parsed.args.payload_builder_cutover);
     }
@@ -544,13 +535,13 @@ mod tests {
     }
 
     #[test]
-    fn payload_builder_modes_are_mutually_exclusive() {
+    fn legacy_cutover_flag_is_compatible_with_basic_only() {
         let parsed = CommandParser::try_parse_from([
             "test",
             "--builder.payload-builder-cutover",
             "--builder.basic-payload-builder",
         ]);
-        assert!(parsed.is_err());
+        assert!(parsed.expect("legacy flag must not prevent startup").args.basic_payload_builder);
     }
 
     #[rstest]

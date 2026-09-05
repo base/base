@@ -60,8 +60,6 @@ pub struct InProcessBuilderConfig {
     /// Whether to accept experimental validity-bearing transactions and expose
     /// `base_sendRawTransactionValidity`.
     pub enable_experimental_validity_transactions: bool,
-    /// Whether to run both payload builders and cut over to basic at Denim.
-    pub payload_builder_cutover: bool,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -218,10 +216,10 @@ impl InProcessBuilder {
             .apply_to(
                 node_builder
                     .with_components(
-                        base_node.components().pool(pool_component(&rollup_args)).payload(
-                            MultiplexingServiceBuilder::new(builder_config)
-                                .with_cutover_enabled(config.payload_builder_cutover),
-                        ),
+                        base_node
+                            .components()
+                            .pool(pool_component(&rollup_args))
+                            .payload(MultiplexingServiceBuilder::new(builder_config)),
                     )
                     .with_add_ons(addons)
                     .on_component_initialized(move |_ctx| Ok(())),
