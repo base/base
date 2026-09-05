@@ -89,9 +89,9 @@ To exercise Cobalt validity transactions on the native payload builder, the
 deployment must schedule Cobalt no later than Denim and configure both sides of
 the forwarding path:
 
-- builder: `--builder.enable-experimental-validity-transactions` and
-  `--builder.payload-builder-cutover`. The builder flag also registers
-  `base_sendRawTransactionValidity` for direct ingress.
+- builder: `--builder.enable-experimental-validity-transactions`, which also registers
+  `base_sendRawTransactionValidity` for direct ingress. Native builder selection is automatic
+  after Beryl.
 - ingress/client: `--enable-experimental-validity-transactions` and a
   `--builder-rpc-urls` endpoint targeting the builder
 

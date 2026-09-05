@@ -3356,6 +3356,7 @@ dependencies = [
  "base-execution-rpc",
  "base-node-core",
  "base-node-runner",
+ "base-protocol",
  "eyre",
  "futures",
  "metrics",
@@ -3374,6 +3375,7 @@ dependencies = [
  "reth-tasks",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-tungstenite 0.28.0",
  "tracing",
 ]
 

@@ -56,9 +56,10 @@ alloy-provider.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
-base-common-genesis.workspace = true
+base-protocol.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-network.workspace = true
+base-common-genesis.workspace = true
 base-common-rpc-types-engine.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-rpc = { workspace = true, features = ["client"] }
@@ -68,4 +69,5 @@ reth-ipc.workspace = true
 reth-node-core.workspace = true
 reth-tasks.workspace = true
 reth-ethereum-forks.workspace = true
+tokio-tungstenite.workspace = true
 tokio = { workspace = true, features = ["macros"] }

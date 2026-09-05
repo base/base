@@ -135,7 +135,6 @@ services:
       - --flashblocks.block-time=200
       - --rollup.chain-block-time=2000
       - --builder.enable-experimental-validity-transactions
-      - --builder.payload-builder-cutover
       - --metrics=0.0.0.0:${L2_SEQ1_METRICS_PORT}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768
@@ -246,7 +245,6 @@ services:
       - --flashblocks.block-time=200
       - --rollup.chain-block-time=2000
       - --builder.enable-experimental-validity-transactions
-      - --builder.payload-builder-cutover
       - --metrics=0.0.0.0:${L2_SEQ2_METRICS_PORT}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768

@@ -1,4 +1,4 @@
-//! End-to-end test for the Denim payload-builder and block-time cutover.
+//! End-to-end test for post-Beryl builder retirement and the separate Denim block-time cutover.
 
 use std::time::Duration;
 
@@ -20,20 +20,21 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
-const DENIM_ACTIVATION_BLOCK: u64 = 10;
+const COBALT_ACTIVATION_BLOCK: u64 = 10;
+const DENIM_ACTIVATION_BLOCK: u64 = 14;
 const LAST_VERIFIED_BLOCK: u64 = DENIM_ACTIVATION_BLOCK + 4;
 const BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
 const REPLAY_QUIET_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tokio::test]
-async fn cuts_over_builder_and_block_time_at_denim() -> Result<()> {
+async fn retires_flashblocks_at_cobalt_before_denim_block_time_cutover() -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
 
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
+        .with_base_cobalt_activation_block(COBALT_ACTIVATION_BLOCK)
         .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
-        .with_payload_builder_cutover()
         .build()
         .await?;
     let builder = system.l2_builder_provider()?;
@@ -43,22 +44,22 @@ async fn cuts_over_builder_and_block_time_at_denim() -> Result<()> {
     let pre_cutover_receipt_block =
         send_transaction(&builder, &signer).await.wrap_err("pre-cutover transaction failed")?;
     assert!(
-        pre_cutover_receipt_block < DENIM_ACTIVATION_BLOCK,
+        pre_cutover_receipt_block < COBALT_ACTIVATION_BLOCK,
         "pre-cutover transaction landed at block {pre_cutover_receipt_block}"
     );
 
-    wait_for_block(&builder, DENIM_ACTIVATION_BLOCK + 1).await?;
+    wait_for_block(&builder, COBALT_ACTIVATION_BLOCK + 1).await?;
     let post_cutover_receipt_block =
         send_transaction(&builder, &signer).await.wrap_err("post-cutover transaction failed")?;
     assert!(
-        post_cutover_receipt_block > DENIM_ACTIVATION_BLOCK,
+        post_cutover_receipt_block > COBALT_ACTIVATION_BLOCK,
         "post-cutover transaction landed at block {post_cutover_receipt_block}"
     );
 
     wait_for_block(&builder, LAST_VERIFIED_BLOCK).await?;
     wait_for_block(&client, LAST_VERIFIED_BLOCK).await?;
     verify_chain_and_cadence(&builder, &client).await?;
-    verify_flashblocks_stop_at_denim(&system.l2_stack().builder().flashblocks_url()).await?;
+    verify_flashblocks_stop_at_cobalt(&system.l2_stack().builder().flashblocks_url()).await?;
 
     Ok(())
 }
@@ -144,7 +145,7 @@ async fn verify_chain_and_cadence(
     Ok(())
 }
 
-async fn verify_flashblocks_stop_at_denim(url: &str) -> Result<()> {
+async fn verify_flashblocks_stop_at_cobalt(url: &str) -> Result<()> {
     let replay_url = format!("{url}?block_number=0&flashblock_index=0");
     let (stream, _) = connect_async(replay_url).await?;
     let (_, mut messages) = stream.split();
@@ -159,10 +160,10 @@ async fn verify_flashblocks_stop_at_denim(url: &str) -> Result<()> {
         positions.push((metadata.block_number, flashblock.index));
     }
 
-    assert!(!positions.is_empty(), "no pre-Denim flashblocks were published");
+    assert!(!positions.is_empty(), "no pre-Cobalt flashblocks were published");
     assert!(
-        positions.iter().all(|(number, _)| *number < DENIM_ACTIVATION_BLOCK),
-        "post-Denim flashblock published at {positions:?}"
+        positions.iter().all(|(number, _)| *number < COBALT_ACTIVATION_BLOCK),
+        "post-Cobalt flashblock published at {positions:?}"
     );
 
     Ok(())

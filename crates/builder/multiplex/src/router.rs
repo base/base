@@ -73,7 +73,7 @@ pub type ResolveFuture = std::pin::Pin<
     >,
 >;
 
-/// Router that cuts payload selection from flashblocks to basic when Denim activates.
+/// Router that cuts payload selection from flashblocks to basic after Beryl.
 #[derive(Debug)]
 pub struct MultiplexRouter {
     /// Flashblocks payload-builder handle.
@@ -84,7 +84,7 @@ pub struct MultiplexRouter {
     pub flashblocks_health: HealthState,
     /// Basic health state.
     pub basic_health: HealthState,
-    /// Chain spec that owns the Denim activation condition.
+    /// Chain spec that owns the upgrade activation conditions.
     pub chain_spec: Arc<BaseChainSpec>,
     /// Whether recent payload IDs are routed to the basic builder, ordered oldest first.
     pub payload_routes: VecDeque<(PayloadId, bool)>,
@@ -109,9 +109,9 @@ impl MultiplexRouter {
         }
     }
 
-    /// Returns whether Denim selects the basic builder at `timestamp`.
+    /// Returns whether a post-Beryl upgrade selects the basic builder at `timestamp`.
     pub fn basic_selected_at(&self, timestamp: u64) -> bool {
-        self.chain_spec.is_denim_active_at_timestamp(timestamp)
+        self.chain_spec.is_post_beryl_active_at_timestamp(timestamp)
     }
 
     /// Returns the recorded route for a payload, defaulting unknown payloads to flashblocks.
@@ -198,6 +198,29 @@ impl MultiplexRouter {
         let selected_basic = self.basic_selected_at(input.attributes.timestamp());
         self.record_payload_route(payload_id, selected_basic);
 
+        if selected_basic {
+            Self::inc_dispatch_metric(BASIC_BUILDER);
+            Self::inc_selected_build_metric(BASIC_BUILDER);
+            let basic_rx = self.basic_handle.send_new_payload(input);
+            let basic_health = self.basic_health.clone();
+            return async move {
+                let result = basic_rx.await.unwrap_or_else(|_| {
+                    basic_health.mark_unavailable();
+                    Self::set_service_health_metric(BASIC_BUILDER, false);
+                    Err(Self::unavailable_error(BASIC_BUILDER))
+                });
+                info!(
+                    builder = BASIC_BUILDER,
+                    payload_id = ?payload_id,
+                    selected = true,
+                    result = if result.is_ok() { "ok" } else { "err" },
+                    "multiplex build request completed"
+                );
+                let _ = tx.send(result);
+            }
+            .boxed();
+        }
+
         let mut shadow_attributes = input.attributes.clone();
         shadow_attributes.no_tx_pool = true;
         let shadow_input = BuildNewPayload {
@@ -205,41 +228,16 @@ impl MultiplexRouter {
             parent_hash: input.parent_hash,
             resources: Default::default(),
         };
-        let (flashblocks_input, basic_input) =
-            if selected_basic { (shadow_input, input) } else { (input, shadow_input) };
 
         Self::inc_dispatch_metric(FLASHBLOCKS_BUILDER);
         Self::inc_dispatch_metric(BASIC_BUILDER);
 
-        let flashblocks_rx = self.flashblocks_handle.send_new_payload(flashblocks_input);
-        let basic_rx = self.basic_handle.send_new_payload(basic_input);
-
-        let (
-            selected_rx,
-            selected_health,
-            selected_builder,
-            shadow_rx,
-            shadow_health,
-            shadow_builder,
-        ) = if selected_basic {
-            (
-                basic_rx,
-                self.basic_health.clone(),
-                BASIC_BUILDER,
-                flashblocks_rx,
-                self.flashblocks_health.clone(),
-                FLASHBLOCKS_BUILDER,
-            )
-        } else {
-            (
-                flashblocks_rx,
-                self.flashblocks_health.clone(),
-                FLASHBLOCKS_BUILDER,
-                basic_rx,
-                self.basic_health.clone(),
-                BASIC_BUILDER,
-            )
-        };
+        let selected_rx = self.flashblocks_handle.send_new_payload(input);
+        let selected_health = self.flashblocks_health.clone();
+        let selected_builder = FLASHBLOCKS_BUILDER;
+        let shadow_rx = self.basic_handle.send_new_payload(shadow_input);
+        let shadow_health = self.basic_health.clone();
+        let shadow_builder = BASIC_BUILDER;
 
         Self::inc_selected_build_metric(selected_builder);
         async move {
@@ -415,7 +413,7 @@ impl MultiplexRouter {
                     _ = events_tx.closed() => break,
                     result = flashblocks_events.recv(), if !flashblocks_closed => match result {
                         Ok(event) => {
-                            if !chain_spec.is_denim_active_at_timestamp(Self::event_timestamp(&event)) {
+                            if !chain_spec.is_post_beryl_active_at_timestamp(Self::event_timestamp(&event)) {
                                 let _ = events_tx.send(event);
                             }
                         }
@@ -439,7 +437,7 @@ impl MultiplexRouter {
                     },
                     result = basic_events.recv(), if !basic_closed => match result {
                         Ok(event) => {
-                            if chain_spec.is_denim_active_at_timestamp(Self::event_timestamp(&event)) {
+                            if chain_spec.is_post_beryl_active_at_timestamp(Self::event_timestamp(&event)) {
                                 let _ = events_tx.send(event);
                             }
                         }
@@ -530,7 +528,7 @@ mod tests {
     use std::time::Duration;
 
     use alloy_primitives::B256;
-    use base_common_genesis::BaseUpgrade;
+    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
     use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_ethereum_forks::ForkCondition;
     use reth_payload_builder::PayloadBuilderHandle;
@@ -581,7 +579,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_fans_to_both_and_selects_by_denim_activation() {
+    async fn build_fans_out_before_post_beryl_activation_and_uses_only_basic_after() {
         for (timestamp, selected_basic) in [(DENIM_TIMESTAMP - 1, false), (DENIM_TIMESTAMP, true)] {
             let (mut router, mut flash_rx, mut basic_rx) = test_router();
             let (tx, rx) = tokio::sync::oneshot::channel();
@@ -590,42 +588,123 @@ mod tests {
             let payload_id = input.payload_id();
             let response = router.handle_build_new_payload(input, tx);
 
-            let flash_cmd = flash_rx.recv().await.expect("flash cmd");
             let basic_cmd = basic_rx.recv().await.expect("basic cmd");
-            let mut flash_seen = false;
-            let mut basic_seen = false;
-
-            if let PayloadServiceCommand::BuildNewPayload(input, _, tx) = flash_cmd {
-                flash_seen = true;
+            if !selected_basic {
+                let flash_cmd = flash_rx.recv().await.expect("flash cmd");
+                let PayloadServiceCommand::BuildNewPayload(input, _, tx) = flash_cmd else {
+                    panic!("expected flash BuildNewPayload");
+                };
                 assert_eq!(input.payload_id() == payload_id, !selected_basic);
                 assert_eq!(input.attributes.no_tx_pool, selected_basic);
                 assert!(input.resources.execution_cache().is_none());
                 assert!(input.resources.state_root_handle().is_none());
-                tx.send(if selected_basic {
-                    Err(PayloadBuilderError::MissingPayload)
-                } else {
-                    Ok(payload_id)
-                })
-                .expect("flash response");
+                tx.send(Ok(payload_id)).expect("flash response");
+            } else {
+                assert!(flash_rx.try_recv().is_err());
             }
 
-            if let PayloadServiceCommand::BuildNewPayload(input, _, tx) = basic_cmd {
-                basic_seen = true;
-                assert_eq!(input.payload_id() == payload_id, selected_basic);
-                assert_eq!(input.attributes.no_tx_pool, !selected_basic);
-                tx.send(if selected_basic {
-                    Ok(payload_id)
-                } else {
-                    Err(PayloadBuilderError::MissingPayload)
-                })
-                .expect("basic response");
-            }
+            let PayloadServiceCommand::BuildNewPayload(input, _, tx) = basic_cmd else {
+                panic!("expected basic BuildNewPayload");
+            };
+            assert_eq!(input.payload_id() == payload_id, selected_basic);
+            assert_eq!(input.attributes.no_tx_pool, !selected_basic);
+            tx.send(if selected_basic {
+                Ok(payload_id)
+            } else {
+                Err(PayloadBuilderError::MissingPayload)
+            })
+            .expect("basic response");
 
-            assert!(flash_seen);
-            assert!(basic_seen);
             response.await;
             assert!(rx.await.expect("selected response").is_ok());
         }
+    }
+
+    #[test]
+    fn beryl_is_eligible_until_a_later_upgrade_boundary() {
+        let (mut router, _, _) = test_router();
+        router.chain_spec = Arc::new(
+            BaseChainSpecBuilder::base_mainnet()
+                .with_fork(BaseUpgrade::Beryl, ForkCondition::Timestamp(1))
+                .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(10))
+                .with_fork(BaseUpgrade::Denim, ForkCondition::Never)
+                .with_fork(BaseUpgrade::Zenith, ForkCondition::Never)
+                .build(),
+        );
+
+        assert!(!router.basic_selected_at(9));
+        assert!(router.basic_selected_at(10));
+        assert!(router.basic_selected_at(11));
+    }
+
+    #[test]
+    fn runtime_post_beryl_activation_updates_existing_router() {
+        const CHAIN_ID: u64 = 9_777_101;
+        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
+        let (mut router, _, _) = test_router();
+        router.chain_spec = Arc::new(
+            BaseChainSpecBuilder::base_mainnet()
+                .chain(CHAIN_ID.into())
+                .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
+                .build(),
+        );
+        assert!(!router.basic_selected_at(10));
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Cobalt, 10);
+        assert!(router.basic_selected_at(10));
+        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
+    }
+
+    #[tokio::test]
+    async fn post_beryl_builds_never_dispatch_to_flashblocks() {
+        for upgrade in [BaseUpgrade::Cobalt, BaseUpgrade::Denim, BaseUpgrade::Zenith] {
+            let (mut router, mut flash_rx, mut basic_rx) = test_router();
+            router.chain_spec = Arc::new(
+                BaseChainSpecBuilder::base_mainnet()
+                    .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
+                    .with_fork(BaseUpgrade::Denim, ForkCondition::Never)
+                    .with_fork(BaseUpgrade::Zenith, ForkCondition::Never)
+                    .with_fork(upgrade, ForkCondition::Timestamp(10))
+                    .build(),
+            );
+            let input = sample_input(10);
+            let payload_id = input.payload_id();
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let response = router.handle_build_new_payload(input, tx);
+
+            assert!(flash_rx.try_recv().is_err(), "Flashblocks received work at {upgrade:?}");
+            let PayloadServiceCommand::BuildNewPayload(input, _, tx) =
+                basic_rx.try_recv().expect("native build command")
+            else {
+                panic!("expected native BuildNewPayload");
+            };
+            assert_eq!(input.payload_id(), payload_id);
+            assert!(!input.attributes.no_tx_pool);
+            tx.send(Ok(payload_id)).expect("native response");
+            response.await;
+            assert_eq!(rx.await.expect("selected response").expect("successful build"), payload_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn post_beryl_native_error_does_not_fall_back_to_flashblocks() {
+        let (mut router, mut flash_rx, mut basic_rx) = test_router();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let response = router.handle_build_new_payload(sample_input(DENIM_TIMESTAMP), tx);
+
+        let PayloadServiceCommand::BuildNewPayload(_, _, tx) =
+            basic_rx.recv().await.expect("native build command")
+        else {
+            panic!("expected native BuildNewPayload");
+        };
+        tx.send(Err(PayloadBuilderError::MissingPayload)).expect("native response");
+        response.await;
+
+        assert!(matches!(
+            rx.await.expect("selected response"),
+            Err(PayloadBuilderError::MissingPayload)
+        ));
+        assert!(flash_rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -706,6 +785,14 @@ mod tests {
         );
 
         basic_events_tx
+            .send(Events::Attributes(sample_input(DENIM_TIMESTAMP - 1).attributes))
+            .expect("send rejected pre-Denim basic event");
+        flash_events_tx
+            .send(Events::Attributes(sample_input(DENIM_TIMESTAMP).attributes))
+            .expect("send rejected post-Denim flash event");
+        assert!(tokio::time::timeout(Duration::from_millis(50), sub.recv()).await.is_err());
+
+        basic_events_tx
             .send(Events::Attributes(sample_input(DENIM_TIMESTAMP).attributes))
             .expect("send post-Denim basic event");
         assert_eq!(
@@ -732,10 +819,6 @@ mod tests {
         let build_rx = handle.send_new_payload(input);
         let resolve = handle.resolve_kind(payload_id, PayloadKind::Earliest);
 
-        let flash_cmd = flash_rx.recv().await.expect("flash build command");
-        let PayloadServiceCommand::BuildNewPayload(_, _, flash_build_tx) = flash_cmd else {
-            panic!("expected flash BuildNewPayload command");
-        };
         let basic_cmd = basic_rx.recv().await.expect("basic build command");
         let PayloadServiceCommand::BuildNewPayload(_, _, basic_build_tx) = basic_cmd else {
             panic!("expected basic BuildNewPayload command");
@@ -752,7 +835,6 @@ mod tests {
         assert!(flash_rx.try_recv().is_err());
 
         basic_build_tx.send(Ok(payload_id)).expect("basic build response");
-        flash_build_tx.send(Ok(payload_id)).expect("flash build response");
         assert!(basic_resolve_tx.send(None).is_ok(), "basic resolve response");
 
         assert_eq!(
@@ -767,7 +849,7 @@ mod tests {
 
     #[tokio::test]
     async fn stalled_shadow_does_not_block_selected_builder() {
-        for (timestamp, selected_basic) in [(DENIM_TIMESTAMP - 1, false), (DENIM_TIMESTAMP, true)] {
+        for timestamp in [DENIM_TIMESTAMP - 2, DENIM_TIMESTAMP - 1] {
             let (router, mut flash_rx, mut basic_rx) = test_router();
             let (router_tx, router_rx) = mpsc::unbounded_channel();
             let handle = PayloadBuilderHandle::new(router_tx);
@@ -784,9 +866,7 @@ mod tests {
             let PayloadServiceCommand::BuildNewPayload(_, _, basic_tx) = basic_cmd else {
                 panic!("expected basic BuildNewPayload command");
             };
-            let (selected_tx, stalled_tx) =
-                if selected_basic { (basic_tx, flash_tx) } else { (flash_tx, basic_tx) };
-            selected_tx.send(Ok(payload_id)).expect("selected build response");
+            flash_tx.send(Ok(payload_id)).expect("selected build response");
 
             let result = tokio::time::timeout(Duration::from_secs(1), build_rx)
                 .await
@@ -795,7 +875,7 @@ mod tests {
                 .expect("successful selected response");
             assert_eq!(result, payload_id);
 
-            drop(stalled_tx);
+            drop(basic_tx);
             drop(handle);
             router_task.await.expect("router task");
         }
