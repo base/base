@@ -7,7 +7,6 @@ use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
 use alloy_rpc_types_eth::error::EthRpcErrorCode;
 use audit_archiver_lib::BundleEvent;
 use base_bundles::{AcceptedBundle, Bundle, BundleExtensions, MeterBundleResponse, ParsedBundle};
-use base_common_chains::ChainConfig;
 use base_common_consensus::{BaseTxEnvelope, EIP8130_REJECTION_MSG};
 use base_common_network::Base;
 use base_observability_events::{
@@ -22,7 +21,7 @@ use moka::future::Cache;
 use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::result::rpc_err;
 use tokio::{
-    sync::{broadcast, mpsc},
+    sync::{OnceCell, broadcast, mpsc},
     time::{Duration, Instant, timeout},
 };
 use tracing::{debug, info, warn};
@@ -45,7 +44,7 @@ pub struct IngressService {
     builder_tx: broadcast::Sender<MeteringForwardMessage>,
     bundle_cache: Cache<B256, ()>,
     send_to_builder: bool,
-    cobalt_timestamp: Option<u64>,
+    zenith_timestamp: OnceCell<Option<u64>>,
 }
 
 impl std::fmt::Debug for IngressService {
@@ -62,8 +61,6 @@ impl IngressService {
         builder_tx: broadcast::Sender<MeteringForwardMessage>,
         config: Config,
     ) -> Self {
-        let cobalt_timestamp = ChainConfig::by_chain_id(config.chain_id)
-            .and_then(|chain_config| chain_config.cobalt_timestamp);
         let simulation_provider = Arc::new(simulation_provider);
 
         // A TTL cache to deduplicate bundles with the same Bundle ID
@@ -77,7 +74,7 @@ impl IngressService {
             builder_tx,
             bundle_cache,
             send_to_builder: config.send_to_builder,
-            cobalt_timestamp,
+            zenith_timestamp: OnceCell::new(),
         }
     }
 }
@@ -205,7 +202,7 @@ impl IngressService {
 
         let envelope = BaseTxEnvelope::decode_2718_exact(data.iter().as_slice())
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
-        self.ensure_cobalt_active_for_eip8130(&envelope).await?;
+        self.ensure_zenith_active_for_eip8130(&envelope).await?;
 
         let transaction = envelope
             .try_into_recovered()
@@ -213,14 +210,38 @@ impl IngressService {
         Ok(transaction)
     }
 
-    async fn ensure_cobalt_active_for_eip8130(&self, envelope: &BaseTxEnvelope) -> RpcResult<()> {
+    async fn ensure_zenith_active_for_eip8130(&self, envelope: &BaseTxEnvelope) -> RpcResult<()> {
         if !envelope.is_eip8130() {
             return Ok(());
         }
-        let Some(cobalt_timestamp) = self.cobalt_timestamp else {
-            return Err(Self::eip8130_pre_cobalt_error());
+
+        // Zenith is intentionally absent from canonical chain schedules. Read the simulation
+        // node's genesis config so only an explicitly configured devnet/test chain can open this
+        // gate; never infer Zenith from a chain ID or the L1 runtime upgrade registry.
+        let zenith_timestamp = match self
+            .zenith_timestamp
+            .get_or_try_init(|| async {
+                let chain_config: Result<serde_json::Value, _> =
+                    self.simulation_provider.client().request_noparams("debug_chainConfig").await;
+                chain_config.map(|config| {
+                    config
+                        .get("base")
+                        .and_then(|base| base.get("zenith"))
+                        .and_then(|timestamp| timestamp.as_u64())
+                })
+            })
+            .await
+        {
+            Ok(timestamp) => timestamp,
+            Err(error) => {
+                warn!(error = %error, "failed to fetch genesis config for EIP-8130 Zenith gate");
+                return Err(Self::eip8130_pre_zenith_error());
+            }
         };
-        if cobalt_timestamp == 0 {
+        let Some(zenith_timestamp) = zenith_timestamp else {
+            return Err(Self::eip8130_pre_zenith_error());
+        };
+        if *zenith_timestamp == 0 {
             return Ok(());
         }
 
@@ -229,21 +250,21 @@ impl IngressService {
             .get_block(BlockId::Number(BlockNumberOrTag::Latest))
             .await
             .map_err(|error| {
-                warn!(error = %error, "failed to fetch latest block for EIP-8130 Cobalt gate");
+                warn!(error = %error, "failed to fetch latest block for EIP-8130 Zenith gate");
                 EthApiError::InternalEthError.into_rpc_err()
             })?
             .ok_or_else(|| {
-                warn!("latest block missing for EIP-8130 Cobalt gate");
+                warn!("latest block missing for EIP-8130 Zenith gate");
                 EthApiError::InternalEthError.into_rpc_err()
             })?;
 
-        if block.header.timestamp < cobalt_timestamp {
-            return Err(Self::eip8130_pre_cobalt_error());
+        if block.header.timestamp < *zenith_timestamp {
+            return Err(Self::eip8130_pre_zenith_error());
         }
         Ok(())
     }
 
-    fn eip8130_pre_cobalt_error() -> jsonrpsee::types::ErrorObjectOwned {
+    fn eip8130_pre_zenith_error() -> jsonrpsee::types::ErrorObjectOwned {
         rpc_err(EthRpcErrorCode::TransactionRejected.code(), EIP8130_REJECTION_MSG, None)
     }
 
@@ -442,8 +463,13 @@ mod tests {
         str::FromStr,
     };
 
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::U256;
     use alloy_provider::RootProvider;
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
     use base_bundles::test_utils::create_test_meter_bundle_response;
+    use base_common_consensus::{BasePooledTransaction, Eip8130Signed, TxEip8130};
     use base_observability_events::{DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES};
     use tokio::sync::{broadcast, mpsc};
     use url::Url;
@@ -480,6 +506,88 @@ mod tests {
             transaction_events_required: false,
             transaction_events_network: "base-mainnet".to_string(),
         }
+    }
+
+    fn signed_eip8130() -> Bytes {
+        let signer = PrivateKeySigner::random();
+        let tx = TxEip8130 {
+            chain_id: 11,
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).expect("test signer");
+        let mut sender_auth = [0u8; 65];
+        sender_auth[..32].copy_from_slice(&signature.r().to_be_bytes::<32>());
+        sender_auth[32..64].copy_from_slice(&signature.s().to_be_bytes::<32>());
+        sender_auth[64] = 27 + u8::from(signature.v());
+        BasePooledTransaction::Eip8130(Eip8130Signed::new(
+            tx,
+            Bytes::from(sender_auth.to_vec()),
+            Bytes::new(),
+        ))
+        .encoded_2718()
+        .into()
+    }
+
+    #[tokio::test]
+    async fn eip8130_gate_reads_zenith_from_genesis_chain_config() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": { "base": { "zenith": 0 } },
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = create_test_config(&mock_server);
+        let simulation_provider = RootProvider::new_http(mock_server.uri().parse().unwrap());
+        let (audit_tx, _audit_rx) = mpsc::channel(1);
+        let (builder_tx, _builder_rx) = broadcast::channel(1);
+        let service = IngressService::new(simulation_provider, audit_tx, builder_tx, config);
+
+        let transaction = signed_eip8130();
+        service.get_tx(&transaction).await.expect("Zenith genesis config should open the gate");
+        service.get_tx(&transaction).await.expect("Zenith genesis config should open the gate");
+    }
+
+    #[tokio::test]
+    async fn eip8130_gate_rejects_genesis_without_zenith() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": { "base": { "cobalt": 0 } },
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = create_test_config(&mock_server);
+        let simulation_provider = RootProvider::new_http(mock_server.uri().parse().unwrap());
+        let (audit_tx, _audit_rx) = mpsc::channel(1);
+        let (builder_tx, _builder_rx) = broadcast::channel(1);
+        let service = IngressService::new(simulation_provider, audit_tx, builder_tx, config);
+
+        let error = service
+            .get_tx(&signed_eip8130())
+            .await
+            .expect_err("genesis without Zenith must keep the EIP-8130 gate closed");
+        assert_eq!(error.code(), EthRpcErrorCode::TransactionRejected.code());
+        assert_eq!(error.message(), EIP8130_REJECTION_MSG);
     }
 
     #[tokio::test]

@@ -14,12 +14,12 @@ pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 pub const EIP8130_TX_TYPE_ID: u8 = 121; // 0x79
 
-/// Canonical user-facing rejection message for EIP-8130 transactions submitted before Cobalt.
+/// Canonical user-facing rejection message for EIP-8130 transactions submitted before Zenith.
 ///
 /// Used by `base-execution-rpc` when an EIP-8130 transaction is submitted before
-/// the Cobalt fork is active at the latest block timestamp.
-pub const EIP8130_REJECTION_MSG: &str = "EIP-8130 (account abstraction) transactions are gated behind Cobalt; \
-     eth_sendRawTransaction does not accept transaction type 0x79 before Cobalt";
+/// the Zenith fork is active at the latest block timestamp.
+pub const EIP8130_REJECTION_MSG: &str = "EIP-8130 (account abstraction) transactions are gated behind Zenith; \
+     eth_sendRawTransaction does not accept transaction type 0x79 before Zenith";
 
 #[allow(clippy::derivable_impls)]
 impl Default for OpTxType {

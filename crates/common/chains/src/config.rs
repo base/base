@@ -336,6 +336,8 @@ impl ChainConfig {
                 beryl: self.beryl_timestamp,
                 cobalt: self.cobalt_timestamp,
                 denim: self.denim_timestamp,
+                // Zenith is a genesis-only testing gate and must never enter a canonical chain
+                // schedule. Devnets and tests opt in through custom genesis config instead.
                 zenith: None,
             },
         }

@@ -153,6 +153,21 @@ pub fn build_test_genesis_cobalt() -> Genesis {
     genesis
 }
 
+/// Builds a test genesis with Zenith enabled at timestamp 0.
+pub fn build_test_genesis_zenith() -> Genesis {
+    let mut genesis = build_test_genesis_cobalt();
+    genesis.config.extra_fields.insert(
+        "base".to_string(),
+        serde_json::json!({
+            "azul": 0,
+            "beryl": 0,
+            "cobalt": 0,
+            "zenith": 0
+        }),
+    );
+    genesis
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::keccak256;

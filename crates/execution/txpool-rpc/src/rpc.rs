@@ -25,12 +25,12 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 /// Rejection message returned when an EIP-8130 (account abstraction) validity transaction is
-/// submitted before the Cobalt hard fork is active at the latest block.
+/// submitted before the Zenith hard fork is active at the latest block.
 ///
-/// EIP-8130 validity transactions are fork-gated on Cobalt; other transaction types (e.g. EIP-1559)
+/// EIP-8130 validity transactions are fork-gated on Zenith; other transaction types (e.g. EIP-1559)
 /// carry validity predicates under the experimental flag alone.
-pub const VALIDITY_TX_PRE_COBALT_RPC_ERROR: &str = "EIP-8130 validity transactions are gated behind \
-     the Cobalt hard fork; they are not accepted before Cobalt is active";
+pub const VALIDITY_TX_PRE_ZENITH_RPC_ERROR: &str = "EIP-8130 validity transactions are gated behind \
+     the Zenith hard fork; they are not accepted before Zenith is active";
 
 /// The status of a transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -108,14 +108,14 @@ pub struct SendRawTransactionValidityApiImpl<Pool, Provider> {
 impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
     /// Creates a validity transaction ingress backed by the given pool and default predicate limit.
     ///
-    /// The provider fork-gates the RPC method on the Cobalt hard fork.
+    /// The provider fork-gates the RPC method on the Zenith hard fork.
     pub const fn new(pool: Pool, provider: Provider) -> Self {
         Self { pool, provider, max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES }
     }
 
     /// Creates a validity transaction ingress with a predicate limit.
     ///
-    /// The provider fork-gates the RPC method on the Cobalt hard fork.
+    /// The provider fork-gates the RPC method on the Zenith hard fork.
     pub const fn with_max_validity_predicates(
         pool: Pool,
         provider: Provider,
@@ -129,11 +129,11 @@ impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider>
 where
     Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
 {
-    /// Returns whether the Cobalt hard fork is active at the latest block's timestamp.
+    /// Returns whether the Zenith hard fork is active at the latest block's timestamp.
     ///
     /// Returns `false` when no latest header is available (e.g. before genesis is committed), which
     /// keeps the fork-gated RPC method closed until a canonical head exists.
-    fn is_cobalt_active_at_latest(&self) -> RpcResult<bool> {
+    fn is_zenith_active_at_latest(&self) -> RpcResult<bool> {
         let Some(header) = self.provider.latest_header().map_err(|error| {
             ErrorObjectOwned::owned(
                 ErrorCode::InternalError.code(),
@@ -144,7 +144,7 @@ where
         else {
             return Ok(false);
         };
-        Ok(self.provider.chain_spec().is_cobalt_active_at_timestamp(header.timestamp()))
+        Ok(self.provider.chain_spec().is_zenith_active_at_timestamp(header.timestamp()))
     }
 }
 
@@ -228,13 +228,13 @@ where
                 )
             })?;
 
-        // EIP-8130 (account abstraction) validity transactions are fork-gated on Cobalt. Other
+        // EIP-8130 (account abstraction) validity transactions are fork-gated on Zenith. Other
         // transaction types (e.g. EIP-1559) carry validity predicates under the experimental flag
-        // alone and are accepted before Cobalt activates.
-        if transaction.ty() == EIP8130_TX_TYPE_ID && !self.is_cobalt_active_at_latest()? {
+        // alone and are accepted before Zenith activates.
+        if transaction.ty() == EIP8130_TX_TYPE_ID && !self.is_zenith_active_at_latest()? {
             return Err(ErrorObjectOwned::owned(
                 ErrorCode::InvalidParams.code(),
-                VALIDITY_TX_PRE_COBALT_RPC_ERROR,
+                VALIDITY_TX_PRE_ZENITH_RPC_ERROR,
                 None::<()>,
             ));
         }
@@ -312,6 +312,7 @@ mod tests {
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
         TransactionEventType,
     };
+    use base_test_utils::build_test_genesis_zenith;
     use httpmock::prelude::*;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
@@ -323,19 +324,21 @@ mod tests {
 
     use super::*;
 
-    /// Provider whose latest header sits after Cobalt activation, so the fork gate is open.
-    fn cobalt_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
+    /// Provider whose latest header sits after Zenith activation, so the fork gate is open.
+    fn zenith_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
+        let mut genesis = build_test_genesis_zenith();
+        genesis.config.chain_id = ChainConfig::mainnet().chain_id;
+        MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
+            .with_genesis_block()
+    }
+
+    /// Provider whose latest header predates Zenith activation, so the fork gate is closed.
+    fn pre_zenith_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
         MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(
                 BaseChainSpecBuilder::base_mainnet().cobalt_activated().build(),
             ))
-            .with_genesis_block()
-    }
-
-    /// Provider whose latest header predates Cobalt activation, so the fork gate is closed.
-    fn pre_cobalt_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
-        MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::new(BaseChainSpec::mainnet()))
             .with_genesis_block()
     }
 
@@ -506,7 +509,7 @@ mod tests {
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
         let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
 
         let tx_hash = rpc.send_raw_transaction_validity(raw, options).await.unwrap_or_else(|_| {
@@ -533,37 +536,37 @@ mod tests {
 
     #[test]
     fn send_raw_transaction_validity_method_is_registered() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
         let module = SendRawTransactionValidityApiServer::into_rpc(rpc);
 
         assert!(module.method_names().any(|name| name == "base_sendRawTransactionValidity"));
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_eip8130_before_cobalt() {
+    async fn send_raw_transaction_validity_rejects_eip8130_before_zenith() {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip8130(&signer);
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_cobalt_provider());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_zenith_provider());
         let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
             .await
-            .expect_err("EIP-8130 validity transactions should be rejected before Cobalt");
+            .expect_err("EIP-8130 validity transactions should be rejected before Zenith");
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
-        assert_eq!(error.message(), VALIDITY_TX_PRE_COBALT_RPC_ERROR);
+        assert_eq!(error.message(), VALIDITY_TX_PRE_ZENITH_RPC_ERROR);
     }
 
     #[tokio::test]
-    async fn send_raw_transaction_validity_accepts_eip1559_before_cobalt() {
-        // EIP-1559 validity transactions are gated by the experimental flag alone, not by Cobalt,
-        // so they clear the fork gate before Cobalt activates. The admission event fires only once
+    async fn send_raw_transaction_validity_accepts_eip1559_before_zenith() {
+        // EIP-1559 validity transactions are gated by the experimental flag alone, not by Zenith,
+        // so they clear the fork gate before Zenith activates. The admission event fires only once
         // the gate is cleared; the noop pool then rejects insertion.
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_cobalt_provider());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_zenith_provider());
         let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
 
         let error = rpc
@@ -571,20 +574,20 @@ mod tests {
             .await
             .expect_err("the noop pool rejects insertion after the fork gate is cleared");
 
-        assert_ne!(error.message(), VALIDITY_TX_PRE_COBALT_RPC_ERROR);
+        assert_ne!(error.message(), VALIDITY_TX_PRE_ZENITH_RPC_ERROR);
         assert!(
             capture
                 .events()
                 .iter()
                 .any(|event| event.event_type
                     == TransactionEventType::TxpoolSendRawTransactionValidity),
-            "admission event should fire once the Cobalt gate is cleared for EIP-1559"
+            "admission event should fire once the Zenith gate is cleared for EIP-1559"
         );
     }
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_malformed_transaction() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
 
         let (raw, options) = validity_request(Bytes::from_static(&[0xff]));
         let error = rpc
@@ -600,7 +603,7 @@ mod tests {
     async fn send_raw_transaction_validity_enforces_configured_predicate_limit() {
         let rpc = SendRawTransactionValidityApiImpl::with_max_validity_predicates(
             validity_pool(),
-            cobalt_provider(),
+            zenith_provider(),
             2,
         );
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
@@ -618,7 +621,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_empty_predicates() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity.clear();
 
@@ -633,7 +636,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_storage_value_outside_mask() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity = vec![ValidityPredicate::Storage {
             address: Address::repeat_byte(0xab),
@@ -654,7 +657,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_unsatisfiable_flashblock_index() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         // A flashblock-index predicate that only holds at index 0, which pooled
         // transactions never reach, would park forever if admitted.

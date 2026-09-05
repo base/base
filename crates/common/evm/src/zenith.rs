@@ -25,19 +25,19 @@ const SYSTEM_ACCOUNT_STUB: [u8; 1] = [0xEF];
 /// every chain where EIP-8130 is enabled.
 const CODELESS_SYSTEM_ACCOUNTS: [Address; 1] = [NonceManagerStorage::ADDRESS];
 
-/// The Cobalt upgrade enables EIP-8130. The enshrined execution path writes
+/// The Zenith upgrade enables EIP-8130. The enshrined execution path writes
 /// persistent state (e.g. 2D nonce channels) to system accounts that hold
 /// storage but carry no code, leaving them EIP-161-"empty" and liable to be
 /// reaped — discarding that storage — by end-of-block state clearing.
 ///
-/// This issues an irregular state transition at the Cobalt activation that
+/// This issues an irregular state transition at the Zenith activation that
 /// force-deploys a one-byte code stub onto those accounts, mirroring the Canyon
 /// create2-deployer transition in [`ensure_create2_deployer`]. Once an account
 /// has code it is no longer EIP-161-empty and survives clearing.
 ///
 /// The stub is only planted on an account that has no code yet, so it never
 /// overwrites a real deployment, and it is idempotent: it fires on the first
-/// Cobalt block and is a no-op thereafter.
+/// Zenith block and is a no-op thereafter.
 ///
 /// [`ensure_create2_deployer`]: crate::ensure_create2_deployer
 pub fn ensure_eip8130_system_accounts<DB>(
@@ -48,7 +48,7 @@ pub fn ensure_eip8130_system_accounts<DB>(
 where
     DB: Database + DatabaseCommit,
 {
-    if !chain_spec.is_cobalt_active_at_timestamp(timestamp) {
+    if !chain_spec.is_zenith_active_at_timestamp(timestamp) {
         return Ok(());
     }
 
@@ -82,22 +82,20 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_hardforks::ForkCondition;
-    use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
-    use base_common_genesis::BaseUpgrade;
+    use base_common_genesis::{BaseUpgrade, RollupConfig};
     use revm::{Database as _, database::InMemoryDB, state::AccountInfo};
 
     use super::*;
 
     const ADDR: Address = NonceManagerStorage::ADDRESS;
 
-    /// Cobalt active: the code-less nonce manager is given the `0xEF` stub so it
+    /// Zenith active: the code-less nonce manager is given the `0xEF` stub so it
     /// is no longer EIP-161-empty.
     #[test]
-    fn cobalt_active_plants_stub_on_codeless_system_account() {
+    fn zenith_active_plants_stub_on_codeless_system_account() {
         let mut db = InMemoryDB::default();
 
-        ensure_eip8130_system_accounts(cobalt(ForkCondition::Timestamp(0)), 100, &mut db).unwrap();
+        ensure_eip8130_system_accounts(zenith(Some(0)), 100, &mut db).unwrap();
 
         let acc = db.basic(ADDR).unwrap().expect("system account must exist");
         assert!(!acc.is_empty_code_hash(), "the stub must give the account a non-empty code hash");
@@ -107,12 +105,12 @@ mod tests {
         );
     }
 
-    /// Cobalt inactive: nothing is planted.
+    /// Zenith inactive: nothing is planted.
     #[test]
-    fn cobalt_inactive_is_a_noop() {
+    fn zenith_inactive_is_a_noop() {
         let mut db = InMemoryDB::default();
 
-        ensure_eip8130_system_accounts(cobalt(ForkCondition::Never), 100, &mut db).unwrap();
+        ensure_eip8130_system_accounts(zenith(None), 100, &mut db).unwrap();
 
         assert!(db.basic(ADDR).unwrap().is_none(), "no system account should be materialized");
     }
@@ -131,15 +129,17 @@ mod tests {
             },
         );
 
-        ensure_eip8130_system_accounts(cobalt(ForkCondition::Timestamp(0)), 100, &mut db).unwrap();
+        ensure_eip8130_system_accounts(zenith(Some(0)), 100, &mut db).unwrap();
 
         let acc = db.basic(ADDR).unwrap().unwrap();
         assert_eq!(acc.code_hash, real.hash_slow(), "a real deployment must not be overwritten");
     }
 
-    fn cobalt(condition: ForkCondition) -> ChainUpgrades {
-        ChainUpgrades::new(BaseUpgrade::devnet().into_iter().map(move |(fork, cond)| {
-            if fork == BaseUpgrade::Cobalt { (fork, condition) } else { (fork, cond) }
-        }))
+    fn zenith(timestamp: Option<u64>) -> RollupConfig {
+        let mut config = RollupConfig::default();
+        if let Some(timestamp) = timestamp {
+            config.set_upgrade_activation_timestamp(BaseUpgrade::Zenith, timestamp);
+        }
+        config
     }
 }
