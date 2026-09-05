@@ -640,7 +640,7 @@ mod tests {
     }
 
     #[test]
-    fn test_check_batch_accept_8130_post_cobalt() {
+    fn test_check_batch_accept_8130() {
         let mut transactions = example_transactions();
         transactions.push(eip_8130_tx_bytes());
 
@@ -652,7 +652,6 @@ mod tests {
             transactions,
         };
 
-        // Notice: Cobalt is active.
         let cfg = RollupConfig {
             max_sequencer_drift: 1,
             block_time: 1,
