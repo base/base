@@ -340,17 +340,7 @@ where
         &mut self,
         envelope: BaseExecutionPayloadEnvelope,
         result_tx: Option<mpsc::Sender<InsertTaskResult>>,
-        log_upgrade_activation: bool,
     ) {
-        if log_upgrade_activation {
-            self.rollup.log_upgrade_activation(
-                envelope.execution_payload.block_number(),
-                envelope.execution_payload.timestamp(),
-                self.rollup.l2_block_timestamp(
-                    envelope.execution_payload.block_number().saturating_sub(1),
-                ),
-            );
-        }
         let task = match result_tx {
             Some(result_tx) => {
                 EngineTask::Insert(Box::new(InsertTask::unsafe_payload_with_result(
@@ -369,6 +359,15 @@ where
         self.engine.enqueue(task);
     }
 
+    /// Enqueues an externally received unsafe payload for serialized insertion.
+    pub fn enqueue_gossip_payload_insert(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+        self.engine.enqueue(EngineTask::Insert(Box::new(InsertTask::gossip_payload(
+            Arc::clone(&self.client),
+            Arc::clone(&self.rollup),
+            envelope,
+        ))));
+    }
+
     /// Enqueues an externally received unsafe payload.
     pub fn handle_external_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
         info!(
@@ -378,7 +377,13 @@ where
             parent_hash = %envelope.execution_payload.parent_hash(),
             "Enqueuing external unsafe payload"
         );
-        self.enqueue_unsafe_payload_insert(envelope, None, true);
+        self.rollup.log_upgrade_activation(
+            envelope.execution_payload.block_number(),
+            envelope.execution_payload.timestamp(),
+            self.rollup
+                .l2_block_timestamp(envelope.execution_payload.block_number().saturating_sub(1)),
+        );
+        self.enqueue_gossip_payload_insert(envelope);
     }
 
     /// Applies inputs already validated and selected by a shadow reconciliation gate.
@@ -471,7 +476,7 @@ where
             parent_hash = %envelope.execution_payload.parent_hash(),
             "Enqueuing local sequencer unsafe payload"
         );
-        self.enqueue_unsafe_payload_insert(envelope, result_tx, false);
+        self.enqueue_unsafe_payload_insert(envelope, result_tx);
     }
 
     async fn mark_el_sync_complete_and_notify_derivation_actor(
@@ -812,6 +817,34 @@ mod tests {
         (EngineProcessor::new(client, config, derivation_client, engine), queue_rx)
     }
 
+    #[tokio::test]
+    async fn only_external_payloads_drop_invalid_cobalt_schedules() {
+        let config = RollupConfig {
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { cobalt: Some(2), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let unsafe_head = l2_head(1, B256::with_last_byte(1));
+        let mut envelope = unsafe_payload(2, unsafe_head.block_info.hash, B256::with_last_byte(2));
+        let BaseExecutionPayload::V1(payload) = &mut envelope.execution_payload else {
+            unreachable!();
+        };
+        payload.timestamp = 3;
+        payload.transactions = vec![l1_info_deposit_tx_bytes().into()];
+
+        let (mut local, _) = unsafe_payload_processor(true, unsafe_head, None, config.clone());
+        local.handle_local_unsafe_l2_block(envelope.clone(), None);
+        let error = local.engine.drain().await.unwrap_err();
+        assert_eq!(error.severity(), EngineTaskErrorSeverity::Critical);
+
+        let (mut external, _) = unsafe_payload_processor(true, unsafe_head, None, config);
+        external.handle_external_unsafe_l2_block(envelope);
+        external.engine.drain().await.unwrap();
+    }
+
     #[rstest]
     #[case::sequencer_enqueues_contiguous_external_payload(
         NodeMode::Sequencer,
@@ -944,7 +977,7 @@ mod tests {
                 .block_number()
                 .checked_sub(unsafe_head.block_info.number);
             if block_gap.is_some_and(|gap| gap > 0 && gap <= 300) {
-                processor.enqueue_unsafe_payload_insert(envelope, None, false);
+                processor.enqueue_gossip_payload_insert(envelope);
             }
         } else {
             processor.handle_external_unsafe_l2_block(envelope);
@@ -977,7 +1010,7 @@ mod tests {
                 unreachable!();
             };
             payload.timestamp = 10;
-            processor.enqueue_unsafe_payload_insert(envelope, None, true);
+            processor.handle_external_unsafe_l2_block(envelope);
         }
 
         let activation_logs =

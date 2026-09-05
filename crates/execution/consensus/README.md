@@ -9,6 +9,11 @@ Implements block validation following Base consensus rules for the execution lay
 including blob gas accounting, deposit ordering, Canyon EIP-1559, and Isthmus system contract
 upgrades. Also provides receipt root calculation and post-execution validation helpers.
 
+Execution-layer validation ensures that raw block imports have valid headers, bodies, execution
+results, and canonical `BaseTime` metadata. Rollup-valid imports additionally require the
+consensus node to validate Cobalt timestamps against the absolute rollup schedule before submission
+to the Engine API.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

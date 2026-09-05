@@ -407,8 +407,7 @@ where
                                         max_external_unsafe_gap = MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
                                         "Sequencer enqueuing external unsafe payload within gap limit"
                                     );
-                                    self.processor
-                                        .enqueue_unsafe_payload_insert(*envelope, None, false);
+                                    self.processor.enqueue_gossip_payload_insert(*envelope);
                                 } else {
                                     info!(
                                         target: "engine",
