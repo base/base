@@ -1,4 +1,6 @@
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, NodeBounds, PoolBounds};
+use base_common_chains::Upgrades;
+use base_common_genesis::BaseUpgrade;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::config::BaseBuilderConfig;
 use base_node_core::{
@@ -9,6 +11,7 @@ use base_node_runner::{
     BaseNode, BaseNodeTypes, PayloadServiceBuilder as BasePayloadServiceBuilder,
 };
 use reth_basic_payload_builder::{BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig};
+use reth_ethereum_forks::ForkCondition;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{
     BuilderContext,
@@ -74,6 +77,13 @@ where
         );
 
         if !self.routing_config.cutover_enabled && !self.basic_only {
+            for upgrade in [BaseUpgrade::Cobalt, BaseUpgrade::Denim] {
+                eyre::ensure!(
+                    ctx.chain_spec().fork_condition(upgrade) == ForkCondition::Never,
+                    "Flashblocks-only mode cannot start with scheduled {upgrade:?}; enable \
+                     --builder.payload-builder-cutover or --builder.basic-payload-builder"
+                );
+            }
             return FlashblocksServiceBuilder::new(self.builder_config)
                 .spawn_payload_builder_service(ctx, pool, evm_config)
                 .await;

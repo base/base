@@ -9,13 +9,15 @@ use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder};
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_genesis::BaseUpgrade;
 use base_common_network::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
-use base_execution_chainspec::BaseChainSpec;
+use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_execution_rpc::BaseEngineApiClient;
 use base_node_core::{BaseEngineTypes, args::RollupArgs};
 use base_node_runner::BaseNodeRunner;
+use reth_ethereum_forks::ForkCondition;
 use reth_node_api::{EngineTypes, PayloadTypes};
 use reth_node_builder::NodeBuilder;
 use reth_payload_builder::PayloadId;
@@ -39,31 +41,47 @@ struct BuiltBlockSummary {
 
 impl RunningNode {
     async fn launch_flashblocks() -> eyre::Result<Self> {
-        Self::launch(FlashblocksServiceBuilder::new(test_builder_config())).await
+        Self::launch(
+            FlashblocksServiceBuilder::new(test_builder_config()),
+            BaseChainSpec::mainnet(),
+        )
+        .await
     }
 
     async fn launch_disabled() -> eyre::Result<Self> {
-        Self::launch(MultiplexingServiceBuilder::new(test_builder_config())).await
+        Self::launch(
+            MultiplexingServiceBuilder::new(test_builder_config()),
+            BaseChainSpec::mainnet(),
+        )
+        .await
     }
 
     async fn launch_multiplex() -> eyre::Result<Self> {
         let service_builder =
             MultiplexingServiceBuilder::new(test_builder_config()).with_cutover_enabled(true);
-        Self::launch(service_builder).await
+        let chain_spec = BaseChainSpecBuilder::base_mainnet()
+            .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(u64::MAX))
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(u64::MAX))
+            .build();
+        Self::launch(service_builder, chain_spec).await
     }
 
     async fn launch_basic() -> eyre::Result<Self> {
         let service_builder =
             MultiplexingServiceBuilder::new(test_builder_config()).with_basic_only(true);
-        Self::launch(service_builder).await
+        let chain_spec = BaseChainSpecBuilder::base_mainnet()
+            .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(u64::MAX))
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(u64::MAX))
+            .build();
+        Self::launch(service_builder, chain_spec).await
     }
 
-    async fn launch<SB>(service_builder: SB) -> eyre::Result<Self>
+    async fn launch<SB>(service_builder: SB, chain_spec: BaseChainSpec) -> eyre::Result<Self>
     where
         SB: base_node_runner::PayloadServiceBuilder,
     {
         let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
-        let chain_spec = std::sync::Arc::new(BaseChainSpec::mainnet());
+        let chain_spec = std::sync::Arc::new(chain_spec);
         let mut node_config = reth_node_builder::NodeConfig::new(chain_spec).with_unused_ports();
         node_config.rpc = reth_node_core::args::RpcServerArgs::default().with_auth_ipc();
         node_config.rpc.http = false;
@@ -269,4 +287,32 @@ async fn payload_builder_modes_match_flashblocks_baseline() -> eyre::Result<()> 
     std::mem::forget(basic);
 
     Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rejects_flashblocks_only_with_scheduled_native_upgrade() {
+    for upgrade in [BaseUpgrade::Cobalt, BaseUpgrade::Denim] {
+        for timestamp in [0, u64::MAX] {
+            let chain_spec = BaseChainSpecBuilder::base_mainnet()
+                .with_fork(upgrade, ForkCondition::Timestamp(timestamp))
+                .build();
+            let result = RunningNode::launch(
+                MultiplexingServiceBuilder::new(test_builder_config()),
+                chain_spec,
+            )
+            .await;
+
+            // Keep a mistakenly launched node alive, as in the payload smoke test above.
+            let error = match result {
+                Ok(node) => {
+                    std::mem::forget(node);
+                    panic!("Flashblocks-only startup accepted scheduled {upgrade:?}");
+                }
+                Err(error) => format!("{error:#}"),
+            };
+            assert!(error.contains("--builder.payload-builder-cutover"), "{error}");
+            assert!(error.contains("--builder.basic-payload-builder"), "{error}");
+            assert!(error.contains(&format!("{upgrade:?}")), "{error}");
+        }
+    }
 }

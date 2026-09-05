@@ -37,6 +37,7 @@ async fn denim_and_zenith_activation_matches_el_and_cl_configs() -> Result<()> {
         .with_base_azul_activation_block(AZUL_ACTIVATION_BLOCK)
         .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
         .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK)
+        .with_payload_builder_cutover()
         .build()
         .await?;
 
