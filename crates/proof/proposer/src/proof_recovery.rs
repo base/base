@@ -207,7 +207,7 @@ impl ProofRecovery {
 
         loop {
             // Resolved per step so the walk keeps reconstructing games across the
-            // Denim activation block, where the verifier switches cadence.
+            // Cobalt activation block, where the verifier switches cadence.
             let intervals = self.intervals.for_starting_block(state.l2_block_number).await?;
 
             let Some(expected_block) =
@@ -513,35 +513,35 @@ mod tests {
         }
     }
 
-    /// The verifier switches to the Denim interval pair at
-    /// `DENIM_ACTIVATION_BLOCK`, so the walk has to reconstruct 100-block games
+    /// The verifier switches to the fast-cadence interval pair at
+    /// `FAST_ACTIVATION_BLOCK`, so the walk has to reconstruct 100-block games
     /// before it and 200-block games after it. A proposer that resolved the
     /// interval once at startup would look for a 100-block game at 400, find
     /// `Address::ZERO`, and re-propose over three games that already exist.
     #[tokio::test]
-    async fn test_recovery_forward_walk_crosses_denim_activation_block() {
-        const PRE_DENIM_INTERVAL: u64 = 100;
-        const PRE_DENIM_INTERMEDIATE: u64 = 50;
-        const DENIM_ACTIVATION_BLOCK: u64 = 300;
-        const DENIM_INTERVAL: u64 = 200;
-        const DENIM_INTERMEDIATE: u64 = 100;
+    async fn test_recovery_forward_walk_crosses_fast_activation_block() {
+        const SLOW_INTERVAL: u64 = 100;
+        const SLOW_INTERMEDIATE: u64 = 50;
+        const FAST_ACTIVATION_BLOCK: u64 = 300;
+        const FAST_INTERVAL: u64 = 200;
+        const FAST_INTERMEDIATE: u64 = 100;
 
-        // Starting blocks either side of the boundary: 0/100/200 are pre-Denim,
-        // 300/500 are Denim.
+        // Starting blocks either side of the boundary: 0/100/200 are slow-cadence,
+        // 300/500 are fast-cadence.
         let mut uuid_games = HashMap::new();
         let mut output_roots = HashMap::new();
         let mut parent = Address::ZERO;
         let mut starting_block = TEST_ANCHOR_BLOCK;
         for index in 0..5u64 {
-            let intervals = if starting_block < DENIM_ACTIVATION_BLOCK {
+            let intervals = if starting_block < FAST_ACTIVATION_BLOCK {
                 Intervals {
-                    block_interval: PRE_DENIM_INTERVAL,
-                    intermediate_block_interval: PRE_DENIM_INTERMEDIATE,
+                    block_interval: SLOW_INTERVAL,
+                    intermediate_block_interval: SLOW_INTERMEDIATE,
                 }
             } else {
                 Intervals {
-                    block_interval: DENIM_INTERVAL,
-                    intermediate_block_interval: DENIM_INTERMEDIATE,
+                    block_interval: FAST_INTERVAL,
+                    intermediate_block_interval: FAST_INTERMEDIATE,
                 }
             };
             let target_block = starting_block + intervals.block_interval;
@@ -594,24 +594,23 @@ mod tests {
             )
         };
 
-        let denim_aware = fixture(test_interval_resolver(MockAggregateVerifier {
-            block_interval: PRE_DENIM_INTERVAL,
-            intermediate_block_interval: PRE_DENIM_INTERMEDIATE,
-            denim_activation_block: DENIM_ACTIVATION_BLOCK,
-            denim_block_interval: DENIM_INTERVAL,
-            denim_intermediate_block_interval: DENIM_INTERMEDIATE,
+        let cobalt_aware = fixture(test_interval_resolver(MockAggregateVerifier {
+            block_interval: SLOW_INTERVAL,
+            intermediate_block_interval: SLOW_INTERMEDIATE,
+            fast_activation_block: FAST_ACTIVATION_BLOCK,
+            fast_block_interval: FAST_INTERVAL,
+            fast_intermediate_block_interval: FAST_INTERMEDIATE,
             ..Default::default()
         }));
-        let (state, _) = recover_uncached(&denim_aware).await;
-        assert_eq!(state.l2_block_number, 700, "walk must not stall at the Denim boundary");
+        let (state, _) = recover_uncached(&cobalt_aware).await;
+        assert_eq!(state.l2_block_number, 700, "walk must not stall at the cadence boundary");
         assert_eq!(state.parent_address, proxy_addr(4));
 
-        // The pre-Denim pair applied everywhere is the bug this guards against:
+        // The slow-cadence pair applied everywhere is the bug this guards against:
         // the walk looks for a 100-block game at 400 and stops at the boundary.
-        let stale =
-            fixture(test_fixed_interval_resolver(PRE_DENIM_INTERVAL, PRE_DENIM_INTERMEDIATE));
+        let stale = fixture(test_fixed_interval_resolver(SLOW_INTERVAL, SLOW_INTERMEDIATE));
         let (state, _) = recover_uncached(&stale).await;
-        assert_eq!(state.l2_block_number, DENIM_ACTIVATION_BLOCK);
+        assert_eq!(state.l2_block_number, FAST_ACTIVATION_BLOCK);
     }
 
     #[tokio::test]

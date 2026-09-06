@@ -138,7 +138,7 @@ impl ProposerService {
         let factory_client: Arc<dyn DisputeGameFactoryClient> = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
 
-        // The proposal intervals change at the Denim activation block, so they are
+        // The proposal intervals change at the Cobalt activation block, so they are
         // resolved from each game's starting block instead of being read once here.
         let intervals = Arc::new(IntervalResolver::new(
             Arc::clone(&verifier_client),

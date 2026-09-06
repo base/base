@@ -1,6 +1,6 @@
 //! Per-game resolution of the proposal checkpoint intervals.
 //!
-//! The `AggregateVerifier` switches to a shorter cadence at the Denim
+//! The `AggregateVerifier` switches to a shorter cadence at the Cobalt
 //! activation block, so `BLOCK_INTERVAL` / `INTERMEDIATE_BLOCK_INTERVAL` are a
 //! function of the block a game's range starts at, not process-wide constants.
 //! Every consumer resolves them from the starting block of the game it is
@@ -41,7 +41,7 @@ impl Intervals {
 ///
 /// Both the implementation address and the interval pair are read per lookup:
 /// the factory's `gameImpls` entry can be swapped by an upgrade, and the pair
-/// changes at the Denim activation block. Caching either one at startup makes
+/// changes at the Cobalt activation block. Caching either one at startup makes
 /// the proposer stop finding — and stop creating — games on the far side of a
 /// boundary it never observes.
 pub struct IntervalResolver {

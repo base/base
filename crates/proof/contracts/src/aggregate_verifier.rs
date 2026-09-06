@@ -250,7 +250,7 @@ pub trait AggregateVerifierClient: Send + Sync {
     /// `AggregateVerifier` implementation applies to a game whose range starts
     /// at `starting_block`.
     ///
-    /// Denim switches the verifier to a shorter cadence at a fixed L2 block, so
+    /// Cobalt switches the verifier to a shorter cadence at a fixed L2 block, so
     /// the pair is a function of the game's starting block. Callers must resolve
     /// it per game rather than reading `BLOCK_INTERVAL` once at startup.
     async fn read_intervals_for_starting_block(
@@ -512,7 +512,7 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         }
         if !block_interval.is_multiple_of(intermediate_block_interval) {
             return Err(ContractError::validation(format!(
-                "BLOCK_INTERVAL ({block_interval}) is not divisible by                  INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
+                "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
             )));
         }
 

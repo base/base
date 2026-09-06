@@ -86,7 +86,7 @@ where
                 return false;
             }
 
-            // Resolved per target: the interval changes at the Denim activation
+            // Resolved per target: the interval changes at the Cobalt activation
             // block, so the cursor's own starting block picks the cadence.
             let starting_block = current.l2_block_number;
             let block_interval = match self.intervals.for_starting_block(starting_block).await {

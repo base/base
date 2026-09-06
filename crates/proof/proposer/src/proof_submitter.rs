@@ -124,7 +124,7 @@ impl ProofSubmitter {
         }
 
         // The intervals are a function of the starting block, not of process
-        // config: the verifier switches cadence at the Denim activation block.
+        // config: the verifier switches cadence at the Cobalt activation block.
         let intervals = self
             .intervals
             .for_starting_block(starting_block_number)
@@ -610,7 +610,7 @@ mod tests {
     }
 
     /// The caller's target block must agree with the interval the verifier will
-    /// apply to the game's starting block. Across the Denim boundary a cursor
+    /// apply to the game's starting block. Across the cadence boundary a cursor
     /// built from a stale interval would otherwise commit an under-sized range.
     #[tokio::test]
     async fn submit_rejects_target_block_that_contradicts_resolved_interval() {

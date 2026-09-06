@@ -247,22 +247,22 @@ pub const TEST_IMPL_ADDRESS: Address = Address::repeat_byte(0xA1);
 ///
 /// `read_intervals_for_starting_block` mirrors the onchain
 /// `intervalsForStartingBlock`: games whose range starts at or after
-/// `denim_activation_block` are created with the Denim interval pair. The
-/// default is a chain with Denim unscheduled.
+/// `fast_activation_block` are created with the fast-cadence interval pair.
+/// The default is a chain on which the speedup is unscheduled.
 #[derive(Debug)]
 pub struct MockAggregateVerifier {
     /// L1 head returned by `l1_head()`.
     pub l1_head: B256,
-    /// Pre-Denim `BLOCK_INTERVAL`.
+    /// Slow-cadence `BLOCK_INTERVAL`.
     pub block_interval: u64,
-    /// Pre-Denim `INTERMEDIATE_BLOCK_INTERVAL`.
+    /// Slow-cadence `INTERMEDIATE_BLOCK_INTERVAL`.
     pub intermediate_block_interval: u64,
-    /// First starting block that uses the Denim interval pair.
-    pub denim_activation_block: u64,
-    /// Post-Denim `BLOCK_INTERVAL`.
-    pub denim_block_interval: u64,
-    /// Post-Denim `INTERMEDIATE_BLOCK_INTERVAL`.
-    pub denim_intermediate_block_interval: u64,
+    /// First starting block that uses the fast-cadence interval pair.
+    pub fast_activation_block: u64,
+    /// Fast-cadence `BLOCK_INTERVAL`.
+    pub fast_block_interval: u64,
+    /// Fast-cadence `INTERMEDIATE_BLOCK_INTERVAL`.
+    pub fast_intermediate_block_interval: u64,
 }
 
 impl Default for MockAggregateVerifier {
@@ -271,9 +271,9 @@ impl Default for MockAggregateVerifier {
             l1_head: B256::ZERO,
             block_interval: 100,
             intermediate_block_interval: 100,
-            denim_activation_block: u64::MAX,
-            denim_block_interval: 100,
-            denim_intermediate_block_interval: 100,
+            fast_activation_block: u64::MAX,
+            fast_block_interval: 100,
+            fast_intermediate_block_interval: 100,
         }
     }
 }
@@ -295,8 +295,8 @@ pub fn test_fixed_interval_resolver(
     test_interval_resolver(MockAggregateVerifier {
         block_interval,
         intermediate_block_interval,
-        denim_block_interval: block_interval,
-        denim_intermediate_block_interval: intermediate_block_interval,
+        fast_block_interval: block_interval,
+        fast_intermediate_block_interval: intermediate_block_interval,
         ..Default::default()
     })
 }
@@ -335,10 +335,10 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         _: Address,
         starting_block: u64,
     ) -> Result<(u64, u64), ContractError> {
-        if starting_block < self.denim_activation_block {
+        if starting_block < self.fast_activation_block {
             Ok((self.block_interval, self.intermediate_block_interval))
         } else {
-            Ok((self.denim_block_interval, self.denim_intermediate_block_interval))
+            Ok((self.fast_block_interval, self.fast_intermediate_block_interval))
         }
     }
     async fn intermediate_output_roots(&self, _: Address) -> Result<Vec<B256>, ContractError> {

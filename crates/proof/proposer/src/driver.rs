@@ -39,7 +39,7 @@ pub struct DriverConfig {
     pub submit_timeout: Option<Duration>,
     /// Game type ID for `AggregateVerifier` dispute games.
     ///
-    /// The proposal intervals are deliberately absent: they change at the Denim
+    /// The proposal intervals are deliberately absent: they change at the Cobalt
     /// activation block and are resolved per game by
     /// [`crate::IntervalResolver`].
     pub game_type: u32,
