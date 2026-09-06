@@ -242,13 +242,13 @@ pub struct MockAggregateVerifier {
     /// Addresses passed to the interval reads, used by tests that assert read counts.
     pub intermediate_block_interval_reads: Mutex<Vec<Address>>,
     /// `(block_interval, intermediate_block_interval)` returned for starting blocks
-    /// below `denim_activation_block`.
+    /// below `fast_activation_block`.
     pub intervals: (u64, u64),
-    /// First starting block that resolves to `denim_intervals`.
-    pub denim_activation_block: u64,
+    /// First starting block that resolves to `fast_intervals`.
+    pub fast_activation_block: u64,
     /// `(block_interval, intermediate_block_interval)` returned at or after
-    /// `denim_activation_block`.
-    pub denim_intervals: (u64, u64),
+    /// `fast_activation_block`.
+    pub fast_intervals: (u64, u64),
 }
 
 impl MockAggregateVerifier {
@@ -261,12 +261,12 @@ impl MockAggregateVerifier {
             delayed_weth_reads: Mutex::new(Vec::new()),
             intermediate_block_interval_reads: Mutex::new(Vec::new()),
             intervals: (10, 5),
-            denim_activation_block: u64::MAX,
-            denim_intervals: (10, 5),
+            fast_activation_block: u64::MAX,
+            fast_intervals: (10, 5),
         }
     }
 
-    /// Sets the interval pair returned for every starting block before Denim.
+    /// Sets the interval pair returned for every starting block before the speedup.
     #[must_use]
     pub const fn with_intervals(
         mut self,
@@ -278,17 +278,17 @@ impl MockAggregateVerifier {
     }
 
     /// Makes the verifier switch to `(block_interval, intermediate_block_interval)` for
-    /// games whose range starts at or after `activation_block`, as the Denim-aware
+    /// games whose range starts at or after `activation_block`, as the Cobalt-aware
     /// `AggregateVerifier` does.
     #[must_use]
-    pub const fn with_denim_intervals(
+    pub const fn with_fast_intervals(
         mut self,
         activation_block: u64,
         block_interval: u64,
         intermediate_block_interval: u64,
     ) -> Self {
-        self.denim_activation_block = activation_block;
-        self.denim_intervals = (block_interval, intermediate_block_interval);
+        self.fast_activation_block = activation_block;
+        self.fast_intervals = (block_interval, intermediate_block_interval);
         self
     }
 
@@ -384,10 +384,10 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         starting_block: u64,
     ) -> Result<(u64, u64), ContractError> {
         self.intermediate_block_interval_reads.lock().unwrap().push(impl_address);
-        if starting_block < self.denim_activation_block {
+        if starting_block < self.fast_activation_block {
             Ok(self.intervals)
         } else {
-            Ok(self.denim_intervals)
+            Ok(self.fast_intervals)
         }
     }
 

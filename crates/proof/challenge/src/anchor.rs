@@ -114,7 +114,7 @@ impl AnchorUpdater {
         anchor_game: Address,
     ) -> Option<Address> {
         // Resolved from the anchor block, which is where the next game's range starts:
-        // the verifier switches to a shorter cadence at the Denim activation block, so a
+        // the verifier switches to a shorter cadence at the Cobalt activation block, so a
         // pair cached at startup silently stops matching any game past the boundary.
         let (block_interval, intermediate_block_interval) = match resolve_intervals(
             self.factory_client.as_ref(),
@@ -334,9 +334,9 @@ mod tests {
     const GAME_TYPE: u32 = 1;
     const BLOCK_INTERVAL: u64 = 100;
     const INTERMEDIATE_BLOCK_INTERVAL: u64 = 100;
-    const DENIM_ACTIVATION_BLOCK: u64 = 200;
-    const DENIM_BLOCK_INTERVAL: u64 = 50;
-    const DENIM_INTERMEDIATE_BLOCK_INTERVAL: u64 = 25;
+    const FAST_ACTIVATION_BLOCK: u64 = 200;
+    const FAST_BLOCK_INTERVAL: u64 = 50;
+    const FAST_INTERMEDIATE_BLOCK_INTERVAL: u64 = 25;
 
     fn insert_l2_block(l2: &mut MockL2Provider, block: u64) -> B256 {
         let storage_hash = B256::repeat_byte(block as u8);
@@ -562,36 +562,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn poll_finds_next_game_built_with_denim_intervals() {
-        // The anchor sits exactly at the Denim activation block, so the next game
-        // spans DENIM_BLOCK_INTERVAL and carries two intermediate roots instead of
+    async fn poll_finds_next_game_built_with_fast_intervals() {
+        // The anchor sits exactly at the Cobalt activation block, so the next game
+        // spans FAST_BLOCK_INTERVAL and carries two intermediate roots instead of
         // one. Its UUID is only reproducible with the post-activation pair.
         let game = addr(1);
         let tx_hash = B256::repeat_byte(0xDD);
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
         anchor_registry.snapshot.lock().unwrap().anchor_root.l2_block_number =
-            DENIM_ACTIVATION_BLOCK;
+            FAST_ACTIVATION_BLOCK;
 
         let mut l2 = MockL2Provider::default();
-        let roots: Vec<B256> = (1..=DENIM_BLOCK_INTERVAL / DENIM_INTERMEDIATE_BLOCK_INTERVAL)
+        let roots: Vec<B256> = (1..=FAST_BLOCK_INTERVAL / FAST_INTERMEDIATE_BLOCK_INTERVAL)
             .map(|i| {
                 insert_l2_block(
                     &mut l2,
-                    DENIM_ACTIVATION_BLOCK + i * DENIM_INTERMEDIATE_BLOCK_INTERVAL,
+                    FAST_ACTIVATION_BLOCK + i * FAST_INTERMEDIATE_BLOCK_INTERVAL,
                 )
             })
             .collect();
-        // Present so the pre-Denim run fails on a UUID mismatch rather than on a
+        // Present so the slow-cadence run fails on a UUID mismatch rather than on a
         // missing output root.
-        insert_l2_block(&mut l2, DENIM_ACTIVATION_BLOCK + BLOCK_INTERVAL);
+        insert_l2_block(&mut l2, FAST_ACTIVATION_BLOCK + BLOCK_INTERVAL);
         let l2 = Arc::new(l2);
 
         let extra_data = game_lookup_key(
-            DENIM_ACTIVATION_BLOCK,
+            FAST_ACTIVATION_BLOCK,
             ASR_ADDRESS,
-            DENIM_BLOCK_INTERVAL,
-            DENIM_INTERMEDIATE_BLOCK_INTERVAL,
+            FAST_BLOCK_INTERVAL,
+            FAST_INTERMEDIATE_BLOCK_INTERVAL,
             &roots,
         )
         .unwrap()
@@ -601,20 +601,20 @@ mod tests {
         let mut state = mock_state(
             GameStatus::DefenderWins,
             Address::ZERO,
-            DENIM_ACTIVATION_BLOCK + DENIM_BLOCK_INTERVAL,
+            FAST_ACTIVATION_BLOCK + FAST_BLOCK_INTERVAL,
         );
         state.anchor_state_registry = ASR_ADDRESS;
         let games = HashMap::from([(game, state)]);
 
-        let denim_verifier = verifier(games.clone()).with_denim_intervals(
-            DENIM_ACTIVATION_BLOCK,
-            DENIM_BLOCK_INTERVAL,
-            DENIM_INTERMEDIATE_BLOCK_INTERVAL,
+        let cobalt_verifier = verifier(games.clone()).with_fast_intervals(
+            FAST_ACTIVATION_BLOCK,
+            FAST_BLOCK_INTERVAL,
+            FAST_INTERMEDIATE_BLOCK_INTERVAL,
         );
-        let (denim_submitter, tx_manager) = submitter(vec![tx_success(tx_hash)]);
-        let mut denim_updater =
+        let (cobalt_submitter, tx_manager) = submitter(vec![tx_success(tx_hash)]);
+        let mut cobalt_updater =
             updater(Arc::clone(&factory), Arc::clone(&anchor_registry), Arc::clone(&l2));
-        denim_updater.poll(&denim_verifier, &denim_submitter).await;
+        cobalt_updater.poll(&cobalt_verifier, &cobalt_submitter).await;
 
         let calls = tx_manager.recorded_calls();
         assert_eq!(calls.len(), 1, "anchor should advance to the post-activation game");
@@ -628,7 +628,7 @@ mod tests {
 
         assert!(
             tx_manager.recorded_calls().is_empty(),
-            "pre-Denim intervals build a different UUID, so no game is found"
+            "slow-cadence intervals build a different UUID, so no game is found"
         );
     }
 }

@@ -21,16 +21,16 @@ use crate::{
 /// Resolves the `(block_interval, intermediate_block_interval)` pair that applies to a
 /// game of `game_type` whose range starts at `starting_block`.
 ///
-/// Denim switches the verifier to a shorter cadence at a fixed L2 block, so the pair is
+/// Cobalt switches the verifier to a shorter cadence at a fixed L2 block, so the pair is
 /// a function of the starting block and must be resolved per game rather than read once
 /// at startup.
 ///
 /// The implementation address is read from the factory on every call so a governance
 /// `setImplementation` is picked up without a restart. The implementation — not the game
 /// proxy — is queried on purpose: callers also resolve intervals for games that do not
-/// exist yet, and games created before the Denim-aware implementation was deployed run
-/// bytecode that has no `intervalsForStartingBlock`. For pre-Denim starting blocks the
-/// Denim-aware implementation returns the same pair the old one had.
+/// exist yet, and games created before the Cobalt-aware implementation was deployed run
+/// bytecode that has no `intervalsForStartingBlock`. For pre-Cobalt starting blocks the
+/// Cobalt-aware implementation returns the same pair the old one had.
 pub async fn resolve_intervals(
     factory_client: &dyn DisputeGameFactoryClient,
     verifier_client: &dyn AggregateVerifierClient,

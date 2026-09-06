@@ -100,7 +100,7 @@ impl ChallengerService {
                 config.game_type
             ));
         }
-        // The intervals are not read here: they change at the Denim activation block, so
+        // The intervals are not read here: they change at the Cobalt activation block, so
         // every consumer resolves them from the starting block of the game it is handling.
         info!(
             impl_address = %impl_address,

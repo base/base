@@ -387,7 +387,7 @@ impl GameScanner {
         )?;
 
         // Resolved from this game's own starting block: the verifier switches to a
-        // shorter cadence at the Denim activation block, so one interval per
+        // shorter cadence at the Cobalt activation block, so one interval per
         // implementation is wrong once a single implementation serves both sides of it.
         let (_, intermediate_block_interval) = resolve_intervals(
             self.factory_client.as_ref(),
@@ -1057,9 +1057,9 @@ mod tests {
         );
     }
 
-    /// Two games straddling the Denim activation block resolve different intervals.
+    /// Two games straddling the Cobalt activation block resolve different intervals.
     #[tokio::test]
-    async fn test_scan_resolves_intervals_per_game_across_denim_activation() {
+    async fn test_scan_resolves_intervals_per_game_across_cadence_activation() {
         let factory =
             Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1), factory_game(1, 1)]));
 
@@ -1069,7 +1069,7 @@ mod tests {
         verifier_games.insert(addr(1), mock_state(GameStatus::InProgress, Address::ZERO, 400));
 
         let verifier =
-            Arc::new(MockAggregateVerifier::new(verifier_games).with_denim_intervals(300, 4, 2));
+            Arc::new(MockAggregateVerifier::new(verifier_games).with_fast_intervals(300, 4, 2));
 
         let mut scanner = GameScanner::new(
             factory,
@@ -1081,11 +1081,11 @@ mod tests {
 
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].starting_block_number, 90);
-        assert_eq!(candidates[0].intermediate_block_interval, 5, "pre-Denim game");
+        assert_eq!(candidates[0].intermediate_block_interval, 5, "slow-cadence game");
         assert_eq!(candidates[1].starting_block_number, 390);
         assert_eq!(
             candidates[1].intermediate_block_interval, 2,
-            "post-Denim game must not inherit the pre-Denim interval"
+            "fast-cadence game must not inherit the slow-cadence interval"
         );
     }
 }
