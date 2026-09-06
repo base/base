@@ -8,9 +8,8 @@ Unified Base node binary.
 consensus node in the same process. The execution node exposes the Engine API over auth IPC, and the
 consensus node connects to that IPC endpoint internally.
 
-The execution CLI surface is shared with the standalone execution binaries through
-`base-execution-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
-sequencer, builder, conductor, and transaction-forwarding options.
+The execution CLI surface comes from `base-execution-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
+sequencer, builder, and conductor options.
 
 Supported forms:
 
@@ -33,6 +32,26 @@ base rpc --execution-chain dev
 
 The command also accepts metering flags such as `--enable-metering` for trusted local devnet
 simulation nodes.
+
+### Follow mode and historical proofs
+
+`base rpc --source-l2-rpc <url> --http` follows another L2 node using the embedded
+execution service. Add `--follow.proofs` to gate sync on local proofs history progress.
+Initialize historical proofs storage before the first launch:
+
+```bash
+base reth init --chain <genesis.json> --datadir <data>
+base proofs init --chain <genesis.json> --datadir <data> --proofs-history.storage-path <proofs>
+base --chain <chain.toml> rpc --execution-chain <genesis.json> --datadir <data> \
+  --http --http.api eth,debug --source-l2-rpc <source> --follow.proofs \
+  --proofs-history --proofs-history.storage-path <proofs> \
+  --l1-eth-rpc <l1-rpc> --l1-beacon <l1-beacon>
+```
+
+The Docker image runs `base rpc` by default. The root Compose file runs one integrated
+node and exposes execution RPC on 8545 and consensus RPC on 7545. Configure L1 endpoints
+in `.env.mainnet` or `.env.sepolia`. Add execution flags, including pruning options, to
+the Compose command. Existing execution databases can be reused through `HOST_DATA_DIR`.
 
 ## `base sequencer`
 

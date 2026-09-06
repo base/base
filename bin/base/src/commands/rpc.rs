@@ -3,8 +3,9 @@
 use std::{path::Path, sync::Arc};
 
 use base_consensus_cli::{
-    CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
-    ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
+    CliMetrics, ConsensusFollowNodeArgs, ConsensusNodeArgs, ConsensusNodeConfigArgs,
+    ConsensusNodeOverrides, ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
+    EmbeddedFollowArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
@@ -41,6 +42,10 @@ pub(crate) struct RpcCommand {
     /// Consensus node arguments.
     #[command(flatten)]
     pub(crate) consensus: EmbeddedConsensusNodeConfigArgs,
+
+    /// Optional source-based synchronization for proofs nodes.
+    #[command(flatten)]
+    pub follow: EmbeddedFollowArgs,
 }
 
 impl RpcCommand {
@@ -50,14 +55,13 @@ impl RpcCommand {
         resolved_chain: ResolvedChainConfig,
         metrics_enabled: bool,
     ) -> eyre::Result<()> {
-        let Self { execution_chain, execution, consensus } = self;
-        let mut execution_chain = match execution_chain {
+        let mut execution_chain = match self.execution_chain {
             Some(chain) => chain,
             None => resolved_chain.execution_chain_spec()?,
         };
         let consensus_chain = resolved_chain.consensus_chain_args();
-        let mut execution = execution;
-        let mut consensus_config: ConsensusNodeConfigArgs = consensus.into();
+        let mut execution = self.execution;
+        let mut consensus_config: ConsensusNodeConfigArgs = self.consensus.into();
         execution
             .standard
             .rollup_args
@@ -102,15 +106,49 @@ impl RpcCommand {
             let execution_exit = handle.node_exit_future;
 
             let consensus_cancellation = CancellationToken::new();
-            let consensus_exit = consensus_args.start_with_options(
-                ConsensusNodeStartOptions::new(rollup_config)
-                    .with_overrides(ConsensusNodeOverrides::embedded_execution(
-                        l2_engine_rpc,
-                        upgrade_signal_l1_rpc,
-                    ))
-                    .with_cancellation(consensus_cancellation.clone())
-                    .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied),
-            );
+            let follow_config = if self.follow.source_l2_rpc.is_some() {
+                let mut address = execution_node
+                    .rpc_server_handle()
+                    .http_local_addr()
+                    .ok_or_else(|| eyre::eyre!("follow mode requires the local HTTP RPC"))?;
+                if address.ip().is_unspecified() {
+                    address.set_ip(if address.is_ipv4() {
+                        std::net::Ipv4Addr::LOCALHOST.into()
+                    } else {
+                        std::net::Ipv6Addr::LOCALHOST.into()
+                    });
+                }
+                self.follow.into_config(
+                    consensus_args.config.clone(),
+                    Url::parse(&format!("http://{address}"))?,
+                    l2_engine_rpc.clone(),
+                )
+            } else {
+                None
+            };
+            let consensus_exit = async {
+                if let Some(config) = follow_config {
+                    let follow_args =
+                        ConsensusFollowNodeArgs::new(consensus_args.chain.clone(), config);
+                    return tokio::select! {
+                        result = follow_args.start_with_rollup_config(rollup_config) => result,
+                        _ = consensus_cancellation.cancelled() => Ok(()),
+                    };
+                }
+                consensus_args
+                    .start_with_options(
+                        ConsensusNodeStartOptions::new(rollup_config)
+                            .with_overrides(ConsensusNodeOverrides::embedded_execution(
+                                l2_engine_rpc,
+                                upgrade_signal_l1_rpc,
+                            ))
+                            .with_cancellation(consensus_cancellation.clone())
+                            .with_upgrade_signal_startup_mode(
+                                UpgradeSignalStartupMode::AlreadyApplied,
+                            ),
+                    )
+                    .await
+            };
             tokio::pin!(execution_exit);
             tokio::pin!(consensus_exit);
 
@@ -169,6 +207,47 @@ mod tests {
         let mut full_args = Vec::from(args);
         full_args.extend_from_slice(REQUIRED_CONSENSUS_ARGS);
         full_args
+    }
+
+    #[test]
+    fn follow_mode_uses_embedded_endpoints_and_proofs_options() {
+        let cli = BaseCli::parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--http",
+            "--source-l2-rpc=http://source:8545",
+            "--follow.proofs",
+            "--proofs.max-blocks-ahead=8",
+            "--follow.insert-delay-ms=25",
+        ]));
+        let BaseCommand::Rpc(rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+        let config = rpc
+            .follow
+            .into_config(
+                rpc.consensus.into(),
+                "http://127.0.0.1:12345".parse().unwrap(),
+                "file:///tmp/embedded-engine.ipc".parse().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(config.source_l2_rpc.as_str(), "http://source:8545/");
+        assert_eq!(config.l2_rpc_url.as_str(), "http://127.0.0.1:12345/");
+        assert_eq!(config.l2_client_args.l2_engine_rpc.as_str(), "file:///tmp/embedded-engine.ipc");
+        assert!(config.proofs);
+        assert_eq!(config.proofs_max_blocks_ahead, 8);
+        assert_eq!(config.insert_delay.as_millis(), 25);
+    }
+
+    #[test]
+    fn follow_mode_requires_local_http_and_proofs_requires_source() {
+        for args in [
+            &["base", "rpc", "--source-l2-rpc=http://source:8545"][..],
+            &["base", "rpc", "--http", "--follow.proofs"][..],
+        ] {
+            let error = BaseCli::try_parse_from(rpc_args(args)).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        }
     }
 
     #[test]

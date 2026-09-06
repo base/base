@@ -3154,24 +3154,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-builder-bin"
-version = "0.0.0"
-dependencies = [
- "base-builder-cli",
- "base-builder-core",
- "base-builder-metering",
- "base-cli-utils",
- "base-execution-cli",
- "base-node-runner",
- "base-observability-events",
- "base-reth-cli",
- "base-shadow-indexer",
- "base-txpool-rpc",
- "clap",
- "reth-cli-util",
-]
-
-[[package]]
 name = "base-builder-cli"
 version = "0.0.0"
 dependencies = [
@@ -3711,15 +3693,6 @@ dependencies = [
  "brotli",
  "derive_more 2.1.1",
  "thiserror 2.0.19",
-]
-
-[[package]]
-name = "base-consensus"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "base-consensus-cli",
- "clap",
 ]
 
 [[package]]
@@ -5787,17 +5760,6 @@ dependencies = [
  "tempfile",
  "tracing",
  "zstd",
-]
-
-[[package]]
-name = "base-reth-node"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "base-execution-cli",
- "base-reth-cli",
- "clap",
- "reth-cli-util",
 ]
 
 [[package]]

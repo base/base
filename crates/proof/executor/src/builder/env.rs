@@ -99,7 +99,7 @@ where
         min_base_fee: u64,
     ) -> ExecutorResult<BlockEnv> {
         // Base L2 blocks do not have a blob fee market. The canonical sequencer EL
-        // (`base-reth-node`) hardcodes `excess_blob_gas: 0, blob_gasprice: 1` for every
+        // (`base`) hardcodes `excess_blob_gas: 0, blob_gasprice: 1` for every
         // post-Ecotone block — per spec, BLOBBASEFEE always pushes 1 since L2 processes
         // no blobs. The proof executor must mirror that exactly; re-deriving the value
         // from the parent header via the EIP-4844 formula would diverge from canonical

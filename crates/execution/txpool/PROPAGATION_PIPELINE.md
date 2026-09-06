@@ -177,7 +177,7 @@ impl BaseNodeExtension for TxForwardingExtension {
 ### Registration
 
 ```rust
-// bin/node/src/main.rs
+// Execution launch wiring used by base rpc
 if args.enable_tx_forwarding {
     runner.install_ext::<TxForwardingExtension>(config);
 }

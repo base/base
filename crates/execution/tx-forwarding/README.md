@@ -64,7 +64,8 @@ than a logged skip, so a caller never silently forwards to fewer destinations th
 Enable transaction forwarding on the Base node CLI:
 
 ```bash
-cargo run -p base-reth-node --release -- \
+cargo run -p base --release -- rpc \
+  --l1-eth-rpc <l1-rpc> --l1-beacon <l1-beacon> \
   --enable-tx-forwarding \
-  --builder-rpc-urls http://builder1:8545,http://builder2:8545 \
+  --builder-rpc-urls http://builder1:8545,http://builder2:8545
 ```

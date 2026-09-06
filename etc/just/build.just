@@ -35,7 +35,7 @@ elfs:
 
 # Builds the base node binary
 node:
-    cargo build --bin base-reth-node
+    cargo build --bin base
 
 # Builds the test contracts
 contracts:

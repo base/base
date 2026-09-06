@@ -274,7 +274,7 @@ where
             Some((n, _)) => n,
             None => {
                 return Err(eyre::eyre!(
-                    "Proofs storage not initialized. Please run 'base-reth-node proofs init --proofs-history.storage-path <PATH>' first."
+                    "Proofs storage not initialized. Please run 'base proofs init --proofs-history.storage-path <PATH>' first."
                 ));
             }
         };
@@ -283,7 +283,7 @@ where
             Some((n, _)) => n,
             None => {
                 return Err(eyre::eyre!(
-                    "Proofs storage not initialized. Please run 'base-reth-node proofs init --proofs-history.storage-path <PATH>' first."
+                    "Proofs storage not initialized. Please run 'base proofs init --proofs-history.storage-path <PATH>' first."
                 ));
             }
         };
@@ -298,7 +298,7 @@ where
                 return Err(eyre::eyre!(
                     "Configuration requires pruning {} blocks, which exceeds the safety threshold of {}. \
                      Huge prune operations can stall the node. \
-                     Please run 'base-reth-node proofs prune' manually before starting the node.",
+                     Please run 'base proofs prune' manually before starting the node.",
                     blocks_to_prune,
                     self.max_prune_blocks_startup
                 ));

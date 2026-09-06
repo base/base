@@ -4,7 +4,7 @@ Sidecar for generating and uploading reth node snapshots to S3-compatible storag
 
 ## Overview
 
-Runs alongside a Base execution layer node (base-node-reth) and orchestrates periodic snapshot
+Runs alongside a Base execution layer node (`base`) and orchestrates periodic snapshot
 creation. `Snapshotter` coordinates the full lifecycle: fetching the EL's latest block and verifying
 it is at chain tip (within a configurable freshness window, default 10s), stopping the CL and EL
 containers via the Docker socket, generating a snapshot manifest and chunk archives for the

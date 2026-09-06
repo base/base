@@ -155,3 +155,18 @@ See the exact supported options at any revision with:
 ```bash
 cargo run -p base-system-tests --bin base-devnet -- snapshot --help
 ```
+
+### Unified binary smoke test
+
+To exercise the shipped `base` executable as a sequencer and an integrated proofs
+follower, build it and run the Docker-backed smoke test explicitly:
+
+```bash
+cargo build -p base --bin base
+BASE_BINARY="$PWD/target/debug/base" RUST_MIN_STACK=33554432 \
+  cargo test -p base-system-tests --test smoke \
+  smoke_test_unified_binary_produces_and_follows_blocks -- --ignored --nocapture
+```
+
+The test checks block production, transaction inclusion, and matching block hashes
+between the sequencer and proofs follower, then shuts down its temporary processes.

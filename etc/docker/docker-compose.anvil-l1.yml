@@ -33,10 +33,14 @@ services:
       - SETUP_L2_SKIP_IF_CONFIGURED=true
 
   # The proof host needs historical trie data and debug_executePayload. Keep that
-  # workload on the same proofs-history + follow-mode pair used in production.
+  # workload on an integrated proofs-history node in follow mode.
   base-proofs:
     image: base:local
     container_name: base-proofs
+    environment:
+      - BASE_CHAIN_NAME=dev
+      - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
+      - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
     profiles: ["nitro-local"]
     depends_on:
       setup-l2:
@@ -45,7 +49,7 @@ services:
         condition: service_healthy
     ports:
       - "${L2_PROOFS_HTTP_PORT}:${L2_PROOFS_HTTP_PORT}"
-      - "${L2_PROOFS_AUTH_PORT}:${L2_PROOFS_AUTH_PORT}"
+      - "${L2_PROOFS_CL_RPC_PORT}:${L2_PROOFS_CL_RPC_PORT}"
       - "${L2_PROOFS_METRICS_PORT}:${L2_PROOFS_METRICS_PORT}"
     volumes:
       - ../../.devnet/l2/proofs:/data
@@ -54,69 +58,37 @@ services:
     entrypoint: ["/bin/bash", "-ec"]
     command:
       - |
-        /app/base-reth-node init \
+        /app/base reth init \
           --chain=/genesis/l2/genesis.json \
           --datadir=/data
-        /app/base-reth-node proofs init \
+        /app/base proofs init \
           --chain=/genesis/l2/genesis.json \
           --datadir=/data \
           --proofs-history.storage-path=/data/proofs
-        exec /app/base-reth-node node \
-          --chain=/genesis/l2/genesis.json \
+        exec /app/base --chain=dev rpc \
+          --execution-chain=/genesis/l2/genesis.json \
           --datadir=/data \
           --disable-discovery \
           --http \
           --http.addr=0.0.0.0 \
           --http.port=${L2_PROOFS_HTTP_PORT} \
           --http.api=eth,web3,net,rpc,debug \
-          --authrpc.addr=0.0.0.0 \
-          --authrpc.port=${L2_PROOFS_AUTH_PORT} \
-          --authrpc.jwtsecret=/genesis/jwt.hex \
+          --auth-ipc.path=/data/engine.ipc \
           --metrics=0.0.0.0:${L2_PROOFS_METRICS_PORT} \
-          --rollup.sequencer-http=http://base-builder:${L2_BUILDER_HTTP_PORT} \
+          --source-l2-rpc=http://base-builder:${L2_BUILDER_HTTP_PORT} \
+          --follow.proofs \
+          --l1-eth-rpc=http://l1-el:${L1_HTTP_PORT} \
+          --l1-beacon=http://l1-el:${L1_HTTP_PORT} \
+          --l2-config-file=/genesis/l2/rollup.json \
+          --l1-config-file=/genesis/el/chain-config.json \
+          --l1-slot-duration-override=${L1_SLOT_DURATION_OVERRIDE:-12} \
+          --rpc.port=${L2_PROOFS_CL_RPC_PORT} \
           --proofs-history \
           --proofs-history.storage-path=/data/proofs \
           --enable-experimental-validity-transactions \
           -vvv
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"debug_proofsSyncStatus\",\"params\":[],\"id\":1}' http://localhost:${L2_PROOFS_HTTP_PORT}/ | grep -q '\"result\"'"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
-    restart: unless-stopped
-
-  base-proofs-consensus:
-    image: base:local
-    container_name: base-proofs-consensus
-    profiles: ["nitro-local"]
-    depends_on:
-      base-proofs:
-        condition: service_healthy
-    ports:
-      - "${L2_PROOFS_CL_RPC_PORT}:${L2_PROOFS_CL_RPC_PORT}"
-    volumes:
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
-    entrypoint: ["/app/base-consensus"]
-    command:
-      - --chain
-      - "${L2_CHAIN_ID}"
-      - follow
-      - --source-l2-rpc=http://base-builder:${L2_BUILDER_HTTP_PORT}
-      - --l2-rpc-url=http://base-proofs:${L2_PROOFS_HTTP_PORT}
-      - --l2-engine-rpc=http://base-proofs:${L2_PROOFS_AUTH_PORT}
-      - --l2-engine-jwt-secret=/genesis/jwt.hex
-      - --proofs
-      - --l1-eth-rpc=http://l1-el:${L1_HTTP_PORT}
-      - --l1-beacon=http://l1-el:${L1_HTTP_PORT}
-      - --l2-config-file=/genesis/l2/rollup.json
-      - --l1-config-file=/genesis/el/chain-config.json
-      - --l1-slot-duration-override=${L1_SLOT_DURATION_OVERRIDE:-12}
-      - --rpc.port=${L2_PROOFS_CL_RPC_PORT}
-      - -vvv
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:${L2_PROOFS_CL_RPC_PORT}/healthz >/dev/null"]
+      test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"debug_proofsSyncStatus\",\"params\":[],\"id\":1}' http://localhost:${L2_PROOFS_HTTP_PORT}/ | grep -q '\"result\"' && curl -sf http://localhost:${L2_PROOFS_CL_RPC_PORT}/healthz >/dev/null"]
       interval: 250ms
       timeout: 1s
       retries: 240
@@ -174,7 +146,7 @@ services:
     container_name: nitro-prover-1
     profiles: ["nitro-local"]
     depends_on:
-      base-proofs-consensus:
+      base-proofs:
         condition: service_healthy
       base-prover-service:
         condition: service_healthy
@@ -199,7 +171,7 @@ services:
     container_name: nitro-prover-2
     profiles: ["nitro-local"]
     depends_on:
-      base-proofs-consensus:
+      base-proofs:
         condition: service_healthy
       base-prover-service:
         condition: service_healthy

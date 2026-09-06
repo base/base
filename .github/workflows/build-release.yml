@@ -44,8 +44,6 @@ jobs:
             os: macos
         binary:
           - base
-          - base-reth-node
-          - base-consensus
           - basectl
 
     runs-on: ${{ matrix.target.runner }}
@@ -97,7 +95,7 @@ jobs:
         run: |
           if [ "${{ matrix.target.triple }}" = "aarch64-unknown-linux-gnu" ]; then
             case "${{ matrix.binary }}" in
-              base|base-consensus|basectl)
+              base|basectl)
                 cargo rustc --locked --release -p "${{ matrix.binary }}" --bin "${{ matrix.binary }}" -- -C link-arg=-lblst
                 exit
             esac

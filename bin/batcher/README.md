@@ -30,7 +30,7 @@ the production remote-signer path with `--signer-endpoint` and
 `--signer-address`.
 
 This override only changes where the batcher writes. It does not make a stock
-`base-consensus` verifier derive those batches: derivation filters DA by both
+`base rpc` verifier derive those batches: derivation filters DA by both
 `RollupConfig.batch_inbox_address` and the current `SystemConfig.batcher_address`.
 A shadow verifier must therefore use accepted inbox and signer inputs that match
 the shadow submissions. Do not add permanent production consensus bypass logic

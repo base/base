@@ -2,11 +2,18 @@
 
 This directory contains the Dockerfiles and Compose configuration for the **local devnet** and internal Rust services.
 
-The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerfile.rust-services`. Published images and operator `--build` use `PROFILE=release` (same as `base/node`), while `just devnet` builds `dev`. `PROFILE` is set on the shared `_rust-service-common` target, so passing it as an environment variable applies it to every target in the invocation; to give one target a different profile, override just that target's build arg — `docker buildx bake -f etc/docker/docker-bake.hcl builder consensus --set builder.args.PROFILE=release-symbols --load` builds `builder` with profiling symbols while `consensus` stays on the default `release`. Operator entrypoints live in `etc/scripts/node/`; operators edit `.env.mainnet` / `.env.sepolia` at the repo root. Root `docker-compose.yml` pulls the published image, or compiles this tree with `--build`. `just devnet up` overrides the entrypoint to `./base`.
+The public operator image (`ghcr.io/base/node`) is the `base` target in
+`Dockerfile.rust-services`. It runs the unified binary directly. Published images and
+operator `--build` use `PROFILE=release`, while `just devnet` builds `dev`.
+`PROFILE` applies to every Bake target in an invocation; for example,
+`docker buildx bake -f etc/docker/docker-bake.hcl base batcher --set base.args.PROFILE=release-symbols --load`
+builds `base` with profiling symbols while `batcher` uses the default profile.
+Operators configure `.env.mainnet` or `.env.sepolia` and the root `docker-compose.yml`,
+which runs one integrated node and can compile this tree with `--build`.
 
 ## Dockerfiles
 
-`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. The `base` target is published as `ghcr.io/base/node` and is also the local devnet image. Devnet compose overrides the default supervisord CMD.
+`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. The `base` target is published as `ghcr.io/base/node` and is also the local devnet image. The image defaults to `base rpc`; devnet Compose selects `rpc`, `sequencer`, or `bootnode`.
 
 `Dockerfile.devnet` builds a utility image containing genesis generation tools (`eth-genesis-state-generator`, `eth2-val-tools`, `op-deployer`) and setup scripts. This image bootstraps L1 and L2 chain configurations for local development.
 
@@ -61,7 +68,7 @@ attestation, while the workers run the Nitro enclave proving code in-process.
 The Base nodes and proof verifier therefore use the same real `ProtocolVersions`
 contract from genesis; this path does not deploy the normal devnet's mock
 upgrade-signal contract. Docker Compose then starts a proofs-history execution
-node with a follow-mode consensus node, a fresh prover database, prover-service,
+node with embedded follow-mode consensus, a fresh prover database, prover-service,
 two registered Nitro workers in local mode, and the proposer. Inspect or stop it
 with:
 

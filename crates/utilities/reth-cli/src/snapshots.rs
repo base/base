@@ -54,7 +54,7 @@ impl Snapshots {
 
 /// Initializes Reth's global snapshot download URLs and pruning defaults.
 ///
-/// Use this in execution layer binaries (base-node-reth, base-builder) that need
+/// Use this in the unified `base` binary that need
 /// Reth's global download URLs initialized for snapshot downloads
 ///
 /// This macro must be called from the binary crate to capture the correct URLs.

@@ -17,9 +17,61 @@ use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
-    ConsensusChainArgs, L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, LogArgs,
-    MetricsArgs, RpcArgs, metrics::CliMetrics,
+    ConsensusChainArgs, ConsensusNodeConfigArgs, L1ClientArgs, L1ConfigFile, L2ClientArgs,
+    L2ConfigFile, LogArgs, MetricsArgs, RpcArgs, metrics::CliMetrics,
 };
+
+/// Follow-mode options for an integrated RPC node.
+#[derive(Args, Clone, Debug)]
+pub struct EmbeddedFollowArgs {
+    /// Follow this node instead of deriving blocks from L1.
+    #[arg(long = "source-l2-rpc", env = "BASE_NODE_SOURCE_L2_RPC", requires = "http")]
+    pub source_l2_rpc: Option<Url>,
+
+    /// Gate sync behind the local proofs history progress.
+    #[arg(long = "follow.proofs", env = "BASE_NODE_PROOFS", requires = "source_l2_rpc")]
+    pub proofs: bool,
+
+    /// Maximum blocks to advance beyond the proofs history head.
+    #[arg(
+        long = "proofs.max-blocks-ahead",
+        default_value_t = 16,
+        env = "BASE_NODE_PROOFS_MAX_BLOCKS_AHEAD"
+    )]
+    pub proofs_max_blocks_ahead: u64,
+
+    /// Delay after each successful payload insert, in milliseconds.
+    #[arg(long = "follow.insert-delay-ms", default_value = "0",
+        value_parser = |arg: &str| -> Result<Duration, ParseIntError> {
+            Ok(Duration::from_millis(arg.parse()?))
+        }, env = "BASE_NODE_FOLLOW_INSERT_DELAY_MS")]
+    pub insert_delay: Duration,
+}
+
+impl EmbeddedFollowArgs {
+    /// Builds follow configuration using the integrated node's local endpoints.
+    pub fn into_config(
+        self,
+        consensus: ConsensusNodeConfigArgs,
+        l2_rpc_url: Url,
+        l2_engine_rpc: Url,
+    ) -> Option<ConsensusFollowNodeConfigArgs> {
+        let mut l2_client_args = consensus.l2_client_args;
+        l2_client_args.l2_engine_rpc = l2_engine_rpc;
+        Some(ConsensusFollowNodeConfigArgs {
+            source_l2_rpc: self.source_l2_rpc?,
+            l2_rpc_url,
+            l2_client_args,
+            proofs: self.proofs,
+            proofs_max_blocks_ahead: self.proofs_max_blocks_ahead,
+            insert_delay: self.insert_delay,
+            rpc_flags: consensus.rpc_flags,
+            l2_config: consensus.l2_config,
+            l1_config: consensus.l1_config,
+            l1_rpc_args: consensus.l1_rpc_args,
+        })
+    }
+}
 
 /// Standalone consensus follow-node command.
 #[derive(Args, Clone, Debug)]
@@ -218,7 +270,11 @@ impl ConsensusFollowNodeArgs {
 
     /// Starts a follow node.
     pub async fn start(&self) -> eyre::Result<()> {
-        let cfg = self.load_rollup_config()?;
+        self.start_with_rollup_config(self.load_rollup_config()?).await
+    }
+
+    /// Starts following with the integrated node's resolved upgrade schedule.
+    pub async fn start_with_rollup_config(&self, cfg: RollupConfig) -> eyre::Result<()> {
         if !self.config.proofs {
             warn!(
                 target: "rollup_node",

@@ -22,7 +22,7 @@ Add the dependency to your `Cargo.toml`:
 base-builder-core = { git = "https://github.com/base/base" }
 ```
 
-To run the builder, use the [`base-builder`](../../../bin/builder/) binary.
+To run the builder, use the [`base sequencer`](../../../bin/base/) command.
 
 ## License
 

@@ -8,13 +8,13 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod app;
-pub use app::{ConsensusCli, ConsensusCommands, LogArgs, MetricsArgs};
+pub use app::{LogArgs, MetricsArgs};
 
 mod bootnode;
 pub use bootnode::{Bootnode, BootnodeEnr, BootnodeP2PArgs, resolve_host};
 
 mod chain;
-pub use chain::{ConsensusChainArgs, GlobalConsensusChainArgs};
+pub use chain::ConsensusChainArgs;
 
 mod config;
 pub use config::{ConfigError, L1ConfigFile, L2ConfigFile};
@@ -22,6 +22,7 @@ pub use config::{ConfigError, L1ConfigFile, L2ConfigFile};
 mod follow;
 pub use follow::{
     ConsensusFollowNodeArgs, ConsensusFollowNodeCommand, ConsensusFollowNodeConfigArgs,
+    EmbeddedFollowArgs,
 };
 
 mod l1;

@@ -761,7 +761,7 @@ where
     /// Executes all sequencer transactions that are included in the payload attributes.
     ///
     /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
-    /// for the payload (derived from L1 batches by `base-consensus`), not a list of optional
+    /// for the payload (derived from L1 batches by the consensus service), not a list of optional
     /// pre-include candidates. In that mode an `InvalidTx` from any sequencer transaction must
     /// be propagated as a fatal error so the EL rejects the payload, matching the strictness of
     /// the proof executor. Silently skipping the offending transaction would diverge the EL

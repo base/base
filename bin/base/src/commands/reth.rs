@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand};
 use reth_cli_commands::{config_cmd, db, dump_genesis, init_cmd, prune, re_execute, stage};
 use reth_cli_runner::CliRunner;
 
-/// Execution-layer maintenance utilities re-exposed from `base-reth-node`.
+/// Execution-layer maintenance utilities for `base`.
 #[derive(Parser, Debug)]
 pub(crate) struct RethCommand {
     /// The reth-derived subcommand to execute.

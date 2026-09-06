@@ -141,14 +141,14 @@ For local Vector health, alert or inspect `component_discarded_events_total`.
 
 ## Producer Values
 
-- `base-reth-node`
+- `base-reth-node` (stable event producer identifier for execution inside `base`)
 - `base-builder`
 - `ingress-rpc`
 - `base-routing/proxyd`
 
 ## Txpool Tracing Example
 
-`base-reth-node` txpool tracing can emit the existing live LRU events to the
+The execution service in `base` can emit the existing live LRU events to the
 durable journal when `--enable-transaction-event-journal` and
 `--transaction-event-journal-path` are set:
 

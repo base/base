@@ -28,7 +28,7 @@ tip latency.
 ## Architecture
 
 ```text
-base-reth-node
+base rpc
 ├── Standard reth pipeline (sync, EVM, state)
 ├── proofs-history ExEx (ingests committed blocks → versioned trie store)
 ├── Pruner task (background, removes data outside retention window)
@@ -75,7 +75,7 @@ Once `latest` tracks the chain tip, `eth_getProof` calls for every block within
 **Prune** — manually remove old proof history to reclaim space:
 
 ```bash
-base-reth-node proofs prune \
+base proofs prune \
   --datadir /path/to/reth-datadir \
   --proofs-history.storage-path /path/to/proofs-db \
   --proofs-history.window 1296000
@@ -84,7 +84,7 @@ base-reth-node proofs prune \
 **Unwind** — recover from corruption by reverting to a specific block:
 
 ```bash
-base-reth-node proofs unwind \
+base proofs unwind \
   --datadir /path/to/reth-datadir \
   --proofs-history.storage-path /path/to/proofs-db \
   --target <BLOCK_NUMBER>

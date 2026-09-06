@@ -1,6 +1,6 @@
 //! Smoke tests for the full `SystemTestStack` stack.
 
-use std::{process::Command, time::Duration};
+use std::{net::TcpListener, process::Command, time::Duration};
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
@@ -12,7 +12,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_system_tests::{ANVIL_ACCOUNT_1, SystemTestStackBuilder};
+use base_system_tests::{ANVIL_ACCOUNT_1, SEQUENCER, SystemTestStackBuilder};
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
@@ -264,5 +264,127 @@ async fn smoke_test_builder_and_client_block_sync() -> Result<()> {
 
     assert!(client_block > 0, "Client should have synced at least one block");
 
+    Ok(())
+}
+
+/// Runs the shipped executable, including integrated proofs follow mode.
+#[tokio::test]
+#[ignore = "requires BASE_BINARY pointing to a built base executable and Docker"]
+pub async fn smoke_test_unified_binary_produces_and_follows_blocks() -> Result<()> {
+    let binary = std::fs::canonicalize(std::env::var("BASE_BINARY")?)?;
+    let _guard = SMOKE_TEST_LOCK.lock().await;
+    let system = SystemTestStackBuilder::new()
+        .with_l1_chain_id(L1_CHAIN_ID)
+        .with_l2_chain_id(L2_CHAIN_ID)
+        .build()
+        .await?;
+    let data = tempfile::tempdir()?;
+    let mut nodes = Vec::new();
+    let mut providers: Vec<String> = Vec::new();
+    for role in ["sequencer", "rpc"] {
+        let node_dir = data.path().join(role);
+        std::fs::create_dir(&node_dir)?;
+        let rpc_port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+        let rpc_url = format!("http://127.0.0.1:{rpc_port}");
+        if role == "rpc" {
+            for command in [vec!["reth", "init"], vec!["proofs", "init"]] {
+                let mut init = Command::new(&binary);
+                init.current_dir(&node_dir)
+                    .args(&command)
+                    .arg("--chain")
+                    .arg(system.l2_deployment().genesis_path())
+                    .arg("--datadir")
+                    .arg(&node_dir);
+                if command[0] == "proofs" {
+                    init.arg("--proofs-history.storage-path").arg(node_dir.join("proofs"));
+                }
+                eyre::ensure!(init.status()?.success(), "proofs initialization failed");
+            }
+        }
+        let mut command = tokio::process::Command::new(&binary);
+        command
+            .current_dir(&node_dir)
+            .kill_on_drop(true)
+            .args(["--chain", "dev", role])
+            .arg("--execution-chain")
+            .arg(system.l2_deployment().genesis_path())
+            .arg("--datadir")
+            .arg(&node_dir)
+            .arg("--auth-ipc.path")
+            .arg(node_dir.join("engine.ipc"))
+            .args([
+                "--http",
+                "--http.addr=127.0.0.1",
+                "--http.api=eth,debug,net,web3",
+                "--authrpc.port=0",
+                "--port=0",
+                "--disable-discovery",
+                "--rpc.port=0",
+                "--p2p.listen.tcp=0",
+                "--p2p.listen.udp=0",
+                "--l1-slot-duration-override=1",
+            ])
+            .arg(format!("--http.port={rpc_port}"))
+            .arg("--l1-eth-rpc")
+            .arg(system.l1_rpc_url().await?.as_str())
+            .arg("--l1-beacon")
+            .arg(system.l1_stack().beacon_url().await?)
+            .arg("--l2-config-file")
+            .arg(system.l2_deployment().rollup_config_path())
+            .arg("--l1-config-file")
+            .arg(system.l1_genesis().el_genesis_path().with_file_name("chain-config.json"));
+        if role == "sequencer" {
+            command
+                .arg("--p2p.sequencer.key")
+                .arg(SEQUENCER.private_key.to_string())
+                .arg("--sequencer.l1-confs=0");
+        } else {
+            command
+                .arg("--source-l2-rpc")
+                .arg(&providers[0])
+                .args(["--follow.proofs", "--proofs-history"])
+                .arg("--proofs-history.storage-path")
+                .arg(node_dir.join("proofs"));
+        }
+        nodes.push(command.spawn()?);
+        let provider = RootProvider::<Base>::new_http(rpc_url.parse()?);
+        timeout(Duration::from_secs(90), async {
+            loop {
+                if provider.get_block_number().await.is_ok_and(|number| number > 0) {
+                    return Ok::<_, eyre::Error>(());
+                }
+                for node in &mut nodes {
+                    eyre::ensure!(node.try_wait()?.is_none(), "base process exited during startup");
+                }
+                sleep(BLOCK_POLL_INTERVAL).await;
+            }
+        })
+        .await
+        .wrap_err("unified node did not advance")??;
+        providers.push(rpc_url);
+    }
+    let sequencer = RootProvider::<Base>::new_http(providers[0].parse()?);
+    let follower = RootProvider::<Base>::new_http(providers[1].parse()?);
+    verify_l1_block_production(&system.l1_provider().await?).await?;
+    verify_l2_block_production(&sequencer).await?;
+    send_l2_transaction_via_client(&sequencer, &sequencer).await?;
+    let height = sequencer.get_block_number().await?;
+    timeout(Duration::from_secs(60), async {
+        while follower.get_block_number().await? < height {
+            sleep(BLOCK_POLL_INTERVAL).await;
+        }
+        Ok::<_, eyre::Error>(())
+    })
+    .await??;
+    let expected = sequencer.get_block_by_number(height.into()).await?.unwrap();
+    let actual = follower.get_block_by_number(height.into()).await?.unwrap();
+    assert_eq!(expected.header.hash, actual.header.hash);
+    println!(
+        "Unified sequencer and proofs follower agree at block {height}: {}",
+        actual.header.hash
+    );
+    for mut node in nodes {
+        node.kill().await?;
+    }
     Ok(())
 }

@@ -16,8 +16,6 @@ curl -fsSL https://raw.githubusercontent.com/base/base/main/baseup/install | bas
 baseup                                # Install the latest release binaries
 baseup -i v0.6.0                      # Install a specific release tag
 baseup --bin base                     # Install only the unified base binary
-baseup --bin base-reth-node           # Install only the node binary
-baseup --bin base-consensus           # Install only the consensus binary
 baseup --bin basectl                  # Install only basectl
 baseup --bin all                      # Install all published binaries
 baseup verify-release                 # Verify latest published release archive signatures without installing
@@ -32,8 +30,6 @@ baseup --help                         # Show help
 By default, `baseup` installs every binary this repo publishes in GitHub releases today:
 
 - `base`
-- `base-reth-node`
-- `base-consensus`
 - `basectl`
 
 ## Verification
