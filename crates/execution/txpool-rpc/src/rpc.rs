@@ -376,10 +376,6 @@ mod tests {
                 op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
                 value: U256::from(100),
             },
-            ValidityPredicate::FlashblockIndex {
-                op: base_execution_txpool::ValidityOperator::LessThan,
-                value: U256::from(5),
-            },
         ]
     }
 
@@ -470,13 +466,6 @@ mod tests {
                     "params": {
                         "op": ">=",
                         "value": "0x64",
-                    },
-                },
-                {
-                    "type": "flashblock_index",
-                    "params": {
-                        "op": "<",
-                        "value": "0x5",
                     },
                 },
             ])
@@ -650,26 +639,6 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("outside its mask"));
-    }
-
-    #[tokio::test]
-    async fn send_raw_transaction_validity_rejects_unsatisfiable_flashblock_index() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt_provider());
-        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
-        // A flashblock-index predicate that only holds at index 0, which pooled
-        // transactions never reach, would park forever if admitted.
-        options.validity = vec![ValidityPredicate::FlashblockIndex {
-            op: base_execution_txpool::ValidityOperator::Equal,
-            value: U256::ZERO,
-        }];
-
-        let error = rpc
-            .send_raw_transaction_validity(raw, options)
-            .await
-            .expect_err("an unsatisfiable flashblock-index predicate should be rejected");
-
-        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
-        assert!(error.message().contains("can never be satisfied"));
     }
 
     #[tokio::test]

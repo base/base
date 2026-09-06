@@ -2,10 +2,9 @@
 
 ## Overview
 
-WebSocket proxy that subscribes to new Flashblocks from
-[rollup-boost](https://github.com/flashbots/rollup-boost) on the sequencer and broadcasts them
-to downstream RPC nodes, minimizing connections to the sequencer and restricting access.
-Supports optional Brotli compression for downstream clients.
+A generic one-directional WebSocket proxy. It maintains an upstream connection
+and broadcasts messages to downstream clients, with optional Brotli compression.
+Reconnects use the configured upstream URL without interpreting message payloads.
 
 > **Warning**
 >
@@ -60,7 +59,7 @@ cargo test --all-features
 ### Deployment
 
 Builds of the websocket proxy are provided.
-The only configuration required is the rollup-boost URL to proxy. You can set this via an env var `UPSTREAM_WS` or a flag `--upstream-ws`.
+The only configuration required is the upstream WebSocket URL to proxy. You can set this via an env var `UPSTREAM_WS` or a flag `--upstream-ws`.
 
 You can see a full list of parameters by running:
 

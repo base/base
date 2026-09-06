@@ -11,7 +11,7 @@ use revm::{Database, state::EvmState};
 ///
 /// State keys ([`Self::Balance`], [`Self::Storage`]) are woken by
 /// [`ParkedPredicateIndex::affected_by_state`]. Context keys
-/// ([`Self::BlockNumber`], [`Self::FlashblockIndex`]) stay parked until the
+/// ([`Self::BlockNumber`]) stay parked until the
 /// iterator is rebuilt with an updated context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValidityPredicateKey {
@@ -21,8 +21,6 @@ pub enum ValidityPredicateKey {
     Storage(Address, U256),
     /// Number of the block currently being built.
     BlockNumber,
-    /// Index of the flashblock currently being built.
-    FlashblockIndex,
 }
 
 impl ValidityPredicateKey {
@@ -32,7 +30,6 @@ impl ValidityPredicateKey {
             ValidityPredicate::Balance { address, .. } => Self::Balance(*address),
             ValidityPredicate::Storage { address, slot, .. } => Self::Storage(*address, *slot),
             ValidityPredicate::BlockNumber { .. } => Self::BlockNumber,
-            ValidityPredicate::FlashblockIndex { .. } => Self::FlashblockIndex,
         }
     }
 
@@ -233,7 +230,7 @@ mod tests {
     }
 
     fn test_context() -> PredicateContext {
-        PredicateContext { block_number: 0, flashblock_index: 0 }
+        PredicateContext { block_number: 0 }
     }
 
     #[test]
@@ -405,7 +402,7 @@ mod tests {
     #[test]
     fn evaluation_classifies_expired_position_predicates() {
         let mut db = InMemoryDB::default();
-        let context = PredicateContext { block_number: 2, flashblock_index: 1 };
+        let context = PredicateContext { block_number: 2 };
         let predicates =
             [ValidityPredicate::BlockNumber { op: ValidityOperator::Equal, value: U256::from(1) }];
 
@@ -421,22 +418,13 @@ mod tests {
     #[test]
     fn first_unsatisfied_indexes_context_predicates() {
         let mut db = InMemoryDB::default();
-        let context = PredicateContext { block_number: 1, flashblock_index: 0 };
+        let context = PredicateContext { block_number: 1 };
         let block_number =
             ValidityPredicate::BlockNumber { op: ValidityOperator::Equal, value: U256::from(2) };
-        let flashblock_index = ValidityPredicate::FlashblockIndex {
-            op: ValidityOperator::Equal,
-            value: U256::from(1),
-        };
 
         assert_eq!(
             ValidityPredicateKey::first_unsatisfied(&[block_number], &mut db, &context).unwrap(),
             Some(ValidityPredicateKey::BlockNumber)
-        );
-        assert_eq!(
-            ValidityPredicateKey::first_unsatisfied(&[flashblock_index], &mut db, &context)
-                .unwrap(),
-            Some(ValidityPredicateKey::FlashblockIndex)
         );
 
         let passing =

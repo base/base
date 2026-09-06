@@ -21,15 +21,13 @@ base-runtime.workspace = true
 base-test-utils = { workspace = true, optional = true }
 base-txpool-rpc.workspace = true
 base-tx-manager.workspace = true
-base-flashblocks.workspace = true
-base-builder-multiplex.workspace = true
 base-tx-forwarding.workspace = true
 base-execution-cli.workspace = true
+base-execution-eip8130-rpc-node.workspace = true
 base-txpool-tracing.workspace = true
 base-upgrade-signal.workspace = true
 base-batcher-encoder.workspace = true
 base-batcher-service.workspace = true
-base-flashblocks-node.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
@@ -116,15 +114,6 @@ testcontainers-modules = { workspace = true, features = ["postgres"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
 
-[features]
-default = [ "upgrade-signal" ]
-# The upgrade-signal stack deploys a mock ProtocolVersions contract via base-test-utils, whose
-# contract bindings embed Foundry `out/` artifacts through `sol!(..., concat!(...))` at compile
-# time. Those artifacts are gitignored, so base-test-utils cannot compile when pulled over a git
-# dependency. External consumers that only need the core L1+L2 stack disable this feature
-# (`default-features = false`); it stays on by default for in-tree use where the artifacts exist.
-upgrade-signal = [ "base-test-utils/contracts", "dep:base-test-utils" ]
-
 [dev-dependencies]
 # consensus
 base-consensus-derive.workspace = true
@@ -135,7 +124,6 @@ alloy-json-rpc.workspace = true
 
 # base-alloy
 base-common-consensus.workspace = true
-base-common-flashblocks.workspace = true
 base-common-rpc-types-engine.workspace = true
 
 # proof
@@ -162,3 +150,12 @@ tokio-tungstenite.workspace = true
 [[bench]]
 name = "b20_zk_proving"
 harness = false
+
+[features]
+default = [ "upgrade-signal" ]
+# The upgrade-signal stack deploys a mock ProtocolVersions contract via base-test-utils, whose
+# contract bindings embed Foundry `out/` artifacts through `sol!(..., concat!(...))` at compile
+# time. Those artifacts are gitignored, so base-test-utils cannot compile when pulled over a git
+# dependency. External consumers that only need the core L1+L2 stack disable this feature
+# (`default-features = false`); it stays on by default for in-tree use where the artifacts exist.
+upgrade-signal = [ "base-test-utils/contracts", "dep:base-test-utils" ]

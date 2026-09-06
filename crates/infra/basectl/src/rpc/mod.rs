@@ -17,13 +17,9 @@ pub use conductor::{
 mod el;
 pub use el::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, InitialBacklog, TxSummary,
-    decode_flashblock_transactions, fetch_block, fetch_block_transactions,
-    fetch_initial_backlog_with_progress, fetch_l2_block_number, fetch_l2_chain_id,
-    run_block_fetcher,
+    fetch_block, fetch_block_transactions, fetch_initial_backlog_with_progress,
+    fetch_l2_block_number, fetch_l2_chain_id, run_block_fetcher,
 };
-
-mod flashblocks;
-pub use flashblocks::{TimestampedFlashblock, run_flashblock_ws, run_flashblock_ws_timestamped};
 
 mod games;
 pub use games::{

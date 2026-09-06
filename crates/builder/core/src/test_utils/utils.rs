@@ -4,7 +4,6 @@ use std::{net::TcpListener, path::PathBuf, sync::Arc};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
-use alloy_sol_types::SolCall;
 use base_common_consensus::{BaseTypedTransaction, TxDeposit};
 use base_common_rpc_types::Transaction;
 use base_execution_chainspec::BaseChainSpec;
@@ -16,9 +15,8 @@ use reth_db::{
 use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConfig};
 
 use super::{
-    BUILDER_PRIVATE_KEY, FLASHBLOCKS_DEPLOY_KEY, FUNDED_PRIVATE_KEY, PrivateKeySigner, Protocol,
-    TransactionBuilder, driver::ChainDriver, flashblocks_number_contract::FlashblocksNumber,
-    sign_base_tx,
+    BUILDER_PRIVATE_KEY, FUNDED_PRIVATE_KEY, PrivateKeySigner, Protocol, TransactionBuilder,
+    driver::ChainDriver, sign_base_tx,
 };
 
 /// Extension methods on [`TransactionBuilder`] for common test transaction patterns.
@@ -29,13 +27,6 @@ pub trait TransactionBuilderExt {
     fn random_reverting_transaction(self) -> Self;
     /// Configures a contract creation that consumes approximately 86 220 gas.
     fn random_big_transaction(self) -> Self;
-    // flashblocks number methods
-    /// Configures deployment of the `FlashblocksNumber` contract.
-    fn deploy_flashblock_number_contract(self) -> Self;
-    /// Configures an `initialize` call on the `FlashblocksNumber` contract.
-    fn init_flashblock_number_contract(self, register_builder: bool) -> Self;
-    /// Configures an `addBuilder` call to authorize a builder address.
-    fn add_authorized_builder(self, builder: Address) -> Self;
 }
 
 impl TransactionBuilderExt for TransactionBuilder {
@@ -53,36 +44,6 @@ impl TransactionBuilderExt for TransactionBuilder {
         // PUSH13 0x63ffffffff60005260046000f3 PUSH1 0x00 MSTORE PUSH1 0x02 PUSH1 0x0d PUSH1 0x13 PUSH1 0x00 CREATE2
         self.with_create()
             .with_input(hex!("6c63ffffffff60005260046000f36000526002600d60136000f5").into())
-    }
-
-    fn deploy_flashblock_number_contract(self) -> Self {
-        self.with_create()
-            .with_input(FlashblocksNumber::BYTECODE.clone())
-            .with_gas_limit(2_000_000) // deployment costs ~1.6 million gas
-            .with_signer(&flashblocks_number_signer())
-    }
-
-    fn init_flashblock_number_contract(self, register_builder: bool) -> Self {
-        let builder_signer = builder_signer();
-        let owner = flashblocks_number_signer();
-
-        let init_data = FlashblocksNumber::initializeCall {
-            _owner: owner.address(),
-            _initialBuilders: if register_builder {
-                vec![builder_signer.address()]
-            } else {
-                vec![]
-            },
-        }
-        .abi_encode();
-
-        self.with_input(init_data.into()).with_signer(&flashblocks_number_signer())
-    }
-
-    fn add_authorized_builder(self, builder: Address) -> Self {
-        let calldata = FlashblocksNumber::addBuilderCall { builder }.abi_encode();
-
-        self.with_input(calldata.into()).with_signer(&flashblocks_number_signer())
     }
 }
 
@@ -282,11 +243,4 @@ pub fn builder_signer() -> PrivateKeySigner {
 /// Returns the [`PrivateKeySigner`] for the default pre-funded account.
 pub fn funded_signer() -> PrivateKeySigner {
     FUNDED_PRIVATE_KEY.parse().expect("invalid hardcoded funded private key")
-}
-
-/// Returns the [`PrivateKeySigner`] for the flashblocks contract deployer account.
-pub fn flashblocks_number_signer() -> PrivateKeySigner {
-    FLASHBLOCKS_DEPLOY_KEY
-        .parse()
-        .expect("invalid hardcoded flashblocks number deployer private key")
 }

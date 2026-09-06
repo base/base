@@ -202,19 +202,9 @@ async fn chain_produces_big_tx_with_gas_limit() -> eyre::Result<()> {
     let exclusion_result = txs.hashes().find(|hash| hash == tx_high_gas.tx_hash());
     assert!(exclusion_result.is_none());
 
-    // Regression: the over-cap tx must be evicted from the pool and seeded into the
-    // shared rejection cache after the first post-execution rejection. Otherwise the
-    // builder will re-execute it on every subsequent flashblock/block attempt, turning
-    // the cap into an unpaid EVM-execution sink.
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    assert!(
-        rbuilder.builder_config().rejection_cache.contains_key(tx_high_gas.tx_hash()),
-        "over-cap tx should be in the shared rejection cache after one rejection"
-    );
-    assert!(
-        !rbuilder.pool().exists(*tx_high_gas.tx_hash()),
-        "over-cap tx should be evicted from the txpool after one rejection"
-    );
+    // The cap is checked before execution on every build attempt.
+    let next = driver.build_new_block_with_current_timestamp(None).await?;
+    assert!(!next.transactions.hashes().any(|hash| hash == *tx_high_gas.tx_hash()));
 
     Ok(())
 }
@@ -244,31 +234,6 @@ async fn chain_produces_big_tx_without_gas_limit() -> eyre::Result<()> {
 
     // deposit + big tx (no gas limit to exclude it)
     assert_eq!(txs.len(), 2, "Should have 2 transactions (deposit + big tx)");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn metering_wait_duration_does_not_delay_txs_when_metering_is_disabled() -> eyre::Result<()> {
-    let config =
-        BuilderConfig::for_tests().with_metering_wait_duration(Some(Duration::from_secs(60)));
-    let rbuilder = setup_test_instance_with_builder_config(config).await?;
-    let driver = rbuilder.driver().await?;
-
-    let tx = driver
-        .create_transaction()
-        .random_valid_transfer()
-        .send()
-        .await
-        .expect("Failed to send transaction");
-
-    let block = driver.build_new_block_with_current_timestamp(None).await?;
-    let txs = block.transactions;
-
-    assert!(
-        txs.hashes().any(|hash| hash == *tx.tx_hash()),
-        "fresh tx should not be delayed when metering is disabled"
-    );
 
     Ok(())
 }

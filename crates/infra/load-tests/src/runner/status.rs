@@ -69,10 +69,7 @@ pub struct DisplaySnapshot {
     pub p50_latency: Duration,
     /// Rolling 30s p99 block landing latency.
     pub p99_latency: Duration,
-    /// Rolling 30s flashblocks p50 latency.
-    pub flashblocks_p50_latency: Duration,
-    /// Rolling 30s flashblocks p99 latency.
-    pub flashblocks_p99_latency: Duration,
+
     /// Current gas price in gwei.
     pub gas_price_gwei: f64,
 }
@@ -89,7 +86,7 @@ pub struct LoadTestDisplay {
     rate: ProgressBar,
     flight: ProgressBar,
     gas_lat: ProgressBar,
-    flashblocks_lat: ProgressBar,
+
     duration: Option<Duration>,
 }
 
@@ -176,7 +173,7 @@ impl LoadTestDisplay {
             rate: make_stat(mp),
             flight: make_stat(mp),
             gas_lat: make_stat(mp),
-            flashblocks_lat: make_stat(mp),
+
             duration,
         }
     }
@@ -209,7 +206,7 @@ impl LoadTestDisplay {
         self.header.set_message(format!("Base Load Test  {}", stage.as_str()));
 
         if stage == LoadTestStage::Cleanup {
-            for bar in [&self.txs, &self.rate, &self.flight, &self.gas_lat, &self.flashblocks_lat] {
+            for bar in [&self.txs, &self.rate, &self.flight, &self.gas_lat] {
                 bar.finish_and_clear();
             }
         }
@@ -275,25 +272,12 @@ impl LoadTestDisplay {
             fmt_latency(snap.p50_latency),
             fmt_latency(snap.p99_latency),
         ));
-
-        if snap.flashblocks_p50_latency > Duration::ZERO
-            || snap.flashblocks_p99_latency > Duration::ZERO
-        {
-            self.flashblocks_lat.set_message(format!(
-                "               fb latency p50 {}   p99 {}",
-                fmt_latency(snap.flashblocks_p50_latency),
-                fmt_latency(snap.flashblocks_p99_latency),
-            ));
-        } else {
-            self.flashblocks_lat
-                .set_message("               fb latency waiting for data...".to_string());
-        }
     }
 
     /// Finishes all bars and clears the stat rows.
     pub fn finish(&self) {
         self.header.finish_and_clear();
-        for bar in [&self.txs, &self.rate, &self.flight, &self.gas_lat, &self.flashblocks_lat] {
+        for bar in [&self.txs, &self.rate, &self.flight, &self.gas_lat] {
             bar.finish_and_clear();
         }
     }

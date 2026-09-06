@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use base_flashblocks::FlashblocksConfig;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use tracing::info;
 
@@ -14,16 +13,15 @@ use crate::{MeteredOpcodes, MeteringApiImpl, MeteringApiServer};
 pub struct MeteringExtension {
     /// Whether metering is enabled.
     pub enabled: bool,
-    /// Optional Flashblocks configuration (includes state).
-    pub flashblocks_config: Option<FlashblocksConfig>,
+
     /// Opcodes and precompiles to track for gas metering.
     pub metered_opcodes: MeteredOpcodes,
 }
 
 impl MeteringExtension {
     /// Creates a new metering extension.
-    pub fn new(enabled: bool, flashblocks_config: Option<FlashblocksConfig>) -> Self {
-        Self { enabled, flashblocks_config, metered_opcodes: MeteredOpcodes::default() }
+    pub fn new(enabled: bool) -> Self {
+        Self { enabled, metered_opcodes: MeteredOpcodes::default() }
     }
 
     /// Sets the opcodes and precompiles to track for gas metering.
@@ -59,8 +57,7 @@ impl BaseNodeExtension for MeteringExtension {
 pub struct MeteringConfig {
     /// Whether metering is enabled.
     pub enabled: bool,
-    /// Optional Flashblocks configuration (includes state).
-    pub flashblocks_config: Option<FlashblocksConfig>,
+
     /// Opcodes and precompiles to track for gas metering.
     pub metered_opcodes: MeteredOpcodes,
 }
@@ -71,18 +68,9 @@ impl MeteringConfig {
         Self { enabled: false, ..Self::enabled() }
     }
 
-    /// Creates a configuration with metering enabled and no flashblocks integration.
+    /// Creates a configuration with metering enabled.
     pub fn enabled() -> Self {
-        Self { enabled: true, flashblocks_config: None, metered_opcodes: MeteredOpcodes::default() }
-    }
-
-    /// Creates a configuration with metering enabled and flashblocks integration.
-    pub fn with_flashblocks(flashblocks_config: FlashblocksConfig) -> Self {
-        Self {
-            enabled: true,
-            flashblocks_config: Some(flashblocks_config),
-            metered_opcodes: MeteredOpcodes::default(),
-        }
+        Self { enabled: true, metered_opcodes: MeteredOpcodes::default() }
     }
 
     /// Sets the opcodes and precompiles to track for gas metering.
@@ -96,10 +84,6 @@ impl FromExtensionConfig for MeteringExtension {
     type Config = MeteringConfig;
 
     fn from_config(config: Self::Config) -> Self {
-        Self {
-            enabled: config.enabled,
-            flashblocks_config: config.flashblocks_config,
-            metered_opcodes: config.metered_opcodes,
-        }
+        Self { enabled: config.enabled, metered_opcodes: config.metered_opcodes }
     }
 }

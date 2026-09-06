@@ -1,4 +1,4 @@
-//! Inclusion signals shared by canonical and flashblock watchers.
+//! Inclusion signals shared by canonical and block watchers.
 
 use std::time::Instant;
 
@@ -9,8 +9,7 @@ use super::BlockPulse;
 pub enum InclusionSource {
     /// Canonical block polling.
     Canonical,
-    /// Builder flashblock broadcast.
-    Flashblock,
+
     /// Timer fallback used when neither watcher produces a timely signal.
     Safety,
 }
@@ -37,11 +36,6 @@ impl InclusionPulse {
             released_gas,
             canonical: Some(block),
         }
-    }
-
-    /// Creates a flashblock inclusion pulse.
-    pub const fn flashblock(observed_at: Instant, released_gas: u128) -> Self {
-        Self { source: InclusionSource::Flashblock, observed_at, released_gas, canonical: None }
     }
 
     /// Creates a timer-driven safety pulse.

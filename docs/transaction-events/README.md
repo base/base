@@ -15,11 +15,11 @@ one event JSON object per line, not a wrapped JSON batch.
 not the long-term archive. A background worker deletes rows by event type:
 high-volume proxy and builder-decision events default to 3 days, ingress and
 forwarding events default to 7 days, and failures, drops, inclusion, and
-flashblock events default to 30 days. Autovacuum reclaims the resulting table
+block events default to 30 days. Autovacuum reclaims the resulting table
 bloat. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
 same hot window as the other per-attempt builder decisions; deferral can fire
-once per flashblock for a parked validity transaction.
+once per block for a parked validity transaction.
 
 ## Configuration Fields
 
@@ -201,7 +201,7 @@ transaction is decoded and before sequencer forwarding or pool insertion.
 `TXPOOL_QUEUED`, which record later subpool membership.
 `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` is the **only** event that records
 `data.validity_predicates` (the serialized `balance`, `storage`,
-`block_number`, and `flashblock_index` list). Downstream lifecycle events —
+and `block_number` list). Downstream lifecycle events —
 including `BUILDER_DEFERRED`, `BUILDER_EXPIRED`, `BUILDER_ACCEPTED`, and
 `BUILDER_INCLUDED` — must not repeat that list; join them back by `tx_hash`. A
 replacement is a fresh admission with its own `tx_hash` and/or predicate list;
@@ -232,23 +232,19 @@ Builder:
 - `BUILDER_EXPIRED`
 - `BUILDER_INCLUDED`
 - `BUILDER_PAYLOAD_FINALIZED`
-- `BUILDER_FLASHBLOCK_STARTED`
-- `BUILDER_FLASHBLOCK_PUBLISHED`
-- `BUILDER_FLASHBLOCK_BUILD_STOPPED`
 
 Builder caveat: `BUILDER_CONSIDERED`, `BUILDER_ACCEPTED`,
 `BUILDER_REJECTED`, `BUILDER_DEFERRED`, and `BUILDER_EXPIRED` are emitted per
-payload-building attempt and include `payload_id`, `block_number`, and
-`flashblock_index` when applicable. The same transaction can therefore produce
-multiple decision events across flashblocks. `BUILDER_DEFERRED` is emitted each
+payload-building attempt and include `payload_id` and `block_number`. The same transaction can therefore produce
+multiple decision events across blocks. `BUILDER_DEFERRED` is emitted each
 time the builder moves a transaction from the selection queue into the parking
-lot, including after a promote-and-repark in the same flashblock. Reindexing an
+lot, including after a promote-and-repark in the same block. Reindexing an
 already-parked transaction when its blocker changes does not emit another
 `BUILDER_DEFERRED`. `BUILDER_EXPIRED` is the terminal discard for builder-side
 windows that can never become valid again, such as an expired bundle validity
 window or an expired position predicate. `BUILDER_ACCEPTED` and
 `BUILDER_INCLUDED` are unchanged; correlate a deferral with a later
-accept/include by `tx_hash` within the same `payload_id`/flashblock window. A
+accept/include by `tx_hash` within the same `payload_id`/block window. A
 parking-capacity miss stays `BUILDER_REJECTED` with
 `validity_predicate_not_satisfied`.
 `BUILDER_INCLUDED` is emitted when the builder finalizes the payload it can
@@ -260,14 +256,6 @@ built payload and links `payload_id` to the builder's block hash and number even
 when the payload contains no user transactions. It includes `data.parent_hash`,
 `data.transaction_count`, `data.gas_used`, `data.gas_limit`, and
 `data.timestamp`.
-`BUILDER_FLASHBLOCK_STARTED`, `BUILDER_FLASHBLOCK_PUBLISHED`, and
-`BUILDER_FLASHBLOCK_BUILD_STOPPED` are payload/flashblock-scoped events. They
-include top-level `payload_id` and `block_number`, plus `data.parent_hash`,
-`data.flashblock_index`, and `data.target_flashblock_count`. Published events
-also include top-level `block_hash`, `data.transaction_count`, `data.byte_size`,
-and `data.build_duration_ms`. Build-stopped events use `data.reason` to
-distinguish control-flow stops such as payload resolution winning before
-publish.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with
@@ -397,7 +385,7 @@ Join later park, expiry, accept, and include events by `tx_hash`:
 }
 ```
 
-Parked (recoverable predicate, held for a later position or flashblock). Does
+Parked (recoverable predicate, held for a later position or block). Does
 not repeat the predicate list:
 
 ```json
@@ -414,8 +402,7 @@ not repeat the predicate list:
   "payload_id": "0x0102030405060708",
   "request_id": null,
   "data": {
-    "builder_mode": "flashblocks",
-    "flashblock_index": 2,
+    "builder_mode": "native",
     "ordering_position": 4,
     "defer_reason": "validity_predicate_not_satisfied",
     "defer_detail": "a validity predicate is not satisfied by the current build state"
@@ -440,8 +427,7 @@ with `validity_predicate_not_satisfied` instead:
   "payload_id": "0x0102030405060708",
   "request_id": null,
   "data": {
-    "builder_mode": "flashblocks",
-    "flashblock_index": 0,
+    "builder_mode": "native",
     "ordering_position": 1,
     "expire_reason": "validity_predicate_expired",
     "expire_detail": "a validity predicate can no longer be satisfied at or after the current build position"

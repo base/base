@@ -184,15 +184,6 @@ pub enum TransactionEventType {
     /// The builder finalized a payload.
     #[serde(rename = "BUILDER_PAYLOAD_FINALIZED")]
     BuilderPayloadFinalized,
-    /// The builder started building a flashblock.
-    #[serde(rename = "BUILDER_FLASHBLOCK_STARTED")]
-    BuilderFlashblockStarted,
-    /// The builder published a flashblock.
-    #[serde(rename = "BUILDER_FLASHBLOCK_PUBLISHED")]
-    BuilderFlashblockPublished,
-    /// The builder stopped flashblock construction before publishing.
-    #[serde(rename = "BUILDER_FLASHBLOCK_BUILD_STOPPED")]
-    BuilderFlashblockBuildStopped,
 }
 
 impl TransactionEventType {
@@ -246,9 +237,6 @@ impl fmt::Display for TransactionEventType {
             Self::BuilderExpired => "BUILDER_EXPIRED",
             Self::BuilderIncluded => "BUILDER_INCLUDED",
             Self::BuilderPayloadFinalized => "BUILDER_PAYLOAD_FINALIZED",
-            Self::BuilderFlashblockStarted => "BUILDER_FLASHBLOCK_STARTED",
-            Self::BuilderFlashblockPublished => "BUILDER_FLASHBLOCK_PUBLISHED",
-            Self::BuilderFlashblockBuildStopped => "BUILDER_FLASHBLOCK_BUILD_STOPPED",
         };
         f.write_str(value)
     }

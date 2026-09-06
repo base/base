@@ -9,9 +9,6 @@ pub use config::{
 mod backoff;
 pub use backoff::AdaptiveBackoff;
 
-mod flashblock_watcher;
-pub use flashblock_watcher::FlashblockWatcher;
-
 mod block_watcher;
 pub use block_watcher::{BlockClock, BlockPulse, BlockWatcher};
 
@@ -20,8 +17,7 @@ pub use inclusion::{InclusionPulse, InclusionSource};
 
 mod results_tracker;
 pub use results_tracker::{
-    BlockMatch, BlockObservation, BlockReceipt, FlashblockInclusion, MeasurementWindow,
-    ResultsTracker, SentTransaction,
+    BlockMatch, BlockObservation, BlockReceipt, MeasurementWindow, ResultsTracker, SentTransaction,
 };
 
 mod submission;

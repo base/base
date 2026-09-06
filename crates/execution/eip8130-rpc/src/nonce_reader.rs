@@ -28,13 +28,8 @@ impl ChannelNonceReader {
     /// Resolves the channel nonce for `(address, nonce_key)` at `block_id`,
     /// honoring `state_overrides` if provided.
     ///
-    /// `state_overrides` lets callers stack pending-state writes on top of the
-    /// canonical block — e.g. flashblocks passes its accumulated
-    /// [`StateOverride`] here so a 2D nonce incremented inside the pending
-    /// flashblock is visible. The override's `state` field, if present,
-    /// fully replaces the precompile's storage view; otherwise `state_diff`
-    /// is consulted slot-by-slot and the canonical storage is used for slots
-    /// the diff doesn't mention.
+    /// A supplied override's `state` replaces the account storage; `state_diff`
+    /// merges individual slots with canonical storage.
     ///
     /// # Errors
     /// - [`Eip8130Constants::NONCE_KEY_MAX`] returns an `INVALID_PARAMS` RPC

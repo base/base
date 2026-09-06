@@ -25,10 +25,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::{
-    BlockWatcher, DisplaySnapshot, FlashblockWatcher, GasPricer, InclusionPulse, InclusionSource,
-    LoadRunner, LoadTestDisplay, LoadTestStage, PipelineStartConfig, PreparedTransaction,
-    PresignBuffer, QueuedSubmitFailures, ResultsTracker, SignedBatch, SignedTransaction,
-    SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
+    BlockWatcher, DisplaySnapshot, GasPricer, InclusionPulse, InclusionSource, LoadRunner,
+    LoadTestDisplay, LoadTestStage, PipelineStartConfig, PreparedTransaction, PresignBuffer,
+    QueuedSubmitFailures, ResultsTracker, SignedBatch, SignedTransaction, SubmissionPipeline,
+    SubmitEvent, TxType, ValidityRouter,
 };
 use crate::{
     BaselineError, Result,
@@ -159,7 +159,6 @@ impl EnqueueProgressDisplay<'_> {
         collector.sample_throughput(elapsed);
 
         let (p50, p99) = collector.rolling_p50_p99();
-        let (flashblocks_p50, flashblocks_p99) = collector.rolling_flashblocks_p50_p99();
         if should_log {
             info!(
                 stage = self.stage.as_str(),
@@ -194,8 +193,7 @@ impl EnqueueProgressDisplay<'_> {
             target_gps: self.target_gps,
             p50_latency: p50,
             p99_latency: p99,
-            flashblocks_p50_latency: flashblocks_p50,
-            flashblocks_p99_latency: flashblocks_p99,
+
             gas_price_gwei: self.gas_price_gwei,
         };
         if let Some(display) = self.display {
@@ -450,8 +448,7 @@ impl LoadRunner {
         const INCLUSION_PULSE_BUFFER: usize = 1_024;
         let (inclusion_pulse_tx, mut inclusion_pulse_rx) =
             mpsc::channel::<InclusionPulse>(INCLUSION_PULSE_BUFFER);
-        let results_tracker =
-            ResultsTracker::new_with_pulse_sender(&sender_addresses, inclusion_pulse_tx.clone());
+        let results_tracker = ResultsTracker::new(&sender_addresses);
 
         let receipt_provider = RootProvider::<Base>::new_http(self.config.query_rpc.clone());
         let watcher_cancel = self.cancel_token.child_token();
@@ -466,15 +463,7 @@ impl LoadRunner {
             )
             .start(),
         );
-        let flashblock_watcher_task = self.config.flashblocks_ws.clone().map(|ws_url| {
-            FlashblockWatcher::new(
-                ws_url,
-                results_tracker.clone(),
-                inclusion_pulse_tx.clone(),
-                watcher_cancel.clone(),
-            )
-            .start()
-        });
+
         drop(inclusion_pulse_tx);
 
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
@@ -925,11 +914,9 @@ impl LoadRunner {
                 &results_tracker,
             );
 
-            // Drain flashblock observations for the rolling window (separate from
+            // Drain block observations for the rolling window (separate from
             // confirmed metrics to avoid double-counting in the final summary).
-            for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
-                self.collector.record_flashblock_observed(latency, observed_at);
-            }
+
             // Drain confirmed metrics non-blocking so the rolling window stays
             // current during the run (not just during the post-run drain).
             for metrics in results_tracker.drain_confirmed_metrics() {
@@ -992,7 +979,7 @@ impl LoadRunner {
             self.collector.record_completed_refill_lag(lag);
         }
 
-        // Keep background watchers alive through the drain so late flashblock
+        // Keep background watchers alive through the drain so late block
         // inclusions and block observations can still be joined into metrics.
         self.stop_flag.store(true, Ordering::SeqCst);
 
@@ -1023,9 +1010,6 @@ impl LoadRunner {
         let mut last_drain_report = Instant::now();
 
         while drain_start.elapsed() < confirmation_drain_timeout {
-            for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
-                self.collector.record_flashblock_observed(latency, observed_at);
-            }
             let metrics = results_tracker.drain_confirmed_metrics();
             let has_confirmed = !metrics.is_empty();
             if has_confirmed {
@@ -1098,9 +1082,6 @@ impl LoadRunner {
             self.collector.record_undrained_inventory(undrained, undrained_gas);
         }
 
-        for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
-            self.collector.record_flashblock_observed(latency, observed_at);
-        }
         for metrics in results_tracker.drain_confirmed_metrics() {
             self.collector.record_confirmed(metrics);
             last_confirmed_at = start.elapsed();
@@ -1112,14 +1093,6 @@ impl LoadRunner {
         if let Some(task) = block_watcher_task {
             match tokio::time::timeout(Duration::from_secs(2), task).await {
                 Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
-                _ => {}
-            }
-        }
-        if let Some(task) = flashblock_watcher_task {
-            match tokio::time::timeout(Duration::from_secs(2), task).await {
-                Ok(Err(error)) if error.is_panic() => {
-                    warn!(error = %error, "flashblock watcher panicked");
-                }
                 _ => {}
             }
         }
@@ -1811,7 +1784,7 @@ impl LoadRunner {
                 .saturating_duration_since(config.controller.measurement_started_at),
             source: match pulse.source {
                 InclusionSource::Canonical => PacingCycleSource::Canonical,
-                InclusionSource::Flashblock => PacingCycleSource::Flashblock,
+
                 InclusionSource::Safety => PacingCycleSource::Safety,
             },
             block_observed: canonical.is_some(),
@@ -1976,7 +1949,6 @@ impl LoadRunner {
         stage: LoadTestStage,
     ) -> DisplaySnapshot {
         let (p50, p99) = self.collector.rolling_p50_p99();
-        let (flashblocks_p50, flashblocks_p99) = self.collector.rolling_flashblocks_p50_p99();
         DisplaySnapshot {
             elapsed: start.elapsed(),
             duration: self.config.duration,
@@ -1992,8 +1964,7 @@ impl LoadRunner {
             target_gps: self.config.target_gps,
             p50_latency: p50,
             p99_latency: p99,
-            flashblocks_p50_latency: flashblocks_p50,
-            flashblocks_p99_latency: flashblocks_p99,
+
             gas_price_gwei: self.base_fee as f64 / 1e9,
         }
     }
@@ -2066,9 +2037,6 @@ impl LoadRunner {
         }
         for metrics in results_tracker.drain_confirmed_metrics() {
             collector.record_confirmed(metrics);
-        }
-        for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
-            collector.record_flashblock_observed(latency, observed_at);
         }
     }
 

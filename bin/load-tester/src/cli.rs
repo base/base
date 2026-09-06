@@ -301,8 +301,8 @@ fn present_load_test_summary(summary: &MetricsSummary) {
             pacing.chain_bound_cycles
         );
         println!(
-            "Refill Sources: canonical={}  flashblock={}  safety={}",
-            pacing.canonical_cycles, pacing.flashblock_cycles, pacing.safety_cycles
+            "Refill Sources: canonical={}  safety={}",
+            pacing.canonical_cycles, pacing.safety_cycles
         );
         println!(
             "Block Fill: mean={:.1}%  load_test_estimated={:.1}%",

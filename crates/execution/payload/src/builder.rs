@@ -6,6 +6,7 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_evm::{Evm as AlloyEvm, block::TxResult};
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
@@ -15,7 +16,7 @@ use base_common_consensus::{BaseTransaction, CoinbaseTip, Predeploys};
 use base_common_evm::L1BlockInfo;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
+    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
@@ -610,6 +611,8 @@ pub struct ExecutionInfo {
     pub cumulative_gas_used: u64,
     /// Estimated DA size
     pub cumulative_da_bytes_used: u64,
+    /// Total EIP-2718 encoded transaction bytes in this block.
+    pub cumulative_uncompressed_bytes: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
     /// Inclusion and fee revenue from executed mempool transactions.
@@ -622,6 +625,7 @@ impl ExecutionInfo {
         Self {
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
+            cumulative_uncompressed_bytes: 0,
             total_fees: U256::ZERO,
             inclusion: InclusionTracker::default(),
         }
@@ -807,6 +811,7 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
+            info.cumulative_uncompressed_bytes += sequencer_tx.encode_2718_len() as u64;
         }
 
         Ok(info)
@@ -841,7 +846,7 @@ where
         let base_fee = builder.evm_mut().block().basefee();
         let block_number =
             builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
-        let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
+        let predicate_context = PredicateContext { block_number };
         let mut predicate_index = ParkedPredicateIndex::default();
         let mut predicate_loads = PredicateLoadTracker::default();
         let mut predicate_eval_duration = None;
@@ -877,36 +882,6 @@ where
                         "validity_predicate_count" => tx.validity_predicates().len(),
                     }
                 );
-            }
-            if tx
-                .validity_predicates()
-                .iter()
-                .any(|predicate| matches!(predicate, ValidityPredicate::FlashblockIndex { .. }))
-            {
-                ValidityMetrics::validity_predicate_evaluations_total("unsupported").increment(1);
-                emit_native_validity_event!(
-                    self,
-                    TransactionEventType::BuilderRejected,
-                    tx_hash,
-                    validity_consideration_index,
-                    {
-                        "rejection_reason" => "unsupported_flashblock_index_predicate",
-                        "rejection_detail" =>
-                            "flashblock-index predicates are unsupported by the native builder",
-                        "permanent" => true,
-                    }
-                );
-                trace!(
-                    target: "payload_builder",
-                    tx_hash = ?tx_hash,
-                    "skipping transaction with unsupported flashblock-index predicate"
-                );
-                if tx.eip8130_replay_id().is_none() {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else {
-                    best_txs.mark_current_committed();
-                }
-                continue;
             }
 
             if has_validity_predicates
@@ -1153,14 +1128,20 @@ where
                     ),
                 );
 
-            if info.is_tx_over_limits(
-                tx_da_size,
-                block_gas_limit,
-                tx_da_limit,
-                block_da_limit,
-                tx.gas_limit().saturating_add(tx_payer_auth),
-                da_footprint_gas_scalar,
-            ) {
+            if self.builder_config.max_gas_per_txn.is_some_and(|limit| tx.gas_limit() > limit)
+                || self.builder_config.max_uncompressed_block_size.is_some_and(|limit| {
+                    info.cumulative_uncompressed_bytes.saturating_add(tx.encode_2718_len() as u64)
+                        > limit
+                })
+                || info.is_tx_over_limits(
+                    tx_da_size,
+                    block_gas_limit,
+                    tx_da_limit,
+                    block_da_limit,
+                    tx.gas_limit().saturating_add(tx_payer_auth),
+                    da_footprint_gas_scalar,
+                )
+            {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
@@ -1205,6 +1186,7 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
+            info.cumulative_uncompressed_bytes += tx.encode_2718_len() as u64;
             info.cumulative_da_bytes_used += tx_da_size;
 
             best_txs.mark_current_committed();
@@ -1715,24 +1697,6 @@ mod tests {
                 .iter()
                 .any(|event| event.event_type == TransactionEventType::BuilderAccepted)
         );
-    }
-
-    #[test]
-    fn native_builder_rejects_flashblock_index_predicates() {
-        let transaction = pool_transaction(0).with_validity_predicates(vec![
-            ValidityPredicate::FlashblockIndex { op: ValidityOperator::Equal, value: U256::ZERO },
-        ]);
-        let sender = transaction.sender();
-
-        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
-            pool_payload_context(DENIM_TIMESTAMP),
-            TestParkableTransactions::new(vec![transaction]),
-            &[sender],
-        ) else {
-            panic!("Denim payload must freeze")
-        };
-
-        assert!(payload.block().body().transactions.is_empty());
     }
 
     #[test]

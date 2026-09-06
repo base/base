@@ -15,8 +15,8 @@ use base_execution_txpool::{
 };
 use futures::{StreamExt, future::join_all, stream};
 
-/// This test ensures that the transactions are ordered by fee priority within each flashblock.
-/// We expect breaks in global ordering that align with flashblock boundaries.
+/// This test ensures that the transactions are ordered by fee priority within each block.
+/// Transactions in a completed payload must remain in descending fee order.
 #[tokio::test]
 async fn fee_priority_ordering() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
@@ -62,10 +62,7 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
         "not all transactions included in the block"
     );
 
-    let config = rbuilder.builder_config();
-    let flashblocks_per_block = config.flashblocks_per_block();
-
-    // verify user transactions are fee-ordered within each flashblock boundary
+    // Verify user transactions are fee-ordered throughout the block.
     let tips_in_block_order = driver
         .latest_full()
         .await?
@@ -82,10 +79,7 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
 
     let breaks = tips_in_block_order.windows(2).filter(|pair| pair[0] < pair[1]).count();
 
-    assert!(
-        (breaks as u64) <= flashblocks_per_block,
-        "Observed more ordering resets than flashblocks_per_block (breaks={breaks}, flashblocks_per_block={flashblocks_per_block})"
-    );
+    assert!(breaks == 0, "Transactions must remain fee ordered (breaks={breaks})");
 
     Ok(())
 }
@@ -176,10 +170,10 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
     Ok(())
 }
 
-/// Once a flashblock's validity-predicate evaluation time budget is exhausted, further
+/// Once a block's validity-predicate evaluation time budget is exhausted, further
 /// validity-gated transactions are deferred without evaluation rather than checked, even when
 /// their predicate is already satisfied. An ordinary transaction is unaffected by the cutoff, so
-/// it can be included in the same flashblock ahead of a higher-priority deferred transaction.
+/// it can be included in the same block ahead of a higher-priority deferred transaction.
 #[tokio::test]
 async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<()> {
     let instance =
@@ -262,11 +256,11 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
         })
         .collect::<Vec<_>>();
 
-    // `first` is evaluated within budget and included immediately at its natural priority
-    // position. `deferred` has higher priority than `ordinary` but is skipped by the exhausted
-    // budget, so `ordinary` (unaffected by the cutoff) is included ahead of it; `deferred` is
-    // still included overall, just in a later flashblock once the budget resets.
-    assert_eq!(actual, [first_hash, ordinary_hash, deferred_hash]);
+    // The exhausted predicate budget defers the second validity-gated transaction while
+    // ordinary transactions remain eligible. The budget resets for the next block.
+    assert_eq!(actual, [first_hash, ordinary_hash]);
+    let next_block = driver.build_new_block().await?;
+    assert!(next_block.transactions.into_transactions().any(|tx| tx.tx_hash() == deferred_hash));
 
     Ok(())
 }

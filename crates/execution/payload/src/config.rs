@@ -28,6 +28,10 @@ pub struct BaseBuilderConfig {
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,
+    /// Maximum gas limit of a pooled transaction.
+    pub max_gas_per_txn: Option<u64>,
+    /// Maximum total EIP-2718 encoded bytes in a composed block.
+    pub max_uncompressed_block_size: Option<u64>,
 }
 
 impl Default for BaseBuilderConfig {
@@ -37,6 +41,8 @@ impl Default for BaseBuilderConfig {
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            max_gas_per_txn: None,
+            max_uncompressed_block_size: None,
         }
     }
 }
@@ -53,6 +59,8 @@ impl BaseBuilderConfig {
             gas_limit_config,
             manifest_precheck_enabled,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            max_gas_per_txn: None,
+            max_uncompressed_block_size: None,
         }
     }
 

@@ -30,7 +30,6 @@ alloy-transport-http = { workspace = true }
 base-consensus-gossip = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
 base-common-precompiles = { workspace = true }
-base-common-flashblocks = { workspace = true }
 base-prover-service-client = { workspace = true }
 base-prover-service-protocol = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }

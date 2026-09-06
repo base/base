@@ -158,7 +158,7 @@ struct Args {
     )]
     transaction_event_warm_retention_days: u32,
 
-    /// Days to keep failures, drops, inclusion, and flashblock events.
+    /// Days to keep failures, drops, inclusion, and block events.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS",

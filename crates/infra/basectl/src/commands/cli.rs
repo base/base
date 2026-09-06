@@ -8,7 +8,7 @@ use super::{
     BlockCommand, CommandOutcome, ConductorCommand, DoctorCommand, P2pCommand, ProofsCommand,
     SequencerCommand, SyncStatusCommand, TxpoolCommand, UpgradeReadinessCommand,
 };
-use crate::{MonitoringConfig, ViewId, run_app, run_flashblocks_json};
+use crate::{MonitoringConfig, ViewId, run_app};
 
 /// Base infrastructure control CLI.
 #[derive(Debug, Parser)]
@@ -62,9 +62,6 @@ pub enum Commands {
     Doctor(DoctorCommand),
     /// Request and inspect ZK proofs on the internal prover service.
     Proofs(ProofsCommand),
-    /// Stream flashblocks as JSON lines.
-    #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
-    Flashblocks,
 }
 
 /// TUI monitor views.
@@ -73,15 +70,11 @@ pub enum MonitorCommands {
     /// Chain configuration operations
     #[command(visible_alias = "c")]
     Config,
-    /// Flashblocks monitor
-    #[command(visible_alias = "f")]
-    Flashblocks,
+
     /// DA (Data Availability) backlog monitor
     #[command(visible_alias = "d")]
     Da,
-    /// Command center (combined view)
-    #[command(visible_alias = "cc")]
-    CommandCenter,
+
     /// HA conductor cluster monitor
     #[command(visible_alias = "co")]
     Conductor,
@@ -133,9 +126,7 @@ impl Cli {
             }
             Commands::Proofs(command) => command.run(config).await,
             Commands::Doctor(command) => command.run(config).await,
-            Commands::Flashblocks => {
-                run_flashblocks_json(config).await.map(|()| CommandOutcome::Success)
-            }
+
             // Handled by the pre-load match above; the compiler cannot narrow the type.
             Commands::Monitor { .. } => bail!("monitor reached post-load dispatch"),
         }
@@ -147,9 +138,9 @@ impl MonitorCommands {
     pub const fn view_id(&self) -> ViewId {
         match self {
             Self::Config => ViewId::Config,
-            Self::Flashblocks => ViewId::Flashblocks,
+
             Self::Da => ViewId::DaMonitor,
-            Self::CommandCenter => ViewId::CommandCenter,
+
             Self::Conductor => ViewId::Conductor,
             Self::Pods => ViewId::Pods,
             Self::Upgrades => ViewId::Upgrades,
@@ -159,7 +150,7 @@ impl MonitorCommands {
 
 #[cfg(test)]
 mod tests {
-    use clap::{CommandFactory, Parser};
+    use clap::Parser;
 
     use super::Cli;
     use crate::{Commands, ProofsCommands, ZkBackendOption};
@@ -175,20 +166,9 @@ mod tests {
 
     #[test]
     fn monitor_aliases_parse() {
-        for alias in ["c", "f", "d", "cc", "co", "po", "u"] {
+        for alias in ["c", "d", "co", "po", "u"] {
             assert!(try_parse(["basectl", "monitor", alias]).is_ok(), "alias: {alias}");
         }
-    }
-
-    #[test]
-    fn flashblocks_help_points_to_monitor() {
-        let help = Cli::command()
-            .find_subcommand_mut("flashblocks")
-            .expect("flashblocks command")
-            .render_long_help()
-            .to_string();
-
-        assert!(help.contains("Use `basectl monitor flashblocks` for the TUI."));
     }
 
     #[test]

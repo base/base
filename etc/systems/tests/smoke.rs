@@ -3,8 +3,8 @@
 use std::{process::Command, time::Duration};
 
 use alloy_consensus::SignableTransaction;
-use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
-use alloy_network::{Ethereum, TransactionBuilder};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_network::{Ethereum, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
@@ -114,6 +114,7 @@ async fn verify_l1_block_production(provider: &RootProvider<Ethereum>) -> Result
     .wrap_err("L1 block production timed out")??;
 
     assert!(result > initial_block, "L1 should produce new blocks");
+    println!("L1 block height: {initial_block} -> {result}");
     Ok(())
 }
 
@@ -133,6 +134,7 @@ async fn verify_l2_block_production(provider: &RootProvider<Base>) -> Result<()>
     .wrap_err("L2 block production timed out")??;
 
     assert!(result > initial_block, "L2 should produce new blocks");
+    println!("L2 block height: {initial_block} -> {result}");
     Ok(())
 }
 
@@ -202,6 +204,23 @@ async fn send_l2_transaction_via_client(
     assert!(receipt.inner.block_number.is_some(), "Receipt should have block number");
     assert_eq!(receipt.inner.from, sender_address);
     assert_eq!(receipt.inner.to, Some(recipient));
+    assert!(receipt.status(), "transfer must execute successfully");
+    let client_receipt = timeout(TX_RECEIPT_TIMEOUT, async {
+        loop {
+            if let Some(receipt) = client_provider.get_transaction_receipt(tx_hash).await? {
+                return Ok::<_, eyre::Error>(receipt);
+            }
+            sleep(BLOCK_POLL_INTERVAL).await;
+        }
+    })
+    .await
+    .wrap_err("client did not import the transaction block")??;
+    assert_eq!(client_receipt.inner.block_hash, receipt.inner.block_hash);
+    assert_eq!(client_receipt.inner.block_number, receipt.inner.block_number);
+    println!(
+        "Transfer {tx_hash} included on builder and client in block {:?} ({:?})",
+        receipt.inner.block_number, receipt.inner.block_hash
+    );
 
     Ok(())
 }
@@ -246,78 +265,4 @@ async fn smoke_test_builder_and_client_block_sync() -> Result<()> {
     assert!(client_block > 0, "Client should have synced at least one block");
 
     Ok(())
-}
-
-#[tokio::test]
-async fn smoke_test_client_pending_state_via_flashblocks() -> Result<()> {
-    let _guard = SMOKE_TEST_LOCK.lock().await;
-    let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
-        .build()
-        .await?;
-
-    let builder_provider = system.l2_builder_provider()?;
-    let client_provider = system.l2_client_provider()?;
-
-    timeout(BLOCK_PRODUCTION_TIMEOUT, async {
-        loop {
-            let block = builder_provider.get_block_number().await?;
-            if block >= 3 {
-                return Ok::<_, eyre::Error>(block);
-            }
-            sleep(BLOCK_POLL_INTERVAL).await;
-        }
-    })
-    .await
-    .wrap_err("Builder block production timed out")??;
-
-    timeout(Duration::from_secs(60), async {
-        loop {
-            let client_block = client_provider.get_block_number().await?;
-            if client_block >= 1 {
-                return Ok::<_, eyre::Error>(client_block);
-            }
-            sleep(Duration::from_secs(2)).await;
-        }
-    })
-    .await
-    .wrap_err("Client block sync timed out")??;
-
-    let mut matches = 0;
-    let required_matches = 3;
-
-    for _ in 0..10 {
-        let builder_pending = get_pending_block_number(&builder_provider).await?;
-        let client_pending = get_pending_block_number(&client_provider).await?;
-
-        let diff = (builder_pending as i64 - client_pending as i64).abs();
-
-        if diff <= 1 {
-            matches += 1;
-            if matches >= required_matches {
-                return Ok(());
-            }
-        } else {
-            matches = 0;
-        }
-
-        sleep(Duration::from_millis(250)).await;
-    }
-
-    eyre::bail!(
-        "Client pending state not tracking builder - only got {matches}/{required_matches} matches"
-    );
-}
-
-async fn get_pending_block_number(provider: &RootProvider<Base>) -> Result<u64> {
-    let block = provider
-        .get_block_by_number(BlockNumberOrTag::Pending)
-        .await
-        .wrap_err("Failed to get pending block")?;
-
-    match block {
-        Some(b) => Ok(b.header.number),
-        None => Ok(0),
-    }
 }

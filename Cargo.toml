@@ -156,7 +156,6 @@ base-common-signer = { path = "crates/common/signer" }
 base-common-chains = { path = "crates/common/chains" }
 base-common-network = { path = "crates/common/network" }
 base-common-rpc-types = { path = "crates/common/rpc-types" }
-base-common-flashblocks = { path = "crates/common/flashblocks" }
 base-precompile-macros = { path = "crates/common/precompile-macros" }
 base-common-evm = { path = "crates/common/evm", default-features = false }
 base-common-evm2 = { path = "crates/common/evm2", default-features = false }
@@ -172,8 +171,6 @@ base-observability-events = { path = "crates/common/observability-events", defau
 # Builder
 base-builder-cli = { path = "crates/builder/cli" }
 base-builder-core = { path = "crates/builder/core" }
-base-builder-multiplex = { path = "crates/builder/multiplex" }
-base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
 
 # Consensus
@@ -203,7 +200,6 @@ base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db" }
 base-execution-exex = { path = "crates/execution/exex" }
 base-execution-trie = { path = "crates/execution/trie" }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc" }
-base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }
 base-proofs-extension = { path = "crates/execution/proofs" }
 base-tx-forwarding = { path = "crates/execution/tx-forwarding" }
@@ -211,7 +207,6 @@ base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
-base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
 base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc" }
 base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }

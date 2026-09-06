@@ -1155,6 +1155,7 @@ where
                     gas_limit_config: self.gas_limit_config,
                     manifest_precheck_enabled: self.manifest_precheck_enabled,
                     predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
+                    ..Default::default()
                 },
             )
             .with_transactions(self.best_transactions);

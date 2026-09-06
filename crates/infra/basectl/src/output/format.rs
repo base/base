@@ -60,9 +60,6 @@ const BACKLOG_THRESHOLDS: &[(u64, Color)] = &[
 
 const TARGET_USAGE_MAX: f64 = 1.5;
 
-const FLASHBLOCK_TARGET_MS: i64 = 200;
-const FLASHBLOCK_TOLERANCE_MS: i64 = 50;
-
 /// Formatting and color helpers for basectl output rendering.
 #[derive(Debug)]
 pub struct Format;
@@ -167,23 +164,6 @@ impl Format {
             (a.1 as f64 + (b.1 as f64 - a.1 as f64) * t) as u8,
             (a.2 as f64 + (b.2 as f64 - a.2 as f64) * t) as u8,
         )
-    }
-
-    /// Returns a color indicating how close a time delta is to the 200ms target.
-    pub fn time_diff_color(ms: i64) -> Color {
-        let target = FLASHBLOCK_TARGET_MS;
-        let tol = FLASHBLOCK_TOLERANCE_MS;
-        if (target - tol..=target + tol).contains(&ms) {
-            Color::Green
-        } else if (target - 2 * tol..target - tol).contains(&ms) {
-            Color::Blue
-        } else if ms < target - 2 * tol {
-            Color::Magenta
-        } else if (target + tol..target + 2 * tol).contains(&ms) {
-            Color::Yellow
-        } else {
-            Color::Red
-        }
     }
 
     /// Formats a Unix timestamp (seconds since epoch) as `YYYY-MM-DD HH:MM:SS UTC`.

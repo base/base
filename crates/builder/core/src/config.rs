@@ -1,16 +1,13 @@
 //! Builder Configuration
 
-use core::{
-    net::{Ipv4Addr, SocketAddr},
-    time::Duration,
-};
+use core::time::Duration;
 use std::sync::Arc;
 
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 
-use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
+use crate::{NoopMeteringProvider, SharedMeteringProvider};
 
-/// Configuration values for the flashblocks builder.
+/// Configuration values for the full-block builder.
 #[derive(Clone)]
 pub struct BuilderConfig {
     /// The interval at which blocks are added to the chain.
@@ -28,74 +25,23 @@ pub struct BuilderConfig {
     /// Extra time allowed for payload building before garbage collection.
     pub block_time_leeway: Duration,
 
-    /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
-    pub sampling_ratio: u64,
-
-    /// The address of the websockets endpoint that listens for subscriptions to
-    /// new flashblocks updates.
-    pub flashblocks_ws_addr: SocketAddr,
-
-    /// How often a flashblock is produced. This is independent of the block time of the chain.
-    pub flashblocks_interval: Duration,
-
-    /// How much time would be deducted from block build time to account for latencies.
-    /// This value would be deducted from first flashblock and it shouldn't be more than interval.
-    pub flashblocks_leeway_time: Duration,
-
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
-
-    /// Maximum execution time per transaction in microseconds.
-    pub max_execution_time_per_tx_us: Option<u128>,
-
-    /// Execution metering mode: off, dry-run, or enforce.
-    pub execution_metering_mode: ExecutionMeteringMode,
 
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
 
-    /// Duration to wait for metering data before including a transaction.
-    /// Transactions younger than this without metering data will be skipped.
-    pub metering_wait_duration: Option<Duration>,
-
     /// Hard cutoff on cumulative validity-predicate evaluation time per builder iteration.
     /// Once the cutoff is exceeded, further validity-gated transactions are deferred to a
-    /// later iteration rather than evaluated. This is the guardrail backing the
-    /// `base_builder_predicate_eval_duration_per_block` metric's P99 SLO.
+    /// later iteration rather than evaluated.
     pub predicate_eval_hard_cutoff: Duration,
 
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 
-    /// Cache of permanently rejected transaction hashes, shared across blocks.
-    /// Transactions in this cache are skipped by the iterator without re-evaluation.
-    pub rejection_cache: RejectionCache,
-
-    /// URL of the audit-archiver RPC endpoint for rejected transaction forwarding.
-    /// When set, rejected transactions will be forwarded to this endpoint.
-    pub audit_archiver_url: Option<String>,
-
-    /// Bounded channel capacity for rejected transaction forwarding.
-    /// When the channel is full, new rejected transactions are dropped.
-    pub rejected_tx_channel_size: usize,
-
-    /// Maximum number of rejected transactions accumulated per block before
-    /// further rejections are dropped. Prevents unbounded `ExecutionInfo` growth.
-    pub max_rejected_txs_per_block: usize,
-
     /// Whether to drop EIP-8130 transactions whose captured authorization
     /// predicates are positively stale before executing them.
     pub manifest_precheck_enabled: bool,
-}
-
-impl BuilderConfig {
-    /// Returns the number of flashblocks per block.
-    pub const fn flashblocks_per_block(&self) -> u64 {
-        if self.block_time.as_millis() == 0 {
-            return 0;
-        }
-        (self.block_time.as_millis() / self.flashblocks_interval.as_millis()) as u64
-    }
 }
 
 impl core::fmt::Debug for BuilderConfig {
@@ -105,21 +51,10 @@ impl core::fmt::Debug for BuilderConfig {
             .field("block_time_leeway", &self.block_time_leeway)
             .field("da_config", &self.da_config)
             .field("gas_limit_config", &self.gas_limit_config)
-            .field("sampling_ratio", &self.sampling_ratio)
-            .field("flashblocks_ws_addr", &self.flashblocks_ws_addr)
-            .field("flashblocks_interval", &self.flashblocks_interval)
-            .field("flashblocks_leeway_time", &self.flashblocks_leeway_time)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
-            .field("max_execution_time_per_tx_us", &self.max_execution_time_per_tx_us)
-            .field("execution_metering_mode", &self.execution_metering_mode)
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
-            .field("metering_wait_duration", &self.metering_wait_duration)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
             .field("metering_provider", &self.metering_provider)
-            .field("rejection_cache_size", &self.rejection_cache.entry_count())
-            .field("audit_archiver_url", &self.audit_archiver_url)
-            .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
-            .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .finish()
     }
@@ -132,21 +67,10 @@ impl Default for BuilderConfig {
             block_time_leeway: Duration::from_millis(500),
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
-            flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
-            flashblocks_interval: Duration::from_millis(250),
-            flashblocks_leeway_time: Duration::from_millis(50),
-            sampling_ratio: 100,
             max_gas_per_txn: None,
-            max_execution_time_per_tx_us: None,
-            execution_metering_mode: ExecutionMeteringMode::Off,
             max_uncompressed_block_size: None,
-            metering_wait_duration: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             metering_provider: Arc::new(NoopMeteringProvider),
-            rejection_cache: RejectionCache::default(),
-            audit_archiver_url: None,
-            rejected_tx_channel_size: 500,
-            max_rejected_txs_per_block: 500,
             manifest_precheck_enabled: true,
         }
     }
@@ -154,15 +78,9 @@ impl Default for BuilderConfig {
 
 #[cfg(any(test, feature = "test-utils"))]
 impl BuilderConfig {
-    /// Creates a new [`BuilderConfig`] suitable for testing with a randomized flashblocks port.
+    /// Creates a new [`BuilderConfig`] suitable for testing.
     pub fn for_tests() -> Self {
-        Self {
-            flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
-            flashblocks_interval: Duration::from_millis(200),
-            flashblocks_leeway_time: Duration::from_millis(100),
-            block_time: Duration::from_secs(1),
-            ..Self::default()
-        }
+        Self { block_time: Duration::from_secs(1), ..Self::default() }
     }
 
     /// Sets the block time in milliseconds.
@@ -179,20 +97,6 @@ impl BuilderConfig {
         self
     }
 
-    /// Sets the flashblocks leeway time in milliseconds.
-    #[must_use]
-    pub const fn with_flashblocks_leeway_time_ms(mut self, ms: u64) -> Self {
-        self.flashblocks_leeway_time = Duration::from_millis(ms);
-        self
-    }
-
-    /// Sets the flashblocks interval in milliseconds.
-    #[must_use]
-    pub const fn with_flashblocks_interval_ms(mut self, ms: u64) -> Self {
-        self.flashblocks_interval = Duration::from_millis(ms);
-        self
-    }
-
     /// Sets the maximum uncompressed block size.
     #[must_use]
     pub const fn with_max_uncompressed_block_size(
@@ -200,16 +104,6 @@ impl BuilderConfig {
         max_uncompressed_block_size: Option<u64>,
     ) -> Self {
         self.max_uncompressed_block_size = max_uncompressed_block_size;
-        self
-    }
-
-    /// Sets the metering wait duration.
-    #[must_use]
-    pub const fn with_metering_wait_duration(
-        mut self,
-        metering_wait_duration: Option<Duration>,
-    ) -> Self {
-        self.metering_wait_duration = metering_wait_duration;
         self
     }
 

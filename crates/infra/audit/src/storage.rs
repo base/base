@@ -83,8 +83,6 @@ pub enum BundleHistoryEvent {
         builder: String,
         /// Block number.
         block_number: u64,
-        /// Flashblock index.
-        flashblock_index: u64,
     },
     /// Bundle was included in a block.
     BlockIncluded {
@@ -138,13 +136,12 @@ fn to_history_event(event: &Event) -> BundleHistoryEvent {
         BundleEvent::Cancelled { .. } => {
             BundleHistoryEvent::Cancelled { key: event.key.clone(), timestamp: event.timestamp }
         }
-        BundleEvent::BuilderIncluded { builder, block_number, flashblock_index, .. } => {
+        BundleEvent::BuilderIncluded { builder, block_number, .. } => {
             BundleHistoryEvent::BuilderIncluded {
                 key: event.key.clone(),
                 timestamp: event.timestamp,
                 builder: builder.clone(),
                 block_number: *block_number,
-                flashblock_index: *flashblock_index,
             }
         }
         BundleEvent::BlockIncluded { block_number, block_hash, .. } => {
@@ -545,7 +542,6 @@ mod tests {
                     bundle_id,
                     builder: "test-builder".to_string(),
                     block_number: 12345,
-                    flashblock_index: 1,
                 },
             ),
             (

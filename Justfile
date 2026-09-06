@@ -186,8 +186,6 @@ watch-check:
 
 # Runs all benchmarks (excludes b20_zk_proving, which requires a live local L2/rollup/prover-service stack)
 benches:
-    @just bench-flashblocks-pending-state
-    @just bench-flashblocks-sender-recovery
     @just bench-proof-mpt
     @just bench-protocol
     @just bench-consensus-derive
@@ -195,16 +193,6 @@ benches:
     @just bench-node-runner
     @just bench-execution-trie-witness-reads
     @just bench-execution-trie-deep-history-reads
-    @just bench-builder-core
-    @just bench-builder-publish
-
-# Runs flashblocks pending state benchmarks
-bench-flashblocks-pending-state:
-    cargo bench -p base-flashblocks-node --bench pending_state
-
-# Runs flashblocks sender recovery benchmarks
-bench-flashblocks-sender-recovery:
-    cargo bench -p base-flashblocks-node --bench sender_recovery
 
 # Runs MPT trie node benchmarks
 bench-proof-mpt:
@@ -233,14 +221,6 @@ bench-execution-trie-witness-reads:
 # Runs execution trie deep history read benchmarks
 bench-execution-trie-deep-history-reads:
     cargo bench -p base-execution-trie --bench deep_history_reads
-
-# Runs builder core state root benchmarks
-bench-builder-core:
-    cargo bench -p base-builder-core --bench state_root
-
-# Runs builder publish benchmarks
-bench-builder-publish:
-    cargo bench -p base-builder-publish --bench publisher
 
 # Runs the B-20 ZK proving system benchmark (requires a live local L2/rollup/prover-service stack)
 bench-b20-zk-proving:

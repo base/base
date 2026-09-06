@@ -375,7 +375,7 @@ where
     /// the newly committed `block_number`.
     ///
     /// This is the pool-side, block-granular half of validity expiry (the
-    /// builder enforces the finer flashblock deadline). Driven from
+    /// builder enforces the finer block deadline). Driven from
     /// `on_canonical_state_change`, so eviction rides block cadence. Entries for
     /// transactions removed by other paths (inclusion, replacement) are cleaned
     /// up lazily when their own expiry block is reached, bounding index growth to

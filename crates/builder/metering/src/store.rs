@@ -114,7 +114,7 @@ impl MeteringProvider for MeteringStore {
             return;
         }
 
-        // Atomically record the first unmetered inclusion. Later flashblock
+        // Atomically record the first unmetered inclusion. Later block
         // iterations must not overwrite the original timestamp.
         self.needed_at.entry_by_ref(tx_hash).or_insert(Instant::now());
     }

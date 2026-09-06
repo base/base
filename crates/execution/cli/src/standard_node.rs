@@ -2,9 +2,7 @@
 
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
-use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
-use base_flashblocks::FlashblocksConfig;
-use base_flashblocks_node::FlashblocksExtension;
+use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
@@ -61,14 +59,6 @@ pub struct MeteringArgs {
     /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
     #[arg(long = "metering.da-bytes", requires = "enable_metering", hide = true)]
     pub metering_da_bytes: Option<u64>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    #[arg(
-        long = "metering.target-flashblocks-per-block",
-        requires = "enable_metering",
-        hide = true
-    )]
-    pub metering_target_flashblocks_per_block: Option<usize>,
 }
 
 /// Default maximum number of open shadow indexer database connections.
@@ -228,31 +218,6 @@ pub struct RpcStandardNodeArgs {
         value_name = "RPC_FORWARDING_ENDPOINT"
     )]
     pub rpc_forwarding_endpoint: Option<String>,
-
-    /// A URL pointing to a secure websocket subscription that streams out flashblocks.
-    ///
-    /// If given, the flashblocks are received to build pending block. All request with "pending"
-    /// block tag will use the pending state based on flashblocks.
-    #[arg(long, alias = "websocket-url")]
-    pub flashblocks_url: Option<Url>,
-
-    /// The max pending blocks depth.
-    #[arg(
-        long = "max-pending-blocks-depth",
-        value_name = "MAX_PENDING_BLOCKS_DEPTH",
-        default_value = "3"
-    )]
-    pub max_pending_blocks_depth: u64,
-
-    /// Interval between flashblocks upstream websocket ping frames.
-    #[arg(
-        long = "flashblocks.ping-interval",
-        value_name = "FLASHBLOCKS_PING_INTERVAL",
-        default_value = "30s",
-        value_parser = humantime::parse_duration,
-        requires = "flashblocks_url"
-    )]
-    pub flashblocks_ping_interval: Duration,
 
     /// Enable transaction tracing for mempool-to-block timing analysis
     #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
@@ -439,15 +404,6 @@ impl HasRollupArgs for StandardNodeArgs {
     }
 }
 
-impl From<&StandardNodeArgs> for Option<FlashblocksConfig> {
-    fn from(args: &StandardNodeArgs) -> Self {
-        args.rpc.flashblocks_url.clone().map(|url| {
-            FlashblocksConfig::new(url, args.rpc.max_pending_blocks_depth)
-                .with_subscriber_ping_interval(args.rpc.flashblocks_ping_interval)
-        })
-    }
-}
-
 impl From<&StandardNodeArgs> for TxForwardingConfig {
     fn from(args: &StandardNodeArgs) -> Self {
         if !args.rpc.enable_tx_forwarding || args.rpc.builder_rpc_urls.is_empty() {
@@ -562,8 +518,6 @@ impl StandardBaseRethNode {
         Self::validate_upgrade_signal_args(&rollup_args)?;
         let mut runner = BaseNodeRunner::new(rollup_args.clone());
 
-        // Create flashblocks config first so we can share its state with metering.
-        let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
         let transaction_event_env = TransactionEventEnv::read();
         let transaction_event_writer_config =
             transaction_event_writer_config(&args.rpc, &transaction_event_env)?;
@@ -575,17 +529,6 @@ impl StandardBaseRethNode {
             tracing::warn!(error = %err, "transaction event journal disabled");
         }
 
-        // Feature extensions. Several use `replace_configured` (which is overwrite,
-        // not compose) on overlapping RPC methods, so install order would otherwise
-        // silently decide which one wins. Coordination is enforced by self-gating:
-        //   - FlashblocksExtension: registers eth_getTransactionCount (and others)
-        //     iff flashblocks is enabled.
-        //   - Eip8130RpcExtension: registers eth_getTransactionCount iff flashblocks
-        //     is NOT (see `Eip8130RpcMode` below).
-        //   - ProofsHistoryExtension: registers eth_getProof variants (disjoint from
-        //     the above, so it can sit anywhere in the chain).
-        // New extensions touching the same RPC methods MUST be added to this
-        // coordination scheme rather than relying on install order.
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig {
             sequencer_rpc: args.rpc.rollup_args.sequencer.clone(),
         });
@@ -595,14 +538,12 @@ impl StandardBaseRethNode {
                 || transaction_event_env.enabled,
             tracing_logs_enabled: args.rpc.enable_transaction_tracing_logs,
             transaction_event_node_role: transaction_event_node_role(),
-            flashblocks_config: flashblocks_config.clone(),
         });
 
         if args.metering.metering_execution_time_us.is_some()
             || args.metering.metering_state_root_time_us.is_some()
             || args.metering.metering_gas_limit.is_some()
             || args.metering.metering_da_bytes.is_some()
-            || args.metering.metering_target_flashblocks_per_block.is_some()
         {
             warn!("deprecated metering resource limit flags are ignored");
         }
@@ -615,10 +556,7 @@ impl StandardBaseRethNode {
             }
             .with_all_precompiles();
 
-            flashblocks_config
-                .clone()
-                .map_or_else(MeteringConfig::enabled, MeteringConfig::with_flashblocks)
-                .with_metered_opcodes(metered_opcodes)
+            MeteringConfig::enabled().with_metered_opcodes(metered_opcodes)
         } else {
             MeteringConfig::disabled()
         };
@@ -633,13 +571,7 @@ impl StandardBaseRethNode {
         runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
-        let eip8130_rpc_mode = if flashblocks_config.is_some() {
-            Eip8130RpcMode::Defer
-        } else {
-            Eip8130RpcMode::Register
-        };
-        runner.install_ext::<FlashblocksExtension>(flashblocks_config);
-        runner.install_ext::<Eip8130RpcExtension>(eip8130_rpc_mode);
+        runner.install_ext::<Eip8130RpcExtension>(());
         Ok(runner)
     }
 
@@ -791,9 +723,6 @@ mod tests {
         RpcStandardNodeArgs {
             rollup_args: RollupArgs::default(),
             rpc_forwarding_endpoint: None,
-            flashblocks_url: None,
-            max_pending_blocks_depth: 3,
-            flashblocks_ping_interval: Duration::from_secs(30),
             enable_transaction_tracing: false,
             enable_transaction_tracing_logs: false,
             enable_transaction_event_journal: false,
@@ -812,58 +741,6 @@ mod tests {
     fn standard_node_args_provides_embedded_rollup_args() {
         let args = StandardNodeArgs::from(default_rpc_standard_node_args());
         assert!(std::ptr::eq(args.rollup_args(), &args.rpc.rollup_args));
-    }
-
-    #[test]
-    fn test_flashblocks_ping_interval_defaults_to_30_seconds() {
-        let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
-            "reth",
-            "--flashblocks-url",
-            "wss://example.com/ws",
-        ])
-        .args;
-
-        assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(30));
-    }
-
-    #[test]
-    fn test_flashblocks_ping_interval_defaults_without_flashblocks_url() {
-        let args = CommandParser::<RpcStandardNodeArgs>::try_parse_from(["reth"])
-            .expect("default args should parse without flashblocks enabled")
-            .args;
-
-        assert_eq!(args.flashblocks_url, None);
-        assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(30));
-    }
-
-    #[test]
-    fn test_flashblocks_ping_interval_requires_flashblocks_url() {
-        let error = CommandParser::<RpcStandardNodeArgs>::try_parse_from([
-            "reth",
-            "--flashblocks.ping-interval",
-            "45s",
-        ])
-        .expect_err("ping interval should require flashblocks url");
-
-        assert!(error.to_string().contains("--flashblocks-url"));
-    }
-
-    #[test]
-    fn test_flashblocks_ping_interval_flows_into_config() {
-        let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
-            "reth",
-            "--flashblocks-url",
-            "wss://example.com/ws",
-            "--flashblocks.ping-interval",
-            "45s",
-        ])
-        .args;
-
-        let standard_args = StandardNodeArgs::from(args);
-        let config: FlashblocksConfig = Option::<FlashblocksConfig>::from(&standard_args)
-            .expect("flashblocks config should exist");
-
-        assert_eq!(config.subscriber_ping_interval, Duration::from_secs(45));
     }
 
     #[test]
@@ -1215,8 +1092,6 @@ mod tests {
             "30000000",
             "--metering.da-bytes",
             "1572860",
-            "--metering.target-flashblocks-per-block",
-            "4",
         ])
         .args;
 
@@ -1224,6 +1099,5 @@ mod tests {
         assert_eq!(args.metering.metering_state_root_time_us, Some(1_000_000));
         assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
         assert_eq!(args.metering.metering_da_bytes, Some(1_572_860));
-        assert_eq!(args.metering.metering_target_flashblocks_per_block, Some(4));
     }
 }

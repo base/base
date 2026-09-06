@@ -887,7 +887,7 @@ pub enum ConductorPollUpdate {
     Membership(Arc<ClusterMembership>),
     /// New peer list synthesised from a `Discover` source after a membership
     /// change. Subscribers may use this to update displayed config (e.g.
-    /// flashblocks URL routing) without restarting the poller.
+    /// blocks URL routing) without restarting the poller.
     NodeListRefreshed(Vec<ConductorNodeConfig>),
 }
 
@@ -1142,7 +1142,6 @@ mod tests {
             docker_conductor: None,
             docker_el: None,
             docker_cl: None,
-            flashblocks_ws: None,
         }
     }
 

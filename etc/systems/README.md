@@ -24,10 +24,8 @@ blocks. Transactions submitted to the builder use its real transaction pool and 
 Interactive `base-devnet` runs the sequencer and validator concurrently.
 
 This is an unsafe-chain development network, not a valid restartable continuation of Base mainnet.
-It has no L1, derivation, batching, or safe/finalized-head advancement. At 200ms it produces full
-canonical blocks with Base/Reth's standard payload service. The 2s case uses the Flashblocks payload
-service, but the 200ms case neither starts nor subscribes to Flashblocks. Treat 200ms results as
-full-block results and do not compare Flashblock latency against the 2s case.
+It has no L1, derivation, batching, or safe/finalized-head advancement. Both the 2s and 200ms variants produce full canonical blocks with
+Base/Reth's standard payload service.
 
 ## Prerequisites
 
@@ -116,7 +114,7 @@ cast balance "$FUNDER_ADDRESS" --rpc-url "$BUILDER_RPC"
 ```
 
 The runtime JSON contains `status`, `chain_id`, `boundary_number`, `boundary_hash`,
-`block_interval_ms`, `builder_rpc_url`, `builder_flashblocks_url`, and `client_rpc_url`. Dynamic
+`block_interval_ms`, `builder_rpc_url` and `client_rpc_url`. Dynamic
 ports are the default and are safest for automation. `--stable-ports` binds the builder and client
 RPCs to ports 7545 and 8545, respectively, but fails if those ports are occupied.
 
@@ -151,9 +149,6 @@ Never destroy the immutable source snapshot. If shutdown was interrupted, check 
 - **Port conflict:** omit `--stable-ports` and consume the allocated URLs from runtime JSON.
 - **Unexpected disk growth:** account creation changes state heavily. Monitor ZFS referenced space
   or EBS free space throughout long runs.
-- **No 200ms Flashblock data:** expected. The 200ms snapshot stack uses Base/Reth's standard payload
-  service and does not publish or subscribe to Flashblocks; the 2s path remains unchanged. Compare
-  canonical blocks, confirmations, gas, and throughput instead.
 
 See the exact supported options at any revision with:
 

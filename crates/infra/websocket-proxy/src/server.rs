@@ -254,7 +254,7 @@ fn websocket_handler(
         }
     };
 
-    // Downstream clients are primarily receive-only (flashblock broadcast). Limit inbound
+    // Downstream clients are primarily receive-only (block broadcast). Limit inbound
     // frame and message sizes to prevent clients from forcing large allocations
     // that the proxy never uses. Only small control frames (ping, pong, close) are
     // expected from clients.

@@ -316,7 +316,6 @@ mod tests {
             "--rpc.txfeecap=0",
             "--rpc.gascap=600000000",
             "--rpc.eth-proof-window=1209600",
-            "--flashblocks-url=ws://base-builder:7111",
             "--bootnodes=enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303",
             "--rollup.discovery.v4",
             "--l1-eth-rpc",

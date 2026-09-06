@@ -6,7 +6,7 @@ RPC-layer helpers for EIP-8130: 2D nonce reads and gas estimation.
 
 Exposes [`ChannelNonceReader`], which resolves a `(address, nonce_key)` channel
 nonce against a state snapshot at a given block, optionally honoring
-state overrides (e.g. flashblocks pending state).
+state overrides.
 
 Behavior by `nonce_key`:
 

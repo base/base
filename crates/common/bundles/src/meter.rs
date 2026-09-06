@@ -175,7 +175,6 @@ mod tests {
 
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"stateBlockNumber\":12345"));
-        assert!(!json.contains("stateFlashblockIndex"));
         assert!(!json.contains("stateRoot"));
 
         let deserialized: MeterBundleResponse = serde_json::from_str(&json).unwrap();

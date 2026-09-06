@@ -35,7 +35,7 @@ use crate::{
 ///
 /// Generic over the engine backend `E`, defaulting to the in-memory [`ActionEngineClient`]. Use the
 /// default for deterministic protocol tests; use [`BuilderBackedEngineClient`](crate::BuilderBackedEngineClient)
-/// to drive the production Flashblocks builder.
+/// to drive the production full-block builder.
 #[derive(Debug)]
 pub struct L2Sequencer<E: SequencerEngineBackend = ActionEngineClient> {
     head: L2BlockInfo,

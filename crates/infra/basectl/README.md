@@ -9,8 +9,6 @@ txpool, peer, proof, conductor, sequencer, and diagnostic workflows. `Cli::run`
 dispatches parsed commands and returns a process outcome.
 
 The crate also provides the interactive terminal monitor for block production,
-node sync status, flashblock throughput, and system metrics, plus the
-non-interactive `basectl flashblocks` JSON-lines stream.
 
 ## Pods View
 

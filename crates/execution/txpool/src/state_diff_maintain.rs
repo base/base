@@ -140,7 +140,7 @@ impl AccountStateDiff {
         diffs
     }
 
-    /// Collects watched state changes between flashblocks.
+    /// Collects watched state changes between blocks.
     ///
     /// Protocol and channel nonce advances are omitted because the builder has
     /// already pruned each included transaction, promoting the valid successor

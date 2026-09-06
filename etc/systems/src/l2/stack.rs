@@ -4,7 +4,7 @@
 //! - Builder execution layer (in-process, produces blocks and sequences transactions)
 //! - Consensus layer (in-process, derives L2 blocks from L1 data)
 //! - Batcher (in-process, submits L2 transaction batches to L1)
-//! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
+//! - Client execution layer (in-process, imports canonical L2 blocks)
 
 use std::{num::NonZeroU64, path::PathBuf, time::Duration};
 
@@ -82,8 +82,7 @@ pub struct L2StackConfig {
     /// Whether both L2 nodes enable experimental validity transaction transport,
     /// including `base_sendRawTransactionValidity` on the builder.
     pub enable_experimental_validity_transactions: bool,
-    /// Whether the active builder cuts over from flashblocks to basic at Denim.
-    pub payload_builder_cutover: bool,
+
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
@@ -219,11 +218,9 @@ impl L2Stack {
             ws_port: container_config.and_then(|c| c.builder_ws_port),
             auth_port: container_config.and_then(|c| c.builder_auth_port),
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
-            flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
             metrics_port: None,
             enable_experimental_validity_transactions: config
                 .enable_experimental_validity_transactions,
-            payload_builder_cutover: config.payload_builder_cutover,
             extra_extensions: config.extra_builder_extensions,
             block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,
@@ -301,7 +298,6 @@ impl L2Stack {
             datadir: config.client_datadir,
             jwt_secret: config.jwt_secret,
             builder_rpc_url: builder.rpc_url()?.to_string(),
-            builder_flashblocks_url: Some(builder.flashblocks_url()),
             builder_p2p_enode: builder.p2p_enode(),
             http_port: container_config.and_then(|c| c.client_http_port),
             ws_port: container_config.and_then(|c| c.client_ws_port),

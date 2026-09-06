@@ -44,7 +44,7 @@ NETWORK_ENV=.env.sepolia docker compose up --build
 NODE_TAG=v1.3.0 docker compose up
 ```
 
-See the [docs](https://docs.base.org/base-chain/node-operators/run-a-base-node) for hardware requirements, snapshots, Flashblocks, and historical proofs.
+See the [docs](https://docs.base.org/base-chain/node-operators/run-a-base-node) for hardware requirements, snapshots, and historical proofs.
 
 ## Base Anvil Package
 

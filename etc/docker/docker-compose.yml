@@ -254,7 +254,6 @@ services:
       - "${L2_BUILDER_AUTH_PORT}:${L2_BUILDER_AUTH_PORT}"           # Auth RPC (Engine API)
       - "${L2_BUILDER_P2P_PORT}:${L2_BUILDER_P2P_PORT}"             # P2P
       - "${L2_BUILDER_P2P_PORT}:${L2_BUILDER_P2P_PORT}/udp"         # Discovery
-      - "${L2_BUILDER_FLASHBLOCKS_PORT}:${L2_BUILDER_FLASHBLOCKS_PORT}"  # Flashblocks
       - "${L2_BUILDER_METRICS_PORT}:${L2_BUILDER_METRICS_PORT}"     # Metrics
       - "${L2_BUILDER_CL_RPC_PORT}:${L2_BUILDER_CL_RPC_PORT}"       # Consensus RPC
       - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}"       # Consensus P2P TCP
@@ -282,7 +281,6 @@ services:
       - sequencer
       - --execution-chain=/genesis/l2/genesis.json
       - --datadir=/data
-      - --telemetry.sampling-ratio=1
       - --http
       - --http.addr=0.0.0.0
       - --http.port=${L2_BUILDER_HTTP_PORT}
@@ -303,15 +301,10 @@ services:
       - --p2p-secret-key-hex=${BUILDER_P2P_KEY}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
-      - --flashblocks.addr=0.0.0.0
-      - --flashblocks.port=${L2_BUILDER_FLASHBLOCKS_PORT}
-      - --flashblocks.block-time=200
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --builder.enable-resource-metering
       - --builder.enable-experimental-validity-transactions
-      - --builder.payload-builder-cutover
-      - --builder.max-rejected-txs-per-block=${BUILDER_MAX_REJECTED_TXS_PER_BLOCK}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768
       - --txpool.pending-max-count=200000
@@ -474,7 +467,6 @@ services:
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
       - --rpc.eth-proof-window=1209600
-      - --flashblocks-url=ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
       - --rpc.forwarding-endpoint=http://base-builder:${L2_BUILDER_HTTP_PORT}

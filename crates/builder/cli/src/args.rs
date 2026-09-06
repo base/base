@@ -1,11 +1,11 @@
 //! Builder CLI arguments and config conversion helpers.
 
-use core::{net::SocketAddr, time::Duration};
+use core::time::Duration;
 use std::path::PathBuf;
 
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    ExecutionMeteringMode, RejectionCache, ShadowValidityConfig, SharedMeteringProvider,
+    ShadowValidityConfig, SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -15,45 +15,6 @@ use base_observability_events::{
     TransactionEventWriterConfig,
 };
 use tracing::warn;
-
-/// Parameters for Flashblocks configuration.
-///
-/// The names in the struct are prefixed with `flashblocks` to avoid conflicts
-/// with the legacy standard builder configuration (now removed) since these args are
-/// flattened into the main `Args` struct with the other rollup/node args.
-#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
-pub struct FlashblocksArgs {
-    /// Flashblocks is always enabled; these options tune its behavior.
-    /// The port that we bind to for the websocket server that provides flashblocks
-    #[arg(long = "flashblocks.port", env = "FLASHBLOCKS_WS_PORT", default_value = "1111")]
-    pub flashblocks_port: u16,
-
-    /// The address that we bind to for the websocket server that provides flashblocks
-    #[arg(long = "flashblocks.addr", env = "FLASHBLOCKS_WS_ADDR", default_value = "127.0.0.1")]
-    pub flashblocks_addr: String,
-
-    /// flashblock block time in milliseconds
-    #[arg(long = "flashblocks.block-time", default_value = "250", env = "FLASHBLOCK_BLOCK_TIME")]
-    pub flashblocks_block_time: u64,
-
-    /// Time by which blocks would be completed earlier in milliseconds.
-    ///
-    /// This time is used to account for latencies and would be deducted from total block
-    /// building time before calculating number of fbs.
-    #[arg(long = "flashblocks.leeway-time", default_value = "75", env = "FLASHBLOCK_LEEWAY_TIME")]
-    pub flashblocks_leeway_time: u64,
-}
-
-impl Default for FlashblocksArgs {
-    fn default() -> Self {
-        Self {
-            flashblocks_port: 1111,
-            flashblocks_addr: "127.0.0.1".to_string(),
-            flashblocks_block_time: 250,
-            flashblocks_leeway_time: 75,
-        }
-    }
-}
 
 /// Dedicated transaction event journal configuration.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -149,15 +110,6 @@ pub struct Args {
     #[arg(long = "builder.max_gas_per_txn")]
     pub max_gas_per_txn: Option<u64>,
 
-    /// Maximum execution time per transaction in microseconds (requires resource metering)
-    #[arg(long = "builder.max-execution-time-per-tx-us")]
-    pub max_execution_time_per_tx_us: Option<u128>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
-    #[arg(long = "builder.flashblock-execution-time-budget-us", hide = true)]
-    pub flashblock_execution_time_budget_us: Option<u128>,
-
     /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
     /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
     #[arg(long = "builder.block-state-root-gas-limit", hide = true)]
@@ -172,10 +124,6 @@ pub struct Args {
     /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
     #[arg(long = "builder.state-root-gas-anchor-us", hide = true)]
     pub state_root_gas_anchor_us: Option<u128>,
-
-    /// Execution metering mode: off, dry-run, or enforce
-    #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
-    pub execution_metering_mode: ExecutionMeteringMode,
 
     /// How much extra time to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
@@ -219,28 +167,11 @@ pub struct Args {
     #[arg(long = "builder.max-uncompressed-block-size")]
     pub max_uncompressed_block_size: Option<u64>,
 
-    /// Duration in milliseconds to wait for metering data before including a transaction.
-    /// Transactions younger than this without metering data will be skipped.
-    #[arg(long = "builder.metering-wait-duration-ms")]
-    pub metering_wait_duration_ms: Option<u64>,
-
     /// Hard cutoff, in milliseconds, on cumulative validity-predicate evaluation time per
     /// builder iteration. Once exceeded, further validity-gated transactions are deferred to a
     /// later iteration rather than evaluated.
     #[arg(long = "builder.predicate-eval-hard-cutoff-ms", default_value = "10")]
     pub predicate_eval_hard_cutoff_ms: u64,
-
-    /// URL of the audit-archiver RPC endpoint for forwarding rejected transactions
-    #[arg(long = "builder.audit-archiver-url", env = "BUILDER_AUDIT_ARCHIVER_URL")]
-    pub audit_archiver_url: Option<String>,
-
-    /// Bounded channel capacity for rejected transaction forwarding (drops on full)
-    #[arg(long = "builder.rejected-tx-channel-size", default_value = "500")]
-    pub rejected_tx_channel_size: usize,
-
-    /// Maximum rejected transactions accumulated per block before dropping
-    #[arg(long = "builder.max-rejected-txs-per-block", default_value = "500")]
-    pub max_rejected_txs_per_block: usize,
 
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
@@ -251,18 +182,6 @@ pub struct Args {
     #[arg(long = "builder.metering-store-ttl-secs", default_value = "30")]
     pub metering_store_ttl_secs: u64,
 
-    /// Maximum number of entries in the rejection cache for permanently rejected transactions
-    #[arg(long = "builder.rejection-cache-max-capacity", default_value = "100000")]
-    pub rejection_cache_max_capacity: u64,
-
-    /// TTL in seconds for entries in the rejection cache
-    #[arg(long = "builder.rejection-cache-ttl-secs", default_value = "1800")]
-    pub rejection_cache_ttl_secs: u64,
-
-    /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
-    #[arg(long = "telemetry.sampling-ratio", env = "SAMPLING_RATIO", default_value = "100")]
-    pub sampling_ratio: u64,
-
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution. Disable with
     /// `--builder.eip8130-manifest-precheck=false`.
@@ -272,26 +191,6 @@ pub struct Args {
         action = clap::ArgAction::Set
     )]
     pub manifest_precheck_enabled: bool,
-
-    /// Flashblocks configuration
-    #[command(flatten)]
-    pub flashblocks: FlashblocksArgs,
-
-    /// Runs both payload builders and selects the basic builder when Denim activates.
-    #[arg(
-        long = "builder.payload-builder-cutover",
-        default_value = "false",
-        conflicts_with = "basic_payload_builder"
-    )]
-    pub payload_builder_cutover: bool,
-
-    /// Runs only the basic payload builder after the cutover is complete.
-    #[arg(
-        long = "builder.basic-payload-builder",
-        default_value = "false",
-        conflicts_with = "payload_builder_cutover"
-    )]
-    pub basic_payload_builder: bool,
 
     /// Transaction event journal configuration
     #[command(flatten)]
@@ -312,7 +211,7 @@ impl Args {
     /// Creates a [`MeteringStore`] from the CLI arguments.
     pub fn build_metering_store(&self) -> MeteringStore {
         MeteringStore::new(
-            self.enable_resource_metering || self.execution_metering_mode.is_enabled(),
+            self.enable_resource_metering,
             self.tx_data_store_buffer_size,
             Duration::from_secs(self.metering_store_ttl_secs),
         )
@@ -325,12 +224,11 @@ impl Default for Args {
             rollup_args: RollupArgs::default(),
             chain_block_time: 1000,
             max_gas_per_txn: None,
-            max_execution_time_per_tx_us: None,
-            flashblock_execution_time_budget_us: None,
+
             block_state_root_gas_limit: None,
             state_root_gas_coefficient: None,
             state_root_gas_anchor_us: None,
-            execution_metering_mode: ExecutionMeteringMode::Off,
+
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             enable_experimental_validity_transactions: false,
@@ -338,20 +236,13 @@ impl Default for Args {
             shadow_validity_injection_enabled: false,
             shadow_validity_injection_sample_rate_bps: 100,
             max_uncompressed_block_size: None,
-            metering_wait_duration_ms: None,
+
             predicate_eval_hard_cutoff_ms: 10,
-            audit_archiver_url: None,
-            rejected_tx_channel_size: 500,
-            max_rejected_txs_per_block: 500,
+
             tx_data_store_buffer_size: 10000,
             metering_store_ttl_secs: 30,
-            rejection_cache_max_capacity: 100_000,
-            rejection_cache_ttl_secs: 1800,
-            sampling_ratio: 100,
+
             manifest_precheck_enabled: true,
-            flashblocks: FlashblocksArgs::default(),
-            payload_builder_cutover: false,
-            basic_payload_builder: false,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
         }
@@ -384,44 +275,26 @@ impl Args {
         self,
         metering_provider: SharedMeteringProvider,
     ) -> eyre::Result<BuilderConfig> {
-        if self.flashblock_execution_time_budget_us.is_some()
-            || self.block_state_root_gas_limit.is_some()
+        if self.block_state_root_gas_limit.is_some()
             || self.state_root_gas_coefficient.is_some()
             || self.state_root_gas_anchor_us.is_some()
         {
             warn!("deprecated builder resource limit flags are ignored");
         }
 
-        let flashblocks_ws_addr = SocketAddr::new(
-            self.flashblocks.flashblocks_addr.parse()?,
-            self.flashblocks.flashblocks_port,
-        );
-
         Ok(BuilderConfig {
             block_time: Duration::from_millis(self.chain_block_time),
             block_time_leeway: Duration::from_secs(self.extra_block_deadline_secs),
             da_config: Default::default(),
             gas_limit_config: Default::default(),
-            sampling_ratio: self.sampling_ratio,
-            flashblocks_ws_addr,
-            flashblocks_interval: Duration::from_millis(self.flashblocks.flashblocks_block_time),
-            flashblocks_leeway_time: Duration::from_millis(
-                self.flashblocks.flashblocks_leeway_time,
-            ),
+
             max_gas_per_txn: self.max_gas_per_txn,
-            max_execution_time_per_tx_us: self.max_execution_time_per_tx_us,
-            execution_metering_mode: self.execution_metering_mode,
+
             max_uncompressed_block_size: self.max_uncompressed_block_size,
-            metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
+
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             metering_provider,
-            rejection_cache: RejectionCache::new(
-                self.rejection_cache_max_capacity,
-                Duration::from_secs(self.rejection_cache_ttl_secs),
-            ),
-            audit_archiver_url: self.audit_archiver_url,
-            rejected_tx_channel_size: self.rejected_tx_channel_size,
-            max_rejected_txs_per_block: self.max_rejected_txs_per_block,
+
             manifest_precheck_enabled: self.manifest_precheck_enabled,
         })
     }
@@ -524,35 +397,6 @@ mod tests {
         assert!(!parsed.args.manifest_precheck_enabled);
     }
 
-    #[test]
-    fn payload_builder_cutover_defaults_to_disabled() {
-        let parsed = CommandParser::parse_from(["test"]);
-        assert!(!parsed.args.payload_builder_cutover);
-        assert!(!parsed.args.basic_payload_builder);
-    }
-
-    #[test]
-    fn payload_builder_cutover_requires_explicit_opt_in() {
-        let parsed = CommandParser::parse_from(["test", "--builder.payload-builder-cutover"]);
-        assert!(parsed.args.payload_builder_cutover);
-    }
-
-    #[test]
-    fn basic_payload_builder_requires_explicit_opt_in() {
-        let parsed = CommandParser::parse_from(["test", "--builder.basic-payload-builder"]);
-        assert!(parsed.args.basic_payload_builder);
-    }
-
-    #[test]
-    fn payload_builder_modes_are_mutually_exclusive() {
-        let parsed = CommandParser::try_parse_from([
-            "test",
-            "--builder.payload-builder-cutover",
-            "--builder.basic-payload-builder",
-        ]);
-        assert!(parsed.is_err());
-    }
-
     #[rstest]
     #[case::block_time_1s(1000, 1000)]
     #[case::block_time_2s(2000, 2000)]
@@ -583,19 +427,6 @@ mod tests {
         assert_eq!(config.block_time_leeway, Duration::from_secs(expected_secs));
     }
 
-    #[rstest]
-    #[case::interval_500ms(500, 500)]
-    #[case::interval_200ms(200, 200)]
-    #[case::interval_250ms(250, 250)]
-    fn flashblocks_interval_maps_correctly(#[case] input_ms: u64, #[case] expected_ms: u64) {
-        let args = Args {
-            flashblocks: FlashblocksArgs { flashblocks_block_time: input_ms, ..Default::default() },
-            ..Default::default()
-        };
-        let config = convert(args);
-        assert_eq!(config.flashblocks_interval, Duration::from_millis(expected_ms));
-    }
-
     #[test]
     fn metering_data_written_to_provider_is_readable_from_config() {
         let metering_provider: SharedMeteringProvider =
@@ -623,19 +454,6 @@ mod tests {
 
         let result = config.metering_provider.get(&tx_hash);
         assert_eq!(result.unwrap().total_execution_time_us, 500);
-    }
-
-    #[rstest]
-    #[case::some_duration(Some(500), Some(Duration::from_millis(500)))]
-    #[case::none(None, None)]
-    #[case::zero(Some(0), Some(Duration::from_millis(0)))]
-    fn metering_wait_duration_maps_correctly(
-        #[case] input: Option<u64>,
-        #[case] expected: Option<Duration>,
-    ) {
-        let args = Args { metering_wait_duration_ms: input, ..Default::default() };
-        let config = convert(args);
-        assert_eq!(config.metering_wait_duration, expected);
     }
 
     #[rstest]
@@ -684,8 +502,6 @@ mod tests {
     fn deprecated_resource_limit_flags_remain_accepted() {
         let args = CommandParser::parse_from([
             "builder",
-            "--builder.flashblock-execution-time-budget-us",
-            "5000000",
             "--builder.block-state-root-gas-limit",
             "1000000",
             "--builder.state-root-gas-coefficient",
@@ -695,7 +511,6 @@ mod tests {
         ])
         .args;
 
-        assert_eq!(args.flashblock_execution_time_budget_us, Some(5_000_000));
         assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
         assert_eq!(args.state_root_gas_coefficient, Some(0.1));
         assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
@@ -706,24 +521,14 @@ mod tests {
         let args = Args {
             chain_block_time: 2000,
             max_gas_per_txn: Some(100000),
-            max_execution_time_per_tx_us: Some(5000),
-            execution_metering_mode: ExecutionMeteringMode::Enforce,
+
             extra_block_deadline_secs: 10,
-            flashblocks: FlashblocksArgs {
-                flashblocks_block_time: 200,
-                flashblocks_leeway_time: 50,
-                ..Default::default()
-            },
             ..Default::default()
         };
         let config = convert(args);
 
         assert_eq!(config.block_time, Duration::from_millis(2000));
         assert_eq!(config.max_gas_per_txn, Some(100000));
-        assert_eq!(config.max_execution_time_per_tx_us, Some(5000));
-        assert_eq!(config.execution_metering_mode, ExecutionMeteringMode::Enforce);
         assert_eq!(config.block_time_leeway, Duration::from_secs(10));
-        assert_eq!(config.flashblocks_interval, Duration::from_millis(200));
-        assert_eq!(config.flashblocks_leeway_time, Duration::from_millis(50));
     }
 }

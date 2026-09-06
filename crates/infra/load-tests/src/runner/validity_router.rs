@@ -47,7 +47,7 @@ impl ValidityRouter {
     /// Returns true when resolving this router's predicates requires the current
     /// chain height, i.e. at least one [`BlockNumberBound::Offset`] template is
     /// configured on the validity path. Absolute, balance, storage, and
-    /// flashblock-index predicates never read the current height, so absolute-only
+    /// block-index predicates never read the current height, so absolute-only
     /// configurations avoid the per-round latest-block fetch entirely.
     pub fn needs_current_block(&self) -> bool {
         !self.is_disabled()
@@ -141,9 +141,6 @@ impl ValidityRouter {
                     }
                 };
                 ValidityPredicate::BlockNumber { op: *op, value }
-            }
-            ValidityPredicateTemplate::FlashblockIndex { op, value } => {
-                ValidityPredicate::FlashblockIndex { op: *op, value: *value }
             }
         }
     }
@@ -307,16 +304,10 @@ mod tests {
 
     #[test]
     fn position_predicates_resolve_independent_of_addresses() {
-        let templates = vec![
-            ValidityPredicateTemplate::BlockNumber {
-                op: ValidityOperator::GreaterThanOrEqual,
-                bound: BlockNumberBound::Absolute(U256::from(100)),
-            },
-            ValidityPredicateTemplate::FlashblockIndex {
-                op: ValidityOperator::Equal,
-                value: U256::from(2),
-            },
-        ];
+        let templates = vec![ValidityPredicateTemplate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            bound: BlockNumberBound::Absolute(U256::from(100)),
+        }];
         let r = router(1.0, templates);
         let predicates = r.predicates_for(
             SubmitCohort::ValidityPass,
@@ -326,16 +317,10 @@ mod tests {
         );
         assert_eq!(
             predicates,
-            vec![
-                ValidityPredicate::BlockNumber {
-                    op: ValidityOperator::GreaterThanOrEqual,
-                    value: U256::from(100),
-                },
-                ValidityPredicate::FlashblockIndex {
-                    op: ValidityOperator::Equal,
-                    value: U256::from(2),
-                },
-            ],
+            vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(100),
+            },],
         );
     }
 
@@ -437,26 +422,6 @@ mod tests {
             }],
         );
         assert!(!r.needs_current_block(), "a disabled router routes nothing to the validity path");
-    }
-
-    #[test]
-    fn flashblock_index_resolves_independent_of_current_block() {
-        let templates = vec![ValidityPredicateTemplate::FlashblockIndex {
-            op: ValidityOperator::Equal,
-            value: U256::from(2),
-        }];
-        let r = router(1.0, templates);
-        let low = r.predicates_for(SubmitCohort::ValidityPass, 0, Address::repeat_byte(0xaa), None);
-        let high =
-            r.predicates_for(SubmitCohort::ValidityPass, 9_999, Address::repeat_byte(0xaa), None);
-        assert_eq!(low, high);
-        assert_eq!(
-            low,
-            vec![ValidityPredicate::FlashblockIndex {
-                op: ValidityOperator::Equal,
-                value: U256::from(2),
-            }],
-        );
     }
 
     #[test]

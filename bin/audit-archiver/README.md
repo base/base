@@ -44,7 +44,7 @@ catch-up work.
 
 Rows expire by `ingested_at` in three classes, oldest first within a pass: hot
 (high-volume proxy and builder-decision events), then warm (ingress, simulation
-success, txpool-forward), then cold (failures, drops, inclusion, flashblocks).
+success, txpool-forward), then cold (failures, drops, inclusion, blocks).
 The pass budget (`max_batches`) is shared across classes, so a large hot
 backlog can defer warm and cold until a later pass.
 
@@ -101,4 +101,3 @@ in that environment rather than shrinking the defaults.
 - `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE` (default `10000`): rows deleted per statement when the scan is not bisected
 - `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES` (default `1000`): delete statements per locked pass
 - `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS` (default `30000`): Postgres `statement_timeout` per expire `DELETE`
-

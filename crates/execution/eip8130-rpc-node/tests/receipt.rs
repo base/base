@@ -12,7 +12,7 @@ use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use base_common_consensus::{Call, Eip8130Constants, Eip8130Signed, TxEip8130};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
+use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis_cobalt};
 
@@ -26,7 +26,7 @@ async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_cobalt()));
     let harness = TestHarness::builder()
         .with_chain_spec(chain_spec)
-        .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
+        .with_ext::<Eip8130RpcExtension>(())
         .build()
         .await?;
     let provider = harness.provider();
@@ -100,7 +100,7 @@ async fn eip8130_receipt_reports_phase_statuses() -> eyre::Result<()> {
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_cobalt()));
     let harness = TestHarness::builder()
         .with_chain_spec(chain_spec)
-        .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
+        .with_ext::<Eip8130RpcExtension>(())
         .build()
         .await?;
     let provider = harness.provider();
@@ -163,7 +163,7 @@ async fn eip8130_sponsored_receipt_reports_declared_payer() -> eyre::Result<()> 
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_cobalt()));
     let harness = TestHarness::builder()
         .with_chain_spec(chain_spec)
-        .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
+        .with_ext::<Eip8130RpcExtension>(())
         .build()
         .await?;
     let provider = harness.provider();
@@ -240,7 +240,7 @@ async fn two_eip8130_transactions_in_one_block_attribute_phase_statuses() -> eyr
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
     let harness = TestHarness::builder()
         .with_chain_spec(chain_spec)
-        .with_ext::<Eip8130RpcExtension>(Eip8130RpcMode::Register)
+        .with_ext::<Eip8130RpcExtension>(())
         .build()
         .await?;
     let provider = harness.provider();

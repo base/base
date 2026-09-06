@@ -95,10 +95,7 @@ authoritative outbound request limit. `batch_size` controls the maximum transact
 batch request and defaults to 100.
 
 During measurement, the runner refills immediately after an inclusion source releases transaction
-inventory. When `flashblocks_ws` is configured, builder broadcasts provide the earliest signal;
-phase-locked canonical polling remains active as an automatic fallback and the authoritative source
-for final metrics. Both sources feed the same idempotent depth controller, so canonical observation
-does not double-release transactions already seen in a flashblock.
+inventory. Canonical block observations release in-flight capacity.
 
 The controller calibrates expected execution gas before measurement, targets
 `target_gps * block_time` of that estimated gas outstanding, and permits up to twice that depth
@@ -107,11 +104,10 @@ execution safety, but do not reduce TPS when they conservatively exceed observed
 measure depth from transactions accepted by a submission RPC; local submission backlog still counts
 toward sender and aggregate transaction capacity but is not treated as node mempool inventory.
 Refills are capped by the cumulative measured submission budget (`target_gps * elapsed`), so faster
-flashblock inclusion cannot drive offered load above the configured rate. When `target_gps` is
+block inclusion cannot drive offered load above the configured rate. When `target_gps` is
 omitted, the floor is one full block and the ceiling is two full blocks. Capacity and submission
-bottlenecks are reported without failing the run. Omit `flashblocks_ws` to run with canonical
-polling only; removing the flashblock watcher does not change the controller or submission pipeline.
-The final pacing summary reports canonical, flashblock, and safety refill-cycle counts so source
+bottlenecks are reported without failing the run.
+The final pacing summary reports canonical and safety refill-cycle counts so source
 fallback is visible.
 
 ### Logging
@@ -332,10 +328,9 @@ port 8545. Both nodes still require the experimental validity flags described be
 
 A configurable fraction of *senders* can route their entire traffic through the
 `base_sendRawTransactionValidity` endpoint, attaching validity predicates to
-every transaction they submit. All four server predicate types are supported:
+every transaction they submit. All three server predicate types are supported:
 the state-based `balance` and `storage` conditions, and the build-position
-`block_number` and `flashblock_index` conditions (compared against the block and
-flashblock currently being built). This exercises the sequencer and builder
+`block_number` conditions (compared against the block being built). This exercises the sequencer and builder
 under congestion when validity predicates are in play. Set `validity.ratio` to
 `0.0` (the default) to disable the workload entirely, in which case behavior is
 identical to a plain run.
@@ -375,7 +370,7 @@ validity:
         key: sender
       op: ">="
       value: "0x0"
-    # build-position predicates read the block/flashblock being built:
+    # build-position predicates read the block being built:
     - type: block_number
       op: ">="
       value: "0x0"                # absolute block number
@@ -383,23 +378,13 @@ validity:
     - type: block_number
       op: ">="
       offset: "10"
-    - type: flashblock_index
-      op: ">="
-      value: "1"
 ```
 
 Predicate addresses resolve per transaction: `sender` → the tx `from`,
 `recipient` → the tx `to` (falling back to `from` for contract creation), or a
 fixed `0x` address. Storage slots are either a `fixed` slot or a `mapping`
 slot, which computes the Solidity mapping slot `keccak256(key ++ mapping_slot)`
-so `balanceOf(key)` slots are expressible. The `flashblock_index` predicate
-carries an `op` and `value`, and `block_number` carries an `op` plus exactly one
-of `value` (a fixed absolute block number) or `offset` (resolved to
-`current_block + offset` at prepare time); both read the build position rather
-than any address or slot. Storage predicate values may also be `sender_parity`,
-which resolves to the low bit of each transaction sender's address. Fixed values,
-slots, masks, and offsets accept hex (`0x...`) or decimal strings. At most 64
-predicates may be attached per transaction.
+so `balanceOf(key)` slots are expressible.
 
 The final summary's `by_cohort` breakdown reports confirmed transactions split
 across the `plain` and `validity_pass` cohorts, so plain traffic can be compared
@@ -467,7 +452,7 @@ that:
    forwarded validity metadata. If it is not set, forwarded transactions that
    carry predicates are **rejected** ("transaction extensions are disabled"), so
    a misconfiguration fails loudly rather than silently dropping predicates.
-3. The builder runs the flashblocks build path (the only builder path wired in
+3. The builder runs the full-block payload service (the builder path wired in
    the shipped binaries), which is where predicates are evaluated against state.
 
 If `validity.ratio > 0` but the ingress endpoint does not serve

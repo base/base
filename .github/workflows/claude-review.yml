@@ -93,7 +93,7 @@ jobs:
             - Rust idioms: &String instead of &str, &Vec<T> instead of &[T], manual implementations of standard traits, needless lifetime annotations
 
             BLOCK PRODUCTION HALT/STALL CRITICAL FINDINGS:
-            Treat PRs touching builder, execution, precompile, payload assembly, state-root, tx selection, metering, payload/data transport, or flashblocks publishing paths as block-production-sensitive.
+            Treat PRs touching builder, execution, precompile, payload assembly, state-root, tx selection, metering, payload/data transport, or payload building paths as block-production-sensitive.
             After forming your standard review findings, check whether the PR is block-production-sensitive. If it is, run `git show HEAD:docs/guides/BLOCK_PRODUCTION_REVIEW.md` and use that guide as an additional authoritative source for Critical block-production halt/stall findings.
             The guide's known trigger classes are not exhaustive. Use your own engineering judgment to identify analogous changes that could halt block production, stall payload finalization, prevent validator re-execution, or indefinitely exclude valid transactions.
 

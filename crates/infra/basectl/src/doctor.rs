@@ -1419,7 +1419,7 @@ mod tests {
             rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
             el_ws_rpc: None,
             public_rpc: None,
-            flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
+
             l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
             consensus_node_rpc: None,
             chain_id,

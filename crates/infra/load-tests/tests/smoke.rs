@@ -93,7 +93,6 @@ fn metrics_collector_counts() {
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::ZERO,
         None,
-        None,
         21000,
         1_000_000_000,
         Some(1),
@@ -115,7 +114,6 @@ fn metrics_summary_latency() {
         collector.record_confirmed(TransactionMetrics::new(
             TxHash::repeat_byte(i as u8),
             Some(Duration::from_millis(*ms)),
-            Some(Duration::from_millis(*ms / 2)),
             21000,
             1_000_000_000,
             Some(i as u64),
@@ -130,9 +128,6 @@ fn metrics_summary_latency() {
     assert_eq!(block_latency.min, Duration::from_millis(100));
     assert_eq!(block_latency.max, Duration::from_millis(500));
     assert_eq!(block_latency.p50, Duration::from_millis(300));
-
-    let fb_latency = &summary.flashblocks_latency;
-    assert_eq!(fb_latency.p50, Duration::from_millis(150));
 }
 
 #[test]
@@ -144,7 +139,6 @@ fn metrics_summary_full_run_throughput_and_block_range() {
         collector.record_confirmed(TransactionMetrics::new(
             TxHash::repeat_byte(i as u8),
             Some(Duration::from_millis(100 + i * 10)),
-            Some(Duration::from_millis(50 + i * 5)),
             21_000,
             1_000_000_000,
             Some(100 + i),
@@ -159,7 +153,6 @@ fn metrics_summary_full_run_throughput_and_block_range() {
     assert_eq!(summary.block_range.block_count, 30);
     assert_eq!(summary.block_latency.min, Duration::from_millis(100), "tx 0 block latency");
     assert_eq!(summary.block_latency.max, Duration::from_millis(390), "tx 29 block latency");
-    assert_eq!(summary.flashblocks_latency.count, 30);
 }
 
 #[test]
@@ -188,7 +181,6 @@ fn metrics_summary_gas() {
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::ZERO,
         None,
-        None,
         21000,
         1_000_000_000,
         Some(1),
@@ -196,7 +188,6 @@ fn metrics_summary_gas() {
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::repeat_byte(1),
-        None,
         None,
         42000,
         2_000_000_000,
@@ -215,7 +206,6 @@ fn metrics_summary_json_serialization() {
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::ZERO,
-        None,
         None,
         21000,
         1_000_000_000,

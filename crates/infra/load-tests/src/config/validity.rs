@@ -102,13 +102,6 @@ pub enum ValidityPredicateConfig {
         #[serde(default)]
         offset: Option<U256>,
     },
-    /// Compares the index of the flashblock being built with a value.
-    FlashblockIndex {
-        /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
-        op: String,
-        /// Right-hand comparison value.
-        value: U256,
-    },
 }
 
 /// Configured source for a storage predicate's comparison value.
@@ -274,10 +267,6 @@ impl ValidityPredicateConfig {
                 };
                 Ok(ValidityPredicateTemplate::BlockNumber { op: parse_operator(op)?, bound })
             }
-            Self::FlashblockIndex { op, value } => Ok(ValidityPredicateTemplate::FlashblockIndex {
-                op: parse_operator(op)?,
-                value: *value,
-            }),
         }
     }
 }
@@ -512,19 +501,6 @@ mod tests {
 
         let error = config.to_template().unwrap_err();
         assert!(error.to_string().contains("expected 'sender_parity'"));
-    }
-
-    #[test]
-    fn flashblock_index_predicate_to_template() {
-        let config =
-            ValidityPredicateConfig::FlashblockIndex { op: "=".into(), value: U256::from(2) };
-        match config.to_template().unwrap() {
-            ValidityPredicateTemplate::FlashblockIndex { op, value } => {
-                assert_eq!(op, ValidityOperator::Equal);
-                assert_eq!(value, U256::from(2));
-            }
-            other => panic!("expected flashblock_index template, got {other:?}"),
-        }
     }
 
     #[test]

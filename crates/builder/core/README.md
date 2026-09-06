@@ -3,19 +3,15 @@
 <a href="https://github.com/base/base/actions/workflows/ci.yml"><img src="https://github.com/base/base/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
 <a href="https://github.com/base/base/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
 
-Block builder library for Base. Provides flashblocks payload building infrastructure, which progressively builds block chunks at sub-second intervals.
-
-## Overview
-
-- **`flashblocks`**: Progressive block builder that produces block chunks at short intervals, publishing them via WebSocket before merging into full blocks.
-- **`launcher`**: Node launcher utilities for starting the builder.
-- **`metering`**: Resource metering provider trait and types.
+Block builder library for Base. `BlockServiceBuilder` runs the full-block payload
+service with the real transaction pool, DA and gas limits, and validity predicates.
+`BuilderApiExtension` registers transaction insertion and shadow validity RPCs.
 
 ## Features
 
 - `jemalloc`: Use jemalloc allocator (default).
 - `jemalloc-prof`: Enable jemalloc profiling.
-- `testing`: Enable testing utilities and framework.
+- `test-utils`: Enable test node and transaction utilities.
 
 ## Usage
 

@@ -311,22 +311,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
-    use alloy_consensus::Header;
     use alloy_eips::Encodable2718;
-    use alloy_primitives::{B256, Bloom, Bytes, address};
+    use alloy_primitives::{Bytes, address};
     use alloy_rpc_client::RpcClient;
     use base_bundles::{Bundle, MeterBundleResponse};
     use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
-    use base_common_flashblocks::{
-        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
-    };
-    use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
     use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
     use base_test_utils::Account;
     use reth_transaction_pool::test_utils::TransactionBuilder;
-    use url::Url;
 
     use super::*;
     use crate::{MeteringConfig, MeteringExtension};
@@ -618,76 +611,6 @@ mod tests {
             client.request("base_meterBundle", (bundle,)).await;
 
         assert!(response.is_err());
-
-        Ok(())
-    }
-
-    /// Flashblock pending state must not be used for `meter_bundle`.
-    ///
-    /// Overlaying lagged pending state caused expensive database reads that
-    /// stalled RPC nodes. Canonical state is the source of truth.
-    #[tokio::test]
-    async fn test_meter_bundle_ignores_flashblock_pending_state() -> eyre::Result<()> {
-        let flashblocks_config =
-            FlashblocksConfig::new(Url::parse("ws://localhost:12345").unwrap(), 10);
-        let flashblocks_state = Arc::clone(&flashblocks_config.state);
-
-        let harness = TestHarness::builder()
-            .with_ext::<MeteringExtension>(MeteringConfig::with_flashblocks(flashblocks_config))
-            .build()
-            .await?;
-        let client = harness.rpc_client()?;
-
-        harness
-            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
-            .await?;
-
-        let flashblock_header = Header {
-            number: 2,
-            timestamp: 1_700_000_001,
-            gas_limit: 30_000_000,
-            base_fee_per_gas: Some(1_000_000_000),
-            ..Default::default()
-        };
-        let sealed_header = flashblock_header.seal(B256::ZERO);
-
-        let flashblock = Flashblock {
-            payload_id: Default::default(),
-            index: 0,
-            base: Some(ExecutionPayloadBaseV1 {
-                parent_beacon_block_root: B256::ZERO,
-                parent_hash: B256::ZERO,
-                fee_recipient: Default::default(),
-                prev_randao: B256::ZERO,
-                block_number: 2,
-                gas_limit: 30_000_000,
-                timestamp: 1_700_000_001,
-                extra_data: Default::default(),
-                base_fee_per_gas: alloy_primitives::U256::from(1_000_000_000u64),
-            }),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                state_root: B256::ZERO,
-                receipts_root: B256::ZERO,
-                logs_bloom: Bloom::default(),
-                gas_used: 0,
-                block_hash: B256::ZERO,
-                transactions: vec![],
-                withdrawals: vec![],
-                withdrawals_root: B256::ZERO,
-                blob_gas_used: Some(0),
-            },
-            metadata: Metadata::new(2),
-        };
-
-        let mut builder = PendingBlocksBuilder::new();
-        builder.with_header(sealed_header);
-        builder.with_flashblocks([flashblock]);
-        flashblocks_state.set_pending_blocks_for_testing(Some(builder.build()?));
-
-        let bundle = create_bundle(vec![]);
-        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
-
-        assert_eq!(response.state_block_number, 1);
 
         Ok(())
     }

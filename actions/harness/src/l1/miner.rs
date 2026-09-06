@@ -67,8 +67,7 @@ pub struct L1MinerConfig {
     /// Timestamp of the synthetic L1 genesis block.
     ///
     /// Defaults to `0` (the deterministic model used by most action tests). Set this to a
-    /// near-wall-clock value when driving the production Flashblocks builder, whose flashblock
-    /// scheduling is wall-clock based and produces no flashblocks for timestamps far in the past.
+    /// near-wall-clock value when driving the production builder.
     pub genesis_timestamp: u64,
 }
 

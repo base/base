@@ -9,15 +9,6 @@ use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtension
 /// Default maximum number of experimental validity predicates carried by one transaction.
 pub const DEFAULT_MAX_VALIDITY_PREDICATES: usize = 64;
 
-/// The first flashblock index at which pooled transactions are evaluated.
-///
-/// The fallback block published at flashblock index `0` executes only sequencer
-/// (attribute-derived) transactions; pooled transactions are first considered in
-/// the flashblock at index `1`. A [`ValidityPredicate::FlashblockIndex`] whose
-/// greatest satisfiable index is below this can therefore never hold for a pooled
-/// transaction.
-pub const FIRST_POOL_FLASHBLOCK_INDEX: u64 = 1;
-
 /// Error returned when a batch of validity predicates fails ingress validation.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ValidityPredicateError {
@@ -42,21 +33,6 @@ pub enum ValidityPredicateError {
     /// `index` is the position of the offending predicate within the batch.
     #[error("storage predicate at index {index} has value bits set outside its mask")]
     StorageValueOutsideMask {
-        /// Position of the offending predicate within the batch.
-        index: usize,
-    },
-    /// A flashblock-index predicate can never be satisfied by a pooled transaction.
-    ///
-    /// Pooled transactions are first evaluated at flashblock index
-    /// [`FIRST_POOL_FLASHBLOCK_INDEX`]; the index-`0` fallback block carries only
-    /// sequencer transactions. A predicate whose greatest satisfiable flashblock
-    /// index is below that would never be includable and would park indefinitely,
-    /// so it is rejected at ingress. `index` is the position of the offending
-    /// predicate within the batch.
-    #[error(
-        "flashblock-index predicate at index {index} can never be satisfied by a pooled transaction"
-    )]
-    UnsatisfiableFlashblockIndex {
         /// Position of the offending predicate within the batch.
         index: usize,
     },
@@ -102,26 +78,22 @@ impl ValidityOperator {
 
 /// Block-level context evaluated by non-state [`ValidityPredicate`] variants.
 ///
-/// Carries the properties of the block and flashblock currently being built so
-/// that predicates such as [`ValidityPredicate::BlockNumber`] and
-/// [`ValidityPredicate::FlashblockIndex`] can be checked without reading state.
+/// Supplies the block number for evaluating [`ValidityPredicate::BlockNumber`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PredicateContext {
     /// Number of the block currently being built.
     pub block_number: u64,
-    /// Index of the flashblock currently being built.
-    pub flashblock_index: u64,
 }
 
 /// A declared condition for a transaction.
 ///
 /// The JSON representation uses a `type` tag and a `params` object, accepting
-/// `balance`, `storage`, `block_number`, or `flashblock_index`. A `storage`
+/// `balance`, `storage`, or `block_number`. A `storage`
 /// predicate compares `storage(address, slot) & mask` with `value`; omitted
 /// masks default to [`U256::MAX`]. A `balance` predicate has the same
 /// comparison fields but does not accept `slot` or `mask`. The `block_number`
-/// and `flashblock_index` predicates compare the block or flashblock currently
-/// being built against `value` and accept only `op` and `value`.
+/// predicate compares the current block number against `value` and accepts
+/// only `op` and `value`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(tag = "type", content = "params", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ValidityPredicate {
@@ -155,13 +127,6 @@ pub enum ValidityPredicate {
         /// Right-hand comparison value.
         value: U256,
     },
-    /// Compares the index of the flashblock being built with a value.
-    FlashblockIndex {
-        /// Comparison to apply to the flashblock index.
-        op: ValidityOperator,
-        /// Right-hand comparison value.
-        value: U256,
-    },
 }
 
 impl ValidityPredicate {
@@ -185,27 +150,7 @@ impl ValidityPredicate {
             Self::Storage { mask, value, .. } if (*value & !*mask) != U256::ZERO => {
                 Err(ValidityPredicateError::StorageValueOutsideMask { index })
             }
-            Self::FlashblockIndex { op, value } => {
-                // Pooled transactions are first evaluated at flashblock index
-                // FIRST_POOL_FLASHBLOCK_INDEX (the index-0 fallback block carries
-                // only sequencer transactions), so a predicate whose greatest
-                // satisfiable index is below that can never hold. Upper bounds
-                // (`<`, `<=`, `=`) cap the satisfiable index; lower bounds and
-                // `!=` always leave some index >= 1 satisfiable.
-                let max_satisfiable_index = match op {
-                    ValidityOperator::LessThan => value.checked_sub(U256::from(1)),
-                    ValidityOperator::LessThanOrEqual | ValidityOperator::Equal => Some(*value),
-                    ValidityOperator::NotEqual
-                    | ValidityOperator::GreaterThan
-                    | ValidityOperator::GreaterThanOrEqual => return Ok(()),
-                };
-                if max_satisfiable_index
-                    .is_none_or(|max| max < U256::from(FIRST_POOL_FLASHBLOCK_INDEX))
-                {
-                    return Err(ValidityPredicateError::UnsatisfiableFlashblockIndex { index });
-                }
-                Ok(())
-            }
+
             _ => Ok(()),
         }
     }
@@ -230,8 +175,7 @@ impl ValidityPredicate {
     /// Returns whether this predicate holds against the current build.
     ///
     /// State-reading variants ([`Self::Balance`], [`Self::Storage`]) query
-    /// `db`; block-level variants ([`Self::BlockNumber`],
-    /// [`Self::FlashblockIndex`]) read `context` instead. An absent account has
+    /// `db`; block-level variants ([`Self::BlockNumber`]) read `context` instead. An absent account has
     /// a zero balance. Storage values are masked before comparison. Callers must
     /// treat database errors as an inability to verify the predicate rather than
     /// as a successful match.
@@ -252,18 +196,14 @@ impl ValidityPredicate {
             Self::BlockNumber { op, value } => {
                 Ok(op.matches(U256::from(context.block_number), *value))
             }
-            Self::FlashblockIndex { op, value } => {
-                Ok(op.matches(U256::from(context.flashblock_index), *value))
-            }
         }
     }
 
     /// Returns whether these predicates can no longer be satisfied at any build
     /// position at or after `context`.
     ///
-    /// Build position advances monotonically: `block_number` strictly increases
-    /// across blocks and `flashblock_index` increases from zero within a block.
-    /// A [`Self::BlockNumber`] or [`Self::FlashblockIndex`] predicate whose upper
+    /// The block number advances monotonically across blocks.
+    /// A [`Self::BlockNumber`] predicate whose upper
     /// bound the build has already passed can therefore never hold again, so the
     /// transaction is permanently ineligible and should be evicted rather than
     /// parked for a later rescan. State predicates ([`Self::Balance`],
@@ -276,17 +216,15 @@ impl ValidityPredicate {
     #[must_use]
     pub fn is_batch_expired(predicates: &[Self], context: &PredicateContext) -> bool {
         let current_block = U256::from(context.block_number);
-        let current_flashblock = U256::from(context.flashblock_index);
 
         // Tightest inclusive upper bound implied by each monotonic target.
         // `None` means unbounded.
         let mut block_upper: Option<U256> = None;
-        let mut flashblock_upper: Option<U256> = None;
 
         for predicate in predicates {
             let (op, value, upper) = match predicate {
                 Self::BlockNumber { op, value } => (op, value, &mut block_upper),
-                Self::FlashblockIndex { op, value } => (op, value, &mut flashblock_upper),
+
                 // State predicates are recoverable and never expire a batch.
                 Self::Balance { .. } | Self::Storage { .. } => continue,
             };
@@ -294,9 +232,7 @@ impl ValidityPredicate {
             let candidate = match op {
                 ValidityOperator::LessThan => match value.checked_sub(U256::from(1)) {
                     Some(max) => max,
-                    // `< 0` can never hold at any position — block number and
-                    // flashblock index are both non-negative — so the batch is
-                    // permanently expired.
+                    // Block numbers are non-negative, so `< 0` is permanently expired.
                     None => return true,
                 },
                 ValidityOperator::LessThanOrEqual | ValidityOperator::Equal => *value,
@@ -307,14 +243,7 @@ impl ValidityPredicate {
             *upper = Some((*upper).map_or(candidate, |current| current.min(candidate)));
         }
 
-        // No block at or after the current one can satisfy the block predicates.
-        if block_upper.is_some_and(|max| max < current_block) {
-            return true;
-        }
-        // The flashblock index resets each block, so a passed flashblock bound is
-        // terminal only when no later block is allowed either.
-        let pinned_to_current_block = block_upper == Some(current_block);
-        pinned_to_current_block && flashblock_upper.is_some_and(|max| max < current_flashblock)
+        block_upper.is_some_and(|max| max < current_block)
     }
 
     /// Returns the inclusive last block at which these predicates can still be
@@ -324,7 +253,6 @@ impl ValidityPredicate {
     /// any block (drop as soon as the chain advances), and `None` when no
     /// `block_number` upper bound applies or the bound exceeds [`u64::MAX`]. This
     /// is the pool-side, block-granular projection of [`Self::is_batch_expired`];
-    /// the finer flashblock deadline is enforced only by the builder.
     #[must_use]
     pub fn block_expiry_bound(predicates: &[Self]) -> Option<u64> {
         let mut upper: Option<U256> = None;
@@ -402,9 +330,9 @@ mod tests {
 
     use super::*;
 
-    /// A predicate context with arbitrary block and flashblock coordinates.
+    /// A predicate context for the first block.
     fn test_context() -> PredicateContext {
-        PredicateContext { block_number: 100, flashblock_index: 3 }
+        PredicateContext { block_number: 100 }
     }
 
     #[test]
@@ -620,44 +548,8 @@ mod tests {
     }
 
     #[test]
-    fn deserializes_block_number_and_flashblock_index_predicates() {
-        let block_number: ValidityPredicate =
-            serde_json::from_str(r#"{"type":"block_number","params":{"op":">=","value":"0x64"}}"#)
-                .unwrap();
-        let flashblock_index: ValidityPredicate = serde_json::from_str(
-            r#"{"type":"flashblock_index","params":{"op":"<","value":"0x5"}}"#,
-        )
-        .unwrap();
-
-        assert_eq!(
-            block_number,
-            ValidityPredicate::BlockNumber {
-                op: ValidityOperator::GreaterThanOrEqual,
-                value: U256::from(100),
-            }
-        );
-        assert_eq!(
-            flashblock_index,
-            ValidityPredicate::FlashblockIndex {
-                op: ValidityOperator::LessThan,
-                value: U256::from(5),
-            }
-        );
-    }
-
-    #[test]
-    fn block_number_and_flashblock_index_predicates_reject_state_fields() {
-        let block_number_with_address = r#"{"type":"block_number","params":{"address":"0x1111111111111111111111111111111111111111","op":"=","value":"0x0"}}"#;
-        let flashblock_index_with_slot =
-            r#"{"type":"flashblock_index","params":{"slot":"0x1","op":"=","value":"0x0"}}"#;
-
-        assert!(serde_json::from_str::<ValidityPredicate>(block_number_with_address).is_err());
-        assert!(serde_json::from_str::<ValidityPredicate>(flashblock_index_with_slot).is_err());
-    }
-
-    #[test]
     fn block_level_predicates_match_context_without_reading_state() {
-        let context = PredicateContext { block_number: 100, flashblock_index: 3 };
+        let context = PredicateContext { block_number: 100 };
         let mut db = InMemoryDB::default();
 
         let block_number = ValidityPredicate::BlockNumber {
@@ -668,43 +560,9 @@ mod tests {
             op: ValidityOperator::LessThan,
             value: U256::from(100),
         };
-        let flashblock_index = ValidityPredicate::FlashblockIndex {
-            op: ValidityOperator::Equal,
-            value: U256::from(3),
-        };
-        let flashblock_index_mismatch = ValidityPredicate::FlashblockIndex {
-            op: ValidityOperator::GreaterThan,
-            value: U256::from(3),
-        };
 
         assert!(block_number.matches(&mut db, &context).unwrap());
         assert!(!block_number_too_low.matches(&mut db, &context).unwrap());
-        assert!(flashblock_index.matches(&mut db, &context).unwrap());
-        assert!(!flashblock_index_mismatch.matches(&mut db, &context).unwrap());
-    }
-
-    #[test]
-    fn flashblock_index_predicate_round_trips() {
-        let predicate = ValidityPredicate::FlashblockIndex {
-            op: ValidityOperator::LessThanOrEqual,
-            value: U256::from(7),
-        };
-
-        assert_eq!(
-            serde_json::to_value(&predicate).unwrap(),
-            json!({
-                "type": "flashblock_index",
-                "params": {
-                    "op": "<=",
-                    "value": "0x7",
-                },
-            })
-        );
-        assert_eq!(
-            serde_json::from_value::<ValidityPredicate>(serde_json::to_value(&predicate).unwrap())
-                .unwrap(),
-            predicate
-        );
     }
 
     #[test]
@@ -762,36 +620,6 @@ mod tests {
         let error = extension.apply(transaction).unwrap_err();
 
         assert!(error.to_string().contains("outside its mask"));
-    }
-
-    #[test]
-    fn apply_rejects_unsatisfiable_flashblock_index() {
-        let signed: BaseTransactionSigned = TxDeposit {
-            source_hash: Default::default(),
-            from: Address::ZERO,
-            to: TxKind::Create,
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 21_000,
-            is_system_transaction: false,
-            input: Default::default(),
-        }
-        .into();
-        let encoded_length = signed.encode_2718_len();
-        let transaction = BasePooledTransaction::new(
-            Recovered::new_unchecked(signed, Address::ZERO),
-            encoded_length,
-        );
-        let extension = TransactionValidity {
-            validity: vec![ValidityPredicate::FlashblockIndex {
-                op: ValidityOperator::Equal,
-                value: U256::ZERO,
-            }],
-        };
-
-        let error = extension.apply(transaction).unwrap_err();
-
-        assert!(error.to_string().contains("can never be satisfied"));
     }
 
     #[test]
@@ -858,64 +686,6 @@ mod tests {
         };
 
         assert_eq!(predicate.validate_params(0), Ok(()));
-    }
-
-    #[test]
-    fn validate_params_rejects_flashblock_index_unsatisfiable_for_pooled_transactions() {
-        // Every shape whose greatest satisfiable index is below the first pool
-        // flashblock index (1): pooled transactions never run at index 0.
-        let unsatisfiable = [
-            (ValidityOperator::LessThan, U256::ZERO), // < 0: never holds
-            (ValidityOperator::LessThan, U256::from(1)), // < 1: only index 0
-            (ValidityOperator::LessThanOrEqual, U256::ZERO), // <= 0: only index 0
-            (ValidityOperator::Equal, U256::ZERO),    // = 0: only index 0
-        ];
-        for (op, value) in unsatisfiable {
-            let predicate = ValidityPredicate::FlashblockIndex { op, value };
-            assert_eq!(
-                predicate.validate_params(2),
-                Err(ValidityPredicateError::UnsatisfiableFlashblockIndex { index: 2 }),
-                "expected {op:?} {value} to be rejected",
-            );
-        }
-    }
-
-    #[test]
-    fn validate_params_accepts_satisfiable_flashblock_index() {
-        // Shapes that some index >= 1 can still satisfy.
-        let satisfiable = [
-            (ValidityOperator::LessThan, U256::from(2)), // < 2: index 1
-            (ValidityOperator::LessThanOrEqual, U256::from(1)), // <= 1: index 1
-            (ValidityOperator::Equal, U256::from(1)),    // = 1
-            (ValidityOperator::NotEqual, U256::ZERO),    // != 0: any index >= 1
-            (ValidityOperator::GreaterThan, U256::ZERO), // > 0: index >= 1
-            (ValidityOperator::GreaterThanOrEqual, U256::from(3)), // >= 3
-        ];
-        for (op, value) in satisfiable {
-            let predicate = ValidityPredicate::FlashblockIndex { op, value };
-            assert_eq!(
-                predicate.validate_params(0),
-                Ok(()),
-                "expected {op:?} {value} to be accepted",
-            );
-        }
-    }
-
-    #[test]
-    fn validate_batch_rejects_unsatisfiable_flashblock_index_reporting_its_index() {
-        let predicates = vec![
-            ValidityPredicate::Balance {
-                address: Address::repeat_byte(0x11),
-                op: ValidityOperator::GreaterThanOrEqual,
-                value: U256::from(1),
-            },
-            ValidityPredicate::FlashblockIndex { op: ValidityOperator::Equal, value: U256::ZERO },
-        ];
-
-        assert_eq!(
-            ValidityPredicate::validate_batch(&predicates, DEFAULT_MAX_VALIDITY_PREDICATES),
-            Err(ValidityPredicateError::UnsatisfiableFlashblockIndex { index: 1 })
-        );
     }
 
     #[test]
@@ -990,18 +760,13 @@ mod tests {
     }
 
     /// Builds a context at the given build position.
-    fn context_at(block_number: u64, flashblock_index: u64) -> PredicateContext {
-        PredicateContext { block_number, flashblock_index }
+    fn context_at(block_number: u64) -> PredicateContext {
+        PredicateContext { block_number }
     }
 
     /// A block-number predicate with the given operator and value.
     fn block_number(op: ValidityOperator, value: u64) -> ValidityPredicate {
         ValidityPredicate::BlockNumber { op, value: U256::from(value) }
-    }
-
-    /// A flashblock-index predicate with the given operator and value.
-    fn flashblock_index(op: ValidityOperator, value: u64) -> ValidityPredicate {
-        ValidityPredicate::FlashblockIndex { op, value: U256::from(value) }
     }
 
     #[test]
@@ -1010,14 +775,14 @@ mod tests {
             [(ValidityOperator::LessThanOrEqual, 100), (ValidityOperator::Equal, 100)]
         {
             let predicates = [block_number(op, deadline)];
-            assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 0)));
-            assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(101, 0)));
+            assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(100)));
+            assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(101)));
         }
 
         // `<` is exclusive, so it expires one block earlier.
         let predicates = [block_number(ValidityOperator::LessThan, 100)];
-        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(99, 0)));
-        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 0)));
+        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(99)));
+        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(100)));
     }
 
     #[test]
@@ -1028,44 +793,15 @@ mod tests {
             ValidityOperator::NotEqual,
         ] {
             let predicates = [block_number(op, 100)];
-            assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(1_000, 0)));
+            assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(1_000)));
         }
-    }
-
-    #[test]
-    fn flashblock_index_alone_never_expires() {
-        // The flashblock index resets each block, so a future block can still
-        // satisfy an upper-bounded flashblock predicate.
-        let predicates = [flashblock_index(ValidityOperator::LessThanOrEqual, 2)];
-        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 9)));
-    }
-
-    #[test]
-    fn composite_block_and_flashblock_deadline_expires_within_the_pinned_block() {
-        // Pinned to block 100, valid through flashblock index 2.
-        let predicates = [
-            block_number(ValidityOperator::Equal, 100),
-            flashblock_index(ValidityOperator::LessThanOrEqual, 2),
-        ];
-        // Still satisfiable up to and including (100, 2).
-        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 2)));
-        // Past the flashblock bound within the pinned block: terminal.
-        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 3)));
-        // Before the pinned block, the flashblock bound is not yet binding.
-        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(99, 9)));
-        // After the pinned block: terminal via the block bound.
-        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(101, 0)));
     }
 
     #[test]
     fn unsatisfiable_upper_bound_expires_immediately() {
         // `block_number < 0` can never hold at any position.
         let predicates = [block_number(ValidityOperator::LessThan, 0)];
-        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(0, 0)));
-
-        // `flashblock_index < 0` likewise, regardless of block bound.
-        let predicates = [flashblock_index(ValidityOperator::LessThan, 0)];
-        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(50, 0)));
+        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(0)));
     }
 
     #[test]
@@ -1074,8 +810,8 @@ mod tests {
             block_number(ValidityOperator::LessThanOrEqual, 200),
             block_number(ValidityOperator::LessThanOrEqual, 100),
         ];
-        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(100, 0)));
-        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(101, 0)));
+        assert!(!ValidityPredicate::is_batch_expired(&predicates, &context_at(100)));
+        assert!(ValidityPredicate::is_batch_expired(&predicates, &context_at(101)));
     }
 
     #[test]
@@ -1094,8 +830,8 @@ mod tests {
                 value: U256::from(3),
             },
         ];
-        assert!(!ValidityPredicate::is_batch_expired(&state_only, &context_at(10_000, 9)));
-        assert!(!ValidityPredicate::is_batch_expired(&[], &context_at(10_000, 9)));
+        assert!(!ValidityPredicate::is_batch_expired(&state_only, &context_at(10_000)));
+        assert!(!ValidityPredicate::is_batch_expired(&[], &context_at(10_000)));
     }
 
     #[test]
@@ -1127,14 +863,7 @@ mod tests {
         ] {
             assert_eq!(ValidityPredicate::block_expiry_bound(&[block_number(op, 100)]), None);
         }
-        // No block predicate at all.
-        assert_eq!(
-            ValidityPredicate::block_expiry_bound(&[flashblock_index(
-                ValidityOperator::LessThanOrEqual,
-                2
-            )]),
-            None
-        );
+
         assert_eq!(ValidityPredicate::block_expiry_bound(&[]), None);
     }
 

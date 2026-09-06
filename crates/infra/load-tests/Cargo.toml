@@ -27,7 +27,6 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 base-cli-utils.workspace = true
 base-tx-manager.workspace = true
 base-common-network.workspace = true
-base-common-flashblocks.workspace = true
 base-execution-txpool.workspace = true
 base-common-precompiles = { workspace = true, default-features = false }
 
@@ -53,6 +52,5 @@ serde_yaml.workspace = true
 parking_lot.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["signal"] }
-tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
 [dev-dependencies]

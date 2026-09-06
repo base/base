@@ -3,13 +3,12 @@
 use alloy_consensus::Header;
 use base_common_consensus::{BasePrimitives, BaseTransactionSigned};
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_builder::ParkablePayloadTransactions;
 use base_execution_txpool::{BasePooledTx, StateDiffInvalidation, TimestampedTransaction};
 use base_node_core::BaseEngineTypes;
 use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
-
-use crate::ParkablePayloadTransactions;
 
 /// Composite trait bound for a full node type compatible with the Base builder.
 pub trait NodeBounds:

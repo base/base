@@ -61,8 +61,6 @@ pub enum BundleEvent {
         builder: String,
         /// Block number.
         block_number: u64,
-        /// Flashblock index.
-        flashblock_index: u64,
     },
     /// Bundle was included in a block.
     BlockIncluded {

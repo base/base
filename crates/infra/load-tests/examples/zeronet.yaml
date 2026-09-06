@@ -12,7 +12,6 @@ query_rpc: "https://<zeronet-rpc-url>"
 
 txpool_nodes: []
 
-flashblocks_ws: "wss://<zeronet-rollup-boost-proxy-url>/ws"
 
 sender_count: 100
 target_gps: 15000000

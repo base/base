@@ -38,8 +38,7 @@ pub struct TransactionMetrics {
     /// Time from submission to first observation in a polled block (includes the
     /// block poll + scan cost).
     pub block_latency: Option<Duration>,
-    /// Time from submission to sequencer acceptance.
-    pub flashblocks_latency: Option<Duration>,
+
     /// Gas used by the transaction.
     pub gas_used: u64,
     /// Gas price in wei.
@@ -61,7 +60,6 @@ impl TransactionMetrics {
     pub const fn new(
         tx_hash: TxHash,
         block_latency: Option<Duration>,
-        flashblocks_latency: Option<Duration>,
         gas_used: u64,
         gas_price: u128,
         block_number: Option<u64>,
@@ -69,7 +67,6 @@ impl TransactionMetrics {
         Self {
             tx_hash,
             block_latency,
-            flashblocks_latency,
             gas_used,
             gas_price,
             block_number,
@@ -197,8 +194,7 @@ pub enum PacingCycleSource {
     /// Canonical block polling.
     #[default]
     Canonical,
-    /// Builder flashblock broadcast.
-    Flashblock,
+
     /// Timer fallback.
     Safety,
 }
@@ -256,8 +252,7 @@ pub struct PacingMetrics {
     pub blocks_observed: u64,
     /// Refill cycles triggered by canonical block polling.
     pub canonical_cycles: u64,
-    /// Refill cycles triggered by flashblock inclusion.
-    pub flashblock_cycles: u64,
+
     /// Timer-driven fallback cycles.
     pub safety_cycles: u64,
     /// Observed blocks whose pre-refill depth was below the one-block floor.
@@ -328,27 +323,6 @@ pub struct BlockLoadMetrics {
     pub confirmed_count: u64,
     /// Total gas used by confirmed load-test transactions in this block.
     pub total_gas: u64,
-}
-
-/// Aggregated flashblocks latency percentiles.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct FlashblocksLatencyMetrics {
-    /// Transactions with flashblocks data.
-    pub count: u64,
-    /// Minimum latency observed.
-    pub min: Duration,
-    /// Maximum latency observed.
-    pub max: Duration,
-    /// Mean latency.
-    pub mean: Duration,
-    /// Median latency.
-    pub p50: Duration,
-    /// 90th percentile latency.
-    pub p90: Duration,
-    /// 95th percentile latency.
-    pub p95: Duration,
-    /// 99th percentile latency.
-    pub p99: Duration,
 }
 
 /// Test configuration included in the JSON output (excludes URLs and secrets).

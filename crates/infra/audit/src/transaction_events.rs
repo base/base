@@ -63,7 +63,7 @@ const TRANSACTION_EVENT_DB_MAX_ATTEMPTS: u32 = 3;
 pub const DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS: u32 = 3;
 /// Default days to keep ingress, simulation-success, and txpool-forward events.
 pub const DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS: u32 = 7;
-/// Default days to keep failures, drops, inclusion, and flashblock events.
+/// Default days to keep failures, drops, inclusion, and block events.
 pub const DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS: u32 = 30;
 /// Default number of expired rows deleted in one statement.
 pub const DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE: u32 = 10_000;
@@ -210,10 +210,7 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::TxpoolBuilderForwardDropped
             | TransactionEventType::TxpoolValidatedInsertRejected
             | TransactionEventType::BuilderIncluded
-            | TransactionEventType::BuilderPayloadFinalized
-            | TransactionEventType::BuilderFlashblockStarted
-            | TransactionEventType::BuilderFlashblockPublished
-            | TransactionEventType::BuilderFlashblockBuildStopped => Self::Cold,
+            | TransactionEventType::BuilderPayloadFinalized => Self::Cold,
         }
     }
 

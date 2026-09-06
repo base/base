@@ -1,9 +1,9 @@
-//! End-to-end action test: the production `SequencerActor` drives the real Flashblocks builder.
+//! End-to-end action test: the production `SequencerActor` drives the real full-block builder.
 //!
 //! Unlike the default action-harness sequencer (which assembles blocks with reth's execution-side
 //! `BasePayloadBuilder` and a no-op pool), this drives an [`L2Sequencer`] backed by
 //! [`BuilderBackedEngineClient`] — an in-process node running the production
-//! `FlashblocksServiceBuilder`. It proves the harness's production sequencer actor can build blocks
+//! `BlockServiceBuilder`. It proves the harness's production sequencer actor can build blocks
 //! through the real builder over the Engine API, against the harness's rollup-derived genesis.
 
 use base_action_harness::{
@@ -13,7 +13,7 @@ use base_action_harness::{
 use base_batcher_encoder::{DaType, EncoderConfig};
 
 /// Build a harness + builder-backed sequencer anchored a few seconds ahead of wall-clock, so the
-/// Flashblocks builder schedules flashblocks and selects from the pool (see the module docs).
+/// full-block builder schedules blocks and selects from the pool (see the module docs).
 ///
 /// Returns the harness, the builder-backed sequencer, and the batcher config used to derive the
 /// rollup config (needed to batch produced blocks back to L1).
@@ -97,11 +97,7 @@ async fn builder_backed_sequencer_produces_block_with_azul_active() -> eyre::Res
 /// A harness-supplied user transaction is routed through the real mempool (not force-included) and
 /// selected by the production builder into the block — exercising real pool-based tx selection.
 ///
-/// The production Flashblocks builder schedules flashblocks from wall-clock time
-/// (`calculate_flashblocks` produces none when the block timestamp is behind `now`). This test uses
-/// the harness's wall-clock timestamp mode — anchoring L1 and L2 genesis a few seconds ahead of
-/// `now` (well within `max_sequencer_drift`) — so the builder allocates flashblocks and pulls the
-/// injected transaction from the pool.
+/// Uses wall-clock genesis timestamps to model live sequencer operation.
 #[tokio::test(flavor = "multi_thread")]
 async fn builder_backed_sequencer_selects_pool_transaction() -> eyre::Result<()> {
     let (_h, mut sequencer, _batcher_cfg) = wall_clock_builder_sequencer().await?;

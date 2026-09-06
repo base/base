@@ -1,9 +1,8 @@
-use std::{io::Write, time::Instant};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use base_common_flashblocks::Flashblock;
 use base_common_genesis::SystemConfig;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 use url::Url;
 
 use super::{App, Resources, SourceLabel, ViewId, views::create_view};
@@ -11,9 +10,8 @@ use crate::{
     config::{ConductorSource, MonitoringConfig},
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorPollUpdate, L1BlockInfo, L1ConnectionMode,
-        PodsSnapshot, ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
-        fetch_full_system_config, fetch_initial_backlog_with_progress, run_block_fetcher,
-        run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped,
+        PodsSnapshot, ProofsSnapshot, ValidatorNodeStatus, fetch_full_system_config,
+        fetch_initial_backlog_with_progress, run_block_fetcher, run_conductor_poller,
         run_l1_blob_watcher, run_pods_poller, run_proofs_poller, run_rollup_config_poller,
         run_safe_head_poller, run_validator_poller,
     },
@@ -47,7 +45,7 @@ pub async fn run_app(
 
 /// Starts all background data-fetching services, wiring their channels into `resources`.
 ///
-/// Spawns tokio tasks for flashblock streams, L1 blob watching, DA backlog loading,
+/// Spawns tokio tasks for canonical block polling, L1 blob watching, DA backlog loading,
 /// safe-head polling, system config fetching, conductor polling, validator polling,
 /// and proof monitoring. All tasks communicate back through channels stored in
 /// `resources`.
@@ -57,8 +55,6 @@ pub fn start_background_services(
     conductor_rpc: Option<Url>,
 ) {
     let mut background_tasks = Vec::new();
-    let (fb_tx, fb_rx) = mpsc::channel::<TimestampedFlashblock>(100);
-    let (da_fb_tx, da_fb_rx) = mpsc::channel::<Flashblock>(100);
     let (sync_tx, sync_rx) = mpsc::channel::<u64>(10);
     let (backlog_tx, backlog_rx) = mpsc::channel::<BacklogFetchResult>(1000);
     let (block_req_tx, block_req_rx) = mpsc::channel::<u64>(100);
@@ -66,45 +62,36 @@ pub fn start_background_services(
     let (l1_block_tx, l1_block_rx) = mpsc::channel::<L1BlockInfo>(100);
     let (toast_tx, toast_rx) = mpsc::channel::<Toast>(50);
 
-    resources.flash.set_channel(fb_rx);
-
-    // Create a watch channel seeded with the configured flashblocks URL.
-    // If a conductor cluster is configured and all nodes carry flashblocks_ws
-    // endpoints, `run_conductor_leader_url_tracker` will push the current
-    // leader's URL into this channel so both subscriber tasks switch over
-    // immediately on every leadership change.
-    let (fb_url_tx, fb_url_rx) = watch::channel(config.flashblocks_ws.to_string());
-
-    // Give FlashState a clone so it can detect URL changes and reset its
-    // last-flashblock tracking state (avoids spurious missed-flashblock counts
-    // when the first flashblock from the new leader arrives mid-block).
-    resources.flash.set_url_rx(fb_url_rx.clone());
-
-    resources.da.set_channels(
-        da_fb_rx,
-        sync_rx,
-        backlog_rx,
-        block_req_tx,
-        block_res_rx,
-        l1_block_rx,
-    );
+    resources.da.set_channels(sync_rx, backlog_rx, block_req_tx.clone(), block_res_rx, l1_block_rx);
     resources.toasts.set_channel(toast_rx);
-
-    background_tasks.push(
-        tokio::spawn(run_flashblock_ws_timestamped(fb_url_rx.clone(), fb_tx, toast_tx.clone()))
-            .abort_handle(),
-    );
-    background_tasks.push(
-        tokio::spawn(run_flashblock_ws(fb_url_rx, da_fb_tx, toast_tx.clone())).abort_handle(),
-    );
 
     background_tasks.push(
         tokio::spawn(run_block_fetcher(
             config.rpc.to_string(),
             block_req_rx,
-            block_res_tx,
+            block_res_tx.clone(),
             toast_tx.clone(),
         ))
+        .abort_handle(),
+    );
+
+    let rpc = config.rpc.clone();
+    background_tasks.push(
+        tokio::spawn(async move {
+            let mut last = None;
+            loop {
+                if let Ok(head) = crate::rpc::fetch_l2_block_number(&rpc).await {
+                    let start = last.map_or(head, |number: u64| number.saturating_add(1));
+                    for number in start..=head {
+                        if block_req_tx.send(number).await.is_err() {
+                            return;
+                        }
+                        last = Some(number);
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        })
         .abort_handle(),
     );
 
@@ -168,18 +155,9 @@ pub fn start_background_services(
                 last_refresh: Instant::now(),
             },
         });
-        // Wire the URL sender into ConductorState so that the existing
-        // conductor poll (200 ms) drives flashblocks URL changes instead of
-        // a separate task that would duplicate the conductor_leader RPCs.
-        // Discovered peers carry no flashblocks_ws endpoints, so this only
-        // applies to statically configured clusters (devnet today).
         match &source {
             ConductorSource::Static(nodes) => {
-                if nodes.iter().any(|n| n.flashblocks_ws.is_some()) {
-                    resources.conductor.set_url_sender(nodes.clone(), fb_url_tx);
-                } else {
-                    resources.conductor.set_nodes_config(nodes.clone());
-                }
+                resources.conductor.set_nodes_config(nodes.clone());
             }
             ConductorSource::Discover { .. } => {
                 if let Some(bootstrap) = source.bootstrap_node() {
@@ -220,30 +198,4 @@ pub fn start_background_services(
     }
 
     resources.set_background_tasks(background_tasks);
-}
-
-/// Streams flashblocks as JSON lines to stdout.
-pub async fn run_flashblocks_json(config: MonitoringConfig) -> Result<()> {
-    let (tx, mut rx) = mpsc::channel::<Flashblock>(100);
-    let (toast_tx, mut toast_rx) = mpsc::channel::<Toast>(50);
-
-    let (_, url_rx) = watch::channel(config.flashblocks_ws.to_string());
-    tokio::spawn(run_flashblock_ws(url_rx, tx, toast_tx));
-
-    tokio::spawn(async move {
-        while let Some(toast) = toast_rx.recv().await {
-            eprintln!("connection status: {}", toast.message);
-        }
-    });
-
-    let stdout = std::io::stdout();
-    let mut writer = std::io::BufWriter::new(stdout.lock());
-
-    while let Some(fb) = rx.recv().await {
-        serde_json::to_writer(&mut writer, &fb)?;
-        writeln!(writer)?;
-        writer.flush()?;
-    }
-
-    Ok(())
 }

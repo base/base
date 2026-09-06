@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # workspace
-base-flashblocks.workspace = true
 base-node-runner.workspace = true
 base-observability-events.workspace = true
 
@@ -45,7 +44,6 @@ serde_json.workspace = true
 # workspace
 base-test-utils.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
-base-flashblocks-node = { workspace = true, features = ["test-utils"] }
 
 # reth
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }

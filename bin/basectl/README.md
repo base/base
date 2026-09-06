@@ -1,8 +1,7 @@
 # `basectl`
 
 `basectl` is the operator console for Base infrastructure. It combines interactive terminal
-dashboards with scriptable commands to inspect blocks, node sync, peers, transaction pools,
-Flashblocks, data availability, pods, upgrades, and proofs; diagnose node health; and safely
+dashboards with scriptable commands to inspect blocks, node sync, peers, and transaction pools, and to
 operate HA conductor and sequencer clusters across mainnet, Sepolia, and local devnets.
 
 If you run, debug, or automate Base infrastructure, this README documents the RPC access each command needs, human and JSON output modes, configuration and discovery behavior, and the confirmation and partial-failure semantics of state-changing operations.
@@ -42,8 +41,6 @@ background requests reconnect to the selected EL endpoint.
 | `monitor`                |       | TUI Home view                                    |
 | `monitor conductor`      | `co`  | HA conductor cluster monitor                     |
 | `monitor da`             | `d`   | DA backlog monitor                               |
-| `monitor flashblocks`    | `f`   | Flashblocks TUI monitor                          |
-| `monitor command-center` | `cc`  | Combined command center view                     |
 | `monitor upgrades`       | `u`   | Network upgrade activation countdown and history |
 | `monitor config`         | `c`   | Chain configuration view                         |
 
@@ -349,11 +346,6 @@ detection fails or the chain is unsupported. The external CL check also needs
 | `--safe-recency-fail-blocks <BLOCKS>` | Safe-head lag behind unsafe head above which doctor fails. Default `300`.                                                                        |
 | `--json`                              | Emit a humanized JSON report with `inputs`, `summary`, and `checks` instead of pretty text.                                                      |
 
-### `basectl flashblocks`
-
-Streams live flashblocks as newline-delimited JSON to stdout. For the
-interactive view, use `basectl monitor flashblocks`.
-
 ### `basectl proofs`
 
 Submits and inspects ZK proof requests on the internal prover service, used to
@@ -496,11 +488,7 @@ basectl -c devnet monitor
 basectl monitor conductor
 ```
 
-### `basectl flashblocks`
-
 ```sh
-# Stream flashblocks as JSONL on sepolia
-basectl -c sepolia flashblocks
 ```
 
 ### `basectl block`

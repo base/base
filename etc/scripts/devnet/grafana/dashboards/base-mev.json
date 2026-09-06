@@ -61,7 +61,7 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "# 🔵 Base MEV · Validity Transaction Control Room\nFollow the local path from **RPC/client admission → builder predicates → Flashblock selection → inclusion and fee value**. Blue is validity traffic, cyan is standard traffic, green is healthy, amber needs attention, and red is actionable. Rates use **$window**; summary charts use **p$quantile**.",
+        "content": "# \ud83d\udd35 Base MEV \u00b7 Validity Transaction Control Room\nFollow the local path from **RPC/client admission \u2192 builder predicates \u2192 transaction selection \u2192 inclusion and fee value**. Blue is validity traffic, cyan is standard traffic, green is healthy, amber needs attention, and red is actionable. Rates use **$window**; summary charts use **p$quantile**.",
         "mode": "markdown"
       },
       "pluginVersion": "10.4.1",
@@ -78,7 +78,7 @@
       },
       "id": 100,
       "panels": [],
-      "title": "Triage · Is validity traffic flowing safely?",
+      "title": "Triage \u00b7 Is validity traffic flowing safely?",
       "type": "row"
     },
     {
@@ -510,7 +510,7 @@
       },
       "id": 101,
       "panels": [],
-      "title": "Validity lifecycle · Where are transactions admitted, parked, rejected, and included?",
+      "title": "Validity lifecycle \u00b7 Where are transactions admitted, parked, rejected, and included?",
       "type": "row"
     },
     {
@@ -603,7 +603,7 @@
           },
           "editorMode": "code",
           "expr": "sum by (job, outcome) (rate((reth_txpool_validity_admitted{job=~\"l2_builder|l2_client|l2_base_rpc\"} * 1)[$window:]))",
-          "legendFormat": "{{job}} · {{outcome}}",
+          "legendFormat": "{{job}} \u00b7 {{outcome}}",
           "range": true,
           "refId": "A"
         }
@@ -715,7 +715,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Builder predicate evaluations by outcome. Investigate read errors immediately; budget exhaustion means candidates were deferred to a later Flashblock rather than rejected.",
+      "description": "Builder predicate evaluations by outcome. Investigate read errors immediately; budget exhaustion means candidates were deferred to a later block rather than rejected.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -833,7 +833,7 @@
       },
       "id": 102,
       "panels": [],
-      "title": "Flow economics · Which cohort earns inclusion and fee value?",
+      "title": "Flow economics \u00b7 Which cohort earns inclusion and fee value?",
       "type": "row"
     },
     {
@@ -945,7 +945,7 @@
           },
           "editorMode": "code",
           "expr": "sum by (flow) (rate(reth_base_builder_priority_fee_revenue_wei_sum{job=\"l2_builder\"}[$window])) / 1e18",
-          "legendFormat": "{{flow}} · priority fee",
+          "legendFormat": "{{flow}} \u00b7 priority fee",
           "range": true,
           "refId": "A"
         },
@@ -956,7 +956,7 @@
           },
           "editorMode": "code",
           "expr": "sum by (flow) (rate(reth_base_builder_base_fee_revenue_wei_sum{job=\"l2_builder\"}[$window])) / 1e18",
-          "legendFormat": "{{flow}} · base-fee value",
+          "legendFormat": "{{flow}} \u00b7 base-fee value",
           "range": true,
           "refId": "B"
         }
@@ -1055,7 +1055,7 @@
           },
           "editorMode": "code",
           "expr": "sum by (flow, bid) (rate(reth_base_builder_tip_per_gas_sum{job=\"l2_builder\"}[$window])) / sum by (flow, bid) (rate(reth_base_builder_tip_per_gas_count{job=\"l2_builder\"}[$window]))",
-          "legendFormat": "{{flow}} · {{bid}}",
+          "legendFormat": "{{flow}} \u00b7 {{bid}}",
           "range": true,
           "refId": "A"
         }
@@ -1167,7 +1167,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Observation-weighted mean included gas per block, segmented by flow. Use the Flashblock headroom row to diagnose saturation.",
+      "description": "Observation-weighted mean included gas per block, segmented by flow. Use the block headroom row to diagnose saturation.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1271,579 +1271,579 @@
       },
       "id": 103,
       "panels": [],
-      "title": "Predicate detail · Are validity conditions cheap, fully evaluated, and becoming satisfiable?",
+      "title": "Predicate detail \u00b7 Are validity conditions cheap, fully evaluated, and becoming satisfiable?",
       "type": "row"
     },
     {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Selected local summary quantile for initial predicate evaluation and rescans. These quantiles come from the single devnet builder and are not aggregated across instances.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
           },
-          "description": "Selected local summary quantile for initial predicate evaluation and rescans. These quantiles come from the single devnet builder and are not aggregated across instances.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 15,
-                "lineWidth": 2,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "line"
-                }
-              },
-              "decimals": 4,
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "#3BD671",
-                    "value": null
-                  },
-                  {
-                    "color": "#F2B84B",
-                    "value": 0.05
-                  },
-                  {
-                    "color": "#F2495C",
-                    "value": 0.15
-                  }
-                ]
-              },
-              "unit": "s"
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
             },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 10
-          },
-          "id": 15,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
+            "thresholdsStyle": {
+              "mode": "line"
             }
           },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "reth_base_builder_validity_predicate_eval_duration_per_block{job=\"l2_builder\",quantile=\"$quantile\"}",
-              "legendFormat": "initial · p$quantile",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "reth_base_builder_validity_predicate_rescan_duration{job=\"l2_builder\",quantile=\"$quantile\"} or on() (0 * max(up{job=\"l2_builder\"}))",
-              "legendFormat": "rescan · p$quantile",
-              "range": true,
-              "refId": "B"
-            }
-          ],
-          "title": "Predicate Latency",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "description": "Mean account and storage reads for builds with predicate activity. These summaries intentionally omit builds with no predicate reads; widening total-versus-unique lines expose repeated state access.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 15,
-                "lineWidth": 2,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                }
-              },
-              "decimals": 2,
-              "mappings": [],
-              "unit": "short"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 10
-          },
-          "id": 16,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "sum(rate(reth_base_builder_predicate_accounts_loaded_total_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_accounts_loaded_total_count{job=\"l2_builder\"}[$window]))",
-              "legendFormat": "accounts · total",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "sum(rate(reth_base_builder_predicate_accounts_loaded_unique_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_accounts_loaded_unique_count{job=\"l2_builder\"}[$window]))",
-              "legendFormat": "accounts · unique",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "sum(rate(reth_base_builder_predicate_slots_loaded_total_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_slots_loaded_total_count{job=\"l2_builder\"}[$window]))",
-              "legendFormat": "slots · total",
-              "range": true,
-              "refId": "C"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "sum(rate(reth_base_builder_predicate_slots_loaded_unique_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_slots_loaded_unique_count{job=\"l2_builder\"}[$window]))",
-              "legendFormat": "slots · unique",
-              "range": true,
-              "refId": "D"
-            }
-          ],
-          "title": "Predicate State Reads per Active Build",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "description": "Share of supported primary-scan validity candidates that the builder evaluated instead of deferring after exhausting its predicate budget. Weighted coverage works with existing builders; the selected per-build quantile appears with the new instrumentation. Rescans and unsupported Flashblock-index predicates are excluded.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 20,
-                "lineWidth": 2,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "line"
-                }
-              },
-              "decimals": 2,
-              "mappings": [],
-              "max": 100,
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "#F2495C",
-                    "value": null
-                  },
-                  {
-                    "color": "#F2B84B",
-                    "value": 95
-                  },
-                  {
-                    "color": "#3BD671",
-                    "value": 99
-                  }
-                ]
-              },
-              "unit": "percent"
-            },
-            "overrides": [
+          "decimals": 4,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
               {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "/weighted/i"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "#5794F2",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
+                "color": "#3BD671",
+                "value": null
               },
               {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "/per-build/i"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "#B877D9",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
+                "color": "#F2B84B",
+                "value": 0.05
+              },
+              {
+                "color": "#F2495C",
+                "value": 0.15
               }
             ]
           },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 0,
-            "y": 18
-          },
-          "id": 35,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "min"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "asc"
-            }
-          },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "100 * sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=~\"matched|not_satisfied|expired|read_error\"}[$window])) / (sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=~\"matched|not_satisfied|expired|read_error\"}[$window])) + (sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=\"budget_exhausted\"}[$window])) or vector(0)))",
-              "legendFormat": "weighted coverage",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "100 * reth_base_builder_validity_predicate_evaluation_coverage_per_build{job=\"l2_builder\",quantile=\"$quantile\"}",
-              "legendFormat": "per-build · p$quantile",
-              "range": true,
-              "refId": "B"
-            }
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
           ],
-          "title": "Predicate Evaluation Coverage",
-          "type": "timeseries"
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "10.4.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "reth_base_builder_validity_predicate_eval_duration_per_block{job=\"l2_builder\",quantile=\"$quantile\"}",
+          "legendFormat": "initial \u00b7 p$quantile",
+          "range": true,
+          "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "description": "Raw supported primary-scan validity candidate counts per build. New builders show the selected per-build quantile; older builders fall back to the window mean derived from outcome counters. Any deferred value above zero means the 10 ms predicate-evaluation cutoff blocked work.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "bars",
-                "fillOpacity": 35,
-                "lineWidth": 1,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                }
-              },
-              "decimals": 2,
-              "mappings": [],
-              "min": 0,
-              "unit": "short"
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "/evaluated/i"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "#3BD671",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "/deferred/i"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "#F2495C",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              }
-            ]
+          "editorMode": "code",
+          "expr": "reth_base_builder_validity_predicate_rescan_duration{job=\"l2_builder\",quantile=\"$quantile\"} or on() (0 * max(up{job=\"l2_builder\"}))",
+          "legendFormat": "rescan \u00b7 p$quantile",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Predicate Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Mean account and storage reads for builds with predicate activity. These summaries intentionally omit builds with no predicate reads; widening total-versus-unique lines expose repeated state access.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
           },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 8,
-            "y": 18
-          },
-          "id": 36,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
             }
           },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "reth_base_builder_validity_predicate_candidates_evaluated_per_build{job=\"l2_builder\",quantile=\"$quantile\"} or on() (sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=~\"matched|not_satisfied|expired|read_error\"}[$window])) / sum(rate(reth_base_builder_total_block_built_duration_count{job=\"l2_builder\"}[$window])))",
-              "legendFormat": "evaluated · p$quantile / mean fallback",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "reth_base_builder_validity_predicate_candidates_deferred_per_build{job=\"l2_builder\",quantile=\"$quantile\"} or on() ((sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=\"budget_exhausted\"}[$window])) or vector(0)) / sum(rate(reth_base_builder_total_block_built_duration_count{job=\"l2_builder\"}[$window])))",
-              "legendFormat": "deferred · p$quantile / mean fallback",
-              "range": true,
-              "refId": "B"
-            }
+          "decimals": 2,
+          "mappings": [],
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
           ],
-          "title": "Validity Candidates per Build",
-          "type": "timeseries"
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "10.4.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(reth_base_builder_predicate_accounts_loaded_total_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_accounts_loaded_total_count{job=\"l2_builder\"}[$window]))",
+          "legendFormat": "accounts \u00b7 total",
+          "range": true,
+          "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "description": "Exact percentage of completed builds that deferred primary or rescan work after exhausting the predicate budget, available with the new per-build instrumentation. The binary fallback is 100% whenever an older builder reports any primary candidate deferred in the selected window, identifying when cutoff pressure occurred without claiming a frequency.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 25,
-                "lineWidth": 2,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "area"
-                }
-              },
-              "decimals": 2,
-              "mappings": [],
-              "max": 100,
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "#3BD671",
-                    "value": null
-                  },
-                  {
-                    "color": "#F2B84B",
-                    "value": 0.01
-                  },
-                  {
-                    "color": "#F2495C",
-                    "value": 1
-                  }
-                ]
-              },
-              "unit": "percent"
+          "editorMode": "code",
+          "expr": "sum(rate(reth_base_builder_predicate_accounts_loaded_unique_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_accounts_loaded_unique_count{job=\"l2_builder\"}[$window]))",
+          "legendFormat": "accounts \u00b7 unique",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(reth_base_builder_predicate_slots_loaded_total_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_slots_loaded_total_count{job=\"l2_builder\"}[$window]))",
+          "legendFormat": "slots \u00b7 total",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(reth_base_builder_predicate_slots_loaded_unique_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_slots_loaded_unique_count{job=\"l2_builder\"}[$window]))",
+          "legendFormat": "slots \u00b7 unique",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Predicate State Reads per Active Build",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Share of supported primary-scan validity candidates that the builder evaluated instead of deferring after exhausting its predicate budget. Weighted coverage works with existing builders; the selected per-build quantile appears with the new instrumentation. Rescans and unsupported block-index predicates are excluded.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
             },
-            "overrides": [
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
               {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "/exact/i"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "#F2495C",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
+                "color": "#F2495C",
+                "value": null
               },
               {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "/observed/i"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "fixedColor": "#F2B84B",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
+                "color": "#F2B84B",
+                "value": 95
+              },
+              {
+                "color": "#3BD671",
+                "value": 99
               }
             ]
           },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 16,
-            "y": 18
-          },
-          "id": 37,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "100 * (sum(rate(reth_base_builder_validity_predicate_eval_cutoff_builds_total{job=\"l2_builder\"}[$window])) or vector(0)) / sum(rate(reth_base_builder_validity_predicate_candidates_evaluated_per_build_count{job=\"l2_builder\"}[$window]))",
-              "legendFormat": "cutoff builds · exact",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "100 * ((sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=\"budget_exhausted\"}[$window])) or vector(0)) > bool 0)",
-              "legendFormat": "cutoff observed · window",
-              "range": true,
-              "refId": "B"
-            }
-          ],
-          "title": "Predicate Cutoff Pressure",
-          "type": "timeseries"
+          "unit": "percent"
         },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/weighted/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5794F2",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/per-build/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#B877D9",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 18
+      },
+      "id": 35,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "asc"
+        }
+      },
+      "pluginVersion": "10.4.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "100 * sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=~\"matched|not_satisfied|expired|read_error\"}[$window])) / (sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=~\"matched|not_satisfied|expired|read_error\"}[$window])) + (sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=\"budget_exhausted\"}[$window])) or vector(0)))",
+          "legendFormat": "weighted coverage",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "100 * reth_base_builder_validity_predicate_evaluation_coverage_per_build{job=\"l2_builder\",quantile=\"$quantile\"}",
+          "legendFormat": "per-build \u00b7 p$quantile",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Predicate Evaluation Coverage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Raw supported primary-scan validity candidate counts per build. New builders show the selected per-build quantile; older builders fall back to the window mean derived from outcome counters. Any deferred value above zero means the 10 ms predicate-evaluation cutoff blocked work.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 35,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/evaluated/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3BD671",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/deferred/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F2495C",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 18
+      },
+      "id": 36,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "10.4.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "reth_base_builder_validity_predicate_candidates_evaluated_per_build{job=\"l2_builder\",quantile=\"$quantile\"} or on() (sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=~\"matched|not_satisfied|expired|read_error\"}[$window])) / sum(rate(reth_base_builder_total_block_built_duration_count{job=\"l2_builder\"}[$window])))",
+          "legendFormat": "evaluated \u00b7 p$quantile / mean fallback",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "reth_base_builder_validity_predicate_candidates_deferred_per_build{job=\"l2_builder\",quantile=\"$quantile\"} or on() ((sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=\"budget_exhausted\"}[$window])) or vector(0)) / sum(rate(reth_base_builder_total_block_built_duration_count{job=\"l2_builder\"}[$window])))",
+          "legendFormat": "deferred \u00b7 p$quantile / mean fallback",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Validity Candidates per Build",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Exact percentage of completed builds that deferred primary or rescan work after exhausting the predicate budget, available with the new per-build instrumentation. The binary fallback is 100% whenever an older builder reports any primary candidate deferred in the selected window, identifying when cutoff pressure occurred without claiming a frequency.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "area"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3BD671",
+                "value": null
+              },
+              {
+                "color": "#F2B84B",
+                "value": 0.01
+              },
+              {
+                "color": "#F2495C",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/exact/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F2495C",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/observed/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F2B84B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 18
+      },
+      "id": 37,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "10.4.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "100 * (sum(rate(reth_base_builder_validity_predicate_eval_cutoff_builds_total{job=\"l2_builder\"}[$window])) or vector(0)) / sum(rate(reth_base_builder_validity_predicate_candidates_evaluated_per_build_count{job=\"l2_builder\"}[$window]))",
+          "legendFormat": "cutoff builds \u00b7 exact",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "100 * ((sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=\"budget_exhausted\"}[$window])) or vector(0)) > bool 0)",
+          "legendFormat": "cutoff observed \u00b7 window",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Predicate Cutoff Pressure",
+      "type": "timeseries"
+    },
     {
       "datasource": {
         "type": "prometheus",
@@ -1954,7 +1954,7 @@
           },
           "editorMode": "code",
           "expr": "sum(rate(reth_base_builder_predicate_bucket_wakeups_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_bucket_wakeups_count{job=\"l2_builder\"}[$window]))",
-          "legendFormat": "bucket wakeups · mean/build",
+          "legendFormat": "bucket wakeups \u00b7 mean/build",
           "range": true,
           "refId": "A"
         },
@@ -1965,7 +1965,7 @@
           },
           "editorMode": "code",
           "expr": "sum(rate(reth_base_builder_predicate_bucket_depth_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_bucket_depth_count{job=\"l2_builder\"}[$window]))",
-          "legendFormat": "sampled bucket depth · mean",
+          "legendFormat": "sampled bucket depth \u00b7 mean",
           "range": true,
           "refId": "B"
         },
@@ -1976,7 +1976,7 @@
           },
           "editorMode": "code",
           "expr": "sum(rate(reth_base_builder_validity_predicate_evaluations_total{job=\"l2_builder\",outcome=~\"rescan_matched|rescan_not_satisfied|rescan_read_error|rescan_budget_exhausted\"}[$window]))",
-          "legendFormat": "rescan evaluations · rate",
+          "legendFormat": "rescan evaluations \u00b7 rate",
           "range": true,
           "refId": "C"
         }
@@ -2053,7 +2053,7 @@
               },
               "editorMode": "code",
               "expr": "sum by (job) (rate((reth_txpool_reader_txs_read{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))",
-              "legendFormat": "{{job}} · read",
+              "legendFormat": "{{job}} \u00b7 read",
               "range": true,
               "refId": "A"
             },
@@ -2064,7 +2064,7 @@
               },
               "editorMode": "code",
               "expr": "sum by (job) (rate((reth_txpool_reader_txs_sent{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))",
-              "legendFormat": "{{job}} · queued",
+              "legendFormat": "{{job}} \u00b7 queued",
               "range": true,
               "refId": "B"
             },
@@ -2075,7 +2075,7 @@
               },
               "editorMode": "code",
               "expr": "sum by (job) (rate((reth_txpool_forwarder_txs_forwarded{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))",
-              "legendFormat": "{{job}} · forwarded",
+              "legendFormat": "{{job}} \u00b7 forwarded",
               "range": true,
               "refId": "C"
             },
@@ -2086,12 +2086,12 @@
               },
               "editorMode": "code",
               "expr": "sum by (job) (rate((reth_txpool_forwarder_num_tx_rejected_in_batch{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))",
-              "legendFormat": "{{job}} · builder rejected",
+              "legendFormat": "{{job}} \u00b7 builder rejected",
               "range": true,
               "refId": "D"
             }
           ],
-          "title": "Node Intake → Builder",
+          "title": "Node Intake \u2192 Builder",
           "type": "timeseries"
         },
         {
@@ -2153,7 +2153,7 @@
               },
               "editorMode": "code",
               "expr": "max by (job, builder_url) (reth_txpool_forwarder_queue_size{job=~\"l2_client|l2_base_rpc\"})",
-              "legendFormat": "{{job}} · queue",
+              "legendFormat": "{{job}} \u00b7 queue",
               "range": true,
               "refId": "A"
             },
@@ -2164,7 +2164,7 @@
               },
               "editorMode": "code",
               "expr": "max by (job, builder_url) (reth_txpool_forwarder_buffer_size{job=~\"l2_client|l2_base_rpc\"})",
-              "legendFormat": "{{job}} · buffer",
+              "legendFormat": "{{job}} \u00b7 buffer",
               "range": true,
               "refId": "B"
             }
@@ -2232,7 +2232,7 @@
               },
               "editorMode": "code",
               "expr": "(sum by (job, reason) (rate((reth_txpool_forwarder_rpc_errors{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))) or on() label_replace(label_replace(0 * sum(up{job=~\"l2_client|l2_base_rpc\"}), \"job\", \"all\", \"\", \"\"), \"reason\", \"none\", \"\", \"\")",
-              "legendFormat": "{{job}} · {{reason}}",
+              "legendFormat": "{{job}} \u00b7 {{reason}}",
               "range": true,
               "refId": "A"
             },
@@ -2243,7 +2243,7 @@
               },
               "editorMode": "code",
               "expr": "sum by (job) (rate((reth_txpool_forwarder_num_tx_rejected_in_batch{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))",
-              "legendFormat": "{{job}} · builder item rejection",
+              "legendFormat": "{{job}} \u00b7 builder item rejection",
               "range": true,
               "refId": "B"
             }
@@ -2310,7 +2310,7 @@
               },
               "editorMode": "code",
               "expr": "reth_txpool_forwarder_rpc_latency{job=~\"l2_client|l2_base_rpc\",quantile=\"$quantile\"}",
-              "legendFormat": "{{job}} · forward · p$quantile",
+              "legendFormat": "{{job}} \u00b7 forward \u00b7 p$quantile",
               "range": true,
               "refId": "A"
             },
@@ -2321,7 +2321,7 @@
               },
               "editorMode": "code",
               "expr": "reth_txpool_validator_validate_seconds{job=~\"l2_builder|l2_client|l2_base_rpc\",quantile=\"$quantile\"}",
-              "legendFormat": "{{job}} · {{kind}} validate · p$quantile",
+              "legendFormat": "{{job}} \u00b7 {{kind}} validate \u00b7 p$quantile",
               "range": true,
               "refId": "B"
             }
@@ -2330,7 +2330,7 @@
           "type": "timeseries"
         }
       ],
-      "title": "Forwarding detail · Does node demand reach the builder without pressure or retry loss?",
+      "title": "Forwarding detail \u00b7 Does node demand reach the builder without pressure or retry loss?",
       "type": "row"
     },
     {
@@ -2422,12 +2422,12 @@
               },
               "editorMode": "code",
               "expr": "reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"$quantile\"} / 0.2 * 100",
-              "legendFormat": "budget used · p$quantile",
+              "legendFormat": "budget used \u00b7 p$quantile",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Build Budget Used · p$quantile",
+          "title": "Build Budget Used \u00b7 p$quantile",
           "type": "timeseries"
         },
         {
@@ -2576,7 +2576,7 @@
               },
               "editorMode": "code",
               "expr": "reth_base_builder_total_block_built_duration{job=\"l2_builder\",quantile=\"$quantile\"}",
-              "legendFormat": "total build · p$quantile",
+              "legendFormat": "total build \u00b7 p$quantile",
               "range": true,
               "refId": "A"
             },
@@ -2587,7 +2587,7 @@
               },
               "editorMode": "code",
               "expr": "reth_base_builder_state_root_calculation_duration{job=\"l2_builder\",quantile=\"$quantile\"}",
-              "legendFormat": "state root · p$quantile",
+              "legendFormat": "state root \u00b7 p$quantile",
               "range": true,
               "refId": "B"
             },
@@ -2598,12 +2598,12 @@
               },
               "editorMode": "code",
               "expr": "reth_base_builder_validity_predicate_eval_duration_per_block{job=\"l2_builder\",quantile=\"$quantile\"}",
-              "legendFormat": "predicate eval · p$quantile",
+              "legendFormat": "predicate eval \u00b7 p$quantile",
               "range": true,
               "refId": "C"
             }
           ],
-          "title": "Block Construction Critical Path · p$quantile",
+          "title": "Block Construction Critical Path \u00b7 p$quantile",
           "type": "timeseries"
         },
         {
@@ -2716,7 +2716,7 @@
           "type": "timeseries"
         }
       ],
-      "title": "Block construction · Is the 200 ms builder on time and healthy?",
+      "title": "Block construction \u00b7 Is the 200 ms builder on time and healthy?",
       "type": "row"
     },
     {
@@ -2974,7 +2974,7 @@
               },
               "editorMode": "code",
               "expr": "(sum by (dimension, scope) (rate(reth_base_payload_resource_metering_limit_exceeded_total{job=\"l2_builder\"}[$window]))) or on() label_replace(label_replace(0 * sum(up{job=\"l2_builder\"}), \"dimension\", \"none\", \"\", \"\"), \"scope\", \"none\", \"\", \"\")",
-              "legendFormat": "would exceed · {{scope}} · {{dimension}}",
+              "legendFormat": "would exceed \u00b7 {{scope}} \u00b7 {{dimension}}",
               "range": true,
               "refId": "A"
             },
@@ -2985,7 +2985,7 @@
               },
               "editorMode": "code",
               "expr": "(sum by (dimension, scope) (rate(reth_base_payload_resource_metering_throttled_total{job=\"l2_builder\"}[$window]))) or on() label_replace(label_replace(0 * sum(up{job=\"l2_builder\"}), \"dimension\", \"none\", \"\", \"\"), \"scope\", \"none\", \"\", \"\")",
-              "legendFormat": "throttled · {{scope}} · {{dimension}}",
+              "legendFormat": "throttled \u00b7 {{scope}} \u00b7 {{dimension}}",
               "range": true,
               "refId": "B"
             }
@@ -3017,7 +3017,7 @@
               },
               "decimals": 1,
               "mappings": [],
-              "unit": "µs"
+              "unit": "\u00b5s"
             },
             "overrides": []
           },
@@ -3052,7 +3052,7 @@
               },
               "editorMode": "code",
               "expr": "reth_base_builder_tx_predicted_execution_time_us{job=\"l2_builder\",quantile=\"$quantile\"} or on() (0 * max(up{job=\"l2_builder\"}))",
-              "legendFormat": "predicted · p$quantile",
+              "legendFormat": "predicted \u00b7 p$quantile",
               "range": true,
               "refId": "A"
             },
@@ -3063,7 +3063,7 @@
               },
               "editorMode": "code",
               "expr": "reth_base_builder_execution_time_prediction_error_us{job=\"l2_builder\",quantile=\"$quantile\"} or on() (0 * max(up{job=\"l2_builder\"}))",
-              "legendFormat": "prediction error · p$quantile",
+              "legendFormat": "prediction error \u00b7 p$quantile",
               "range": true,
               "refId": "B"
             },
@@ -3074,276 +3074,16 @@
               },
               "editorMode": "code",
               "expr": "reth_base_builder_unmetered_tx_actual_execution_time_us{job=\"l2_builder\",quantile=\"$quantile\"} or on() (0 * max(up{job=\"l2_builder\"}))",
-              "legendFormat": "unmetered actual · p$quantile",
+              "legendFormat": "unmetered actual \u00b7 p$quantile",
               "range": true,
               "refId": "C"
             }
           ],
-          "title": "Execution Metering Prediction · p$quantile",
+          "title": "Execution Metering Prediction \u00b7 p$quantile",
           "type": "timeseries"
         }
       ],
-      "title": "Optional external metering & resource limits · Is the builder informed and resource-safe?",
-      "type": "row"
-    },
-    {
-      "collapsed": true,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 60
-      },
-      "id": 107,
-      "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "description": "Messages received from the legacy pre-Denim Flashblock stream by consumer node. Near-zero traffic is expected after the payload-builder cutover; use this row only for compatibility-mode diagnosis.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 15,
-                "lineWidth": 2,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                }
-              },
-              "decimals": 2,
-              "mappings": [],
-              "unit": "cps"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 0,
-            "y": 55
-          },
-          "id": 29,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "sum by (job) (rate((reth_reth_flashblocks_upstream_messages{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))",
-              "legendFormat": "{{job}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Legacy Flashblock Receive Rate",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "description": "Legacy stream errors, processing failures, unexpected order, reconnects, and stale drops. Explicit zero baselines mean no event while the consumer targets are healthy.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "fixedColor": "#F2495C",
-                "mode": "fixed"
-              },
-              "custom": {
-                "drawStyle": "bars",
-                "fillOpacity": 45,
-                "lineWidth": 1,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                }
-              },
-              "decimals": 3,
-              "mappings": [],
-              "unit": "cps"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 8,
-            "y": 55
-          },
-          "id": 30,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "(sum by (job) (rate((reth_reth_flashblocks_upstream_errors{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))) or on() label_replace(0 * sum(up{job=~\"l2_client|l2_base_rpc\"}), \"job\", \"all\", \"\", \"\")",
-              "legendFormat": "{{job}} · upstream error",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "(sum by (job) (rate((reth_reth_flashblocks_block_processing_error{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))) or on() label_replace(0 * sum(up{job=~\"l2_client|l2_base_rpc\"}), \"job\", \"all\", \"\", \"\")",
-              "legendFormat": "{{job}} · processing error",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "(sum by (job) (rate((reth_reth_flashblocks_unexpected_block_order{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))) or on() label_replace(0 * sum(up{job=~\"l2_client|l2_base_rpc\"}), \"job\", \"all\", \"\", \"\")",
-              "legendFormat": "{{job}} · unexpected order",
-              "range": true,
-              "refId": "C"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "(sum by (job) (rate((reth_reth_flashblocks_reconnect_attempts{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))) or on() label_replace(0 * sum(up{job=~\"l2_client|l2_base_rpc\"}), \"job\", \"all\", \"\", \"\")",
-              "legendFormat": "{{job}} · reconnect",
-              "range": true,
-              "refId": "D"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "(sum by (job) (rate((reth_reth_flashblocks_pending_drop_stale{job=~\"l2_client|l2_base_rpc\"} * 1)[$window:]))) or on() label_replace(0 * sum(up{job=~\"l2_client|l2_base_rpc\"}), \"job\", \"all\", \"\", \"\")",
-              "legendFormat": "{{job}} · stale drop",
-              "range": true,
-              "refId": "E"
-            }
-          ],
-          "title": "Stream Integrity Events",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "description": "Selected local summary quantile for legacy Flashblock processing. Zero is expected when the pre-Denim stream is inactive; keep each node separate because exporter summary quantiles are not aggregatable.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 15,
-                "lineWidth": 2,
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                }
-              },
-              "decimals": 4,
-              "mappings": [],
-              "unit": "s"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 16,
-            "y": 55
-          },
-          "id": 31,
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull",
-                "max"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "10.4.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "PBFA97CFB590B2093"
-              },
-              "editorMode": "code",
-              "expr": "reth_reth_flashblocks_block_processing_duration{job=~\"l2_client|l2_base_rpc\",quantile=\"$quantile\"}",
-              "legendFormat": "{{job}} · p$quantile",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Processing Latency · p$quantile",
-          "type": "timeseries"
-        }
-      ],
-      "title": "Legacy Flashblock compatibility · Is the pre-Denim consumer stream healthy when active?",
+      "title": "Optional external metering & resource limits \u00b7 Is the builder informed and resource-safe?",
       "type": "row"
     },
     {
@@ -3515,7 +3255,7 @@
               },
               "editorMode": "code",
               "expr": "tips_ingress_rpc_rpc_latency{job=\"tips_ingress\",quantile=\"$quantile\"}",
-              "legendFormat": "{{rpc}} · p$quantile",
+              "legendFormat": "{{rpc}} \u00b7 p$quantile",
               "range": true,
               "refId": "A"
             },
@@ -3526,12 +3266,12 @@
               },
               "editorMode": "code",
               "expr": "tips_ingress_rpc_send_raw_transaction_duration{job=\"tips_ingress\",quantile=\"$quantile\"}",
-              "legendFormat": "sendRawTransaction · p$quantile",
+              "legendFormat": "sendRawTransaction \u00b7 p$quantile",
               "range": true,
               "refId": "B"
             }
           ],
-          "title": "Ingress RPC Latency · p$quantile",
+          "title": "Ingress RPC Latency \u00b7 p$quantile",
           "type": "timeseries"
         },
         {
@@ -3635,7 +3375,7 @@
           "type": "timeseries"
         }
       ],
-      "title": "Optional Tips ingress · Are bundles simulated, metered, and delivered on time?",
+      "title": "Optional Tips ingress \u00b7 Are bundles simulated, metered, and delivered on time?",
       "type": "row"
     }
   ],
@@ -3645,8 +3385,7 @@
     "devnet",
     "mev",
     "validity",
-    "builder",
-    "flashblocks"
+    "builder"
   ],
   "templating": {
     "list": [

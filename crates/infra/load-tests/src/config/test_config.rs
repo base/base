@@ -37,9 +37,6 @@ pub struct TestConfig {
     /// Optional HTTP JSON-RPC endpoints whose txpools should be cleared before a test.
     #[serde(default)]
     pub txpool_nodes: Vec<Url>,
-    /// Optional legacy builder flashblocks WebSocket endpoint.
-    #[serde(default)]
-    pub flashblocks_ws: Option<Url>,
 
     /// Mnemonic phrase for deriving sender accounts.
     /// If not provided, accounts are generated from seed.
@@ -161,7 +158,7 @@ impl Default for TestConfig {
             ],
             query_rpc: None,
             txpool_nodes: Vec::new(),
-            flashblocks_ws: None,
+
             mnemonic: None,
             funding_amount: "10000000000000000".to_string(),
             sender_count: 100,
@@ -194,7 +191,6 @@ impl fmt::Debug for TestConfig {
             .field("transaction_submission_rpcs", &self.transaction_submission_rpcs)
             .field("query_rpc", &self.query_rpc)
             .field("txpool_nodes", &self.txpool_nodes)
-            .field("flashblocks_ws", &self.flashblocks_ws)
             .field("mnemonic", &self.mnemonic.as_ref().map(|_| "[REDACTED]"))
             .field("funding_amount", &self.funding_amount)
             .field("sender_count", &self.sender_count)
@@ -459,10 +455,6 @@ impl TestConfig {
             Self::validate_http_url(url, "txpool_nodes")?;
         }
 
-        if let Some(flashblocks_ws) = &self.flashblocks_ws {
-            Self::validate_ws_url(flashblocks_ws, "flashblocks_ws")?;
-        }
-
         if !(0.0..=1.0).contains(&self.fresh_recipient_ratio) {
             return Err(BaselineError::Config(
                 "fresh_recipient_ratio must be between 0.0 and 1.0".into(),
@@ -495,21 +487,6 @@ impl TestConfig {
             ))),
             scheme => Err(BaselineError::Config(format!(
                 "{field_name} has invalid scheme '{scheme}', expected 'http://' or 'https://'"
-            ))),
-        }
-    }
-
-    fn validate_ws_url(url: &Url, field_name: &str) -> Result<()> {
-        match url.scheme() {
-            "ws" | "wss" => Ok(()),
-            "http" => Err(BaselineError::Config(format!(
-                "{field_name} uses 'http://' scheme but requires 'ws://' for WebSocket connections"
-            ))),
-            "https" => Err(BaselineError::Config(format!(
-                "{field_name} uses 'https://' scheme but requires 'wss://' for secure WebSocket connections"
-            ))),
-            scheme => Err(BaselineError::Config(format!(
-                "{field_name} has invalid scheme '{scheme}', expected 'ws://' or 'wss://'"
             ))),
         }
     }
@@ -686,7 +663,7 @@ impl TestConfig {
                 .map(|max| max as usize),
             batch_size: self.batch_size as usize,
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
-            flashblocks_ws: self.flashblocks_ws.clone(),
+
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
             validity_predicates: self.validity.to_templates()?,
@@ -847,7 +824,6 @@ mod tests {
     fn parse_minimal_config() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.primary_submission_rpc().unwrap().host_str(), Some("localhost"));
@@ -876,7 +852,6 @@ block_time: 0s
 transaction_submission_rpcs:
   - http://localhost:7545
   - http://localhost:7546
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         let load_config = config.to_load_config(Some(1337)).unwrap();
@@ -892,7 +867,6 @@ transaction_submission_rpcs: http://localhost:8545
 txpool_nodes:
   - http://localhost:7545
   - http://localhost:10545
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         let load_config = config.to_load_config(Some(1337)).unwrap();
@@ -905,7 +879,6 @@ flashblocks_ws: ws://localhost:7111
     fn parse_full_config() {
         let yaml = r#"
 transaction_submission_rpcs: https://sepolia.base.org
-flashblocks_ws: wss://sepolia.flashblocks.base.org/ws
 mnemonic: "test test test test test test test test test test test junk"
 funding_amount: "500000000000000000"
 sender_count: 20
@@ -937,7 +910,6 @@ transactions:
     fn parse_duration_formats() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 duration: "30s"
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
@@ -945,7 +917,6 @@ duration: "30s"
 
         let yaml2 = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 duration: "1h 30m"
 "#;
         let config2 = TestConfig::from_yaml(yaml2).unwrap();
@@ -978,7 +949,6 @@ measurement_blocks: 0
     fn parse_precompile_targets() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 funder_key: "0x1234"
 transactions:
   - weight: 10
@@ -1035,7 +1005,6 @@ transactions:
     fn parse_precompile_with_iterations() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 funder_key: "0x1234"
 looper_contract: "0x1234567890123456789012345678901234567890"
 transactions:
@@ -1062,7 +1031,6 @@ transactions:
     fn parse_storage_config() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 100
     type: storage
@@ -1101,7 +1069,6 @@ transactions:
     fn parse_storage_config_defaults_slots_per_tx() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 100
     type: storage
@@ -1129,7 +1096,6 @@ transactions:
             let yaml = format!(
                 r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 100
     type: storage
@@ -1167,7 +1133,6 @@ transactions:
     fn storage_config_rejects_invalid_contract_address() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 100
     type: storage
@@ -1183,22 +1148,10 @@ transactions:
     }
 
     #[test]
-    fn rejects_http_scheme_for_flashblocks_ws() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: http://localhost:7111
-"#;
-        let err = TestConfig::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("flashblocks_ws"));
-        assert!(err.to_string().contains("ws://"));
-    }
-
-    #[test]
     fn query_rpc_accepts_http() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
 query_rpc: http://localhost:8546
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.query_rpc.as_ref().unwrap().scheme(), "http");
@@ -1208,7 +1161,6 @@ flashblocks_ws: ws://localhost:7111
     fn fresh_recipient_ratio_defaults_to_zero() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.fresh_recipient_ratio, 0.0);
@@ -1219,7 +1171,6 @@ flashblocks_ws: ws://localhost:7111
     fn fresh_recipient_ratio_explicit_one_round_trips() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 fresh_recipient_ratio: 1.0
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
@@ -1232,7 +1183,6 @@ fresh_recipient_ratio: 1.0
     fn fresh_recipient_ratio_explicit_half_round_trips() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 fresh_recipient_ratio: 0.5
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
@@ -1244,7 +1194,6 @@ fresh_recipient_ratio: 0.5
     fn fresh_recipient_ratio_rejects_values_above_one() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 fresh_recipient_ratio: 1.1
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
@@ -1256,7 +1205,6 @@ fresh_recipient_ratio: 1.1
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
 query_rpc: wss://localhost:8546
-flashblocks_ws: wss://localhost:7111
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("query_rpc"));
@@ -1269,7 +1217,6 @@ flashblocks_ws: wss://localhost:7111
 transaction_submission_rpcs: http://localhost:8545
 txpool_nodes:
   - ws://localhost:7546
-flashblocks_ws: ws://localhost:7111
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("txpool_nodes"));
@@ -1277,49 +1224,9 @@ flashblocks_ws: ws://localhost:7111
     }
 
     #[test]
-    fn flashblocks_ws_accepts_wss() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: wss://localhost:7111
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.flashblocks_ws.as_ref().unwrap().scheme(), "wss");
-    }
-
-    #[test]
-    fn flashblocks_ws_is_optional() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        assert!(config.flashblocks_ws.is_none());
-        assert!(config.to_load_config(Some(1337)).unwrap().flashblocks_ws.is_none());
-    }
-
-    #[test]
-    fn flashblocks_ws_is_preserved_for_runtime() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-
-        assert_eq!(
-            config
-                .to_load_config(Some(1337))
-                .unwrap()
-                .flashblocks_ws
-                .as_ref()
-                .map(url::Url::as_str),
-            Some("ws://localhost:7111/")
-        );
-    }
-
-    #[test]
     fn parse_uniswap_v3_config() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 10
     type: uniswap_v3
@@ -1342,7 +1249,6 @@ transactions:
     fn validity_defaults_to_disabled() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.validity.ratio, 0.0);
@@ -1356,7 +1262,6 @@ flashblocks_ws: ws://localhost:7111
     fn validity_config_round_trips_predicates() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 validity:
   ratio: 0.25
   predicates:
@@ -1404,7 +1309,6 @@ validity:
     fn validity_rejects_ratio_above_one() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 validity:
   ratio: 1.5
   predicates:
@@ -1420,7 +1324,6 @@ validity:
     fn validity_rejects_enabled_without_predicates() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 validity:
   ratio: 0.5
 "#;
@@ -1490,7 +1393,6 @@ validity:
     fn parse_aerodrome_cl_config() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 10
     type: aerodrome_cl

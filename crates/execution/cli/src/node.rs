@@ -369,7 +369,6 @@ impl ExecutionNodeLaunchConfig {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use url::Url;
 
     use super::*;
 
@@ -398,20 +397,10 @@ mod tests {
 
     #[test]
     fn standard_execution_args_keep_base_extension_args_separate() {
-        let args = CommandParser::<ExecutionNodeArgs>::parse_from([
-            "reth",
-            "--port",
-            "30333",
-            "--flashblocks-url",
-            "wss://example.com/ws",
-        ])
-        .args;
+        let args = CommandParser::<ExecutionNodeArgs>::parse_from(["reth", "--port", "30333"]).args;
 
         assert_eq!(args.node.network.port, 30333);
-        assert_eq!(
-            args.standard.flashblocks_url.as_ref().map(Url::as_str),
-            Some("wss://example.com/ws")
-        );
+
         assert!(!args.metering.enable_metering);
     }
 

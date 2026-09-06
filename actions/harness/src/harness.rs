@@ -296,10 +296,10 @@ impl ActionTestHarness {
         )
     }
 
-    /// Create an [`L2Sequencer`] backed by the production Flashblocks builder.
+    /// Create an [`L2Sequencer`] backed by the production full-block builder.
     ///
     /// Identical wiring to [`create_l2_sequencer`](Self::create_l2_sequencer), but block production
-    /// runs through an in-process [`BuilderBackedEngineClient`] (real `FlashblocksServiceBuilder` +
+    /// runs through an in-process [`BuilderBackedEngineClient`] (real `BlockServiceBuilder` +
     /// transaction pool) driven by the production `SequencerActor` over the Engine API. Async
     /// because launching the in-process builder node is async.
     ///

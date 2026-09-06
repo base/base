@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_with_real_data() {
-        // Test against real flashblocks payload data structure
+        // Test against real blocks payload data structure
         let payload = r#"
   {
     "payload_id": "0x0307de8ff1df8ed8",

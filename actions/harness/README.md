@@ -19,10 +19,10 @@ production components:
   selector and stateful attributes builder.
 - The engine client executes blocks through the production `BasePayloadBuilder`
   against a temporary Reth database.
-- The sequencer can optionally run the **production Flashblocks builder**
+- The sequencer can optionally run the **production full-block builder**
   in-process (`BuilderBackedEngineClient`, launched via
   `ActionTestHarness::create_l2_sequencer_with_builder`). In this mode the
-  production `SequencerActor` drives a real `FlashblocksServiceBuilder` + real
+  production `SequencerActor` drives a real `BlockServiceBuilder` + real
   transaction pool over an auth-IPC Engine API, so tests exercise real pool
   transaction selection and other block-construction
   policy that the default in-memory engine never reaches.
@@ -44,7 +44,7 @@ store, P2P transport, conductor behavior, and finality/reset orchestration.
 | Batcher | `BatchDriver`, `BatchEncoder`, channel manager behavior, Single-batch encoding, signed calldata/blob tx construction | `L1MinerTxManager`, protocol-level Span fixtures for derivation coverage, in-memory L2/L1 event channels, synthetic inclusion receipts | Submission does not use a real RPC tx manager, replacement, fee bumping, or production receipt polling against an RPC provider |
 | Sequencer | L1 origin selection, attributes building, payload construction, real signed L2 user txs | Test actor lifecycle and manual stepping | No real node service loop, txpool/RPC ingress, engine transport, or production unsafe block scheduling |
 | Engine (default) | `BasePayloadBuilder`, Base EVM config, temporary Reth database, state-root comparison | `ActionEngineClient` implements only the Engine API behavior tests need | Simplified payload statuses, forkchoice handling, transaction pool, networking, persistence lifecycle, and Engine API edge cases |
-| Builder (opt-in) | Production `FlashblocksServiceBuilder` + real transaction pool driving a real in-process Reth node over auth IPC (`BuilderBackedEngineClient`); real pool selection, DA/gas limits, metering | `L2Sequencer<BuilderBackedEngineClient>` via `create_l2_sequencer_with_builder`; the production `SequencerActor` drives it, but transactions still arrive via harness injection rather than RPC ingress | Flashblock scheduling is wall-clock based, so pool-dependent tests use the wall-clock timestamp mode (anchor L1+L2 genesis near `now`, within `max_sequencer_drift`) and must land within the inserted-block timeout |
+| Builder (opt-in) | Production `BlockServiceBuilder` + real transaction pool driving a real in-process Reth node over auth IPC (`BuilderBackedEngineClient`); real pool selection, DA/gas limits, metering | `L2Sequencer<BuilderBackedEngineClient>` via `create_l2_sequencer_with_builder`; the production `SequencerActor` drives it, but transactions still arrive via harness injection rather than RPC ingress | Block scheduling is wall-clock based, so pool-dependent tests use the wall-clock timestamp mode (anchor L1+L2 genesis near `now`, within `max_sequencer_drift`) and must land within the inserted-block timeout |
 | Verifier and derivation | Real derivation pipeline, attributes queue, reset signals, payload application, `SafeDB` | `TestRollupNode` orchestration and manual L1 push/signals | Reset/finality/unsafe-head flow is test-scripted rather than driven by production driver loops and online providers |
 | P2P and unsafe gossip | Optional production unsafe-block signing formula | `SupervisedP2P` and `TestGossipTransport` are in-memory | No libp2p peer scoring, mesh behavior, networking, throttling, or gossip timing |
 | Conductor | Exercises high-level sequencing/follower roles | In-memory conductor control surface | No production service integration, RPC control plane, or multi-process failure modes |

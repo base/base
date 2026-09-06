@@ -1,5 +1,5 @@
 //! Standalone `eth_getTransactionCount` override that adds EIP-8130
-//! `nonce_key` support on nodes without flashblocks.
+//! `nonce_key` support on execution nodes.
 
 use alloy_eips::BlockId;
 use alloy_evm::EvmFactory;
@@ -27,9 +27,7 @@ use crate::{ChannelNonceReader, Eip8130CobaltGate, Eip8130GasEstimator};
 /// Eth API override trait that adds EIP-8130 `nonce_key` support to
 /// `eth_getTransactionCount`.
 ///
-/// Registered only on nodes where the flashblocks override is not
-/// registering, since flashblocks's override already extends the same
-/// method with `nonce_key` plus its own pending-state semantics.
+/// Installed on every execution node.
 #[rpc(server, namespace = "eth")]
 pub trait Eip8130EthApiOverride {
     /// Returns transaction count for an address.
@@ -40,9 +38,7 @@ pub trait Eip8130EthApiOverride {
     /// Nonce Manager precompile. `nonce_key == NONCE_KEY_MAX` returns
     /// `INVALID_PARAMS`.
     ///
-    /// No pending-flashblock state is consulted here; this override is for
-    /// nodes running without flashblocks. Use the flashblocks override if
-    /// pending-state semantics are required.
+    /// Uses the requested block state.
     #[method(name = "getTransactionCount")]
     async fn get_transaction_count(
         &self,
@@ -122,9 +118,7 @@ where
         }
 
         // Protocol nonce path. Standard reth resolution against
-        // `account.nonce` at the requested block. No flashblocks
-        // pending-state delta. This override only registers when
-        // flashblocks is disabled.
+        // `account.nonce` at the requested block.
         EthState::transaction_count(&self.eth_api, address, block_number).await.map_err(Into::into)
     }
 
@@ -155,8 +149,6 @@ where
         Eip8130CobaltGate::check(&self.eth_api, block_id)?;
         // This standalone override only receives state overrides (the
         // `eth_estimateGas` RPC signature carries no block overrides); the
-        // estimator still accepts the full `EvmOverrides` so the flashblocks
-        // path can thread its pending block env through.
         Eip8130GasEstimator::estimate(
             &self.eth_api,
             request,
