@@ -10,10 +10,7 @@ use jsonrpsee::http_client::HttpClient;
 use reth_payload_builder::PayloadId;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 
-use crate::{
-    NodeBuilderHelper,
-    testsuite::actions::{Action, ActionBox},
-};
+use crate::testsuite::actions::{Action, ActionBox};
 pub mod actions;
 pub mod setup;
 use std::sync::Arc;
@@ -307,7 +304,16 @@ impl TestBuilder {
     /// Run the test scenario
     pub async fn run<N>(mut self) -> Result<()>
     where
-        N: NodeBuilderHelper,
+        N: Default
+            + reth_node_builder::Node<
+                crate::TmpNodeAdapter,
+                ComponentsBuilder: reth_node_builder::NodeComponentsBuilder<
+                    crate::TmpNodeAdapter,
+                    Network: reth_network_api::test_utils::PeersHandleProvider,
+                >,
+                AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
+                            + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
+            >,
     {
         let mut setup = self.setup.take();
 

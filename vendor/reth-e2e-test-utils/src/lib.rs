@@ -6,11 +6,8 @@ use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use node::NodeTestContext;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
-use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_builder::{
     BuiltComponents, FullNodeTypesAdapter, Node, NodeAdapter, NodeTypesWithDBAdapter,
-    components::NodeComponentsBuilder,
-    rpc::{EngineValidatorAddOn, RethRpcAddOns},
 };
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
@@ -56,7 +53,16 @@ pub async fn setup<N>(
     + 'static,
 ) -> eyre::Result<(Vec<NodeHelperType<N>>, Wallet)>
 where
-    N: NodeBuilderHelper,
+    N: Default
+        + reth_node_builder::Node<
+            crate::TmpNodeAdapter,
+            ComponentsBuilder: reth_node_builder::NodeComponentsBuilder<
+                crate::TmpNodeAdapter,
+                Network: reth_network_api::test_utils::PeersHandleProvider,
+            >,
+            AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
+                        + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
+        >,
 {
     E2ETestSetupBuilder::new(num_nodes, chain_spec, attributes_generator)
         .with_node_config_modifier(move |config| config.set_dev(is_dev))
@@ -77,7 +83,16 @@ pub async fn setup_engine<N>(
     + 'static,
 ) -> eyre::Result<(Vec<NodeHelperType<N, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>>, Wallet)>
 where
-    N: NodeBuilderHelper,
+    N: Default
+        + reth_node_builder::Node<
+            crate::TmpNodeAdapter,
+            ComponentsBuilder: reth_node_builder::NodeComponentsBuilder<
+                crate::TmpNodeAdapter,
+                Network: reth_network_api::test_utils::PeersHandleProvider,
+            >,
+            AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
+                        + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
+        >,
 {
     setup_engine_with_connection::<N>(
         num_nodes,
@@ -104,7 +119,16 @@ pub async fn setup_engine_with_connection<N>(
     connect_nodes: bool,
 ) -> eyre::Result<(Vec<NodeHelperType<N, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>>, Wallet)>
 where
-    N: NodeBuilderHelper,
+    N: Default
+        + reth_node_builder::Node<
+            crate::TmpNodeAdapter,
+            ComponentsBuilder: reth_node_builder::NodeComponentsBuilder<
+                crate::TmpNodeAdapter,
+                Network: reth_network_api::test_utils::PeersHandleProvider,
+            >,
+            AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
+                        + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
+        >,
 {
     E2ETestSetupBuilder::new(num_nodes, chain_spec, attributes_generator)
         .with_tree_config_modifier(move |base| {
@@ -121,7 +145,8 @@ where
 
 /// Testing database
 pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
-type TmpNodeAdapter<Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>> =
+/// Provider adapter used by test nodes.
+pub type TmpNodeAdapter<Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>> =
     FullNodeTypesAdapter<TmpDB, Provider>;
 
 /// Type alias for a `NodeAdapter`
@@ -136,39 +161,3 @@ pub type Adapter<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>
 /// Type alias for a type of `NodeHelper`
 pub type NodeHelperType<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>> =
     NodeTestContext<Adapter<N, Provider>, <N as Node<TmpNodeAdapter<Provider>>>::AddOns>;
-
-/// Helper trait to simplify bounds when calling setup functions.
-pub trait NodeBuilderHelper
-where
-    Self: Default
-        + Node<
-            TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-            ComponentsBuilder: NodeComponentsBuilder<
-                TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-                Network: PeersHandleProvider,
-            >,
-            AddOns: RethRpcAddOns<
-                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-            > + EngineValidatorAddOn<
-                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-            >,
-        >,
-{
-}
-
-impl<T> NodeBuilderHelper for T where
-    Self: Default
-        + Node<
-            TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-            ComponentsBuilder: NodeComponentsBuilder<
-                TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-                Network: PeersHandleProvider,
-            >,
-            AddOns: RethRpcAddOns<
-                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-            > + EngineValidatorAddOn<
-                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-            >,
-        >
-{
-}

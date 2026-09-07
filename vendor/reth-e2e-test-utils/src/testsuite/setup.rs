@@ -20,7 +20,7 @@ use tokio::{
 };
 use tracing::debug;
 
-use crate::{E2ETestSetupBuilder, NodeBuilderHelper, testsuite::Environment};
+use crate::{E2ETestSetupBuilder, testsuite::Environment};
 
 /// Configuration for setting up test environment
 #[derive(Debug)]
@@ -133,7 +133,16 @@ impl Setup {
     /// Apply the setup to the environment
     pub async fn apply<N>(&mut self, env: &mut Environment) -> Result<()>
     where
-        N: NodeBuilderHelper,
+        N: Default
+            + reth_node_builder::Node<
+                crate::TmpNodeAdapter,
+                ComponentsBuilder: reth_node_builder::NodeComponentsBuilder<
+                    crate::TmpNodeAdapter,
+                    Network: reth_network_api::test_utils::PeersHandleProvider,
+                >,
+                AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
+                            + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
+            >,
     {
         // Note: this future is quite large so we box it
         Box::pin(self.apply_::<N>(env)).await
@@ -142,7 +151,16 @@ impl Setup {
     /// Apply the setup to the environment
     async fn apply_<N>(&mut self, env: &mut Environment) -> Result<()>
     where
-        N: NodeBuilderHelper,
+        N: Default
+            + reth_node_builder::Node<
+                crate::TmpNodeAdapter,
+                ComponentsBuilder: reth_node_builder::NodeComponentsBuilder<
+                    crate::TmpNodeAdapter,
+                    Network: reth_network_api::test_utils::PeersHandleProvider,
+                >,
+                AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
+                            + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
+            >,
     {
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;

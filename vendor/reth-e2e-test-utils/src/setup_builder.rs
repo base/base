@@ -19,7 +19,7 @@ use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
 use tracing::{Instrument, Level, span};
 
-use crate::{NodeBuilderHelper, NodeHelperType, TmpDB, node::NodeTestContext, wallet::Wallet};
+use crate::{NodeHelperType, TmpDB, node::NodeTestContext, wallet::Wallet};
 
 /// Type alias for tree config modifier closure
 type TreeConfigModifier =
@@ -95,7 +95,18 @@ where
     }
 
     /// Builds and launches the test nodes.
-    pub async fn build<N: NodeBuilderHelper>(
+    pub async fn build<
+        N: Default
+            + reth_node_builder::Node<
+                crate::TmpNodeAdapter,
+                ComponentsBuilder: reth_node_builder::NodeComponentsBuilder<
+                    crate::TmpNodeAdapter,
+                    Network: reth_network_api::test_utils::PeersHandleProvider,
+                >,
+                AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
+                            + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
+            >,
+    >(
         self,
     ) -> eyre::Result<(
         Vec<NodeHelperType<N, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>>,
