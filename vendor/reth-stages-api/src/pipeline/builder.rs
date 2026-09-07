@@ -1,5 +1,6 @@
 use alloy_primitives::{B256, BlockNumber};
-use reth_provider::{DatabaseProviderFactory, ProviderFactory, providers::ProviderNodeTypes};
+use reth_node_types::NodeTypesWithDB;
+use reth_provider::{DatabaseProviderFactory, ProviderFactory};
 use reth_static_file::StaticFileProducer;
 use tokio::sync::watch;
 
@@ -75,7 +76,7 @@ impl<Provider> PipelineBuilder<Provider> {
         static_file_producer: StaticFileProducer<ProviderFactory<N>>,
     ) -> Pipeline<N>
     where
-        N: ProviderNodeTypes,
+        N: NodeTypesWithDB,
         ProviderFactory<N>: DatabaseProviderFactory<ProviderRW = Provider>,
     {
         let Self { stages, max_block, tip_tx, metrics_tx, fail_on_unwind } = self;

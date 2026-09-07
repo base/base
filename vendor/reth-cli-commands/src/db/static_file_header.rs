@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use reth_db_common::DbTool;
-use reth_provider::{StaticFileProviderFactory, providers::ProviderNodeTypes};
+use reth_node_api::NodeTypesWithDB;
+use reth_provider::StaticFileProviderFactory;
 use reth_static_file_types::StaticFileSegment;
 use tracing::warn;
 
@@ -33,7 +34,7 @@ enum Source {
 
 impl Command {
     /// Execute `db static-file-header` command
-    pub fn execute<N: ProviderNodeTypes>(self, tool: &DbTool<N>) -> eyre::Result<()> {
+    pub fn execute<N: NodeTypesWithDB>(self, tool: &DbTool<N>) -> eyre::Result<()> {
         let static_file_provider = tool.provider_factory.static_file_provider();
         if let Err(err) = static_file_provider.check_consistency(&tool.provider_factory.provider()?)
         {

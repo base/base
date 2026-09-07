@@ -9,10 +9,11 @@ use reth_db_api::{database::Database, models::BlockNumberAddress, table::TableIm
 use reth_db_common::DbTool;
 use reth_evm::ConfigureEvm;
 use reth_exex::ExExManagerHandle;
+use reth_node_api::NodeTypesWithDB;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{
     DatabaseProviderFactory, ProviderFactory,
-    providers::{ProviderNodeTypes, RocksDBProvider, StaticFileProvider},
+    providers::{RocksDBProvider, StaticFileProvider},
 };
 use reth_stages::{
     ExecutionStageThresholds, Stage, StageCheckpoint, UnwindInput,
@@ -37,7 +38,7 @@ pub(crate) async fn dump_merkle_stage<N>(
     runtime: reth_tasks::Runtime,
 ) -> Result<()>
 where
-    N: ProviderNodeTypes<DB = DatabaseEnv>,
+    N: NodeTypesWithDB<DB = DatabaseEnv>,
 {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
 
@@ -77,7 +78,7 @@ where
 }
 
 /// Dry-run an unwind to FROM block and copy the necessary table data to the new database.
-fn unwind_and_copy<N: ProviderNodeTypes>(
+fn unwind_and_copy<N: NodeTypesWithDB>(
     db_tool: &DbTool<N>,
     range: (u64, u64),
     tip_block_number: u64,
@@ -161,7 +162,7 @@ fn unwind_and_copy<N: ProviderNodeTypes>(
 /// Try to re-execute the stage straight away
 fn dry_run<N>(output_provider_factory: ProviderFactory<N>, to: u64, from: u64) -> eyre::Result<()>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
 {
     info!(target: "reth::cli", "Executing stage.");
     let provider = output_provider_factory.database_provider_rw()?;

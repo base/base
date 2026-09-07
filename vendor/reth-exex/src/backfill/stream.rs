@@ -249,8 +249,7 @@ mod tests {
     use reth_evm::TestEvmConfig;
     use reth_primitives_traits::{Block as _, crypto::secp256k1::public_key_to_address};
     use reth_provider::{
-        ProviderFactory,
-        providers::{BlockchainProvider, ProviderNodeTypes},
+        ProviderFactory, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_chain_spec,
     };
     use reth_stages_api::ExecutionStageThresholds;
@@ -392,7 +391,7 @@ mod tests {
         blocks: &[RecoveredBlock<BaseBlock>],
     ) -> Result<()>
     where
-        N: ProviderNodeTypes,
+        N: NodeTypesWithDB,
     {
         for block in blocks {
             execute_block_and_commit_to_database(provider_factory, chain_spec.clone(), block)?;

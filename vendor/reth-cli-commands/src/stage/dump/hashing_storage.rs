@@ -2,17 +2,18 @@ use eyre::Result;
 use reth_db::DatabaseEnv;
 use reth_db_api::{database::Database, table::TableImporter, tables};
 use reth_db_common::DbTool;
+use reth_node_api::NodeTypesWithDB;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{
     DatabaseProviderFactory, ProviderFactory,
-    providers::{ProviderNodeTypes, RocksDBProvider, StaticFileProvider},
+    providers::{RocksDBProvider, StaticFileProvider},
 };
 use reth_stages::{Stage, StageCheckpoint, UnwindInput, stages::StorageHashingStage};
 use tracing::info;
 
 use super::setup;
 
-pub(crate) async fn dump_hashing_storage_stage<N: ProviderNodeTypes<DB = DatabaseEnv>>(
+pub(crate) async fn dump_hashing_storage_stage<N: NodeTypesWithDB<DB = DatabaseEnv>>(
     db_tool: &DbTool<N>,
     from: u64,
     to: u64,
@@ -42,7 +43,7 @@ pub(crate) async fn dump_hashing_storage_stage<N: ProviderNodeTypes<DB = Databas
 }
 
 /// Dry-run an unwind to FROM block and copy the necessary table data to the new database.
-fn unwind_and_copy<N: ProviderNodeTypes>(
+fn unwind_and_copy<N: NodeTypesWithDB>(
     db_tool: &DbTool<N>,
     from: u64,
     tip_block_number: u64,
@@ -72,7 +73,7 @@ fn unwind_and_copy<N: ProviderNodeTypes>(
 }
 
 /// Try to re-execute the stage straight away
-fn dry_run<N: ProviderNodeTypes>(
+fn dry_run<N: NodeTypesWithDB>(
     output_provider_factory: ProviderFactory<N>,
     to: u64,
     from: u64,

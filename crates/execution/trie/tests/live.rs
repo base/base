@@ -22,8 +22,7 @@ use reth_node_api::NodeTypesWithDB;
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
 use reth_provider::{
     BlockWriter as _, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef,
-    ProviderFactory, StateRootProvider,
-    providers::{BlockchainProvider, ProviderNodeTypes},
+    ProviderFactory, StateRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_chain_spec,
 };
 use reth_revm::database::StateProviderDatabase;
@@ -158,7 +157,7 @@ fn execute_block<N>(
     chain_spec: &Arc<ChainSpec>,
 ) -> eyre::Result<reth_evm::execute::BlockExecutionOutput<Receipt>>
 where
-    N: ProviderNodeTypes + NodeTypesWithDB,
+    N: NodeTypesWithDB,
 {
     let provider = provider_factory.provider()?;
     let db = StateProviderDatabase::new(LatestStateProviderRef::new(&provider));
@@ -183,7 +182,7 @@ fn commit_block_to_database<N>(
     provider_factory: &ProviderFactory<N>,
 ) -> eyre::Result<()>
 where
-    N: ProviderNodeTypes + NodeTypesWithDB,
+    N: NodeTypesWithDB,
 {
     let execution_outcome = ExecutionOutcome {
         bundle: execution_output.state.clone(),
@@ -219,7 +218,7 @@ fn run_test_scenario<N>(
     storage: BaseProofsStorage<Arc<RocksdbProofsStorage>>,
 ) -> eyre::Result<()>
 where
-    N: ProviderNodeTypes + NodeTypesWithDB,
+    N: NodeTypesWithDB,
 {
     let genesis_hash = chain_spec.genesis_hash();
     let mut nonce_counter = 0u64;

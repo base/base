@@ -11,10 +11,7 @@ use reth_db_common::DbTool;
 use reth_fs_util as fs;
 use reth_node_builder::{NodeTypesWithDB, NodeTypesWithDBAdapter};
 use reth_node_core::dirs::{ChainPath, DataDirPath};
-use reth_provider::{
-    RocksDBProviderFactory,
-    providers::{ProviderNodeTypes, StaticFileProvider},
-};
+use reth_provider::{RocksDBProviderFactory, providers::StaticFileProvider};
 use reth_static_file_types::SegmentRangeInclusive;
 
 use crate::{common::CliNodeTypes, db::checksum::ChecksumViewer};
@@ -406,7 +403,7 @@ impl Command {
         Ok(table)
     }
 
-    fn checksum_report<N: ProviderNodeTypes>(&self, tool: &DbTool<N>) -> eyre::Result<ComfyTable> {
+    fn checksum_report<N: NodeTypesWithDB>(&self, tool: &DbTool<N>) -> eyre::Result<ComfyTable> {
         let mut table = ComfyTable::new();
         table.load_preset(comfy_table::presets::ASCII_MARKDOWN);
         table.set_header(vec![Cell::new("Table"), Cell::new("Checksum"), Cell::new("Elapsed")]);

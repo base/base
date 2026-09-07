@@ -13,7 +13,8 @@ use reth_db::DatabaseEnv;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_evm::ConfigureEvm;
 use reth_exex::ExExManagerHandle;
-use reth_provider::{BlockNumReader, ProviderFactory, providers::ProviderNodeTypes};
+use reth_node_api::NodeTypesWithDB;
+use reth_provider::{BlockNumReader, ProviderFactory};
 use reth_stages::{
     ExecutionStageThresholds, Pipeline, StageSet,
     sets::{DefaultStages, OfflineStages},
@@ -78,7 +79,7 @@ impl<C: ChainSpecParser> Command<C> {
         Ok(())
     }
 
-    fn build_pipeline<N: ProviderNodeTypes>(
+    fn build_pipeline<N: NodeTypesWithDB>(
         self,
         config: Config,
         provider_factory: ProviderFactory<N>,
@@ -157,7 +158,7 @@ enum Subcommands {
 
 impl Subcommands {
     /// Returns the block to unwind to. The returned block will stay in database.
-    fn unwind_target<N: ProviderNodeTypes<DB = DatabaseEnv>>(
+    fn unwind_target<N: NodeTypesWithDB<DB = DatabaseEnv>>(
         &self,
         factory: ProviderFactory<N>,
     ) -> eyre::Result<u64> {

@@ -75,7 +75,7 @@ use reth_provider::{
     DatabaseProviderFactory, InMemoryBalStore, MetadataProvider, MetadataWriter, ProviderError,
     ProviderFactory, ProviderResult, RocksDBProviderFactory, StageCheckpointReader,
     StaticFileProviderBuilder, StaticFileProviderFactory, StorageSettingsCache,
-    providers::{ProviderNodeTypes, RocksDBProvider, StaticFileProvider},
+    providers::{RocksDBProvider, StaticFileProvider},
 };
 use reth_prune::{PruneMode, PruneModes, PrunerBuilder};
 use reth_rpc_builder::config::RethRpcServerConfig;
@@ -463,7 +463,7 @@ where
         disabled_stages: &[StageId],
     ) -> eyre::Result<ProviderFactory<N>>
     where
-        N: ProviderNodeTypes<DB = DB>,
+        N: NodeTypesWithDB<DB = DB>,
         Evm: ConfigureEvm + 'static,
     {
         // Validate static files configuration
@@ -655,7 +655,7 @@ where
         disabled_stages: &[StageId],
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, ProviderFactory<N>>>>
     where
-        N: ProviderNodeTypes<DB = DB>,
+        N: NodeTypesWithDB<DB = DB>,
         Evm: ConfigureEvm + 'static,
     {
         let factory = self
@@ -672,7 +672,7 @@ where
 
 impl<T> LaunchContextWith<Attached<WithConfigs, ProviderFactory<T>>>
 where
-    T: ProviderNodeTypes,
+    T: NodeTypesWithDB,
 {
     /// Returns access to the underlying database.
     pub const fn database(&self) -> &T::DB {

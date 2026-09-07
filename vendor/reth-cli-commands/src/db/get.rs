@@ -20,10 +20,7 @@ use reth_db_api::{
 use reth_db_common::DbTool;
 use reth_node_builder::NodeTypesWithDB;
 use reth_primitives_traits::ValueWithSubKey;
-use reth_provider::{
-    ChangeSetReader, RocksDBProviderFactory, StaticFileProviderFactory,
-    providers::ProviderNodeTypes,
-};
+use reth_provider::{ChangeSetReader, RocksDBProviderFactory, StaticFileProviderFactory};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::StorageChangeSetReader;
 use tracing::error;
@@ -130,7 +127,7 @@ pub enum RocksDbTable {
 
 impl Command {
     /// Execute `db get` command
-    pub fn execute<N: ProviderNodeTypes>(self, tool: &DbTool<N>) -> eyre::Result<()> {
+    pub fn execute<N: NodeTypesWithDB>(self, tool: &DbTool<N>) -> eyre::Result<()> {
         match self.subcommand {
             Subcommand::Mdbx { table, key, subkey, end_key, end_subkey, raw } => {
                 table.view(&GetValueViewer { tool, key, subkey, end_key, end_subkey, raw })?
@@ -305,7 +302,7 @@ impl Command {
 }
 
 /// Gets a value from a RocksDB table by key.
-fn get_rocksdb<N: ProviderNodeTypes>(
+fn get_rocksdb<N: NodeTypesWithDB>(
     tool: &DbTool<N>,
     table: RocksDbTable,
     key: &str,
@@ -525,7 +522,7 @@ struct GetValueViewer<'a, N: NodeTypesWithDB> {
     raw: bool,
 }
 
-impl<N: ProviderNodeTypes> TableViewer<()> for GetValueViewer<'_, N> {
+impl<N: NodeTypesWithDB> TableViewer<()> for GetValueViewer<'_, N> {
     type Error = eyre::Report;
 
     fn view<T: Table>(&self) -> Result<(), Self::Error> {

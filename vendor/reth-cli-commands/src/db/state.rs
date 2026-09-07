@@ -8,7 +8,7 @@ use clap::Parser;
 use reth_db_api::{cursor::DbDupCursorRO, database::Database, tables, transaction::DbTx};
 use reth_db_common::DbTool;
 use reth_node_builder::NodeTypesWithDB;
-use reth_provider::{StaticFileProviderFactory, providers::ProviderNodeTypes};
+use reth_provider::StaticFileProviderFactory;
 use reth_storage_api::{BlockNumReader, StateProvider};
 use tracing::info;
 
@@ -36,10 +36,7 @@ pub struct Command {
 
 impl Command {
     /// Execute `db state` command
-    pub fn execute<N: NodeTypesWithDB + ProviderNodeTypes>(
-        self,
-        tool: &DbTool<N>,
-    ) -> eyre::Result<()> {
+    pub fn execute<N: NodeTypesWithDB>(self, tool: &DbTool<N>) -> eyre::Result<()> {
         let address = self.address;
         let limit = self.limit;
 
@@ -50,7 +47,7 @@ impl Command {
         }
     }
 
-    fn execute_current<N: NodeTypesWithDB + ProviderNodeTypes>(
+    fn execute_current<N: NodeTypesWithDB>(
         &self,
         tool: &DbTool<N>,
         address: Address,
@@ -95,7 +92,7 @@ impl Command {
         Ok(())
     }
 
-    fn execute_historical<N: NodeTypesWithDB + ProviderNodeTypes>(
+    fn execute_historical<N: NodeTypesWithDB>(
         &self,
         tool: &DbTool<N>,
         address: Address,
@@ -160,7 +157,7 @@ impl Command {
     }
 
     /// Collects storage keys from static file StorageChangeSets (storage_v2).
-    fn collect_staticfile_storage_keys<N: NodeTypesWithDB + ProviderNodeTypes>(
+    fn collect_staticfile_storage_keys<N: NodeTypesWithDB>(
         &self,
         tool: &DbTool<N>,
         address: Address,

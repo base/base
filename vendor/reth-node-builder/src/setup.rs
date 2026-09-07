@@ -15,7 +15,8 @@ use reth_exex::ExExManagerHandle;
 use reth_network_p2p::{
     BlockClient, bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader,
 };
-use reth_provider::{ProviderFactory, providers::ProviderNodeTypes};
+use reth_node_api::NodeTypesWithDB;
+use reth_provider::ProviderFactory;
 use reth_stages::{Pipeline, StageId, StageSet, prelude::DefaultStages, stages::ExecutionStage};
 use reth_static_file::StaticFileProducer;
 use reth_tasks::TaskExecutor;
@@ -39,7 +40,7 @@ pub fn build_networked_pipeline<N, Client, Evm>(
     disabled_stages: &[StageId],
 ) -> eyre::Result<Pipeline<N>>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
     Client: BlockClient<Block = BaseBlock> + 'static,
     Evm: ConfigureEvm + 'static,
 {
@@ -87,7 +88,7 @@ pub fn build_pipeline<N, H, B, Evm>(
     disabled_stages: &[StageId],
 ) -> eyre::Result<Pipeline<N>>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
     H: HeaderDownloader<Header = alloy_consensus::Header> + 'static,
     B: BodyDownloader<Block = BaseBlock> + 'static,
     Evm: ConfigureEvm + 'static,

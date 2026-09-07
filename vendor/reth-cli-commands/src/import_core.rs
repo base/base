@@ -18,10 +18,11 @@ use reth_network_p2p::{
     bodies::downloader::BodyDownloader,
     headers::downloader::{HeaderDownloader, SyncTarget},
 };
+use reth_node_api::NodeTypesWithDB;
 use reth_node_events::node::NodeEvent;
 use reth_provider::{
     BlockNumReader, HeaderProvider, ProviderError, ProviderFactory, RocksDBProviderFactory,
-    StageCheckpointReader, providers::ProviderNodeTypes,
+    StageCheckpointReader,
 };
 use reth_prune::PruneModes;
 use reth_stages::{ControlFlow, Pipeline, StageId, StageSet, prelude::*};
@@ -91,7 +92,7 @@ pub async fn import_blocks_from_file<N>(
     runtime: reth_tasks::Runtime,
 ) -> eyre::Result<ImportResult>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
 {
     if import_config.no_state {
         info!(target: "reth::import", "Disabled stages requiring state");
@@ -285,7 +286,7 @@ pub fn build_import_pipeline_impl<N, C, E>(
     runtime: reth_tasks::Runtime,
 ) -> eyre::Result<(Pipeline<N>, impl futures::Stream<Item = NodeEvent> + use<N, C, E>)>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
     C: FullConsensus + 'static,
     E: ConfigureEvm + 'static,
 {

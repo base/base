@@ -2,9 +2,9 @@
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use reth_db_common::DbTool;
+use reth_node_api::NodeTypesWithDB;
 use reth_provider::{
     DBProvider, DatabaseProviderFactory, StageCheckpointReader, StageCheckpointWriter,
-    providers::ProviderNodeTypes,
 };
 use reth_stages::StageId;
 
@@ -27,14 +27,14 @@ impl Command {
     }
 
     /// Execute the command
-    pub fn execute<N: ProviderNodeTypes>(self, tool: &DbTool<N>) -> eyre::Result<()> {
+    pub fn execute<N: NodeTypesWithDB>(self, tool: &DbTool<N>) -> eyre::Result<()> {
         match self.command {
             Subcommands::Get { stage } => Self::get(tool, stage),
             Subcommands::Set(args) => Self::set(tool, args),
         }
     }
 
-    fn get<N: ProviderNodeTypes>(tool: &DbTool<N>, stage: Option<StageArg>) -> eyre::Result<()> {
+    fn get<N: NodeTypesWithDB>(tool: &DbTool<N>, stage: Option<StageArg>) -> eyre::Result<()> {
         let provider = tool.provider_factory.provider()?;
 
         match stage {
@@ -55,7 +55,7 @@ impl Command {
         Ok(())
     }
 
-    fn set<N: ProviderNodeTypes>(tool: &DbTool<N>, args: SetArgs) -> eyre::Result<()> {
+    fn set<N: NodeTypesWithDB>(tool: &DbTool<N>, args: SetArgs) -> eyre::Result<()> {
         let stage_id: StageId = args.stage.into();
         let provider_rw = tool.provider_factory.database_provider_rw()?;
 

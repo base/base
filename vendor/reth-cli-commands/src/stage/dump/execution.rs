@@ -8,10 +8,11 @@ use reth_db_api::{
 };
 use reth_db_common::DbTool;
 use reth_evm::ConfigureEvm;
+use reth_node_api::NodeTypesWithDB;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{
     DatabaseProviderFactory, ProviderFactory,
-    providers::{ProviderNodeTypes, RocksDBProvider, StaticFileProvider},
+    providers::{RocksDBProvider, StaticFileProvider},
 };
 use reth_stages::{Stage, StageCheckpoint, UnwindInput, stages::ExecutionStage};
 use tracing::info;
@@ -30,7 +31,7 @@ pub(crate) async fn dump_execution_stage<N, E, C>(
     runtime: reth_tasks::Runtime,
 ) -> eyre::Result<()>
 where
-    N: ProviderNodeTypes<DB = DatabaseEnv>,
+    N: NodeTypesWithDB<DB = DatabaseEnv>,
     E: ConfigureEvm + 'static,
     C: FullConsensus + 'static,
 {
@@ -60,7 +61,7 @@ where
 }
 
 /// Imports all the tables that can be copied over a range.
-fn import_tables_with_range<N: ProviderNodeTypes>(
+fn import_tables_with_range<N: NodeTypesWithDB>(
     output_db: &DatabaseEnv,
     db_tool: &DbTool<N>,
     from: u64,
@@ -133,7 +134,7 @@ fn import_tables_with_range<N: ProviderNodeTypes>(
 /// Dry-run an unwind to FROM block, so we can get the `PlainStorageState` and
 /// `PlainAccountState` safely. There might be some state dependency from an address
 /// which hasn't been changed in the given range.
-fn unwind_and_copy<N: ProviderNodeTypes>(
+fn unwind_and_copy<N: NodeTypesWithDB>(
     db_tool: &DbTool<N>,
     from: u64,
     tip_block_number: u64,
@@ -172,7 +173,7 @@ fn dry_run<N, E, C>(
     consensus: C,
 ) -> eyre::Result<()>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
     E: ConfigureEvm + 'static,
     C: FullConsensus + 'static,
 {

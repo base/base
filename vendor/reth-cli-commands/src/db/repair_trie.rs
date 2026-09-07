@@ -13,6 +13,7 @@ use reth_db_api::{
     transaction::{DbTx, DbTxMut},
 };
 use reth_db_common::DbTool;
+use reth_node_api::NodeTypesWithDB;
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     version::version_metadata,
@@ -23,9 +24,7 @@ use reth_node_metrics::{
     server::{MetricServer, MetricServerConfig},
     version::VersionInfo,
 };
-use reth_provider::{
-    ChainSpecProvider, HeaderProvider, StageCheckpointReader, providers::ProviderNodeTypes,
-};
+use reth_provider::{ChainSpecProvider, HeaderProvider, StageCheckpointReader};
 use reth_stages::StageId;
 use reth_tasks::TaskExecutor;
 use reth_trie::{
@@ -56,7 +55,7 @@ pub struct Command {
 
 impl Command {
     /// Execute `db repair-trie` command
-    pub fn execute<N: ProviderNodeTypes>(
+    pub fn execute<N: NodeTypesWithDB>(
         self,
         tool: &DbTool<N>,
         task_executor: TaskExecutor,
@@ -106,7 +105,7 @@ impl Command {
     }
 }
 
-fn verify_only<N: ProviderNodeTypes>(tool: &DbTool<N>) -> eyre::Result<()> {
+fn verify_only<N: NodeTypesWithDB>(tool: &DbTool<N>) -> eyre::Result<()> {
     // Log the database block tip from Finish stage checkpoint
     let finish_checkpoint = tool
         .provider_factory
@@ -206,7 +205,7 @@ fn verify_checkpoints(provider: impl StageCheckpointReader) -> eyre::Result<()> 
     Ok(())
 }
 
-fn verify_and_repair<N: ProviderNodeTypes>(tool: &DbTool<N>) -> eyre::Result<()> {
+fn verify_and_repair<N: NodeTypesWithDB>(tool: &DbTool<N>) -> eyre::Result<()> {
     // Get a read-write database provider
     let mut provider_rw = tool.provider_factory.provider_rw()?;
 
@@ -231,7 +230,7 @@ fn verify_and_repair<N: ProviderNodeTypes>(tool: &DbTool<N>) -> eyre::Result<()>
     Ok(())
 }
 
-fn do_verify_and_repair<N: ProviderNodeTypes, A: TrieTableAdapter>(
+fn do_verify_and_repair<N: NodeTypesWithDB, A: TrieTableAdapter>(
     provider_rw: &mut reth_provider::DatabaseProviderRW<N::DB>,
     block_number: u64,
 ) -> eyre::Result<usize>
@@ -345,7 +344,7 @@ where
     Ok(inconsistent_nodes as usize)
 }
 
-fn verify_repaired_state_root<N: ProviderNodeTypes, A: TrieTableAdapter>(
+fn verify_repaired_state_root<N: NodeTypesWithDB, A: TrieTableAdapter>(
     provider_rw: &reth_provider::DatabaseProviderRW<N::DB>,
     block_number: u64,
 ) -> eyre::Result<()>

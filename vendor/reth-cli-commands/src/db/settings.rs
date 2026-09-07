@@ -2,7 +2,8 @@
 
 use clap::{Parser, Subcommand};
 use reth_db_common::DbTool;
-use reth_provider::{MetadataProvider, providers::ProviderNodeTypes};
+use reth_node_api::NodeTypesWithDB;
+use reth_provider::MetadataProvider;
 
 use crate::common::AccessRights;
 
@@ -30,13 +31,13 @@ enum Subcommands {
 
 impl Command {
     /// Execute the command
-    pub fn execute<N: ProviderNodeTypes>(self, tool: &DbTool<N>) -> eyre::Result<()> {
+    pub fn execute<N: NodeTypesWithDB>(self, tool: &DbTool<N>) -> eyre::Result<()> {
         match self.command {
             Subcommands::Get => self.get(tool),
         }
     }
 
-    fn get<N: ProviderNodeTypes>(&self, tool: &DbTool<N>) -> eyre::Result<()> {
+    fn get<N: NodeTypesWithDB>(&self, tool: &DbTool<N>) -> eyre::Result<()> {
         // Read storage settings
         let provider = tool.provider_factory.provider()?;
         let storage_settings = provider.storage_settings()?;

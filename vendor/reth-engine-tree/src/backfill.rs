@@ -10,7 +10,7 @@
 use std::task::{Context, Poll, ready};
 
 use futures::FutureExt;
-use reth_provider::providers::ProviderNodeTypes;
+use reth_node_types::NodeTypesWithDB;
 use reth_stages_api::{ControlFlow, Pipeline, PipelineError, PipelineTarget, PipelineWithResult};
 use reth_tasks::Runtime;
 use tokio::sync::oneshot;
@@ -79,7 +79,7 @@ pub enum BackfillEvent {
 
 /// Pipeline sync.
 #[derive(Debug)]
-pub struct PipelineSync<N: ProviderNodeTypes> {
+pub struct PipelineSync<N: NodeTypesWithDB> {
     /// The type that can spawn the pipeline task.
     pipeline_task_spawner: Runtime,
     /// The current state of the pipeline.
@@ -89,7 +89,7 @@ pub struct PipelineSync<N: ProviderNodeTypes> {
     pending_pipeline_target: Option<PipelineTarget>,
 }
 
-impl<N: ProviderNodeTypes> PipelineSync<N> {
+impl<N: NodeTypesWithDB> PipelineSync<N> {
     /// Create a new instance.
     pub fn new(pipeline: Pipeline<N>, pipeline_task_spawner: Runtime) -> Self {
         Self {
@@ -178,7 +178,7 @@ impl<N: ProviderNodeTypes> PipelineSync<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BackfillSync for PipelineSync<N> {
+impl<N: NodeTypesWithDB> BackfillSync for PipelineSync<N> {
     fn on_action(&mut self, event: BackfillAction) {
         match event {
             BackfillAction::Start(target) => self.set_pipeline_sync_target(target),
@@ -213,14 +213,14 @@ impl<N: ProviderNodeTypes> BackfillSync for PipelineSync<N> {
 /// blockchain tree any messages that would result in database writes, since it would result in a
 /// deadlock.
 #[derive(Debug)]
-enum PipelineState<N: ProviderNodeTypes> {
+enum PipelineState<N: NodeTypesWithDB> {
     /// Pipeline is idle.
     Idle(Option<Box<Pipeline<N>>>),
     /// Pipeline is running and waiting for a response
     Running(oneshot::Receiver<PipelineWithResult<N>>),
 }
 
-impl<N: ProviderNodeTypes> PipelineState<N> {
+impl<N: NodeTypesWithDB> PipelineState<N> {
     /// Returns `true` if the state matches idle.
     const fn is_idle(&self) -> bool {
         matches!(self, Self::Idle(_))

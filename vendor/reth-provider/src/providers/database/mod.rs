@@ -54,7 +54,6 @@ pub use provider::{CommitOrder, DatabaseProvider, DatabaseProviderRO, DatabasePr
 mod save_blocks;
 pub use save_blocks::SaveBlocksInput;
 
-use super::ProviderNodeTypes;
 mod builder;
 pub use builder::{ProviderFactoryBuilder, ReadOnlyConfig};
 
@@ -110,7 +109,7 @@ impl<N: reth_node_types::NodeTypes> ProviderFactory<NodeTypesWithDBAdapter<N, Da
     }
 }
 
-impl<N: ProviderNodeTypes> ProviderFactory<N> {
+impl<N: NodeTypesWithDB> ProviderFactory<N> {
     /// Create new database provider factory.
     ///
     /// The storage backends used by the produced factory MAY be inconsistent.
@@ -358,7 +357,7 @@ impl<N: NodeTypesWithDB> RocksDBProviderFactory for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes<DB = DatabaseEnv>> ProviderFactory<N> {
+impl<N: NodeTypesWithDB<DB = DatabaseEnv>> ProviderFactory<N> {
     /// Create new database provider by passing a path. [`ProviderFactory`] will own the database
     /// instance.
     pub fn new_with_database_path<P: AsRef<Path>>(
@@ -380,7 +379,7 @@ impl<N: ProviderNodeTypes<DB = DatabaseEnv>> ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> ProviderFactory<N> {
+impl<N: NodeTypesWithDB> ProviderFactory<N> {
     /// Returns a provider with a created `DbTx` inside, which allows fetching data from the
     /// database using different types of providers. Example: [`HeaderProvider`]
     /// [`BlockHashReader`]. This may fail if the inner read database transaction fails to open.
@@ -605,13 +604,13 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BalProvider for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> BalProvider for ProviderFactory<N> {
     fn bal_store(&self) -> &BalStoreHandle {
         &self.bal_store
     }
 }
 
-impl<N: ProviderNodeTypes> DatabaseProviderFactory for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> DatabaseProviderFactory for ProviderFactory<N> {
     type DB = N::DB;
     type Provider = DatabaseProvider<<N::DB as Database>::TX>;
     type ProviderRW = DatabaseProvider<<N::DB as Database>::TXMut>;
@@ -640,7 +639,7 @@ impl<N: NodeTypesWithDB> StaticFileProviderFactory for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> HeaderSyncGapProvider for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> HeaderSyncGapProvider for ProviderFactory<N> {
     type Header = alloy_consensus::Header;
     fn local_tip_header(
         &self,
@@ -650,7 +649,7 @@ impl<N: ProviderNodeTypes> HeaderSyncGapProvider for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> HeaderProvider for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> HeaderProvider for ProviderFactory<N> {
     type Header = alloy_consensus::Header;
 
     fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
@@ -691,7 +690,7 @@ impl<N: ProviderNodeTypes> HeaderProvider for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BlockHashReader for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> BlockHashReader for ProviderFactory<N> {
     fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
         self.caught_up_static_file_provider()?.block_hash(number)
     }
@@ -705,7 +704,7 @@ impl<N: ProviderNodeTypes> BlockHashReader for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BlockNumReader for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> BlockNumReader for ProviderFactory<N> {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         self.provider()?.chain_info()
     }
@@ -729,7 +728,7 @@ impl<N: ProviderNodeTypes> BlockNumReader for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BlockReader for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> BlockReader for ProviderFactory<N> {
     type Block = BaseBlock;
 
     fn find_block_by_hash(
@@ -793,7 +792,7 @@ impl<N: ProviderNodeTypes> BlockReader for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> TransactionsProvider for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> TransactionsProvider for ProviderFactory<N> {
     type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
@@ -855,7 +854,7 @@ impl<N: ProviderNodeTypes> TransactionsProvider for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> ReceiptProvider for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> ReceiptProvider for ProviderFactory<N> {
     type Receipt = BaseReceipt;
 
     fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
@@ -899,7 +898,7 @@ impl<N: ProviderNodeTypes> ReceiptProvider for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BlockBodyIndicesProvider for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> BlockBodyIndicesProvider for ProviderFactory<N> {
     fn block_body_indices(
         &self,
         number: BlockNumber,
@@ -915,7 +914,7 @@ impl<N: ProviderNodeTypes> BlockBodyIndicesProvider for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> StageCheckpointReader for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> StageCheckpointReader for ProviderFactory<N> {
     fn get_stage_checkpoint(&self, id: StageId) -> ProviderResult<Option<StageCheckpoint>> {
         self.provider()?.get_stage_checkpoint(id)
     }
@@ -934,7 +933,7 @@ impl<N: NodeTypesWithDB> ChainSpecProvider for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> PruneCheckpointReader for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> PruneCheckpointReader for ProviderFactory<N> {
     fn get_prune_checkpoint(
         &self,
         segment: PruneSegment,
@@ -947,7 +946,7 @@ impl<N: ProviderNodeTypes> PruneCheckpointReader for ProviderFactory<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> MetadataProvider for ProviderFactory<N> {
+impl<N: NodeTypesWithDB> MetadataProvider for ProviderFactory<N> {
     fn get_metadata(&self, key: &str) -> ProviderResult<Option<Vec<u8>>> {
         self.provider()?.get_metadata(key)
     }

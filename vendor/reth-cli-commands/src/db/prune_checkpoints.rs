@@ -2,7 +2,8 @@
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use reth_db_common::DbTool;
-use reth_provider::{DBProvider, DatabaseProviderFactory, providers::ProviderNodeTypes};
+use reth_node_api::NodeTypesWithDB;
+use reth_provider::{DBProvider, DatabaseProviderFactory};
 use reth_prune_types::{PruneCheckpoint, PruneMode, PruneSegment};
 use reth_storage_api::{PruneCheckpointReader, PruneCheckpointWriter};
 
@@ -109,17 +110,14 @@ pub enum PruneModeArg {
 
 impl Command {
     /// Execute the command
-    pub fn execute<N: ProviderNodeTypes>(self, tool: &DbTool<N>) -> eyre::Result<()> {
+    pub fn execute<N: NodeTypesWithDB>(self, tool: &DbTool<N>) -> eyre::Result<()> {
         match self.command {
             Subcommands::Get { segment } => Self::get(tool, segment),
             Subcommands::Set(args) => Self::set(tool, args),
         }
     }
 
-    fn get<N: ProviderNodeTypes>(
-        tool: &DbTool<N>,
-        segment: Option<SegmentArg>,
-    ) -> eyre::Result<()> {
+    fn get<N: NodeTypesWithDB>(tool: &DbTool<N>, segment: Option<SegmentArg>) -> eyre::Result<()> {
         let provider = tool.provider_factory.provider()?;
 
         match segment {
@@ -157,7 +155,7 @@ impl Command {
         Ok(())
     }
 
-    fn set<N: ProviderNodeTypes>(tool: &DbTool<N>, args: SetArgs) -> eyre::Result<()> {
+    fn set<N: NodeTypesWithDB>(tool: &DbTool<N>, args: SetArgs) -> eyre::Result<()> {
         eyre::ensure!(
             args.block_number.is_some() || args.tx_number.is_some(),
             "at least one of --block-number or --tx-number must be provided"

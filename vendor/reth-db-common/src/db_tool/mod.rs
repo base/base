@@ -14,7 +14,7 @@ use reth_db_api::{
 };
 use reth_fs_util as fs;
 use reth_node_types::NodeTypesWithDB;
-use reth_provider::{ChainSpecProvider, DBProvider, ProviderFactory, providers::ProviderNodeTypes};
+use reth_provider::{ChainSpecProvider, DBProvider, ProviderFactory};
 use tracing::info;
 
 /// Wrapper over DB that implements many useful DB queries.
@@ -110,7 +110,7 @@ impl<N: NodeTypesWithDB> DbTool<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> DbTool<N> {
+impl<N: NodeTypesWithDB> DbTool<N> {
     /// Takes a DB where the tables have already been created.
     pub fn new(provider_factory: ProviderFactory<N>) -> eyre::Result<Self> {
         // Disable timeout because we are entering a TUI which might read for a long time. We

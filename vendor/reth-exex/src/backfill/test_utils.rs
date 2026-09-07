@@ -9,11 +9,9 @@ use reth_evm::{
     ConfigureEvm, TestEvmConfig,
     execute::{BlockExecutionOutput, Executor},
 };
+use reth_node_api::NodeTypesWithDB;
 use reth_primitives_traits::{Block as _, RecoveredBlock};
-use reth_provider::{
-    BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory,
-    providers::ProviderNodeTypes,
-};
+use reth_provider::{BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory};
 use reth_revm::database::StateProviderDatabase;
 use reth_trie_common::KeccakKeyHasher;
 use secp256k1::Keypair;
@@ -55,7 +53,7 @@ pub(crate) fn execute_block_and_commit_to_database<N>(
     block: &RecoveredBlock<BaseBlock>,
 ) -> eyre::Result<BlockExecutionOutput<BaseReceipt>>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
 {
     let provider = provider_factory.provider()?;
 
@@ -152,7 +150,7 @@ pub(crate) fn blocks_and_execution_outputs<N>(
     key_pair: Keypair,
 ) -> eyre::Result<Vec<(RecoveredBlock<BaseBlock>, BlockExecutionOutput<BaseReceipt>)>>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
 {
     let (block1, block2) = blocks(chain_spec.clone(), key_pair)?;
 
@@ -170,7 +168,7 @@ pub(crate) fn blocks_and_execution_outcome<N>(
     key_pair: Keypair,
 ) -> eyre::Result<(Vec<RecoveredBlock<BaseBlock>>, ExecutionOutcome<BaseReceipt>)>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
 {
     let (block1, block2) = blocks(chain_spec.clone(), key_pair)?;
 

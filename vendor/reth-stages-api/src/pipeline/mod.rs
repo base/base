@@ -10,11 +10,12 @@ use std::{
 use alloy_primitives::{B256, BlockNumber};
 pub use event::*;
 use futures_util::Future;
+use reth_node_types::NodeTypesWithDB;
 use reth_primitives_traits::constants::BEACON_CONSENSUS_REORG_UNWIND_DEPTH;
 use reth_provider::{
     BlockHashReader, BlockNumReader, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, PruneCheckpointReader, StageCheckpointReader,
-    StageCheckpointWriter, providers::ProviderNodeTypes,
+    StageCheckpointWriter,
 };
 use reth_static_file::StaticFileProducer;
 use reth_tokio_util::{EventSender, EventStream};
@@ -69,7 +70,7 @@ pub type PipelineWithResult<N> = (Pipeline<N>, Result<ControlFlow, PipelineError
 /// # Defaults
 ///
 /// The [`DefaultStages`](crate::sets::DefaultStages) are used to fully sync reth.
-pub struct Pipeline<N: ProviderNodeTypes> {
+pub struct Pipeline<N: NodeTypesWithDB> {
     /// Provider factory.
     provider_factory: ProviderFactory<N>,
     /// All configured stages in the order they will be executed.
@@ -97,7 +98,7 @@ pub struct Pipeline<N: ProviderNodeTypes> {
     detached_head_attempts: u64,
 }
 
-impl<N: ProviderNodeTypes> Pipeline<N> {
+impl<N: NodeTypesWithDB> Pipeline<N> {
     /// Construct a pipeline using a [`PipelineBuilder`].
     pub fn builder() -> PipelineBuilder<<ProviderFactory<N> as DatabaseProviderFactory>::ProviderRW>
     {
@@ -132,7 +133,7 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> Pipeline<N> {
+impl<N: NodeTypesWithDB> Pipeline<N> {
     /// Registers progress metrics for each registered stage
     pub fn register_metrics(&mut self) -> Result<(), PipelineError> {
         let Some(metrics_tx) = &mut self.metrics_tx else { return Ok(()) };
@@ -611,7 +612,7 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> std::fmt::Debug for Pipeline<N> {
+impl<N: NodeTypesWithDB> std::fmt::Debug for Pipeline<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Pipeline")
             .field("stages", &self.stages.iter().map(|stage| stage.id()).collect::<Vec<StageId>>())

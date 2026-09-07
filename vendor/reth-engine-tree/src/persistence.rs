@@ -10,10 +10,11 @@ use std::{
 use alloy_eips::BlockNumHash;
 use crossbeam_channel::Sender as CrossbeamSender;
 use reth_errors::ProviderError;
+use reth_node_types::NodeTypesWithDB;
 use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
     BalProvider, BlockExecutionWriter, BlockHashReader, ChainStateBlockWriter, DBProvider,
-    DatabaseProviderFactory, ProviderFactory, SaveBlocksInput, providers::ProviderNodeTypes,
+    DatabaseProviderFactory, ProviderFactory, SaveBlocksInput,
 };
 use reth_prune::{PrunerError, PrunerWithFactory};
 use reth_stages_api::{MetricEvent, MetricEventsSender};
@@ -44,7 +45,7 @@ pub struct PersistenceResult {
 #[derive(Debug)]
 pub struct PersistenceService<N>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
 {
     /// The provider factory to use
     provider: ProviderFactory<N>,
@@ -66,7 +67,7 @@ where
 
 impl<N> PersistenceService<N>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
 {
     /// Create a new persistence service
     pub fn new(
@@ -89,7 +90,7 @@ where
 
 impl<N> PersistenceService<N>
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
 {
     /// This is the main loop, that will listen to database events and perform the requested
     /// database actions
@@ -311,7 +312,7 @@ impl PersistenceHandle {
         sync_metrics_tx: MetricEventsSender,
     ) -> PersistenceHandle
     where
-        N: ProviderNodeTypes,
+        N: NodeTypesWithDB,
     {
         // create the initial channels
         let (db_service_tx, db_service_rx) = std::sync::mpsc::channel();

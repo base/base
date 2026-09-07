@@ -13,7 +13,7 @@ use reth_db_api::{
 };
 use reth_db_common::DbTool;
 use reth_node_builder::{NodeTypesWithDB, NodeTypesWithDBAdapter};
-use reth_provider::{DBProvider, StaticFileProviderFactory, providers::ProviderNodeTypes};
+use reth_provider::{DBProvider, StaticFileProviderFactory};
 use reth_static_file_types::{ChangesetOffset, StaticFileSegment};
 use tracing::{info, warn};
 
@@ -225,7 +225,7 @@ impl<N: NodeTypesWithDB> ChecksumViewer<'_, N> {
     }
 }
 
-impl<N: ProviderNodeTypes> TableViewer<(u64, Duration)> for ChecksumViewer<'_, N> {
+impl<N: NodeTypesWithDB> TableViewer<(u64, Duration)> for ChecksumViewer<'_, N> {
     type Error = eyre::Report;
 
     fn view<T: Table>(&self) -> Result<(u64, Duration), Self::Error> {

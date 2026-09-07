@@ -12,6 +12,7 @@ use reth_chain_state::{BlockState, CanonicalInMemoryState};
 use reth_chainspec::ChainInfo;
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
 use reth_execution_types::ExecutionOutcome;
+use reth_node_types::NodeTypesWithDB;
 use reth_primitives_traits::{
     BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
 };
@@ -25,7 +26,7 @@ use reth_storage_api::{
 use reth_storage_errors::provider::ProviderResult;
 use revm::database::states::PlainStorageRevert;
 
-use super::{DatabaseProviderRO, ProviderFactory, ProviderNodeTypes};
+use super::{DatabaseProviderRO, ProviderFactory};
 use crate::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt, BlockSource,
     ChainSpecProvider, ChangeSetReader, HeaderProvider, ProviderError, PruneCheckpointReader,
@@ -43,7 +44,7 @@ use crate::{
 /// time-out.
 #[derive(Debug)]
 #[doc(hidden)] // triggers ICE for `cargo docs`
-pub struct ConsistentProvider<N: ProviderNodeTypes> {
+pub struct ConsistentProvider<N: NodeTypesWithDB> {
     /// Storage provider.
     storage_provider: <ProviderFactory<N> as DatabaseProviderFactory>::Provider,
     /// Head block at time of [`Self`] creation
@@ -52,7 +53,7 @@ pub struct ConsistentProvider<N: ProviderNodeTypes> {
     canonical_in_memory_state: CanonicalInMemoryState,
 }
 
-impl<N: ProviderNodeTypes> ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> ConsistentProvider<N> {
     /// Create a new provider using [`ProviderFactory`] and [`CanonicalInMemoryState`],
     ///
     /// Underneath it will take a snapshot by fetching [`CanonicalInMemoryState::head_state`] and
@@ -421,7 +422,7 @@ impl<N: ProviderNodeTypes> ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> ConsistentProvider<N> {
     /// Ensures that the given block number is canonical (synced)
     ///
     /// This is a helper for guarding the `HistoricalStateProvider` against block numbers that are
@@ -441,7 +442,7 @@ impl<N: ProviderNodeTypes> ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> StaticFileProviderFactory for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> StaticFileProviderFactory for ConsistentProvider<N> {
     fn static_file_provider(&self) -> StaticFileProvider {
         self.storage_provider.static_file_provider()
     }
@@ -455,7 +456,7 @@ impl<N: ProviderNodeTypes> StaticFileProviderFactory for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> HeaderProvider for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> HeaderProvider for ConsistentProvider<N> {
     type Header = alloy_consensus::Header;
 
     fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
@@ -526,7 +527,7 @@ impl<N: ProviderNodeTypes> HeaderProvider for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BlockHashReader for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> BlockHashReader for ConsistentProvider<N> {
     fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
         self.get_in_memory_or_storage_by_block(
             number.into(),
@@ -552,7 +553,7 @@ impl<N: ProviderNodeTypes> BlockHashReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BlockNumReader for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> BlockNumReader for ConsistentProvider<N> {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         let best_number = self.best_block_number()?;
         Ok(ChainInfo { best_hash: self.block_hash(best_number)?.unwrap_or_default(), best_number })
@@ -575,7 +576,7 @@ impl<N: ProviderNodeTypes> BlockNumReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BlockIdReader for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> BlockIdReader for ConsistentProvider<N> {
     fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
         Ok(self.canonical_in_memory_state.pending_block_num_hash())
     }
@@ -589,7 +590,7 @@ impl<N: ProviderNodeTypes> BlockIdReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BlockReader for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> BlockReader for ConsistentProvider<N> {
     type Block = BaseBlock;
 
     fn find_block_by_hash(
@@ -741,7 +742,7 @@ impl<N: ProviderNodeTypes> BlockReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> TransactionsProvider for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> TransactionsProvider for ConsistentProvider<N> {
     type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
@@ -873,7 +874,7 @@ impl<N: ProviderNodeTypes> TransactionsProvider for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> ReceiptProvider for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> ReceiptProvider for ConsistentProvider<N> {
     type Receipt = BaseReceipt;
 
     fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
@@ -942,7 +943,7 @@ impl<N: ProviderNodeTypes> ReceiptProvider for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> ReceiptProviderIdExt for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> ReceiptProviderIdExt for ConsistentProvider<N> {
     fn receipts_by_block_id(&self, block: BlockId) -> ProviderResult<Option<Vec<Self::Receipt>>> {
         match block {
             BlockId::Hash(rpc_block_hash) => {
@@ -975,7 +976,7 @@ impl<N: ProviderNodeTypes> ReceiptProviderIdExt for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BlockBodyIndicesProvider for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> BlockBodyIndicesProvider for ConsistentProvider<N> {
     fn block_body_indices(
         &self,
         number: BlockNumber,
@@ -1019,7 +1020,7 @@ impl<N: ProviderNodeTypes> BlockBodyIndicesProvider for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> StageCheckpointReader for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> StageCheckpointReader for ConsistentProvider<N> {
     fn get_stage_checkpoint(&self, id: StageId) -> ProviderResult<Option<StageCheckpoint>> {
         self.storage_provider.get_stage_checkpoint(id)
     }
@@ -1033,7 +1034,7 @@ impl<N: ProviderNodeTypes> StageCheckpointReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> PruneCheckpointReader for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> PruneCheckpointReader for ConsistentProvider<N> {
     fn get_prune_checkpoint(
         &self,
         segment: PruneSegment,
@@ -1046,13 +1047,13 @@ impl<N: ProviderNodeTypes> PruneCheckpointReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> ChainSpecProvider for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> ChainSpecProvider for ConsistentProvider<N> {
     fn chain_spec(&self) -> Arc<BaseChainSpec> {
         ChainSpecProvider::chain_spec(&self.storage_provider)
     }
 }
 
-impl<N: ProviderNodeTypes> BlockReaderIdExt for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> BlockReaderIdExt for ConsistentProvider<N> {
     fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<Self::Block>> {
         match id {
             BlockId::Number(num) => self.block_by_number_or_tag(num),
@@ -1134,7 +1135,7 @@ impl<N: ProviderNodeTypes> BlockReaderIdExt for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> StorageChangeSetReader for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> StorageChangeSetReader for ConsistentProvider<N> {
     fn storage_changeset(
         &self,
         block_number: BlockNumber,
@@ -1295,7 +1296,7 @@ impl<N: ProviderNodeTypes> StorageChangeSetReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> ChangeSetReader for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> ChangeSetReader for ConsistentProvider<N> {
     fn account_block_changeset(
         &self,
         block_number: BlockNumber,
@@ -1443,7 +1444,7 @@ impl<N: ProviderNodeTypes> ChangeSetReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> StateReader for ConsistentProvider<N> {
+impl<N: NodeTypesWithDB> StateReader for ConsistentProvider<N> {
     type Receipt = BaseReceipt;
 
     /// Re-constructs the [`ExecutionOutcome`] from in-memory and database state, if necessary.

@@ -12,11 +12,9 @@ use reth_consensus::FullConsensus;
 use reth_engine_primitives::BeaconEngineMessage;
 use reth_evm::ConfigureEvm;
 use reth_network_p2p::BlockClient;
+use reth_node_types::NodeTypesWithDB;
 use reth_payload_builder::PayloadBuilderHandle;
-use reth_provider::{
-    ProviderFactory,
-    providers::{BlockchainProvider, ProviderNodeTypes},
-};
+use reth_provider::{ProviderFactory, providers::BlockchainProvider};
 use reth_prune::PrunerWithFactory;
 use reth_stages_api::{MetricEventsSender, Pipeline};
 use reth_storage_overlay::OverlayManager;
@@ -76,7 +74,7 @@ pub fn build_engine_orchestrator<N, Client, S, V, C>(
     PipelineSync<N>,
 >
 where
-    N: ProviderNodeTypes,
+    N: NodeTypesWithDB,
     Client: BlockClient<Block = BaseBlock> + 'static,
     S: Stream<Item = BeaconEngineMessage> + Send + Sync + Unpin + 'static,
     V: EngineValidator + WaitForCaches,

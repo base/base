@@ -7,14 +7,14 @@ use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
 use reth_db::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
 use reth_errors::ProviderResult;
-use reth_node_types::NodeTypesWithDBAdapter;
+use reth_node_types::{NodeTypesWithDB, NodeTypesWithDBAdapter};
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_trie::StateRoot;
 use reth_trie_db::DatabaseStateRoot;
 
 use crate::{
     ChainSpecProvider, HashingWriter, ProviderFactory, TrieWriter,
-    providers::{ProviderNodeTypes, RocksDBBuilder, StaticFileProvider, StaticFileProviderBuilder},
+    providers::{RocksDBBuilder, StaticFileProvider, StaticFileProviderBuilder},
 };
 
 type DbStateRoot<'a, TX, A> = StateRoot<
@@ -136,7 +136,7 @@ pub fn create_test_provider_factory_with_chain_spec_and_db_args(
 }
 
 /// Inserts the provider's genesis allocation into the trie.
-pub fn insert_genesis<N: ProviderNodeTypes>(
+pub fn insert_genesis<N: NodeTypesWithDB>(
     provider_factory: &ProviderFactory<N>,
 ) -> ProviderResult<B256> {
     let provider = provider_factory.provider_rw()?;
