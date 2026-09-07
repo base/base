@@ -70,27 +70,27 @@ where
     ) -> Result<crate::ExecutionCtxFor<'_, Self>, Self::Error> {
         self.inner().context_for_next_block(parent, attributes)
     }
-}
 
-#[cfg(feature = "std")]
-impl<Inner, T> crate::ConfigureEngineEvm<T> for NoopEvmConfig<Inner>
-where
-    Inner: crate::ConfigureEngineEvm<T>,
-{
-    fn evm_env_for_payload(&self, payload: &T) -> Result<EvmEnvFor<Self>, Self::Error> {
+    #[cfg(feature = "std")]
+    fn evm_env_for_payload(
+        &self,
+        payload: &base_common_rpc_types_engine::ExecutionData,
+    ) -> Result<EvmEnvFor<Self>, Self::Error> {
         self.inner().evm_env_for_payload(payload)
     }
 
+    #[cfg(feature = "std")]
     fn context_for_payload<'a>(
         &self,
-        payload: &'a T,
+        payload: &'a base_common_rpc_types_engine::ExecutionData,
     ) -> Result<crate::ExecutionCtxFor<'a, Self>, Self::Error> {
         self.inner().context_for_payload(payload)
     }
 
+    #[cfg(feature = "std")]
     fn tx_iterator_for_payload(
         &self,
-        payload: &T,
+        payload: &base_common_rpc_types_engine::ExecutionData,
     ) -> Result<impl crate::ExecutableTxIterator<Self>, Self::Error> {
         self.inner().tx_iterator_for_payload(payload)
     }

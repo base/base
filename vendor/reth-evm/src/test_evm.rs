@@ -30,9 +30,9 @@ use revm::{
 };
 
 use crate::{
-    ConfigureEngineEvm, ConfigureEvm, Evm, EvmEnv, EvmEnvFor, ExecutableTxIterator,
-    ExecutionCtxFor, NextBlockEnvAttributes, SenderRecoveryCache, TestBlockAssembler,
-    eth::NextEvmEnvAttributes, noop::NoopEvmConfig,
+    ConfigureEvm, Evm, EvmEnv, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor,
+    NextBlockEnvAttributes, SenderRecoveryCache, TestBlockAssembler, eth::NextEvmEnvAttributes,
+    noop::NoopEvmConfig,
 };
 
 /// Test EVM using Alloy's interpreter and a supplied test fork schedule.
@@ -178,9 +178,8 @@ impl ConfigureEvm for TestEvmConfig {
             slot_number: attributes.slot_number,
         })
     }
-}
 
-impl ConfigureEngineEvm<ExecutionData> for TestEvmConfig {
+    #[cfg(feature = "std")]
     fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
         let timestamp = payload.payload.timestamp();
         let block_number = payload.payload.block_number();
@@ -232,6 +231,7 @@ impl ConfigureEngineEvm<ExecutionData> for TestEvmConfig {
         Ok(EvmEnv { cfg_env, block_env })
     }
 
+    #[cfg(feature = "std")]
     fn context_for_payload<'a>(
         &self,
         payload: &'a ExecutionData,
@@ -250,6 +250,7 @@ impl ConfigureEngineEvm<ExecutionData> for TestEvmConfig {
         })
     }
 
+    #[cfg(feature = "std")]
     fn tx_iterator_for_payload(
         &self,
         payload: &ExecutionData,

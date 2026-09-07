@@ -50,10 +50,7 @@ use reth_tokio_util::EventSender;
 use reth_tracing::tracing::{debug, info};
 use tokio::sync::oneshot;
 
-use crate::{
-    ConfigureEngineEvm, ConsensusEngineEvent, ConsensusEngineHandle, InvalidBlockHookBuilder,
-    txpool_prewarm,
-};
+use crate::{ConsensusEngineEvent, ConsensusEngineHandle, InvalidBlockHookBuilder, txpool_prewarm};
 
 /// Contains the handles to the spawned RPC servers.
 ///
@@ -1422,7 +1419,7 @@ where
 
 impl<Node, EV> EngineValidatorBuilder<Node> for BasicEngineValidatorBuilder<EV>
 where
-    Node: FullNodeComponents<Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>>,
+    Node: FullNodeComponents,
     EV: PayloadValidatorBuilder<Node>,
     EV::Validator: reth_engine_primitives::PayloadValidator<Block = BaseBlock> + Clone,
 {

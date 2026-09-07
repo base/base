@@ -3,25 +3,7 @@ use alloy_evm::{RecoveredTx, block::ExecutableTxParts};
 use base_common_consensus::BaseTxEnvelope;
 use rayon::prelude::*;
 
-use crate::{ConfigureEvm, EvmEnvFor, ExecutionCtxFor, TxEnvFor, execute::ExecutableTxFor};
-
-/// [`ConfigureEvm`] extension providing methods for executing payloads.
-pub trait ConfigureEngineEvm<ExecutionData>: ConfigureEvm {
-    /// Returns an [`crate::EvmEnv`] for the given payload.
-    fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error>;
-
-    /// Returns an [`ExecutionCtxFor`] for the given payload.
-    fn context_for_payload<'a>(
-        &self,
-        payload: &'a ExecutionData,
-    ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error>;
-
-    /// Returns an [`ExecutableTxIterator`] for the given payload.
-    fn tx_iterator_for_payload(
-        &self,
-        payload: &ExecutionData,
-    ) -> Result<impl ExecutableTxIterator<Self>, Self::Error>;
-}
+use crate::{ConfigureEvm, TxEnvFor, execute::ExecutableTxFor};
 
 /// Converts a raw transaction into an executable transaction.
 ///

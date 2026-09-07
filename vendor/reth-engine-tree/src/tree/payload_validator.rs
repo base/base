@@ -118,7 +118,7 @@ use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_chain_state::{CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
 use reth_engine_primitives::{
-    ConfigureEngineEvm, ExecutableTxIterator, ExecutionPayload, InvalidBlockHook, PayloadValidator,
+    ExecutableTxIterator, ExecutionPayload, InvalidBlockHook, PayloadValidator,
 };
 use reth_errors::{BlockExecutionError, ProviderResult};
 use reth_evm::{
@@ -398,7 +398,7 @@ where
     pub fn evm_env_for(&self, input: &BlockOrPayload) -> Result<EvmEnvFor<Evm>, Evm::Error>
     where
         V: PayloadValidator<Block = BaseBlock>,
-        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
+        Evm: ConfigureEvm,
     {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.evm_env_for_payload(payload)?),
@@ -413,7 +413,7 @@ where
     ) -> Result<impl ExecutableTxIterator<Evm>, NewPayloadError>
     where
         V: PayloadValidator<Block = BaseBlock>,
-        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
+        Evm: ConfigureEvm,
     {
         Ok(match input {
             BlockOrPayload::Payload(payload) => {
@@ -438,7 +438,7 @@ where
     ) -> Result<ExecutionCtxFor<'a, Evm>, Evm::Error>
     where
         V: PayloadValidator<Block = BaseBlock>,
-        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
+        Evm: ConfigureEvm,
     {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.context_for_payload(payload)?),
@@ -469,7 +469,7 @@ where
     ) -> InsertPayloadResult
     where
         V: PayloadValidator<Block = BaseBlock> + Clone,
-        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
+        Evm: ConfigureEvm,
     {
         let parent_hash = input.parent_hash();
         let _txpool_pause = self.txpool_prewarm.as_ref().map(txpool_prewarm::Handle::pause);
@@ -997,7 +997,7 @@ where
         S: StateProvider + Send,
         Err: core::error::Error + Send + Sync + 'static,
         V: PayloadValidator<Block = BaseBlock>,
-        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
+        Evm: ConfigureEvm,
     {
         debug!(target: "engine::tree::payload_validator", "Executing block");
 
@@ -1132,7 +1132,7 @@ where
         Tx: ExecutableTxFor<Evm> + Send,
         Err: core::error::Error + Send + Sync + 'static,
         MakeStateProvider: Fn(bool) -> ProviderResult<StateProviderBox> + Sync,
-        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
+        Evm: ConfigureEvm,
         V: PayloadValidator<Block = BaseBlock>,
     {
         debug!(target: "engine::tree::payload_validator", "Executing block via BAL path");
@@ -1782,7 +1782,7 @@ where
         + Clone
         + 'static,
     V: PayloadValidator<Block = BaseBlock> + Clone,
-    Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData> + 'static,
+    Evm: ConfigureEvm + 'static,
 {
     fn validate_payload_attributes_against_header(
         &self,

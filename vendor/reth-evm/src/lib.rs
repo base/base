@@ -44,7 +44,7 @@ pub use aliases::*;
 #[cfg(feature = "std")]
 mod engine;
 #[cfg(feature = "std")]
-pub use engine::{ConfigureEngineEvm, ConvertTx, ExecutableTxIterator, ExecutableTxTuple};
+pub use engine::{ConvertTx, ExecutableTxIterator, ExecutableTxTuple};
 mod sender_recovery;
 pub use sender_recovery::SenderRecoveryCache;
 
@@ -206,6 +206,27 @@ pub trait ConfigureEvm: Clone + Debug + Send + Sync + Unpin {
 
     /// A type that knows how to build a block.
     type BlockAssembler: BlockAssembler<Self::BlockExecutorFactory, Block = BaseBlock>;
+
+    /// Returns an EVM environment for a Base execution payload.
+    #[cfg(feature = "std")]
+    fn evm_env_for_payload(
+        &self,
+        payload: &base_common_rpc_types_engine::ExecutionData,
+    ) -> Result<EvmEnvFor<Self>, Self::Error>;
+
+    /// Returns execution context for a Base execution payload.
+    #[cfg(feature = "std")]
+    fn context_for_payload<'a>(
+        &self,
+        payload: &'a base_common_rpc_types_engine::ExecutionData,
+    ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error>;
+
+    /// Returns transactions ready for parallel payload execution.
+    #[cfg(feature = "std")]
+    fn tx_iterator_for_payload(
+        &self,
+        payload: &base_common_rpc_types_engine::ExecutionData,
+    ) -> Result<impl ExecutableTxIterator<Self>, Self::Error>;
 
     /// Returns reference to the configured [`BlockExecutorFactory`].
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory;

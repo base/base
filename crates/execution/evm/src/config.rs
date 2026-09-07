@@ -18,9 +18,9 @@ use base_common_rpc_types_engine as _;
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
-#[cfg(feature = "std")]
-use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
 use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnvMut, precompiles::PrecompilesMap};
+#[cfg(feature = "std")]
+use reth_evm::{EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
 #[cfg(feature = "std")]
 use reth_primitives_traits::WithEncoded;
 use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
@@ -186,19 +186,13 @@ where
             extra_data: attributes.extra_data,
         })
     }
-}
 
-#[cfg(feature = "std")]
-impl<R> ConfigureEngineEvm<ExecutionData> for BaseEvmConfig<R>
-where
-    BaseTransaction<TxEnv>: FromRecoveredTx<BaseTxEnvelope> + FromTxWithEncoded<BaseTxEnvelope>,
-    R: BaseReceiptBuilder<Receipt = BaseReceipt, Transaction = BaseTxEnvelope> + Clone,
-    Self: Send + Sync + Unpin + Clone + 'static,
-{
+    #[cfg(feature = "std")]
     fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
         Ok(BaseEvmEnvBuilder::payload_evm_env(payload, self.chain_spec()))
     }
 
+    #[cfg(feature = "std")]
     fn context_for_payload<'a>(
         &self,
         payload: &'a ExecutionData,
@@ -210,6 +204,7 @@ where
         })
     }
 
+    #[cfg(feature = "std")]
     fn tx_iterator_for_payload(
         &self,
         payload: &ExecutionData,
