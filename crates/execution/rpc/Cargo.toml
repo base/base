@@ -66,7 +66,6 @@ derive_more = { workspace = true, features = ["constructor"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
-reth-node-builder = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-execution-evm = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }

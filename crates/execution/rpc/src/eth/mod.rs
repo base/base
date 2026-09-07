@@ -22,7 +22,8 @@ use alloy_primitives::U256;
 use eyre::WrapErr;
 pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
 use reth_node_api::{FullNodeComponents, FullNodeTypes};
-use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
+mod context;
+pub use context::EthApiCtx;
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
     EthApiTypes, FromEvmError, FullEthApiServer, RpcConvert, RpcConverter, RpcNodeCore,
@@ -314,6 +315,9 @@ pub type BaseRpcConvert<N> = RpcConverter<
     BaseTxInfoMapper<<N as FullNodeTypes>::Provider>,
 >;
 
+/// The Base eth API for a node provider, transaction pool, and network.
+pub type BaseNodeEthApi<N> = BaseEthApi<N, BaseRpcConvert<N>>;
+
 /// Builds [`BaseEthApi`] for Base.
 #[derive(Debug)]
 pub struct BaseEthApiBuilder {
@@ -365,15 +369,14 @@ impl BaseEthApiBuilder {
     }
 }
 
-impl<N> EthApiBuilder<N> for BaseEthApiBuilder
-where
-    N: FullNodeComponents,
-    BaseRpcConvert<N>: RpcConvert,
-    BaseEthApi<N, BaseRpcConvert<N>>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
-{
-    type EthApi = BaseEthApi<N, BaseRpcConvert<N>>;
-
-    async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
+impl BaseEthApiBuilder {
+    /// Constructs the Base eth API from the node components and RPC settings.
+    pub async fn build_eth_api<N>(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<BaseNodeEthApi<N>>
+    where
+        N: FullNodeComponents,
+        BaseRpcConvert<N>: RpcConvert,
+        BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
+    {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
         let provider = ctx.components.provider().clone();
         let base_time = BaseTimeCache::default();

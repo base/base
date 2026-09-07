@@ -11,6 +11,7 @@ use alloy_rpc_types::engine::ClientVersionV1;
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_payload_builder::BaseEngineValidator;
+use base_execution_rpc::eth::{BaseEthApiBuilder, BaseNodeEthApi, EthApiCtx};
 use jsonrpsee::RpcModule;
 pub use jsonrpsee::{
     core::middleware::layer::Either,
@@ -41,7 +42,7 @@ use reth_rpc_builder::{
     config::RethRpcServerConfig,
 };
 use reth_rpc_engine_api::{EngineApi, capabilities::EngineCapabilities};
-use reth_rpc_eth_types::{EthConfig, EthStateCache, cache::cache_new_blocks_task};
+use reth_rpc_eth_types::{EthStateCache, cache::cache_new_blocks_task};
 use reth_storage_overlay::OverlayManager;
 use reth_tokio_util::EventSender;
 use reth_tracing::tracing::{debug, info};
@@ -483,15 +484,14 @@ struct RpcSetupContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
 /// methods or even replace existing method handlers, see also [`TransportRpcModules`].
 pub struct RpcAddOns<
     Node: FullNodeComponents,
-    EthB: EthApiBuilder<Node>,
     EB = BasicEngineApiBuilder,
     RpcMiddleware = Identity,
     AuthHttpMiddleware = Identity,
 > {
     /// Additional RPC add-ons.
-    pub hooks: RpcHooks<Node, EthB::EthApi>,
+    pub hooks: RpcHooks<Node, BaseNodeEthApi<Node>>,
     /// Builder for `EthApi`
-    eth_api_builder: EthB,
+    eth_api_builder: BaseEthApiBuilder,
     /// Builder for `EngineApi`
     engine_api_builder: EB,
 
@@ -509,11 +509,10 @@ pub struct RpcAddOns<
     tokio_runtime: Option<tokio::runtime::Handle>,
 }
 
-impl<Node, EthB, EB, RpcMiddleware, AuthHttpMiddleware> Debug
-    for RpcAddOns<Node, EthB, EB, RpcMiddleware, AuthHttpMiddleware>
+impl<Node, EB, RpcMiddleware, AuthHttpMiddleware> Debug
+    for RpcAddOns<Node, EB, RpcMiddleware, AuthHttpMiddleware>
 where
     Node: FullNodeComponents,
-    EthB: EthApiBuilder<Node>,
     EB: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -526,15 +525,15 @@ where
     }
 }
 
-impl<Node, EthB, EB, RpcMiddleware, AuthHttpMiddleware>
-    RpcAddOns<Node, EthB, EB, RpcMiddleware, AuthHttpMiddleware>
+impl<Node, EB, RpcMiddleware, AuthHttpMiddleware>
+    RpcAddOns<Node, EB, RpcMiddleware, AuthHttpMiddleware>
 where
     Node: FullNodeComponents,
-    EthB: EthApiBuilder<Node>,
+    BaseNodeEthApi<Node>: FullEthApiServer<Provider = Node::Provider, Pool = Node::Pool>,
 {
     /// Creates a new instance of the RPC add-ons.
     pub fn new(
-        eth_api_builder: EthB,
+        eth_api_builder: BaseEthApiBuilder,
         engine_api_builder: EB,
 
         rpc_middleware: RpcMiddleware,
@@ -556,7 +555,7 @@ where
     pub fn with_engine_api<T>(
         self,
         engine_api_builder: T,
-    ) -> RpcAddOns<Node, EthB, T, RpcMiddleware, AuthHttpMiddleware> {
+    ) -> RpcAddOns<Node, T, RpcMiddleware, AuthHttpMiddleware> {
         let Self {
             hooks,
             eth_api_builder,
@@ -619,7 +618,7 @@ where
     pub fn with_rpc_middleware<T>(
         self,
         rpc_middleware: T,
-    ) -> RpcAddOns<Node, EthB, EB, T, AuthHttpMiddleware> {
+    ) -> RpcAddOns<Node, EB, T, AuthHttpMiddleware> {
         let Self {
             hooks,
             eth_api_builder,
@@ -649,7 +648,7 @@ where
     pub fn with_auth_http_middleware<T>(
         self,
         auth_http_middleware: T,
-    ) -> RpcAddOns<Node, EthB, EB, RpcMiddleware, T> {
+    ) -> RpcAddOns<Node, EB, RpcMiddleware, T> {
         let Self {
             hooks, eth_api_builder, engine_api_builder, rpc_middleware, tokio_runtime, ..
         } = self;
@@ -669,7 +668,7 @@ where
     pub fn layer_auth_http_middleware<T>(
         self,
         layer: T,
-    ) -> RpcAddOns<Node, EthB, EB, RpcMiddleware, Stack<AuthHttpMiddleware, T>> {
+    ) -> RpcAddOns<Node, EB, RpcMiddleware, Stack<AuthHttpMiddleware, T>> {
         let Self {
             hooks,
             eth_api_builder,
@@ -698,8 +697,7 @@ where
     pub fn option_layer_auth_http_middleware<T>(
         self,
         layer: Option<T>,
-    ) -> RpcAddOns<Node, EthB, EB, RpcMiddleware, Stack<AuthHttpMiddleware, Either<T, Identity>>>
-    {
+    ) -> RpcAddOns<Node, EB, RpcMiddleware, Stack<AuthHttpMiddleware, Either<T, Identity>>> {
         let layer = layer.map(Either::Left).unwrap_or(Either::Right(Identity::new()));
         self.layer_auth_http_middleware(layer)
     }
@@ -732,7 +730,7 @@ where
     pub fn layer_rpc_middleware<T>(
         self,
         layer: T,
-    ) -> RpcAddOns<Node, EthB, EB, Stack<RpcMiddleware, T>, AuthHttpMiddleware> {
+    ) -> RpcAddOns<Node, EB, Stack<RpcMiddleware, T>, AuthHttpMiddleware> {
         let Self {
             hooks,
             eth_api_builder,
@@ -761,8 +759,7 @@ where
     pub fn option_layer_rpc_middleware<T>(
         self,
         layer: Option<T>,
-    ) -> RpcAddOns<Node, EthB, EB, Stack<RpcMiddleware, Either<T, Identity>>, AuthHttpMiddleware>
-    {
+    ) -> RpcAddOns<Node, EB, Stack<RpcMiddleware, Either<T, Identity>>, AuthHttpMiddleware> {
         let layer = layer.map(Either::Left).unwrap_or(Either::Right(Identity::new()));
         self.layer_rpc_middleware(layer)
     }
@@ -770,7 +767,10 @@ where
     /// Sets the hook that is run once the rpc server is started.
     pub fn on_rpc_started<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(RpcContext<'_, Node, EthB::EthApi>, RethRpcServerHandles) -> eyre::Result<()>
+        F: FnOnce(
+                RpcContext<'_, Node, BaseNodeEthApi<Node>>,
+                RethRpcServerHandles,
+            ) -> eyre::Result<()>
             + Send
             + 'static,
     {
@@ -781,30 +781,27 @@ where
     /// Sets the hook that is run to configure the rpc modules.
     pub fn extend_rpc_modules<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(RpcContext<'_, Node, EthB::EthApi>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(RpcContext<'_, Node, BaseNodeEthApi<Node>>) -> eyre::Result<()> + Send + 'static,
     {
         self.hooks.set_extend_rpc_modules(hook);
         self
     }
 }
 
-impl<Node, EthB, EB> Default for RpcAddOns<Node, EthB, EB, Identity, Identity>
+impl<Node, EB> Default for RpcAddOns<Node, EB, Identity, Identity>
 where
     Node: FullNodeComponents,
-    EthB: EthApiBuilder<Node>,
     EB: Default,
 {
     fn default() -> Self {
-        Self::new(EthB::default(), EB::default(), Default::default(), Identity::new())
+        Self::new(BaseEthApiBuilder::default(), EB::default(), Default::default(), Identity::new())
     }
 }
 
-impl<N, EthB, EB, RpcMiddleware, AuthHttpMiddleware>
-    RpcAddOns<N, EthB, EB, RpcMiddleware, AuthHttpMiddleware>
+impl<N, EB, RpcMiddleware, AuthHttpMiddleware> RpcAddOns<N, EB, RpcMiddleware, AuthHttpMiddleware>
 where
     N: FullNodeComponents,
     N::Provider: ChainSpecProvider,
-    EthB: EthApiBuilder<N>,
     EB: EngineApiBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
     AuthHttpMiddleware: RethAuthHttpMiddleware<Identity>,
@@ -818,9 +815,9 @@ where
         self,
         ctx: AddOnsContext<'_, N>,
         ext: F,
-    ) -> eyre::Result<RpcServerOnlyHandle<N, EthB::EthApi>>
+    ) -> eyre::Result<RpcServerOnlyHandle<N, BaseNodeEthApi<N>>>
     where
-        F: FnOnce(RpcModuleContainer<'_, N, EthB::EthApi>) -> eyre::Result<()>,
+        F: FnOnce(RpcModuleContainer<'_, N, BaseNodeEthApi<N>>) -> eyre::Result<()>,
     {
         let rpc_middleware = self.rpc_middleware.clone();
         let tokio_runtime = self.tokio_runtime.clone();
@@ -870,9 +867,9 @@ where
         self,
         ctx: AddOnsContext<'_, N>,
         ext: F,
-    ) -> eyre::Result<RpcHandle<N, EthB::EthApi>>
+    ) -> eyre::Result<RpcHandle<N, BaseNodeEthApi<N>>>
     where
-        F: FnOnce(RpcModuleContainer<'_, N, EthB::EthApi>) -> eyre::Result<()>,
+        F: FnOnce(RpcModuleContainer<'_, N, BaseNodeEthApi<N>>) -> eyre::Result<()>,
     {
         // Check CLI config to determine if auth server should be disabled
         let disable_auth = ctx.config.rpc.disable_auth_server;
@@ -889,9 +886,9 @@ where
         ctx: AddOnsContext<'_, N>,
         ext: F,
         disable_auth: bool,
-    ) -> eyre::Result<RpcHandle<N, EthB::EthApi>>
+    ) -> eyre::Result<RpcHandle<N, BaseNodeEthApi<N>>>
     where
-        F: FnOnce(RpcModuleContainer<'_, N, EthB::EthApi>) -> eyre::Result<()>,
+        F: FnOnce(RpcModuleContainer<'_, N, BaseNodeEthApi<N>>) -> eyre::Result<()>,
     {
         let rpc_middleware = self.rpc_middleware.clone();
         let auth_http_middleware = self.auth_http_middleware.clone();
@@ -958,9 +955,9 @@ where
         self,
         ctx: AddOnsContext<'a, N>,
         ext: F,
-    ) -> eyre::Result<RpcSetupContext<'a, N, EthB::EthApi>>
+    ) -> eyre::Result<RpcSetupContext<'a, N, BaseNodeEthApi<N>>>
     where
-        F: FnOnce(RpcModuleContainer<'_, N, EthB::EthApi>) -> eyre::Result<()>,
+        F: FnOnce(RpcModuleContainer<'_, N, BaseNodeEthApi<N>>) -> eyre::Result<()>,
     {
         let Self { eth_api_builder, engine_api_builder, hooks, .. } = self;
 
@@ -1088,12 +1085,12 @@ where
 
     /// Helper to finalize RPC setup by creating context and calling hooks
     fn finalize_rpc_setup(
-        registry: &mut RpcRegistry<N, EthB::EthApi>,
+        registry: &mut RpcRegistry<N, BaseNodeEthApi<N>>,
         modules: &mut TransportRpcModules,
         auth_module: &mut AuthRpcModule,
         node: &N,
         config: &NodeConfig,
-        on_rpc_started: Box<dyn OnRpcStarted<N, EthB::EthApi>>,
+        on_rpc_started: Box<dyn OnRpcStarted<N, BaseNodeEthApi<N>>>,
         handles: RethRpcServerHandles,
     ) -> eyre::Result<()> {
         let ctx = RpcContext { node: node.clone(), config, registry, modules, auth_module };
@@ -1103,17 +1100,16 @@ where
     }
 }
 
-impl<N, EthB, EB, RpcMiddleware, AuthHttpMiddleware> NodeAddOns<N>
-    for RpcAddOns<N, EthB, EB, RpcMiddleware, AuthHttpMiddleware>
+impl<N, EB, RpcMiddleware, AuthHttpMiddleware> NodeAddOns<N>
+    for RpcAddOns<N, EB, RpcMiddleware, AuthHttpMiddleware>
 where
     N: FullNodeComponents,
     <N as FullNodeTypes>::Provider: ChainSpecProvider,
-    EthB: EthApiBuilder<N>,
     EB: EngineApiBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
     AuthHttpMiddleware: RethAuthHttpMiddleware<Identity>,
 {
-    type Handle = RpcHandle<N, EthB::EthApi>;
+    type Handle = RpcHandle<N, BaseNodeEthApi<N>>;
 
     async fn launch_add_ons(self, ctx: AddOnsContext<'_, N>) -> eyre::Result<Self::Handle> {
         self.launch_add_ons_with(ctx, |_| Ok(())).await
@@ -1132,65 +1128,17 @@ pub trait RethRpcAddOns<N: FullNodeComponents>:
     fn hooks_mut(&mut self) -> &mut RpcHooks<N, Self::EthApi>;
 }
 
-impl<N: FullNodeComponents, EthB, EB, RpcMiddleware, AuthHttpMiddleware> RethRpcAddOns<N>
-    for RpcAddOns<N, EthB, EB, RpcMiddleware, AuthHttpMiddleware>
+impl<N: FullNodeComponents, EB, RpcMiddleware, AuthHttpMiddleware> RethRpcAddOns<N>
+    for RpcAddOns<N, EB, RpcMiddleware, AuthHttpMiddleware>
 where
-    Self: NodeAddOns<N, Handle = RpcHandle<N, EthB::EthApi>>,
-    EthB: EthApiBuilder<N>,
+    Self: NodeAddOns<N, Handle = RpcHandle<N, BaseNodeEthApi<N>>>,
+    BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
-    type EthApi = EthB::EthApi;
+    type EthApi = BaseNodeEthApi<N>;
 
     fn hooks_mut(&mut self) -> &mut RpcHooks<N, Self::EthApi> {
         &mut self.hooks
     }
-}
-
-/// `EthApiCtx` struct
-/// This struct is used to pass the necessary context to the `EthApiBuilder` to build the `EthApi`.
-#[derive(Debug)]
-pub struct EthApiCtx<'a, N: FullNodeTypes> {
-    /// Reference to the node components
-    pub components: &'a N,
-    /// Eth API configuration
-    pub config: EthConfig,
-    /// Cache for eth state
-    pub cache: EthStateCache,
-    /// Handle to the beacon consensus engine
-    pub engine_handle: ConsensusEngineHandle,
-}
-
-impl<'a, N: FullNodeComponents> EthApiCtx<'a, N> {
-    /// Provides a [`EthApiBuilder`] with preconfigured config and components.
-    pub fn eth_api_builder(self) -> reth_rpc::EthApiBuilder<N, ()> {
-        reth_rpc::EthApiBuilder::new_with_components(self.components.clone())
-            .eth_cache(self.cache)
-            .task_spawner(self.components.task_executor().clone())
-            .gas_cap(self.config.rpc_gas_cap.into())
-            .max_simulate_blocks(self.config.rpc_max_simulate_blocks)
-            .compute_state_root_for_eth_simulate(self.config.compute_state_root_for_eth_simulate)
-            .eth_proof_window(self.config.eth_proof_window)
-            .fee_history_cache_config(self.config.fee_history_cache)
-            .proof_permits(self.config.proof_permits)
-            .gas_oracle_config(self.config.gas_oracle)
-            .max_batch_size(self.config.max_batch_size)
-            .max_blocking_io_requests(self.config.max_blocking_io_requests)
-            .pending_block_kind(self.config.pending_block_kind)
-            .raw_tx_forwarder(self.config.raw_tx_forwarder)
-            .evm_memory_limit(self.config.rpc_evm_memory_limit)
-            .force_blob_sidecar_upcasting(self.config.force_blob_sidecar_upcasting)
-    }
-}
-
-/// A `EthApi` that knows how to build `eth` namespace API from [`FullNodeComponents`].
-pub trait EthApiBuilder<N: FullNodeComponents>: Default + Send + 'static {
-    /// The Ethapi implementation this builder will build.
-    type EthApi: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>;
-
-    /// Builds the [`EthApiServer`](reth_rpc_api::eth::EthApiServer) from the given context.
-    fn build_eth_api(
-        self,
-        ctx: EthApiCtx<'_, N>,
-    ) -> impl Future<Output = eyre::Result<Self::EthApi>> + Send;
 }
 
 /// Builder for engine API RPC module.

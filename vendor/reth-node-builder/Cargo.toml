@@ -39,6 +39,7 @@ reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-tokio-util = { workspace = true }
+reth-rpc-eth-api = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-engine-tree = { workspace = true }
@@ -49,6 +50,7 @@ reth-rpc-builder = { workspace = true }
 reth-static-file = { workspace = true }
 reth-engine-local = { workspace = true }
 reth-node-metrics = { workspace = true }
+base-execution-rpc = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 reth-node-ethstats = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
