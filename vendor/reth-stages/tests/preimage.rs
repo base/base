@@ -25,8 +25,8 @@ use reth_downloaders::{
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
 use reth_ethereum_primitives::{Block, BlockBody, Transaction, TransactionSigned};
+use reth_evm::TestEvmConfig;
 use reth_evm::{ConfigureEvm, execute::Executor};
-use reth_evm_ethereum::EthEvmConfig;
 use reth_libmdbx::{Environment, EnvironmentFlags, Mode};
 use reth_network_p2p::{
     bodies::downloader::BodyDownloader,
@@ -412,7 +412,7 @@ fn setup_selfdestruct_scenario() -> eyre::Result<SelfdestructScenario> {
         init_genesis(&provider_factory).expect("init genesis");
 
         let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-        let evm_config = EthEvmConfig::new(chain_spec.clone());
+        let evm_config = TestEvmConfig::new(chain_spec.clone());
         let mut blocks = Vec::new();
         let mut parent_hash = genesis.hash();
         let gas_price = INITIAL_BASE_FEE as u128;
@@ -527,7 +527,7 @@ fn setup_create2_selfdestruct_scenario() -> eyre::Result<Create2SelfdestructScen
     let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
     init_genesis(&provider_factory)?;
     let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-    let evm_config = EthEvmConfig::new(chain_spec.clone());
+    let evm_config = TestEvmConfig::new(chain_spec.clone());
     let tx = sign_tx_with_key_pair(
         key_pair,
         Transaction::Eip1559(TxEip1559 {
@@ -650,7 +650,7 @@ fn setup_reverted_slot_selfdestruct_scenario() -> eyre::Result<RevertedSlotSelfd
         init_genesis(&provider_factory).expect("init genesis");
 
         let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-        let evm_config = EthEvmConfig::new(chain_spec.clone());
+        let evm_config = TestEvmConfig::new(chain_spec.clone());
         let mut blocks = Vec::new();
         let mut parent_hash = genesis.hash();
         let gas_price = INITIAL_BASE_FEE as u128;
@@ -739,7 +739,7 @@ fn setup_same_address_double_wipe_scenario() -> eyre::Result<SameAddressDoubleWi
         init_genesis(&provider_factory).expect("init genesis");
 
         let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-        let evm_config = EthEvmConfig::new(chain_spec.clone());
+        let evm_config = TestEvmConfig::new(chain_spec.clone());
         let mut blocks = Vec::new();
         let mut parent_hash = genesis.hash();
         let gas_price = INITIAL_BASE_FEE as u128;
@@ -835,7 +835,7 @@ fn setup_same_address_recreate_and_write_same_block_then_wipe_scenario()
         init_genesis(&provider_factory).expect("init genesis");
 
         let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-        let evm_config = EthEvmConfig::new(chain_spec.clone());
+        let evm_config = TestEvmConfig::new(chain_spec.clone());
         let gas_price = INITIAL_BASE_FEE as u128;
 
         let mut parent_hash = genesis.hash();
@@ -986,7 +986,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
         init_genesis(&provider_factory).expect("init genesis");
 
         let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-        let evm_config = EthEvmConfig::new(chain_spec.clone());
+        let evm_config = TestEvmConfig::new(chain_spec.clone());
         let gas_price = INITIAL_BASE_FEE as u128;
 
         // Single pre-Cancun block with three txs:
@@ -1074,7 +1074,7 @@ fn init_v2_pipeline_provider_factory(
 
 fn execute_and_commit_block(
     provider_factory: &TestProviderFactory,
-    evm_config: &EthEvmConfig,
+    evm_config: &TestEvmConfig,
     signer_address: Address,
     parent_hash: B256,
     block_num: u64,
@@ -1292,7 +1292,7 @@ where
 {
     let consensus = NoopConsensus::arc();
     let stages_config = StageConfig::default();
-    let evm_config = EthEvmConfig::new(provider_factory.chain_spec());
+    let evm_config = TestEvmConfig::new(provider_factory.chain_spec());
 
     let (tip_tx, tip_rx) = watch::channel(B256::ZERO);
     let static_file_producer =

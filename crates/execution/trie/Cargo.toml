@@ -54,11 +54,11 @@ eyre = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 serial_test = { workspace = true, features = ["default"] }
+reth-evm = { workspace = true, features = ["test-utils"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 reth-chainspec = { workspace = true, features = ["default"] }
 reth-db-api = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-evm-ethereum = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 reth-codecs = { workspace = true, features = ["alloy", "test-utils"] }
 reth-ethereum-primitives = { workspace = true, features = ["default"] }

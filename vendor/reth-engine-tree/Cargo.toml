@@ -85,7 +85,6 @@ metrics-util = { workspace = true, features = ["debugging"] }
 reth-stages = { workspace = true, features = ["test-utils"] }
 reth-exex-types = { workspace = true, features = ["default"] }
 reth-chain-state = { workspace = true, features = ["test-utils"] }
-reth-evm-ethereum = { workspace = true, features = ["test-utils"] }
 reth-consensus-common = { workspace = true, features = ["test-utils"] }
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
@@ -116,7 +115,6 @@ test-utils = [
     "reth-ethereum-primitives/test-utils",
     "reth-tasks/test-utils",
     "reth-execution-cache/test-utils",
-    "reth-evm-ethereum/test-utils",
 ]
 trie-debug = [
     "reth-trie-sparse/trie-debug",

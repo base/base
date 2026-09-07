@@ -30,9 +30,12 @@ reth-primitives-traits = { workspace = true }
 rayon = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 reth-metrics = { workspace = true, optional = true }
+reth-chainspec = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
+alloy-rpc-types-engine = { workspace = true, optional = true }
+reth-ethereum-primitives = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 reth-ethereum-primitives = { workspace = true }
@@ -53,12 +56,15 @@ std = [
     "derive_more/std",
     "reth-storage-api/std",
     "reth-trie-common/std",
-    "reth-ethereum-primitives/std",
+    "reth-ethereum-primitives?/std",
     "alloy-eip7928/std",
     "fixed-cache/std",
 ]
 metrics = ["std", "dep:metrics", "dep:reth-metrics"]
 test-utils = [
+    "std",
+    "dep:reth-chainspec",
+    "dep:alloy-rpc-types-engine",
     "reth-primitives-traits/test-utils",
     "reth-trie-common/test-utils",
     "reth-ethereum-primitives/test-utils",

@@ -758,7 +758,7 @@ mod tests {
         transaction::{DbTx, DbTxMut},
     };
     use reth_ethereum_primitives::Block;
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_primitives_traits::{Account, Block as _, Bytecode, SealedBlock, StorageEntry};
     use reth_provider::{
         AccountReader, BlockWriter, DatabaseProviderFactory, HashingWriter, ReceiptProvider,
@@ -774,9 +774,9 @@ mod tests {
     use super::*;
     use crate::stages::MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD;
 
-    fn stage() -> ExecutionStage<EthEvmConfig> {
+    fn stage() -> ExecutionStage<TestEvmConfig> {
         let evm_config =
-            EthEvmConfig::new(Arc::new(ChainSpecBuilder::mainnet().berlin_activated().build()));
+            TestEvmConfig::new(Arc::new(ChainSpecBuilder::mainnet().berlin_activated().build()));
         let consensus = Arc::new(TestConsensus::new(Arc::new(
             ChainSpecBuilder::mainnet().berlin_activated().build(),
         )));

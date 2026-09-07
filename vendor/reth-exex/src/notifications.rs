@@ -577,7 +577,7 @@ mod tests {
     use futures::StreamExt;
     use reth_db_common::init::init_genesis;
     use reth_ethereum_primitives::Block;
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_primitives_traits::Block as _;
     use reth_provider::{
         BlockWriter, Chain, DBProvider, DatabaseProviderFactory, providers::BlockchainProvider,
@@ -639,7 +639,7 @@ mod tests {
         let mut notifications = ExExNotificationsWithoutHead::new(
             node_head,
             provider,
-            EthEvmConfig::mainnet(),
+            TestEvmConfig::default(),
             notifications_rx,
             wal.handle(),
         )
@@ -685,7 +685,7 @@ mod tests {
             ExExHead { block: BlockNumHash { number: genesis_block.number, hash: genesis_hash } };
         let (notifications_tx, notifications_rx) = mpsc::channel(1);
 
-        let evm_config = EthEvmConfig::mainnet();
+        let evm_config = TestEvmConfig::default();
         let mut notifications = ExExNotifications::new(
             BlockNumHash { number: genesis_block.number, hash: genesis_hash },
             provider.clone(),
@@ -803,7 +803,7 @@ mod tests {
         let mut notifications = ExExNotificationsWithoutHead::new(
             node_head,
             provider,
-            EthEvmConfig::mainnet(),
+            TestEvmConfig::default(),
             notifications_rx,
             wal.handle(),
         )
@@ -842,7 +842,7 @@ mod tests {
         provider_rw.commit()?;
         let node_head_notification = ExExNotification::ChainCommitted {
             new: Arc::new(
-                BackfillJobFactory::new(EthEvmConfig::mainnet(), provider.clone())
+                BackfillJobFactory::new(TestEvmConfig::default(), provider.clone())
                     .backfill(node_head.number..=node_head.number)
                     .next()
                     .ok_or_else(|| eyre::eyre!("failed to backfill"))??,
@@ -886,7 +886,7 @@ mod tests {
         let mut notifications = ExExNotificationsWithoutHead::new(
             node_head,
             provider,
-            EthEvmConfig::mainnet(),
+            TestEvmConfig::default(),
             notifications_rx,
             wal.handle(),
         )
@@ -964,7 +964,7 @@ mod tests {
         let mut notifications = ExExNotificationsWithoutHead::new(
             node_head,
             provider,
-            EthEvmConfig::mainnet(),
+            TestEvmConfig::default(),
             notifications_rx,
             wal.handle(),
         )
@@ -1073,7 +1073,7 @@ mod tests {
         let mut notifications = ExExNotificationsWithoutHead::new(
             node_head,
             provider,
-            EthEvmConfig::mainnet(),
+            TestEvmConfig::default(),
             notifications_rx,
             wal.handle(),
         )

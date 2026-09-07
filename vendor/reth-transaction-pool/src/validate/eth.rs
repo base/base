@@ -1552,7 +1552,7 @@ mod tests {
     };
     use alloy_primitives::{Address, B256, Bytes, U256, hex};
     use reth_ethereum_primitives::PooledTransactionVariant;
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_primitives_traits::SignedTransaction;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use revm::primitives::eip3860::MAX_INITCODE_SIZE;
@@ -1564,8 +1564,8 @@ mod tests {
         traits::PoolTransaction,
     };
 
-    fn test_evm_config() -> EthEvmConfig {
-        EthEvmConfig::mainnet()
+    fn test_evm_config() -> TestEvmConfig {
+        TestEvmConfig::default()
     }
 
     fn get_transaction() -> EthPooledTransaction {
@@ -1820,7 +1820,7 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(provider, EthEvmConfig::mainnet())
+        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
             .set_tx_fee_cap(0) // no cap
             .build(blob_store);
 
@@ -1838,7 +1838,7 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(provider, EthEvmConfig::mainnet())
+        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
             .set_tx_fee_cap(2e18 as u128) // 2 ETH cap
             .build(blob_store);
 
@@ -1856,7 +1856,7 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(provider, EthEvmConfig::mainnet())
+        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
             .with_max_tx_gas_limit(Some(500_000)) // Set limit lower than transaction gas limit (1_015_288)
             .build(blob_store.clone());
 
@@ -1888,7 +1888,7 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(provider, EthEvmConfig::mainnet())
+        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
             .with_max_tx_gas_limit(None) // disabled
             .build(blob_store);
 
@@ -1906,7 +1906,7 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(provider, EthEvmConfig::mainnet())
+        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
             .with_max_tx_gas_limit(Some(2_000_000)) // Set limit higher than transaction gas limit (1_015_288)
             .build(blob_store);
 
@@ -1930,7 +1930,7 @@ mod tests {
         provider: MockEthProvider,
         minimum_priority_fee: Option<u128>,
         local_config: Option<LocalTransactionConfig>,
-    ) -> EthTransactionValidator<MockEthProvider, EthPooledTransaction, EthEvmConfig> {
+    ) -> EthTransactionValidator<MockEthProvider, EthPooledTransaction, TestEvmConfig> {
         let blob_store = InMemoryBlobStore::default();
         let mut builder = EthTransactionValidatorBuilder::new(provider, test_evm_config())
             .with_minimum_priority_fee(minimum_priority_fee);
@@ -2147,7 +2147,7 @@ mod tests {
 
         // Validate with balance check enabled
         let validator =
-            EthTransactionValidatorBuilder::new(provider.clone(), EthEvmConfig::mainnet())
+            EthTransactionValidatorBuilder::new(provider.clone(), TestEvmConfig::default())
                 .build(InMemoryBlobStore::default());
 
         let outcome = validator.validate_one(TransactionOrigin::External, transaction.clone());
@@ -2163,7 +2163,7 @@ mod tests {
         }
 
         // Validate with balance check disabled
-        let validator = EthTransactionValidatorBuilder::new(provider, EthEvmConfig::mainnet())
+        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
             .disable_balance_check()
             .build(InMemoryBlobStore::default());
 

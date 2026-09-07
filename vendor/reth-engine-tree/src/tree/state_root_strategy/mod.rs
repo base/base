@@ -1349,7 +1349,7 @@ mod tests {
     use reth_db_common::init::init_genesis;
     use reth_ethereum_primitives::EthPrimitives;
     use reth_evm::OnStateHook;
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_primitives_traits::{Account, StorageEntry};
     use reth_provider::{
         HashingWriter, providers::BlockchainProvider,
@@ -1509,7 +1509,7 @@ mod tests {
         }
 
         let provider_factory = BlockchainProvider::new(factory).unwrap();
-        let env: ExecutionEnv<EthEvmConfig> = ExecutionEnv::test_default();
+        let env: ExecutionEnv<TestEvmConfig> = ExecutionEnv::test_default();
         let runtime = reth_tasks::Runtime::test();
         let overlay_manager = OverlayManager::<EthPrimitives>::default();
         let mut state_root_handle = DefaultStateRootStrategy::default().spawn_state_root(

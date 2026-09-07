@@ -555,3 +555,12 @@ pub struct NextBlockEnvAttributes {
     /// Optional slot number for post-Amsterdam payloads.
     pub slot_number: Option<u64>,
 }
+
+#[cfg(feature = "test-utils")]
+mod test_evm;
+#[cfg(feature = "test-utils")]
+pub use test_evm::{MockEvmConfig, TestEvmConfig, TestReceiptBuilder};
+#[cfg(feature = "test-utils")]
+mod test_block;
+#[cfg(feature = "test-utils")]
+pub use test_block::TestBlockAssembler;

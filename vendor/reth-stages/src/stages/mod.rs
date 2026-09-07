@@ -59,7 +59,7 @@ mod tests {
         transaction::{DbTx, DbTxMut},
     };
     use reth_ethereum_primitives::Block;
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_exex::ExExManagerHandle;
     use reth_primitives_traits::{Account, Bytecode, SealedBlock, SignerRecoverable};
     use reth_provider::{
@@ -155,7 +155,7 @@ mod tests {
             // Check execution and create receipts and changesets according to the pruning
             // configuration
             let mut execution_stage = ExecutionStage::new(
-                EthEvmConfig::ethereum(Arc::new(
+                TestEvmConfig::new(Arc::new(
                     ChainSpecBuilder::mainnet().berlin_activated().build(),
                 )),
                 Arc::new(TestConsensus::new(Arc::new(

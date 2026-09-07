@@ -26,7 +26,7 @@ use reth_consensus_common::test_utils::TestConsensus;
 use reth_engine_primitives::TestEngineTypes;
 use reth_engine_primitives::{EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook};
 use reth_ethereum_primitives::{Block, EthPrimitives};
-use reth_evm_ethereum::MockEvmConfig;
+use reth_evm::MockEvmConfig;
 use reth_payload_builder::PayloadServiceCommand;
 use reth_primitives_traits::Block as _;
 use reth_provider::{BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider};

@@ -9,32 +9,30 @@ use alloy_network::Ethereum;
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
 use derive_more::Deref;
-use reth_chainspec::{ChainSpec, ChainSpecProvider};
-use reth_evm_ethereum::EthEvmConfig;
-use reth_network_api::noop::NoopNetwork;
+use reth_chainspec::ChainSpecProvider;
 use reth_node_api::{FullNodeComponents, FullNodeTypes};
 use reth_rpc_convert::{RpcConvert, RpcConverter};
 use reth_rpc_eth_api::{
     EthApiTypes, RpcNodeCore,
     helpers::{SpawnBlocking, pending_block::PendingEnvBuilder, spec::SignersForRpc},
-    node::{RpcNodeCoreAdapter, RpcNodeCoreExt},
+    node::RpcNodeCoreExt,
 };
 use reth_rpc_eth_types::{
     EthApiError, EthStateCache, FeeHistoryCache, GasCap, GasPriceOracle, PendingBlock,
     builder::config::PendingBlockKind, receipt::EthReceiptConverter,
 };
-use reth_storage_api::{BlockReaderIdExt, ProviderHeader, noop::NoopProvider};
+use reth_storage_api::{BlockReaderIdExt, ProviderHeader};
 use reth_tasks::{
     Runtime,
     pool::{BlockingTaskGuard, BlockingTaskPool},
 };
 use reth_transaction_pool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, TransactionPool,
-    blobstore::BlobSidecarConverter, noop::NoopTransactionPool,
+    blobstore::BlobSidecarConverter,
 };
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
 
-use crate::{EthApiBuilder, eth::helpers::types::EthRpcConverter};
+use crate::EthApiBuilder;
 
 const DEFAULT_BROADCAST_CAPACITY: usize = 2000;
 
@@ -80,56 +78,6 @@ where
 {
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone() }
-    }
-}
-
-impl
-    EthApi<
-        RpcNodeCoreAdapter<NoopProvider, NoopTransactionPool, NoopNetwork, EthEvmConfig>,
-        EthRpcConverter<ChainSpec>,
-    >
-{
-    /// Convenience fn to obtain a new [`EthApiBuilder`] instance with mandatory components.
-    ///
-    /// Creating an [`EthApi`] requires a few mandatory components:
-    ///  - provider: The type responsible for fetching requested data from disk.
-    ///  - transaction pool: To interact with the pool, submitting new transactions (e.g.
-    ///    `eth_sendRawTransactions`).
-    ///  - network: required to handle requests related to network state (e.g. `eth_syncing`).
-    ///  - evm config: Knows how create a new EVM instance to transact,estimate,call,trace.
-    ///
-    /// # Create an instance with noop ethereum implementations
-    ///
-    /// ```no_run
-    /// use alloy_network::Ethereum;
-    /// use reth_evm_ethereum::EthEvmConfig;
-    /// use reth_network_api::noop::NoopNetwork;
-    /// use reth_provider::noop::NoopProvider;
-    /// use reth_rpc::EthApi;
-    /// use reth_transaction_pool::noop::NoopTransactionPool;
-    /// let eth_api = EthApi::builder(
-    ///     NoopProvider::default(),
-    ///     NoopTransactionPool::default(),
-    ///     NoopNetwork::default(),
-    ///     EthEvmConfig::mainnet(),
-    /// )
-    /// .build();
-    /// ```
-    #[expect(clippy::type_complexity)]
-    pub fn builder<Provider, Pool, Network, EvmConfig, ChainSpec>(
-        provider: Provider,
-        pool: Pool,
-        network: Network,
-        evm_config: EvmConfig,
-    ) -> EthApiBuilder<
-        RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>,
-        RpcConverter<Ethereum, EvmConfig, EthReceiptConverter<ChainSpec>>,
-    >
-    where
-        RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>:
-            RpcNodeCore<Provider: ChainSpecProvider<ChainSpec = ChainSpec>, Evm = EvmConfig>,
-    {
-        EthApiBuilder::new(provider, pool, network, evm_config)
     }
 }
 
@@ -582,7 +530,7 @@ mod tests {
     use reth_chain_state::CanonStateSubscriptions;
     use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
     use reth_ethereum_primitives::TransactionSigned;
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
         PruneCheckpointReader, StageCheckpointReader,
@@ -596,8 +544,8 @@ mod tests {
     use crate::{EthApi, EthApiBuilder, eth::helpers::types::EthRpcConverter};
 
     type FakeEthApi<P = MockEthProvider> = EthApi<
-        RpcNodeCoreAdapter<P, TestPool, NoopNetwork, EthEvmConfig>,
-        EthRpcConverter<ChainSpec>,
+        RpcNodeCoreAdapter<P, TestPool, NoopNetwork, TestEvmConfig>,
+        EthRpcConverter<ChainSpec, TestEvmConfig>,
     >;
 
     fn build_test_eth_api<
@@ -623,7 +571,7 @@ mod tests {
             provider.clone(),
             testing_pool(),
             NoopNetwork::default(),
-            EthEvmConfig::new(provider.chain_spec()),
+            TestEvmConfig::new(provider.chain_spec()),
         )
         .build()
     }

@@ -80,8 +80,8 @@ tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thre
 [dev-dependencies]
 reth-ethereum-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
+reth-evm = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-evm-ethereum = { workspace = true, features = ["test-utils"] }
 reth-payload-builder = { workspace = true, features = ["test-utils"] }
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 [features]
@@ -105,7 +105,6 @@ test-utils = [
     "reth-db-api/test-utils",
     "reth-provider/test-utils",
     "reth-transaction-pool/test-utils",
-    "reth-evm-ethereum/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-tasks/test-utils",
 ]

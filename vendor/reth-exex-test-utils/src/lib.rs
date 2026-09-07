@@ -28,7 +28,7 @@ use reth_db::{
 use reth_db_common::init::init_genesis;
 use reth_engine_primitives::TestEngineTypes;
 use reth_ethereum_primitives::EthPrimitives;
-use reth_evm_ethereum::MockEvmConfig;
+use reth_evm::MockEvmConfig;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
 use reth_network::{NetworkConfigBuilder, NetworkHandle, NetworkManager, config::rng_secret_key};

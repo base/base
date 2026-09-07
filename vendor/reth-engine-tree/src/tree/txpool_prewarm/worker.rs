@@ -328,7 +328,7 @@ mod tests {
     use crossbeam_channel::{Sender, unbounded};
     use parking_lot::{Mutex, RwLock};
     use reth_ethereum_primitives::{EthPrimitives, TransactionSigned};
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_provider::test_utils::MockEthProvider;
     use reth_stages_api::{StageCheckpoint, StageId};
 
@@ -339,7 +339,7 @@ mod tests {
     const WAIT_LIMIT: Duration = Duration::from_secs(5);
     const POLL_INTERVAL: Duration = Duration::from_millis(2);
 
-    type TestJob = Job<EthPrimitives, MockEthProvider, EthEvmConfig>;
+    type TestJob = Job<EthPrimitives, MockEthProvider, TestEvmConfig>;
 
     /// Drives a live worker thread through its public seams only: commands in, the publication
     /// slot and the scripted pool out.
@@ -358,7 +358,7 @@ mod tests {
             let worker = thread::spawn({
                 let publication = Arc::clone(&publication);
                 let source: Arc<dyn Source<EthPrimitives>> = pool.clone();
-                move || Worker::new(receiver, publication, source, EthEvmConfig::mainnet()).run()
+                move || Worker::new(receiver, publication, source, TestEvmConfig::default()).run()
             });
             Self { commands, publication, pool, worker: Some(worker) }
         }

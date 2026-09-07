@@ -266,7 +266,7 @@ mod tests {
     use reth_chain_state::ForkChoiceStream;
     use reth_db_common::init::init_genesis;
     use reth_ethereum_primitives::EthPrimitives;
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_execution_types::{Chain, ExecutionOutcome};
     use reth_exex::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
     use reth_provider::{providers::BlockchainProvider, test_utils::create_test_provider_factory};
@@ -543,7 +543,7 @@ mod tests {
             "shadow-indexer".to_string(),
             Default::default(),
             provider.clone(),
-            EthEvmConfig::mainnet(),
+            TestEvmConfig::default(),
             wal.handle(),
         );
         let (finalized_headers, finalized_header_rx) = watch::channel(None);

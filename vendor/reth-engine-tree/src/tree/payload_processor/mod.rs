@@ -637,7 +637,7 @@ mod tests {
     use alloy_eips::eip1898::{BlockNumHash, BlockWithParent};
     use alloy_primitives::{Address, B256, U256};
     use reth_chainspec::ChainSpec;
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_execution_cache::CachedStatus;
     use reth_revm::db::BundleState;
     use revm::state::AccountInfo;
@@ -732,7 +732,7 @@ mod tests {
     fn on_inserted_executed_block_populates_cache() {
         let payload_processor = PayloadProcessor::new(
             reth_tasks::Runtime::test(),
-            EthEvmConfig::new(Arc::new(ChainSpec::default())),
+            TestEvmConfig::new(Arc::new(ChainSpec::default())),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),
         );
@@ -761,7 +761,7 @@ mod tests {
     fn on_inserted_executed_block_skips_on_parent_mismatch() {
         let payload_processor = PayloadProcessor::new(
             reth_tasks::Runtime::test(),
-            EthEvmConfig::new(Arc::new(ChainSpec::default())),
+            TestEvmConfig::new(Arc::new(ChainSpec::default())),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),
         );
@@ -796,7 +796,7 @@ mod tests {
     fn on_inserted_executed_block_does_not_mutate_checked_out_parent_cache() {
         let payload_processor = PayloadProcessor::new(
             reth_tasks::Runtime::test(),
-            EthEvmConfig::new(Arc::new(ChainSpec::default())),
+            TestEvmConfig::new(Arc::new(ChainSpec::default())),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),
         );

@@ -35,7 +35,7 @@ mod tests {
         map::{AddressMap, B256Map},
     };
     use reth_chainspec::ChainSpec;
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
         ChainSpecProvider,
@@ -48,29 +48,29 @@ mod tests {
     use crate::eth::helpers::types::EthRpcConverter;
 
     fn noop_eth_api() -> EthApi<
-        RpcNodeCoreAdapter<NoopProvider, TestPool, NoopNetwork, EthEvmConfig>,
-        EthRpcConverter<ChainSpec>,
+        RpcNodeCoreAdapter<NoopProvider, TestPool, NoopNetwork, TestEvmConfig>,
+        EthRpcConverter<ChainSpec, TestEvmConfig>,
     > {
         let provider = NoopProvider::default();
         let pool = testing_pool();
-        let evm_config = EthEvmConfig::mainnet();
+        let evm_config = TestEvmConfig::default();
 
-        EthApi::builder(provider, pool, NoopNetwork::default(), evm_config).build()
+        crate::EthApiBuilder::new(provider, pool, NoopNetwork::default(), evm_config).build()
     }
 
     fn mock_eth_api(
         accounts: AddressMap<ExtendedAccount>,
     ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, EthEvmConfig>,
-        EthRpcConverter<ChainSpec>,
+        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, TestEvmConfig>,
+        EthRpcConverter<ChainSpec, TestEvmConfig>,
     > {
         let pool = testing_pool();
         let mock_provider = MockEthProvider::default();
 
-        let evm_config = EthEvmConfig::new(mock_provider.chain_spec());
+        let evm_config = TestEvmConfig::new(mock_provider.chain_spec());
         mock_provider.extend_accounts(accounts);
 
-        EthApi::builder(mock_provider, pool, NoopNetwork::default(), evm_config).build()
+        crate::EthApiBuilder::new(mock_provider, pool, NoopNetwork::default(), evm_config).build()
     }
 
     #[tokio::test]

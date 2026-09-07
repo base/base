@@ -407,7 +407,6 @@ reth-payload-util = { path = "vendor/reth-payload-util", default-features = fals
 reth-node-builder = { path = "vendor/reth-node-builder", default-features = false }
 reth-node-metrics = { path = "vendor/reth-node-metrics", default-features = false }
 reth-cli-commands = { path = "vendor/reth-cli-commands", default-features = false }
-reth-evm-ethereum = { path = "vendor/reth-evm-ethereum", default-features = false }
 reth-tracing-otlp = { path = "vendor/reth-tracing-otlp", default-features = false }
 reth-stages-types = { path = "vendor/reth-stages-types", default-features = false }
 reth-engine-local = { path = "vendor/reth-engine-local", default-features = false }

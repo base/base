@@ -1,13 +1,12 @@
 //! L1 `eth` API types.
 
 use alloy_network::Ethereum;
-use reth_evm_ethereum::EthEvmConfig;
 use reth_rpc_convert::RpcConverter;
 use reth_rpc_eth_types::receipt::EthReceiptConverter;
 
-/// An [`RpcConverter`] with its generics set to Ethereum specific.
-pub type EthRpcConverter<ChainSpec> =
-    RpcConverter<Ethereum, EthEvmConfig, EthReceiptConverter<ChainSpec>>;
+/// An [`RpcConverter`] for Ethereum-compatible RPC with an explicit EVM configuration.
+pub type EthRpcConverter<ChainSpec, Evm> =
+    RpcConverter<Ethereum, Evm, EthReceiptConverter<ChainSpec>>;
 
 //tests for simulate
 #[cfg(test)]
@@ -19,10 +18,12 @@ mod tests {
     use revm::database::CacheDB;
 
     use super::*;
+    use reth_evm::TestEvmConfig;
 
     #[test]
     fn test_resolve_transaction_empty_request() {
-        let builder = EthRpcConverter::new(EthReceiptConverter::new(MAINNET.clone()));
+        let builder =
+            EthRpcConverter::<_, TestEvmConfig>::new(EthReceiptConverter::new(MAINNET.clone()));
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
         let tx = TransactionRequest::default();
         let result = resolve_transaction(tx, 21000, 0, 1, false, &mut db, &builder).unwrap();
@@ -37,7 +38,8 @@ mod tests {
     #[test]
     fn test_resolve_transaction_legacy() {
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
-        let builder = EthRpcConverter::new(EthReceiptConverter::new(MAINNET.clone()));
+        let builder =
+            EthRpcConverter::<_, TestEvmConfig>::new(EthReceiptConverter::new(MAINNET.clone()));
 
         let tx = TransactionRequest { gas_price: Some(100), ..Default::default() };
 
@@ -53,7 +55,8 @@ mod tests {
     #[test]
     fn test_resolve_transaction_partial_eip1559() {
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
-        let rpc_converter = EthRpcConverter::new(EthReceiptConverter::new(MAINNET.clone()));
+        let rpc_converter =
+            EthRpcConverter::<_, TestEvmConfig>::new(EthReceiptConverter::new(MAINNET.clone()));
 
         let tx = TransactionRequest {
             max_fee_per_gas: Some(200),
@@ -73,7 +76,8 @@ mod tests {
     #[test]
     fn test_resolve_transaction_wraps_max_nonce_when_nonce_check_disabled() {
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
-        let rpc_converter = EthRpcConverter::new(EthReceiptConverter::new(MAINNET.clone()));
+        let rpc_converter =
+            EthRpcConverter::<_, TestEvmConfig>::new(EthReceiptConverter::new(MAINNET.clone()));
 
         let tx = TransactionRequest { nonce: Some(u64::MAX), ..Default::default() };
 

@@ -1,8 +1,6 @@
 //! E2E tests for forkchoice updates to canonical ancestors around the finalized block.
 
-#[path = "../fixtures/mod.rs"]
-pub mod fixtures;
-use fixtures::BaseTestPayload;
+use crate::fixtures::BaseTestPayload;
 
 use std::sync::Arc;
 

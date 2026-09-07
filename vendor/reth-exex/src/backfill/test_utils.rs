@@ -5,11 +5,11 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, TxKind, U256, b256};
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN_TRANSACTION_GAS};
 use reth_ethereum_primitives::{Block, BlockBody, Receipt, Transaction};
+use reth_evm::TestEvmConfig;
 use reth_evm::{
     ConfigureEvm,
     execute::{BlockExecutionOutput, Executor},
 };
-use reth_evm_ethereum::EthEvmConfig;
 use reth_node_api::NodePrimitives;
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{
@@ -69,7 +69,7 @@ where
     let provider = provider_factory.provider()?;
 
     // Execute the block to produce a block execution output
-    let mut block_execution_output = EthEvmConfig::ethereum(chain_spec)
+    let mut block_execution_output = TestEvmConfig::new(chain_spec)
         .batch_executor(StateProviderDatabase::new(LatestStateProvider::new(provider)))
         .execute(block)?;
     block_execution_output.state.reverts.sort();
@@ -200,7 +200,7 @@ where
 
     let provider = provider_factory.provider()?;
 
-    let evm_config = EthEvmConfig::new(chain_spec);
+    let evm_config = TestEvmConfig::new(chain_spec);
     let executor =
         evm_config.batch_executor(StateProviderDatabase::new(LatestStateProvider::new(provider)));
 

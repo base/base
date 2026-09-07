@@ -1,12 +1,12 @@
 # Vendored Reth crate removal review
 
-Reviewed against `8425d3a07`, with the authorized initial removals applied in this working tree.
+Initial review against `8425d3a07`; updated after the authorized ERA and Ethereum implementation removals.
 
 ## Scope and result
 
 Inventoried all **109 vendored `reth-*` crates** using workspace manifests, Cargo metadata, and the resolved Base dependency tree. Inspected source consumers for removal candidates and the shared functionality that blocks deletion. This is a crate/dependency architecture review, not a line-by-line correctness audit of every Reth implementation.
 
-Before this change, `cargo tree --offline -p base -e normal,build` reached **106 Reth crates**. After this change it reaches **100**. The three crates originally outside that production graph were `reth-e2e-test-utils`, `reth-exex-test-utils`, and `reth-testing-utils`.
+`cargo tree --offline -p base -e normal,build` originally reached **106 Reth crates**, fell to **100** after the ERA/unused dependency cleanup, and now reaches **98**. Eight original crates have been deleted, leaving **101** vendored Reth crates in the workspace. The three crates originally outside that production graph were `reth-e2e-test-utils`, `reth-exex-test-utils`, and `reth-testing-utils`.
 
 “Base only” is interpreted as a Base execution implementation, preserving Base mainnet, Base Sepolia, Base Zeronet, and local Base development/testing. It does not make Ethereum-compatible transactions, hardfork rules, execution-layer networking, database maintenance, or L1 interaction obsolete.
 
@@ -26,15 +26,11 @@ Older configuration files containing `[stages.era]` can still load via the exist
 
 The three implementation crates are deleted. Base integration tests sit above the shared execution libraries to avoid introducing dependency cycles. RocksDB fixtures include an Ecotone L1-info deposit and use Base RPC block types. Generic tests retain shared validation and storage coverage.
 
-### `reth-evm-ethereum`
+### `reth-evm-ethereum` (completed)
 
-Base supplies `BaseExecutorProvider`, but shared crates still reference `EthEvmConfig`:
+Deleted the crate. `EthTransactionPool` and `EthRpcConverter` now require their EVM parameter explicitly, and callers construct the generic `EthApiBuilder` directly. Base retains the shared transaction validator and `EthApiInner` RPC infrastructure.
 
-- `reth-transaction-pool/src/lib.rs`: default EVM parameter of `EthTransactionPool`.
-- `reth-rpc/src/eth/core.rs` and `eth/helpers/types.rs`: Ethereum convenience builder and converter aliases.
-- Network test-utils and several existing execution/storage tests.
-
-Remove the Ethereum conveniences, make shared APIs accept their EVM explicitly, and migrate fixtures. The **generic transaction validator and RPC internals must survive**. `BaseTransactionValidator` wraps `EthTransactionValidator`, and Base RPC uses `reth_rpc::eth::core::EthApiInner`.
+Shared execution, storage, networking, pool, RPC, and ExEx tests use `TestEvmConfig` behind `reth-evm/test-utils`. The fixture adapts Alloy's executor to test blocks and receipts. It has no production dependency edge or configurable node implementation; Base uses its own execution provider.
 
 ### `reth-ethereum-engine-primitives` (completed)
 
@@ -124,7 +120,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-ethereum-primitives](../../vendor/reth-ethereum-primitives/Cargo.toml) | Consolidate; retain required code |
 | [reth-etl](../../vendor/reth-etl/Cargo.toml) | Retain shared infrastructure |
 | [reth-evm](../../vendor/reth-evm/Cargo.toml) | Retain shared infrastructure |
-| [reth-evm-ethereum](../../vendor/reth-evm-ethereum/Cargo.toml) | Remove after Ethereum implementation cleanup |
+| `reth-evm-ethereum` | Deleted; explicit EVM parameters and test-only Alloy adapter |
 | [reth-execution-cache](../../vendor/reth-execution-cache/Cargo.toml) | Retain shared infrastructure |
 | [reth-execution-errors](../../vendor/reth-execution-errors/Cargo.toml) | Retain shared infrastructure |
 | [reth-execution-types](../../vendor/reth-execution-types/Cargo.toml) | Retain shared infrastructure |
@@ -196,9 +192,9 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 
 ## Validation
 
-The review uses the host/default Base build, not an all-target/all-feature guarantee. Test-only Ethereum crates can re-enter when compiling tests or enabling test-utils.
+The dependency counts use the host/default Base build. All eight removed crates are absent from the workspace and lockfile. The new engine and EVM fixtures are excluded from Base's normal/build feature graph; test-utils enables them for shared tests. This is not an all-platform/all-feature guarantee.
 
-Passed:
+Initial ERA cleanup passed:
 
 - `cargo check --offline --locked -p base --all-targets`
 - `cargo test --offline -p reth-config --features serde --lib` — 16 tests, including loading and saving old ERA configuration.
@@ -209,4 +205,18 @@ Passed:
 - Formatting of affected packages and `git diff --check`.
 - Dependency-tree comparison confirms all six named crates are absent from Base's normal/build graph. Searches found no remaining ERA production references.
 
-Total: **78 selected tests passed**. Existing vendored warnings remain; the entire workspace test suite and all feature/platform combinations were not run.
+Initial cleanup total: **78 selected tests passed**. Existing vendored warnings remain; the entire workspace test suite and all feature/platform combinations were not run.
+
+
+Follow-up removals:
+
+- The first batch passed 13 Base engine scenarios, 10 RocksDB scenarios, six harness scenarios, and 313 shared engine/stage/RPC/node unit tests.
+- The second batch passed 578 provider, engine, payload scheduler, node configuration, and RPC unit tests, plus the payload-builder documentation example.
+- The EVM batch passed 614 shared pool, RPC, engine, stages, ExEx, invalid-block-hook, and node-builder unit tests (two existing ignored tests).
+- A broader network library test check hits lifetime errors in unchanged discovery tests at `vendor/reth-network/src/discovery.rs:635` and `:706`, where `Discv5::send_ping` is returned through `with_discv5`. Network test-utils compile in the Base integration build.
+- The final Base node run passed 70 unit tests, two existing mining scenarios, and all 29 migrated engine/RocksDB/harness scenarios (one existing ignored P2P scenario).
+- RPC-builder integration tests passed (68), as did live-trie integration tests (five). Test targets for Base shadow-indexer/trie, RPC builder, and stages compile.
+- `reth-evm` checks passed with `--no-default-features` and with `--no-default-features --features test-utils`.
+- `cargo build --offline -p base` passed, and the built binary responds to `--version`.
+- Base trie unit tests (169) and shadow-indexer unit tests (13) passed with `--test-threads=1`. The parallel trie run hit MDBX database-allocation errors; the serial run passed without code changes.
+- RPC and stages documentation examples passed (three). Final EVM-batch selected unit/integration total: **970 passed**, plus those three documentation examples.

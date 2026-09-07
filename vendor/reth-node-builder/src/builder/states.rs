@@ -325,8 +325,8 @@ mod test {
     use reth_db_api::mock::DatabaseMock;
     use reth_engine_primitives::TestEngineTypes;
     use reth_ethereum_primitives::EthPrimitives;
+    use reth_evm::MockEvmConfig;
     use reth_evm::noop::NoopEvmConfig;
-    use reth_evm_ethereum::MockEvmConfig;
     use reth_network::EthNetworkPrimitives;
     use reth_network_api::noop::NoopNetwork;
     use reth_node_api::AnyNodeTypes;

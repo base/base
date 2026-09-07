@@ -138,7 +138,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256, map::AddressMap};
     use alloy_rpc_types_eth::request::TransactionRequest;
     use reth_chainspec::{ChainSpec, ChainSpecBuilder};
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
         ChainSpecProvider,
@@ -156,8 +156,8 @@ mod tests {
     fn mock_eth_api(
         accounts: AddressMap<ExtendedAccount>,
     ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, EthEvmConfig>,
-        EthRpcConverter<ChainSpec>,
+        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, TestEvmConfig>,
+        EthRpcConverter<ChainSpec, TestEvmConfig>,
     > {
         mock_eth_api_with_sync_timeout(accounts, Duration::from_secs(30))
     }
@@ -166,14 +166,14 @@ mod tests {
         accounts: AddressMap<ExtendedAccount>,
         send_raw_transaction_sync_timeout: Duration,
     ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, EthEvmConfig>,
-        EthRpcConverter<ChainSpec>,
+        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, TestEvmConfig>,
+        EthRpcConverter<ChainSpec, TestEvmConfig>,
     > {
         let mock_provider = MockEthProvider::default()
             .with_chain_spec(ChainSpecBuilder::mainnet().cancun_activated().build());
         mock_provider.extend_accounts(accounts);
 
-        let evm_config = EthEvmConfig::new(mock_provider.chain_spec());
+        let evm_config = TestEvmConfig::new(mock_provider.chain_spec());
         let pool = testing_pool();
 
         let genesis_header = Header {
@@ -189,7 +189,7 @@ mod tests {
         let genesis_hash = B256::ZERO;
         mock_provider.add_block(genesis_hash, Block::new(genesis_header, Default::default()));
 
-        EthApi::builder(mock_provider, pool, NoopNetwork::default(), evm_config)
+        crate::EthApiBuilder::new(mock_provider, pool, NoopNetwork::default(), evm_config)
             .send_raw_transaction_sync_timeout(send_raw_transaction_sync_timeout)
             .build()
     }

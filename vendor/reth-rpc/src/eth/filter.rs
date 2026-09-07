@@ -121,17 +121,17 @@ where
     /// # Create a new instance with [`EthApi`](crate::EthApi)
     ///
     /// ```no_run
-    /// use reth_evm_ethereum::EthEvmConfig;
+    /// use reth_evm::TestEvmConfig;
     /// use reth_network_api::noop::NoopNetwork;
     /// use reth_provider::noop::NoopProvider;
     /// use reth_rpc::{EthApi, EthFilter};
     /// use reth_tasks::Runtime;
     /// use reth_transaction_pool::noop::NoopTransactionPool;
-    /// let eth_api = EthApi::builder(
+    /// let eth_api = reth_rpc::EthApiBuilder::new(
     ///     NoopProvider::default(),
     ///     NoopTransactionPool::default(),
     ///     NoopNetwork::default(),
-    ///     EthEvmConfig::mainnet(),
+    ///     TestEvmConfig::default(),
     /// )
     /// .build();
     /// let filter = EthFilter::new(eth_api, Default::default(), Runtime::test());
@@ -1371,7 +1371,7 @@ mod tests {
     use rand::Rng;
     use reth_chainspec::{ChainSpec, ChainSpecProvider};
     use reth_ethereum_primitives::TxType;
-    use reth_evm_ethereum::EthEvmConfig;
+    use reth_evm::TestEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::test_utils::MockEthProvider;
     use reth_rpc_convert::RpcConverter;
@@ -1411,14 +1411,14 @@ mod tests {
     fn build_test_eth_api(
         provider: MockEthProvider,
     ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, EthEvmConfig>,
-        RpcConverter<Ethereum, EthEvmConfig, EthReceiptConverter<ChainSpec>>,
+        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, TestEvmConfig>,
+        RpcConverter<Ethereum, TestEvmConfig, EthReceiptConverter<ChainSpec>>,
     > {
         EthApiBuilder::new(
             provider.clone(),
             testing_pool(),
             NoopNetwork::default(),
-            EthEvmConfig::new(provider.chain_spec()),
+            TestEvmConfig::new(provider.chain_spec()),
         )
         .build()
     }
