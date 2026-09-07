@@ -12,71 +12,46 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
-base-bundles.workspace = true
-base-node-runner.workspace = true
-base-common-precompiles.workspace = true
-
-# reth
-reth-evm.workspace = true
-reth-revm.workspace = true
-reth-provider.workspace = true
-base-common-evm.workspace = true
-base-execution-evm.workspace = true
-reth-primitives-traits.workspace = true
-base-execution-chainspec.workspace = true
-
-# revm
-revm.workspace = true
-revm-bytecode.workspace = true
-
-# alloy
-alloy-evm.workspace = true
-alloy-primitives.workspace = true
-alloy-eips = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["std"] }
-
-# rpc
-jsonrpsee.workspace = true
-
-# base-alloy
-base-common-consensus.workspace = true
-
-# misc
-eyre.workspace = true
-derive_more.workspace = true
+revm = { workspace = true }
+alloy-evm = { workspace = true }
+jsonrpsee = { workspace = true }
+derive_more = { workspace = true }
+base-bundles = { workspace = true }
+revm-bytecode = { workspace = true }
+reth-provider = { workspace = true }
+base-common-evm = { workspace = true }
+alloy-primitives = { workspace = true }
+base-node-runner = { workspace = true }
+base-common-consensus = { workspace = true }
+reth-primitives-traits = { workspace = true }
+base-common-precompiles = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
-
+eyre = { workspace = true, features = ["default"] }
+alloy-eips = { workspace = true, features = ["std"] }
+reth-evm = { workspace = true, features = ["default"] }
+reth-revm = { workspace = true, features = ["default"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+base-execution-evm = { workspace = true, features = ["default"] }
+base-execution-chainspec = { workspace = true, features = ["default"] }
 [dev-dependencies]
-# workspace
-base-test-utils = { workspace = true, features = ["contracts"] }
-base-node-runner = { workspace = true, features = ["test-utils"] }
-
-# reth
-base-node-core.workspace = true
-reth-db-common.workspace = true
-reth-db = { workspace = true, features = ["test-utils"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
-reth-transaction-pool = { workspace = true, features = ["test-utils"] }
-
-# revm
-revm.workspace = true
-revm-bytecode.workspace = true
-
-# alloy
-alloy-network.workspace = true
-alloy-sol-types.workspace = true
-alloy-rpc-types-engine.workspace = true
-alloy-rpc-client.workspace = true
+revm = { workspace = true }
+serde_json = { workspace = true }
+revm-bytecode = { workspace = true }
+alloy-network = { workspace = true }
+reth-db-common = { workspace = true }
+alloy-sol-types = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+url = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }
+base-node-core = { workspace = true, features = ["default"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-
-# base-alloy
-base-common-rpc-types.workspace = true
-
-# misc
-url.workspace = true
-rand.workspace = true
-tokio.workspace = true
-serde_json.workspace = true
+alloy-rpc-client = { workspace = true, features = ["default"] }
+base-test-utils = { workspace = true, features = ["contracts"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
+base-common-rpc-types = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["default", "test-utils"] }
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }

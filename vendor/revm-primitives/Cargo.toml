@@ -1,0 +1,71 @@
+[package]
+name = "revm-primitives"
+description = "Revm primitives types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[lib]
+name = "revm_primitives"
+path = "src/lib.rs"
+
+[dependencies]
+once_cell = { workspace = true, features = [
+    "alloc",
+    "race",
+] }
+alloy-primitives = { workspace = true, features = [
+    "map-indexmap",
+    "rlp",
+    "map",
+] }
+serde = { workspace = true, features = [
+    "derive",
+    "rc",
+    "derive",
+    "rc",
+], optional = true }
+[lints]
+workspace = true
+
+[features]
+arbitrary = [
+    "std",
+    "alloy-primitives/arbitrary",
+]
+asm-keccak = ["alloy-primitives/asm-keccak"]
+default = ["std"]
+hashbrown = ["alloy-primitives/map-hashbrown"]
+map-foldhash = ["alloy-primitives/map-foldhash"]
+rand = ["alloy-primitives/rand"]
+serde = [
+    "dep:serde",
+    "alloy-primitives/serde",
+]
+sha3-keccak = ["alloy-primitives/sha3-keccak"]
+std = [
+    "alloy-primitives/std",
+    "serde?/std",
+    "once_cell/std",
+]

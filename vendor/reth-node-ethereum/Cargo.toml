@@ -1,0 +1,119 @@
+[package]
+name = "reth-node-ethereum"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+tower = { workspace = true }
+reth-evm = { workspace = true }
+reth-rpc = { workspace = true }
+jsonrpsee = { workspace = true }
+alloy-eips = { workspace = true }
+reth-network = { workspace = true }
+reth-rpc-api = { workspace = true }
+ethereum_ssz = { workspace = true }
+alloy-network = { workspace = true }
+reth-provider = { workspace = true }
+reth-node-api = { workspace = true }
+reth-chainspec = { workspace = true }
+reth-node-core = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-rpc-eth-api = { workspace = true }
+reth-rpc-builder = { workspace = true }
+reth-engine-local = { workspace = true }
+reth-rpc-eth-types = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+reth-rpc-engine-api = { workspace = true }
+ethereum_ssz_derive = { workspace = true }
+reth-transaction-pool = { workspace = true }
+reth-rpc-server-types = { workspace = true }
+reth-ethereum-consensus = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+eyre = { workspace = true, features = ["default"] }
+reth-revm = { workspace = true, features = ["std"] }
+reth-ethereum-payload-builder = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+reth-tracing = { workspace = true, features = ["default"] }
+reth-evm-ethereum = { workspace = true, features = ["std"] }
+http-body-util = { workspace = true, features = ["default"] }
+reth-node-builder = { workspace = true, features = ["default"] }
+reth-engine-primitives = { workspace = true, features = ["std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["ssz"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-payload-primitives = { workspace = true, features = ["default"] }
+reth-ethereum-engine-primitives = { workspace = true, features = ["std"] }
+reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
+revm = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_limit", "p256-aws-lc-rs"] }
+[dev-dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+reth-db = { workspace = true }
+reth-exex = { workspace = true }
+reth-tasks = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-genesis = { workspace = true }
+alloy-contract = { workspace = true }
+reth-rpc-layer = { workspace = true }
+alloy-sol-types = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-testing-utils = { workspace = true }
+reth-e2e-test-utils = { workspace = true }
+alloy-rpc-types-trace = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+tempfile = { workspace = true, features = ["default"] }
+enr = { workspace = true, features = ["rust-secp256k1"] }
+jsonrpsee-core = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
+alloy-rpc-types-beacon = { workspace = true, features = ["ssz"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+similar-asserts = { workspace = true, features = ["default", "serde"] }
+alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
+[features]
+default = []
+jit = ["reth-evm-ethereum/jit"]
+gmp = ["reth-evm-ethereum/gmp"]
+asm-keccak = [
+    "alloy-primitives/asm-keccak",
+    "reth-node-core/asm-keccak",
+    "revm/asm-keccak",
+]
+keccak-cache-global = [
+    "alloy-primitives/keccak-cache-global",
+    "reth-node-core/keccak-cache-global",
+]
+js-tracer = [
+    "reth-node-builder/js-tracer",
+    "reth-rpc/js-tracer",
+    "reth-rpc-eth-api/js-tracer",
+    "reth-rpc-eth-types/js-tracer",
+]
+test-utils = [
+    "reth-node-builder/test-utils",
+    "reth-chainspec/test-utils",
+    "reth-network/test-utils",
+    "reth-ethereum-primitives/test-utils",
+    "reth-revm/test-utils",
+    "reth-db/test-utils",
+    "reth-provider/test-utils",
+    "reth-transaction-pool/test-utils",
+    "reth-evm/test-utils",
+    "reth-primitives-traits/test-utils",
+    "reth-evm-ethereum/test-utils",
+    "reth-stages-types/test-utils",
+    "reth-tasks/test-utils",
+]

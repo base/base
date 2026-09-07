@@ -14,31 +14,22 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# base
-base-node-runner.workspace = true
-base-execution-eip8130-rpc.workspace = true
-
-# misc
+base-node-runner = { workspace = true }
+base-execution-eip8130-rpc = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
-
 [dev-dependencies]
-# base
-base-test-utils.workspace = true
-base-common-precompiles.workspace = true
-base-common-consensus.workspace = true
-base-execution-chainspec.workspace = true
+alloy-eips = { workspace = true }
+serde_json = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-genesis = { workspace = true }
+alloy-network = { workspace = true }
+base-test-utils = { workspace = true }
+alloy-primitives = { workspace = true }
+base-common-consensus = { workspace = true }
+base-common-precompiles = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+alloy-provider = { workspace = true, features = ["default"] }
+alloy-rpc-client = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
-
-# alloy
-alloy-eips.workspace = true
-alloy-signer.workspace = true
-alloy-genesis.workspace = true
-alloy-network.workspace = true
-alloy-provider.workspace = true
-alloy-primitives.workspace = true
-alloy-rpc-client.workspace = true
-
-# misc
-eyre.workspace = true
-serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+base-execution-chainspec = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }

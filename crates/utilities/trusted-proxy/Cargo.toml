@@ -12,7 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-http.workspace = true
-ipnet.workspace = true
 tracing = { workspace = true, features = ["std"] }
+http = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
+ipnet = { workspace = true, features = ["default"] }

@@ -1,0 +1,34 @@
+[package]
+name = "reth-libmdbx"
+description = "Idiomatic and safe MDBX wrapper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags = { workspace = true }
+smallvec = { workspace = true }
+thiserror = { workspace = true }
+reth-mdbx-sys = { workspace = true }
+derive_more = { workspace = true, features = ["full"] }
+byteorder = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["attributes"] }
+parking_lot = { workspace = true, features = ["default"] }
+crossbeam-queue = { workspace = true, features = ["default"] }
+dashmap = { workspace = true, features = ["inline"], optional = true }
+[dev-dependencies]
+tempfile = { workspace = true, features = ["default"] }
+[features]
+default = []
+return-borrowed = []
+read-tx-timeouts = ["dep:dashmap"]

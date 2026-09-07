@@ -1,0 +1,15 @@
+//! Builds an RPC receipt response w.r.t. data layout of network.
+
+use reth_rpc_convert::RpcConvert;
+use reth_rpc_eth_api::{FromEvmError, RpcNodeCore, helpers::LoadReceipt};
+use reth_rpc_eth_types::EthApiError;
+
+use crate::EthApi;
+
+impl<N, Rpc> LoadReceipt for EthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    EthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+{
+}

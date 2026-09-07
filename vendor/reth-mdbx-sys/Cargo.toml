@@ -1,0 +1,19 @@
+[package]
+name = "reth-mdbx-sys"
+description = "Raw bindings for libmdbx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[build-dependencies]
+cc = { workspace = true }
+bindgen = { workspace = true, features = ["runtime"] }
+[lints]
+workspace = true

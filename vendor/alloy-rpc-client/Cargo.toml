@@ -1,0 +1,103 @@
+[package]
+name = "alloy-rpc-client"
+description = "Low-level Ethereum JSON-RPC client implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_rpc_client"
+path = "src/lib.rs"
+
+[dependencies]
+pin-project = { workspace = true }
+alloy-json-rpc = { workspace = true }
+alloy-transport = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+alloy-pubsub = { workspace = true, optional = true }
+futures = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+alloy-transport-ws = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, features = ["map"] }
+alloy-transport-http = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["default", "sync"] }
+tokio-stream = { workspace = true, features = ["default", "sync"] }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+] }
+url = { workspace = true, features = ["default", "serde"], optional = true }
+[dev-dependencies]
+ci_info = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-node-bindings = { workspace = true }
+tempfile = { workspace = true, features = ["default"] }
+futures-util = { workspace = true, features = ["default"] }
+similar-asserts = { workspace = true, features = ["default"] }
+alloy-transport-ipc = { workspace = true, features = ["mock"] }
+alloy-transport-ws = { workspace = true, features = ["aws-lc-rs"] }
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+wasmtimer = { workspace = true, features = ["default"] }
+[target.'cfg(not(all(target_os = "wasi", target_env = "p1")))'.dependencies]
+reqwest = { workspace = true, optional = true }
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+alloy-transport-ipc = { workspace = true, optional = true }
+[lints]
+workspace = true
+
+[features]
+default = ["reqwest"]
+hyper = [
+    "dep:url",
+    "alloy-transport-http/hyper",
+]
+ipc = [
+    "pubsub",
+    "dep:alloy-transport-ipc",
+]
+pubsub = ["dep:alloy-pubsub"]
+reqwest = [
+    "dep:url",
+    "dep:reqwest",
+    "alloy-transport-http/reqwest",
+]
+ws = [
+    "ws-base",
+    "alloy-transport-ws/aws-lc-rs",
+]
+ws-base = [
+    "pubsub",
+    "dep:url",
+    "dep:alloy-transport-ws",
+]
+ws-native-tls = [
+    "ws-base",
+    "alloy-transport-ws/native-tls",
+]
+ws-ring = [
+    "ws-base",
+    "alloy-transport-ws/ring",
+]

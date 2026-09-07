@@ -1,0 +1,54 @@
+[package]
+name = "alloy-eip2930"
+description = "Implementation of EIP-2930 type definitions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_eip2930"
+path = "src/lib.rs"
+
+[dependencies]
+alloy-rlp = { workspace = true, features = ["derive"] }
+alloy-primitives = { workspace = true, features = ["rlp"] }
+borsh = { workspace = true, features = ["derive"], optional = true }
+rand_08 = { workspace = true, optional = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+], optional = true }
+[dev-dependencies]
+serde_json = { workspace = true, features = ["alloc"] }
+[lints]
+workspace = true
+
+[features]
+arbitrary = ["std", "dep:arbitrary", "dep:rand_08", "alloy-primitives/arbitrary"]
+borsh = ["dep:borsh", "alloy-primitives/borsh"]
+default = ["std"]
+serde = ["dep:serde", "alloy-primitives/serde"]
+std = ["alloy-primitives/std", "alloy-rlp/std", "serde?/std", "borsh?/std"]

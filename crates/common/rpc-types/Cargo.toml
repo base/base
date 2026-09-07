@@ -14,49 +14,31 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# Workspace
-base-common-consensus = { workspace = true, features = ["serde"] }
-
-# Alloy
-alloy-serde.workspace = true
-alloy-consensus.workspace = true
-alloy-network-primitives.workspace = true
-alloy-eips = { workspace = true, features = ["serde"] }
-alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
-alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
-
-# network
-alloy-network = { workspace = true, optional = true }
-
-# Serde
-serde_json = { workspace = true, features = ["alloc"] }
-serde = { workspace = true, features = ["derive", "alloc"] }
-
-# reth
+alloy-serde = { workspace = true }
+alloy-consensus = { workspace = true }
 revm = { workspace = true, optional = true }
+alloy-network-primitives = { workspace = true }
 alloy-evm = { workspace = true, optional = true }
-base-common-evm = { workspace = true, optional = true }
-reth-primitives-traits = { workspace = true, optional = true }
-reth-rpc-convert = { workspace = true, optional = true }
-
-# signing
 alloy-signer = { workspace = true, optional = true }
-
-
-# arbitrary
+alloy-network = { workspace = true, optional = true }
+alloy-eips = { workspace = true, features = ["serde"] }
+serde_json = { workspace = true, features = ["alloc"] }
+base-common-evm = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive", "alloc"] }
+reth-primitives-traits = { workspace = true, optional = true }
+alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
+base-common-consensus = { workspace = true, features = ["serde"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
-
-# misc
+alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
+reth-rpc-convert = { workspace = true, optional = true, features = ["default"] }
 derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"] }
-
 [dev-dependencies]
-rand.workspace = true
-similar-asserts.workspace = true
+rand = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
+similar-asserts = { workspace = true, features = ["default"] }
 alloy-consensus = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
 alloy-rpc-types-eth = { workspace = true, features = ["arbitrary"] }
-
 [features]
 default = [ "std" ]
 std = [

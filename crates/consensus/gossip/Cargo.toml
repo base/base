@@ -13,56 +13,43 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-# consensus
-base-metrics.workspace = true
-base-consensus-disc.workspace = true
-base-consensus-peers.workspace = true
-base-common-genesis.workspace = true
-
-# Alloy
-alloy-eips = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["std"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-alloy-primitives = { workspace = true, features = ["k256", "getrandom"] }
-
-# Base Alloy
-base-common-consensus = { workspace = true, features = ["k256"] }
-base-common-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
-
-# Networking
-snap.workspace = true
-futures.workspace = true
-libp2p-stream.workspace = true
-ipnet = { workspace = true, features = ["serde"] }
-discv5 = { workspace = true, features = ["libp2p"] }
-libp2p-identity = { workspace = true, features = ["secp256k1"] }
-libp2p = { workspace = true, features = ["macros", "tokio", "tcp", "dns", "noise", "gossipsub", "ping", "yamux", "identify"] }
-
-# Misc
-lru.workspace = true
-sha2.workspace = true
-tokio.workspace = true
-serde_repr.workspace = true
+sha2 = { workspace = true }
+snap = { workspace = true }
+serde_repr = { workspace = true }
+base-metrics = { workspace = true }
+libp2p-stream = { workspace = true }
+base-consensus-disc = { workspace = true }
+base-common-genesis = { workspace = true }
+base-consensus-peers = { workspace = true }
+metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
+lru = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["default"] }
+discv5 = { workspace = true, features = ["libp2p"] }
+alloy-eips = { workspace = true, features = ["std"] }
+futures = { workspace = true, features = ["default"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+ipnet = { workspace = true, features = ["default", "serde"] }
+libp2p-identity = { workspace = true, features = ["secp256k1"] }
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["k256"] }
+alloy-primitives = { workspace = true, features = ["k256", "getrandom"] }
 derive_more = { workspace = true, features = ["display", "deref", "debug"] }
-
-# `metrics` feature
-metrics = { workspace = true, optional = true }
-
+base-common-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
+libp2p = { workspace = true, features = ["macros", "tokio", "tcp", "dns", "noise", "gossipsub", "ping", "yamux", "identify"] }
 [dev-dependencies]
-tempfile.workspace = true
-multihash.workspace = true
 alloy-rlp = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-rand = { workspace = true, features = ["thread_rng"] }
 alloy-chains = { workspace = true, features = ["std"] }
 arbitrary = { workspace = true, features = ["derive"] }
+tempfile = { workspace = true, features = ["default"] }
+multihash = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
+rand = { workspace = true, features = ["default", "thread_rng"] }
 base-common-consensus = { workspace = true, features = ["arbitrary", "k256"] }
 alloy-consensus = { workspace = true, features = ["arbitrary", "k256", "std"] }
-
 [features]
 default = []
 metrics = [

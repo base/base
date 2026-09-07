@@ -11,85 +11,75 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# reth
-reth-cli.workspace = true
-reth-discv4.workspace = true
-reth-discv5.workspace = true
-reth-net-nat.workspace = true
-reth-provider.workspace = true
-reth-network.workspace = true
-reth-cli-util.workspace = true
-reth-node-core.workspace = true
-reth-chainspec.workspace = true
-reth-tracing.workspace = true
-reth-cli-runner.workspace = true
-reth-node-builder.workspace = true
-reth-network-p2p.workspace = true
-reth-cli-commands.workspace = true
-reth-node-metrics.workspace = true
-reth-network-peers.workspace = true
-reth-ethereum-forks.workspace = true
-reth-rpc-server-types.workspace = true
-reth-tasks.workspace = true
-reth-db-api.workspace = true
-reth-stages-types.workspace = true
-reth-db = { workspace = true, features = ["mdbx"] }
-
-# op-reth
-base-metering.workspace = true
-base-reth-cli.workspace = true
-base-cli-utils.workspace = true
-base-node-core.workspace = true
-base-txpool-rpc.workspace = true
-base-node-runner.workspace = true
-base-observability-events.workspace = true
-base-common-chains.workspace = true
-base-execution-evm.workspace = true
-base-tx-forwarding.workspace = true
-base-txpool-tracing.workspace = true
-base-execution-trie.workspace = true
-base-execution-eip8130-rpc-node.workspace = true
-base-proofs-extension.workspace = true
-base-shadow-indexer.workspace = true
-base-shadow-indexer-db.workspace = true
-base-execution-chainspec.workspace = true
-base-execution-consensus.workspace = true
-base-upgrade-signal = { workspace = true, features = ["metrics"] }
-
-# misc
-tar.workspace = true
-zstd.workspace = true
-eyre.workspace = true
-humantime.workspace = true
-url.workspace = true
-backon.workspace = true
-futures.workspace = true
-tracing.workspace = true
-serde_json.workspace = true
+tracing = { workspace = true }
+reth-cli = { workspace = true }
+humantime = { workspace = true }
+serde_json = { workspace = true }
+alloy-eips = { workspace = true }
+reth-tasks = { workspace = true }
+reth-discv5 = { workspace = true }
+reth-db-api = { workspace = true }
+reth-network = { workspace = true }
+reth-provider = { workspace = true }
+reth-cli-util = { workspace = true }
+base-metering = { workspace = true }
+base-reth-cli = { workspace = true }
+reth-node-core = { workspace = true }
+base-cli-utils = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-cli-runner = { workspace = true }
+base-txpool-rpc = { workspace = true }
+base-node-runner = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-cli-commands = { workspace = true }
+reth-node-metrics = { workspace = true }
+reth-ethereum-forks = { workspace = true }
+base-execution-trie = { workspace = true }
+reth-rpc-server-types = { workspace = true }
+base-proofs-extension = { workspace = true }
+base-shadow-indexer-db = { workspace = true }
+base-observability-events = { workspace = true }
+tar = { workspace = true, features = ["default"] }
+url = { workspace = true, features = ["default"] }
+zstd = { workspace = true, features = ["default"] }
+eyre = { workspace = true, features = ["default"] }
+backon = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+base-execution-eip8130-rpc-node = { workspace = true }
 jsonrpsee = { workspace = true, features = ["server"] }
-reqwest = { workspace = true, features = ["json", "stream"] }
-alloy-consensus.workspace = true
-alloy-eips.workspace = true
-secp256k1.workspace = true
-tokio-stream.workspace = true
-clap = { workspace = true, features = ["derive", "env"] }
-tokio = { workspace = true, features = ["macros", "time", "sync"] }
-
-# reth test-vectors
-proptest = { workspace = true, optional = true }
+secp256k1 = { workspace = true, features = ["default"] }
+reth-discv4 = { workspace = true, features = ["default"] }
+reth-net-nat = { workspace = true, features = ["default"] }
+reth-tracing = { workspace = true, features = ["default"] }
+tokio-stream = { workspace = true, features = ["default"] }
+reth-chainspec = { workspace = true, features = ["default"] }
+base-node-core = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["default", "mdbx"] }
+reth-network-p2p = { workspace = true, features = ["default"] }
+reth-node-builder = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
-
+reth-network-peers = { workspace = true, features = ["default"] }
+base-common-chains = { workspace = true, features = ["default"] }
+base-execution-evm = { workspace = true, features = ["default"] }
+base-tx-forwarding = { workspace = true, features = ["default"] }
+base-txpool-tracing = { workspace = true, features = ["default"] }
+base-shadow-indexer = { workspace = true, features = ["default"] }
+clap = { workspace = true, features = ["default", "derive", "env"] }
+base-execution-chainspec = { workspace = true, features = ["default"] }
+base-execution-consensus = { workspace = true, features = ["default"] }
+proptest = { workspace = true, optional = true, features = ["default"] }
+reqwest = { workspace = true, features = ["default", "json", "stream"] }
+base-upgrade-signal = { workspace = true, features = ["default", "metrics"] }
+tokio = { workspace = true, features = ["default", "macros", "time", "sync"] }
 [dev-dependencies]
-alloy-primitives.workspace = true
-base-common-genesis.workspace = true
-rstest.workspace = true
-tempfile.workspace = true
+alloy-primitives = { workspace = true }
+base-common-genesis = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
+tempfile = { workspace = true, features = ["default"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-
+tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] }
 [build-dependencies]
-base-execution-chainspec = { workspace = true, features = ["std"] }
-
+base-execution-chainspec = { workspace = true, features = ["default", "std"] }
 [features]
 default = []
 

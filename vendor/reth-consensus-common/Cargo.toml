@@ -1,0 +1,38 @@
+[package]
+name = "reth-consensus-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-eips = { workspace = true }
+reth-chainspec = { workspace = true }
+reth-consensus = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-primitives-traits = { workspace = true }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+[dev-dependencies]
+reth-ethereum-primitives = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+[features]
+default = ["std"]
+std = [
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "reth-chainspec/std",
+    "reth-consensus/std",
+    "reth-primitives-traits/std",
+    "reth-ethereum-primitives/std",
+    "alloy-primitives/std",
+]

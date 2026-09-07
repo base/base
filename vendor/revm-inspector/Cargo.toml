@@ -1,0 +1,62 @@
+[package]
+name = "revm-inspector"
+description = "Revm inspector interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[lib]
+name = "revm_inspector"
+path = "src/lib.rs"
+
+[dependencies]
+either = { workspace = true }
+auto_impl = { workspace = true }
+revm-state = { workspace = true }
+revm-context = { workspace = true }
+revm-handler = { workspace = true }
+revm-primitives = { workspace = true }
+revm-interpreter = { workspace = true }
+revm-database-interface = { workspace = true }
+serde_json = { workspace = true, features = [
+    "alloc",
+    "preserve_order",
+], optional = true }
+serde = { workspace = true, features = [
+    "derive",
+    "rc",
+    "derive",
+    "rc",
+], optional = true }
+[dev-dependencies]
+revm-database = { workspace = true, features = ["serde"] }
+[lints]
+workspace = true
+
+[features]
+default = ["std"]
+serde = ["dep:serde", "revm-context/serde", "revm-database/serde", "revm-database-interface/serde", "revm-handler/serde", "revm-interpreter/serde", "revm-primitives/serde", "revm-state/serde", "either/serde"]
+serde-json = ["tracer"]
+std = ["serde?/std", "serde_json?/std", "serde_json?/preserve_order", "revm-context/std", "revm-database/std", "revm-database-interface/std", "revm-handler/std", "revm-interpreter/std", "revm-primitives/std", "revm-state/std", "either/std"]
+tracer = ["std", "serde", "dep:serde_json"]

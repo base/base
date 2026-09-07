@@ -15,11 +15,10 @@ workspace = true
 [dependencies]
 
 [dev-dependencies]
-rstest.workspace = true
-criterion.workspace = true
-hex-literal.workspace = true
-iai-callgrind.workspace = true
-
+hex-literal = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
+criterion = { workspace = true, features = ["default"] }
+iai-callgrind = { workspace = true, features = ["default"] }
 [[bench]]
 name = "flz"
 harness = false

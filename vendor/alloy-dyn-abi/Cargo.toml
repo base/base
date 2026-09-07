@@ -1,0 +1,81 @@
+[package]
+name = "alloy-dyn-abi"
+description = "Run-time ABI and EIP-712 implementations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_dyn_abi"
+path = "src/lib.rs"
+
+[[bench]]
+name = "abi"
+path = "benches/abi.rs"
+harness = false
+
+[[bench]]
+name = "types"
+path = "benches/types.rs"
+harness = false
+
+[dependencies]
+itoa = { workspace = true }
+alloy-json-abi = { workspace = true }
+alloy-sol-types = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-sol-type-parser = { workspace = true }
+proptest = { workspace = true, optional = true }
+arbitrary = { workspace = true, optional = true }
+serde = { workspace = true, features = ["alloc"], optional = true }
+winnow = { workspace = true, features = [
+    "alloc",
+    "ascii",
+] }
+serde_json = { workspace = true, features = ["alloc"], optional = true }
+derive_more = { workspace = true, features = [
+    "deref",
+    "deref_mut",
+    "from",
+    "into",
+    "into_iterator",
+], optional = true }
+[dev-dependencies]
+ethabi = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+criterion_0_7 = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = [
+    "os_rng",
+    "thread_rng",
+] }
+[lints]
+workspace = true
+
+[features]
+arbitrary = ["std", "alloy-sol-types/arbitrary", "dep:arbitrary", "dep:proptest"]
+debug = ["std", "alloy-sol-type-parser/debug"]
+default = ["std"]
+eip712 = ["alloy-sol-types/eip712-serde", "alloy-sol-type-parser/eip712", "dep:derive_more", "dep:serde", "dep:serde_json"]
+std = ["alloy-json-abi/std", "alloy-sol-types/std", "alloy-sol-type-parser/std", "alloy-primitives/std", "serde?/std", "serde_json?/std"]

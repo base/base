@@ -1,0 +1,30 @@
+[package]
+name = "reth-era-downloader"
+description = "An asynchronous stream interface for downloading ERA1 files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+bytes = { workspace = true }
+reth-era = { workspace = true }
+futures-util = { workspace = true }
+reth-fs-util = { workspace = true }
+sha2 = { workspace = true, features = ["std"] }
+eyre = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros"] }
+[dev-dependencies]
+test-case = { workspace = true }
+futures = { workspace = true, features = ["default"] }
+tempfile = { workspace = true, features = ["default"] }
+[lints]
+workspace = true

@@ -16,9 +16,9 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-cadence = { workspace = true }
 tracing = { workspace = true }
+cadence = { workspace = true }
 base-sidecrush = { workspace = true }
-clap = { workspace = true, features = ["derive", "env"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "ansi", "json"] }
+clap = { workspace = true, features = ["default", "derive", "env"] }
+tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros", "signal"] }
+tracing-subscriber = { workspace = true, features = ["default", "env-filter", "fmt", "ansi", "json"] }

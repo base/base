@@ -1,0 +1,31 @@
+[package]
+name = "example-custom-state-root"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dependencies]
+tokio = { workspace = true }
+reth-evm = { workspace = true }
+reth-trie = { workspace = true }
+alloy-genesis = { workspace = true }
+alloy-network = { workspace = true }
+reth-provider = { workspace = true }
+reth-engine-tree = { workspace = true }
+reth-storage-overlay = { workspace = true }
+reth-primitives-traits = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-ethereum = { workspace = true, features = ["default", "node", "test-utils"] }
+[lints]
+workspace = true

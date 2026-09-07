@@ -1,0 +1,20 @@
+[package]
+name = "example-custom-node-components"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dependencies]
+eyre = { workspace = true, features = ["default"] }
+reth-tracing = { workspace = true, features = ["default"] }
+reth-ethereum = { workspace = true, features = ["default", "node", "pool", "node-api", "cli"] }
+[lints]
+workspace = true

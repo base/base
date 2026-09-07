@@ -1,0 +1,57 @@
+[package]
+name = "revm-bytecode"
+description = "EVM Bytecodes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[lib]
+name = "revm_bytecode"
+path = "src/lib.rs"
+
+[dependencies]
+revm-primitives = { workspace = true }
+paste = { workspace = true, optional = true }
+bitvec = { workspace = true, features = ["alloc"] }
+phf = { workspace = true, features = ["macros"], optional = true }
+serde = { workspace = true, features = [
+    "derive",
+    "rc",
+    "derive",
+    "rc",
+], optional = true }
+[dev-dependencies]
+serde_json = { workspace = true }
+anyhow = { workspace = true, features = ["default"] }
+rand_0_10_2 = { workspace = true, features = ["default"] }
+[lints]
+workspace = true
+
+[features]
+default = ["std", "parse"]
+hashbrown = ["revm-primitives/hashbrown"]
+parse = ["phf", "paste"]
+serde = ["dep:serde", "revm-primitives/serde", "bitvec/serde", "phf?/serde"]
+serde-json = ["serde"]
+std = ["serde?/std", "serde_json/std", "revm-primitives/std", "bitvec/std", "phf?/std"]

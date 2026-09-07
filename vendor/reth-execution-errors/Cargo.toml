@@ -1,0 +1,33 @@
+[package]
+name = "reth-execution-errors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nybbles = { workspace = true }
+alloy-evm = { workspace = true }
+thiserror = { workspace = true }
+reth-storage-errors = { workspace = true }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+[features]
+default = ["std"]
+std = [
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "thiserror/std",
+    "nybbles/std",
+    "reth-storage-errors/std",
+    "alloy-evm/std",
+]

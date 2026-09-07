@@ -1,0 +1,202 @@
+use alloc::vec::Vec;
+
+use alloy_primitives::Bytes;
+
+use super::JumpTable;
+use crate::interpreter::op;
+
+/// Analyzes the bytecode to produce a jump table and potentially padded bytecode.
+///
+/// Prefer using [`Bytecode::new_legacy`](super::Bytecode::new_legacy) instead.
+#[inline]
+pub(super) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
+    let mut jumps = JumpTable::new(bytecode.len());
+    let range = bytecode.as_ptr_range();
+    let start = range.start;
+    let mut iterator = start;
+    let end = range.end;
+    let mut prev_byte: u8 = 0;
+    let mut last_byte: u8 = 0;
+
+    while iterator < end {
+        prev_byte = last_byte;
+        last_byte = unsafe { *iterator };
+        if last_byte == op::JUMPDEST {
+            // SAFETY: Jumps are max length of the code.
+            jumps.set(unsafe { iterator.offset_from_unsigned(start) });
+            iterator = unsafe { iterator.add(1) };
+        } else {
+            let push_offset = last_byte.wrapping_sub(op::PUSH1);
+            if push_offset < 32 {
+                // A trailing PUSH can advance past the bytecode allocation.
+                // `wrapping_add` keeps that offset computation defined.
+                iterator = iterator.wrapping_add(push_offset as usize + 2);
+            } else {
+                // SAFETY: Iterator access range is checked in the while loop.
+                iterator = unsafe { iterator.add(1) };
+            }
+        }
+    }
+
+    // Calculate padding needed:
+    // push_overflow: bytes needed for incomplete PUSH immediate data
+    let push_overflow = (iterator as usize) - (end as usize);
+    let mut padding = push_overflow;
+
+    if last_byte == op::STOP {
+        // DUPN/SWAPN/EXCHANGE have 1-byte immediates that aren't handled by the loop above,
+        // so we need extra padding to ensure safe execution.
+        padding += is_dupn_swapn_exchange(prev_byte) as usize;
+    } else {
+        // Add final STOP instruction and immediate for DUPN/SWAPN/EXCHANGE
+        padding += 1 + is_dupn_swapn_exchange(last_byte) as usize;
+    }
+
+    let bytecode = if padding > 0 {
+        let mut padded = Vec::with_capacity(bytecode.len() + padding);
+        padded.extend_from_slice(&bytecode);
+        padded.resize(padded.len() + padding, 0);
+        Bytes::from(padded)
+    } else {
+        bytecode
+    };
+
+    (jumps, bytecode)
+}
+
+/// Returns true if the opcode is DUPN, SWAPN, or EXCHANGE.
+const fn is_dupn_swapn_exchange(opcode: u8) -> bool {
+    opcode.wrapping_sub(op::DUPN) < 3
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use super::*;
+
+    #[test]
+    fn test_bytecode_ends_with_stop_no_padding_needed() {
+        let bytecode = vec![op::PUSH1, 0x01, op::PUSH1, 0x02, op::ADD, op::STOP];
+        let (_, padded_bytecode) = analyze_legacy(bytecode.clone().into());
+        assert_eq!(padded_bytecode.len(), bytecode.len());
+    }
+
+    #[test]
+    fn test_bytecode_ends_without_stop_requires_padding() {
+        let bytecode = vec![op::PUSH1, 0x01, op::PUSH1, 0x02, op::ADD];
+        let (_, padded_bytecode) = analyze_legacy(bytecode.clone().into());
+        assert_eq!(padded_bytecode.len(), bytecode.len() + 1);
+    }
+
+    #[test]
+    fn test_bytecode_ends_with_push16_requires_17_bytes_padding() {
+        let bytecode = vec![op::PUSH1, 0x01, op::PUSH16];
+        let (_, padded_bytecode) = analyze_legacy(bytecode.clone().into());
+        assert_eq!(padded_bytecode.len(), bytecode.len() + 17);
+    }
+
+    #[test]
+    fn test_bytecode_ends_with_push2_requires_2_bytes_padding() {
+        let bytecode = vec![op::PUSH1, 0x01, op::PUSH2, 0x02];
+        let (_, padded_bytecode) = analyze_legacy(bytecode.clone().into());
+        assert_eq!(padded_bytecode.len(), bytecode.len() + 2);
+    }
+
+    #[test]
+    fn test_bytecode_with_jumpdest_at_start() {
+        let bytecode = vec![op::JUMPDEST, op::PUSH1, 0x01, op::STOP];
+        let (jump_table, _) = analyze_legacy(bytecode.into());
+        assert!(jump_table.is_valid(0)); // First byte should be a valid jumpdest
+    }
+
+    #[test]
+    fn test_bytecode_with_jumpdest_after_push() {
+        let bytecode = vec![op::PUSH1, 0x01, op::JUMPDEST, op::STOP];
+        let (jump_table, _) = analyze_legacy(bytecode.into());
+        assert!(jump_table.is_valid(2)); // JUMPDEST should be at position 2
+    }
+
+    #[test]
+    fn test_bytecode_with_multiple_jumpdests() {
+        let bytecode = vec![op::JUMPDEST, op::PUSH1, 0x01, op::JUMPDEST, op::STOP];
+        let (jump_table, _) = analyze_legacy(bytecode.into());
+        assert!(jump_table.is_valid(0)); // First JUMPDEST
+        assert!(jump_table.is_valid(3)); // Second JUMPDEST
+    }
+
+    #[test]
+    fn test_bytecode_with_max_push32() {
+        let bytecode = vec![op::PUSH32];
+        let (_, padded_bytecode) = analyze_legacy(bytecode.clone().into());
+        assert_eq!(padded_bytecode.len(), bytecode.len() + 33); // PUSH32 + 32 bytes + STOP
+    }
+
+    #[test]
+    fn test_truncated_pushes_are_padded_without_inbounds_pointer_advance() {
+        for push in op::PUSH1..=op::PUSH32 {
+            let bytecode = vec![push];
+            let (_, padded_bytecode) = analyze_legacy(bytecode.clone().into());
+            let push_immediate_len = (push - op::PUSH1 + 1) as usize;
+            assert_eq!(padded_bytecode.len(), bytecode.len() + push_immediate_len + 1);
+        }
+    }
+
+    #[test]
+    fn test_bytecode_with_invalid_opcode() {
+        let bytecode = vec![0xFF, op::STOP]; // 0xFF is an invalid opcode
+        let (jump_table, _) = analyze_legacy(bytecode.into());
+        assert!(!jump_table.is_valid(0)); // Invalid opcode should not be a jumpdest
+    }
+
+    #[test]
+    fn test_bytecode_with_sequential_pushes() {
+        let bytecode = vec![
+            op::PUSH1,
+            0x01,
+            op::PUSH2,
+            0x02,
+            0x03,
+            op::PUSH4,
+            0x04,
+            0x05,
+            0x06,
+            0x07,
+            op::STOP,
+        ];
+        let (jump_table, padded_bytecode) = analyze_legacy(bytecode.clone().into());
+        assert_eq!(padded_bytecode.len(), bytecode.len());
+        assert!(!jump_table.is_valid(0)); // PUSH1
+        assert!(!jump_table.is_valid(2)); // PUSH2
+        assert!(!jump_table.is_valid(5)); // PUSH4
+    }
+
+    #[test]
+    fn test_bytecode_with_jumpdest_in_push_data() {
+        let bytecode = vec![
+            op::PUSH2,
+            op::JUMPDEST, // This should not be treated as a JUMPDEST
+            0x02,
+            op::STOP,
+        ];
+        let (jump_table, _) = analyze_legacy(bytecode.into());
+        assert!(!jump_table.is_valid(1)); // JUMPDEST in push data should not be valid
+    }
+
+    #[test]
+    fn test_bytecode_ends_with_immediate_opcode_and_stop_requires_padding() {
+        // For SWAPN/DUPN/EXCHANGE, the STOP (0x00) is consumed as the immediate operand,
+        // not as an actual STOP instruction, so padding is needed.
+        // [OPCODE]       -> [OPCODE, STOP, STOP] (3 bytes)
+        // [OPCODE, STOP] -> [OPCODE, STOP, STOP] (3 bytes)
+        for op in [op::SWAPN, op::DUPN, op::EXCHANGE] {
+            for bytecode in [vec![op], vec![op, op::STOP]] {
+                let (_, padded_bytecode) = analyze_legacy(bytecode.into());
+                assert_eq!(padded_bytecode.len(), 3);
+                assert_eq!(padded_bytecode[0], op);
+                assert_eq!(padded_bytecode[1], op::STOP);
+                assert_eq!(padded_bytecode[2], op::STOP);
+            }
+        }
+    }
+}

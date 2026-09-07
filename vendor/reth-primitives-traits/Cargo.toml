@@ -1,0 +1,163 @@
+[package]
+name = "reth-primitives-traits"
+description = "Common types in reth."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = false
+
+[lib]
+name = "reth_primitives_traits"
+path = "src/lib.rs"
+
+[dependencies]
+bytes = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-trie = { workspace = true }
+revm-state = { workspace = true }
+alloy-genesis = { workspace = true }
+revm-bytecode = { workspace = true }
+revm-primitives = { workspace = true }
+serde = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+reth-codecs = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["full"] }
+modular-bitfield = { workspace = true, optional = true }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+alloy-consensus = { workspace = true, features = ["k256"] }
+alloy-rpc-types-eth = { workspace = true, optional = true }
+once_cell = { workspace = true, features = ["critical-section"] }
+proptest-arbitrary-interop = { workspace = true, optional = true }
+quanta = { workspace = true, optional = true, features = ["default"] }
+dashmap = { workspace = true, features = ["inline"], optional = true }
+proptest = { workspace = true, optional = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+byteorder = { workspace = true, optional = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = [
+    "map-foldhash",
+    "k256",
+] }
+secp256k1 = { workspace = true, features = [
+    "global-context",
+    "recovery",
+    "recovery",
+], optional = true }
+[dev-dependencies]
+serde = { workspace = true }
+reth-codecs = { workspace = true }
+modular-bitfield = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+rand_08 = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+proptest = { workspace = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"] }
+byteorder = { workspace = true, features = ["default"] }
+alloy-consensus = { workspace = true, features = [
+    "arbitrary",
+    "serde",
+] }
+alloy-primitives = { workspace = true, features = [
+    "map-foldhash",
+    "arbitrary",
+    "serde",
+] }
+secp256k1 = { workspace = true, features = [
+    "global-context",
+    "recovery",
+    "recovery",
+    "global-context",
+    "rand",
+] }
+[lints]
+workspace = true
+
+[features]
+arbitrary = [
+    "std",
+    "alloy-consensus/arbitrary",
+    "alloy-primitives/arbitrary",
+    "dep:arbitrary",
+    "dep:proptest",
+    "dep:proptest-arbitrary-interop",
+    "alloy-eips/arbitrary",
+    "revm-primitives/arbitrary",
+    "reth-codecs?/arbitrary",
+    "secp256k1?/global-context",
+    "secp256k1?/rand",
+    "alloy-trie/arbitrary",
+    "alloy-rpc-types-eth?/arbitrary",
+    "dashmap?/arbitrary",
+]
+dashmap = ["dep:dashmap"]
+default = [
+    "std",
+    "quanta",
+]
+quanta = [
+    "std",
+    "dep:quanta",
+]
+rayon = ["dep:rayon"]
+reth-codec = [
+    "dep:reth-codecs",
+    "dep:modular-bitfield",
+    "dep:byteorder",
+]
+rpc-compat = ["alloy-rpc-types-eth"]
+secp256k1 = ["alloy-consensus/secp256k1"]
+serde = [
+    "dep:serde",
+    "alloy-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "bytes/serde",
+    "rand/serde",
+    "reth-codecs?/serde",
+    "revm-primitives/serde",
+    "revm-primitives/serde",
+    "secp256k1?/serde",
+    "alloy-trie/serde",
+    "revm-bytecode/serde",
+    "revm-state/serde",
+    "rand_08/serde",
+    "alloy-rpc-types-eth?/serde",
+    "dashmap?/serde",
+]
+std = [
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "alloy-genesis/std",
+    "alloy-primitives/std",
+    "revm-primitives/std",
+    "serde?/std",
+    "alloy-rlp/std",
+    "bytes/std",
+    "derive_more/std",
+    "once_cell/std",
+    "secp256k1?/std",
+    "thiserror/std",
+    "alloy-trie/std",
+    "serde_json/std",
+    "revm-bytecode/std",
+    "revm-state/std",
+    "alloy-rpc-types-eth?/std",
+]
+test-utils = [
+    "arbitrary",
+    "reth-codecs?/test-utils",
+]

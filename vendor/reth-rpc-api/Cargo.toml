@@ -1,0 +1,50 @@
+[package]
+name = "reth-rpc-api"
+description = "Reth RPC interfaces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-eips = { workspace = true }
+alloy-serde = { workspace = true }
+alloy-genesis = { workspace = true }
+alloy-json-rpc = { workspace = true }
+reth-rpc-eth-api = { workspace = true }
+reth-chain-state = { workspace = true }
+reth-network-peers = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+alloy-rpc-types-mev = { workspace = true }
+alloy-rpc-types-debug = { workspace = true }
+alloy-rpc-types-trace = { workspace = true }
+alloy-rpc-types-anvil = { workspace = true }
+alloy-rpc-types-admin = { workspace = true }
+reth-engine-primitives = { workspace = true }
+alloy-rpc-types-txpool = { workspace = true }
+alloy-rpc-types-beacon = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["alloc"] }
+alloy-rpc-types = { workspace = true, features = ["eth"] }
+reth-trie-common = { workspace = true, features = ["serde"] }
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+jsonrpsee = { workspace = true, features = ["client", "async-client", "http-client"] }
+[features]
+client = [
+    "jsonrpsee/client",
+    "jsonrpsee/async-client",
+    "reth-rpc-eth-api/client",
+]

@@ -1,0 +1,59 @@
+[package]
+name = "revm-handler"
+description = "Revm handler crates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[lib]
+name = "revm_handler"
+path = "src/lib.rs"
+
+[dependencies]
+auto_impl = { workspace = true }
+revm-state = { workspace = true }
+revm-context = { workspace = true }
+derive-where = { workspace = true }
+revm-bytecode = { workspace = true }
+revm-precompile = { workspace = true }
+revm-primitives = { workspace = true }
+revm-interpreter = { workspace = true }
+revm-context-interface = { workspace = true }
+revm-database-interface = { workspace = true }
+serde = { workspace = true, features = [
+    "derive",
+    "rc",
+], optional = true }
+[dev-dependencies]
+alloy-signer = { workspace = true }
+revm-database = { workspace = true }
+alloy-signer-local = { workspace = true }
+[lints]
+workspace = true
+
+[features]
+default = ["std"]
+serde = ["dep:serde", "revm-primitives/serde", "revm-state/serde", "revm-context-interface/serde", "revm-bytecode/serde", "revm-context/serde", "revm-database/serde", "revm-database-interface/serde", "revm-interpreter/serde", "derive-where/serde"]
+serde-json = ["serde"]
+std = ["serde?/std", "revm-bytecode/std", "revm-context/std", "revm-context-interface/std", "revm-database/std", "revm-database-interface/std", "revm-interpreter/std", "revm-precompile/std", "revm-primitives/std", "revm-state/std"]

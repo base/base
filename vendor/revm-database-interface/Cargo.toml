@@ -1,0 +1,55 @@
+[package]
+name = "revm-database-interface"
+description = "Revm Database interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[lib]
+name = "revm_database_interface"
+path = "src/lib.rs"
+
+[dependencies]
+either = { workspace = true }
+thiserror = { workspace = true }
+auto_impl = { workspace = true }
+revm-state = { workspace = true }
+revm-primitives = { workspace = true }
+tokio = { workspace = true, optional = true, features = ["default"] }
+serde = { workspace = true, features = [
+    "derive",
+    "rc",
+    "derive",
+    "rc",
+], optional = true }
+[dev-dependencies]
+
+[lints]
+workspace = true
+
+[features]
+asyncdb = ["dep:tokio", "tokio/rt-multi-thread"]
+default = ["std"]
+serde = ["dep:serde", "revm-primitives/serde", "revm-state/serde", "either/serde"]
+std = ["serde?/std", "revm-primitives/std", "revm-state/std", "either/std", "thiserror/std"]

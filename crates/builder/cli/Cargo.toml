@@ -12,24 +12,15 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
-base-node-core.workspace = true
-base-builder-core.workspace = true
-base-execution-cli.workspace = true
-base-builder-metering.workspace = true
-base-observability-events.workspace = true
-
-# cli
-clap = { workspace = true, features = ["derive", "env"] }
-
-# misc
-eyre.workspace = true
-tracing.workspace = true
-
+tracing = { workspace = true }
+base-builder-metering = { workspace = true }
+base-observability-events = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+base-node-core = { workspace = true, features = ["default"] }
+base-builder-core = { workspace = true, features = ["default"] }
+base-execution-cli = { workspace = true, features = ["default"] }
+clap = { workspace = true, features = ["default", "derive", "env"] }
 [dev-dependencies]
-# workspace
-base-bundles.workspace = true
-
-# misc
-alloy-primitives.workspace = true
-rstest.workspace = true
+base-bundles = { workspace = true }
+alloy-primitives = { workspace = true }
+rstest = { workspace = true, features = ["default"] }

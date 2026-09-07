@@ -1,0 +1,36 @@
+[package]
+name = "reth-static-file"
+description = "Static file producer implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rayon = { workspace = true }
+reth-codecs = { workspace = true }
+reth-db-api = { workspace = true }
+reth-provider = { workspace = true }
+reth-tokio-util = { workspace = true }
+reth-prune-types = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-storage-errors = { workspace = true }
+reth-primitives-traits = { workspace = true }
+reth-static-file-types = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+parking_lot = { workspace = true, features = ["default", "send_guard", "arc_lock"] }
+[dev-dependencies]
+assert_matches = { workspace = true }
+reth-testing-utils = { workspace = true }
+tempfile = { workspace = true, features = ["default"] }
+reth-stages = { workspace = true, features = ["test-utils"] }

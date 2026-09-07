@@ -1,0 +1,13 @@
+# cargo-deny configuration for sigp/discv5
+# See https://embarkstudios.github.io/cargo-deny/
+
+[bans]
+multiple-versions = "warn"
+deny = [
+    { crate = "aes", deny-multiple-versions = true, reason = "takes a long time to compile" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

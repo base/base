@@ -1,0 +1,24 @@
+[package]
+name = "example-node-custom-rpc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+clap = { workspace = true, features = ["default", "derive"] }
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
+reth-ethereum = { workspace = true, features = ["default", "node", "pool", "cli"] }
+[dev-dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "example-custom-auth-http-middleware"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dependencies]
+tower = { workspace = true }
+http = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+jsonrpsee = { workspace = true, features = ["server"] }
+tracing = { workspace = true, features = ["attributes"] }
+clap = { workspace = true, features = ["default", "derive"] }
+reth-ethereum = { workspace = true, features = ["default", "node", "rpc", "cli"] }
+[lints]
+workspace = true

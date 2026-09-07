@@ -1,0 +1,112 @@
+[package]
+name = "reth-stages"
+description = "Staged syncing primitives used in reth."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rayon = { workspace = true }
+reth-db = { workspace = true }
+reth-etl = { workspace = true }
+reth-era = { workspace = true }
+reth-revm = { workspace = true }
+thiserror = { workspace = true }
+itertools = { workspace = true }
+reth-exex = { workspace = true }
+page_size = { workspace = true }
+reth-prune = { workspace = true }
+reth-tasks = { workspace = true }
+reth-codecs = { workspace = true }
+reth-config = { workspace = true }
+reth-db-api = { workspace = true }
+futures-util = { workspace = true }
+reth-fs-util = { workspace = true }
+reth-provider = { workspace = true }
+reth-chainspec = { workspace = true }
+reth-consensus = { workspace = true }
+reth-era-utils = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-stages-api = { workspace = true }
+reth-prune-types = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-storage-errors = { workspace = true }
+reth-era-downloader = { workspace = true }
+reth-execution-types = { workspace = true }
+reth-primitives-traits = { workspace = true }
+reth-static-file-types = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+eyre = { workspace = true, features = ["default"] }
+reth-evm = { workspace = true, features = ["metrics"] }
+reth-trie = { workspace = true, features = ["metrics"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+tracing = { workspace = true, features = ["attributes"] }
+num-traits = { workspace = true, features = ["default"] }
+reth-testing-utils = { workspace = true, optional = true }
+reth-libmdbx = { workspace = true, features = ["default"] }
+reth-trie-db = { workspace = true, features = ["metrics"] }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
+reth-network-p2p = { workspace = true, features = ["default"] }
+reth-ethereum-primitives = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+tempfile = { workspace = true, optional = true, features = ["default"] }
+[dev-dependencies]
+paste = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-genesis = { workspace = true }
+reth-chainspec = { workspace = true }
+reth-db-common = { workspace = true }
+assert_matches = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-static-file = { workspace = true }
+reth-evm-ethereum = { workspace = true }
+reth-network-peers = { workspace = true }
+reth-testing-utils = { workspace = true }
+reth-ethereum-consensus = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+tempfile = { workspace = true, features = ["default"] }
+reth-tracing = { workspace = true, features = ["default"] }
+reth-trie = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+reth-consensus = { workspace = true, features = ["test-utils"] }
+reth-db = { workspace = true, features = ["test-utils", "mdbx"] }
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+reth-stages-api = { workspace = true, features = ["test-utils"] }
+reth-ethereum-primitives = { workspace = true, features = ["test-utils"] }
+reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
+reth-downloaders = { workspace = true, features = ["default", "file-client"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom", "rand"] }
+[features]
+test-utils = [
+    "reth-network-p2p/test-utils",
+    "reth-db/test-utils",
+    "reth-provider/test-utils",
+    "reth-stages-api/test-utils",
+    "dep:reth-testing-utils",
+    "dep:tempfile",
+    "reth-chainspec/test-utils",
+    "reth-consensus/test-utils",
+    "reth-evm/test-utils",
+    "reth-downloaders/test-utils",
+    "reth-primitives-traits/test-utils",
+    "reth-revm/test-utils",
+    "reth-codecs/test-utils",
+    "reth-db-api/test-utils",
+    "reth-trie-db/test-utils",
+    "reth-trie/test-utils",
+    "reth-prune-types/test-utils",
+    "dep:reth-ethereum-primitives",
+    "reth-ethereum-primitives?/test-utils",
+    "reth-evm-ethereum/test-utils",
+    "reth-tasks/test-utils",
+]

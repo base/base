@@ -1,0 +1,138 @@
+use std::{
+    fmt,
+    marker::PhantomData,
+    sync::{Arc, OnceLock},
+};
+
+use alloy_network::{Ethereum, Network};
+#[cfg(feature = "pubsub")]
+use alloy_pubsub::{PubSubFrontend, Subscription};
+use alloy_rpc_client::{BuiltInConnectionString, ClientBuilder, ClientRef, RpcClient, WeakClient};
+use alloy_transport::{TransportConnect, TransportError};
+
+use crate::{
+    Identity, ProviderBuilder,
+    blocks::NewBlocks,
+    heart::{Heartbeat, HeartbeatHandle},
+};
+
+/// The root provider manages the RPC client and the heartbeat. It is at the
+/// base of every provider stack.
+///
+/// Cloning a root provider is cheap: clones share the client and heartbeat. Some deferred APIs,
+/// including default call builders, filter pollers, block or log watch builders, and subscription
+/// request builders, keep only a weak client handle. Keep at least one provider clone alive until
+/// those builders are awaited or their streams are consumed, or they may report that the backend
+/// was dropped or end early. A [`PendingTransactionBuilder`](crate::PendingTransactionBuilder)
+/// instead owns a root-provider clone. Layers can also retain additional state; for example,
+/// batched calls keep their batching backend alive.
+pub struct RootProvider<N: Network = Ethereum> {
+    /// The inner state of the root provider.
+    pub(crate) inner: Arc<RootProviderInner<N>>,
+}
+
+impl<N: Network> Clone for RootProvider<N> {
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
+}
+
+impl<N: Network> fmt::Debug for RootProvider<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RootProvider").field("client", &self.inner.client).finish_non_exhaustive()
+    }
+}
+
+/// Helper function to directly access [`ProviderBuilder`] with minimal
+/// generics.
+pub fn builder<N: Network>() -> ProviderBuilder<Identity, Identity, N> {
+    ProviderBuilder::default()
+}
+
+impl<N: Network> RootProvider<N> {
+    /// Creates a new HTTP root provider from the given URL.
+    #[cfg(all(feature = "reqwest", not(all(target_os = "wasi", target_env = "p1"))))]
+    pub fn new_http(url: url::Url) -> Self {
+        Self::new(RpcClient::new_http(url))
+    }
+
+    /// Creates a new root provider from the given RPC client.
+    pub fn new(client: RpcClient) -> Self {
+        Self { inner: Arc::new(RootProviderInner::new(client)) }
+    }
+
+    /// Creates a new root provider from the provided string.
+    ///
+    /// See [`BuiltInConnectionString`] for more information.
+    pub async fn connect(s: &str) -> Result<Self, TransportError> {
+        Self::connect_with(s.parse::<BuiltInConnectionString>()?).await
+    }
+
+    /// Connects to a transport with the given connector.
+    pub async fn connect_with<C: TransportConnect>(conn: C) -> Result<Self, TransportError> {
+        ClientBuilder::default().connect_with(conn).await.map(Self::new)
+    }
+}
+
+impl<N: Network> RootProvider<N> {
+    /// Gets the subscription corresponding to the given RPC subscription ID.
+    #[cfg(feature = "pubsub")]
+    pub async fn get_subscription<R: alloy_json_rpc::RpcRecv>(
+        &self,
+        id: alloy_primitives::B256,
+    ) -> alloy_transport::TransportResult<Subscription<R>> {
+        self.pubsub_frontend()?.get_subscription(id).await.map(Subscription::from)
+    }
+
+    /// Unsubscribes from the subscription corresponding to the given RPC subscription ID.
+    #[cfg(feature = "pubsub")]
+    pub fn unsubscribe(&self, id: alloy_primitives::B256) -> alloy_transport::TransportResult<()> {
+        self.pubsub_frontend()?.unsubscribe(id)
+    }
+
+    #[cfg(feature = "pubsub")]
+    pub(crate) fn pubsub_frontend(&self) -> alloy_transport::TransportResult<&PubSubFrontend> {
+        self.inner
+            .client_ref()
+            .pubsub_frontend()
+            .ok_or_else(alloy_transport::TransportErrorKind::pubsub_unavailable)
+    }
+
+    #[inline]
+    pub(crate) fn get_heart(&self) -> &HeartbeatHandle {
+        self.inner.heart.get_or_init(|| {
+            let new_blocks = NewBlocks::<N>::new(self.inner.weak_client());
+            let paused = new_blocks.paused.clone();
+            let stream = new_blocks.into_stream();
+            Heartbeat::<N, _>::new(Box::pin(stream), paused).spawn()
+        })
+    }
+}
+
+/// The root provider manages the RPC client and the heartbeat. It is at the
+/// base of every provider stack.
+pub(crate) struct RootProviderInner<N: Network = Ethereum> {
+    client: RpcClient,
+    heart: OnceLock<HeartbeatHandle>,
+    _network: PhantomData<N>,
+}
+
+impl<N: Network> Clone for RootProviderInner<N> {
+    fn clone(&self) -> Self {
+        Self { client: self.client.clone(), heart: self.heart.clone(), _network: PhantomData }
+    }
+}
+
+impl<N: Network> RootProviderInner<N> {
+    pub(crate) fn new(client: RpcClient) -> Self {
+        Self { client, heart: Default::default(), _network: PhantomData }
+    }
+
+    pub(crate) fn weak_client(&self) -> WeakClient {
+        self.client.get_weak()
+    }
+
+    pub(crate) fn client_ref(&self) -> ClientRef<'_> {
+        self.client.get_ref()
+    }
+}

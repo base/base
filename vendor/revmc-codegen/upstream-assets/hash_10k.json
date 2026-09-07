@@ -1,0 +1,36 @@
+{
+  "hash_10k": {
+    "env": {
+      "currentBaseFee": "0x0",
+      "currentCoinbase": "0x0000000000000000000000000000000000000000",
+      "currentGasLimit": "0x7fffffffffffffff",
+      "currentNumber": "0x1",
+      "currentTimestamp": "0x1"
+    },
+    "pre": {
+      "0x1111111111111111111111111111111111111111": {
+        "balance": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "code": "0x",
+        "nonce": "0x0",
+        "storage": {}
+      },
+      "0xcccccccccccccccccccccccccccccccccccccccc": {
+        "balance": "0x0",
+        "code": "0x6080604052348015600e575f80fd5b50600436106026575f3560e01c806330627b7c14602a575b5f80fd5b60306042565b60405190815260200160405180910390f35b5f805b612710811015609957604080516020810184905201604080517fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe0818403018152919052805160209091012091506001016045565b509056fea26469706673582212205619b6f35e6b36e84f322068af3e58f103c6c5317af1da5cbb6f136edc8e3be564736f6c63430008190033",
+        "nonce": "0x1",
+        "storage": {}
+      }
+    },
+    "transaction": [
+      {
+        "data": "0x30627b7c",
+        "gasLimit": "0x7fffffffffffffff",
+        "gasPrice": "0x0",
+        "nonce": "0x0",
+        "sender": "0x1111111111111111111111111111111111111111",
+        "to": "0xcccccccccccccccccccccccccccccccccccccccc",
+        "value": "0x0"
+      }
+    ]
+  }
+}

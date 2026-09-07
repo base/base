@@ -1,0 +1,68 @@
+[package]
+name = "reth-rpc-eth-types"
+description = "Types supporting implementation of 'eth' namespace RPC server API"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+revm = { workspace = true }
+tokio = { workspace = true }
+metrics = { workspace = true }
+reth-evm = { workspace = true }
+reth-revm = { workspace = true }
+thiserror = { workspace = true }
+itertools = { workspace = true }
+reth-trie = { workspace = true }
+alloy-eips = { workspace = true }
+reth-tasks = { workspace = true }
+alloy-serde = { workspace = true }
+reth-errors = { workspace = true }
+alloy-chains = { workspace = true }
+reth-metrics = { workspace = true }
+alloy-network = { workspace = true }
+reth-chainspec = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-sol-types = { workspace = true }
+alloy-transport = { workspace = true }
+jsonrpsee-types = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-chain-state = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+reth-execution-types = { workspace = true }
+reth-rpc-server-types = { workspace = true }
+reth-transaction-pool = { workspace = true }
+url = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
+rand = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+derive_more = { workspace = true, features = ["full"] }
+alloy-eip7928 = { workspace = true, features = ["rlp"] }
+schnellru = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["attributes"] }
+tokio-stream = { workspace = true, features = ["default"] }
+jsonrpsee-core = { workspace = true, features = ["default"] }
+revm-inspectors = { workspace = true, features = ["default"] }
+alloy-rpc-client = { workspace = true, features = ["reqwest"] }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
+reth-rpc-convert = { workspace = true, features = ["default"] }
+reth-ethereum-primitives = { workspace = true, features = ["rpc"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+alloy-evm = { workspace = true, features = ["overrides", "call-util"] }
+reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
+[dev-dependencies]
+reth-db-models = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+reth-storage-api = { workspace = true, features = ["std"] }
+[features]
+js-tracer = ["revm-inspectors/js-tracer"]

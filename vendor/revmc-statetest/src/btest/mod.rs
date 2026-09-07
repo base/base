@@ -1,0 +1,1098 @@
+pub mod post_block;
+pub mod pre_block;
+
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
+
+use revm_bytecode::Bytecode;
+use revm_context::{Context, ContextTr, cfg::CfgEnv};
+use revm_context_interface::{block::BlobExcessGasAndPrice, result::HaltReason};
+use revm_database::{Database, EmptyDB, State, states::bundle_state::BundleRetention};
+use revm_handler::{EvmTr, ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
+use revm_inspector::{InspectEvm, inspectors::TracerEip3155};
+use revm_primitives::{Address, AddressMap, U256, U256Map, hardfork::SpecId, hex};
+use revm_state::{AccountInfo, bal::Bal};
+use revm_statetest_types_42_0_0::blockchain::{
+    Account, BlockchainTest, BlockchainTestCase, ForkSpec, Withdrawal,
+};
+use serde_json::json;
+use thiserror::Error;
+
+/// Panics if the value cannot be serialized to JSON.
+fn print_json(value: &serde_json::Value) {
+    println!("{}", serde_json::to_string(value).unwrap());
+}
+
+/// Run blockchain tests from the given files with default settings.
+pub fn run_btests(test_files: Vec<PathBuf>) -> Result<(), Error> {
+    run_tests(test_files, false, false, false, false)
+}
+
+/// Run all blockchain tests from the given files
+fn run_tests(
+    test_files: Vec<PathBuf>,
+    omit_progress: bool,
+    keep_going: bool,
+    print_env_on_error: bool,
+    json_output: bool,
+) -> Result<(), Error> {
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+    let mut failed_paths = Vec::new();
+
+    let start_time = Instant::now();
+    let total_files = test_files.len();
+
+    for (file_index, file_path) in test_files.into_iter().enumerate() {
+        let current_file = file_index + 1;
+        if skip_test(&file_path) {
+            skipped += 1;
+            if json_output {
+                let output = json!({
+                    "file": file_path.display().to_string(),
+                    "status": "skipped",
+                    "reason": "known_issue"
+                });
+                print_json(&output);
+            } else if !omit_progress {
+                println!("Skipping ({}/{}): {}", current_file, total_files, file_path.display());
+            }
+            continue;
+        }
+
+        let result = run_test_file(&file_path, json_output, print_env_on_error);
+
+        match result {
+            Ok(test_count) => {
+                passed += test_count;
+                if json_output {
+                    // JSON output handled in run_test_file
+                } else if !omit_progress {
+                    println!(
+                        "✓ ({}/{}) {} ({} tests)",
+                        current_file,
+                        total_files,
+                        file_path.display(),
+                        test_count
+                    );
+                }
+            }
+            Err(e) => {
+                failed += 1;
+                if keep_going {
+                    failed_paths.push(file_path.clone());
+                }
+                if json_output {
+                    let output = json!({
+                        "file": file_path.display().to_string(),
+                        "error": e.to_string(),
+                        "status": "failed"
+                    });
+                    print_json(&output);
+                } else if !omit_progress {
+                    eprintln!(
+                        "✗ ({}/{}) {} - {}",
+                        current_file,
+                        total_files,
+                        file_path.display(),
+                        e
+                    );
+                }
+
+                if !keep_going {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    let duration = start_time.elapsed();
+
+    if json_output {
+        let results = json!({
+            "summary": {
+                "passed": passed,
+                "failed": failed,
+                "skipped": skipped,
+                "duration_secs": duration.as_secs_f64(),
+            }
+        });
+        print_json(&results);
+    } else {
+        // Print failed test paths if keep-going was enabled
+        if keep_going && !failed_paths.is_empty() {
+            println!("\nFailed test files:");
+            for path in &failed_paths {
+                println!("  {}", path.display());
+            }
+        }
+
+        println!("\nTest results:");
+        println!("  Passed:  {passed}");
+        println!("  Failed:  {failed}");
+        println!("  Skipped: {skipped}");
+        println!("  Time:    {:.2}s", duration.as_secs_f64());
+    }
+
+    if failed > 0 { Err(Error::TestsFailed { failed }) } else { Ok(()) }
+}
+
+/// Run tests from a single file
+fn run_test_file(
+    file_path: &Path,
+    json_output: bool,
+    print_env_on_error: bool,
+) -> Result<usize, Error> {
+    let content =
+        fs::read_to_string(file_path).map_err(|e| Error::FileRead(file_path.to_path_buf(), e))?;
+
+    let blockchain_test: BlockchainTest = serde_json::from_str(&content)
+        .map_err(|e| Error::JsonDecode(file_path.to_path_buf(), e))?;
+
+    let mut test_count = 0;
+
+    for (test_name, test_case) in blockchain_test.0 {
+        if json_output {
+            // Output test start in JSON format
+            let output = json!({
+                "test": test_name,
+                "file": file_path.display().to_string(),
+                "status": "running"
+            });
+            print_json(&output);
+        } else {
+            println!("  Running: {test_name}");
+        }
+        // Execute the blockchain test
+        let result = execute_blockchain_test(&test_case, print_env_on_error, json_output);
+
+        match result {
+            Ok(()) => {
+                if json_output {
+                    let output = json!({
+                        "test": test_name,
+                        "file": file_path.display().to_string(),
+                        "status": "passed"
+                    });
+                    print_json(&output);
+                }
+                test_count += 1;
+            }
+            Err(e) => {
+                if json_output {
+                    let output = json!({
+                        "test": test_name,
+                        "file": file_path.display().to_string(),
+                        "status": "failed",
+                        "error": e.to_string()
+                    });
+                    print_json(&output);
+                }
+                return Err(Error::TestExecution {
+                    test_name,
+                    test_path: file_path.to_path_buf(),
+                    error: e.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(test_count)
+}
+
+/// Debug information captured during test execution
+#[derive(Debug, Clone)]
+struct DebugInfo {
+    /// Initial pre-state before any execution
+    pre_state: AddressMap<(AccountInfo, U256Map<U256>)>,
+    /// Transaction environment
+    tx_env: Option<revm_context::tx::TxEnv>,
+    /// Block environment
+    block_env: revm_context::block::BlockEnv,
+    /// Configuration environment
+    cfg_env: CfgEnv,
+    /// Block index where error occurred
+    block_idx: usize,
+    /// Transaction index where error occurred
+    tx_idx: usize,
+    /// Withdrawals in the block
+    withdrawals: Option<Vec<Withdrawal>>,
+}
+
+impl DebugInfo {
+    /// Capture current state from the State database
+    fn capture_committed_state(state: &State<EmptyDB>) -> AddressMap<(AccountInfo, U256Map<U256>)> {
+        let mut committed_state = AddressMap::default();
+
+        // Access the cache state to get all accounts
+        for (address, cache_account) in &state.cache.accounts {
+            if let Some(plain_account) = &cache_account.account {
+                let mut storage = U256Map::default();
+                for (key, value) in &plain_account.storage {
+                    storage.insert(*key, *value);
+                }
+                committed_state.insert(*address, (plain_account.info.clone(), storage));
+            }
+        }
+
+        committed_state
+    }
+}
+
+/// Validate post state against expected values
+fn validate_post_state(
+    state: &mut State<EmptyDB>,
+    expected_post_state: &BTreeMap<Address, Account>,
+    debug_info: &DebugInfo,
+    print_env_on_error: bool,
+) -> Result<(), TestExecutionError> {
+    #[allow(clippy::too_many_arguments)]
+    fn make_failure(
+        state: &mut State<EmptyDB>,
+        debug_info: &DebugInfo,
+        expected_post_state: &BTreeMap<Address, Account>,
+        print_env_on_error: bool,
+        address: Address,
+        field: String,
+        expected: String,
+        actual: String,
+    ) -> Result<(), TestExecutionError> {
+        if print_env_on_error {
+            print_error_with_state(debug_info, state, Some(expected_post_state));
+        }
+        Err(TestExecutionError::PostStateValidation { address, field, expected, actual })
+    }
+
+    for (address, expected_account) in expected_post_state {
+        // Load account from final state
+        let actual_account = state
+            .load_cache_account(*address)
+            .map_err(|e| TestExecutionError::Database(format!("Account load failed: {e}")))?;
+        let info = actual_account.account.as_ref().map(|a| a.info.clone()).unwrap_or_default();
+
+        // Validate balance
+        if info.balance != expected_account.balance {
+            return make_failure(
+                state,
+                debug_info,
+                expected_post_state,
+                print_env_on_error,
+                *address,
+                "balance".to_string(),
+                format!("{}", expected_account.balance),
+                format!("{}", info.balance),
+            );
+        }
+
+        // Validate nonce
+        let expected_nonce = expected_account.nonce.to::<u64>();
+        if info.nonce != expected_nonce {
+            return make_failure(
+                state,
+                debug_info,
+                expected_post_state,
+                print_env_on_error,
+                *address,
+                "nonce".to_string(),
+                format!("{expected_nonce}"),
+                format!("{}", info.nonce),
+            );
+        }
+
+        // Validate code if present
+        if !expected_account.code.is_empty() {
+            if let Some(actual_code) = &info.code {
+                if actual_code.original_bytes() != expected_account.code {
+                    return make_failure(
+                        state,
+                        debug_info,
+                        expected_post_state,
+                        print_env_on_error,
+                        *address,
+                        "code".to_string(),
+                        format!("0x{}", hex::encode(&expected_account.code)),
+                        format!("0x{}", hex::encode(actual_code.original_byte_slice())),
+                    );
+                }
+            } else {
+                return make_failure(
+                    state,
+                    debug_info,
+                    expected_post_state,
+                    print_env_on_error,
+                    *address,
+                    "code".to_string(),
+                    format!("0x{}", hex::encode(&expected_account.code)),
+                    "empty".to_string(),
+                );
+            }
+        }
+
+        // Check for unexpected storage entries. Avoid allocating a temporary HashMap when the
+        // account is None.
+        if let Some(acc) = actual_account.account.as_ref() {
+            for (slot, actual_value) in &acc.storage {
+                let slot = *slot;
+                let actual_value = *actual_value;
+                if !expected_account.storage.contains_key(&slot) && !actual_value.is_zero() {
+                    return make_failure(
+                        state,
+                        debug_info,
+                        expected_post_state,
+                        print_env_on_error,
+                        *address,
+                        format!("storage_unexpected[{slot}]"),
+                        "0x0".to_string(),
+                        format!("{actual_value}"),
+                    );
+                }
+            }
+        }
+
+        // Validate storage slots
+        for (slot, expected_value) in &expected_account.storage {
+            let actual_value = state.storage(*address, *slot);
+            let actual_value = actual_value.unwrap_or_default();
+
+            if actual_value != *expected_value {
+                return make_failure(
+                    state,
+                    debug_info,
+                    expected_post_state,
+                    print_env_on_error,
+                    *address,
+                    format!("storage_validation[{slot}]"),
+                    format!("{expected_value}"),
+                    format!("{actual_value}"),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Print comprehensive error information including environment and state comparison
+fn print_error_with_state(
+    debug_info: &DebugInfo,
+    current_state: &State<EmptyDB>,
+    expected_post_state: Option<&BTreeMap<Address, Account>>,
+) {
+    eprintln!("\n========== TEST EXECUTION ERROR ==========");
+
+    // Print error location
+    eprintln!(
+        "\n📍 Error occurred at block {} transaction {}",
+        debug_info.block_idx, debug_info.tx_idx
+    );
+
+    // Print configuration environment
+    eprintln!("\n📋 Configuration Environment:");
+    eprintln!("  Spec ID: {:?}", debug_info.cfg_env.spec());
+    eprintln!("  Chain ID: {}", debug_info.cfg_env.chain_id);
+    eprintln!("  Limit contract code size: {:?}", debug_info.cfg_env.limit_contract_code_size);
+    eprintln!(
+        "  Limit contract initcode size: {:?}",
+        debug_info.cfg_env.limit_contract_initcode_size
+    );
+
+    // Print block environment
+    eprintln!("\n🔨 Block Environment:");
+    eprintln!("  Number: {}", debug_info.block_env.number);
+    eprintln!("  Timestamp: {}", debug_info.block_env.timestamp);
+    eprintln!("  Gas limit: {}", debug_info.block_env.gas_limit);
+    eprintln!("  Base fee: {:?}", debug_info.block_env.basefee);
+    eprintln!("  Difficulty: {}", debug_info.block_env.difficulty);
+    eprintln!("  Prevrandao: {:?}", debug_info.block_env.prevrandao);
+    eprintln!("  Beneficiary: {:?}", debug_info.block_env.beneficiary);
+    let blob = debug_info.block_env.blob_excess_gas_and_price;
+    eprintln!("  Blob excess gas: {:?}", blob.map(|a| a.excess_blob_gas));
+    eprintln!("  Blob gas price: {:?}", blob.map(|a| a.blob_gasprice));
+
+    // Print withdrawals
+    if let Some(withdrawals) = &debug_info.withdrawals {
+        eprintln!("  Withdrawals: {} items", withdrawals.len());
+        if !withdrawals.is_empty() {
+            for (i, withdrawal) in withdrawals.iter().enumerate().take(3) {
+                eprintln!("    Withdrawal {i}:");
+                eprintln!("      Index: {}", withdrawal.index);
+                eprintln!("      Validator Index: {}", withdrawal.validator_index);
+                eprintln!("      Address: {:?}", withdrawal.address);
+                eprintln!(
+                    "      Amount: {} Gwei ({:.6} ETH)",
+                    withdrawal.amount,
+                    withdrawal.amount.to::<u128>() as f64 / 1_000_000_000.0
+                );
+            }
+            if withdrawals.len() > 3 {
+                eprintln!("    ... and {} more withdrawals", withdrawals.len() - 3);
+            }
+        }
+    }
+
+    // Print transaction environment if available
+    if let Some(tx_env) = &debug_info.tx_env {
+        eprintln!("\n📄 Transaction Environment:");
+        eprintln!("  Transaction type: {}", tx_env.tx_type);
+        eprintln!("  Caller: {:?}", tx_env.caller);
+        eprintln!("  Gas limit: {}", tx_env.gas_limit);
+        eprintln!("  Gas price: {}", tx_env.gas_price);
+        eprintln!("  Gas priority fee: {:?}", tx_env.gas_priority_fee);
+        eprintln!("  Transaction kind: {:?}", tx_env.kind);
+        eprintln!("  Value: {}", tx_env.value);
+        eprintln!("  Data length: {} bytes", tx_env.data.len());
+        if !tx_env.data.is_empty() {
+            let preview_len = std::cmp::min(64, tx_env.data.len());
+            eprintln!(
+                "  Data preview: 0x{}{}",
+                hex::encode(&tx_env.data[..preview_len]),
+                if tx_env.data.len() > 64 { "..." } else { "" }
+            );
+        }
+        eprintln!("  Nonce: {}", tx_env.nonce);
+        eprintln!("  Chain ID: {:?}", tx_env.chain_id);
+        eprintln!("  Access list: {} entries", tx_env.access_list.len());
+        if !tx_env.access_list.is_empty() {
+            for (i, access) in tx_env.access_list.iter().enumerate().take(3) {
+                eprintln!(
+                    "    Access {}: address={:?}, {} storage keys",
+                    i,
+                    access.address,
+                    access.storage_keys.len()
+                );
+            }
+            if tx_env.access_list.len() > 3 {
+                eprintln!("    ... and {} more access list entries", tx_env.access_list.len() - 3);
+            }
+        }
+        eprintln!("  Blob hashes: {} blobs", tx_env.blob_hashes.len());
+        if !tx_env.blob_hashes.is_empty() {
+            for (i, hash) in tx_env.blob_hashes.iter().enumerate().take(3) {
+                eprintln!("    Blob {i}: {hash:?}");
+            }
+            if tx_env.blob_hashes.len() > 3 {
+                eprintln!("    ... and {} more blob hashes", tx_env.blob_hashes.len() - 3);
+            }
+        }
+        eprintln!("  Max fee per blob gas: {}", tx_env.max_fee_per_blob_gas);
+        eprintln!("  Authorization list: {} items", tx_env.authorization_list.len());
+        if !tx_env.authorization_list.is_empty() {
+            eprintln!("    (EIP-7702 authorizations present)");
+        }
+    } else {
+        eprintln!(
+            "\n📄 Transaction Environment: Not available (error occurred before tx creation)"
+        );
+    }
+
+    // Print state comparison
+    eprintln!("\n💾 Pre-State (Initial):");
+    // Sort accounts by address for consistent output
+    let mut sorted_accounts: Vec<_> = debug_info.pre_state.iter().collect();
+    sorted_accounts.sort_by_key(|(addr, _)| *addr);
+    for (address, (info, storage)) in sorted_accounts {
+        eprintln!("  Account {address:?}:");
+        eprintln!("    Balance: 0x{:x}", info.balance);
+        eprintln!("    Nonce: {}", info.nonce);
+        eprintln!("    Code hash: {:?}", info.code_hash);
+        eprintln!("    Code size: {} bytes", info.code.as_ref().map_or(0, |c| c.len()));
+        if !storage.is_empty() {
+            eprintln!("    Storage ({} slots):", storage.len());
+            let mut sorted_storage: Vec<_> = storage.iter().collect();
+            sorted_storage.sort_by_key(|(key, _)| *key);
+            for (key, value) in sorted_storage.iter() {
+                eprintln!("      {key:?} => {value:?}");
+            }
+        }
+    }
+
+    eprintln!("\n📝 Current State (Actual):");
+    let committed_state = DebugInfo::capture_committed_state(current_state);
+    // Sort accounts by address for consistent output
+    let mut sorted_current: Vec<_> = committed_state.iter().collect();
+    sorted_current.sort_by_key(|(addr, _)| *addr);
+    for (address, (info, storage)) in sorted_current {
+        eprintln!("  Account {address:?}:");
+        eprintln!("    Balance: 0x{:x}", info.balance);
+        eprintln!("    Nonce: {}", info.nonce);
+        eprintln!("    Code hash: {:?}", info.code_hash);
+        eprintln!("    Code size: {} bytes", info.code.as_ref().map_or(0, |c| c.len()));
+        if !storage.is_empty() {
+            eprintln!("    Storage ({} slots):", storage.len());
+            let mut sorted_storage: Vec<_> = storage.iter().collect();
+            sorted_storage.sort_by_key(|(key, _)| *key);
+            for (key, value) in sorted_storage.iter() {
+                eprintln!("      {key:?} => {value:?}");
+            }
+        }
+    }
+
+    // Print expected post-state if available
+    if let Some(expected_post_state) = expected_post_state {
+        eprintln!("\n✅ Expected Post-State:");
+        for (address, account) in expected_post_state {
+            eprintln!("  Account {address:?}:");
+            eprintln!("    Balance: 0x{:x}", account.balance);
+            eprintln!("    Nonce: {}", account.nonce);
+            if !account.code.is_empty() {
+                eprintln!("    Code size: {} bytes", account.code.len());
+            }
+            if !account.storage.is_empty() {
+                eprintln!("    Storage ({} slots):", account.storage.len());
+                for (key, value) in account.storage.iter() {
+                    eprintln!("      {key:?} => {value:?}");
+                }
+            }
+        }
+    }
+
+    eprintln!("\n===========================================\n");
+}
+
+/// Execute a single blockchain test case
+fn execute_blockchain_test(
+    test_case: &BlockchainTestCase,
+    print_env_on_error: bool,
+    json_output: bool,
+) -> Result<(), TestExecutionError> {
+    // Skip all transition forks for now.
+    if matches!(
+        test_case.network,
+        ForkSpec::ByzantiumToConstantinopleAt5
+            | ForkSpec::ParisToShanghaiAtTime15k
+            | ForkSpec::ShanghaiToCancunAtTime15k
+            | ForkSpec::CancunToPragueAtTime15k
+            | ForkSpec::PragueToOsakaAtTime15k
+            | ForkSpec::BPO1ToBPO2AtTime15k
+            | ForkSpec::BPO2ToAmsterdamAtTime15k
+    ) {
+        eprintln!("⚠️  Skipping transition fork: {:?}", test_case.network);
+        return Ok(());
+    }
+
+    // Create database with initial state
+    let mut state = State::builder().with_bal_builder().build();
+
+    // Capture pre-state for debug info
+    let mut pre_state_debug = AddressMap::default();
+
+    // Insert genesis state into database
+    let genesis_state = test_case.pre.clone().into_genesis_state();
+    for (address, account) in genesis_state {
+        let account_info = AccountInfo {
+            balance: account.balance,
+            nonce: account.nonce,
+            code_hash: revm_primitives::keccak256(&account.code),
+            code: Some(Bytecode::new_raw(account.code.clone())),
+            account_id: None,
+        };
+
+        // Store for debug info
+        if print_env_on_error {
+            pre_state_debug.insert(address, (account_info.clone(), account.storage.clone()));
+        }
+
+        state.insert_account_with_storage(address, account_info, account.storage);
+    }
+
+    // insert genesis hash
+    state.block_hashes.insert(0, test_case.genesis_block_header.hash);
+
+    // Setup configuration based on fork
+    let spec_id = fork_to_spec_id(test_case.network);
+    let mut cfg = CfgEnv::default();
+    cfg.set_spec_and_mainnet_gas_params(spec_id);
+
+    // Genesis block is not used yet.
+    let mut parent_block_hash = Some(test_case.genesis_block_header.hash);
+    let mut parent_excess_blob_gas =
+        test_case.genesis_block_header.excess_blob_gas.unwrap_or_default().to::<u64>();
+    let mut block_env = test_case.genesis_block_env();
+
+    // Process each block in the test
+    for (block_idx, block) in test_case.blocks.iter().enumerate() {
+        // Check if this block should fail
+        let should_fail = block.expect_exception.is_some();
+
+        let transactions = block.transactions.as_deref().unwrap_or_default();
+
+        // Update block environment for this blockk
+
+        let mut block_hash = None;
+        let mut beacon_root = None;
+        let this_excess_blob_gas;
+
+        if let Some(block_header) = block.block_header.as_ref() {
+            block_hash = Some(block_header.hash);
+            beacon_root = block_header.parent_beacon_block_root;
+            let this_excess = block_header.excess_blob_gas.unwrap_or_default().to::<u64>();
+            block_env = block_header.to_block_env(Some(BlobExcessGasAndPrice::new_with_spec(
+                parent_excess_blob_gas,
+                spec_id,
+            )));
+            this_excess_blob_gas = Some(this_excess);
+        } else {
+            this_excess_blob_gas = None;
+        }
+
+        let bal_test = block
+            .block_access_list
+            .as_ref()
+            .and_then(|bal| Bal::try_from(bal.clone()).ok())
+            .map(Arc::new);
+
+        //state.set_bal(bal_test);
+        state.reset_bal_index();
+
+        // Create EVM context for each transaction to ensure fresh state access
+        let evm_context =
+            Context::mainnet().with_block(&block_env).with_cfg(cfg.clone()).with_db(&mut state);
+
+        // Build and execute with EVM - always use inspector when JSON output is enabled
+        let mut evm = evm_context.build_mainnet_with_inspector(TracerEip3155::new_stdout());
+
+        // Pre block system calls
+        pre_block::pre_block_transition(&mut evm, spec_id, parent_block_hash, beacon_root)
+            .map_err(|e| TestExecutionError::PreBlockSystemCall {
+                block_idx,
+                error: format!("{e:?}"),
+            })?;
+
+        // Track cumulative gas used across all transactions in this block.
+        // EIP-8037: Split gas accounting into regular (execution) and state gas.
+        let mut cumulative_tx_gas_used: u64 = 0;
+        let mut block_regular_gas_used: u64 = 0;
+        let mut block_state_gas_used: u64 = 0;
+        let mut block_completed = true;
+
+        // Execute each transaction in the block
+        for (tx_idx, tx) in transactions.iter().enumerate() {
+            if tx.sender.is_none() {
+                if print_env_on_error {
+                    let debug_info = DebugInfo {
+                        pre_state: pre_state_debug.clone(),
+                        tx_env: None,
+                        block_env: block_env.clone(),
+                        cfg_env: cfg.clone(),
+                        block_idx,
+                        tx_idx,
+                        withdrawals: block.withdrawals.clone(),
+                    };
+                    print_error_with_state(
+                        &debug_info,
+                        evm.ctx().db_ref(),
+                        test_case.post_state.as_ref(),
+                    );
+                }
+                if json_output {
+                    let output = json!({
+                        "block": block_idx,
+                        "tx": tx_idx,
+                        "error": "missing sender",
+                        "status": "skipped"
+                    });
+                    print_json(&output);
+                } else {
+                    eprintln!("⚠️  Skipping block {block_idx} due to missing sender");
+                }
+                block_completed = false;
+                break; // Skip to next block
+            }
+
+            let tx_env = match tx.to_tx_env() {
+                Ok(env) => env,
+                Err(e) => {
+                    if should_fail {
+                        // Expected failure during tx env creation
+                        continue;
+                    }
+                    if print_env_on_error {
+                        let debug_info = DebugInfo {
+                            pre_state: pre_state_debug.clone(),
+                            tx_env: None,
+                            block_env: block_env.clone(),
+                            cfg_env: cfg.clone(),
+                            block_idx,
+                            tx_idx,
+                            withdrawals: block.withdrawals.clone(),
+                        };
+                        print_error_with_state(
+                            &debug_info,
+                            evm.ctx().db_ref(),
+                            test_case.post_state.as_ref(),
+                        );
+                    }
+                    if json_output {
+                        let output = json!({
+                            "block": block_idx,
+                            "tx": tx_idx,
+                            "error": format!("tx env creation error: {e}"),
+                            "status": "skipped"
+                        });
+                        print_json(&output);
+                    } else {
+                        eprintln!(
+                            "⚠️  Skipping block {block_idx} due to transaction env creation error: {e}"
+                        );
+                    }
+                    block_completed = false;
+                    break; // Skip to next block
+                }
+            };
+
+            // bump bal index
+            evm.db_mut().bump_bal_index();
+
+            // If JSON output requested, output transaction details
+            let execution_result = if json_output {
+                evm.inspect_tx(tx_env.clone())
+            } else {
+                evm.transact(tx_env.clone())
+            };
+
+            match execution_result {
+                Ok(result) => {
+                    if should_fail {
+                        // Unexpected success - should have failed but didn't
+                        // If not expected to fail, use inspector to trace the transaction
+                        if print_env_on_error {
+                            // Re-run with inspector to get detailed trace
+                            if json_output {
+                                eprintln!("=== Transaction trace (unexpected success) ===");
+                            }
+                            let _ = evm.inspect_tx(tx_env.clone());
+                        }
+
+                        if print_env_on_error {
+                            let debug_info = DebugInfo {
+                                pre_state: pre_state_debug.clone(),
+                                tx_env: Some(tx_env.clone()),
+                                block_env: block_env.clone(),
+                                cfg_env: cfg.clone(),
+                                block_idx,
+                                tx_idx,
+                                withdrawals: block.withdrawals.clone(),
+                            };
+                            print_error_with_state(
+                                &debug_info,
+                                evm.ctx().db_ref(),
+                                test_case.post_state.as_ref(),
+                            );
+                        }
+                        let expected_exception = block.expect_exception.clone().unwrap_or_default();
+                        if json_output {
+                            let output = json!({
+                                "block": block_idx,
+                                "tx": tx_idx,
+                                "expected_exception": expected_exception,
+                                "gas_used": result.result.gas().tx_gas_used(),
+                                "status": "unexpected_success"
+                            });
+                            print_json(&output);
+                        } else {
+                            eprintln!(
+                                "⚠️  Skipping block {block_idx}: transaction unexpectedly succeeded (expected failure: {expected_exception})"
+                            );
+                        }
+                        block_completed = false;
+                        break; // Skip to next block
+                    }
+                    // EIP-8037: Split gas accounting.
+                    let gas = result.result.gas();
+                    cumulative_tx_gas_used += gas.tx_gas_used();
+                    block_regular_gas_used += gas.block_regular_gas_used();
+                    block_state_gas_used += gas.block_state_gas_used();
+                    evm.commit(result.state);
+                }
+                Err(e) => {
+                    if !should_fail {
+                        // Unexpected error - use inspector to trace the transaction
+                        if print_env_on_error {
+                            if json_output {
+                                eprintln!("=== Transaction trace (unexpected failure) ===");
+                            }
+                            let _ = evm.inspect_tx(tx_env.clone());
+                        }
+
+                        if print_env_on_error {
+                            let debug_info = DebugInfo {
+                                pre_state: pre_state_debug.clone(),
+                                tx_env: Some(tx_env.clone()),
+                                block_env: block_env.clone(),
+                                cfg_env: cfg.clone(),
+                                block_idx,
+                                tx_idx,
+                                withdrawals: block.withdrawals.clone(),
+                            };
+                            print_error_with_state(
+                                &debug_info,
+                                evm.ctx().db_ref(),
+                                test_case.post_state.as_ref(),
+                            );
+                        }
+                        if json_output {
+                            let output = json!({
+                                "block": block_idx,
+                                "tx": tx_idx,
+                                "error": format!("{e:?}"),
+                                "status": "unexpected_failure"
+                            });
+                            print_json(&output);
+                        } else {
+                            eprintln!(
+                                "⚠️  Skipping block {block_idx} due to unexpected failure: {e:?}"
+                            );
+                        }
+                        block_completed = false;
+                        break; // Skip to next block
+                    } else if json_output {
+                        // Expected failure
+                        let output = json!({
+                            "block": block_idx,
+                            "tx": tx_idx,
+                            "error": format!("{e:?}"),
+                            "status": "expected_failure"
+                        });
+                        print_json(&output);
+                    }
+                }
+            }
+        }
+
+        // Validate block gas used against header.
+        // EIP-8037 (Amsterdam+): block gas_used = max(regular_gas, state_gas).
+        // Pre-Amsterdam: block gas_used = cumulative tx_gas_used (includes refunds).
+        if block_completed && !should_fail {
+            if let Some(block_header) = block.block_header.as_ref() {
+                let expected_gas_used = block_header.gas_used.to::<u64>();
+                let actual_block_gas_used = if spec_id.is_enabled_in(SpecId::AMSTERDAM) {
+                    block_regular_gas_used.max(block_state_gas_used)
+                } else {
+                    cumulative_tx_gas_used
+                };
+                if actual_block_gas_used != expected_gas_used {
+                    if print_env_on_error {
+                        eprintln!(
+                            "Block gas used mismatch at block {block_idx}: expected {expected_gas_used}, got {actual_block_gas_used} (regular: {block_regular_gas_used}, state: {block_state_gas_used}, tx: {cumulative_tx_gas_used})"
+                        );
+                    }
+                    return Err(TestExecutionError::BlockGasUsedMismatch {
+                        block_idx,
+                        expected: expected_gas_used,
+                        actual: actual_block_gas_used,
+                    });
+                }
+            }
+        }
+
+        // bump bal index
+        evm.db_mut().bump_bal_index();
+
+        // uncle rewards are not implemented yet
+        post_block::post_block_transition(
+            &mut evm,
+            &block_env,
+            block.withdrawals.as_deref().unwrap_or_default(),
+            spec_id,
+        )
+        .map_err(|e| TestExecutionError::PostBlockSystemCall {
+            block_idx,
+            error: format!("{e:?}"),
+        })?;
+
+        // insert present block hash.
+        state.block_hashes.insert(block_env.number.to::<u64>(), block_hash.unwrap_or_default());
+
+        if let Some(bal) = state.bal_state.bal_builder.take() {
+            if let Some(state_bal) = bal_test {
+                if &bal != state_bal.as_ref() {
+                    println!("Bal mismatch");
+                    println!("Test bal");
+                    state_bal.pretty_print();
+                    println!("Bal:");
+                    bal.pretty_print();
+                    return Err(TestExecutionError::BalMismatchError);
+                }
+            }
+        }
+
+        parent_block_hash = block_hash;
+        if let Some(excess_blob_gas) = this_excess_blob_gas {
+            parent_excess_blob_gas = excess_blob_gas;
+        }
+
+        state.merge_transitions(BundleRetention::Reverts);
+    }
+
+    // Validate post state if present
+    if let Some(expected_post_state) = &test_case.post_state {
+        // Create debug info for post-state validation
+        let debug_info = DebugInfo {
+            pre_state: pre_state_debug.clone(),
+            tx_env: None, // Last transaction is done
+            block_env: block_env.clone(),
+            cfg_env: cfg.clone(),
+            block_idx: test_case.blocks.len(),
+            tx_idx: 0,
+            withdrawals: test_case.blocks.last().and_then(|b| b.withdrawals.clone()),
+        };
+        validate_post_state(&mut state, expected_post_state, &debug_info, print_env_on_error)?;
+    }
+
+    Ok(())
+}
+
+/// Convert ForkSpec to SpecId
+fn fork_to_spec_id(fork: ForkSpec) -> SpecId {
+    match fork {
+        ForkSpec::Frontier => SpecId::FRONTIER,
+        ForkSpec::Homestead | ForkSpec::FrontierToHomesteadAt5 => SpecId::HOMESTEAD,
+        ForkSpec::EIP150 | ForkSpec::HomesteadToDaoAt5 | ForkSpec::HomesteadToEIP150At5 => {
+            SpecId::TANGERINE
+        }
+        ForkSpec::EIP158 => SpecId::SPURIOUS_DRAGON,
+        ForkSpec::Byzantium
+        | ForkSpec::EIP158ToByzantiumAt5
+        | ForkSpec::ByzantiumToConstantinopleFixAt5 => SpecId::BYZANTIUM,
+        ForkSpec::Constantinople | ForkSpec::ByzantiumToConstantinopleAt5 => SpecId::PETERSBURG,
+        ForkSpec::ConstantinopleFix => SpecId::PETERSBURG,
+        ForkSpec::Istanbul => SpecId::ISTANBUL,
+        ForkSpec::Berlin => SpecId::BERLIN,
+        ForkSpec::London | ForkSpec::BerlinToLondonAt5 => SpecId::LONDON,
+        ForkSpec::Paris | ForkSpec::ParisToShanghaiAtTime15k => SpecId::MERGE,
+        ForkSpec::Shanghai => SpecId::SHANGHAI,
+        ForkSpec::Cancun | ForkSpec::ShanghaiToCancunAtTime15k => SpecId::CANCUN,
+        ForkSpec::Prague | ForkSpec::CancunToPragueAtTime15k => SpecId::PRAGUE,
+        ForkSpec::Osaka | ForkSpec::PragueToOsakaAtTime15k => SpecId::OSAKA,
+        ForkSpec::Amsterdam => SpecId::AMSTERDAM,
+        _ => SpecId::AMSTERDAM, // For any unknown forks, use latest available
+    }
+}
+
+/// Check if a test should be skipped based on its filename
+fn skip_test(path: &Path) -> bool {
+    let path_str = path.to_str().unwrap_or_default();
+    // blobs excess gas calculation is not supported or osaka BPO configuration
+    if path_str.contains("paris/eip7610_create_collision")
+        || path_str.contains("cancun/eip4844_blobs")
+        || path_str.contains("prague/eip7251_consolidations")
+        || path_str.contains("prague/eip7685_general_purpose_el_requests")
+        || path_str.contains("prague/eip7002_el_triggerable_withdrawals")
+        || path_str.contains("osaka/eip7918_blob_reserve_price")
+    {
+        return true;
+    }
+
+    let name = path.file_name().unwrap().to_str().unwrap_or_default();
+    // Add any problematic tests here that should be skipped
+    matches!(
+        name,
+        // Test check if gas price overflows, we handle this correctly but does not match tests
+        // specific exception.
+        "CreateTransactionHighNonce.json"
+
+        // Test with some storage check.
+        | "RevertInCreateInInit_Paris.json"
+        | "RevertInCreateInInit.json"
+        | "dynamicAccountOverwriteEmpty.json"
+        | "dynamicAccountOverwriteEmpty_Paris.json"
+        | "RevertInCreateInInitCreate2Paris.json"
+        | "create2collisionStorage.json"
+        | "RevertInCreateInInitCreate2.json"
+        | "create2collisionStorageParis.json"
+        | "InitCollision.json"
+        | "InitCollisionParis.json"
+
+        // Malformed value.
+        | "ValueOverflow.json"
+        | "ValueOverflowParis.json"
+
+        // These tests are passing, but they take a lot of time to execute so we are going to skip them.
+        | "Call50000_sha256.json"
+        | "static_Call50000_sha256.json"
+        | "loopMul.json"
+        | "CALLBlake2f_MaxRounds.json"
+        // TODO tests not checked, maybe related to parent block hashes as it is currently not supported in test.
+        | "scenarios.json"
+        // IT seems that post state is wrong, we properly handle max blob gas and state should stay the same.
+        | "invalid_tx_max_fee_per_blob_gas.json"
+        | "correct_increasing_blob_gas_costs.json"
+        | "correct_decreasing_blob_gas_costs.json"
+
+        // test-fixtures/main/develop/blockchain_tests/prague/eip2935_historical_block_hashes_from_state/block_hashes/block_hashes_history.json
+        | "block_hashes_history.json"
+    )
+}
+
+#[derive(Debug, Error)]
+pub enum TestExecutionError {
+    #[error("Database error: {0}")]
+    Database(String),
+
+    #[error("Skipped fork: {0}")]
+    SkippedFork(String),
+
+    #[error("Sender is required")]
+    SenderRequired,
+
+    #[error("Expected failure at block {block_idx}, tx {tx_idx}: {message}")]
+    ExpectedFailure { block_idx: usize, tx_idx: usize, message: String },
+
+    #[error("Unexpected failure at block {block_idx}, tx {tx_idx}: {error}")]
+    UnexpectedFailure { block_idx: usize, tx_idx: usize, error: String },
+
+    #[error("Transaction env creation failed at block {block_idx}, tx {tx_idx}: {error}")]
+    TransactionEnvCreation { block_idx: usize, tx_idx: usize, error: String },
+
+    #[error("Unexpected revert at block {block_idx}, tx {tx_idx}, gas used: {gas_used}")]
+    UnexpectedRevert { block_idx: usize, tx_idx: usize, gas_used: u64 },
+
+    #[error("Unexpected halt at block {block_idx}, tx {tx_idx}: {reason:?}, gas used: {gas_used}")]
+    UnexpectedHalt { block_idx: usize, tx_idx: usize, reason: HaltReason, gas_used: u64 },
+
+    #[error("Block gas used mismatch at block {block_idx}: expected {expected}, got {actual}")]
+    BlockGasUsedMismatch { block_idx: usize, expected: u64, actual: u64 },
+
+    #[error("Pre-block system call failed at block {block_idx}: {error}")]
+    PreBlockSystemCall { block_idx: usize, error: String },
+
+    #[error("Post-block system call failed at block {block_idx}: {error}")]
+    PostBlockSystemCall { block_idx: usize, error: String },
+
+    #[error("BAL error")]
+    BalMismatchError,
+
+    #[error(
+        "Post-state validation failed for {address:?}.{field}: expected {expected}, got {actual}"
+    )]
+    PostStateValidation { address: Address, field: String, expected: String, actual: String },
+}
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Path not found: {0}")]
+    PathNotFound(PathBuf),
+
+    #[error("No JSON files found in: {0}")]
+    NoJsonFiles(PathBuf),
+
+    #[error("Failed to read file {0}: {1}")]
+    FileRead(PathBuf, std::io::Error),
+
+    #[error("Failed to decode JSON from {0}: {1}")]
+    JsonDecode(PathBuf, serde_json::Error),
+
+    #[error("Test execution failed for {test_name} in {test_path}: {error}")]
+    TestExecution { test_name: String, test_path: PathBuf, error: String },
+
+    #[error("Directory traversal error: {0}")]
+    WalkDir(#[from] walkdir::Error),
+
+    #[error("{failed} tests failed")]
+    TestsFailed { failed: usize },
+}

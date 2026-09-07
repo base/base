@@ -1,0 +1,58 @@
+[package]
+name = "alloy-transport-ipc"
+description = "IPC transport implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_transport_ipc"
+path = "src/lib.rs"
+
+[dependencies]
+pin-project = { workspace = true }
+alloy-pubsub = { workspace = true }
+alloy-json-rpc = { workspace = true }
+alloy-transport = { workspace = true }
+bytes = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+tokio-util = { workspace = true, features = ["default", "io"] }
+interprocess = { workspace = true, features = ["default", "tokio"] }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+] }
+tempfile = { workspace = true, optional = true, features = ["default"] }
+[dev-dependencies]
+tokio-test = { workspace = true }
+[lints]
+workspace = true
+
+[features]
+default = []
+mock = ["dep:tempfile"]

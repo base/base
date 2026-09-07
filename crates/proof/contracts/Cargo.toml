@@ -12,26 +12,16 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
-alloy-provider.workspace = true
-alloy-contract.workspace = true
-alloy-transport.workspace = true
-alloy-sol-types.workspace = true
-alloy-primitives.workspace = true
-
-# Async
-futures.workspace = true
-async-trait.workspace = true
-
-# Tracing
-tracing.workspace = true
-
-# Error handling
-thiserror.workspace = true
-
-# Misc
-url.workspace = true
-
+tracing = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+alloy-contract = { workspace = true }
+alloy-sol-types = { workspace = true }
+alloy-transport = { workspace = true }
+alloy-primitives = { workspace = true }
+url = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+alloy-provider = { workspace = true, features = ["default"] }
 [dev-dependencies]
-rstest.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true }
+rstest = { workspace = true, features = ["default"] }

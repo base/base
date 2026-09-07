@@ -1,0 +1,61 @@
+[package]
+name = "reth-stages-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+metrics = { workspace = true }
+thiserror = { workspace = true }
+auto_impl = { workspace = true }
+alloy-eips = { workspace = true }
+reth-prune = { workspace = true }
+aquamarine = { workspace = true }
+reth-codecs = { workspace = true }
+reth-errors = { workspace = true }
+futures-util = { workspace = true }
+reth-metrics = { workspace = true }
+reth-provider = { workspace = true }
+reth-consensus = { workspace = true }
+reth-tokio-util = { workspace = true }
+reth-static-file = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-primitives-traits = { workspace = true }
+reth-static-file-types = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true, features = ["attributes"] }
+reth-network-p2p = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+[dev-dependencies]
+reth-tasks = { workspace = true }
+reth-db-api = { workspace = true }
+reth-chainspec = { workspace = true }
+assert_matches = { workspace = true }
+reth-testing-utils = { workspace = true }
+reth-db = { workspace = true, features = ["test-utils"] }
+tokio-stream = { workspace = true, features = ["default"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+tokio = { workspace = true, features = ["sync", "rt-multi-thread"] }
+[features]
+test-utils = [
+    "reth-chainspec/test-utils",
+    "reth-consensus/test-utils",
+    "reth-db-api/test-utils",
+    "reth-db/test-utils",
+    "reth-network-p2p/test-utils",
+    "reth-primitives-traits/test-utils",
+    "reth-provider/test-utils",
+    "reth-stages-types/test-utils",
+    "reth-tasks/test-utils",
+    "reth-codecs/test-utils",
+]

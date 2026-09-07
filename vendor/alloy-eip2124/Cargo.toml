@@ -1,0 +1,55 @@
+[package]
+name = "alloy-eip2124"
+description = "Fork identifier for chain compatibility checks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_eip2124"
+path = "src/lib.rs"
+
+[dependencies]
+crc = { workspace = true }
+thiserror = { workspace = true }
+alloy-rlp = { workspace = true, features = ["derive"] }
+alloy-primitives = { workspace = true, features = ["rlp"] }
+rand_08 = { workspace = true, optional = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+], optional = true }
+[dev-dependencies]
+arbitrary = { workspace = true, features = ["derive"] }
+alloy-rlp = { workspace = true, features = ["arrayvec"] }
+[lints]
+workspace = true
+
+[features]
+arbitrary = ["std", "dep:arbitrary", "dep:rand_08", "alloy-primitives/arbitrary"]
+default = ["std"]
+serde = ["dep:serde", "alloy-primitives/serde"]
+std = ["alloy-primitives/std", "alloy-rlp/std", "serde?/std", "thiserror/std"]

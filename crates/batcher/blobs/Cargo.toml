@@ -12,10 +12,9 @@ description = "EIP-4844 blob encoding and decoding for the Base batcher"
 workspace = true
 
 [dependencies]
-thiserror.workspace = true
-alloy-eips.workspace = true
-alloy-primitives.workspace = true
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-primitives = { workspace = true }
 base-protocol = { workspace = true, features = ["std"] }
-
 [dev-dependencies]
-rstest.workspace = true
+rstest = { workspace = true, features = ["default"] }

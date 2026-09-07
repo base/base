@@ -12,13 +12,12 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-tokio-util.workspace = true
-alloy-network.workspace = true
-alloy-provider.workspace = true
-alloy-primitives.workspace = true
+alloy-network = { workspace = true }
+alloy-primitives = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["sync", "time"] }
-
+tokio-util = { workspace = true, features = ["default"] }
+alloy-provider = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "sync", "time"] }
 [dev-dependencies]
-alloy-node-bindings.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+alloy-node-bindings = { workspace = true }
+tokio = { workspace = true, features = ["default", "macros", "rt"] }

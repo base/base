@@ -1,0 +1,52 @@
+[package]
+name = "revm-context-interface"
+description = "Revm context interface crates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[lib]
+name = "revm_context_interface"
+path = "src/lib.rs"
+
+[dependencies]
+either = { workspace = true }
+auto_impl = { workspace = true }
+revm-state = { workspace = true }
+alloy-eip2930 = { workspace = true }
+revm-primitives = { workspace = true }
+revm-database-interface = { workspace = true }
+alloy-eip7702 = { workspace = true, features = ["k256"] }
+serde = { workspace = true, features = [
+    "derive",
+    "rc",
+], optional = true }
+[lints]
+workspace = true
+
+[features]
+default = ["std"]
+serde = ["dep:serde", "revm-primitives/serde", "revm-state/serde", "alloy-eip7702/serde", "alloy-eip2930/serde", "revm-database-interface/serde", "either/serde"]
+serde-json = ["serde"]
+std = ["serde?/std", "alloy-eip7702/std", "alloy-eip2930/std", "revm-database-interface/std", "revm-primitives/std", "revm-state/std", "either/std"]

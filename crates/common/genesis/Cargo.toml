@@ -14,34 +14,25 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
-alloy-eips.workspace = true
-alloy-chains.workspace = true
-alloy-sol-types.workspace = true
-alloy-consensus.workspace = true
-alloy-hardforks.workspace = true
-alloy-primitives.workspace = true
-
-# Misc
-spin.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
-derive_more = { workspace = true, features = ["display", "from", "try_from"] }
-
-# `arbitrary` feature
-arbitrary = { workspace = true, features = ["derive"], optional = true }
-
-# `serde` feature
+tracing = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-chains = { workspace = true }
+alloy-sol-types = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-hardforks = { workspace = true }
+alloy-primitives = { workspace = true }
 serde = { workspace = true, optional = true }
-
+spin = { workspace = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+derive_more = { workspace = true, features = ["display", "from", "try_from"] }
 [dev-dependencies]
-rstest.workspace = true
 serde_json = { workspace = true, features = ["std"] }
-rand = { workspace = true, features = ["thread_rng"] }
+rstest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
 toml = { workspace = true, features = ["parse", "serde"] }
+rand = { workspace = true, features = ["default", "thread_rng"] }
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
-
 [features]
 default = []
 test-utils = []

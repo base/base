@@ -1,0 +1,29 @@
+[package]
+name = "example-beacon-api-sidecar-fetcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+futures-util = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-rpc-types-beacon = { workspace = true }
+clap = { workspace = true, features = ["default"] }
+eyre = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-ethereum = { workspace = true, features = ["default", "node", "pool", "cli"] }
+[lints]
+workspace = true

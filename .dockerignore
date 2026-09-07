@@ -1,5 +1,6 @@
 reth-data/
 target/
+.tmp/
 assets/
 .devnet/
 .git/

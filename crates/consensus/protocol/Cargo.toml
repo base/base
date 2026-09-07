@@ -12,57 +12,44 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
-base-common-genesis.workspace = true
-
-# alloy
-alloy-rlp.workspace = true
-alloy-eips.workspace = true
-alloy-genesis.workspace = true
-alloy-consensus.workspace = true
-alloy-rpc-types-eth.workspace = true
-alloy-rpc-types-engine.workspace = true
-alloy-primitives = { workspace = true, features = ["map"] }
-
-# base-alloy
-base-common-consensus.workspace = true
-base-common-rpc-types-engine.workspace = true
-
-# misc
-tracing.workspace = true
-thiserror.workspace = true
-ambassador.workspace = true
-async-trait.workspace = true
-unsigned-varint.workspace = true
-derive_more = { workspace = true, features = ["display"] }
-
-# compression
-brotli.workspace = true
-miniz_oxide.workspace = true
-alloc-no-stdlib.workspace = true
-
-# optional
-spin = { workspace = true, optional = true }
+brotli = { workspace = true }
+tracing = { workspace = true }
+alloy-rlp = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+ambassador = { workspace = true }
+async-trait = { workspace = true }
+alloy-genesis = { workspace = true }
+alloy-consensus = { workspace = true }
+unsigned-varint = { workspace = true }
+alloc-no-stdlib = { workspace = true }
+base-common-genesis = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+base-common-consensus = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
 serde = { workspace = true, optional = true }
+base-common-rpc-types-engine = { workspace = true }
+derive_more = { workspace = true, features = ["display"] }
+miniz_oxide = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map"] }
+spin = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
-tracing-subscriber = { workspace = true, features = ["fmt"], optional = true }
-
+tracing-subscriber = { workspace = true, features = ["default", "fmt"], optional = true }
 [dev-dependencies]
-spin.workspace = true
-rstest.workspace = true
-proptest.workspace = true
-criterion.workspace = true
-serde_json.workspace = true
-iai-callgrind.workspace = true
-base-common-chains.workspace = true
-base-common-rpc-types.workspace = true
+serde_json = { workspace = true }
 brotli = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["full"] }
+spin = { workspace = true, features = ["default"] }
+rstest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
-rand = { workspace = true, features = ["std", "std_rng"] }
-tracing-subscriber = { workspace = true, features = ["fmt"] }
+proptest = { workspace = true, features = ["default"] }
+criterion = { workspace = true, features = ["default"] }
+iai-callgrind = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "full"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
-
+base-common-chains = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default", "std", "std_rng"] }
+tracing-subscriber = { workspace = true, features = ["default", "fmt"] }
 [[bench]]
 name = "batch_transaction"
 harness = false

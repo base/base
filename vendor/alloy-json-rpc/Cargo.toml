@@ -1,0 +1,54 @@
+[package]
+name = "alloy-json-rpc"
+description = "Core types for JSON-RPC 2.0 clients"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_json_rpc"
+path = "src/lib.rs"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+http = { workspace = true, features = ["default"] }
+thiserror = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+] }
+alloy-primitives = { workspace = true, features = [
+    "std",
+    "serde",
+    "map",
+] }
+serde_json = { workspace = true, features = [
+    "alloc",
+    "std",
+    "raw_value",
+] }
+[lints]
+workspace = true

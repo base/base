@@ -12,62 +12,53 @@ description = "A payload builder for base-reth that builds Base payloads."
 workspace = true
 
 [dependencies]
-# reth
-reth-evm.workspace = true
-reth-chainspec.workspace = true
-reth-storage-api.workspace = true
-reth-payload-util.workspace = true
-reth-trie-parallel.workspace = true
-reth-execution-types.workspace = true
-reth-execution-cache.workspace = true
-reth-payload-builder.workspace = true
-reth-transaction-pool.workspace = true
-reth-primitives-traits.workspace = true
-reth-payload-validator.workspace = true
-reth-payload-primitives.workspace = true
-reth-basic-payload-builder.workspace = true
-reth-payload-builder-primitives.workspace = true
-reth-revm = { workspace = true, features = ["witness"] }
-reth-trie-common.workspace = true
-
-# op-reth
-base-bundles.workspace = true
-base-metrics.workspace = true
-base-common-evm.workspace = true
-base-execution-evm.workspace = true
-base-execution-txpool.workspace = true
-base-execution-eip8130.workspace = true
-base-observability-events.workspace = true
-
-# ethereum
-revm.workspace = true
-alloy-rlp.workspace = true
-alloy-evm.workspace = true
-alloy-eips.workspace = true
-alloy-consensus.workspace = true
-alloy-primitives.workspace = true
-base-common-chains.workspace = true
-alloy-rpc-types-debug.workspace = true
-alloy-rpc-types-engine.workspace = true
-base-common-consensus = { workspace = true, features = ["reth"] }
-base-common-rpc-types-engine = { workspace = true, features = ["serde", "reth"] }
-
-# misc
-serde.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
-derive_more.workspace = true
-serde_json.workspace = true
+revm = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+alloy-rlp = { workspace = true }
+alloy-evm = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+serde_json = { workspace = true }
+derive_more = { workspace = true }
+base-metrics = { workspace = true }
+base-bundles = { workspace = true }
+base-common-evm = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-primitives = { workspace = true }
+reth-payload-util = { workspace = true }
+reth-execution-cache = { workspace = true }
+reth-payload-builder = { workspace = true }
+alloy-rpc-types-debug = { workspace = true }
+reth-transaction-pool = { workspace = true }
+reth-primitives-traits = { workspace = true }
+base-execution-eip8130 = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
 metrics = { workspace = true, optional = true }
-
+base-observability-events = { workspace = true }
+reth-basic-payload-builder = { workspace = true }
+reth-payload-builder-primitives = { workspace = true }
+reth-evm = { workspace = true, features = ["default"] }
+reth-chainspec = { workspace = true, features = ["default"] }
+reth-storage-api = { workspace = true, features = ["default"] }
+reth-trie-common = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
+reth-trie-parallel = { workspace = true, features = ["default"] }
+base-execution-evm = { workspace = true, features = ["default"] }
+base-common-chains = { workspace = true, features = ["default"] }
+reth-execution-types = { workspace = true, features = ["default"] }
+reth-revm = { workspace = true, features = ["default", "witness"] }
+base-execution-txpool = { workspace = true, features = ["default"] }
+reth-payload-validator = { workspace = true, features = ["default"] }
+reth-payload-primitives = { workspace = true, features = ["default"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "reth"] }
 [dev-dependencies]
-reth-provider.workspace = true
-reth-ethereum-forks.workspace = true
-metrics-exporter-prometheus.workspace = true
-base-execution-chainspec.workspace = true
-reth-revm = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true }
+reth-ethereum-forks = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+reth-revm = { workspace = true, features = ["default", "test-utils"] }
+base-execution-chainspec = { workspace = true, features = ["default"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
-
 [features]
 default = [ "metrics" ]
 metrics = [

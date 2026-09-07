@@ -1,0 +1,35 @@
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.css"
+    integrity="sha384-zTROYFVGOfTw7JV7KUu8udsvW2fx4lWOsCEDqhBreBwlHI4ioVRtmIvEThzJHGET" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.js"
+    integrity="sha384-GxNFqL3r9uRJQhR+47eDxuPoNE7yLftQM8LcxzgS4HT73tp970WS/wV5p8UzCOmb"
+    crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/contrib/auto-render.min.js"
+    integrity="sha384-vZTG03m+2yp6N6BNi5iM4rW4oIwk5DfcNdFfxkk9ZWpDriOkXX8voJBFrAO7MpVl"
+    crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/contrib/mhchem.min.js"
+    integrity="sha384-LIgAiYlGSAdpNC9+YDjDPF6JeS/RRIumtNo0CmyQERZ/+g0h9MbuYQwf/5pQ4Y4M"
+    crossorigin="anonymous"></script>
+<script defer>
+    document.addEventListener("DOMContentLoaded", function () {
+        var macros = {};
+        katex.renderToString(String.raw`
+                \gdef\N{\mathbb N}
+                \gdef\∀{\forall}
+                \gdef\delim#1#2#3{\mathopen{}\mathclose{\left#1 #2 \right#3}}
+                \gdef\p#1{\delim({#1})}
+                \gdef\floor#1{\delim{\lfloor}{#1}{\rfloor}}
+                \gdef\ceil#1{\delim{\lceil}{#1}{\rceil}}
+                \gdef\mod#1{\delim[{#1}]}
+                \gdef\dummyarg{\operatorname{-}}
+            `, { macros });
+        renderMathInElement(document.body, {
+            output: "html",
+            delimiters: [
+                { left: '$$', right: '$$', display: true },
+                { left: '$', right: '$', display: false },
+            ],
+            maxExpand: 50,
+            macros
+        });
+    });
+</script>

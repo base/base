@@ -11,31 +11,25 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-# General
-thiserror.workspace = true
-serde = { workspace = true, optional = true, features = ["derive", "alloc"] }
-
-# Revm + Alloy
-alloy-rlp.workspace = true
-alloy-trie.workspace = true
+thiserror = { workspace = true }
+alloy-rlp = { workspace = true }
+alloy-trie = { workspace = true }
+base-common-rpc-types-engine = { workspace = true }
 alloy-primitives = { workspace = true, features = ["rlp"] }
-
-# Base Alloy
-base-common-rpc-types-engine.workspace = true
-
+serde = { workspace = true, features = ["derive", "alloc"], optional = true }
 [dev-dependencies]
-# Alloy
-alloy-consensus.workspace = true
-alloy-transport-http.workspace = true
-alloy-provider = { workspace = true, features = ["reqwest"] }
-alloy-rpc-types = { workspace = true, features = ["eth", "debug"] }
-
-# General
-rand.workspace = true
-reqwest.workspace = true
-proptest.workspace = true
-tokio = { workspace = true, features = ["full"] }
-criterion = { workspace = true, features = ["html_reports"] }
+alloy-consensus = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["default"] }
+proptest = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "full"] }
+alloy-transport-http = { workspace = true, features = ["default"] }
+alloy-provider = { workspace = true, features = ["default", "reqwest"] }
+criterion = { workspace = true, features = ["default", "html_reports"] }
+alloy-rpc-types = { workspace = true, features = ["default", "eth", "debug"] }
+[[bench]]
+name = "trie_node"
+harness = false
 
 [features]
 default = [ "serde" ]
@@ -53,7 +47,3 @@ serde = [
 	"base-common-rpc-types-engine/serde",
 	"dep:serde",
 ]
-
-[[bench]]
-name = "trie_node"
-harness = false

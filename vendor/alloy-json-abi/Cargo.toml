@@ -1,0 +1,58 @@
+[package]
+name = "alloy-json-abi"
+description = "Full Ethereum JSON-ABI implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_json_abi"
+path = "src/lib.rs"
+
+[[bench]]
+name = "json_abi"
+path = "benches/json_abi.rs"
+harness = false
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-sol-type-parser = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = [
+    "alloc",
+    "derive",
+] }
+serde_json = { workspace = true, features = ["alloc"], optional = true }
+[dev-dependencies]
+ethabi = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+criterion_0_7 = { workspace = true, features = ["default"] }
+pretty_assertions = { workspace = true, features = ["default"] }
+[lints]
+workspace = true
+
+[features]
+default = ["std"]
+serde_json = ["dep:serde_json"]
+std = ["serde/std", "alloy-primitives/std", "alloy-sol-type-parser/std", "serde_json?/std"]

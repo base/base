@@ -1,0 +1,101 @@
+[package]
+name = "reth-rpc"
+description = "Reth RPC implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sha2 = { workspace = true }
+serde = { workspace = true }
+reth-evm = { workspace = true }
+thiserror = { workspace = true }
+itertools = { workspace = true }
+jsonrpsee = { workspace = true }
+dyn-clone = { workspace = true }
+alloy-serde = { workspace = true }
+reth-errors = { workspace = true }
+async-trait = { workspace = true }
+pin-project = { workspace = true }
+alloy-signer = { workspace = true }
+reth-rpc-api = { workspace = true }
+reth-metrics = { workspace = true }
+alloy-genesis = { workspace = true }
+alloy-network = { workspace = true }
+reth-node-api = { workspace = true }
+reth-chainspec = { workspace = true }
+reth-consensus = { workspace = true }
+alloy-consensus = { workspace = true }
+jsonrpsee-types = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-trie-common = { workspace = true }
+alloy-rpc-client = { workspace = true }
+reth-rpc-eth-api = { workspace = true }
+reth-chain-state = { workspace = true }
+reth-network-api = { workspace = true }
+reth-evm-ethereum = { workspace = true }
+reth-rpc-eth-types = { workspace = true }
+reth-network-types = { workspace = true }
+alloy-rpc-types-mev = { workspace = true }
+reth-rpc-engine-api = { workspace = true }
+reth-consensus-common = { workspace = true }
+alloy-rpc-types-debug = { workspace = true }
+alloy-rpc-types-trace = { workspace = true }
+alloy-rpc-types-admin = { workspace = true }
+reth-transaction-pool = { workspace = true }
+reth-rpc-server-types = { workspace = true }
+reth-primitives-traits = { workspace = true }
+reth-engine-primitives = { workspace = true }
+alloy-rpc-types-txpool = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+alloy-eips = { workspace = true, features = ["kzg"] }
+reth-ethereum-engine-primitives = { workspace = true }
+futures = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+derive_more = { workspace = true, features = ["full"] }
+reth-tasks = { workspace = true, features = ["rayon"] }
+reth-revm = { workspace = true, features = ["witness"] }
+alloy-eip7928 = { workspace = true, features = ["rlp"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+tracing = { workspace = true, features = ["attributes"] }
+alloy-evm = { workspace = true, features = ["overrides"] }
+alloy-rpc-types = { workspace = true, features = ["eth"] }
+parking_lot = { workspace = true, features = ["default"] }
+tokio-stream = { workspace = true, features = ["default"] }
+alloy-dyn-abi = { workspace = true, features = ["default"] }
+revm-inspectors = { workspace = true, features = ["default"] }
+tracing-futures = { workspace = true, features = ["default"] }
+reth-rpc-convert = { workspace = true, features = ["default"] }
+alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
+reth-execution-types = { workspace = true, features = ["serde"] }
+alloy-rpc-types-beacon = { workspace = true, features = ["ssz"] }
+alloy-rpc-types-engine = { workspace = true, features = ["kzg"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+reth-network-peers = { workspace = true, features = ["secp256k1"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-payload-primitives = { workspace = true, features = ["default"] }
+revm = { workspace = true, features = ["optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit"] }
+[dev-dependencies]
+reth-db-api = { workspace = true }
+reth-testing-utils = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+jsonrpsee = { workspace = true, features = ["client"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+[features]
+js-tracer = [
+    "revm-inspectors/js-tracer",
+    "reth-rpc-eth-types/js-tracer",
+    "reth-rpc-eth-api/js-tracer",
+]

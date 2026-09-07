@@ -1,0 +1,59 @@
+[package]
+name = "reth-trie"
+description = "Merkle trie implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+revm = { workspace = true }
+itertools = { workspace = true }
+auto_impl = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-trie = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-storage-errors = { workspace = true }
+reth-execution-errors = { workspace = true }
+metrics = { workspace = true, optional = true }
+reth-metrics = { workspace = true, optional = true }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+tracing = { workspace = true, features = ["attributes"] }
+reth-trie-sparse = { workspace = true, features = ["std"] }
+reth-trie-common = { workspace = true, features = ["rayon"] }
+reth-primitives-traits = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+triehash = { workspace = true, optional = true, features = ["default"] }
+parking_lot = { workspace = true, optional = true, features = ["default"] }
+[dev-dependencies]
+assert_matches = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+triehash = { workspace = true, features = ["default"] }
+proptest = { workspace = true, features = ["default"] }
+parking_lot = { workspace = true, features = ["default"] }
+reth-tracing = { workspace = true, features = ["default"] }
+pretty_assertions = { workspace = true, features = ["default"] }
+reth-primitives-traits = { workspace = true, features = ["test-utils"] }
+codspeed-criterion-compat = { workspace = true, features = ["default"] }
+reth-trie-common = { workspace = true, features = ["test-utils", "arbitrary"] }
+[[bench]]
+name = "proof_v2"
+required-features = ["test-utils"]
+harness = false
+
+[features]
+metrics = ["reth-metrics", "dep:metrics"]
+serde = ["alloy-primitives/serde", "alloy-consensus/serde", "alloy-trie/serde", "alloy-eips/serde", "reth-trie-common/serde", "reth-primitives-traits/serde", "alloy-primitives/serde", "alloy-consensus/serde", "alloy-trie/serde", "alloy-eips/serde", "reth-trie-common/serde", "reth-stages-types/serde", "parking_lot/serde", "rand/serde", "revm/serde"]
+test-utils = ["triehash", "parking_lot", "reth-primitives-traits/test-utils", "reth-trie-common/test-utils", "reth-trie-sparse/test-utils", "reth-stages-types/test-utils"]
+serde-bincode-compat = ["alloy-consensus/serde-bincode-compat", "alloy-eips/serde-bincode-compat", "reth-trie-common/serde-bincode-compat"]

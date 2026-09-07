@@ -12,39 +12,27 @@ description = "EVM chain spec implementation for Base."
 workspace = true
 
 [dependencies]
-# reth
-reth-chainspec.workspace = true
-reth-network-peers.workspace = true
-reth-ethereum-forks.workspace = true
-reth-primitives-traits.workspace = true
-
-# op-reth
-base-common-chains.workspace = true
-
-# ethereum
-alloy-eips.workspace = true
-alloy-chains.workspace = true
-alloy-genesis.workspace = true
-alloy-consensus.workspace = true
-alloy-hardforks.workspace = true
-alloy-primitives.workspace = true
-
-# op
-base-protocol.workspace = true
-base-common-rpc-types.workspace = true
-base-common-genesis = { workspace = true, features = ["std"] }
-
-serde_json.workspace = true
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+serde_json = { workspace = true }
+derive_more = { workspace = true }
+alloy-chains = { workspace = true }
+alloy-genesis = { workspace = true }
+base-protocol = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-hardforks = { workspace = true }
+alloy-primitives = { workspace = true }
+reth-ethereum-forks = { workspace = true }
+base-common-consensus = { workspace = true }
+reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
-
-# misc
-thiserror.workspace = true
-derive_more.workspace = true
-base-common-consensus.workspace = true
-
+reth-chainspec = { workspace = true, features = ["default"] }
+base-common-genesis = { workspace = true, features = ["std"] }
+reth-network-peers = { workspace = true, features = ["default"] }
+base-common-chains = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = ["default"] }
 [dev-dependencies]
-reth-chainspec = { workspace = true, features = ["test-utils"] }
-
+reth-chainspec = { workspace = true, features = ["default", "test-utils"] }
 [features]
 default = [ "std" ]
 std = [

@@ -13,13 +13,9 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# base
-base-common-flz.workspace = true
-base-common-genesis.workspace = true
-
-# alloy
-alloy-primitives.workspace = true
-
+base-common-flz = { workspace = true }
+alloy-primitives = { workspace = true }
+base-common-genesis = { workspace = true }
 [features]
 default = [ "std" ]
 std = [

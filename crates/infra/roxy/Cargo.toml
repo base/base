@@ -12,14 +12,13 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-tokio-util.workspace = true
-tokio = { workspace = true, features = ["net"] }
-anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
+tokio-util = { workspace = true, features = ["default"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
+tokio = { workspace = true, features = ["default", "net"] }
+anyhow = { workspace = true, features = ["default", "std"] }
 base-health = { workspace = true, features = ["axum-server"] }
-clap = { workspace = true, features = ["derive", "env", "std"] }
-
+clap = { workspace = true, features = ["default", "derive", "env", "std"] }
 [dev-dependencies]
-reqwest = { workspace = true, features = ["json"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+reqwest = { workspace = true, features = ["default", "json"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }

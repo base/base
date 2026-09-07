@@ -1,0 +1,66 @@
+[package]
+name = "reth-trie-common"
+description = "Commonly used types for trie usage in reth."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+revm = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-primitives-traits = { workspace = true }
+bytes = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+arrayvec = { workspace = true, optional = true }
+nybbles = { workspace = true, features = ["rlp"] }
+reth-codecs = { workspace = true, optional = true }
+alloy-serde = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["full"] }
+alloy-trie = { workspace = true, features = ["ethereum"] }
+itertools = { workspace = true, features = ["use_alloc"] }
+alloy-rpc-types-eth = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+alloy-rlp = { workspace = true, features = ["core-net", "arrayvec"] }
+hash-db = { workspace = true, optional = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+serde_with = { workspace = true, features = ["macros"], optional = true }
+plain_hasher = { workspace = true, optional = true, features = ["default"] }
+[dev-dependencies]
+bytes = { workspace = true }
+serde = { workspace = true }
+arrayvec = { workspace = true }
+alloy-eips = { workspace = true }
+reth-codecs = { workspace = true }
+alloy-genesis = { workspace = true }
+bincode_1_3_3 = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+hash-db = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+proptest = { workspace = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"] }
+serde_with = { workspace = true, features = ["macros"] }
+plain_hasher = { workspace = true, features = ["default"] }
+reth-primitives-traits = { workspace = true, features = ["serde"] }
+alloy-trie = { workspace = true, features = ["arbitrary", "serde"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
+[features]
+default = ["std"]
+std = ["alloy-consensus/std", "alloy-genesis/std", "alloy-primitives/std", "alloy-rlp/std", "alloy-rpc-types-eth?/std", "alloy-serde?/std", "alloy-trie/std", "arrayvec?/std", "bytes?/std", "derive_more/std", "nybbles/std", "reth-primitives-traits/std", "serde?/std", "serde_with?/std", "serde_json/std", "revm/std", "reth-codecs?/std", "alloy-eips/std"]
+eip1186 = ["alloy-rpc-types-eth/serde", "dep:alloy-serde"]
+serde = ["dep:serde", "arrayvec?/serde", "bytes?/serde", "nybbles/serde", "alloy-primitives/serde", "alloy-consensus/serde", "alloy-trie/serde", "alloy-rpc-types-eth?/serde", "reth-primitives-traits/serde", "reth-codecs?/serde", "revm/serde", "alloy-eips/serde"]
+reth-codec = ["dep:reth-codecs", "dep:bytes", "dep:arrayvec"]
+serde-bincode-compat = ["serde", "alloy-consensus/serde-bincode-compat", "dep:serde_with", "alloy-genesis/serde-bincode-compat", "alloy-rpc-types-eth?/serde-bincode-compat", "alloy-eips/serde-bincode-compat"]
+test-utils = ["dep:plain_hasher", "dep:hash-db", "arbitrary", "reth-primitives-traits/test-utils", "reth-codecs/test-utils"]
+arbitrary = ["std", "dep:reth-codecs", "alloy-trie/arbitrary", "dep:arbitrary", "alloy-serde?/arbitrary", "reth-primitives-traits/arbitrary", "alloy-consensus/arbitrary", "alloy-primitives/arbitrary", "nybbles/arbitrary", "reth-codecs/arbitrary", "alloy-rpc-types-eth?/arbitrary", "alloy-eips/arbitrary", "revm/arbitrary"]
+rayon = ["dep:rayon"]

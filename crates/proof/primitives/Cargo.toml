@@ -11,22 +11,19 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-# General
-thiserror.workspace = true
-async-trait.workspace = true
+thiserror = { workspace = true }
 alloy-eips = { workspace = true }
+async-trait = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-preimage = { workspace = true }
 base-common-genesis = { workspace = true }
 jsonrpsee = { workspace = true, optional = true }
-serde = { workspace = true, optional = true, features = ["derive"] }
-
+serde = { workspace = true, features = ["derive"], optional = true }
 [dev-dependencies]
-hex.workspace = true
-rstest.workspace = true
+hex = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }
-
+rstest = { workspace = true, features = ["default"] }
 [features]
 default = []
 std = [

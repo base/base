@@ -1,0 +1,61 @@
+[package]
+name = "alloy-signer"
+description = "Ethereum signer abstraction"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_signer"
+path = "src/lib.rs"
+
+[dependencies]
+either = { workspace = true }
+thiserror = { workspace = true }
+auto_impl = { workspace = true }
+async-trait = { workspace = true }
+elliptic-curve = { workspace = true }
+k256 = { workspace = true, features = ["ecdsa"] }
+alloy-sol-types = { workspace = true, features = ["std"], optional = true }
+alloy-primitives = { workspace = true, features = [
+    "std",
+    "k256",
+] }
+alloy-dyn-abi = { workspace = true, features = [
+    "std",
+    "eip712",
+], optional = true }
+[dev-dependencies]
+assert_matches_1_5 = { workspace = true }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+[lints]
+workspace = true
+
+[features]
+eip712 = ["dep:alloy-sol-types", "dep:alloy-dyn-abi", "alloy-dyn-abi?/eip712"]

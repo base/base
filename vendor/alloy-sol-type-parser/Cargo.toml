@@ -1,0 +1,53 @@
+[package]
+name = "alloy-sol-type-parser"
+description = "Simple and light-weight Solidity type strings parser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_sol_type_parser"
+path = "src/lib.rs"
+
+[dependencies]
+winnow = { workspace = true, features = [
+    "alloc",
+    "ascii",
+] }
+serde = { workspace = true, features = [
+    "alloc",
+    "derive",
+], optional = true }
+[dev-dependencies]
+serde_json = { workspace = true, features = ["alloc"] }
+[lints]
+workspace = true
+
+[features]
+debug = ["std"]
+default = ["std"]
+eip712 = []
+serde = ["dep:serde"]
+std = ["winnow/std"]

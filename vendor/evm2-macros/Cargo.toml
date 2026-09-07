@@ -1,0 +1,24 @@
+[package]
+name = "evm2-macros"
+description = "Procedural macros for evm2."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = { workspace = true, features = ["default"] }
+proc-macro2 = { workspace = true, features = ["default"] }
+syn_3_0_2 = { workspace = true, features = ["default", "full"] }

@@ -12,44 +12,34 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# base
-base-health.workspace = true
-base-proof-host.workspace = true
-base-proof-worker.workspace = true
-base-proof-preimage.workspace = true
-base-proof-contracts.workspace = true
-base-prover-service-client.workspace = true
-base-prover-service-protocol.workspace = true
-base-proof-tee-nitro-enclave.workspace = true
-base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-server"] }
-
-# crypto
-alloy-signer.workspace = true
-alloy-primitives.workspace = true
-k256 = { workspace = true, features = ["ecdsa"] }
-
-# async
-tokio-util.workspace = true
-async-trait.workspace = true
-tokio = { workspace = true, features = ["rt", "time", "io-util", "net"] }
-
-# misc
-url.workspace = true
-eyre.workspace = true
-tower.workspace = true
-chrono.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
+tower = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+base-health = { workspace = true }
+async-trait = { workspace = true }
+alloy-signer = { workspace = true }
+base-proof-host = { workspace = true }
+alloy-primitives = { workspace = true }
+base-proof-worker = { workspace = true }
+base-proof-preimage = { workspace = true }
+base-proof-contracts = { workspace = true }
+base-prover-service-client = { workspace = true }
+url = { workspace = true, features = ["default"] }
+eyre = { workspace = true, features = ["default"] }
+base-proof-tee-nitro-enclave = { workspace = true }
+chrono = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default"] }
+k256 = { workspace = true, features = ["default", "ecdsa"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
-
+base-prover-service-protocol = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "rt", "time", "io-util", "net"] }
+base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-server"] }
 [target.'cfg(target_os = "linux")'.dependencies]
-tokio-vsock.workspace = true
-
+tokio-vsock = { workspace = true }
 [dev-dependencies]
-reqwest.workspace = true
-alloy-genesis.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+alloy-genesis = { workspace = true }
+reqwest = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "macros", "rt"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
-
 [features]
 metrics = [ "base-proof-host/metrics" ]

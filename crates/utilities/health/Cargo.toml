@@ -12,29 +12,25 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-http.workspace = true
-tower.workspace = true
-bytes.workspace = true
-futures.workspace = true
-http-body.workspace = true
-async-trait.workspace = true
-serde = { workspace = true, features = ["derive"] }
-jsonrpsee = { workspace = true, features = ["server", "macros"] }
-
-# Optional dependencies for the axum-based health server
-eyre = { workspace = true, optional = true }
+tower = { workspace = true }
+http-body = { workspace = true }
+async-trait = { workspace = true }
 tracing = { workspace = true, optional = true }
-tokio-util = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["net"], optional = true }
+serde = { workspace = true, features = ["derive"] }
+http = { workspace = true, features = ["default"] }
+bytes = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
+eyre = { workspace = true, optional = true, features = ["default"] }
+tokio-util = { workspace = true, optional = true, features = ["default"] }
 axum = { workspace = true, features = ["http1", "tokio"], optional = true }
-
+tokio = { workspace = true, features = ["default", "net"], optional = true }
 [dev-dependencies]
-rstest.workspace = true
-reqwest.workspace = true
+rstest = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
-alloy-transport-http = { workspace = true, features = ["reqwest"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-
+alloy-transport-http = { workspace = true, features = ["default", "reqwest"] }
+tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] }
 [features]
 axum-server = [
 	"dep:axum",

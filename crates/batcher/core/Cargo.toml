@@ -12,38 +12,31 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# local
-base-blobs.workspace = true
-base-tx-manager.workspace = true
-base-batcher-source.workspace = true
-base-batcher-encoder.workspace = true
+auto_impl = { workspace = true }
+base-blobs = { workspace = true }
+base-tx-manager = { workspace = true }
+base-batcher-source = { workspace = true }
+base-batcher-encoder = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
+async-trait = { workspace = true, optional = true }
+thiserror = { workspace = true, features = ["std"] }
+futures = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
-base-common-consensus = { workspace = true, features = ["std"] }
-
-# external
-auto_impl.workspace = true
-futures.workspace = true
-tracing = { workspace = true, features = ["std"] }
-thiserror = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["sync", "macros", "rt"] }
-derive_more = { workspace = true, features = ["debug", "display", "from_str"] }
-
-# optional — activated by the `test-utils` feature
-async-trait = { workspace = true, optional = true }
+base-common-consensus = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"], optional = true }
+tokio = { workspace = true, features = ["default", "sync", "macros", "rt"] }
+derive_more = { workspace = true, features = ["debug", "display", "from_str"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"], optional = true }
-
 [dev-dependencies]
-rstest.workspace = true
-async-trait.workspace = true
+async-trait = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["macros", "rt", "time"] }
-
+tokio = { workspace = true, features = ["default", "macros", "rt", "time"] }
 [[test]]
 name = "reorg"
 required-features = ["test-utils"]

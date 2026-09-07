@@ -15,12 +15,12 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-serde.workspace = true
-anyhow.workspace = true
-dotenvy.workspace = true
-base-cli-utils.workspace = true
-base-shadow-metrics.workspace = true
+serde = { workspace = true }
+dotenvy = { workspace = true }
+base-cli-utils = { workspace = true }
+base-shadow-metrics = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
-clap = { workspace = true, features = ["derive", "env"] }
+anyhow = { workspace = true, features = ["default"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time", "signal"] }
+clap = { workspace = true, features = ["default", "derive", "env"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread", "net", "time", "signal"] }

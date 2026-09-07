@@ -12,53 +12,39 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# ethereum
-alloy-eips.workspace = true
-alloy-primitives.workspace = true
-
-# reth
-reth-tasks.workspace = true
-reth-transaction-pool.workspace = true
-
-# workspace
-base-metrics.workspace = true
-base-node-runner.workspace = true
-base-execution-txpool.workspace = true
-base-observability-events.workspace = true
-
-# misc
-url.workspace = true
-serde.workspace = true
-futures.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
-serde_json.workspace = true
-tokio-util.workspace = true
+serde = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+serde_json = { workspace = true }
+reth-tasks = { workspace = true }
+base-metrics = { workspace = true }
+alloy-primitives = { workspace = true }
+base-node-runner = { workspace = true }
+reth-transaction-pool = { workspace = true }
 metrics = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["sync", "rt", "time"] }
+base-observability-events = { workspace = true }
+url = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
-
+base-execution-txpool = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 [dev-dependencies]
-# ethereum
-alloy-signer.workspace = true
-alloy-network.workspace = true
-alloy-provider.workspace = true
-alloy-consensus.workspace = true
-
-# workspace
-base-test-utils.workspace = true
-base-txpool-rpc.workspace = true
-base-common-consensus.workspace = true
-base-common-rpc-types.workspace = true
-base-execution-chainspec.workspace = true
-base-node-runner = { workspace = true, features = ["test-utils"] }
-
-# misc
-eyre.workspace = true
+alloy-signer = { workspace = true }
+alloy-network = { workspace = true }
+alloy-consensus = { workspace = true }
+base-test-utils = { workspace = true }
+base-txpool-rpc = { workspace = true }
+base-common-consensus = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+eyre = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server"] }
-
+alloy-provider = { workspace = true, features = ["default"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
+base-common-rpc-types = { workspace = true, features = ["default"] }
+base-execution-chainspec = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 [features]
 default = [ "metrics" ]
 metrics = [

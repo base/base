@@ -11,28 +11,20 @@ version.workspace = true
 workspace = true
 
 [dependencies]
-# Workspace
-base-protocol.workspace = true
-base-proof-executor.workspace = true
-base-consensus-derive.workspace = true
-base-common-genesis.workspace = true
-
-# Alloy
-alloy-rlp.workspace = true
-alloy-evm.workspace = true
-alloy-consensus.workspace = true
-alloy-primitives.workspace = true
-
-# Base Alloy
-base-common-consensus.workspace = true
-base-common-rpc-types-engine.workspace = true
-
-# Misc
-spin.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
-async-trait.workspace = true
-
+tracing = { workspace = true }
+alloy-rlp = { workspace = true }
+alloy-evm = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+base-protocol = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-primitives = { workspace = true }
+base-proof-executor = { workspace = true }
+base-common-genesis = { workspace = true }
+base-consensus-derive = { workspace = true }
+base-common-consensus = { workspace = true }
+base-common-rpc-types-engine = { workspace = true }
+spin = { workspace = true, features = ["default"] }
 [features]
 std = [
 	"alloy-consensus/std",

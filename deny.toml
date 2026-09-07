@@ -61,12 +61,51 @@ confidence-threshold = 0.8
 exceptions = []
 
 [bans]
-deny = ["reth"]
+# Keep Base crates off the upstream aggregate crate; bundled upstream examples use it.
+deny = [{ name = "reth", wrappers = ["my-exex", "remote-exex", "tracking-state"] }]
 multiple-versions = "deny"
 
 # Skip crates with multiple versions from upstream dependencies that we cannot control
 # These are primarily from reth, alloy, and upstream dependencies
 skip = [
+    # Optional integrations and test tooling in vendored workspace members.
+    "phf",
+    "ctor",
+    "uint",
+    "uuid",
+    "pkcs8",
+    "ark-ff",
+    "object",
+    "pbkdf2",
+    "scrypt",
+    "semver",
+    "ark-std",
+    "darling",
+    "fastrlp",
+    "serdect",
+    "similar",
+    "ethbloom",
+    "governor",
+    "ark-ff-asm",
+    "fixed-hash",
+    "impl-serde",
+    "libloading",
+    "phf_macros",
+    "phf_shared",
+    "fixedbitset",
+    "darling_core",
+    "ethereum_ssz",
+    "ark-ff-macros",
+    "ark-serialize",
+    "darling_macro",
+    "phf_generator",
+    "rustc_version",
+    "semver-parser",
+    "ethereum-types",
+    "primitive-types",
+    "similar-asserts",
+    "ark-serialize-derive",
+
     # Windows platform crates - different versions used by various upstream deps
     "windows",
     "windows-core",

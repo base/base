@@ -1,0 +1,43 @@
+[package]
+name = "reth-db-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+reth-etl = { workspace = true }
+thiserror = { workspace = true }
+reth-trie = { workspace = true }
+reth-config = { workspace = true }
+reth-codecs = { workspace = true }
+reth-db-api = { workspace = true }
+reth-trie-db = { workspace = true }
+reth-fs-util = { workspace = true }
+alloy-genesis = { workspace = true }
+reth-provider = { workspace = true }
+reth-chainspec = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-stages-types = { workspace = true }
+boyer-moore-magiclen = { workspace = true }
+reth-execution-errors = { workspace = true }
+reth-primitives-traits = { workspace = true }
+reth-static-file-types = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+tracing = { workspace = true, features = ["attributes"] }
+reth-node-types = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+[dev-dependencies]
+reth-tasks = { workspace = true }
+reth-db = { workspace = true, features = ["mdbx"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+[lints]
+workspace = true

@@ -15,11 +15,11 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-serde.workspace = true
-dotenvy.workspace = true
-tokio-util.workspace = true
-base-cli-utils.workspace = true
-base-telemetry-service.workspace = true
-anyhow = { workspace = true, features = ["std"] }
-clap = { workspace = true, features = ["derive", "env", "std"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+serde = { workspace = true }
+dotenvy = { workspace = true }
+base-cli-utils = { workspace = true }
+base-telemetry-service = { workspace = true }
+tokio-util = { workspace = true, features = ["default"] }
+anyhow = { workspace = true, features = ["default", "std"] }
+clap = { workspace = true, features = ["default", "derive", "env", "std"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }

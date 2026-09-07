@@ -14,89 +14,34 @@ workspace = true
 normal = ["getrandom"]
 
 [dependencies]
-# Workspace
-base-protocol.workspace = true
-base-proof-mpt.workspace = true
-base-common-genesis.workspace = true
-
-# Alloy
-alloy-rlp.workspace = true
-alloy-eips.workspace = true
-alloy-trie.workspace = true
-alloy-consensus = { workspace = true, features = ["k256"] }
-alloy-primitives = { workspace = true, features = ["rlp"] }
-
-# Base Alloy
-base-common-consensus.workspace = true
-base-common-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
-
-# revm
-revm.workspace = true
-
-# alloy-evm
-alloy-evm.workspace = true
-base-common-evm.workspace = true
-
-# General
-tracing.workspace = true
-thiserror.workspace = true
-
-# getrandom 0.2 is pulled in by k256 (via alloy-consensus/k256); enabling the
-# `custom` feature silences the bare-metal compile_error via Cargo unification.
-getrandom = { version = "0.2", features = ["custom"] }
-
-# `test-utils` feature dependencies
-rand = { workspace = true, optional = true }
-tempfile = { workspace = true, optional = true }
+revm = { workspace = true }
+tracing = { workspace = true }
+alloy-rlp = { workspace = true }
+alloy-evm = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-trie = { workspace = true }
+base-protocol = { workspace = true }
+base-proof-mpt = { workspace = true }
+base-common-evm = { workspace = true }
+base-common-genesis = { workspace = true }
+base-common-consensus = { workspace = true }
 serde_json = { workspace = true, optional = true }
 alloy-transport = { workspace = true, optional = true }
-alloy-rpc-client = { workspace = true, optional = true }
-alloy-transport-http = { workspace = true, optional = true }
+alloy-consensus = { workspace = true, features = ["k256"] }
+alloy-primitives = { workspace = true, features = ["rlp"] }
 alloy-rpc-types-engine = { workspace = true, optional = true }
-base-common-chains = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["full"], optional = true }
+getrandom_0_2_17 = { workspace = true, features = ["custom"] }
 serde = { workspace = true, features = ["derive"], optional = true }
+rand = { workspace = true, optional = true, features = ["default"] }
 rocksdb = { workspace = true, features = ["snappy"], optional = true }
-alloy-provider = { workspace = true, features = ["reqwest"], optional = true }
-
+tempfile = { workspace = true, optional = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "full"], optional = true }
+alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
+base-common-chains = { workspace = true, optional = true, features = ["default"] }
+alloy-transport-http = { workspace = true, optional = true, features = ["default"] }
+alloy-provider = { workspace = true, features = ["default", "reqwest"], optional = true }
 [features]
-std = [
-	"alloy-consensus/std",
-	"alloy-eips/std",
-	"alloy-evm/std",
-	"alloy-primitives/std",
-	"alloy-rlp/std",
-	"alloy-rpc-types-engine?/std",
-	"alloy-trie/std",
-	"base-common-chains?/std",
-	"base-common-consensus/std",
-	"base-common-evm/std",
-	"base-common-genesis/std",
-	"base-common-rpc-types-engine/std",
-	"base-proof-mpt/std",
-	"base-protocol/std",
-	"getrandom/std",
-	"revm/std",
-	"serde?/std",
-	"serde_json?/std",
-	"thiserror/std",
-	"tracing/std",
-]
-test-utils = [
-	"base-common-chains?/test-utils",
-	"base-common-genesis/test-utils",
-	"base-protocol/test-utils",
-	"dep:alloy-provider",
-	"dep:alloy-rpc-client",
-	"dep:alloy-rpc-types-engine",
-	"dep:alloy-transport",
-	"dep:alloy-transport-http",
-	"dep:base-common-chains",
-	"dep:rand",
-	"dep:rocksdb",
-	"dep:serde",
-	"dep:serde_json",
-	"dep:tempfile",
-	"dep:tokio",
-	"std",
-]
+std = ["alloy-consensus/std", "alloy-eips/std", "alloy-evm/std", "alloy-primitives/std", "alloy-rlp/std", "alloy-rpc-types-engine?/std", "alloy-trie/std", "base-common-chains?/std", "base-common-consensus/std", "base-common-evm/std", "base-common-genesis/std", "base-common-rpc-types-engine/std", "base-proof-mpt/std", "base-protocol/std", "getrandom_0_2_17/std", "revm/std", "serde?/std", "serde_json?/std", "thiserror/std", "tracing/std"]
+test-utils = ["base-common-chains?/test-utils", "base-common-genesis/test-utils", "base-protocol/test-utils", "dep:alloy-provider", "dep:alloy-rpc-client", "dep:alloy-rpc-types-engine", "dep:alloy-transport", "dep:alloy-transport-http", "dep:base-common-chains", "dep:rand", "dep:rocksdb", "dep:serde", "dep:serde_json", "dep:tempfile", "dep:tokio", "std"]

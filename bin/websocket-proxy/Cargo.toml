@@ -15,18 +15,18 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-ipnet.workspace = true
-serde.workspace = true
-futures.workspace = true
-dotenvy.workspace = true
-hostname.workspace = true
-tokio-util.workspace = true
-base-cli-utils.workspace = true
-websocket-proxy.workspace = true
+serde = { workspace = true }
+dotenvy = { workspace = true }
+base-cli-utils = { workspace = true }
 axum = { workspace = true, features = ["ws"] }
 brotli = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["std"] }
-clap = { workspace = true, features = ["derive", "env"] }
+ipnet = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+hostname = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default"] }
 base-metrics = { workspace = true, features = ["metrics"] }
+tokio = { workspace = true, features = ["default", "full"] }
+websocket-proxy = { workspace = true, features = ["default"] }
+clap = { workspace = true, features = ["default", "derive", "env"] }
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }

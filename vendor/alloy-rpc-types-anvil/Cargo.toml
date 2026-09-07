@@ -1,0 +1,46 @@
+[package]
+name = "alloy-rpc-types-anvil"
+description = "Types for the Anvil development node's Ethereum JSON-RPC namespace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_rpc_types_anvil"
+path = "src/lib.rs"
+
+[dependencies]
+alloy-serde = { workspace = true }
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+] }
+[dev-dependencies]
+serde_json = { workspace = true, features = ["alloc"] }
+similar-asserts = { workspace = true, features = ["default"] }
+[lints]
+workspace = true

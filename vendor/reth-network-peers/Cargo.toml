@@ -1,0 +1,51 @@
+[package]
+name = "reth-network-peers"
+description = "Network peer types and utils"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+url = { workspace = true }
+thiserror = { workspace = true }
+enr = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+serde_with = { workspace = true, features = ["macros"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "rlp"] }
+alloy-rlp = { workspace = true, features = ["core-net", "derive", "core-error"] }
+secp256k1 = { workspace = true, features = ["global-context", "recovery"], optional = true }
+[dev-dependencies]
+enr = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+rand_08 = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+tokio = { workspace = true, features = ["net", "macros", "rt"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
+[features]
+default = ["std"]
+std = [
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "secp256k1?/std",
+    "serde_with/std",
+    "thiserror/std",
+    "url/std",
+    "serde_json/std",
+]
+secp256k1 = [
+    "dep:secp256k1",
+    "enr/secp256k1",
+    "alloy-primitives/secp256k1",
+]
+net = ["std", "dep:tokio", "tokio?/net"]

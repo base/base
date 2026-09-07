@@ -1,4 +1,0 @@
-telemetry = false
-
-# ensures runtime is always bun regardless of shebang
-run.bun = true

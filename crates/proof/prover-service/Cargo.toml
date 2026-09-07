@@ -9,34 +9,22 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-base-prover-service-db.workspace = true
-base-prover-service-protocol.workspace = true
-
-# RPC
+metrics = { workspace = true }
+tracing = { workspace = true }
+serde_json = { workspace = true }
+base-prover-service-db = { workspace = true }
 jsonrpsee = { workspace = true, optional = true }
-
-# Async
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
-
-# Serialization
-serde_json.workspace = true
-uuid = { workspace = true, features = ["v4"] }
-
-# Error handling
-anyhow.workspace = true
-
-# Observability
-metrics.workspace = true
-tracing.workspace = true
-
+anyhow = { workspace = true, features = ["default"] }
+uuid = { workspace = true, features = ["default", "v4"] }
+base-prover-service-protocol = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread", "sync", "time"] }
 [dev-dependencies]
-rstest.workspace = true
-chrono.workspace = true
+rstest = { workspace = true, features = ["default"] }
+chrono = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio"] }
-base-prover-service-protocol = { workspace = true, features = ["rpc-client"] }
-
+base-prover-service-protocol = { workspace = true, features = ["default", "rpc-client"] }
 [lints]
 workspace = true
 

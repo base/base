@@ -11,60 +11,49 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
-base-metrics.workspace = true
-base-common-genesis.workspace = true
-base-consensus-providers.workspace = true
-base-protocol = {workspace = true, features = ["serde", "std"]}
-
-# alloy
-alloy-json-rpc.workspace = true
-alloy-network.workspace = true
-alloy-pubsub.workspace = true
-alloy-transport.workspace = true
-alloy-primitives.workspace = true
-alloy-rpc-client.workspace = true
-alloy-eips = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["std"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
-alloy-transport-http = { workspace = true, features = ["reqwest", "hyper", "jwt-auth"] }
-alloy-transport-ws.workspace = true
-alloy-provider = { workspace = true, features = ["ipc", "ws", "reqwest", "reqwest-rustls-tls", "engine-api"] }
-
-# base-alloy
-base-common-network.workspace = true
-base-common-rpc-types.workspace = true
-base-common-consensus = { workspace = true, features = ["std"] }
-base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
-
-# general
-url.workspace = true
-tokio.workspace = true
-tower.workspace = true
-http.workspace = true
-async-trait.workspace = true
-http-body-util.workspace = true
-opentelemetry.workspace = true
-opentelemetry-http.workspace = true
+tower = { workspace = true }
+async-trait = { workspace = true }
+base-metrics = { workspace = true }
+alloy-pubsub = { workspace = true }
+alloy-network = { workspace = true }
+alloy-json-rpc = { workspace = true }
+alloy-transport = { workspace = true }
+alloy-primitives = { workspace = true }
+opentelemetry-http = { workspace = true }
+base-common-genesis = { workspace = true }
+base-common-network = { workspace = true }
+base-consensus-providers = { workspace = true }
+metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
+url = { workspace = true, features = ["default"] }
+http = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["default"] }
+alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+opentelemetry = { workspace = true, features = ["default"] }
+http-body-util = { workspace = true, features = ["default"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-rpc-client = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["std"] }
+base-protocol = { workspace = true, features = ["serde", "std"] }
+alloy-transport-ws = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = ["default"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
 derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
-
-# metrics
-metrics = { workspace = true, optional = true }
-
+alloy-transport-http = { workspace = true, features = ["default", "reqwest", "hyper", "jwt-auth"] }
+alloy-provider = { workspace = true, features = ["default", "ipc", "ws", "reqwest", "reqwest-rustls-tls", "engine-api"] }
 [dev-dependencies]
-rstest.workspace = true
-arbitrary.workspace = true
-tokio-tungstenite.workspace = true
-base-common-chains.workspace = true
-metrics-exporter-prometheus.workspace = true
-rand = {workspace = true, features = ["thread_rng"]}
-base-common-rpc-types = {workspace = true, features = ["arbitrary", "k256"]}
-
+arbitrary = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
+tokio-tungstenite = { workspace = true, features = ["default"] }
+base-common-chains = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default", "thread_rng"] }
+base-common-rpc-types = { workspace = true, features = ["default", "arbitrary", "k256"] }
 [features]
 metrics = [
 	"base-consensus-providers/metrics",

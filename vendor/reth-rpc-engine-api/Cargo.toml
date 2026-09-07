@@ -1,0 +1,52 @@
+[package]
+name = "reth-rpc-engine-api"
+description = "Implementation of Engine API"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+metrics = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+reth-tasks = { workspace = true }
+async-trait = { workspace = true }
+reth-rpc-api = { workspace = true }
+reth-metrics = { workspace = true }
+reth-chainspec = { workspace = true }
+jsonrpsee-types = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-network-api = { workspace = true }
+reth-payload-builder = { workspace = true }
+reth-transaction-pool = { workspace = true }
+reth-engine-primitives = { workspace = true }
+reth-primitives-traits = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+reth-payload-builder-primitives = { workspace = true }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+tracing = { workspace = true, features = ["attributes"] }
+jsonrpsee-core = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-payload-primitives = { workspace = true, features = ["default"] }
+[dev-dependencies]
+assert_matches = { workspace = true }
+reth-testing-utils = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+reth-ethereum-engine-primitives = { workspace = true }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+reth-tasks = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+reth-node-ethereum = { workspace = true, features = ["default"] }
+reth-payload-builder = { workspace = true, features = ["test-utils"] }

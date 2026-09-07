@@ -1,0 +1,24 @@
+[package]
+name = "example-txpool-tracing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dependencies]
+futures-util = { workspace = true }
+alloy-network = { workspace = true }
+alloy-rpc-types-trace = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+clap = { workspace = true, features = ["default", "derive"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-ethereum = { workspace = true, features = ["default", "node", "pool", "cli", "rpc"] }
+[lints]
+workspace = true

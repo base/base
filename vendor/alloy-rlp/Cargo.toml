@@ -1,0 +1,49 @@
+[package]
+name = "alloy-rlp"
+description = "Implementation of Ethereum RLP serialization"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[lib]
+name = "alloy_rlp"
+path = "src/lib.rs"
+
+[dependencies]
+bytes = { workspace = true }
+arrayvec = { workspace = true, optional = true }
+alloy-rlp-derive = { workspace = true, optional = true }
+[dev-dependencies]
+hex-literal_0_4_1 = { workspace = true }
+const-hex = { workspace = true, features = ["alloc"] }
+[lints]
+workspace = true
+
+[features]
+arrayvec = ["dep:arrayvec"]
+core-error = []
+core-net = []
+default = ["std"]
+derive = ["dep:alloy-rlp-derive"]
+std = ["bytes/std", "arrayvec?/std"]

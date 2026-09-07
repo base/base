@@ -9,25 +9,14 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# Primitive value types
-alloy-primitives = { workspace = true, features = ["serde"] }
-base-proof-primitives = { workspace = true, features = ["serde"] }
-
-# Serialization
-serde = { workspace = true, features = ["derive"] }
-
-# Time
-chrono = { workspace = true, features = ["serde"] }
-
-# RPC
 jsonrpsee = { workspace = true, optional = true }
-
-# Misc
-uuid = { workspace = true, features = ["v5"] }
-
+serde = { workspace = true, features = ["derive"] }
+uuid = { workspace = true, features = ["default", "v5"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
+chrono = { workspace = true, features = ["default", "serde"] }
+base-proof-primitives = { workspace = true, features = ["serde"] }
 [dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }
-
 [lints]
 workspace = true
 

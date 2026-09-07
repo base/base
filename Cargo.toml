@@ -6,10 +6,13 @@ license = "MIT"
 homepage = "https://github.com/base/base"
 repository = "https://github.com/base/base"
 exclude = [".github/"]
+authors = ["Base Contributors"]
+keywords = ["base", "ethereum", "evm"]
+categories = ["cryptography::cryptocurrencies"]
 
 [workspace]
 resolver = "2"
-exclude = ["actions/fixtures", "vendor"]
+exclude = ["actions/fixtures"]
 members = [
   "actions/*",
   "bin/[a-o]*",
@@ -31,6 +34,7 @@ members = [
   "crates/utilities/*",
   "etc/tools/*",
   "etc/systems",
+  "vendor/*",
 ]
 default-members = [
   "bin/[a-o]*",
@@ -148,36 +152,36 @@ incremental = false
 
 [workspace.dependencies]
 # Base Primitives
-base-bundles = { path = "crates/common/bundles" }
-base-common-signer = { path = "crates/common/signer" }
-base-common-chains = { path = "crates/common/chains" }
-base-common-network = { path = "crates/common/network" }
-base-common-rpc-types = { path = "crates/common/rpc-types" }
-base-precompile-macros = { path = "crates/common/precompile-macros" }
 base-common-evm = { path = "crates/common/evm", default-features = false }
-base-common-evm2 = { path = "crates/common/evm2", default-features = false }
 base-common-flz = { path = "crates/common/flz", default-features = false }
+base-bundles = { path = "crates/common/bundles", default-features = false }
+base-common-evm2 = { path = "crates/common/evm2", default-features = false }
+base-common-signer = { path = "crates/common/signer", default-features = false }
+base-common-chains = { path = "crates/common/chains", default-features = false }
+base-common-network = { path = "crates/common/network", default-features = false }
 base-common-l1-fees = { path = "crates/common/l1-fees", default-features = false }
 base-common-genesis = { path = "crates/common/genesis", default-features = false }
+base-common-rpc-types = { path = "crates/common/rpc-types", default-features = false }
 base-common-consensus = { path = "crates/common/consensus", default-features = false }
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
+base-precompile-macros = { path = "crates/common/precompile-macros", default-features = false }
 base-precompile-storage = { path = "crates/common/precompile-storage", default-features = false }
 base-common-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
 base-observability-events = { path = "crates/common/observability-events", default-features = false }
 
 # Builder
-base-builder-cli = { path = "crates/builder/cli" }
-base-builder-core = { path = "crates/builder/core" }
-base-builder-metering = { path = "crates/builder/metering" }
+base-builder-cli = { path = "crates/builder/cli", default-features = false }
+base-builder-core = { path = "crates/builder/core", default-features = false }
+base-builder-metering = { path = "crates/builder/metering", default-features = false }
 
 # Consensus
-base-consensus-cli = { path = "crates/consensus/cli" }
-base-consensus-rpc = { path = "crates/consensus/rpc" }
-base-consensus-safedb = { path = "crates/consensus/safedb" }
+base-consensus-cli = { path = "crates/consensus/cli", default-features = false }
+base-consensus-rpc = { path = "crates/consensus/rpc", default-features = false }
 base-protocol = { path = "crates/consensus/protocol", default-features = false }
 base-consensus-disc = { path = "crates/consensus/disc", default-features = false }
 base-consensus-peers = { path = "crates/consensus/peers", default-features = false }
 base-consensus-node = { path = "crates/consensus/service", default-features = false }
+base-consensus-safedb = { path = "crates/consensus/safedb", default-features = false }
 base-consensus-derive = { path = "crates/consensus/derive", default-features = false }
 base-consensus-engine = { path = "crates/consensus/engine", default-features = false }
 base-consensus-gossip = { path = "crates/consensus/gossip", default-features = false }
@@ -186,487 +190,741 @@ base-consensus-upgrades = { path = "crates/consensus/upgrades", default-features
 base-consensus-providers = { path = "crates/consensus/providers", default-features = false }
 
 # Execution
-base-node-core = { path = "crates/execution/node" }
-base-execution-cli = { path = "crates/execution/cli" }
-base-execution-evm = { path = "crates/execution/evm" }
-base-execution-rpc = { path = "crates/execution/rpc" }
-base-metering = { path = "crates/execution/metering" }
-base-node-runner = { path = "crates/execution/runner" }
-base-shadow-indexer = { path = "crates/execution/shadow-indexer" }
-base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db" }
-base-execution-exex = { path = "crates/execution/exex" }
-base-execution-trie = { path = "crates/execution/trie" }
-base-txpool-rpc = { path = "crates/execution/txpool-rpc" }
-base-execution-txpool = { path = "crates/execution/txpool" }
-base-proofs-extension = { path = "crates/execution/proofs" }
-base-tx-forwarding = { path = "crates/execution/tx-forwarding" }
-base-execution-chainspec = { path = "crates/execution/chainspec" }
-base-execution-consensus = { path = "crates/execution/consensus" }
-base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
-base-execution-payload-builder = { path = "crates/execution/payload" }
-base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc" }
-base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
+base-node-core = { path = "crates/execution/node", default-features = false }
+base-execution-cli = { path = "crates/execution/cli", default-features = false }
+base-execution-evm = { path = "crates/execution/evm", default-features = false }
+base-execution-rpc = { path = "crates/execution/rpc", default-features = false }
+base-metering = { path = "crates/execution/metering", default-features = false }
+base-node-runner = { path = "crates/execution/runner", default-features = false }
+base-execution-exex = { path = "crates/execution/exex", default-features = false }
+base-execution-trie = { path = "crates/execution/trie", default-features = false }
+base-txpool-rpc = { path = "crates/execution/txpool-rpc", default-features = false }
+base-execution-txpool = { path = "crates/execution/txpool", default-features = false }
+base-proofs-extension = { path = "crates/execution/proofs", default-features = false }
 base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
+base-tx-forwarding = { path = "crates/execution/tx-forwarding", default-features = false }
+base-shadow-indexer = { path = "crates/execution/shadow-indexer", default-features = false }
+base-execution-chainspec = { path = "crates/execution/chainspec", default-features = false }
+base-execution-consensus = { path = "crates/execution/consensus", default-features = false }
+base-txpool-tracing = { path = "crates/execution/txpool-tracing", default-features = false }
+base-execution-payload-builder = { path = "crates/execution/payload", default-features = false }
+base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc", default-features = false }
+base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db", default-features = false }
+base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node", default-features = false }
 
 # Infra
-basectl-cli = { path = "crates/infra/basectl" }
-base-roxy = { path = "crates/infra/roxy" }
-base-sidecrush = { path = "crates/infra/sidecrush" }
-audit-archiver-lib = { path = "crates/infra/audit" }
-base-load-tests = { path = "crates/infra/load-tests" }
-ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
-base-snapshotter = { path = "crates/infra/snapshotter" }
-websocket-proxy = { path = "crates/infra/websocket-proxy" }
-base-telemetry-service = { path = "crates/infra/telemetry" }
-base-shadow-metrics = { path = "crates/infra/shadow-metrics" }
+base-roxy = { path = "crates/infra/roxy", default-features = false }
+basectl-cli = { path = "crates/infra/basectl", default-features = false }
+base-sidecrush = { path = "crates/infra/sidecrush", default-features = false }
+audit-archiver-lib = { path = "crates/infra/audit", default-features = false }
+base-load-tests = { path = "crates/infra/load-tests", default-features = false }
+ingress-rpc-lib = { path = "crates/infra/ingress-rpc", default-features = false }
+base-snapshotter = { path = "crates/infra/snapshotter", default-features = false }
+websocket-proxy = { path = "crates/infra/websocket-proxy", default-features = false }
+base-telemetry-service = { path = "crates/infra/telemetry", default-features = false }
+base-shadow-metrics = { path = "crates/infra/shadow-metrics", default-features = false }
 
 # Proof
-base-proof-rpc = { path = "crates/proof/rpc" }
-base-proposer = { path = "crates/proof/proposer" }
-base-proof-worker = { path = "crates/proof/worker" }
-base-challenger = { path = "crates/proof/challenge" }
-base-proof-contracts = { path = "crates/proof/contracts" }
-base-proof-submission = { path = "crates/proof/submission" }
-base-prover-service = { path = "crates/proof/prover-service" }
-base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
-base-prover-service-db = { path = "crates/proof/prover-service/db" }
-base-proof-tee-nitro-host = { path = "crates/proof/tee/nitro-host" }
 base-proof = { path = "crates/proof/proof", default-features = false }
+base-proof-rpc = { path = "crates/proof/rpc", default-features = false }
 base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
-base-proof-tee-nitro-enclave = { path = "crates/proof/tee/nitro-enclave" }
 base-proof-host = { path = "crates/proof/host", default-features = false }
-base-prover-service-client = { path = "crates/proof/prover-service/client" }
-base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier" }
+base-proposer = { path = "crates/proof/proposer", default-features = false }
+base-proof-worker = { path = "crates/proof/worker", default-features = false }
 base-proof-client = { path = "crates/proof/client", default-features = false }
 base-proof-driver = { path = "crates/proof/driver", default-features = false }
-base-prover-service-protocol = { path = "crates/proof/prover-service/protocol" }
+base-challenger = { path = "crates/proof/challenge", default-features = false }
 base-proof-executor = { path = "crates/proof/executor", default-features = false }
 base-proof-preimage = { path = "crates/proof/preimage", default-features = false }
+base-proof-contracts = { path = "crates/proof/contracts", default-features = false }
+base-proof-submission = { path = "crates/proof/submission", default-features = false }
 base-proof-primitives = { path = "crates/proof/primitives", default-features = false }
+base-prover-service = { path = "crates/proof/prover-service", default-features = false }
+base-proof-tee-registrar = { path = "crates/proof/tee/registrar", default-features = false }
+base-prover-service-db = { path = "crates/proof/prover-service/db", default-features = false }
+base-proof-tee-nitro-host = { path = "crates/proof/tee/nitro-host", default-features = false }
+base-proof-tee-nitro-enclave = { path = "crates/proof/tee/nitro-enclave", default-features = false }
+base-prover-service-client = { path = "crates/proof/prover-service/client", default-features = false }
+base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier", default-features = false }
+base-prover-service-protocol = { path = "crates/proof/prover-service/protocol", default-features = false }
 
 # Batcher
-base-blobs = { path = "crates/batcher/blobs" }
-base-batcher-core = { path = "crates/batcher/core" }
-base-batcher-admin = { path = "crates/batcher/admin" }
-base-batcher-source = { path = "crates/batcher/source" }
-base-batcher-encoder = { path = "crates/batcher/encoder" }
-base-batcher-service = { path = "crates/batcher/service" }
 base-comp = { path = "crates/batcher/comp", default-features = false }
+base-blobs = { path = "crates/batcher/blobs", default-features = false }
+base-batcher-core = { path = "crates/batcher/core", default-features = false }
+base-batcher-admin = { path = "crates/batcher/admin", default-features = false }
+base-batcher-source = { path = "crates/batcher/source", default-features = false }
+base-batcher-encoder = { path = "crates/batcher/encoder", default-features = false }
+base-batcher-service = { path = "crates/batcher/service", default-features = false }
 
 # Utilities
-base-jwt = { path = "crates/utilities/jwt" }
-base-retry = { path = "crates/utilities/retry" }
-base-health = { path = "crates/utilities/health" }
-base-cli-utils = { path = "crates/utilities/cli" }
-base-l1-head = { path = "crates/utilities/l1-head" }
-base-reth-cli = { path = "crates/utilities/reth-cli" }
-base-test-utils = { path = "crates/utilities/test-utils" }
-base-tx-manager = { path = "crates/utilities/tx-manager" }
-base-ring-buffer = { path = "crates/utilities/ring-buffer" }
-base-optimism-rpc = { path = "crates/utilities/optimism-rpc" }
-base-trusted-proxy = { path = "crates/utilities/trusted-proxy" }
-base-upgrade-signal = { path = "crates/utilities/upgrade-signal" }
-base-balance-monitor = { path = "crates/utilities/balance-monitor" }
+base-jwt = { path = "crates/utilities/jwt", default-features = false }
+base-retry = { path = "crates/utilities/retry", default-features = false }
+base-health = { path = "crates/utilities/health", default-features = false }
+base-cli-utils = { path = "crates/utilities/cli", default-features = false }
+base-l1-head = { path = "crates/utilities/l1-head", default-features = false }
 base-metrics = { path = "crates/utilities/metrics", default-features = false }
 base-runtime = { path = "crates/utilities/runtime", default-features = false }
+base-reth-cli = { path = "crates/utilities/reth-cli", default-features = false }
+base-test-utils = { path = "crates/utilities/test-utils", default-features = false }
+base-tx-manager = { path = "crates/utilities/tx-manager", default-features = false }
+base-ring-buffer = { path = "crates/utilities/ring-buffer", default-features = false }
+base-optimism-rpc = { path = "crates/utilities/optimism-rpc", default-features = false }
+base-trusted-proxy = { path = "crates/utilities/trusted-proxy", default-features = false }
+base-upgrade-signal = { path = "crates/utilities/upgrade-signal", default-features = false }
+base-balance-monitor = { path = "crates/utilities/balance-monitor", default-features = false }
 
 # revm
-revm = { path = "vendor/revm/revm-42.0.1", default-features = false }
-revm-bytecode = { path = "vendor/revm/revm-bytecode-42.0.0", default-features = false }
-revm-database = { path = "vendor/revm/revm-database-42.0.0", default-features = false }
-revm-precompile = { path = "vendor/revm/revm-precompile-42.0.1", default-features = false }
+revm = { path = "vendor/revm", default-features = false }
+revmc = { path = "vendor/revmc", default-features = false }
+revmc-llvm = { path = "vendor/revmc-llvm", default-features = false }
+revm-state = { path = "vendor/revm-state", default-features = false }
+revmc-build = { path = "vendor/revmc-build", default-features = false }
+revm-context = { path = "vendor/revm-context", default-features = false }
+revm-handler = { path = "vendor/revm-handler", default-features = false }
+revm-bytecode = { path = "vendor/revm-bytecode", default-features = false }
+revm-database = { path = "vendor/revm-database", default-features = false }
+revmc-runtime = { path = "vendor/revmc-runtime", default-features = false }
+revmc-backend = { path = "vendor/revmc-backend", default-features = false }
+revmc-context = { path = "vendor/revmc-context", default-features = false }
+revmc-codegen = { path = "vendor/revmc-codegen", default-features = false }
+revmc-builtins = { path = "vendor/revmc-builtins", default-features = false }
+revm-inspector = { path = "vendor/revm-inspector", default-features = false }
+revm-precompile = { path = "vendor/revm-precompile", default-features = false }
+revmc-statetest = { path = "vendor/revmc-statetest", default-features = false }
+revm-inspectors = { path = "vendor/revm-inspectors", default-features = false }
+revm-primitives = { path = "vendor/revm-primitives", default-features = false }
+revm-interpreter = { path = "vendor/revm-interpreter", default-features = false }
+revm-statetest-types = { path = "vendor/revm-statetest-types", default-features = false }
+revm-context-interface = { path = "vendor/revm-context-interface", default-features = false }
+revm-database-interface = { path = "vendor/revm-database-interface", default-features = false }
 
 # evm2
-evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "9b037449c846515624ff6afde739f2b764851446", default-features = false }
+evm2 = { path = "vendor/evm2", default-features = false }
 
 # alloy
-alloy-signer = { path = "vendor/alloy/alloy-signer-2.4.1" }
-alloy-pubsub = { path = "vendor/alloy/alloy-pubsub-2.4.1" }
-alloy-network = { path = "vendor/alloy/alloy-network-2.4.1" }
-alloy-provider = { path = "vendor/alloy/alloy-provider-2.4.1" }
-alloy-contract = { path = "vendor/alloy/alloy-contract-2.4.1" }
-alloy-json-rpc = { path = "vendor/alloy/alloy-json-rpc-2.4.1" }
-alloy-transport = { path = "vendor/alloy/alloy-transport-2.4.1" }
-alloy-rpc-types = { path = "vendor/alloy/alloy-rpc-types-2.4.1" }
-alloy-hardforks = { path = "vendor/alloy/alloy-hardforks-0.4.7" }
-alloy-sol-macro = { path = "vendor/alloy/alloy-sol-macro-1.6.1" }
-alloy-rpc-client = { path = "vendor/alloy/alloy-rpc-client-2.4.1" }
-alloy-signer-local = { path = "vendor/alloy/alloy-signer-local-2.4.1" }
-alloy-transport-ws = { path = "vendor/alloy/alloy-transport-ws-2.4.1" }
-alloy-node-bindings = { path = "vendor/alloy/alloy-node-bindings-2.4.1" }
-alloy-transport-http = { path = "vendor/alloy/alloy-transport-http-2.4.1" }
-alloy-rpc-types-beacon = { path = "vendor/alloy/alloy-rpc-types-beacon-2.4.1" }
-alloy-rlp = { path = "vendor/alloy/alloy-rlp-0.3.16", default-features = false }
-alloy-evm = { path = "vendor/alloy/alloy-evm-0.38.0", default-features = false }
-alloy-trie = { path = "vendor/alloy/alloy-trie-0.9.5", default-features = false }
-alloy-eips = { path = "vendor/alloy/alloy-eips-2.4.1", default-features = false }
-alloy-serde = { path = "vendor/alloy/alloy-serde-2.4.1", default-features = false }
-alloy-chains = { path = "vendor/alloy/alloy-chains-0.2.36", default-features = false }
-alloy-genesis = { path = "vendor/alloy/alloy-genesis-2.4.1", default-features = false }
-alloy-consensus = { path = "vendor/alloy/alloy-consensus-2.4.1", default-features = false }
-alloy-sol-types = { path = "vendor/alloy/alloy-sol-types-1.6.1", default-features = false }
-alloy-primitives = { path = "vendor/alloy/alloy-primitives-1.6.1", default-features = false }
-alloy-rpc-types-eth = { path = "vendor/alloy/alloy-rpc-types-eth-2.4.1", default-features = false }
-alloy-rpc-types-debug = { path = "vendor/alloy/alloy-rpc-types-debug-2.4.1", default-features = false }
-alloy-rpc-types-txpool = { path = "vendor/alloy/alloy-rpc-types-txpool-2.4.1", default-features = false }
-alloy-rpc-types-engine = { path = "vendor/alloy/alloy-rpc-types-engine-2.4.1", default-features = false }
-alloy-network-primitives = { path = "vendor/alloy/alloy-network-primitives-2.4.1", default-features = false }
+alloy-rlp = { path = "vendor/alloy-rlp", default-features = false }
+alloy-evm = { path = "vendor/alloy-evm", default-features = false }
+alloy-trie = { path = "vendor/alloy-trie", default-features = false }
+alloy-eips = { path = "vendor/alloy-eips", default-features = false }
+alloy-serde = { path = "vendor/alloy-serde", default-features = false }
+alloy-signer = { path = "vendor/alloy-signer", default-features = false }
+alloy-pubsub = { path = "vendor/alloy-pubsub", default-features = false }
+alloy-chains = { path = "vendor/alloy-chains", default-features = false }
+alloy-network = { path = "vendor/alloy-network", default-features = false }
+alloy-genesis = { path = "vendor/alloy-genesis", default-features = false }
+alloy-dyn-abi = { path = "vendor/alloy-dyn-abi", default-features = false }
+alloy-eip2124 = { path = "vendor/alloy-eip2124", default-features = false }
+alloy-eip2930 = { path = "vendor/alloy-eip2930", default-features = false }
+alloy-eip7702 = { path = "vendor/alloy-eip7702", default-features = false }
+alloy-eip7928 = { path = "vendor/alloy-eip7928", default-features = false }
+alloy-provider = { path = "vendor/alloy-provider", default-features = false }
+alloy-contract = { path = "vendor/alloy-contract", default-features = false }
+alloy-json-rpc = { path = "vendor/alloy-json-rpc", default-features = false }
+alloy-json-abi = { path = "vendor/alloy-json-abi", default-features = false }
+alloy-transport = { path = "vendor/alloy-transport", default-features = false }
+alloy-rpc-types = { path = "vendor/alloy-rpc-types", default-features = false }
+alloy-hardforks = { path = "vendor/alloy-hardforks", default-features = false }
+alloy-sol-macro = { path = "vendor/alloy-sol-macro", default-features = false }
+alloy-consensus = { path = "vendor/alloy-consensus", default-features = false }
+alloy-sol-types = { path = "vendor/alloy-sol-types", default-features = false }
+alloy-tx-macros = { path = "vendor/alloy-tx-macros", default-features = false }
+alloy-rpc-client = { path = "vendor/alloy-rpc-client", default-features = false }
+alloy-primitives = { path = "vendor/alloy-primitives", default-features = false }
+alloy-rlp-derive = { path = "vendor/alloy-rlp-derive", default-features = false }
+alloy-signer-local = { path = "vendor/alloy-signer-local", default-features = false }
+alloy-transport-ws = { path = "vendor/alloy-transport-ws", default-features = false }
+alloy-node-bindings = { path = "vendor/alloy-node-bindings", default-features = false }
+alloy-rpc-types-eth = { path = "vendor/alloy-rpc-types-eth", default-features = false }
+alloy-consensus-any = { path = "vendor/alloy-consensus-any", default-features = false }
+alloy-rpc-types-any = { path = "vendor/alloy-rpc-types-any", default-features = false }
+alloy-rpc-types-mev = { path = "vendor/alloy-rpc-types-mev", default-features = false }
+alloy-transport-ipc = { path = "vendor/alloy-transport-ipc", default-features = false }
+alloy-transport-http = { path = "vendor/alloy-transport-http", default-features = false }
+alloy-rpc-types-debug = { path = "vendor/alloy-rpc-types-debug", default-features = false }
+alloy-rpc-types-admin = { path = "vendor/alloy-rpc-types-admin", default-features = false }
+alloy-rpc-types-anvil = { path = "vendor/alloy-rpc-types-anvil", default-features = false }
+alloy-rpc-types-trace = { path = "vendor/alloy-rpc-types-trace", default-features = false }
+alloy-sol-macro-input = { path = "vendor/alloy-sol-macro-input", default-features = false }
+alloy-sol-type-parser = { path = "vendor/alloy-sol-type-parser", default-features = false }
+alloy-rpc-types-beacon = { path = "vendor/alloy-rpc-types-beacon", default-features = false }
+alloy-rpc-types-txpool = { path = "vendor/alloy-rpc-types-txpool", default-features = false }
+alloy-rpc-types-engine = { path = "vendor/alloy-rpc-types-engine", default-features = false }
+alloy-network-primitives = { path = "vendor/alloy-network-primitives", default-features = false }
+alloy-sol-macro-expander = { path = "vendor/alloy-sol-macro-expander", default-features = false }
+alloy-rpc-types-tenderly = { path = "vendor/alloy-rpc-types-tenderly", default-features = false }
+alloy-hardforks-legacy = { path = "vendor/alloy-hardforks-legacy", default-features = false, package = "alloy-hardforks-legacy" }
 
 # reth
-reth-revm = { path = "vendor/reth/crates/revm" }
-reth-cli = { path = "vendor/reth/crates/cli/cli" }
-reth-ipc = { path = "vendor/reth/crates/rpc/ipc" }
-reth-evm = { path = "vendor/reth/crates/evm/evm" }
-reth-rpc = { path = "vendor/reth/crates/rpc/rpc" }
-reth-tasks = { path = "vendor/reth/crates/tasks" }
-reth-db = { path = "vendor/reth/crates/storage/db" }
-reth-trie = { path = "vendor/reth/crates/trie/trie" }
-reth-exex = { path = "vendor/reth/crates/exex/exex" }
-reth-ecies = { path = "vendor/reth/crates/net/ecies" }
-reth-trie-db = { path = "vendor/reth/crates/trie/db" }
-reth-net-nat = { path = "vendor/reth/crates/net/nat" }
-reth-tracing = { path = "vendor/reth/crates/tracing" }
-reth-discv4 = { path = "vendor/reth/crates/net/discv4" }
-reth-discv5 = { path = "vendor/reth/crates/net/discv5" }
-reth-cli-util = { path = "vendor/reth/crates/cli/util" }
-reth-node-api = { path = "vendor/reth/crates/node/api" }
-reth-rpc-api = { path = "vendor/reth/crates/rpc/rpc-api" }
-reth-network = { path = "vendor/reth/crates/net/network" }
-reth-node-core = { path = "vendor/reth/crates/node/core" }
-reth-chainspec = { path = "vendor/reth/crates/chainspec" }
-reth-network-p2p = { path = "vendor/reth/crates/net/p2p" }
-reth-db-api = { path = "vendor/reth/crates/storage/db-api" }
-reth-eth-wire = { path = "vendor/reth/crates/net/eth-wire" }
-reth-cli-runner = { path = "vendor/reth/crates/cli/runner" }
-reth-rpc-layer = { path = "vendor/reth/crates/rpc/rpc-layer" }
-reth-chain-state = { path = "vendor/reth/crates/chain-state" }
-reth-trie-common = { path = "vendor/reth/crates/trie/common" }
-reth-network-peers = { path = "vendor/reth/crates/net/peers" }
-reth-provider = { path = "vendor/reth/crates/storage/provider" }
-reth-payload-util = { path = "vendor/reth/crates/payload/util" }
-reth-node-builder = { path = "vendor/reth/crates/node/builder" }
-reth-node-metrics = { path = "vendor/reth/crates/node/metrics" }
-reth-cli-commands = { path = "vendor/reth/crates/cli/commands" }
-reth-evm-ethereum = { path = "vendor/reth/crates/ethereum/evm" }
-reth-tracing-otlp = { path = "vendor/reth/crates/tracing-otlp" }
-reth-db-common = { path = "vendor/reth/crates/storage/db-common" }
-reth-rpc-convert = { path = "vendor/reth/crates/rpc/rpc-convert" }
-reth-network-api = { path = "vendor/reth/crates/net/network-api" }
-reth-rpc-eth-api = { path = "vendor/reth/crates/rpc/rpc-eth-api" }
-reth-node-ethereum = { path = "vendor/reth/crates/ethereum/node" }
-reth-trie-parallel = { path = "vendor/reth/crates/trie/parallel" }
-reth-testing-utils = { path = "vendor/reth/testing/testing-utils" }
-reth-consensus = { path = "vendor/reth/crates/consensus/consensus" }
-reth-e2e-test-utils = { path = "vendor/reth/crates/e2e-test-utils" }
-reth-storage-api = { path = "vendor/reth/crates/storage/storage-api" }
-reth-rpc-eth-types = { path = "vendor/reth/crates/rpc/rpc-eth-types" }
-reth-payload-builder = { path = "vendor/reth/crates/payload/builder" }
-reth-exex-test-utils = { path = "vendor/reth/crates/exex/test-utils" }
-reth-rpc-engine-api = { path = "vendor/reth/crates/rpc/rpc-engine-api" }
-reth-eth-wire-types = { path = "vendor/reth/crates/net/eth-wire-types" }
-reth-transaction-pool = { path = "vendor/reth/crates/transaction-pool" }
-reth-execution-types = { path = "vendor/reth/crates/evm/execution-types" }
-reth-payload-validator = { path = "vendor/reth/crates/payload/validator" }
-reth-basic-payload-builder = { path = "vendor/reth/crates/payload/basic" }
-reth-rpc-server-types = { path = "vendor/reth/crates/rpc/rpc-server-types" }
-reth-execution-errors = { path = "vendor/reth/crates/evm/execution-errors" }
-reth-payload-primitives = { path = "vendor/reth/crates/payload/primitives" }
-reth-execution-cache = { path = "vendor/reth/crates/engine/execution-cache" }
-reth-ethereum-primitives = { path = "vendor/reth/crates/ethereum/primitives" }
-reth-prune-types = { path = "vendor/reth/crates/prune/types", default-features = false }
-reth-stages-types = { path = "vendor/reth/crates/stages/types", default-features = false }
-reth-payload-builder-primitives = { path = "vendor/reth/crates/payload/builder-primitives" }
-reth-storage-errors = { path = "vendor/reth/crates/storage/errors", default-features = false }
-reth-ethereum-forks = { path = "vendor/reth/crates/ethereum/hardforks", default-features = false }
-reth-consensus-common = { path = "vendor/reth/crates/consensus/common", default-features = false }
-reth-zstd-compressors = { path = "vendor/reth-primitives/reth-zstd-compressors-0.6.0", default-features = false }
-reth-primitives-traits = { path = "vendor/reth-primitives/reth-primitives-traits-0.6.0", default-features = false }
-reth-codecs = { path = "vendor/reth-primitives/reth-codecs-0.6.0", default-features = false, features = ["alloy"] }
+reth = { path = "vendor/reth", default-features = false }
+reth-db = { path = "vendor/reth-db", default-features = false }
+reth-cli = { path = "vendor/reth-cli", default-features = false }
+reth-ipc = { path = "vendor/reth-ipc", default-features = false }
+reth-evm = { path = "vendor/reth-evm", default-features = false }
+reth-rpc = { path = "vendor/reth-rpc", default-features = false }
+reth-etl = { path = "vendor/reth-etl", default-features = false }
+reth-era = { path = "vendor/reth-era", default-features = false }
+reth-revm = { path = "vendor/reth-revm", default-features = false }
+reth-trie = { path = "vendor/reth-trie", default-features = false }
+reth-exex = { path = "vendor/reth-exex", default-features = false }
+reth-tasks = { path = "vendor/reth-tasks", default-features = false }
+reth-ecies = { path = "vendor/reth-ecies", default-features = false }
+reth-prune = { path = "vendor/reth-prune", default-features = false }
+reth-discv4 = { path = "vendor/reth-discv4", default-features = false }
+reth-discv5 = { path = "vendor/reth-discv5", default-features = false }
+reth-db-api = { path = "vendor/reth-db-api", default-features = false }
+reth-codecs = { path = "vendor/reth-codecs", default-features = false }
+reth-stages = { path = "vendor/reth-stages", default-features = false }
+reth-errors = { path = "vendor/reth-errors", default-features = false }
+reth-config = { path = "vendor/reth-config", default-features = false }
+reth-trie-db = { path = "vendor/reth-trie-db", default-features = false }
+reth-net-nat = { path = "vendor/reth-net-nat", default-features = false }
+reth-tracing = { path = "vendor/reth-tracing", default-features = false }
+reth-rpc-api = { path = "vendor/reth-rpc-api", default-features = false }
+reth-network = { path = "vendor/reth-network", default-features = false }
+reth-libmdbx = { path = "vendor/reth-libmdbx", default-features = false }
+reth-fs-util = { path = "vendor/reth-fs-util", default-features = false }
+reth-metrics = { path = "vendor/reth-metrics", default-features = false }
+reth-cli-util = { path = "vendor/reth-cli-util", default-features = false }
+reth-node-api = { path = "vendor/reth-node-api", default-features = false }
+reth-eth-wire = { path = "vendor/reth-eth-wire", default-features = false }
+reth-provider = { path = "vendor/reth-provider", default-features = false }
+reth-mdbx-sys = { path = "vendor/reth-mdbx-sys", default-features = false }
+reth-ethereum = { path = "vendor/reth-ethereum", default-features = false }
+reth-node-core = { path = "vendor/reth-node-core", default-features = false }
+reth-chainspec = { path = "vendor/reth-chainspec", default-features = false }
+reth-rpc-layer = { path = "vendor/reth-rpc-layer", default-features = false }
+reth-db-common = { path = "vendor/reth-db-common", default-features = false }
+reth-consensus = { path = "vendor/reth-consensus", default-features = false }
+reth-nippy-jar = { path = "vendor/reth-nippy-jar", default-features = false }
+reth-db-models = { path = "vendor/reth-db-models", default-features = false }
+reth-era-utils = { path = "vendor/reth-era-utils", default-features = false }
+reth-cli-runner = { path = "vendor/reth-cli-runner", default-features = false }
+reth-tokio-util = { path = "vendor/reth-tokio-util", default-features = false }
+reth-node-types = { path = "vendor/reth-node-types", default-features = false }
+reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
+reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }
+reth-rpc-traits = { path = "vendor/reth-rpc-traits", default-features = false }
+reth-network-p2p = { path = "vendor/reth-network-p2p", default-features = false }
+reth-chain-state = { path = "vendor/reth-chain-state", default-features = false }
+reth-trie-common = { path = "vendor/reth-trie-common", default-features = false }
+reth-rpc-convert = { path = "vendor/reth-rpc-convert", default-features = false }
+reth-network-api = { path = "vendor/reth-network-api", default-features = false }
+reth-rpc-eth-api = { path = "vendor/reth-rpc-eth-api", default-features = false }
+reth-storage-api = { path = "vendor/reth-storage-api", default-features = false }
+reth-prune-types = { path = "vendor/reth-prune-types", default-features = false }
+reth-static-file = { path = "vendor/reth-static-file", default-features = false }
+reth-rpc-builder = { path = "vendor/reth-rpc-builder", default-features = false }
+reth-downloaders = { path = "vendor/reth-downloaders", default-features = false }
+reth-engine-util = { path = "vendor/reth-engine-util", default-features = false }
+reth-engine-tree = { path = "vendor/reth-engine-tree", default-features = false }
+reth-trie-sparse = { path = "vendor/reth-trie-sparse", default-features = false }
+reth-node-events = { path = "vendor/reth-node-events", default-features = false }
+reth-net-banlist = { path = "vendor/reth-net-banlist", default-features = false }
+reth-payload-util = { path = "vendor/reth-payload-util", default-features = false }
+reth-node-builder = { path = "vendor/reth-node-builder", default-features = false }
+reth-node-metrics = { path = "vendor/reth-node-metrics", default-features = false }
+reth-cli-commands = { path = "vendor/reth-cli-commands", default-features = false }
+reth-evm-ethereum = { path = "vendor/reth-evm-ethereum", default-features = false }
+reth-tracing-otlp = { path = "vendor/reth-tracing-otlp", default-features = false }
+reth-stages-types = { path = "vendor/reth-stages-types", default-features = false }
+reth-engine-local = { path = "vendor/reth-engine-local", default-features = false }
+reth-ethereum-cli = { path = "vendor/reth-ethereum-cli", default-features = false }
+reth-network-peers = { path = "vendor/reth-network-peers", default-features = false }
+reth-node-ethereum = { path = "vendor/reth-node-ethereum", default-features = false }
+reth-trie-parallel = { path = "vendor/reth-trie-parallel", default-features = false }
+reth-testing-utils = { path = "vendor/reth-testing-utils", default-features = false }
+reth-rpc-eth-types = { path = "vendor/reth-rpc-eth-types", default-features = false }
+reth-network-types = { path = "vendor/reth-network-types", default-features = false }
+reth-node-ethstats = { path = "vendor/reth-node-ethstats", default-features = false }
+reth-dns-discovery = { path = "vendor/reth-dns-discovery", default-features = false }
+reth-codecs-derive = { path = "vendor/reth-codecs-derive", default-features = false }
+reth-e2e-test-utils = { path = "vendor/reth-e2e-test-utils", default-features = false }
+reth-rpc-engine-api = { path = "vendor/reth-rpc-engine-api", default-features = false }
+reth-eth-wire-types = { path = "vendor/reth-eth-wire-types", default-features = false }
+reth-storage-errors = { path = "vendor/reth-storage-errors", default-features = false }
+reth-ethereum-forks = { path = "vendor/reth-ethereum-forks", default-features = false }
+reth-era-downloader = { path = "vendor/reth-era-downloader", default-features = false }
+reth-payload-builder = { path = "vendor/reth-payload-builder", default-features = false }
+reth-exex-test-utils = { path = "vendor/reth-exex-test-utils", default-features = false }
+reth-execution-types = { path = "vendor/reth-execution-types", default-features = false }
+reth-execution-cache = { path = "vendor/reth-execution-cache", default-features = false }
+reth-storage-overlay = { path = "vendor/reth-storage-overlay", default-features = false }
+reth-transaction-pool = { path = "vendor/reth-transaction-pool", default-features = false }
+reth-rpc-server-types = { path = "vendor/reth-rpc-server-types", default-features = false }
+reth-execution-errors = { path = "vendor/reth-execution-errors", default-features = false }
+reth-consensus-common = { path = "vendor/reth-consensus-common", default-features = false }
+reth-zstd-compressors = { path = "vendor/reth-zstd-compressors", default-features = false }
+reth-payload-validator = { path = "vendor/reth-payload-validator", default-features = false }
+reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-features = false }
+reth-engine-primitives = { path = "vendor/reth-engine-primitives", default-features = false }
+reth-static-file-types = { path = "vendor/reth-static-file-types", default-features = false }
+reth-payload-primitives = { path = "vendor/reth-payload-primitives", default-features = false }
+reth-ethereum-consensus = { path = "vendor/reth-ethereum-consensus", default-features = false }
+reth-ethereum-primitives = { path = "vendor/reth-ethereum-primitives", default-features = false }
+reth-invalid-block-hooks = { path = "vendor/reth-invalid-block-hooks", default-features = false }
+reth-basic-payload-builder = { path = "vendor/reth-basic-payload-builder", default-features = false }
+reth-consensus-debug-client = { path = "vendor/reth-consensus-debug-client", default-features = false }
+reth-ethereum-payload-builder = { path = "vendor/reth-ethereum-payload-builder", default-features = false }
+reth-payload-builder-primitives = { path = "vendor/reth-payload-builder-primitives", default-features = false }
+reth-ethereum-engine-primitives = { path = "vendor/reth-ethereum-engine-primitives", default-features = false }
 
 # tokio
-tokio = "1.53.1"
-tokio-util = "0.7.19"
-tokio-stream = "0.1.17"
-tokio-tungstenite = "0.28.0"
+tokio = { version = "1.53.1", default-features = false }
+tokio-util = { version = "0.7.19", default-features = false }
+tokio-stream = { version = "0.1.17", default-features = false }
+tokio-tungstenite = { version = "0.28.0", default-features = false }
 
 # async
-futures = "0.3.31"
-reqwest = "0.13.1"
-async-stream = "0.3"
-async-channel = "2.5"
-async-trait = "0.1.83"
+futures = { version = "0.3.31", default-features = false }
+reqwest = { version = "0.13.1", default-features = false }
+async-stream = { version = "0.3", default-features = false }
+async-channel = { version = "2.5", default-features = false }
+async-trait = { version = "0.1.83", default-features = false }
 
 # grpc
-tonic = "0.14"
+tonic = { version = "0.14", default-features = false }
 
 # rpc
-jsonrpsee = "0.26.0"
-jsonrpsee-core = "0.26.0"
-jsonrpsee-types = "0.26.0"
+jsonrpsee = { version = "0.26.0", default-features = false }
+jsonrpsee-core = { version = "0.26.0", default-features = false }
+jsonrpsee-types = { version = "0.26.0", default-features = false }
 
 # cli
-clap = "4.6.5"
-arboard = "3.6.1"
-ratatui = "0.30.0"
-crossterm = "0.29"
-indicatif = "0.18"
-human_bytes = "0.4.3"
-clap_builder = "4.6.5"
-tracing-indicatif = "0.3"
+clap = { version = "4.6.5", default-features = false }
+arboard = { version = "3.6.1", default-features = false }
+ratatui = { version = "0.30.0", default-features = false }
+crossterm = { version = "0.29", default-features = false }
+indicatif = { version = "0.18", default-features = false }
+human_bytes = { version = "0.4.3", default-features = false }
+clap_builder = { version = "4.6.5", default-features = false }
+tracing-indicatif = { version = "0.3", default-features = false }
 
 # tracing
-tracing-appender = "0.2.4"
-tracing-subscriber = "0.3.22"
 tracing = { version = "0.1.43", default-features = false }
+tracing-appender = { version = "0.2.4", default-features = false }
+tracing-subscriber = { version = "0.3.22", default-features = false }
 
 # OpenTelemetry
-opentelemetry = "0.32"
-opentelemetry-appender-tracing = "0.32"
+opentelemetry = { version = "0.32", default-features = false }
 opentelemetry_sdk = { version = "0.32", default-features = false }
 opentelemetry-http = { version = "0.32", default-features = false }
 opentelemetry-otlp = { version = "0.32", default-features = false }
+opentelemetry-appender-tracing = { version = "0.32", default-features = false }
 
 # metrics
-cadence = "1.5"
-ordered-float = "5"
+cadence = { version = "1.5", default-features = false }
 metrics = { version = "0.24.3", default-features = false }
+ordered-float = { version = "5", default-features = false }
 metrics-util = { version = "0.20.1", default-features = false }
 metrics-process = { version = "2.4.3", default-features = false }
 metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
 
 # aws
-aws-nitro-enclaves-nsm-api = "0.4"
 aws-config = { version = "1.1.7", default-features = false }
 aws-sdk-s3 = { version = "1.106.0", default-features = false }
 aws-sdk-ec2 = { version = "1.217.0", default-features = false }
 aws-credential-types = { version = "1.1.7", default-features = false }
+aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 aws-sdk-elasticloadbalancingv2 = { version = "1.109.0", default-features = false }
 
 # crypto
-sha3 = "0.10"
-k256 = "0.13"
-p256 = "0.13"
-p384 = "0.13"
-blake3 = "1.8"
-getrandom = "0.4"
-rustls = "0.23.43"
-secp256k1 = "0.30"
-hex-literal = "1.1"
-x509-parser = "0.17"
+sha3 = { version = "0.10", default-features = false }
+k256 = { version = "0.13", default-features = false }
+p256 = { version = "0.13", default-features = false }
+p384 = { version = "0.13", default-features = false }
 sha2 = { version = "0.10", default-features = false }
+blake3 = { version = "1.8", default-features = false }
 c-kzg = { version = "2.1.5", default-features = false }
 kzg-rs = { version = "0.2.8", default-features = false }
 ark-ff = { version = "0.6.0", default-features = false }
+getrandom = { version = "0.4", default-features = false }
+rustls = { version = "0.23.43", default-features = false }
+secp256k1 = { version = "0.30", default-features = false }
+hex-literal = { version = "1.1", default-features = false }
+x509-parser = { version = "0.17", default-features = false }
 ark-bls12-381 = { version = "0.6.0", default-features = false }
 
 # http
-url = "2.5"
-http = "1.4"
-hyper = "1.8"
-tower = "0.5"
-http-body = "1.0"
-hyper-util = "0.1.11"
-http-body-util = "0.1.3"
+url = { version = "2.5", default-features = false }
+http = { version = "1.4", default-features = false }
+hyper = { version = "1.8", default-features = false }
+tower = { version = "0.5", default-features = false }
 axum = { version = "0.8.9", default-features = false }
-tower-http = { version = "0.6", features = ["limit", "timeout"] }
+http-body = { version = "1.0", default-features = false }
+tower-http = { version = "0.6", default-features = false }
+hyper-util = { version = "0.1.11", default-features = false }
+http-body-util = { version = "0.1.3", default-features = false }
 
 # p2p
-ipnet = "2.11"
-discv5 = "0.10"
-libp2p = "0.56.0"
-multihash = "0.19"
-libp2p-identity = "0.2.12"
-libp2p-stream = "0.4.0-alpha"
+ipnet = { version = "2.11", default-features = false }
+libp2p = { version = "0.56.0", default-features = false }
+multihash = { version = "0.19", default-features = false }
+discv5 = { path = "vendor/discv5", default-features = false }
 unsigned-varint = { version = "0.8", default-features = false }
+libp2p-identity = { version = "0.2.12", default-features = false }
+libp2p-stream = { version = "0.4.0-alpha", default-features = false }
 
 # serde
-rkyv = "0.8"
-bincode = "2"
-ciborium = "0.2"
-serde_repr = "0.1"
-serde_bytes = "0.11"
-serde_with = "3.8.1"
-serde_cbor = "0.11.2"
-ethereum_ssz = "0.10"
-serde_yaml = "0.9.34"
-ethereum_ssz_derive = "0.10"
+rkyv = { version = "0.8", default-features = false }
 toml = { version = "1.0", default-features = false }
+bincode = { version = "2", default-features = false }
+ciborium = { version = "0.2", default-features = false }
 serde = { version = "1.0.228", default-features = false }
+serde_repr = { version = "0.1", default-features = false }
+serde_bytes = { version = "0.11", default-features = false }
+serde_with = { version = "3.8.1", default-features = false }
+serde_cbor = { version = "0.11.2", default-features = false }
+serde_yaml = { version = "0.9.34", default-features = false }
 serde_json = { version = "1.0.151", default-features = false }
+ethereum_ssz_derive = { version = "0.10", default-features = false }
+ethereum_ssz = { path = "vendor/ethereum_ssz", default-features = false }
 
 # testing
-arbtest = "0.3"
-test-case = "3"
-mockall = "0.14"
-tempfile = "3.27"
-rstest = "0.26.1"
-criterion = "0.8"
-serial_test = "3"
-httpmock = "0.8.2"
-proptest = "1.10.0"
-similar-asserts = "1"
-iai-callgrind = "0.16.1"
+arbtest = { version = "0.3", default-features = false }
+test-case = { version = "3", default-features = false }
 arbitrary = { version = "1", default-features = false }
+mockall = { version = "0.14", default-features = false }
+tempfile = { version = "3.27", default-features = false }
+rstest = { version = "0.26.1", default-features = false }
+criterion = { version = "0.8", default-features = false }
+serial_test = { version = "3", default-features = false }
+httpmock = { version = "0.8.2", default-features = false }
 wiremock = { version = "0.6.2", default-features = false }
+proptest = { version = "1.10.0", default-features = false }
+similar-asserts = { version = "1", default-features = false }
 testcontainers = { version = "0.25", default-features = false }
+iai-callgrind = { version = "0.16.1", default-features = false }
 testcontainers-modules = { version = "0.13", default-features = false }
 
 # docker
-bollard = "0.19.4"
+bollard = { version = "0.19.4", default-features = false }
 
 # compression
-snap = "1"
-zstd = "0.13"
-tar = "0.4.44"
-miniz_oxide = "0.9.0"
+snap = { version = "1", default-features = false }
+zstd = { version = "0.13", default-features = false }
+tar = { version = "0.4.44", default-features = false }
 brotli = { version = "8.0.2", default-features = false }
+miniz_oxide = { version = "0.9.0", default-features = false }
 
 # database
-redb = "2"
+redb = { version = "2", default-features = false }
 sqlx = { version = "0.8", default-features = false }
 rocksdb = { version = "0.24", default-features = false }
 
 # errors
-eyre = "0.6"
-anyhow = "1.0"
-backtrace = "0.3"
+eyre = { version = "0.6", default-features = false }
+anyhow = { version = "1.0", default-features = false }
+backtrace = { version = "0.3", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 
 # collections and concurrency
-lru = "0.16"
-moka = "0.12"
-imbl = "7.0.0"
-rayon = "1.11"
-dashmap = "6.1"
-arc-swap = "1.7.1"
-parking_lot = "0.12.3"
+lru = { version = "0.16", default-features = false }
+moka = { version = "0.12", default-features = false }
+imbl = { version = "7.0.0", default-features = false }
+rayon = { version = "1.11", default-features = false }
+dashmap = { version = "6.1", default-features = false }
 either = { version = "1.15.0", default-features = false }
+arc-swap = { version = "1.7.1", default-features = false }
+parking_lot = { version = "0.12.3", default-features = false }
 
 # configuration
-dirs = "6.0.0"
-dirs-next = "2.0.0"
+dirs = { version = "6.0.0", default-features = false }
 dotenvy = { version = "0.15.7", default-features = false }
+dirs-next = { version = "2.0.0", default-features = false }
 figment = { version = "0.10.19", default-features = false }
 
 # encoding
-hex = "0.4"
-base64 = "0.22"
-bytes = "1.12.1"
+hex = { version = "0.4", default-features = false }
+base64 = { version = "0.22", default-features = false }
+bytes = { version = "1.12.1", default-features = false }
 
 # identifiers and randomness
-rand = "0.9"
-uuid = "1.24"
-nanoid = "0.4"
-rand_08 = { package = "rand", version = "0.8" }
+rand = { version = "0.9", default-features = false }
+uuid = { version = "1.24", default-features = false }
+nanoid = { version = "0.4", default-features = false }
+rand_08 = { package = "rand", version = "0.8", default-features = false }
 
 # time
-time = "0.3.55"
-chrono = "0.4.42"
-humantime = "2.3"
+time = { version = "0.3.55", default-features = false }
+chrono = { version = "0.4.42", default-features = false }
+humantime = { version = "2.3", default-features = false }
 
 # retry
-backon = "1.6"
-backoff = "0.4.0"
+backon = { version = "1.6", default-features = false }
+backoff = { version = "0.4.0", default-features = false }
 
 # macros and code generation
-quote = "1"
-ctor = "0.6"
-proc-macro2 = "1"
-auto_impl = "1.2.0"
-ambassador = "0.4.2"
-modular-bitfield = "0.13.1"
-static_assertions = { version = "1.1.0" }
+syn = { version = "2", default-features = false }
+quote = { version = "1", default-features = false }
+ctor = { version = "0.6", default-features = false }
 strum = { version = "0.27", default-features = false }
-syn = { version = "2", features = ["full", "extra-traits"] }
+proc-macro2 = { version = "1", default-features = false }
+auto_impl = { version = "1.2.0", default-features = false }
+ambassador = { version = "0.4.2", default-features = false }
 derive_more = { version = "2.1.0", default-features = false }
+modular-bitfield = { version = "0.13.1", default-features = false }
+static_assertions = { version = "1.1.0", default-features = false }
 
 # no_std
-spin = "0.10"
-cfg-if = "1.0"
-alloc-no-stdlib = "2.0"
-lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
+spin = { version = "0.10", default-features = false }
+cfg-if = { version = "1.0", default-features = false }
+lazy_static = { version = "1.5.0", default-features = false }
+alloc-no-stdlib = { version = "2.0", default-features = false }
 
 # system
-libc = "0.2"
-rlimit = "0.11"
-hostname = "0.4.0"
-tokio-vsock = "0.7"
-tikv-jemallocator = "0.6"
+libc = { version = "0.2", default-features = false }
+rlimit = { version = "0.11", default-features = false }
+hostname = { version = "0.4.0", default-features = false }
+tokio-vsock = { version = "0.7", default-features = false }
+tikv-jemallocator = { version = "0.6", default-features = false }
 
 # tooling
-notify = "8.2"
-cargo_metadata = "0.18.1"
+notify = { version = "8.2", default-features = false }
+cargo_metadata = { version = "0.18.1", default-features = false }
 
 # rate limiting
-governor = "0.7"
+governor = { version = "0.7", default-features = false }
 
-# Use the same local sources for transitive registry dependencies.
-[patch.crates-io]
-revm = { path = "vendor/revm/revm-42.0.1" }
-alloy-evm = { path = "vendor/alloy/alloy-evm-0.38.0" }
-alloy-rlp = { path = "vendor/alloy/alloy-rlp-0.3.16" }
-alloy-eips = { path = "vendor/alloy/alloy-eips-2.4.1" }
-alloy-trie = { path = "vendor/alloy/alloy-trie-0.9.5" }
-revm-state = { path = "vendor/revm/revm-state-42.0.0" }
-alloy-serde = { path = "vendor/alloy/alloy-serde-2.4.1" }
-alloy-pubsub = { path = "vendor/alloy/alloy-pubsub-2.4.1" }
-alloy-signer = { path = "vendor/alloy/alloy-signer-2.4.1" }
-revm-context = { path = "vendor/revm/revm-context-42.0.0" }
-revm-handler = { path = "vendor/revm/revm-handler-42.0.1" }
-alloy-chains = { path = "vendor/alloy/alloy-chains-0.2.36" }
-alloy-dyn-abi = { path = "vendor/alloy/alloy-dyn-abi-1.6.1" }
-alloy-eip2124 = { path = "vendor/alloy/alloy-eip2124-0.2.0" }
-alloy-eip2930 = { path = "vendor/alloy/alloy-eip2930-0.2.3" }
-alloy-eip7702 = { path = "vendor/alloy/alloy-eip7702-0.6.3" }
-alloy-eip7928 = { path = "vendor/alloy/alloy-eip7928-0.4.5" }
-alloy-genesis = { path = "vendor/alloy/alloy-genesis-2.4.1" }
-alloy-network = { path = "vendor/alloy/alloy-network-2.4.1" }
-revm-bytecode = { path = "vendor/revm/revm-bytecode-42.0.0" }
-revm-database = { path = "vendor/revm/revm-database-42.0.0" }
-alloy-contract = { path = "vendor/alloy/alloy-contract-2.4.1" }
-alloy-json-abi = { path = "vendor/alloy/alloy-json-abi-1.6.1" }
-alloy-json-rpc = { path = "vendor/alloy/alloy-json-rpc-2.4.1" }
-alloy-provider = { path = "vendor/alloy/alloy-provider-2.4.1" }
-revm-inspector = { path = "vendor/revm/revm-inspector-42.0.1" }
-alloy-consensus = { path = "vendor/alloy/alloy-consensus-2.4.1" }
-alloy-rpc-types = { path = "vendor/alloy/alloy-rpc-types-2.4.1" }
-alloy-sol-macro = { path = "vendor/alloy/alloy-sol-macro-1.6.1" }
-alloy-sol-types = { path = "vendor/alloy/alloy-sol-types-1.6.1" }
-alloy-transport = { path = "vendor/alloy/alloy-transport-2.4.1" }
-alloy-tx-macros = { path = "vendor/alloy/alloy-tx-macros-2.4.1" }
-revm-inspectors = { path = "vendor/revm/revm-inspectors-0.42.2" }
-revm-precompile = { path = "vendor/revm/revm-precompile-42.0.1" }
-revm-primitives = { path = "vendor/revm/revm-primitives-42.0.0" }
-alloy-primitives = { path = "vendor/alloy/alloy-primitives-1.6.1" }
-alloy-rpc-client = { path = "vendor/alloy/alloy-rpc-client-2.4.1" }
-reth-codecs = { path = "vendor/reth-primitives/reth-codecs-0.6.0" }
-revm-interpreter = { path = "vendor/revm/revm-interpreter-42.0.0" }
-alloy-rlp-derive = { path = "vendor/alloy/alloy-rlp-derive-0.3.16" }
-alloy-signer-local = { path = "vendor/alloy/alloy-signer-local-2.4.1" }
-alloy-transport-ws = { path = "vendor/alloy/alloy-transport-ws-2.4.1" }
-alloy-consensus-any = { path = "vendor/alloy/alloy-consensus-any-2.4.1" }
-alloy-node-bindings = { path = "vendor/alloy/alloy-node-bindings-2.4.1" }
-alloy-rpc-types-any = { path = "vendor/alloy/alloy-rpc-types-any-2.4.1" }
-alloy-rpc-types-eth = { path = "vendor/alloy/alloy-rpc-types-eth-2.4.1" }
-alloy-rpc-types-mev = { path = "vendor/alloy/alloy-rpc-types-mev-2.4.1" }
-alloy-transport-ipc = { path = "vendor/alloy/alloy-transport-ipc-2.4.1" }
-alloy-transport-http = { path = "vendor/alloy/alloy-transport-http-2.4.1" }
-reth-rpc-traits = { path = "vendor/reth-primitives/reth-rpc-traits-0.6.0" }
-alloy-rpc-types-admin = { path = "vendor/alloy/alloy-rpc-types-admin-2.4.1" }
-alloy-rpc-types-anvil = { path = "vendor/alloy/alloy-rpc-types-anvil-2.4.1" }
-alloy-rpc-types-debug = { path = "vendor/alloy/alloy-rpc-types-debug-2.4.1" }
-alloy-rpc-types-trace = { path = "vendor/alloy/alloy-rpc-types-trace-2.4.1" }
-alloy-sol-macro-input = { path = "vendor/alloy/alloy-sol-macro-input-1.6.1" }
-alloy-sol-type-parser = { path = "vendor/alloy/alloy-sol-type-parser-1.6.1" }
-alloy-rpc-types-beacon = { path = "vendor/alloy/alloy-rpc-types-beacon-2.4.1" }
-alloy-rpc-types-engine = { path = "vendor/alloy/alloy-rpc-types-engine-2.4.1" }
-alloy-rpc-types-txpool = { path = "vendor/alloy/alloy-rpc-types-txpool-2.4.1" }
-revm-context-interface = { path = "vendor/revm/revm-context-interface-42.0.0" }
-reth-codecs-derive = { path = "vendor/reth-primitives/reth-codecs-derive-0.6.0" }
-revm-database-interface = { path = "vendor/revm/revm-database-interface-42.0.0" }
-alloy-network-primitives = { path = "vendor/alloy/alloy-network-primitives-2.4.1" }
-alloy-sol-macro-expander = { path = "vendor/alloy/alloy-sol-macro-expander-1.6.1" }
-reth-zstd-compressors = { path = "vendor/reth-primitives/reth-zstd-compressors-0.6.0" }
-reth-primitives-traits = { path = "vendor/reth-primitives/reth-primitives-traits-0.6.0" }
-alloy-hardforks-0-4-7 = { path = "vendor/alloy/alloy-hardforks-0.4.7", package = "alloy-hardforks" }
-alloy-hardforks-0-2-13 = { path = "vendor/alloy/alloy-hardforks-0.2.13", package = "alloy-hardforks" }
+# Additional vendored crates
+enr = { path = "vendor/enr", default-features = false }
+ruint = { path = "vendor/ruint", default-features = false }
+nybbles = { path = "vendor/nybbles", default-features = false }
+ef-tests = { path = "vendor/ef-tests", default-features = false }
+tree_hash = { path = "vendor/tree_hash", default-features = false }
+evm2-macros = { path = "vendor/evm2-macros", default-features = false }
+ethereum_serde_utils = { path = "vendor/ethereum_serde_utils", default-features = false }
+discv5-reth = { path = "vendor/discv5-reth", default-features = false, package = "discv5-reth" }
+
+# Additional shared dependencies
+fnv = { version = "1", default-features = false }
+crc = { version = "3", default-features = false }
+itoa = { version = "1", default-features = false }
+aes = { version = "0.8", default-features = false }
+ctr = { version = "0.9", default-features = false }
+der = { version = "0.7", default-features = false }
+rlp = { version = "0.5", default-features = false }
+log = { version = "0.4", default-features = false }
+heck = { version = "0.5", default-features = false }
+phf = { version = "0.14", default-features = false }
+bitvec = { version = "1", default-features = false }
+cc = { version = "1.2.62", default-features = false }
+typenum = { version = "1", default-features = false }
+hkdf = { version = "0.12", default-features = false }
+uint = { version = "0.10", default-features = false }
+paste = { version = "1.0", default-features = false }
+borsh = { version = "1.5", default-features = false }
+bcs = { version = "0.2.1", default-features = false }
+bn-rs = { version = "0.2", default-features = false }
+pyo3 = { version = "0.25", default-features = false }
+ethabi = { version = "18", default-features = false }
+bimap = { version = "0.6", default-features = false }
+slotmap = { version = "1", default-features = false }
+prost = { version = "0.12", default-features = false }
+indexmap = { version = "2", default-features = false }
+smallvec = { version = "1", default-features = false }
+winnow = { version = "1.0", default-features = false }
+insta = { version = "1.47", default-features = false }
+diesel = { version = "2.2", default-features = false }
+schemars = { version = "1", default-features = false }
+approx = { version = "0.5", default-features = false }
+ark-ec = { version = "0.6", default-features = false }
+ripemd = { version = "0.2", default-features = false }
+lz4 = { version = "1.28.1", default-features = false }
+byteorder = { version = "1", default-features = false }
+quanta = { version = "0.12", default-features = false }
+test-fuzz = { version = "7", default-features = false }
+dunce = { version = "1.0.4", default-features = false }
+socket2 = { version = "0.6", default-features = false }
+rapidhash = { version = "4", default-features = false }
+fastrlp = { version = "0.3", default-features = false }
+blst = { version = "0.3.15", default-features = false }
+ark-std = { version = "0.6", default-features = false }
+anstyle = { version = "1.0", default-features = false }
+boa_gc = { version = "0.21", default-features = false }
+snapbox = { version = "1.2", default-features = false }
+hmac = { version = "0.12.1", default-features = false }
+object = { version = "0.39", default-features = false }
+bindgen = { version = "0.72", default-features = false }
+bitflags = { version = "2.4", default-features = false }
+yubihsm = { version = "0.42", default-features = false }
+arrayvec = { version = "0.7", default-features = false }
+foldhash = { version = "0.2", default-features = false }
+subtle = { version = "2.6.1", default-features = false }
+valuable = { version = "0.1", default-features = false }
+trybuild = { version = "1.0", default-features = false }
+darling = { version = "0.23", default-features = false }
+num_enum = { version = "0.7", default-features = false }
+typeid = { version = "1.0.3", default-features = false }
+mappings = { version = "0.7", default-features = false }
+sysinfo = { version = "0.38", default-features = false }
+nonmax = { version = "0.5.5", default-features = false }
+cipher = { version = "0.4.3", default-features = false }
+console = { version = "0.16", default-features = false }
+zeroize = { version = "1.8.1", default-features = false }
+schnellru = { version = "0.2", default-features = false }
+fixed-map = { version = "0.9", default-features = false }
+lz4_flex = { version = "0.12", default-features = false }
+delay_map = { version = "0.4", default-features = false }
+hashlink = { version = "0.11", default-features = false }
+if-addrs = { version = "0.13", default-features = false }
+rand_core = { version = "0.6", default-features = false }
+sqlx-core = { version = "0.8", default-features = false }
+postgres = { version = "0.19", default-features = false }
+fdlimit = { version = "0.3.0", default-features = false }
+procfs = { version = "0.18.0", default-features = false }
+walkdir = { version = "2.3.3", default-features = false }
+vergen = { version = "10.0.1", default-features = false }
+digest = { version = "0.10.5", default-features = false }
+rmp-serde = { version = "1.3", default-features = false }
+wincode = { version = "0.5.4", default-features = false }
+inkwell = { version = "0.9.0", default-features = false }
+once_cell = { version = "1.19", default-features = false }
+const-hex = { version = "1.14", default-features = false }
+itertools = { version = "0.14", default-features = false }
+interprocess = { version = "2", default-features = false }
+tokio-test = { version = "0.4", default-features = false }
+rustc-hash = { version = "2.0", default-features = false }
+memmap2 = { version = "0.9.11", default-features = false }
+aes-gcm = { version = "0.10.3", default-features = false }
+multiaddr = { version = "0.18", default-features = false }
+quickcheck = { version = "0.9", default-features = false }
+aquamarine = { version = "0.6", default-features = false }
+hashbrown = { version = "0.17", default-features = false }
+bigdecimal = { version = "0.4", default-features = false }
+num-bigint = { version = "0.4", default-features = false }
+arrayref = { version = "0.3.6", default-features = false }
+roaring = { version = "0.11.3", default-features = false }
+mcl_rust = { version = "1.2.0", default-features = false }
+postcard = { version = "1.1.3", default-features = false }
+pprof_util = { version = "0.8", default-features = false }
+triehash = { version = "0.8.4", default-features = false }
+libloading = { version = "0.9", default-features = false }
+thread_local = { version = "1", default-features = false }
+hyper-tls = { version = "0.6.0", default-features = false }
+ci_info = { version = "0.14.14", default-features = false }
+wasmtimer = { version = "0.4.0", default-features = false }
+tiny-keccak = { version = "2.0", default-features = false }
+bytemuck = { version = "1.13.1", default-features = false }
+num-integer = { version = "0.1", default-features = false }
+ark-bn254 = { version = "0.3.0", default-features = false }
+rustversion = { version = "1.0", default-features = false }
+boa_engine = { version = "0.21", default-features = false }
+colorchoice = { version = "1.0", default-features = false }
+page_size = { version = "0.6.0", default-features = false }
+comfy-table = { version = "7.0", default-features = false }
+hash-db = { version = "=0.15.2", default-features = false }
+data-encoding = { version = "2", default-features = false }
+oxc_index = { version = "5.0.0", default-features = false }
+futures-util = { version = "0.3", default-features = false }
+tonic-build = { version = "0.11", default-features = false }
+visibility = { version = "0.1.1", default-features = false }
+macro-string = { version = "0.2", default-features = false }
+coins-bip32 = { version = "0.12", default-features = false }
+coins-bip39 = { version = "0.12", default-features = false }
+more-asserts = { version = "0.3", default-features = false }
+dyn-clone = { version = "1.0.17", default-features = false }
+allocative = { version = "0.3.2", default-features = false }
+keccak-asm = { version = "0.1.5", default-features = false }
+aws-lc-rs = { version = "1.16.2", default-features = false }
+substrate-bn = { version = "0.6", default-features = false }
+gmp-mpfr-sys = { version = "1.6", default-features = false }
+futures-core = { version = "0.3", default-features = false }
+derive-where = { version = "1.6", default-features = false }
+corosensei = { version = "0.3.4", default-features = false }
+plain_hasher = { version = "0.2", default-features = false }
+concat-kdf = { version = "0.1.0", default-features = false }
+wait-timeout = { version = "0.2", default-features = false }
+ringbuffer = { version = "0.16.0", default-features = false }
+rand_xorshift = { version = "0.3", default-features = false }
+num-traits = { version = "0.2.16", default-features = false }
+ruint-macro = { version = "1.2.1", default-features = false }
+ark-serialize = { version = "0.6", default-features = false }
+ed25519-dalek = { version = "2.1", default-features = false }
+snmalloc-rs = { version = "0.3.7", default-features = false }
+serde_derive = { version = "1.0.0", default-features = false }
+pin-project = { version = "1.1.12", default-features = false }
+syn-solidity = { version = "1.6.1", default-features = false }
+fixed-cache = { version = "0.1.10", default-features = false }
+eth-keystore = { version = "0.5.0", default-features = false }
+serde_core = { version = "1.0.211", default-features = false }
+jemalloc_pprof = { version = "0.8", default-features = false }
+tracing-samply = { version = "0.1", default-features = false }
+tracing-tracy = { version = "0.11", default-features = false }
+rolling-file = { version = "0.2.0", default-features = false }
+jsonwebtoken = { version = "10.3.0", default-features = false }
+crossbeam-queue = { version = "0.3", default-features = false }
+humantime-serde = { version = "1.1", default-features = false }
+proptest-derive = { version = "0.8", default-features = false }
+crossbeam-utils = { version = "0.8", default-features = false }
+elliptic-curve = { version = "0.13", default-features = false }
+tracy-client = { version = "0.18.0", default-features = false }
+tracing-futures = { version = "0.2", default-features = false }
+linked_hash_set = { version = "0.1", default-features = false }
+assert_matches = { version = "1.5.0", default-features = false }
+ethereum_hashing = { version = "0.8", default-features = false }
+ws_stream_wasm = { version = "0.7.4", default-features = false }
+postgres-types = { version = "0.2.6", default-features = false }
+primitive-types = { version = "0.12", default-features = false }
+derive_arbitrary = { version = "1.3", default-features = false }
+tracing-chrome = { version = "0.7.2", default-features = false }
+tracing-journald = { version = "0.3", default-features = false }
+tracing-logfmt = { version = "0.3.7", default-features = false }
+metrics-derive = { version = "0.1.1", default-features = false }
+pretty_assertions = { version = "1.4", default-features = false }
+tree_hash_derive = { version = "0.12", default-features = false }
+async-compression = { version = "0.4", default-features = false }
+tikv-jemalloc-ctl = { version = "0.6", default-features = false }
+tikv-jemalloc-sys = { version = "0.6", default-features = false }
+thread-priority = { version = "3.0.0", default-features = false }
+futures-utils-wasm = { version = "0.1", default-features = false }
+context_deserialize = { version = "0.2", default-features = false }
+jsonrpsee-server = { version = "0.26.0", default-features = false }
+hickory-resolver = { version = "0.26.1", default-features = false }
+parity-scale-codec = { version = "3.2.1", default-features = false }
+wasm-bindgen-futures = { version = "0.4", default-features = false }
+aurora-engine-modexp = { version = "1.2", default-features = false }
+crossbeam-channel = { version = "0.5.13", default-features = false }
+boyer-moore-magiclen = { version = "0.2.16", default-features = false }
+tracing-opentelemetry = { version = "0.32.0", default-features = false }
+jsonrpsee-http-client = { version = "0.26.0", default-features = false }
+codspeed-criterion-compat = { version = "4.3", default-features = false }
+proptest-arbitrary-interop = { version = "0.1", default-features = false }
+rand_0_7 = { version = "0.7", package = "rand", default-features = false }
+syn_3_0_2 = { version = "3.0", package = "syn", default-features = false }
+tonic_0_11 = { version = "0.11", package = "tonic", default-features = false }
+proc-macro-error3 = { version = ">=3.0.0, <=3.0.1", default-features = false }
+sha2_0_11_0 = { version = "0.11", package = "sha2", default-features = false }
+rand_0_10_2 = { version = "0.10", package = "rand", default-features = false }
+lru_0_18_2 = { version = "0.18.2", package = "lru", default-features = false }
+k256_0_14_0 = { version = "0.14", package = "k256", default-features = false }
+bincode_1_3_3 = { version = "1", package = "bincode", default-features = false }
+sha3_0_11_0 = { version = "0.11.0", package = "sha3", default-features = false }
+p256_0_14_0 = { version = "0.14.0", package = "p256", default-features = false }
+snapbox_1_1 = { version = "1.1", package = "snapbox", default-features = false }
+ark-ff_0_3_0 = { version = "0.3.0", package = "ark-ff", default-features = false }
+ark-ff_0_4_2 = { version = "0.4.0", package = "ark-ff", default-features = false }
+ark-ff_0_5_0 = { version = "0.5.0", package = "ark-ff", default-features = false }
+fastrlp_0_4_0 = { version = "0.4", package = "fastrlp", default-features = false }
+quickcheck_1 = { version = "1", package = "quickcheck", default-features = false }
+opentelemetry-semantic-conventions = { version = "0.32", default-features = false }
+criterion_0_7 = { version = "0.7", package = "criterion", default-features = false }
+governor_0_10 = { version = "0.10", package = "governor", default-features = false }
+if-addrs_0_14_0 = { version = "0.14", package = "if-addrs", default-features = false }
+getrandom_0_2_17 = { version = "0.2", package = "getrandom", default-features = false }
+secp256k1_0_31_1 = { version = "0.31", package = "secp256k1", default-features = false }
+ark-bn254_0_4_0 = { version = "0.4.0", package = "ark-bn254", default-features = false }
+ark-bn254_0_5_0 = { version = "0.5.0", package = "ark-bn254", default-features = false }
+ark-bn254_0_6_0 = { version = "0.6.0", package = "ark-bn254", default-features = false }
+toml_0_9_12_spec_1_1_0 = { version = "0.9", package = "toml", default-features = false }
+hex-literal_0_4_1 = { version = "0.4", package = "hex-literal", default-features = false }
+assert_matches_1_5 = { version = "1.5", package = "assert_matches", default-features = false }
+postgres-types_0_2 = { version = "0.2", package = "postgres-types", default-features = false }
+ethereum_ssz_0_5_3 = { version = "0.5.3", package = "ethereum_ssz", default-features = false }
+similar-asserts_2_0 = { version = "2.0", package = "similar-asserts", default-features = false }
+opentelemetry_0_31_0 = { version = "0.31.0", package = "opentelemetry", default-features = false }
+proptest-derive_0_7_0 = { version = "0.7", package = "proptest-derive", default-features = false }
+tokio-tungstenite_0_29_0 = { version = "0.29", package = "tokio-tungstenite", default-features = false }
+opentelemetry-http_0_31_0 = { version = "0.31.0", package = "opentelemetry-http", default-features = false }
+tracing-opentelemetry_0_33_0 = { version = "0.33", package = "tracing-opentelemetry", default-features = false }
+codspeed-criterion-compat_5_0 = { version = "5.0", package = "codspeed-criterion-compat", default-features = false }

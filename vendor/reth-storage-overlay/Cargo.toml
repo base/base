@@ -1,0 +1,48 @@
+[package]
+name = "reth-storage-overlay"
+description = "State trie overlay construction and caching"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+metrics = { workspace = true }
+reth-trie = { workspace = true }
+alloy-eips = { workspace = true }
+reth-db-api = { workspace = true }
+reth-errors = { workspace = true }
+reth-metrics = { workspace = true }
+reth-trie-db = { workspace = true }
+reth-prune-types = { workspace = true }
+reth-trie-common = { workspace = true }
+reth-chain-state = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-storage-errors = { workspace = true }
+rayon = { workspace = true, optional = true }
+reth-ethereum-primitives = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
+parking_lot = { workspace = true, features = ["default"] }
+reth-storage-api = { workspace = true, features = ["db-api"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-tasks = { workspace = true, features = ["rayon"], optional = true }
+reth-primitives-traits = { workspace = true, features = ["dashmap", "std"] }
+[dev-dependencies]
+alloy-consensus = { workspace = true }
+reth-db = { workspace = true, features = ["test-utils"] }
+reth-trie = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+reth-chain-state = { workspace = true, features = ["test-utils"] }
+reth-primitives-traits = { workspace = true, features = ["test-utils"] }
+[features]
+partial-persistence = ["reth-stages-types/partial-persistence"]
+rayon = ["dep:rayon", "dep:reth-tasks"]

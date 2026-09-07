@@ -1,0 +1,58 @@
+[package]
+name = "discv5-reth"
+description = "Implementation of the p2p discv5 discovery protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "./README.md"
+
+[dependencies]
+aes = { workspace = true }
+ctr = { workspace = true }
+uint = { workspace = true }
+hkdf = { workspace = true }
+socket2 = { workspace = true }
+smallvec = { workspace = true }
+hashlink = { workspace = true }
+delay_map = { workspace = true }
+lazy_static = { workspace = true }
+more-asserts = { workspace = true }
+hex = { workspace = true, features = ["default"] }
+fnv = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+rand_08 = { workspace = true, features = ["default"] }
+aes-gcm = { workspace = true, features = ["default"] }
+arrayvec = { workspace = true, features = ["default"] }
+alloy-rlp = { workspace = true, features = ["default"] }
+parking_lot = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["default", "log"] }
+enr = { workspace = true, features = ["default", "k256", "ed25519"] }
+zeroize = { workspace = true, features = ["default", "zeroize_derive"] }
+multiaddr = { workspace = true, optional = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "net", "sync", "macros", "rt"] }
+libp2p-identity = { workspace = true, features = [
+  "ed25519",
+  "secp256k1",
+], optional = true }
+[dev-dependencies]
+if-addrs = { workspace = true }
+rand_core = { workspace = true }
+rand_xorshift = { workspace = true }
+rand_0_7 = { workspace = true, features = ["default"] }
+quickcheck = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "full"] }
+clap = { workspace = true, features = ["default", "derive"] }
+tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }
+[lints]
+workspace = true
+
+[features]
+libp2p = ["dep:libp2p-identity", "dep:multiaddr"]
+serde = ["enr/serde"]

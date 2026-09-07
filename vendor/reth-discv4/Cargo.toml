@@ -1,0 +1,46 @@
+[package]
+name = "reth-discv4"
+description = "Ethereum network discovery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+enr = { workspace = true }
+thiserror = { workspace = true }
+itertools = { workspace = true }
+discv5-reth = { workspace = true }
+reth-net-banlist = { workspace = true }
+reth-ethereum-forks = { workspace = true }
+serde = { workspace = true, optional = true }
+schnellru = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["attributes"] }
+parking_lot = { workspace = true, features = ["default"] }
+reth-net-nat = { workspace = true, features = ["default"] }
+tokio-stream = { workspace = true, features = ["default"] }
+reth-network-peers = { workspace = true, features = ["secp256k1"] }
+alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
+tokio = { workspace = true, features = ["io-util", "net", "time"] }
+rand_08 = { workspace = true, optional = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "serde"] }
+[dev-dependencies]
+assert_matches = { workspace = true }
+rand_08 = { workspace = true, features = ["default"] }
+reth-tracing = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
+[features]
+default = ["serde"]
+serde = ["dep:serde", "alloy-primitives/serde", "discv5-reth/serde", "enr/serde", "parking_lot/serde", "rand_08?/serde", "secp256k1/serde", "reth-ethereum-forks/serde"]
+test-utils = ["dep:rand_08"]

@@ -1,0 +1,70 @@
+[package]
+name = "reth-db-models"
+description = "Database models used in storage module."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-eips = { workspace = true }
+reth-primitives-traits = { workspace = true }
+serde = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+reth-codecs = { workspace = true, optional = true }
+modular-bitfield = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+[dev-dependencies]
+bytes = { workspace = true }
+reth-codecs = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+proptest = { workspace = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"] }
+reth-primitives-traits = { workspace = true, features = ["arbitrary", "reth-codec"] }
+[features]
+default = ["std"]
+std = [
+    "alloy-eips/std",
+    "alloy-primitives/std",
+    "reth-primitives-traits/std",
+    "bytes?/std",
+    "serde?/std",
+    "reth-codecs?/std",
+]
+serde = [
+    "dep:serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "bytes?/serde",
+    "reth-codecs?/serde",
+    "reth-primitives-traits/serde",
+]
+test-utils = [
+    "reth-primitives-traits/test-utils",
+    "arbitrary",
+    "reth-codecs?/test-utils",
+]
+arbitrary = [
+    "std",
+    "reth-primitives-traits/arbitrary",
+    "dep:arbitrary",
+    "alloy-primitives/arbitrary",
+    "alloy-eips/arbitrary",
+    "reth-codecs?/arbitrary",
+]
+reth-codec = [
+    "dep:reth-codecs",
+    "dep:modular-bitfield",
+    "dep:bytes",
+    "reth-primitives-traits/reth-codec",
+]

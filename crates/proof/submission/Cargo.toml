@@ -12,19 +12,11 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
-alloy-primitives.workspace = true
-alloy-rpc-types-eth.workspace = true
-
-# Tx Manager
-base-tx-manager.workspace = true
-
-# Proof
-base-proof-contracts.workspace = true
-
-# Error handling
-thiserror.workspace = true
-
+thiserror = { workspace = true }
+base-tx-manager = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+base-proof-contracts = { workspace = true }
 [dev-dependencies]
-alloy-consensus.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+alloy-consensus = { workspace = true }
+tokio = { workspace = true, features = ["default", "macros", "rt", "test-util"] }

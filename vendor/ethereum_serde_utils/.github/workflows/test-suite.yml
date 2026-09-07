@@ -1,0 +1,50 @@
+name: test-suite
+
+on:
+  push:
+    branches:
+      - main
+      - 'pr/*'
+  pull_request:
+env:
+  # Deny warnings in CI
+  RUSTFLAGS: "-D warnings"
+jobs:
+  cargo-fmt:
+    name: cargo-fmt
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Get latest version of stable Rust
+      run: rustup update stable
+    - name: Check formatting with cargo fmt
+      run: cargo fmt --all -- --check
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: test-${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v3
+    - name: Get latest version of stable Rust
+      run: rustup update stable
+    - name: Run tests
+      run: cargo test --release
+  coverage:
+    runs-on: ubuntu-latest
+    name: cargo-tarpaulin
+    steps:
+    - uses: actions/checkout@v3
+    - name: Get latest version of stable Rust
+      run: rustup update stable
+    - name: Install cargo-tarpaulin
+      uses: taiki-e/install-action@cargo-tarpaulin
+    - name: Check code coverage with cargo-tarpaulin
+      run: make coverage
+    - name: Upload to codecov.io
+      uses: codecov/codecov-action@v4
+      with:
+        fail_ci_if_error: true
+        token: ${{ secrets.CODECOV_TOKEN }}
+        informational: true

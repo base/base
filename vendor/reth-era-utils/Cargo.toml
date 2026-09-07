@@ -1,0 +1,44 @@
+[package]
+name = "reth-era-utils"
+description = "Utilities to store and fetch history data with storage-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+reth-era = { workspace = true }
+reth-etl = { workspace = true }
+reth-codecs = { workspace = true }
+reth-db-api = { workspace = true }
+futures-util = { workspace = true }
+reth-fs-util = { workspace = true }
+reth-provider = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-era-downloader = { workspace = true }
+reth-primitives-traits = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+tracing = { workspace = true, features = ["attributes"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread"] }
+[dev-dependencies]
+bytes = { workspace = true }
+reth-db-common = { workspace = true }
+reth-prune-types = { workspace = true }
+reth-static-file-types = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+tempfile = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+tokio-util = { workspace = true, features = ["default", "codec"] }
+[lints]
+workspace = true

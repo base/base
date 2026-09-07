@@ -16,133 +16,97 @@ path = "src/bin/base_devnet.rs"
 workspace = true
 
 [dependencies]
-# workspace
-base-runtime.workspace = true
-base-test-utils = { workspace = true, optional = true }
-base-txpool-rpc.workspace = true
-base-tx-manager.workspace = true
-base-tx-forwarding.workspace = true
-base-execution-cli.workspace = true
-base-execution-eip8130-rpc-node.workspace = true
-base-txpool-tracing.workspace = true
-base-upgrade-signal.workspace = true
-base-batcher-encoder.workspace = true
-base-batcher-service.workspace = true
-base-consensus-rpc = { workspace = true, features = ["client"] }
-base-protocol = { workspace = true, features = ["serde", "std"] }
-base-node-runner = { workspace = true, features = ["test-utils"] }
-base-builder-core = { workspace = true, features = ["test-utils"] }
-
-# consensus
-base-consensus-disc.workspace = true
-base-consensus-node.workspace = true
-base-consensus-peers.workspace = true
-base-consensus-gossip.workspace = true
-base-consensus-sources.workspace = true
-base-consensus-providers.workspace = true
-base-common-genesis.workspace = true
-base-common-chains.workspace = true
-
-# reth
-reth-db.workspace = true
-reth-tasks.workspace = true
-reth-provider.workspace = true
-reth-node-core.workspace = true
-base-node-core.workspace = true
-reth-ethereum-forks.workspace = true
-base-execution-rpc.workspace = true
-base-execution-txpool.workspace = true
-base-execution-chainspec.workspace = true
-reth-node-builder = { workspace = true, features = ["test-utils"] }
-
-# alloy
-alloy-signer.workspace = true
-alloy-network.workspace = true
-alloy-rpc-client.workspace = true
-alloy-primitives.workspace = true
+tower = { workspace = true }
+libp2p = { workspace = true }
+nanoid = { workspace = true }
+reth-tasks = { workspace = true }
+async-trait = { workspace = true }
+base-runtime = { workspace = true }
+alloy-signer = { workspace = true }
+reth-provider = { workspace = true }
+alloy-network = { workspace = true }
+reth-node-core = { workspace = true }
+reth-rpc-layer = { workspace = true }
+base-txpool-rpc = { workspace = true }
+base-tx-manager = { workspace = true }
+alloy-primitives = { workspace = true }
+base-consensus-disc = { workspace = true }
+base-consensus-node = { workspace = true }
+base-common-genesis = { workspace = true }
+reth-ethereum-forks = { workspace = true }
+base-common-network = { workspace = true }
+base-consensus-peers = { workspace = true }
+base-batcher-encoder = { workspace = true }
+base-batcher-service = { workspace = true }
+base-consensus-gossip = { workspace = true }
+base-consensus-sources = { workspace = true }
+base-prover-service-db = { workspace = true }
+base-common-precompiles = { workspace = true }
+base-consensus-providers = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
+hex = { workspace = true, features = ["default"] }
+url = { workspace = true, features = ["default"] }
+k256 = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default"] }
+eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
+reth-db = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["default"] }
+base-execution-eip8130-rpc-node = { workspace = true }
+tempfile = { workspace = true, features = ["default"] }
+base-test-utils = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, features = ["std"] }
+tokio-util = { workspace = true, features = ["default"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
-alloy-provider = { workspace = true, features = ["reqwest"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-alloy-signer-local = { workspace = true, features = ["mnemonic"] }
-
-# base-alloy
-base-common-network.workspace = true
-base-common-rpc-types.workspace = true
-base-common-precompiles.workspace = true
-
-# proof
-base-prover-service.workspace = true
-base-prover-service-db.workspace = true
-base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
-
-# tokio
-tokio-util.workspace = true
-tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
-
-# rpc
 axum = { workspace = true, features = ["http1", "tokio"] }
-jsonrpsee = { workspace = true, features = ["http-client", "server"] }
-reth-rpc-layer.workspace = true
-tower.workspace = true
-
-# p2p
-k256.workspace = true
-libp2p.workspace = true
-
-# misc
-hex.workspace = true
-url.workspace = true
-rand.workspace = true
-eyre.workspace = true
-nanoid.workspace = true
-reqwest.workspace = true
-tempfile.workspace = true
-async-trait.workspace = true
-clap = { workspace = true, features = ["derive", "env"] }
-tracing = { workspace = true, features = ["std"] }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
-serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
+base-node-core = { workspace = true, features = ["default"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-rpc-client = { workspace = true, features = ["default"] }
+base-protocol = { workspace = true, features = ["serde", "std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
+base-tx-forwarding = { workspace = true, features = ["default"] }
+base-execution-cli = { workspace = true, features = ["default"] }
+base-common-chains = { workspace = true, features = ["default"] }
+base-execution-rpc = { workspace = true, features = ["default"] }
+base-txpool-tracing = { workspace = true, features = ["default"] }
+base-upgrade-signal = { workspace = true, features = ["default"] }
+base-prover-service = { workspace = true, features = ["default"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+base-execution-txpool = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = ["default"] }
+clap = { workspace = true, features = ["default", "derive", "env"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
+jsonrpsee = { workspace = true, features = ["http-client", "server"] }
+base-execution-chainspec = { workspace = true, features = ["default"] }
+alloy-provider = { workspace = true, features = ["default", "reqwest"] }
+base-consensus-rpc = { workspace = true, features = ["default", "client"] }
+base-builder-core = { workspace = true, features = ["default", "test-utils"] }
+reth-node-builder = { workspace = true, features = ["default", "test-utils"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
+tracing-subscriber = { workspace = true, features = ["default", "env-filter", "fmt"] }
+base-prover-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
+tokio = { workspace = true, features = ["default", "full", "rt-multi-thread", "macros"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
-
 [dev-dependencies]
-# consensus
-base-consensus-derive.workspace = true
+alloy-json-rpc = { workspace = true }
+base-load-tests = { workspace = true }
+base-optimism-rpc = { workspace = true }
+base-consensus-derive = { workspace = true }
+base-common-consensus = { workspace = true }
+reth-primitives-traits = { workspace = true }
+base-shadow-indexer-db = { workspace = true }
+base-common-rpc-types-engine = { workspace = true }
+chrono = { workspace = true, features = ["default"] }
+anyhow = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+tokio-tungstenite = { workspace = true, features = ["default"] }
+base-shadow-indexer = { workspace = true, features = ["default"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
-
-# alloy
-alloy-json-rpc.workspace = true
-
-# base-alloy
-base-common-consensus.workspace = true
-base-common-rpc-types-engine.workspace = true
-
-# proof
-base-optimism-rpc.workspace = true
-
-# execution
-base-shadow-indexer.workspace = true
-base-shadow-indexer-db.workspace = true
-
-# reth
-reth-primitives-traits.workspace = true
-
-# database
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
-
-# misc
-base-load-tests.workspace = true
-chrono.workspace = true
-anyhow.workspace = true
-futures.workspace = true
-tokio-tungstenite.workspace = true
-
 [features]
 default = [ "upgrade-signal" ]
 # The upgrade-signal stack deploys a mock ProtocolVersions contract via base-test-utils, whose

@@ -12,27 +12,15 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# database
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
-
-# primitives
-reth-primitives-traits = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["default"] }
+chrono = { workspace = true, features = ["default"] }
+anyhow = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
-
-# serialization
-serde.workspace = true
-chrono.workspace = true
-
-# async
-tokio.workspace = true
-
-# error handling
-anyhow.workspace = true
-
-# tracing
-tracing.workspace = true
-
+reth-primitives-traits = { workspace = true, features = ["serde"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 [dev-dependencies]
-alloy-consensus.workspace = true
-alloy-primitives.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-primitives = { workspace = true }

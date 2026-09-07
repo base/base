@@ -16,7 +16,6 @@ path = "src/main.rs"
 workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-eyre.workspace = true
-base-proof-tee-nitro-enclave.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-
+eyre = { workspace = true, features = ["default"] }
+base-proof-tee-nitro-enclave = { workspace = true }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }

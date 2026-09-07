@@ -12,21 +12,15 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# base
-base-retry.workspace = true
-base-prover-service-client.workspace = true
-base-prover-service-protocol.workspace = true
-
-# async
-tokio-util.workspace = true
-async-trait.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
-
-# misc
-backon.workspace = true
-chrono.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
-
+tracing = { workspace = true }
+thiserror = { workspace = true }
+base-retry = { workspace = true }
+async-trait = { workspace = true }
+base-prover-service-client = { workspace = true }
+backon = { workspace = true, features = ["default"] }
+chrono = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default"] }
+base-prover-service-protocol = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "macros", "rt", "sync", "time"] }
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["default", "test-util"] }

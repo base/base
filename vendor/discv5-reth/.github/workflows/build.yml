@@ -1,0 +1,77 @@
+name: build
+
+on: pull_request
+
+jobs:
+  cargo-fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get latest version of stable rust
+        run: rustup update stable
+      - name: Check formatting with cargofmt
+        run: cargo fmt --all -- --check --config imports_granularity=Crate
+  clippy:
+    runs-on: ubuntu-latest
+    needs: cargo-fmt
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get latest version of stable rust
+        run: rustup update stable
+      - name: Lint code for quality and style with Clippy
+        run: cargo clippy --workspace --tests --all-features -- -D warnings
+  release-tests-ubuntu:
+    runs-on: ubuntu-latest
+    needs: cargo-fmt
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get latest version of stable rust
+        run: rustup update stable
+      - name: Run tests in release
+        run: cargo test --all --release
+  test-all-features:
+    runs-on: ubuntu-latest
+    container:
+      image: rust
+    needs: cargo-fmt
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get latest version of stable rust
+        run: rustup update stable
+      - name: Run tests in release
+        run: cargo test --all --release --all-features
+  check-rustdoc-links:
+    name: Check rustdoc intra-doc links
+    runs-on: ubuntu-latest
+    container:
+      image: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get latest version of stable rust
+        run: rustup update stable
+      - name: Check rustdoc links
+        run: RUSTDOCFLAGS="--deny broken_intra_doc_links" cargo doc --verbose --workspace --no-deps --document-private-items
+  cargo-udeps:
+    name: cargo-udeps
+    runs-on: ubuntu-latest
+    needs: cargo-fmt
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Rust nightly
+      run: rustup toolchain install nightly
+    - name: Install cargo-udeps
+      run: cargo install cargo-udeps --locked --force
+    - name: Run cargo udeps to identify unused crates in the dependency graph
+      run: cargo +nightly udeps --tests --all-targets --release
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    needs: cargo-fmt
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get latest version of stable rust
+        run: rustup update stable
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+      - name: Run cargo deny
+        run: cargo deny check bans sources

@@ -1,0 +1,118 @@
+[package]
+name = "reth-node-builder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+rayon = { workspace = true }
+fdlimit = { workspace = true }
+reth-evm = { workspace = true }
+reth-rpc = { workspace = true }
+reth-exex = { workspace = true }
+jsonrpsee = { workspace = true }
+reth-prune = { workspace = true }
+aquamarine = { workspace = true }
+reth-config = { workspace = true }
+reth-db-api = { workspace = true }
+reth-stages = { workspace = true }
+reth-fs-util = { workspace = true }
+reth-network = { workspace = true }
+reth-rpc-api = { workspace = true }
+reth-node-api = { workspace = true }
+reth-provider = { workspace = true }
+reth-chainspec = { workspace = true }
+reth-consensus = { workspace = true }
+reth-db-common = { workspace = true }
+reth-node-core = { workspace = true }
+reth-rpc-layer = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-tokio-util = { workspace = true }
+reth-chain-state = { workspace = true }
+reth-engine-tree = { workspace = true }
+reth-engine-util = { workspace = true }
+reth-network-api = { workspace = true }
+reth-node-events = { workspace = true }
+reth-rpc-builder = { workspace = true }
+reth-static-file = { workspace = true }
+reth-engine-local = { workspace = true }
+reth-node-metrics = { workspace = true }
+reth-rpc-eth-types = { workspace = true }
+reth-node-ethstats = { workspace = true }
+reth-rpc-engine-api = { workspace = true }
+reth-payload-builder = { workspace = true }
+reth-transaction-pool = { workspace = true }
+reth-engine-primitives = { workspace = true }
+reth-primitives-traits = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+reth-invalid-block-hooks = { workspace = true }
+reth-basic-payload-builder = { workspace = true }
+reth-consensus-debug-client = { workspace = true }
+reth-db = { workspace = true, features = ["mdbx"] }
+eyre = { workspace = true, features = ["default"] }
+alloy-eips = { workspace = true, features = ["kzg"] }
+futures = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+reth-tasks = { workspace = true, features = ["rayon"] }
+tracing = { workspace = true, features = ["attributes"] }
+parking_lot = { workspace = true, features = ["default"] }
+tokio-stream = { workspace = true, features = ["default"] }
+reth-downloaders = { workspace = true, features = ["default"] }
+reth-network-p2p = { workspace = true, features = ["default"] }
+reth-storage-overlay = { workspace = true, features = ["rayon"] }
+reth-tracing = { workspace = true, features = ["default", "std"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
+alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
+secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
+tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thread"] }
+[dev-dependencies]
+reth-ethereum-engine-primitives = { workspace = true }
+tempfile = { workspace = true, features = ["default"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+reth-node-ethereum = { workspace = true, features = ["default"] }
+reth-evm-ethereum = { workspace = true, features = ["test-utils"] }
+reth-payload-builder = { workspace = true, features = ["test-utils"] }
+[features]
+default = []
+js-tracer = [
+    "reth-rpc/js-tracer",
+    "reth-node-ethereum/js-tracer",
+    "reth-rpc-eth-types/js-tracer",
+]
+test-utils = [
+    "reth-db/test-utils",
+    "reth-chain-state/test-utils",
+    "reth-chainspec/test-utils",
+    "reth-consensus/test-utils",
+    "reth-engine-tree/test-utils",
+    "reth-evm/test-utils",
+    "reth-downloaders/test-utils",
+    "reth-network/test-utils",
+    "reth-network-p2p/test-utils",
+    "reth-payload-builder/test-utils",
+    "reth-stages/test-utils",
+    "reth-db-api/test-utils",
+    "reth-provider/test-utils",
+    "reth-transaction-pool/test-utils",
+    "reth-evm-ethereum/test-utils",
+    "reth-node-ethereum/test-utils",
+    "reth-primitives-traits/test-utils",
+    "reth-tasks/test-utils",
+]
+trie-debug = [
+    "reth-engine-tree/trie-debug",
+    "reth-engine-primitives/trie-debug",
+    "reth-node-core/trie-debug",
+]

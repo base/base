@@ -41,7 +41,7 @@ udeps: _build-contracts
 # Runs cargo deny to check dependencies
 deny:
     @command -v cargo-deny >/dev/null 2>&1 || cargo install cargo-deny
-    (cd {{justfile_directory()}} && cargo deny check bans --hide-inclusion-graph)
+    (cd {{justfile_directory()}} && cargo deny --all-features check bans --hide-inclusion-graph)
 
 # Checks no_std crates compile without std
 no-std:

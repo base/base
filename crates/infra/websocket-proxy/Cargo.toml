@@ -15,25 +15,23 @@ name = "websocket_proxy"
 workspace = true
 
 [dependencies]
-http.workspace = true
-futures.workspace = true
-backoff.workspace = true
-tokio-util.workspace = true
-tokio-tungstenite.workspace = true
-base-trusted-proxy.workspace = true
+base-trusted-proxy = { workspace = true }
 metrics = { workspace = true, optional = true }
 brotli = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["std"] }
+http = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
+futures = { workspace = true, features = ["default"] }
+backoff = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive", "std"] }
 base-metrics = { workspace = true, features = ["metrics"] }
+tokio = { workspace = true, features = ["default", "full"] }
+tokio-tungstenite = { workspace = true, features = ["default"] }
 axum = { workspace = true, features = ["ws", "query", "tokio", "http1"] }
-
 [dev-dependencies]
-reqwest.workspace = true
-
+reqwest = { workspace = true, features = ["default"] }
 [features]
 default = [ "metrics" ]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]

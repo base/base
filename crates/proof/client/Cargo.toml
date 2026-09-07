@@ -11,26 +11,24 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-spin.workspace = true
-tracing.workspace = true
-alloy-evm.workspace = true
-thiserror.workspace = true
-base-proof.workspace = true
-base-protocol.workspace = true
-base-common-evm.workspace = true
-alloy-consensus.workspace = true
-alloy-primitives.workspace = true
-base-proof-driver.workspace = true
-base-proof-executor.workspace = true
-base-proof-preimage.workspace = true
-base-common-consensus.workspace = true
-base-consensus-derive.workspace = true
-base-common-genesis.workspace = true
-
+tracing = { workspace = true }
+alloy-evm = { workspace = true }
+thiserror = { workspace = true }
+base-proof = { workspace = true }
+base-protocol = { workspace = true }
+base-common-evm = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-primitives = { workspace = true }
+base-proof-driver = { workspace = true }
+base-proof-executor = { workspace = true }
+base-proof-preimage = { workspace = true }
+base-common-genesis = { workspace = true }
+base-common-consensus = { workspace = true }
+base-consensus-derive = { workspace = true }
+spin = { workspace = true, features = ["default"] }
 [dev-dependencies]
-rstest.workspace = true
-tokio = { workspace = true, features = ["full"] }
-
+rstest = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "full"] }
 [features]
 std = [
 	"alloy-consensus/std",

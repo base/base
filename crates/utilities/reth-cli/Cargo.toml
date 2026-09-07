@@ -12,16 +12,15 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-tar.workspace = true
-zstd.workspace = true
-anyhow.workspace = true
-blake3.workspace = true
-rayon.workspace = true
-tracing.workspace = true
-serde_json.workspace = true
-reth-node-core.workspace = true
-reth-prune-types.workspace = true
-reth-cli-commands.workspace = true
-
+rayon = { workspace = true }
+tracing = { workspace = true }
+serde_json = { workspace = true }
+reth-node-core = { workspace = true }
+reth-prune-types = { workspace = true }
+reth-cli-commands = { workspace = true }
+tar = { workspace = true, features = ["default"] }
+zstd = { workspace = true, features = ["default"] }
+anyhow = { workspace = true, features = ["default"] }
+blake3 = { workspace = true, features = ["default"] }
 [dev-dependencies]
-tempfile.workspace = true
+tempfile = { workspace = true, features = ["default"] }

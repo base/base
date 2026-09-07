@@ -1,0 +1,49 @@
+//! BLS12-381 map fp to g1 precompile. More details in [`run`]
+
+use super::utils::{pad_g1_point, remove_fp_padding};
+use crate::{
+    interpreter::GasTracker,
+    precompiles::{
+        PrecompileHalt, PrecompileOutput, PrecompileResult,
+        bls12_381_const::{MAP_FP_TO_G1_BASE_GAS_FEE, PADDED_FP_LENGTH},
+    },
+};
+
+/// Field-to-curve call expects 64 bytes as an input that is interpreted as an
+/// element of Fp. Output of this call is 128 bytes and is an encoded G1 point.
+/// See also: <https://eips.ethereum.org/EIPS/eip-2537#abi-for-mapping-fp-element-to-g1-point>
+pub fn run(input: &[u8], gas: &mut GasTracker) -> PrecompileResult {
+    gas.spend(MAP_FP_TO_G1_BASE_GAS_FEE)?;
+
+    if input.len() != PADDED_FP_LENGTH {
+        return Err(PrecompileHalt::Bls12381MapFpToG1InputLength.into());
+    }
+
+    let input_p0 = remove_fp_padding(input)?;
+
+    let unpadded_result = crate::precompiles::crypto().bls12_381_fp_to_g1(input_p0)?;
+
+    // Pad the result for EVM compatibility
+    let padded_result = pad_g1_point(&unpadded_result);
+
+    Ok(PrecompileOutput::new(padded_result.into()))
+}
+
+#[cfg(test)]
+mod test {
+    use alloy_primitives::{Bytes, hex};
+
+    use super::*;
+
+    #[test]
+    fn sanity_test() {
+        let input = Bytes::from(hex!(
+            "000000000000000000000000000000006900000000000000636f6e7472616374595a603f343061cd305a03f40239f5ffff31818185c136bc2595f2aa18e08f17"
+        ));
+        let fail = run(&input, &mut GasTracker::new(MAP_FP_TO_G1_BASE_GAS_FEE));
+        assert_eq!(
+            fail.err().and_then(|e| e.as_halt().cloned()),
+            Some(PrecompileHalt::NonCanonicalFp)
+        );
+    }
+}

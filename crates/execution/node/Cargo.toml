@@ -11,109 +11,90 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# reth
-alloy-rlp.workspace = true
-reth-db.workspace = true
-reth-discv5.workspace = true
-reth-evm.workspace = true
-reth-tasks.workspace = true
-reth-db-api.workspace = true
-reth-network.workspace = true
-reth-tracing.workspace = true
-reth-rpc-api.workspace = true
-reth-provider.workspace = true
-reth-node-api.workspace = true
-reth-consensus.workspace = true
-reth-node-core.workspace = true
-reth-chainspec.workspace = true
-reth-chain-state.workspace = true
-reth-storage-api = { workspace = true, features = ["db-api"] }
-reth-trie-common.workspace = true
-reth-node-builder.workspace = true
-reth-network-peers.workspace = true
-reth-rpc-engine-api.workspace = true
-reth-payload-builder.workspace = true
-reth-transaction-pool.workspace = true
-reth-rpc-server-types.workspace = true
-reth-payload-primitives.workspace = true
-## ensure secp256k1 recovery with rayon support is activated
-reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
-
-# op-reth
-base-protocol.workspace = true
-base-execution-rpc.workspace = true
-base-execution-txpool.workspace = true
-base-execution-chainspec.workspace = true
-base-execution-payload-builder.workspace = true
+serde = { workspace = true }
+tracing = { workspace = true }
+alloy-rlp = { workspace = true }
+humantime = { workspace = true }
+reth-tasks = { workspace = true }
+reth-discv5 = { workspace = true }
+reth-db-api = { workspace = true }
+reth-network = { workspace = true }
+reth-rpc-api = { workspace = true }
+base-protocol = { workspace = true }
+reth-provider = { workspace = true }
+reth-node-api = { workspace = true }
+reth-node-core = { workspace = true }
+base-common-evm = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-primitives = { workspace = true }
+reth-chain-state = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+reth-rpc-engine-api = { workspace = true }
+reth-payload-builder = { workspace = true }
+reth-transaction-pool = { workspace = true }
+reth-rpc-server-types = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+serde_json = { workspace = true, optional = true }
+clap = { workspace = true, features = ["default"] }
+eyre = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default"] }
+alloy-genesis = { workspace = true, optional = true }
+reth-db = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+reth-evm = { workspace = true, features = ["default"] }
+reth-tracing = { workspace = true, features = ["default"] }
+tokio-stream = { workspace = true, features = ["default"] }
+reth-e2e-test-utils = { workspace = true, optional = true }
+reth-consensus = { workspace = true, features = ["default"] }
+reth-chainspec = { workspace = true, features = ["default"] }
+reth-trie-common = { workspace = true, features = ["default"] }
+reth-node-builder = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
+reth-network-peers = { workspace = true, features = ["default"] }
+base-execution-rpc = { workspace = true, features = ["default"] }
+base-common-chains = { workspace = true, features = ["default"] }
+base-upgrade-signal = { workspace = true, features = ["default"] }
 base-execution-exex = { workspace = true, features = ["metrics"] }
 base-execution-trie = { workspace = true, features = ["metrics"] }
-base-execution-consensus = { workspace = true, features = ["std"] }
-base-execution-evm = { workspace = true, features = ["std", "rpc"] }
-
-# revm with required Base features
-# Note: this must be kept to ensure all features are properly enabled/forwarded
-base-common-evm.workspace = true
-revm = { workspace = true, features = [
-	"secp256k1",
-	"blst",
-	"c-kzg",
-	"memory_limit",
-] }
-
-# ethereum
-alloy-consensus.workspace = true
-alloy-primitives.workspace = true
-base-common-chains.workspace = true
-base-upgrade-signal.workspace = true
-alloy-rpc-types-eth.workspace = true
-alloy-rpc-types-engine.workspace = true
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-execution-txpool = { workspace = true, features = ["default"] }
+reth-payload-primitives = { workspace = true, features = ["default"] }
+base-execution-chainspec = { workspace = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
-
-# async
-tokio.workspace = true
-tokio-stream.workspace = true
-
-# misc
-clap.workspace = true
-eyre.workspace = true
-serde.workspace = true
-futures.workspace = true
-tracing.workspace = true
-humantime.workspace = true
-
-# test-utils dependencies
-serde_json = { workspace = true, optional = true }
-alloy-genesis = { workspace = true, optional = true }
-reth-e2e-test-utils = { workspace = true, optional = true }
-
+reth-storage-api = { workspace = true, features = ["default", "db-api"] }
+base-execution-payload-builder = { workspace = true, features = ["default"] }
+base-execution-consensus = { workspace = true, features = ["default", "std"] }
+base-execution-evm = { workspace = true, features = ["default", "std", "rpc"] }
+reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
+revm = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_limit"] }
 [dev-dependencies]
-rstest.workspace = true
-reth-rpc.workspace = true
-reth-db-common.workspace = true
-reth-codecs = { workspace = true, features = ["test-utils"] }
-reth-prune-types.workspace = true
-reth-trie.workspace = true
-reth-trie-db.workspace = true
-reth-payload-util.workspace = true
-reth-stages-types.workspace = true
-reth-rpc-eth-types.workspace = true
-reth-ethereum-forks.workspace = true
-reth-ethereum-primitives.workspace = true
-reth-revm = { workspace = true, features = ["std"] }
-reth-db = { workspace = true, features = ["test-utils"] }
+reth-rpc = { workspace = true }
+reth-trie = { workspace = true }
+alloy-eips = { workspace = true }
+reth-trie-db = { workspace = true }
+alloy-network = { workspace = true }
+reth-db-common = { workspace = true }
+base-common-evm = { workspace = true }
+reth-prune-types = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-payload-util = { workspace = true }
+reth-rpc-eth-types = { workspace = true }
+reth-ethereum-forks = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
+reth-revm = { workspace = true, features = ["default", "std"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-base-node-core = { workspace = true, features = ["test-utils"] }
-reth-node-builder = { workspace = true, features = ["test-utils"] }
-
-alloy-eips.workspace = true
-alloy-network.workspace = true
-criterion = { workspace = true, features = ["html_reports"] }
-base-common-evm.workspace = true
-
+reth-db = { workspace = true, features = ["default", "test-utils"] }
+reth-codecs = { workspace = true, features = ["alloy", "test-utils"] }
+reth-ethereum-primitives = { workspace = true, features = ["default"] }
+criterion = { workspace = true, features = ["default", "html_reports"] }
+base-node-core = { workspace = true, features = ["default", "test-utils"] }
+reth-node-builder = { workspace = true, features = ["default", "test-utils"] }
 [[bench]]
 name = "provider"
 harness = false
+
+[[test]]
+name = "e2e_testsuite"
+path = "tests/e2e-testsuite/main.rs"
 
 [features]
 default = [ "reth-codec" ]
@@ -163,7 +144,3 @@ test-utils = [
 	"serde_json",
 ]
 reth-codec = []
-
-[[test]]
-name = "e2e_testsuite"
-path = "tests/e2e-testsuite/main.rs"

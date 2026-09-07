@@ -1,0 +1,85 @@
+[package]
+name = "reth-trie-sparse"
+description = "Sparse MPT implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-trie = { workspace = true }
+reth-trie-common = { workspace = true }
+reth-execution-errors = { workspace = true }
+rayon = { workspace = true, optional = true }
+either = { workspace = true, optional = true }
+metrics = { workspace = true, optional = true }
+smallvec = { workspace = true, optional = true }
+strum = { workspace = true, features = ["derive"] }
+reth-metrics = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+serde = { workspace = true, features = ["derive"], optional = true }
+slotmap = { workspace = true, optional = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"], optional = true }
+tracing = { workspace = true, features = ["attributes"], optional = true }
+[dev-dependencies]
+itertools = { workspace = true }
+arbitrary = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+rand_08 = { workspace = true, features = ["default"] }
+proptest = { workspace = true, features = ["default"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+reth-tracing = { workspace = true, features = ["default"] }
+reth-trie = { workspace = true, features = ["test-utils"] }
+pretty_assertions = { workspace = true, features = ["default"] }
+reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
+reth-trie-common = { workspace = true, features = ["test-utils", "arbitrary"] }
+[features]
+default = ["std", "metrics"]
+std = [
+    "dep:either",
+    "dep:rayon",
+    "dep:reth-primitives-traits",
+    "dep:smallvec",
+    "dep:slotmap",
+    "dep:tracing",
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "alloy-trie/std",
+    "reth-execution-errors/std",
+    "reth-primitives-traits/std",
+    "reth-primitives-traits/rayon",
+    "reth-trie-common/std",
+    "tracing/std",
+    "serde?/std",
+    "serde_json?/std",
+    "strum/std",
+    "reth-tracing/std",
+    "either/std",
+]
+metrics = ["dep:reth-metrics", "dep:metrics", "std"]
+trie-debug = ["std", "dep:serde", "dep:serde_json", "alloy-primitives/serde", "alloy-trie/serde"]
+test-utils = [
+    "std",
+    "reth-primitives-traits/test-utils",
+    "reth-trie-common/test-utils",
+    "reth-trie/test-utils",
+]
+arbitrary = [
+    "std",
+    "alloy-primitives/arbitrary",
+    "alloy-trie/arbitrary",
+    "reth-primitives-traits/arbitrary",
+    "reth-trie-common/arbitrary",
+    "smallvec/arbitrary",
+]

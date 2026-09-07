@@ -16,33 +16,22 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-# Workspace – Nitro host
-base-proof-worker.workspace = true
-base-common-chains.workspace = true
-base-proof-tee-nitro-host = { workspace = true, features = ["metrics"] }
-base-prover-service-client.workspace = true
-base-proof-host = { workspace = true, features = ["metrics"] }
-base-proof-tee-nitro-enclave = { workspace = true, optional = true }
-
-# CLI / errors
-eyre.workspace = true
-base-cli-utils.workspace = true
-clap = { workspace = true, features = ["derive", "env"] }
+tracing = { workspace = true }
+base-cli-utils = { workspace = true }
+alloy-primitives = { workspace = true }
+base-proof-worker = { workspace = true }
+base-prover-service-client = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default"] }
+uuid = { workspace = true, features = ["default", "v4"] }
 serde = { workspace = true, features = ["derive", "std"] }
-
-# Async
-tokio-util.workspace = true
-tokio = { workspace = true, features = ["full"] }
-
-# Primitives / identifiers
-alloy-primitives.workspace = true
-uuid = { workspace = true, features = ["v4"] }
-
-# Tracing
-tracing.workspace = true
-
+tokio = { workspace = true, features = ["default", "full"] }
+base-proof-host = { workspace = true, features = ["metrics"] }
+base-common-chains = { workspace = true, features = ["default"] }
+clap = { workspace = true, features = ["default", "derive", "env"] }
+base-proof-tee-nitro-enclave = { workspace = true, optional = true }
+base-proof-tee-nitro-host = { workspace = true, features = ["metrics"] }
 [target.'cfg(target_os = "linux")'.dependencies]
-base-proof-tee-nitro-enclave.workspace = true
-
+base-proof-tee-nitro-enclave = { workspace = true }
 [features]
 local = [ "dep:base-proof-tee-nitro-enclave" ]

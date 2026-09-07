@@ -1,0 +1,98 @@
+[package]
+name = "reth-eth-wire-types"
+description = "types for eth-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-trie = { workspace = true }
+reth-chainspec = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-hardforks = { workspace = true }
+reth-codecs-derive = { workspace = true }
+reth-primitives-traits = { workspace = true }
+serde = { workspace = true, optional = true }
+reth-ethereum-primitives = { workspace = true }
+alloy-chains = { workspace = true, features = ["rlp"] }
+derive_more = { workspace = true, features = ["full"] }
+proptest-arbitrary-interop = { workspace = true, optional = true }
+alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
+proptest = { workspace = true, optional = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+alloy-eip7928 = { workspace = true, features = ["rlp"], optional = true }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "map"] }
+[dev-dependencies]
+test-case = { workspace = true }
+alloy-genesis = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+proptest = { workspace = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"] }
+alloy-eips = { workspace = true, features = ["arbitrary"] }
+alloy-chains = { workspace = true, features = ["arbitrary"] }
+alloy-consensus = { workspace = true, features = ["arbitrary"] }
+alloy-eip7928 = { workspace = true, features = ["rlp", "arbitrary"] }
+reth-ethereum-primitives = { workspace = true, features = ["arbitrary"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "arbitrary", "rand"] }
+[features]
+default = ["std"]
+std = [
+    "alloy-chains/std",
+    "alloy-consensus/std",
+    "alloy-eip7928?/std",
+    "alloy-eips/std",
+    "alloy-genesis/std",
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "bytes/std",
+    "derive_more/std",
+    "reth-ethereum-primitives/std",
+    "reth-primitives-traits/std",
+    "serde?/std",
+    "thiserror/std",
+    "reth-chainspec/std",
+    "alloy-trie/std",
+]
+arbitrary = [
+    "reth-ethereum-primitives/arbitrary",
+    "alloy-chains/arbitrary",
+    "dep:alloy-eip7928",
+    "alloy-eip7928/arbitrary",
+    "dep:arbitrary",
+    "dep:proptest",
+    "dep:proptest-arbitrary-interop",
+    "reth-chainspec/arbitrary",
+    "alloy-consensus/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "reth-primitives-traits/arbitrary",
+    "alloy-trie/arbitrary",
+]
+serde = [
+    "dep:serde",
+    "alloy-chains/serde",
+    "alloy-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "bytes/serde",
+    "rand/serde",
+    "reth-primitives-traits/serde",
+    "reth-ethereum-primitives/serde",
+    "alloy-hardforks/serde",
+    "alloy-eip7928?/serde",
+    "alloy-trie/serde",
+]

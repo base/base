@@ -12,36 +12,34 @@ description = "Execution extensions for Base"
 workspace = true
 
 [dependencies]
-# reth
-reth-exex.workspace = true
-reth-trie.workspace = true
-reth-provider.workspace = true
-reth-node-api.workspace = true
-reth-execution-types.workspace = true
-
-# op-reth
-# proofs exex handles `TrieUpdates` in notifications
+tracing = { workspace = true }
+reth-exex = { workspace = true }
+reth-trie = { workspace = true }
+alloy-eips = { workspace = true }
+reth-provider = { workspace = true }
+reth-node-api = { workspace = true }
+alloy-consensus = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+reth-execution-types = { workspace = true, features = ["default"] }
 base-execution-trie = { workspace = true, features = ["serde-bincode-compat"] }
-
-# alloy
-alloy-eips.workspace = true
-alloy-consensus.workspace = true
-
-# misc
-eyre.workspace = true
-tokio.workspace = true
-tracing.workspace = true
-futures.workspace = true
-
 [dev-dependencies]
-tempfile.workspace = true
-base-node-core.workspace = true
-reth-node-builder.workspace = true
-reth-exex-test-utils.workspace = true
-reth-primitives-traits.workspace = true
-base-execution-chainspec.workspace = true
-reth-ethereum-primitives.workspace = true
-reth-db = { workspace = true, features = ["test-utils"] }
+reth-exex-test-utils = { workspace = true }
+reth-primitives-traits = { workspace = true }
+tempfile = { workspace = true, features = ["default"] }
+base-node-core = { workspace = true, features = ["default"] }
+reth-node-builder = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["default", "test-utils"] }
+base-execution-chainspec = { workspace = true, features = ["default"] }
+reth-ethereum-primitives = { workspace = true, features = ["default"] }
+[package.metadata.cargo-udeps.ignore]
+development = [
+    "reth-node-builder",
+    "base-node-core",
+    "base-execution-chainspec",
+    "tempfile.workspace",
+]
 
 [features]
 test-utils = [
@@ -54,11 +52,3 @@ test-utils = [
 	"reth-trie/test-utils",
 ]
 metrics = [ "base-execution-trie/metrics", "reth-trie/metrics" ]
-
-[package.metadata.cargo-udeps.ignore]
-development = [
-    "reth-node-builder",
-    "base-node-core",
-    "base-execution-chainspec",
-    "tempfile.workspace",
-]

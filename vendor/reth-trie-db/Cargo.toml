@@ -1,0 +1,66 @@
+[package]
+name = "reth-trie-db"
+description = "Database integration with merkle trie implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+reth-trie = { workspace = true }
+reth-db-api = { workspace = true }
+reth-trie-common = { workspace = true }
+reth-storage-errors = { workspace = true }
+reth-execution-errors = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
+reth-storage-api = { workspace = true, features = ["db-api"] }
+reth-primitives-traits = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+[dev-dependencies]
+revm = { workspace = true }
+reth-chainspec = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-stages-types = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+triehash = { workspace = true, features = ["default"] }
+proptest = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["test-utils"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+reth-trie = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+similar-asserts = { workspace = true, features = ["default", "serde"] }
+reth-trie-common = { workspace = true, features = ["test-utils", "arbitrary"] }
+reth-primitives-traits = { workspace = true, features = ["test-utils", "arbitrary"] }
+[features]
+metrics = ["reth-trie/metrics"]
+serde = [
+    "similar-asserts/serde",
+    "alloy-consensus/serde",
+    "alloy-primitives/serde",
+    "reth-storage-api/serde",
+    "reth-trie/serde",
+    "reth-trie-common/serde",
+    "reth-primitives-traits/serde",
+    "revm/serde",
+    "reth-stages-types/serde",
+]
+test-utils = [
+    "reth-trie-common/test-utils",
+    "reth-primitives-traits/test-utils",
+    "reth-chainspec/test-utils",
+    "reth-db/test-utils",
+    "reth-db-api/test-utils",
+    "reth-provider/test-utils",
+    "reth-trie/test-utils",
+    "reth-stages-types/test-utils",
+]

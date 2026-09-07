@@ -12,8 +12,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-eyre.workspace = true
-base-batcher-core.workspace = true
+base-batcher-core = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
+eyre = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["debug"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }

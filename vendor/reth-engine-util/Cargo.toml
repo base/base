@@ -1,0 +1,40 @@
+[package]
+name = "reth-engine-util"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+reth-evm = { workspace = true }
+reth-revm = { workspace = true }
+itertools = { workspace = true }
+reth-errors = { workspace = true }
+pin-project = { workspace = true }
+reth-fs-util = { workspace = true }
+reth-chainspec = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-engine-tree = { workspace = true }
+reth-primitives-traits = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+tracing = { workspace = true, features = ["attributes"] }
+reth-engine-primitives = { workspace = true, features = ["std"] }
+tokio-util = { workspace = true, features = ["default", "codec"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-payload-primitives = { workspace = true, features = ["default"] }

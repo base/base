@@ -11,24 +11,15 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-# General
-tracing.workspace = true
-thiserror.workspace = true
-async-trait.workspace = true
-alloy-primitives.workspace = true
-
-# `std` feature dependencies
-async-channel = { workspace = true, optional = true }
-
-# `serde` feature dependencies
-serde = { workspace = true, optional = true, features = ["derive"] }
-
-# `rkyv` feature dependencies
-rkyv = { workspace = true, optional = true }
-
+tracing = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+alloy-primitives = { workspace = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+rkyv = { workspace = true, optional = true, features = ["default"] }
+async-channel = { workspace = true, optional = true, features = ["default"] }
 [dev-dependencies]
-tokio = { workspace = true, features = ["full"] }
-
+tokio = { workspace = true, features = ["default", "full"] }
 [features]
 default = []
 std = [

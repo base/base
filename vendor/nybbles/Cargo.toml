@@ -1,0 +1,60 @@
+[package]
+name = "nybbles"
+description = "Efficient nibble-sized (4-bit) byte sequence data structure"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[lib]
+name = "nybbles"
+path = "src/lib.rs"
+
+[[test]]
+name = "proptests"
+path = "tests/proptests.rs"
+
+[[bench]]
+name = "bench"
+path = "benches/bench.rs"
+harness = false
+required-features = ["arbitrary"]
+
+[dependencies]
+cfg-if = { workspace = true }
+alloy-rlp = { workspace = true, optional = true }
+ruint = { workspace = true, features = ["alloc"] }
+serde = { workspace = true, features = ["derive"], optional = true }
+proptest = { workspace = true, features = ["alloc"], optional = true }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+smallvec = { workspace = true, features = [
+    "const_new",
+    "union",
+] }
+[dev-dependencies]
+hex-literal = { workspace = true }
+serde_json = { workspace = true, features = ["default"] }
+codspeed-criterion-compat = { workspace = true, features = ["default"] }
+[lints]
+workspace = true
+
+[features]
+arbitrary = ["dep:arbitrary", "dep:proptest", "ruint/arbitrary", "smallvec/arbitrary", "std"]
+default = ["std"]
+nightly = ["smallvec/specialization", "smallvec/may_dangle"]
+rlp = ["dep:alloy-rlp"]
+serde = ["dep:serde", "ruint/serde", "smallvec/serde"]
+std = ["serde?/std", "alloy-rlp?/std", "proptest?/std", "ruint/std"]

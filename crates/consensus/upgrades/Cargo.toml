@@ -14,19 +14,14 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
-alloy-eips.workspace = true
+alloy-eips = { workspace = true }
+base-common-consensus = { workspace = true }
 alloy-primitives = { workspace = true, features = ["rlp"] }
-
-# Base Alloy
-base-common-consensus.workspace = true
-
 [dev-dependencies]
-revm.workspace = true
-rstest.workspace = true
-base-common-evm.workspace = true
+revm = { workspace = true }
+base-common-evm = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
-
 [features]
 default = []
 std = [ "alloy-eips/std", "alloy-primitives/std", "base-common-consensus/std" ]

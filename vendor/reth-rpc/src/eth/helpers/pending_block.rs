@@ -1,0 +1,32 @@
+//! Support for building a pending block with transactions from local view of mempool.
+
+use reth_rpc_convert::RpcConvert;
+use reth_rpc_eth_api::{
+    FromEvmError, RpcNodeCore,
+    helpers::{LoadPendingBlock, pending_block::PendingEnvBuilder},
+};
+use reth_rpc_eth_types::{EthApiError, PendingBlock, builder::config::PendingBlockKind};
+
+use crate::EthApi;
+
+impl<N, Rpc> LoadPendingBlock for EthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    EthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+{
+    #[inline]
+    fn pending_block(&self) -> &tokio::sync::Mutex<Option<PendingBlock<Self::Primitives>>> {
+        self.inner.pending_block()
+    }
+
+    #[inline]
+    fn pending_env_builder(&self) -> &dyn PendingEnvBuilder<Self::Evm> {
+        self.inner.pending_env_builder()
+    }
+
+    #[inline]
+    fn pending_block_kind(&self) -> PendingBlockKind {
+        self.inner.pending_block_kind()
+    }
+}

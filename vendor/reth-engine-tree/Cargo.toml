@@ -1,0 +1,131 @@
+[package]
+name = "reth-engine-tree"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+revm = { workspace = true }
+rayon = { workspace = true }
+reth-db = { workspace = true }
+metrics = { workspace = true }
+alloy-evm = { workspace = true }
+thiserror = { workspace = true }
+reth-trie = { workspace = true }
+alloy-eips = { workspace = true }
+reth-prune = { workspace = true }
+reth-errors = { workspace = true }
+reth-provider = { workspace = true }
+reth-consensus = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-stages-api = { workspace = true }
+reth-trie-common = { workspace = true }
+reth-chain-state = { workspace = true }
+reth-execution-types = { workspace = true }
+reth-execution-cache = { workspace = true }
+reth-payload-builder = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+reth-stages = { workspace = true, optional = true }
+reth-chainspec = { workspace = true, optional = true }
+futures = { workspace = true, features = ["default"] }
+reth-evm = { workspace = true, features = ["metrics"] }
+derive_more = { workspace = true, features = ["full"] }
+indexmap = { workspace = true, features = ["default"] }
+reth-tasks = { workspace = true, features = ["rayon"] }
+alloy-eip7928 = { workspace = true, features = ["rlp"] }
+reth-prune-types = { workspace = true, optional = true }
+schnellru = { workspace = true, features = ["default"] }
+reth-static-file = { workspace = true, optional = true }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+tracing = { workspace = true, features = ["attributes"] }
+parking_lot = { workspace = true, features = ["default"] }
+reth-metrics = { workspace = true, features = ["common"] }
+moka = { workspace = true, features = ["default", "sync"] }
+reth-network-p2p = { workspace = true, features = ["default"] }
+crossbeam-channel = { workspace = true, features = ["default"] }
+reth-engine-primitives = { workspace = true, features = ["std"] }
+reth-trie-parallel = { workspace = true, features = ["default"] }
+reth-storage-overlay = { workspace = true, features = ["rayon"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-trie-sparse = { workspace = true, features = ["std", "metrics"] }
+reth-payload-primitives = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"], optional = true }
+reth-tracing = { workspace = true, optional = true, features = ["default"] }
+reth-primitives-traits = { workspace = true, features = ["rayon", "dashmap"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros"] }
+reth-revm = { workspace = true, features = ["optional-balance-check", "optional-no-base-fee"] }
+[dev-dependencies]
+reth-chainspec = { workspace = true }
+reth-db-common = { workspace = true }
+assert_matches = { workspace = true }
+reth-prune-types = { workspace = true }
+reth-static-file = { workspace = true }
+reth-testing-utils = { workspace = true }
+reth-e2e-test-utils = { workspace = true }
+reth-ethereum-consensus = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default"] }
+reth-ethereum-engine-primitives = { workspace = true }
+rand_08 = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+proptest = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["test-utils"] }
+reth-evm = { workspace = true, features = ["test-utils"] }
+reth-tracing = { workspace = true, features = ["default"] }
+metrics-util = { workspace = true, features = ["debugging"] }
+reth-stages = { workspace = true, features = ["test-utils"] }
+reth-exex-types = { workspace = true, features = ["default"] }
+reth-node-ethereum = { workspace = true, features = ["default"] }
+reth-chain-state = { workspace = true, features = ["test-utils"] }
+reth-evm-ethereum = { workspace = true, features = ["test-utils"] }
+reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
+[[test]]
+name = "e2e_testsuite"
+path = "tests/e2e-testsuite/main.rs"
+
+[features]
+test-utils = [
+    "reth-chain-state/test-utils",
+    "reth-chainspec/test-utils",
+    "reth-consensus/test-utils",
+    "reth-db/test-utils",
+    "reth-evm/test-utils",
+    "reth-network-p2p/test-utils",
+    "reth-payload-builder/test-utils",
+    "reth-primitives-traits/test-utils",
+    "reth-provider/test-utils",
+    "reth-prune-types",
+    "reth-prune-types?/test-utils",
+    "reth-revm/test-utils",
+    "reth-stages-api/test-utils",
+    "reth-stages/test-utils",
+    "reth-static-file",
+    "reth-tracing",
+    "reth-trie/test-utils",
+    "reth-trie-common/test-utils",
+    "reth-trie-sparse/test-utils",
+    "reth-prune-types?/test-utils",
+    "reth-trie-parallel/test-utils",
+    "reth-ethereum-primitives/test-utils",
+    "reth-node-ethereum/test-utils",
+    "reth-tasks/test-utils",
+    "reth-execution-cache/test-utils",
+    "reth-evm-ethereum/test-utils",
+]
+trie-debug = [
+    "reth-trie-sparse/trie-debug",
+    "reth-trie-parallel/trie-debug",
+    "reth-engine-primitives/trie-debug",
+    "dep:serde_json",
+]

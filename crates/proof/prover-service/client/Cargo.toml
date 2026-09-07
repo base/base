@@ -9,43 +9,19 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# Retry
-base-retry.workspace = true
-
-# Protocol
-base-prover-service-protocol = { workspace = true, features = ["rpc-client"] }
-
-# RPC
+tracing = { workspace = true }
+thiserror = { workspace = true }
+base-retry = { workspace = true }
+async-trait = { workspace = true }
+url = { workspace = true, features = ["default"] }
+backon = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
-
-# Async
-backon.workspace = true
-async-trait.workspace = true
-
-# URL parsing
-url.workspace = true
-
-# Error handling
-thiserror.workspace = true
-
-# Observability
-tracing.workspace = true
-
+base-prover-service-protocol = { workspace = true, features = ["default", "rpc-client"] }
 [dev-dependencies]
-# Protocol
-base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
-
-# RPC
+chrono = { workspace = true, features = ["default"] }
+rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server"] }
-
-# Async
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-
-# Time
-chrono.workspace = true
-
-# Testing
-rstest.workspace = true
-
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+base-prover-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
 [lints]
 workspace = true

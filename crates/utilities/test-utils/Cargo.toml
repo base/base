@@ -12,29 +12,20 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
-alloy-eips.workspace = true
-alloy-signer.workspace = true
-alloy-signer-local.workspace = true
+alloy-eips = { workspace = true }
+alloy-signer = { workspace = true }
+base-common-evm = { workspace = true }
+alloy-signer-local = { workspace = true }
+base-common-consensus = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["std"] }
+alloy-contract = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
-# Only the `contracts` module needs these; they pull in the `sol!` machinery and the compile-time
-# artifact include. Optional so the crate builds without the gitignored artifacts when `contracts`
-# is off (see the [features] section).
-alloy-contract = { workspace = true, optional = true }
+base-common-rpc-types = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["std"], optional = true }
 alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
-
-# base-alloy
-base-common-evm.workspace = true
-base-common-consensus.workspace = true
-base-common-rpc-types.workspace = true
-
-# misc
-eyre.workspace = true
-serde_json = { workspace = true, features = ["std"] }
-
 [features]
 # The `contracts` module binds Solidity test fixtures with
 # `sol!(..., concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/<Name>.json"))`, embedding Foundry

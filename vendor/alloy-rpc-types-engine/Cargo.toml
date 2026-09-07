@@ -1,0 +1,85 @@
+[package]
+name = "alloy-rpc-types-engine"
+description = "Types for the `engine` Ethereum JSON-RPC namespace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_rpc_types_engine"
+path = "src/lib.rs"
+
+[dependencies]
+alloy-serde = { workspace = true, optional = true }
+strum = { workspace = true, features = ["derive"] }
+ethereum_ssz = { workspace = true, optional = true }
+alloy-eips = { workspace = true, features = ["serde"] }
+derive_more = { workspace = true, features = ["display"] }
+ethereum_ssz_derive = { workspace = true, optional = true }
+alloy-consensus = { workspace = true, features = ["serde"] }
+rand_08 = { workspace = true, optional = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+jsonwebtoken = { workspace = true, optional = true, features = ["default"] }
+alloy-rlp = { workspace = true, features = [
+    "arrayvec",
+    "derive",
+] }
+alloy-primitives = { workspace = true, features = [
+    "rlp",
+    "serde",
+] }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+    "derive",
+], optional = true }
+[dev-dependencies]
+assert_matches_1_5 = { workspace = true }
+base64 = { workspace = true, features = ["default"] }
+rand_08 = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+tempfile = { workspace = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"] }
+similar-asserts = { workspace = true, features = ["default"] }
+alloy-consensus = { workspace = true, features = ["arbitrary"] }
+jsonwebtoken = { workspace = true, features = ["default", "aws_lc_rs"] }
+alloy-primitives = { workspace = true, features = [
+    "rand",
+    "rlp",
+    "serde",
+    "arbitrary",
+] }
+[lints]
+workspace = true
+
+[features]
+arbitrary = ["dep:arbitrary", "std", "alloy-primitives/arbitrary", "alloy-serde/arbitrary", "alloy-consensus/arbitrary", "alloy-eips/arbitrary"]
+default = ["std", "serde"]
+jwt = ["std", "dep:jsonwebtoken", "dep:rand_08"]
+jwt-aws-lc-rs = ["jwt", "jsonwebtoken/aws_lc_rs"]
+kzg = ["alloy-consensus/kzg", "alloy-eips/kzg"]
+serde = ["dep:serde", "dep:alloy-serde", "alloy-consensus/serde", "alloy-eips/serde", "alloy-primitives/serde", "rand_08?/serde"]
+ssz = ["std", "dep:ethereum_ssz", "dep:ethereum_ssz_derive", "alloy-eips/ssz"]
+std = ["alloy-consensus/std", "derive_more/std", "strum/std", "alloy-eips/std", "alloy-serde?/std", "alloy-primitives/std", "alloy-rlp/std", "serde?/std"]

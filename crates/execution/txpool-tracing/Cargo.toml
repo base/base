@@ -12,56 +12,34 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
-base-node-runner.workspace = true
-base-observability-events.workspace = true
-
-# reth
-reth-tracing.workspace = true
-reth-provider.workspace = true
-reth-node-api.workspace = true
-reth-transaction-pool.workspace = true
-reth-primitives-traits.workspace = true
-
-# alloy
-alloy-primitives.workspace = true
-
-# async
-tokio.workspace = true
-futures.workspace = true
-tokio-stream.workspace = true
-
-# misc
-lru.workspace = true
-chrono.workspace = true
-base-metrics.workspace = true
+serde_json = { workspace = true }
+base-metrics = { workspace = true }
+reth-provider = { workspace = true }
+reth-node-api = { workspace = true }
+alloy-primitives = { workspace = true }
+base-node-runner = { workspace = true }
+reth-transaction-pool = { workspace = true }
+reth-primitives-traits = { workspace = true }
 metrics = { workspace = true, optional = true }
+base-observability-events = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
+lru = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default"] }
+chrono = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["display"] }
-serde_json.workspace = true
-
+reth-tracing = { workspace = true, features = ["default"] }
+tokio-stream = { workspace = true, features = ["default"] }
 [dev-dependencies]
-# workspace
-base-test-utils.workspace = true
-base-node-runner = { workspace = true, features = ["test-utils"] }
-
-# reth
-reth-transaction-pool = { workspace = true, features = ["test-utils"] }
-
-# revm
-revm-database.workspace = true
-
-# alloy
+revm-database = { workspace = true }
+base-test-utils = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-
-# base-alloy
 base-common-consensus = { workspace = true, features = ["reth"] }
-
-# misc
-eyre.workspace = true
-
+base-node-runner = { workspace = true, features = ["test-utils"] }
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 [features]
 default = [ "metrics" ]
 metrics = [

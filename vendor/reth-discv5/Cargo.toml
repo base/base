@@ -1,0 +1,41 @@
+[package]
+name = "reth-discv5"
+description = "Ethereum peer discovery V5"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+enr = { workspace = true }
+tokio = { workspace = true }
+metrics = { workspace = true }
+thiserror = { workspace = true }
+itertools = { workspace = true }
+reth-metrics = { workspace = true }
+reth-chainspec = { workspace = true }
+reth-ethereum-forks = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+derive_more = { workspace = true, features = ["full"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+tracing = { workspace = true, features = ["attributes"] }
+discv5-reth = { workspace = true, features = ["libp2p"] }
+reth-network-peers = { workspace = true, features = ["secp256k1"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+secp256k1 = { workspace = true, features = ["global-context", "recovery"] }
+[dev-dependencies]
+rand_08 = { workspace = true, features = ["default"] }
+reth-tracing = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "rand"] }

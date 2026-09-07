@@ -1,0 +1,43 @@
+[package]
+name = "reth-storage-rpc-provider"
+description = "RPC-based blockchain provider for reth that fetches data via RPC calls"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+revm = { workspace = true }
+reth-trie = { workspace = true }
+alloy-eips = { workspace = true }
+reth-errors = { workspace = true }
+reth-db-api = { workspace = true }
+alloy-network = { workspace = true }
+reth-provider = { workspace = true }
+reth-chainspec = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-prune-types = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-execution-types = { workspace = true }
+reth-primitives-traits = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+dashmap = { workspace = true, features = ["inline"] }
+tracing = { workspace = true, features = ["attributes"] }
+alloy-rpc-types = { workspace = true, features = ["eth"] }
+reth-node-types = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
+tokio = { workspace = true, features = ["sync", "macros", "rt-multi-thread"] }
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

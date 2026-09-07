@@ -1,0 +1,64 @@
+[package]
+name = "reth-network-p2p"
+description = "traits and commonly used types for p2p and network communication"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+auto_impl = { workspace = true }
+alloy-eips = { workspace = true }
+reth-consensus = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-network-peers = { workspace = true }
+reth-network-types = { workspace = true }
+reth-storage-errors = { workspace = true }
+reth-primitives-traits = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+futures = { workspace = true, features = ["default"] }
+derive_more = { workspace = true, features = ["full"] }
+alloy-eip7928 = { workspace = true, features = ["rlp"] }
+tracing = { workspace = true, features = ["attributes"] }
+reth-eth-wire-types = { workspace = true, features = ["default"] }
+parking_lot = { workspace = true, optional = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+[dev-dependencies]
+test-case = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+parking_lot = { workspace = true, features = ["default"] }
+reth-consensus = { workspace = true, features = ["test-utils"] }
+[features]
+default = ["std"]
+test-utils = [
+    "reth-consensus/test-utils",
+    "parking_lot",
+    "reth-network-types/test-utils",
+    "reth-ethereum-primitives/test-utils",
+    "reth-primitives-traits/test-utils",
+    "alloy-eip7928/std",
+    "alloy-primitives/rand",
+]
+std = [
+    "reth-consensus/std",
+    "reth-ethereum-primitives/std",
+    "alloy-eip7928/std",
+    "alloy-eips/std",
+    "alloy-primitives/std",
+    "reth-primitives-traits/std",
+    "alloy-consensus/std",
+    "derive_more/std",
+    "reth-network-peers/std",
+    "reth-storage-errors/std",
+    "tracing/std",
+]

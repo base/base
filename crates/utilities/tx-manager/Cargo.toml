@@ -12,44 +12,37 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
-alloy-network.workspace = true
-alloy-provider.workspace = true
-alloy-consensus.workspace = true
-alloy-transport.workspace = true
-alloy-primitives.workspace = true
-alloy-signer-local.workspace = true
-alloy-sol-types = { workspace = true, features = ["std"] }
-alloy-eips = { workspace = true, features = ["std", "kzg"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-
-# base
-base-metrics.workspace = true
-base-common-signer.workspace = true
-base-runtime = { workspace = true, features = ["tokio"] }
-
-# misc
-url.workspace = true
-backon.workspace = true
-futures.workspace = true
-thiserror.workspace = true
+thiserror = { workspace = true }
+base-metrics = { workspace = true }
+alloy-network = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-transport = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-signer-local = { workspace = true }
+base-common-signer = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["sync", "time"] }
-
+url = { workspace = true, features = ["default"] }
+backon = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+base-runtime = { workspace = true, features = ["tokio"] }
+alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["std", "kzg"] }
+alloy-provider = { workspace = true, features = ["default"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["default", "sync", "time"] }
 [dev-dependencies]
-rayon.workspace = true
-rstest.workspace = true
-proptest.workspace = true
-humantime.workspace = true
-serde_json.workspace = true
-async-trait.workspace = true
-alloy-signer.workspace = true
-alloy-json-rpc.workspace = true
-alloy-node-bindings.workspace = true
-clap = { workspace = true, features = ["derive", "env"] }
+rayon = { workspace = true }
+humantime = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-json-rpc = { workspace = true }
+alloy-node-bindings = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
+proptest = { workspace = true, features = ["default"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
-tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"] }
-
+clap = { workspace = true, features = ["default", "derive", "env"] }
+tokio = { workspace = true, features = ["default", "macros", "net", "rt", "rt-multi-thread"] }
 [features]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]

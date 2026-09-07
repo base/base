@@ -1,0 +1,85 @@
+[package]
+name = "alloy-eips"
+description = "Ethereum Improvement Proprosal (EIP) implementations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_eips"
+path = "src/lib.rs"
+
+[dependencies]
+either = { workspace = true }
+auto_impl = { workspace = true }
+alloy-eip2124 = { workspace = true }
+alloy-eip2930 = { workspace = true }
+alloy-eip7702 = { workspace = true }
+sha2 = { workspace = true, optional = true }
+alloy-serde = { workspace = true, optional = true }
+ethereum_ssz = { workspace = true, optional = true }
+alloy-rlp = { workspace = true, features = ["derive"] }
+alloy-eip7928 = { workspace = true, features = ["rlp"] }
+alloy-primitives = { workspace = true, features = ["rlp"] }
+ethereum_ssz_derive = { workspace = true, optional = true }
+borsh = { workspace = true, features = ["derive"], optional = true }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+serde_with = { workspace = true, features = ["macros"], optional = true }
+c-kzg = { workspace = true, features = ["ethereum_kzg_settings"], optional = true }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+], optional = true }
+derive_more = { workspace = true, features = [
+    "as_ref",
+    "deref",
+    "deref_mut",
+    "from",
+    "into_iterator",
+] }
+[dev-dependencies]
+rand_08 = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+arbitrary = { workspace = true, features = ["derive"] }
+alloy-primitives = { workspace = true, features = [
+    "rand",
+    "serde",
+    "arbitrary",
+] }
+[lints]
+workspace = true
+
+[features]
+arbitrary = ["std", "kzg-sidecar", "dep:arbitrary", "alloy-primitives/arbitrary", "alloy-serde?/arbitrary", "alloy-eip2124/arbitrary", "alloy-eip2930/arbitrary", "alloy-eip7702/arbitrary", "alloy-eip7702/k256", "alloy-eip7928/arbitrary", "c-kzg?/arbitrary"]
+borsh = ["dep:borsh", "alloy-primitives/borsh", "alloy-eip2930/borsh", "alloy-eip7702/borsh", "alloy-eip7928/borsh"]
+default = ["std", "kzg-sidecar"]
+k256 = ["alloy-eip7702/k256", "alloy-primitives/k256"]
+kzg = ["kzg-sidecar", "sha2", "dep:c-kzg"]
+kzg-sidecar = ["sha2"]
+serde = ["dep:alloy-serde", "dep:serde", "dep:serde_with", "alloy-primitives/serde", "c-kzg?/serde", "alloy-eip2930/serde", "alloy-eip7702/serde", "alloy-eip7928/serde", "alloy-eip2124/serde", "either/serde", "rand_08/serde"]
+serde-bincode-compat = ["alloy-eip7702/serde-bincode-compat"]
+sha2 = ["dep:sha2"]
+ssz = ["std", "dep:ethereum_ssz", "dep:ethereum_ssz_derive"]
+std = ["alloy-primitives/std", "alloy-rlp/std", "serde?/std", "c-kzg?/std", "alloy-serde?/std", "alloy-eip2124/std", "alloy-eip2930/std", "alloy-eip7702/std", "alloy-eip7928/std", "derive_more/std", "sha2?/std", "either/std", "serde_with?/std", "borsh?/std"]

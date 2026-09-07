@@ -12,25 +12,15 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Consensus
-base-protocol = { workspace = true, features = ["std"] }
-
-# Alloy
-alloy-primitives = { workspace = true, features = ["std"] }
-alloy-eips = { workspace = true, features = ["serde", "std"] }
-
-# Storage
-redb.workspace = true
-
-# Async
-async-trait.workspace = true
-tokio = { workspace = true, features = ["rt"] }
-
-# Misc
+redb = { workspace = true }
+async-trait = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-
+base-protocol = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["default", "rt"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["serde", "std"] }
 [dev-dependencies]
-tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "macros"] }
+tempfile = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "rt", "macros"] }

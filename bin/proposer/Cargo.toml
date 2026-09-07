@@ -16,8 +16,8 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-eyre.workspace = true
-base-cli-utils.workspace = true
-tokio = { workspace = true, features = ["full"] }
-clap = { workspace = true, features = ["derive", "env"] }
+base-cli-utils = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "full"] }
 base-proposer = { workspace = true, features = ["metrics"] }
+clap = { workspace = true, features = ["default", "derive", "env"] }

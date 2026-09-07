@@ -11,22 +11,17 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
-alloy-rlp.workspace = true
-alloy-trie.workspace = true
-alloy-provider.workspace = true
-alloy-primitives.workspace = true
-alloy-rpc-client.workspace = true
-alloy-transport-http.workspace = true
-
-# base
-base-common-network.workspace = true
+serde = { workspace = true }
+alloy-rlp = { workspace = true }
+alloy-trie = { workspace = true }
+serde_json = { workspace = true }
+alloy-primitives = { workspace = true }
+base-common-network = { workspace = true }
+hex = { workspace = true, features = ["default"] }
+eyre = { workspace = true, features = ["default"] }
 base-proof-mpt = { workspace = true, features = ["std"] }
-
-# misc
-hex.workspace = true
-eyre.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-tokio = { workspace = true, features = ["full"] }
-clap = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["default", "full"] }
+alloy-provider = { workspace = true, features = ["default"] }
+clap = { workspace = true, features = ["default", "derive"] }
+alloy-rpc-client = { workspace = true, features = ["default"] }
+alloy-transport-http = { workspace = true, features = ["default"] }

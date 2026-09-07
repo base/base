@@ -1,0 +1,21 @@
+[package]
+name = "reth-errors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+reth-consensus = { workspace = true }
+reth-storage-errors = { workspace = true }
+reth-execution-errors = { workspace = true }

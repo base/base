@@ -1,0 +1,46 @@
+[package]
+name = "revmc-context"
+description = "EVM bytecode compiler runtime context"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ruint = { workspace = true }
+revm-primitives = { workspace = true }
+revm-interpreter = { workspace = true }
+revm-state = { workspace = true, optional = true }
+revm-context = { workspace = true, optional = true }
+revm-handler = { workspace = true, optional = true }
+revm-inspector = { workspace = true, optional = true }
+revm-context-interface = { workspace = true, optional = true }
+[features]
+default = ["std"]
+std = [
+    "revm-interpreter/std",
+    "revm-primitives/std",
+    "revm-context?/std",
+    "revm-context-interface?/std",
+    "revm-handler?/std",
+    "revm-inspector?/std",
+    "revm-state?/std",
+]
+# Enables the [`JitEvm`] wrapper that dispatches calls to compiled bytecodes
+# from a regular `revm` EVM by code hash.
+evm = [
+    "dep:revm-context",
+    "dep:revm-context-interface",
+    "dep:revm-handler",
+    "dep:revm-inspector",
+    "dep:revm-state",
+]

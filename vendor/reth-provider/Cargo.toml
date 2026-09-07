@@ -1,0 +1,99 @@
+[package]
+name = "reth-provider"
+description = "Reth storage provider."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+revm = { workspace = true }
+strum = { workspace = true }
+rayon = { workspace = true }
+metrics = { workspace = true }
+smallvec = { workspace = true }
+itertools = { workspace = true }
+alloy-eips = { workspace = true }
+reth-codecs = { workspace = true }
+reth-errors = { workspace = true }
+reth-db-api = { workspace = true }
+reth-fs-util = { workspace = true }
+reth-metrics = { workspace = true }
+alloy-genesis = { workspace = true }
+reth-chainspec = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-tokio-util = { workspace = true }
+reth-prune-types = { workspace = true }
+reth-chain-state = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-storage-errors = { workspace = true }
+reth-execution-types = { workspace = true }
+reth-storage-overlay = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+reth-db = { workspace = true, features = ["mdbx"] }
+eyre = { workspace = true, features = ["default"] }
+rocksdb = { workspace = true, features = ["default"] }
+reth-tasks = { workspace = true, features = ["rayon"] }
+alloy-eip7928 = { workspace = true, features = ["rlp"] }
+reth-trie = { workspace = true, features = ["metrics"] }
+tracing = { workspace = true, features = ["attributes"] }
+parking_lot = { workspace = true, features = ["default"] }
+notify = { workspace = true, features = ["macos_fsevent"] }
+reth-trie-db = { workspace = true, features = ["metrics"] }
+reth-nippy-jar = { workspace = true, features = ["default"] }
+reth-node-types = { workspace = true, features = ["default"] }
+reth-static-file-types = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["sync"], optional = true }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-storage-api = { workspace = true, features = ["std", "db-api"] }
+reth-ethereum-engine-primitives = { workspace = true, optional = true }
+reth-ethereum-primitives = { workspace = true, features = ["reth-codec"] }
+reth-primitives-traits = { workspace = true, features = ["reth-codec", "secp256k1", "dashmap"] }
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true, features = ["default"] }
+[dev-dependencies]
+assert_matches = { workspace = true }
+reth-testing-utils = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+reth-ethereum-engine-primitives = { workspace = true }
+tempfile = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["test-utils"] }
+reth-tracing = { workspace = true, features = ["default"] }
+reth-trie = { workspace = true, features = ["test-utils"] }
+reth-chain-state = { workspace = true, features = ["test-utils"] }
+tokio-stream = { workspace = true, features = ["default", "sync"] }
+tokio = { workspace = true, features = ["sync", "macros", "rt-multi-thread"] }
+reth-primitives-traits = { workspace = true, features = ["arbitrary", "test-utils"] }
+[features]
+jemalloc = ["rocksdb/jemalloc"]
+partial-persistence = [
+    "reth-stages-types/partial-persistence",
+    "reth-storage-overlay/partial-persistence",
+]
+test-utils = [
+    "reth-db/test-utils",
+    "reth-nippy-jar/test-utils",
+    "reth-trie/test-utils",
+    "reth-chain-state/test-utils",
+    "reth-ethereum-engine-primitives",
+    "reth-ethereum-primitives/test-utils",
+    "reth-chainspec/test-utils",
+    "reth-primitives-traits/test-utils",
+    "reth-codecs/test-utils",
+    "reth-db-api/test-utils",
+    "reth-trie-db/test-utils",
+    "reth-prune-types/test-utils",
+    "reth-stages-types/test-utils",
+    "reth-tasks/test-utils",
+    "dep:tokio",
+]

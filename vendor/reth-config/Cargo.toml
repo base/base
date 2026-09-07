@@ -1,0 +1,32 @@
+[package]
+name = "reth-config"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+url = { workspace = true }
+reth-prune-types = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-network-peers = { workspace = true }
+reth-network-types = { workspace = true }
+reth-static-file-types = { workspace = true }
+serde = { workspace = true, optional = true }
+eyre = { workspace = true, features = ["default"] }
+humantime-serde = { workspace = true, optional = true }
+toml_0_9_12_spec_1_1_0 = { workspace = true, optional = true, features = ["default"] }
+[dev-dependencies]
+tempfile = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
+[features]
+serde = ["dep:serde", "dep:toml_0_9_12_spec_1_1_0", "dep:humantime-serde", "reth-network-peers/secp256k1", "reth-network-types/serde", "reth-prune-types/serde", "reth-stages-types/serde", "alloy-primitives/serde", "url/serde"]

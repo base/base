@@ -1,0 +1,69 @@
+[package]
+name = "revmc-codegen"
+description = "EVM bytecode compiler code generation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[package.metadata.docs.rs]
+no-default-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags = { workspace = true }
+smallvec = { workspace = true }
+revm-state = { workspace = true }
+revm-context = { workspace = true }
+revm-handler = { workspace = true }
+revmc-backend = { workspace = true }
+revm-inspector = { workspace = true }
+revm-primitives = { workspace = true }
+revm-interpreter = { workspace = true }
+revm-context-interface = { workspace = true }
+paste = { workspace = true, optional = true }
+revm-database-interface = { workspace = true }
+arbitrary = { workspace = true, optional = true }
+revmc-llvm = { workspace = true, optional = true }
+bitvec = { workspace = true, features = ["default"] }
+either = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["default"] }
+tempfile = { workspace = true, features = ["default"] }
+indexmap = { workspace = true, features = ["default"] }
+oxc_index = { workspace = true, features = ["nonmax"] }
+revmc-builtins = { workspace = true, features = ["ir"] }
+revmc-context = { workspace = true, features = ["evm"] }
+derive_more = { workspace = true, features = ["debug"] }
+revm-bytecode = { workspace = true, features = ["parse"] }
+alloy-primitives = { workspace = true, features = ["std", "map-fxhash"] }
+similar-asserts_2_0 = { workspace = true, optional = true, features = ["default"] }
+tracing-subscriber = { workspace = true, features = ["default", "fmt"], optional = true }
+[build-dependencies]
+revmc-build = { workspace = true }
+[dev-dependencies]
+paste = { workspace = true }
+revmc-context = { workspace = true }
+revmc-statetest = { workspace = true }
+serde_json = { workspace = true, features = ["default"] }
+snapbox_1_1 = { workspace = true, features = ["default"] }
+similar-asserts_2_0 = { workspace = true, features = ["default"] }
+tracing-subscriber = { workspace = true, features = ["default", "fmt"] }
+[features]
+default = ["llvm"]
+llvm = ["dep:revmc-llvm"]
+llvm-prefer-static = ["llvm", "revmc-llvm?/prefer-static"]
+llvm-prefer-dynamic = ["llvm", "revmc-llvm?/prefer-dynamic"]
+
+asm-keccak = ["alloy-primitives/asm-keccak"]
+
+# Internal features.
+__fuzzing = ["dep:arbitrary", "dep:paste", "dep:similar-asserts_2_0", "dep:tracing-subscriber"]

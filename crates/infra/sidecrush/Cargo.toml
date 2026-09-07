@@ -12,13 +12,12 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-cadence = { workspace = true }
 tracing = { workspace = true }
+cadence = { workspace = true }
 async-trait = { workspace = true }
-alloy-provider = { workspace = true }
+anyhow = { workspace = true, features = ["default"] }
+alloy-provider = { workspace = true, features = ["default"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["rt", "time", "macros"] }
-
+tokio = { workspace = true, features = ["default", "rt", "time", "macros"] }
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] }

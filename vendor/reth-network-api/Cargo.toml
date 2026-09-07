@@ -1,0 +1,47 @@
+[package]
+name = "reth-network-api"
+description = "Network interfaces and commonly used types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+auto_impl = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-tokio-util = { workspace = true }
+reth-network-peers = { workspace = true }
+reth-network-types = { workspace = true }
+reth-ethereum-forks = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+alloy-rpc-types-admin = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+futures = { workspace = true, features = ["default"] }
+derive_more = { workspace = true, features = ["full"] }
+enr = { workspace = true, features = ["rust-secp256k1"] }
+tokio-stream = { workspace = true, features = ["default"] }
+reth-network-p2p = { workspace = true, features = ["default"] }
+reth-eth-wire-types = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = ["derive"], optional = true }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
+[features]
+serde = [
+    "dep:serde",
+    "reth-eth-wire-types/serde",
+    "reth-network-types/serde",
+    "alloy-primitives/serde",
+    "enr/serde",
+    "reth-ethereum-forks/serde",
+    "alloy-consensus/serde",
+    "alloy-rpc-types-eth/serde",
+]

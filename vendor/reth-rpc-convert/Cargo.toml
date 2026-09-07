@@ -1,0 +1,35 @@
+[package]
+name = "reth-rpc-convert"
+description = "Compatibility layer for reth-primitives and ethereum RPC types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+reth-evm = { workspace = true }
+thiserror = { workspace = true }
+auto_impl = { workspace = true }
+dyn-clone = { workspace = true }
+alloy-network = { workspace = true }
+alloy-json-rpc = { workspace = true }
+reth-rpc-traits = { workspace = true }
+alloy-consensus = { workspace = true }
+jsonrpsee-types = { workspace = true }
+reth-primitives-traits = { workspace = true }
+alloy-evm = { workspace = true, features = ["rpc"] }
+alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+[dev-dependencies]
+serde_json = { workspace = true, features = ["alloc"] }
+[features]
+default = []

@@ -11,80 +11,43 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
-alloy-signer.workspace = true
-alloy-provider.workspace = true
-alloy-sol-types.workspace = true
-alloy-primitives.workspace = true
-
-# AWS
-aws-sdk-ec2.workspace = true
-aws-sdk-elasticloadbalancingv2.workspace = true
-aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
-
-# Crypto
-sha2.workspace = true
-k256 = { workspace = true, features = ["ecdsa"] }
-p384 = { workspace = true, features = ["ecdsa", "expose-field"] }
-
-# X.509 / CRL
-x509-parser.workspace = true
-
-# CBOR (attestation document decode after strict COSE parse)
-ciborium.workspace = true
-
-# HTTP (CRL fetching)
-reqwest.workspace = true
-
-# Contracts
-base-proof-contracts.workspace = true
-
-# Attestation parsing and validation
-base-proof-tee-nitro-verifier.workspace = true
-
-# Transaction management
-base-tx-manager.workspace = true
-
-# RPC
+sha2 = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+aws-sdk-ec2 = { workspace = true }
+base-metrics = { workspace = true }
+alloy-signer = { workspace = true }
+base-cli-utils = { workspace = true }
+alloy-sol-types = { workspace = true }
+base-tx-manager = { workspace = true }
+alloy-primitives = { workspace = true }
+base-proof-contracts = { workspace = true }
+base-balance-monitor = { workspace = true }
+metrics = { workspace = true, optional = true }
+url = { workspace = true, features = ["default"] }
+hex = { workspace = true, features = ["default"] }
+base-proof-tee-nitro-verifier = { workspace = true }
+aws-sdk-elasticloadbalancingv2 = { workspace = true }
+reqwest = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+ciborium = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default"] }
+x509-parser = { workspace = true, features = ["default"] }
+k256 = { workspace = true, features = ["default", "ecdsa"] }
+alloy-provider = { workspace = true, features = ["default"] }
+rustls = { workspace = true, features = ["default", "ring"] }
+base-health = { workspace = true, features = ["axum-server"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
-
-# Async
-futures.workspace = true
-tokio-util.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "net", "time", "macros"] }
-
-# Error
-thiserror.workspace = true
-
-# CLI
-base-cli-utils.workspace = true
-
-# Metrics
-base-metrics.workspace = true
-base-balance-monitor.workspace = true
-metrics = { workspace = true, optional = true }
-
-# TLS
-rustls = { workspace = true, features = ["ring"] }
-
-# Health
-base-health = { workspace = true, features = ["axum-server"] }
-
-# Tracing
-tracing.workspace = true
-
-# Misc
-url.workspace = true
-hex.workspace = true
-
+p384 = { workspace = true, features = ["default", "ecdsa", "expose-field"] }
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+tokio = { workspace = true, features = ["default", "rt", "sync", "net", "time", "macros"] }
 [dev-dependencies]
-hex-literal.workspace = true
-async-trait.workspace = true
-alloy-consensus.workspace = true
-alloy-rpc-types-eth.workspace = true
+hex-literal = { workspace = true }
+async-trait = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
 metrics-util = { workspace = true, features = ["debugging"] }
-tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
-
+tokio = { workspace = true, features = ["default", "rt", "macros", "test-util"] }
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]

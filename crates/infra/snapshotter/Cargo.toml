@@ -11,29 +11,28 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-url = { workspace = true }
-anyhow = { workspace = true }
-bollard = { workspace = true }
-futures = { workspace = true }
 tracing = { workspace = true }
 humantime = { workspace = true }
 alloy-eips = { workspace = true }
+serde_json = { workspace = true }
 async-trait = { workspace = true }
-human_bytes = { workspace = true }
-serde_json = { workspace = true }
 base-reth-cli = { workspace = true }
-alloy-provider = { workspace = true, features = ["reqwest"] }
-tokio = { workspace = true, features = ["rt", "fs", "time"] }
-clap = { workspace = true, features = ["derive", "env"] }
+url = { workspace = true, features = ["default"] }
+anyhow = { workspace = true, features = ["default"] }
+bollard = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+human_bytes = { workspace = true, features = ["default"] }
+clap = { workspace = true, features = ["default", "derive", "env"] }
+alloy-provider = { workspace = true, features = ["default", "reqwest"] }
+tokio = { workspace = true, features = ["default", "rt", "fs", "time"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
-
 [dev-dependencies]
-futures = { workspace = true }
 serde_json = { workspace = true }
-tempfile = { workspace = true }
-bollard = { workspace = true }
-serial_test = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
-testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
-aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+futures = { workspace = true, features = ["default"] }
+bollard = { workspace = true, features = ["default"] }
+tempfile = { workspace = true, features = ["default"] }
+serial_test = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "full"] }
 testcontainers-modules = { workspace = true, features = ["minio"] }
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }

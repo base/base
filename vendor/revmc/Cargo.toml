@@ -1,0 +1,46 @@
+[package]
+name = "revmc"
+description = "EVM bytecode compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[package.metadata.docs.rs]
+no-default-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true
+
+[dependencies]
+revm-handler = { workspace = true }
+revmc-backend = { workspace = true }
+revmc-codegen = { workspace = true }
+revmc-runtime = { workspace = true }
+revm-inspector = { workspace = true }
+revm-primitives = { workspace = true }
+revm-interpreter = { workspace = true }
+revm-context-interface = { workspace = true }
+revmc-llvm = { workspace = true, optional = true }
+revmc-builtins = { workspace = true, features = ["ir"] }
+revmc-context = { workspace = true, features = ["evm"] }
+revm-bytecode = { workspace = true, features = ["parse"] }
+[build-dependencies]
+revmc-build = { workspace = true }
+[dev-dependencies]
+revmc-statetest = { workspace = true }
+[features]
+default = ["llvm"]
+llvm = ["dep:revmc-llvm", "revmc-codegen/llvm", "revmc-runtime/llvm"]
+llvm-prefer-static = ["llvm", "revmc-codegen/llvm-prefer-static", "revmc-runtime/llvm-prefer-static"]
+llvm-prefer-dynamic = ["llvm", "revmc-codegen/llvm-prefer-dynamic", "revmc-runtime/llvm-prefer-dynamic"]
+alloy-evm = ["revmc-runtime/alloy-evm"]
+asm-keccak = ["revmc-codegen/asm-keccak", "revmc-runtime/asm-keccak"]
+__fuzzing = ["revmc-codegen/__fuzzing"]

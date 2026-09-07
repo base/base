@@ -1,0 +1,24 @@
+name: release
+on:
+  push:
+    tags:
+      - v*
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Check version
+        run: |
+          TAG_VERSION=$(echo ${GITHUB_REF#refs/tags/v})
+          CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          test "$TAG_VERSION" = "$CRATE_VERSION"
+  publish:
+    runs-on: ubuntu-latest
+    needs: check-version
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Publish
+        run: cargo publish

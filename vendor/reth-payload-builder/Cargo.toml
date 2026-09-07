@@ -1,0 +1,45 @@
+[package]
+name = "reth-payload-builder"
+description = "reth payload builder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+metrics = { workspace = true }
+futures-util = { workspace = true }
+reth-metrics = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-chain-state = { workspace = true }
+reth-execution-cache = { workspace = true }
+reth-primitives-traits = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+reth-ethereum-engine-primitives = { workspace = true }
+reth-payload-builder-primitives = { workspace = true }
+derive_more = { workspace = true, features = ["full"] }
+tracing = { workspace = true, features = ["attributes"] }
+tokio-stream = { workspace = true, features = ["default"] }
+reth-trie-parallel = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
+reth-payload-primitives = { workspace = true, features = ["default"] }
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync", "rt"] }
+[features]
+test-utils = [
+    "reth-chain-state/test-utils",
+    "reth-primitives-traits/test-utils",
+    "tokio/rt",
+    "reth-execution-cache/test-utils",
+    "reth-trie-parallel/test-utils",
+]

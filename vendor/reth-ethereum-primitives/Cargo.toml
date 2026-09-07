@@ -1,0 +1,84 @@
+[package]
+name = "reth-ethereum-primitives"
+description = "Ethereum primitive types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+reth-primitives-traits = { workspace = true }
+serde = { workspace = true, optional = true }
+alloy-eips = { workspace = true, features = ["k256"] }
+alloy-rpc-types-eth = { workspace = true, optional = true }
+alloy-consensus = { workspace = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-codecs = { workspace = true, features = ["alloy"], optional = true }
+[dev-dependencies]
+arbitrary = { workspace = true }
+reth-zstd-compressors = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+proptest = { workspace = true, features = ["default"] }
+serde_with = { workspace = true, features = ["macros"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+reth-codecs = { workspace = true, features = ["test-utils"] }
+alloy-consensus = { workspace = true, features = ["serde", "arbitrary"] }
+[features]
+default = ["std"]
+test-utils = [
+    "reth-codecs?/test-utils",
+    "reth-primitives-traits/test-utils",
+]
+std = [
+    "alloy-consensus/std",
+    "alloy-primitives/std",
+    "reth-primitives-traits/std",
+    "reth-primitives-traits/quanta",
+    "serde?/std",
+    "alloy-eips/std",
+    "alloy-rpc-types-eth?/std",
+    "alloy-rlp/std",
+    "reth-zstd-compressors/std",
+    "serde_json/std",
+    "serde_with/std",
+    "reth-codecs?/std",
+]
+reth-codec = [
+    "std",
+    "dep:reth-codecs",
+]
+arbitrary = [
+    "std",
+    "alloy-consensus/arbitrary",
+    "alloy-consensus/k256",
+    "alloy-primitives/arbitrary",
+    "reth-codecs?/arbitrary",
+    "reth-primitives-traits/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-rpc-types-eth?/arbitrary",
+]
+serde = [
+    "dep:serde",
+    "alloy-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "reth-codecs?/serde",
+    "reth-primitives-traits/serde",
+    "alloy-rpc-types-eth?/serde",
+    "rand/serde",
+]
+rpc = [
+    "dep:alloy-rpc-types-eth",
+    "alloy-rpc-types-eth?/serde",
+]

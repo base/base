@@ -12,23 +12,21 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-alloy-primitives = { workspace = true, features = ["serde"] }
-base-metrics.workspace = true
-chrono = { workspace = true, features = ["serde"] }
-eyre.workspace = true
-hex.workspace = true
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+base-metrics = { workspace = true }
+tracing-appender = { workspace = true }
 metrics = { workspace = true, optional = true }
-serde = { workspace = true, features = ["derive", "std"] }
-serde_json = { workspace = true, features = ["std"] }
-strum = { workspace = true, features = ["derive"] }
-sha2.workspace = true
-thiserror.workspace = true
 tracing = { workspace = true, features = ["std"] }
-tracing-appender.workspace = true
-
+hex = { workspace = true, features = ["default"] }
+strum = { workspace = true, features = ["derive"] }
+eyre = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
+chrono = { workspace = true, features = ["default", "serde"] }
 [dev-dependencies]
-tempfile.workspace = true
-
+tempfile = { workspace = true, features = ["default"] }
 [features]
 default = [ "metrics" ]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]

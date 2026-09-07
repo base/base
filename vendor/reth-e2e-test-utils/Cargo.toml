@@ -1,0 +1,74 @@
+[package]
+name = "reth-e2e-test-utils"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+url = { workspace = true }
+revm = { workspace = true }
+tokio = { workspace = true }
+jsonrpsee = { workspace = true }
+alloy-eips = { workspace = true }
+reth-tasks = { workspace = true }
+reth-config = { workspace = true }
+alloy-signer = { workspace = true }
+futures-util = { workspace = true }
+alloy-network = { workspace = true }
+reth-provider = { workspace = true }
+reth-node-api = { workspace = true }
+reth-chainspec = { workspace = true }
+reth-consensus = { workspace = true }
+reth-node-core = { workspace = true }
+reth-db-common = { workspace = true }
+reth-tokio-util = { workspace = true }
+reth-network-api = { workspace = true }
+reth-rpc-builder = { workspace = true }
+reth-rpc-eth-api = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-engine-local = { workspace = true }
+reth-cli-commands = { workspace = true }
+reth-network-peers = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+reth-rpc-server-types = { workspace = true }
+reth-engine-primitives = { workspace = true }
+reth-primitives-traits = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+reth-payload-builder-primitives = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+derive_more = { workspace = true, features = ["full"] }
+tempfile = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["test-utils"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+tracing = { workspace = true, features = ["attributes"] }
+alloy-consensus = { workspace = true, features = ["kzg"] }
+reth-rpc-api = { workspace = true, features = ["client"] }
+reth-tracing = { workspace = true, features = ["default"] }
+tokio-stream = { workspace = true, features = ["default"] }
+reth-network-p2p = { workspace = true, features = ["default"] }
+reth-node-ethereum = { workspace = true, features = ["default"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-payload-primitives = { workspace = true, features = ["default"] }
+reth-payload-builder = { workspace = true, features = ["test-utils"] }
+alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
+reth-node-builder = { workspace = true, features = ["default", "test-utils"] }
+[[test]]
+name = "e2e_testsuite"
+path = "tests/e2e-testsuite/main.rs"
+
+[[test]]
+name = "rocksdb"
+path = "tests/rocksdb/main.rs"

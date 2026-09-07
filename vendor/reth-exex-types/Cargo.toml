@@ -1,0 +1,35 @@
+[package]
+name = "reth-exex-types"
+description = "Commonly used types for exex usage in reth."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-eips = { workspace = true }
+reth-chain-state = { workspace = true }
+reth-execution-types = { workspace = true }
+reth-primitives-traits = { workspace = true }
+serde = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+serde_with = { workspace = true, features = ["macros"], optional = true }
+[dev-dependencies]
+arbitrary = { workspace = true }
+bincode_1_3_3 = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
+reth-ethereum-primitives = { workspace = true, features = ["arbitrary", "std"] }
+[features]
+default = []
+serde = ["dep:serde", "reth-execution-types/serde", "alloy-eips/serde", "alloy-primitives/serde", "rand/serde", "reth-primitives-traits/serde", "reth-ethereum-primitives/serde", "reth-chain-state/serde"]
+serde-bincode-compat = ["reth-execution-types/serde-bincode-compat", "serde_with", "alloy-eips/serde-bincode-compat"]

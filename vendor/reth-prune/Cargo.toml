@@ -1,0 +1,45 @@
+[package]
+name = "reth-prune"
+description = "Pruning implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+metrics = { workspace = true }
+thiserror = { workspace = true }
+itertools = { workspace = true }
+rustc-hash = { workspace = true }
+reth-config = { workspace = true }
+reth-db-api = { workspace = true }
+reth-errors = { workspace = true }
+reth-metrics = { workspace = true }
+reth-provider = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-tokio-util = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-prune-types = { workspace = true }
+reth-stages-types = { workspace = true }
+reth-primitives-traits = { workspace = true }
+reth-static-file-types = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
+reth-exex-types = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+[dev-dependencies]
+assert_matches = { workspace = true }
+reth-testing-utils = { workspace = true }
+reth-db = { workspace = true, features = ["test-utils"] }
+reth-tracing = { workspace = true, features = ["default"] }
+reth-stages = { workspace = true, features = ["test-utils"] }
+reth-primitives-traits = { workspace = true, features = ["arbitrary"] }

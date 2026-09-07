@@ -1,0 +1,70 @@
+[package]
+name = "reth-db-api"
+description = "Database abstraction used in reth."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+bytes = { workspace = true }
+metrics = { workspace = true }
+arrayvec = { workspace = true }
+reth-codecs = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-trie-common = { workspace = true }
+modular-bitfield = { workspace = true }
+reth-storage-errors = { workspace = true }
+roaring = { workspace = true, features = ["default"] }
+derive_more = { workspace = true, features = ["full"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+proptest = { workspace = true, optional = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+reth-db-models = { workspace = true, features = ["serde", "reth-codec"] }
+reth-prune-types = { workspace = true, features = ["serde", "reth-codec"] }
+reth-stages-types = { workspace = true, features = ["serde", "reth-codec"] }
+reth-primitives-traits = { workspace = true, features = ["serde", "reth-codec"] }
+reth-ethereum-primitives = { workspace = true, features = ["serde", "reth-codec"] }
+[dev-dependencies]
+test-fuzz = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+proptest = { workspace = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"] }
+reth-codecs = { workspace = true, features = ["test-utils"] }
+reth-db-models = { workspace = true, features = ["arbitrary"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
+[features]
+test-utils = [
+    "arbitrary",
+    "reth-primitives-traits/test-utils",
+    "reth-codecs/test-utils",
+    "reth-db-models/test-utils",
+    "reth-trie-common/test-utils",
+    "reth-prune-types/test-utils",
+    "reth-stages-types/test-utils",
+    "reth-ethereum-primitives/test-utils",
+]
+arbitrary = [
+    "reth-db-models/arbitrary",
+    "dep:arbitrary",
+    "dep:proptest",
+    "reth-primitives-traits/arbitrary",
+    "reth-trie-common/arbitrary",
+    "alloy-primitives/arbitrary",
+    "reth-codecs/arbitrary",
+    "reth-prune-types/arbitrary",
+    "reth-stages-types/arbitrary",
+    "alloy-consensus/arbitrary",
+    "reth-ethereum-primitives/arbitrary",
+]

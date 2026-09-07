@@ -12,87 +12,66 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# reth
-reth-node-api.workspace = true
-reth-db-common.workspace = true
-reth-trie-common.workspace = true
-reth-execution-types.workspace = true
-reth-transaction-pool.workspace = true
-reth-primitives-traits.workspace = true
-reth-payload-primitives.workspace = true
-reth-basic-payload-builder.workspace = true
-reth-revm.workspace = true
-reth-db = { workspace = true, features = ["test-utils"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
-
-# alloy
-alloy-rlp.workspace = true
-alloy-eips.workspace = true
-alloy-signer.workspace = true
-alloy-network.workspace = true
-alloy-provider.workspace = true
-alloy-transport.workspace = true
-alloy-primitives.workspace = true
-alloy-signer-local.workspace = true
-alloy-rpc-types-eth.workspace = true
+tracing = { workspace = true }
+alloy-rlp = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+base-runtime = { workspace = true }
+alloy-signer = { workspace = true }
+reth-node-api = { workspace = true }
+alloy-network = { workspace = true }
+reth-db-common = { workspace = true }
+alloy-transport = { workspace = true }
+base-test-utils = { workspace = true }
+base-tx-manager = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-signer-local = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+base-consensus-node = { workspace = true }
+base-common-network = { workspace = true }
+base-batcher-source = { workspace = true }
+base-batcher-encoder = { workspace = true }
+base-consensus-gossip = { workspace = true }
+base-consensus-engine = { workspace = true }
+reth-transaction-pool = { workspace = true }
+base-consensus-safedb = { workspace = true }
+reth-primitives-traits = { workspace = true }
+reth-basic-payload-builder = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+tempfile = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }
+base-protocol = { workspace = true, features = ["std"] }
+reth-revm = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default"] }
 alloy-consensus = { workspace = true, features = ["std"] }
+miniz_oxide = { workspace = true, features = ["default"] }
+alloy-provider = { workspace = true, features = ["default"] }
+base-node-core = { workspace = true, features = ["default"] }
+base-common-genesis = { workspace = true, features = ["std"] }
+reth-trie-common = { workspace = true, features = ["default"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-
-# base-common
-base-common-network.workspace = true
+base-common-chains = { workspace = true, features = ["default"] }
+base-execution-evm = { workspace = true, features = ["default"] }
+base-consensus-rpc = { workspace = true, features = ["default"] }
+reth-execution-types = { workspace = true, features = ["default"] }
+base-batcher-core = { workspace = true, features = ["test-utils"] }
+base-execution-txpool = { workspace = true, features = ["default"] }
+reth-db = { workspace = true, features = ["default", "test-utils"] }
+reth-payload-primitives = { workspace = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std", "evm"] }
-
-# base
-base-runtime.workspace = true
-base-node-core.workspace = true
-base-builder-core = { workspace = true, features = ["test-utils"] }
-base-test-utils.workspace = true
-base-tx-manager.workspace = true
-base-batcher-core = { workspace = true, features = ["test-utils"] }
-base-common-chains.workspace = true
-base-execution-evm.workspace = true
-base-consensus-rpc.workspace = true
-base-consensus-node.workspace = true
-base-batcher-source.workspace = true
-base-batcher-encoder.workspace = true
-base-consensus-safedb.workspace = true
-base-consensus-gossip.workspace = true
-base-consensus-engine.workspace = true
-base-execution-txpool.workspace = true
-base-execution-chainspec.workspace = true
-base-execution-payload-builder.workspace = true
-base-protocol = { workspace = true, features = ["std"] }
-base-common-genesis = { workspace = true, features = ["std"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
-
-# tokio
-tokio-util.workspace = true
-tokio = { workspace = true, features = ["rt", "time", "sync"] }
-
-# async
-async-trait.workspace = true
-
-# misc
-eyre.workspace = true
-tracing.workspace = true
-tempfile.workspace = true
-thiserror.workspace = true
-serde_json.workspace = true
-miniz_oxide.workspace = true
-
+base-execution-chainspec = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "rt", "time", "sync"] }
+base-execution-payload-builder = { workspace = true, features = ["default"] }
+base-builder-core = { workspace = true, features = ["default", "test-utils"] }
 [dev-dependencies]
-# alloy
+base-blobs = { workspace = true }
+base-common-precompiles = { workspace = true }
+base-precompile-storage = { workspace = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
-
-# base
-base-blobs.workspace = true
-base-common-precompiles.workspace = true
-base-precompile-storage.workspace = true
-
-# tokio
-tokio = { workspace = true, features = ["rt", "macros"] }
-
-# tracing
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tokio = { workspace = true, features = ["default", "rt", "macros"] }
+tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }

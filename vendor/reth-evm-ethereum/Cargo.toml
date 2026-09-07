@@ -1,0 +1,71 @@
+[package]
+name = "reth-evm-ethereum"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+revm = { workspace = true }
+reth-evm = { workspace = true }
+alloy-evm = { workspace = true }
+alloy-eips = { workspace = true }
+reth-chainspec = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-ethereum-forks = { workspace = true }
+reth-storage-errors = { workspace = true }
+reth-execution-types = { workspace = true }
+reth-primitives-traits = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+metrics = { workspace = true, optional = true }
+reth-metrics = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+revmc = { workspace = true, features = ["llvm-prefer-static", "alloy-evm"], optional = true }
+[dev-dependencies]
+alloy-genesis = { workspace = true }
+reth-testing-utils = { workspace = true }
+reth-evm = { workspace = true, features = ["test-utils"] }
+secp256k1 = { workspace = true, features = ["global-context", "recovery"] }
+[features]
+default = ["std"]
+std = [
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "alloy-genesis/std",
+    "alloy-primitives/std",
+    "secp256k1/std",
+    "reth-ethereum-forks/std",
+    "reth-chainspec/std",
+    "alloy-evm/std",
+    "reth-execution-types/std",
+    "reth-evm/std",
+    "reth-primitives-traits/std",
+    "revm/std",
+    "reth-ethereum-primitives/std",
+    "alloy-rpc-types-engine/std",
+    "reth-storage-errors/std",
+]
+jit = [
+    "std",
+    "dep:revmc",
+    "dep:metrics",
+    "dep:reth-metrics",
+]
+gmp = ["revm/gmp"]
+test-utils = [
+    "std",
+    "reth-chainspec/test-utils",
+    "reth-ethereum-primitives/test-utils",
+    "reth-evm/test-utils",
+    "reth-primitives-traits/test-utils",
+]

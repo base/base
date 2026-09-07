@@ -1,0 +1,29 @@
+[package]
+name = "example-custom-engine-types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+alloy-genesis = { workspace = true }
+reth-payload-builder = { workspace = true }
+reth-basic-payload-builder = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+reth-ethereum-payload-builder = { workspace = true }
+reth-tracing = { workspace = true, features = ["default"] }
+alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-ethereum = { workspace = true, features = ["default", "test-utils", "node", "node-api", "pool"] }
+[lints]
+workspace = true

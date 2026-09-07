@@ -1,0 +1,31 @@
+[package]
+name = "reth-net-nat"
+description = "Helpers for working around NAT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+futures-util = { workspace = true }
+if-addrs_0_14_0 = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+tracing = { workspace = true, features = ["attributes"] }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
+serde_with = { workspace = true, features = ["macros"], optional = true }
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros"] }
+reth-tracing = { workspace = true, features = ["default"] }
+[features]
+default = ["serde"]
+serde = ["dep:serde_with"]

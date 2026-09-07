@@ -1,0 +1,26 @@
+[package]
+name = "example-beacon-api-sse"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dependencies]
+bytes = { workspace = true }
+futures-util = { workspace = true }
+alloy-rpc-types-beacon = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+clap = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+tracing = { workspace = true, features = ["attributes"] }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
+reth-ethereum = { workspace = true, features = ["default", "node", "cli"] }
+[lints]
+workspace = true

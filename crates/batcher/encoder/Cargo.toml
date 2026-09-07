@@ -12,8 +12,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-alloy-rlp.workspace = true
-base-metrics.workspace = true
+alloy-rlp = { workspace = true }
+base-metrics = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 base-comp = { workspace = true, features = ["std"] }
@@ -22,15 +22,13 @@ alloy-eips = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-rand = { workspace = true, features = ["std", "small_rng"] }
-base-common-consensus = { workspace = true, features = ["std"] }
 base-common-genesis = { workspace = true, features = ["std"] }
-clap = { workspace = true, features = ["derive"], optional = true }
-
+base-common-consensus = { workspace = true, features = ["std"] }
+rand = { workspace = true, features = ["default", "std", "small_rng"] }
+clap = { workspace = true, features = ["default", "derive"], optional = true }
 [dev-dependencies]
-rstest.workspace = true
+rstest = { workspace = true, features = ["default"] }
 alloy-consensus = { workspace = true, features = ["std"] }
-
 [features]
 clap = [ "dep:clap" ]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]

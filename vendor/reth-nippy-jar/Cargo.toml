@@ -1,0 +1,37 @@
+[package]
+name = "reth-nippy-jar"
+description = "Immutable data store format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "reth_nippy_jar"
+
+[dependencies]
+memmap2 = { workspace = true }
+lz4_flex = { workspace = true }
+thiserror = { workspace = true }
+reth-fs-util = { workspace = true }
+bincode_1_3_3 = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+anyhow = { workspace = true, features = ["default"] }
+derive_more = { workspace = true, features = ["full"] }
+tracing = { workspace = true, features = ["attributes"] }
+zstd = { workspace = true, features = ["default", "experimental", "zdict_builder"] }
+[dev-dependencies]
+tempfile = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default", "small_rng"] }
+[features]
+default = []
+test-utils = []

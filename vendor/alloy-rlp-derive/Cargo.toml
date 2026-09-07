@@ -1,0 +1,39 @@
+[package]
+name = "alloy-rlp-derive"
+description = "Derive macros for alloy-rlp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[lib]
+name = "alloy_rlp_derive"
+path = "src/lib.rs"
+proc-macro = true
+
+[dependencies]
+syn = { workspace = true, features = ["default"] }
+quote = { workspace = true, features = ["default"] }
+proc-macro2 = { workspace = true, features = ["default"] }
+[lints]
+workspace = true

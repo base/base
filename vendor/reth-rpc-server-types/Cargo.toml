@@ -1,0 +1,27 @@
+[package]
+name = "reth-rpc-server-types"
+description = "RPC server types and constants"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-eips = { workspace = true }
+reth-errors = { workspace = true }
+jsonrpsee-types = { workspace = true }
+reth-network-api = { workspace = true }
+alloy-rpc-types-engine = { workspace = true }
+strum = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+jsonrpsee-core = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }

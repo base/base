@@ -1,0 +1,24 @@
+[package]
+name = "custom-hardforks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dependencies]
+alloy-eips = { workspace = true }
+alloy-genesis = { workspace = true }
+reth-chainspec = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-network-peers = { workspace = true }
+serde = { workspace = true, features = ["default", "derive"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+[lints]
+workspace = true

@@ -11,100 +11,87 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-# workspace
-base-health.workspace = true
-base-metrics.workspace = true
-base-protocol.workspace = true
-base-upgrade-signal.workspace = true
-base-consensus-disc.workspace = true
-base-consensus-peers.workspace = true
-base-consensus-gossip.workspace = true
-base-consensus-engine.workspace = true
-base-consensus-derive.workspace = true
-base-consensus-safedb.workspace = true
-base-consensus-sources.workspace = true
-base-common-genesis.workspace = true
-base-consensus-providers.workspace = true
-base-consensus-rpc = { workspace = true, features = ["client"] }
-
-# alloy
-alloy-signer.workspace = true
-alloy-genesis.workspace = true
-alloy-transport.workspace = true
-alloy-consensus.workspace = true
-alloy-rpc-client.workspace = true
-alloy-primitives.workspace = true
-alloy-signer-local.workspace = true
-alloy-eips = { workspace = true, features = ["std"] }
-alloy-chains = { workspace = true, features = ["std"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
-alloy-provider = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
-alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
-
-# base-common
-base-common-chains.workspace = true
-base-common-network.workspace = true
-base-common-consensus.workspace = true
-base-common-rpc-types-engine = { workspace = true, features = ["std"] }
-
-# general
-url.workspace = true
-http.workspace = true
-redb.workspace = true
-serde.workspace = true
-tower = { workspace = true, features = ["limit", "load-shed"] }
-bytes.workspace = true
-discv5.workspace = true
-backon.workspace = true
-libp2p.workspace = true
-futures.workspace = true
-http-body.workspace = true
-tokio-util = { workspace = true, features = ["rt"] }
-opentelemetry.workspace = true
-async-trait.workspace = true
-async-stream.workspace = true
-tokio-stream.workspace = true
-libp2p-stream.workspace = true
-http-body-util.workspace = true
-strum = { workspace = true, features = ["derive"] }
-tracing = { workspace = true, features = ["std"] }
-thiserror = { workspace = true, features = ["std"] }
-tower-http.workspace = true
-derive_more = { workspace = true, features = ["debug", "eq"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
-jsonrpsee = { workspace = true, features = ["server", "http-client"] }
-
-# Binary conductor commit endpoint
-ethereum_ssz.workspace = true
-reqwest.workspace = true
-
-# metrics
+redb = { workspace = true }
+serde = { workspace = true }
+discv5 = { workspace = true }
+libp2p = { workspace = true }
+http-body = { workspace = true }
+base-health = { workspace = true }
+async-trait = { workspace = true }
+base-metrics = { workspace = true }
+alloy-signer = { workspace = true }
+async-stream = { workspace = true }
+ethereum_ssz = { workspace = true }
+base-protocol = { workspace = true }
+alloy-genesis = { workspace = true }
+libp2p-stream = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-transport = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-signer-local = { workspace = true }
+base-consensus-disc = { workspace = true }
+base-common-genesis = { workspace = true }
+base-common-network = { workspace = true }
+base-consensus-peers = { workspace = true }
+base-consensus-gossip = { workspace = true }
+base-consensus-engine = { workspace = true }
+base-consensus-derive = { workspace = true }
+base-common-consensus = { workspace = true }
+base-consensus-safedb = { workspace = true }
+base-consensus-sources = { workspace = true }
+base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }
-
+tracing = { workspace = true, features = ["std"] }
+url = { workspace = true, features = ["default"] }
+strum = { workspace = true, features = ["derive"] }
+http = { workspace = true, features = ["default"] }
+thiserror = { workspace = true, features = ["std"] }
+bytes = { workspace = true, features = ["default"] }
+alloy-eips = { workspace = true, features = ["std"] }
+backon = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["default"] }
+alloy-chains = { workspace = true, features = ["std"] }
+tokio-stream = { workspace = true, features = ["default"] }
+opentelemetry = { workspace = true, features = ["default"] }
+http-body-util = { workspace = true, features = ["default"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+derive_more = { workspace = true, features = ["debug", "eq"] }
+alloy-rpc-client = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default", "rt"] }
+tower = { workspace = true, features = ["limit", "load-shed"] }
+base-common-chains = { workspace = true, features = ["default"] }
+base-upgrade-signal = { workspace = true, features = ["default"] }
+jsonrpsee = { workspace = true, features = ["server", "http-client"] }
+base-common-rpc-types-engine = { workspace = true, features = ["std"] }
+base-consensus-rpc = { workspace = true, features = ["default", "client"] }
+tower-http = { workspace = true, features = ["default", "limit", "timeout"] }
+alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
+tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros", "time"] }
+alloy-provider = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
+alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
 [dev-dependencies]
-rand.workspace = true
-rstest.workspace = true
-anyhow.workspace = true
-mockall.workspace = true
-httpmock.workspace = true
-tempfile.workspace = true
-arbitrary.workspace = true
-alloy-network.workspace = true
-tracing-subscriber.workspace = true
-base-node-runner = { workspace = true, features = ["test-utils"] }
-base-common-rpc-types.workspace = true
-base-protocol = { workspace = true, features = ["test-utils"] }
-tokio = { workspace = true, features = ["test-util"] }
+mockall = { workspace = true }
+arbitrary = { workspace = true }
+alloy-network = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+rstest = { workspace = true, features = ["default"] }
+anyhow = { workspace = true, features = ["default"] }
+httpmock = { workspace = true, features = ["default"] }
+tempfile = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["k256"] }
 metrics-util = { workspace = true, features = ["debugging"] }
+base-protocol = { workspace = true, features = ["test-utils"] }
+tracing-subscriber = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "test-util"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
+base-common-rpc-types = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["test-utils"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 alloy-consensus = { workspace = true, features = ["arbitrary", "std"] }
 base-common-consensus = { workspace = true, features = ["arbitrary", "k256"] }
 alloy-rpc-types-engine = { workspace = true, features = ["arbitrary", "std"] }
-
 [features]
 default = []
 metrics = [

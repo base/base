@@ -1,0 +1,45 @@
+[package]
+name = "reth-invalid-block-hooks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+revm = { workspace = true }
+serde = { workspace = true }
+reth-evm = { workspace = true }
+reth-trie = { workspace = true }
+jsonrpsee = { workspace = true }
+reth-provider = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-rpc-types-debug = { workspace = true }
+reth-engine-primitives = { workspace = true }
+reth-primitives-traits = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+reth-revm = { workspace = true, features = ["serde"] }
+futures = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+reth-rpc-api = { workspace = true, features = ["client"] }
+reth-tracing = { workspace = true, features = ["default"] }
+pretty_assertions = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+[dev-dependencies]
+alloy-eips = { workspace = true }
+reth-chainspec = { workspace = true }
+reth-evm-ethereum = { workspace = true }
+reth-testing-utils = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+tempfile = { workspace = true, features = ["default"] }
+reth-revm = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }

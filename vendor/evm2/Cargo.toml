@@ -1,0 +1,91 @@
+[package]
+name = "evm2"
+description = "Fast, customizable EVM implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+typeid = { workspace = true }
+cfg-if = { workspace = true }
+ripemd = { workspace = true }
+ark-ec = { workspace = true }
+arrayref = { workspace = true }
+thiserror = { workspace = true }
+auto_impl = { workspace = true }
+sha2_0_11_0 = { workspace = true }
+evm2-macros = { workspace = true }
+derive-where = { workspace = true }
+alloy-eip7928 = { workspace = true }
+ark-serialize = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-primitives = { workspace = true }
+aurora-engine-modexp = { workspace = true }
+paste = { workspace = true, optional = true }
+mcl_rust = { workspace = true, optional = true }
+ark-ff = { workspace = true, features = ["asm"] }
+bitvec = { workspace = true, features = ["alloc"] }
+gmp-mpfr-sys = { workspace = true, optional = true }
+substrate-bn = { workspace = true, optional = true }
+alloy-eips = { workspace = true, features = ["k256"] }
+once_cell = { workspace = true, features = ["alloc"] }
+k256_0_14_0 = { workspace = true, features = ["ecdsa"] }
+p256_0_14_0 = { workspace = true, features = ["ecdsa"] }
+ark-bls12-381 = { workspace = true, features = ["curve"] }
+ark-bn254_0_6_0 = { workspace = true, features = ["curve"] }
+phf = { workspace = true, features = ["macros"], optional = true }
+blst = { workspace = true, optional = true, features = ["default"] }
+aws-lc-rs = { workspace = true, features = ["aws-lc-sys"], optional = true }
+serde = { workspace = true, features = ["derive", "alloc"], optional = true }
+c-kzg = { workspace = true, features = ["ethereum_kzg_settings"], optional = true }
+corosensei = { workspace = true, features = ["default-stack", "unwind"], optional = true }
+secp256k1_0_31_1 = { workspace = true, features = ["alloc", "recovery", "rand", "global-context"], optional = true }
+[dev-dependencies]
+ark-std = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+postcard = { workspace = true, features = ["alloc"] }
+rstest = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = ["derive", "std"] }
+rand_0_10_2 = { workspace = true, features = ["default", "std"] }
+alloy-primitives = { workspace = true, features = ["serde", "std"] }
+[[example]]
+name = "custom_evm"
+path = "examples/custom_evm/main.rs"
+doc-scrape-examples = true
+
+[features]
+default = ["std", "map-foldhash", "parse", "asm-keccak", "gmp", "secp256k1", "blst", "portable", "bn254-mcl", "p256-aws-lc-rs"]
+std = ["alloy-consensus/std", "alloy-eip7928/std", "alloy-eips/std", "alloy-primitives/std", "bitvec/std", "ark-bls12-381/std", "ark-bn254_0_6_0/std", "ark-ec/std", "ark-ff/std", "ark-serialize/std", "ark-std/std", "aurora-engine-modexp/std", "k256_0_14_0/std", "once_cell/std", "p256_0_14_0/std", "phf?/std", "thiserror/std", "c-kzg?/std", "secp256k1_0_31_1?/std", "serde?/std"]
+
+async = ["std", "dep:corosensei"]
+
+serde = ["dep:serde", "alloy-consensus/serde", "alloy-eip7928/serde", "alloy-eips/serde", "alloy-primitives/serde", "ark-serialize/serde", "bitvec/serde", "derive-where/serde", "k256_0_14_0/serde", "p256_0_14_0/serde", "phf?/serde", "blst?/serde", "c-kzg?/serde", "secp256k1_0_31_1?/serde"]
+arbitrary = ["alloy-consensus/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary"]
+
+map-hashbrown = ["alloy-primitives/map-hashbrown"]
+map-foldhash = ["alloy-primitives/map-foldhash"]
+asm-keccak = ["alloy-primitives/asm-keccak"]
+sha3-keccak = ["alloy-primitives/sha3-keccak"]
+
+secp256k1 = ["dep:secp256k1_0_31_1"]
+gmp = ["dep:gmp-mpfr-sys"]
+bn = ["dep:substrate-bn"]
+c-kzg = ["dep:c-kzg"]
+blst = ["dep:blst"]
+bn254-mcl = ["std", "dep:mcl_rust"]
+portable = ["c-kzg?/portable", "blst?/portable"]
+p256-aws-lc-rs = ["dep:aws-lc-rs"]
+parse = ["dep:paste", "dep:phf"]
+
+nightly = []
+no-tco = []

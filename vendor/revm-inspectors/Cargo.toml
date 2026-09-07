@@ -1,0 +1,68 @@
+[package]
+name = "revm-inspectors"
+description = "Revm inspector implementations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[lib]
+name = "revm_inspectors"
+path = "src/lib.rs"
+
+[[bench]]
+name = "js_tracer"
+path = "benches/js_tracer.rs"
+harness = false
+
+[dependencies]
+revm = { workspace = true }
+thiserror = { workspace = true }
+colorchoice = { workspace = true }
+alloy-sol-types = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+alloy-rpc-types-trace = { workspace = true }
+boa_gc = { workspace = true, optional = true }
+serde_json = { workspace = true, features = ["alloc"] }
+alloy-primitives = { workspace = true, features = ["map"] }
+anstyle = { workspace = true, optional = true, features = ["default"] }
+boa_engine = { workspace = true, optional = true, features = ["default"] }
+serde = { workspace = true, features = ["default", "derive"], optional = true }
+[dev-dependencies]
+alloy-hardforks = { workspace = true }
+criterion = { workspace = true, features = ["default"] }
+snapbox = { workspace = true, features = ["default", "term-svg"] }
+[lints]
+workspace = true
+
+[features]
+default = ["std"]
+js-tracer = [
+    "dep:boa_engine",
+    "dep:boa_gc",
+]
+serde = [
+    "dep:serde",
+    "revm/serde",
+]
+std = [
+    "alloy-primitives/std",
+    "anstyle/std",
+    "serde/std",
+    "serde_json/std",
+    "revm/std",
+    "thiserror/std",
+]

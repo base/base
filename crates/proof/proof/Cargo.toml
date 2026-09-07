@@ -11,57 +11,42 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-# Workspace
-base-protocol.workspace = true
-base-proof-mpt.workspace = true
-base-proof-driver.workspace = true
-base-proof-executor.workspace = true
-base-proof-preimage.workspace = true
-base-common-chains.workspace = true
-base-consensus-derive.workspace = true
-base-common-genesis = { workspace = true, features = ["serde"] }
-
-# Alloy
-alloy-rlp.workspace = true
-alloy-eips.workspace = true
-alloy-trie.workspace = true
-alloy-genesis.workspace = true
-alloy-consensus.workspace = true
-alloy-primitives.workspace = true
-
-# Base Alloy
-base-common-consensus.workspace = true
-base-common-rpc-types-engine.workspace = true
-
-# Execution
-alloy-evm.workspace = true
-base-common-evm.workspace = true
-
-# General
-lru.workspace = true
-spin.workspace = true
-serde.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
-serde_json.workspace = true
-async-trait.workspace = true
-
-# KZG
-ark-ff.workspace = true
-ark-bls12-381 = { workspace = true, features = ["scalar_field"] }
-
-# `std` feature dependencies
+serde = { workspace = true }
+ark-ff = { workspace = true }
+tracing = { workspace = true }
+alloy-rlp = { workspace = true }
+alloy-evm = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-trie = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+base-protocol = { workspace = true }
+alloy-genesis = { workspace = true }
+base-proof-mpt = { workspace = true }
+alloy-consensus = { workspace = true }
+base-common-evm = { workspace = true }
+alloy-primitives = { workspace = true }
+base-proof-driver = { workspace = true }
+base-proof-executor = { workspace = true }
+base-proof-preimage = { workspace = true }
+base-consensus-derive = { workspace = true }
+base-common-consensus = { workspace = true }
 c-kzg = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["full"], optional = true }
-
+lru = { workspace = true, features = ["default"] }
+base-common-rpc-types-engine = { workspace = true }
+spin = { workspace = true, features = ["default"] }
+base-common-genesis = { workspace = true, features = ["serde"] }
+ark-bls12-381 = { workspace = true, features = ["scalar_field"] }
+base-common-chains = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "full"], optional = true }
 [dev-dependencies]
-rand.workspace = true
-rayon.workspace = true
-rstest.workspace = true
+rayon = { workspace = true }
 c-kzg = { workspace = true, features = [] }
-tokio = { workspace = true, features = ["full"] }
+rand = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"] }
-
+rstest = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "full"] }
 [features]
 std = [
 	"alloy-consensus/std",

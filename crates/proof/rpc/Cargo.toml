@@ -12,47 +12,27 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Alloy
-alloy-eips.workspace = true
-alloy-network.workspace = true
-alloy-provider.workspace = true
-alloy-transport.workspace = true
-alloy-rpc-client.workspace = true
-alloy-primitives.workspace = true
-alloy-rpc-types-eth.workspace = true
-alloy-transport-http.workspace = true
-
-# Base Alloy
-base-optimism-rpc.workspace = true
-base-common-network.workspace = true
-base-common-rpc-types.workspace = true
-
-# Consensus
+serde = { workspace = true }
+tracing = { workspace = true }
+metrics = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+serde_json = { workspace = true }
+base-retry = { workspace = true }
+async-trait = { workspace = true }
+alloy-network = { workspace = true }
+alloy-transport = { workspace = true }
+alloy-primitives = { workspace = true }
+base-optimism-rpc = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+base-common-network = { workspace = true }
+url = { workspace = true, features = ["default"] }
+backon = { workspace = true, features = ["default"] }
+alloy-provider = { workspace = true, features = ["default"] }
+moka = { workspace = true, features = ["default", "future"] }
+alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["serde"] }
-
-# Retry
-base-retry.workspace = true
-
-# Async
-async-trait.workspace = true
-
-# Tracing
-tracing.workspace = true
-
-# Serialization
-serde.workspace = true
-serde_json.workspace = true
-
-# Metrics
-metrics.workspace = true
-
-# Error handling
-thiserror.workspace = true
-
-# Misc
-url.workspace = true
-backon.workspace = true
-moka = { workspace = true, features = ["future"] }
-
+alloy-transport-http = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = ["default"] }
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread", "test-util"] }

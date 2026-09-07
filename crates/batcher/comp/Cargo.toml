@@ -12,16 +12,13 @@ description = "Derivation channel compression for Base"
 workspace = true
 
 [dependencies]
-thiserror.workspace = true
-
+thiserror = { workspace = true }
 brotli = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["debug"], optional = true }
-
 [dev-dependencies]
 base-protocol = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 base-common-genesis = { workspace = true, features = ["std"] }
-
 [features]
 default = []
 std = [

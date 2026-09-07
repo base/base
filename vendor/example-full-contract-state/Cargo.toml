@@ -1,0 +1,19 @@
+[package]
+name = "example-full-contract-state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+eyre = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+reth-ethereum = { workspace = true, features = ["default", "node"] }
+[lints]
+workspace = true

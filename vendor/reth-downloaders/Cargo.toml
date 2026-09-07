@@ -1,0 +1,76 @@
+[package]
+name = "reth-downloaders"
+description = "Implementations of various block downloaders"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rayon = { workspace = true }
+metrics = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+reth-tasks = { workspace = true }
+reth-config = { workspace = true }
+pin-project = { workspace = true }
+futures-util = { workspace = true }
+reth-metrics = { workspace = true }
+reth-consensus = { workspace = true }
+alloy-consensus = { workspace = true }
+reth-storage-api = { workspace = true }
+reth-network-peers = { workspace = true }
+reth-primitives-traits = { workspace = true }
+itertools = { workspace = true, optional = true }
+reth-provider = { workspace = true, optional = true }
+futures = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["attributes"] }
+reth-testing-utils = { workspace = true, optional = true }
+tokio-stream = { workspace = true, features = ["default"] }
+reth-network-p2p = { workspace = true, features = ["default"] }
+reth-ethereum-primitives = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["sync", "fs", "io-util"] }
+tokio-util = { workspace = true, features = ["default", "codec"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+tempfile = { workspace = true, optional = true, features = ["default"] }
+alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
+async-compression = { workspace = true, features = ["gzip", "tokio"], optional = true }
+[dev-dependencies]
+itertools = { workspace = true }
+reth-chainspec = { workspace = true }
+assert_matches = { workspace = true }
+reth-testing-utils = { workspace = true }
+reth-ethereum-primitives = { workspace = true }
+rand = { workspace = true, features = ["default"] }
+tempfile = { workspace = true, features = ["default"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+reth-tracing = { workspace = true, features = ["default"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+reth-consensus = { workspace = true, features = ["test-utils"] }
+async-compression = { workspace = true, features = ["gzip", "tokio"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
+[features]
+default = []
+file-client = ["dep:async-compression", "dep:alloy-rlp", "dep:itertools"]
+test-utils = [
+    "tempfile",
+    "reth-consensus/test-utils",
+    "reth-network-p2p/test-utils",
+    "reth-testing-utils",
+    "reth-chainspec/test-utils",
+    "reth-provider/test-utils",
+    "reth-primitives-traits/test-utils",
+    "dep:reth-ethereum-primitives",
+    "reth-ethereum-primitives?/test-utils",
+    "reth-tasks/test-utils",
+]

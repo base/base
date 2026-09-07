@@ -13,26 +13,19 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# alloy
-alloy-evm.workspace = true
-alloy-sol-types.workspace = true
-alloy-primitives.workspace = true
-
-# base
-base-common-chains.workspace = true
-base-common-genesis.workspace = true
-base-precompile-macros.workspace = true
-base-precompile-storage.workspace = true
-
-# revm
-revm.workspace = true
-
+revm = { workspace = true }
+alloy-evm = { workspace = true }
+alloy-sol-types = { workspace = true }
+alloy-primitives = { workspace = true }
+base-common-genesis = { workspace = true }
+base-precompile-macros = { workspace = true }
+base-precompile-storage = { workspace = true }
+base-common-chains = { workspace = true, features = ["default"] }
 [dev-dependencies]
-rstest.workspace = true
-criterion.workspace = true
-k256 = { workspace = true, features = ["ecdsa"] }
+rstest = { workspace = true, features = ["default"] }
+criterion = { workspace = true, features = ["default"] }
+k256 = { workspace = true, features = ["default", "ecdsa"] }
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
-
 [[bench]]
 name = "base_precompiles"
 harness = false

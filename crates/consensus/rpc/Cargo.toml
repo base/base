@@ -12,40 +12,29 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Workspace
-base-consensus-gossip.workspace = true
-base-consensus-engine.workspace = true
-base-consensus-safedb.workspace = true
-base-upgrade-signal.workspace = true
-base-protocol = { workspace = true, features = ["serde", "std"] }
-base-common-genesis = { workspace = true, features = ["serde", "std"] }
-
-# Base Alloy
-base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
-
-# Alloy
-alloy-eips = { workspace = true, features = ["serde", "std"] }
-alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"] }
-
-# Misc
-ipnet.workspace = true
-backon.workspace = true
-libp2p.workspace = true
-async-trait.workspace = true
+libp2p = { workspace = true }
+async-trait = { workspace = true }
+base-consensus-gossip = { workspace = true }
+base-consensus-engine = { workspace = true }
+base-consensus-safedb = { workspace = true }
 serde = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-
-# RPC
+ipnet = { workspace = true, features = ["default"] }
+backon = { workspace = true, features = ["default"] }
 getrandom = { workspace = true, features = ["wasm_js"] }
+tokio = { workspace = true, features = ["default", "time"] }
+alloy-eips = { workspace = true, features = ["serde", "std"] }
+base-protocol = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
-
+base-upgrade-signal = { workspace = true, features = ["default"] }
+base-common-genesis = { workspace = true, features = ["serde", "std"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"] }
 [dev-dependencies]
-rstest.workspace = true
 serde_json = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["macros", "rt", "sync"] }
-
+rstest = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "macros", "rt", "sync"] }
 [features]
 default = []
 reqwest = [ "client" ]

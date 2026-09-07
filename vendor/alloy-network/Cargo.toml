@@ -1,0 +1,73 @@
+[package]
+name = "alloy-network"
+description = "Ethereum blockchain RPC behavior abstraction"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "alloy_network"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+auto_impl = { workspace = true }
+alloy-serde = { workspace = true }
+async-trait = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-json-rpc = { workspace = true }
+alloy-sol-types = { workspace = true }
+alloy-rpc-types-any = { workspace = true }
+alloy-network-primitives = { workspace = true }
+alloy-eips = { workspace = true, features = ["serde"] }
+derive_more = { workspace = true, features = ["from"] }
+serde_json = { workspace = true, features = ["alloc"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["map"] }
+futures-utils-wasm = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+] }
+alloy-consensus-any = { workspace = true, features = [
+    "std",
+    "serde",
+] }
+alloy-rpc-types-eth = { workspace = true, features = [
+    "std",
+    "serde",
+] }
+[dev-dependencies]
+
+[lints]
+workspace = true
+
+[features]
+k256 = [
+    "alloy-primitives/k256",
+    "alloy-consensus/k256",
+    "alloy-eips/k256",
+    "alloy-rpc-types-eth/k256",
+]
