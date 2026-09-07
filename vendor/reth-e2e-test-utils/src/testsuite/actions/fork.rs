@@ -5,7 +5,6 @@ use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionReques
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use reth_ethereum_primitives::TransactionSigned;
-use reth_node_api::EngineTypes;
 use reth_rpc_api::clients::EthApiClient;
 use tracing::debug;
 
@@ -44,13 +43,8 @@ impl CreateFork {
     }
 }
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for CreateFork
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for CreateFork {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             // resolve the fork base and execute the appropriate sequence
             match &self.fork_base {
@@ -112,11 +106,8 @@ impl SetForkBaseFromBlockInfo {
     }
 }
 
-impl<Engine> Action<Engine> for SetForkBase
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for SetForkBase {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             if env.node_clients.is_empty() {
                 return Err(eyre::eyre!("No node clients available"));
@@ -166,11 +157,8 @@ where
     }
 }
 
-impl<Engine> Action<Engine> for SetForkBaseFromBlockInfo
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for SetForkBaseFromBlockInfo {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let block_info = self.fork_base_info;
 
@@ -212,11 +200,8 @@ impl ValidateFork {
     }
 }
 
-impl<Engine> Action<Engine> for ValidateFork
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for ValidateFork {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let current_block_info = env
                 .current_block_info()

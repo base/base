@@ -1,12 +1,12 @@
 //! Utilities for running e2e tests against a node or a network of nodes.
 
-use std::{collections::HashMap, marker::PhantomData};
+use std::collections::HashMap;
 
 use alloy_primitives::B256;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3;
 use eyre::Result;
 use jsonrpsee::http_client::HttpClient;
-use reth_node_api::EngineTypes;
 use reth_payload_builder::PayloadId;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 
@@ -100,10 +100,7 @@ pub struct BlockInfo {
 
 /// Per-node state tracking for multi-node environments
 #[derive(Clone)]
-pub struct NodeState<I>
-where
-    I: EngineTypes,
-{
+pub struct NodeState {
     /// Current block information for this node
     pub current_block_info: Option<BlockInfo>,
     /// Stores payload attributes indexed by block number for this node
@@ -121,15 +118,12 @@ where
     /// Stores the most recent executed payload for this node
     pub latest_payload_executed: Option<PayloadAttributes>,
     /// Stores the most recent built execution payload envelope for this node
-    pub latest_payload_envelope: Option<I::ExecutionPayloadEnvelopeV3>,
+    pub latest_payload_envelope: Option<BaseExecutionPayloadEnvelopeV3>,
     /// Fork base block number for validation (if this node is currently on a fork)
     pub current_fork_base: Option<u64>,
 }
 
-impl<I> Default for NodeState<I>
-where
-    I: EngineTypes,
-{
+impl Default for NodeState {
     fn default() -> Self {
         Self {
             current_block_info: None,
@@ -146,10 +140,7 @@ where
     }
 }
 
-impl<I> std::fmt::Debug for NodeState<I>
-where
-    I: EngineTypes,
-{
+impl std::fmt::Debug for NodeState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NodeState")
             .field("current_block_info", &self.current_block_info)
@@ -168,16 +159,11 @@ where
 
 /// Represents a test environment.
 #[derive(Debug)]
-pub struct Environment<I>
-where
-    I: EngineTypes,
-{
+pub struct Environment {
     /// Combined clients with both RPC and Engine API endpoints
     pub node_clients: Vec<NodeClient>,
     /// Per-node state tracking
-    pub node_states: Vec<NodeState<I>>,
-    /// Tracks instance generic.
-    _phantom: PhantomData<I>,
+    pub node_states: Vec<NodeState>,
     /// Last producer index
     pub last_producer_idx: Option<usize>,
     /// Defines the increment for block timestamps (default: 2 seconds)
@@ -195,16 +181,12 @@ where
         Option<fn(PayloadAttributes) -> BasePayloadBuilderAttributes<BaseTxEnvelope>>,
 }
 
-impl<I> Default for Environment<I>
-where
-    I: EngineTypes,
-{
+impl Default for Environment {
     fn default() -> Self {
         Self {
             payload_attributes_converter: None,
             node_clients: vec![],
             node_states: vec![],
-            _phantom: Default::default(),
             last_producer_idx: None,
             block_timestamp_increment: 2,
             slots_to_safe: 0,
@@ -215,17 +197,14 @@ where
     }
 }
 
-impl<I> Environment<I>
-where
-    I: EngineTypes,
-{
+impl Environment {
     /// Get the number of nodes in the environment
     pub const fn node_count(&self) -> usize {
         self.node_clients.len()
     }
 
     /// Get mutable reference to a specific node's state
-    pub fn node_state_mut(&mut self, node_idx: usize) -> Result<&mut NodeState<I>, eyre::Error> {
+    pub fn node_state_mut(&mut self, node_idx: usize) -> Result<&mut NodeState, eyre::Error> {
         let node_count = self.node_count();
         self.node_states.get_mut(node_idx).ok_or_else(|| {
             eyre::eyre!("Node index {} out of bounds (have {} nodes)", node_idx, node_count)
@@ -233,19 +212,19 @@ where
     }
 
     /// Get immutable reference to a specific node's state
-    pub fn node_state(&self, node_idx: usize) -> Result<&NodeState<I>, eyre::Error> {
+    pub fn node_state(&self, node_idx: usize) -> Result<&NodeState, eyre::Error> {
         self.node_states.get(node_idx).ok_or_else(|| {
             eyre::eyre!("Node index {} out of bounds (have {} nodes)", node_idx, self.node_count())
         })
     }
 
     /// Get the currently active node's state
-    pub fn active_node_state(&self) -> Result<&NodeState<I>, eyre::Error> {
+    pub fn active_node_state(&self) -> Result<&NodeState, eyre::Error> {
         self.node_state(self.active_node_idx)
     }
 
     /// Get mutable reference to the currently active node's state
-    pub fn active_node_state_mut(&mut self) -> Result<&mut NodeState<I>, eyre::Error> {
+    pub fn active_node_state_mut(&mut self) -> Result<&mut NodeState, eyre::Error> {
         let idx = self.active_node_idx;
         self.node_state_mut(idx)
     }
@@ -282,35 +261,26 @@ where
 
 /// Builder for creating test scenarios
 #[expect(missing_debug_implementations)]
-pub struct TestBuilder<I>
-where
-    I: EngineTypes,
-{
-    setup: Option<Setup<I>>,
-    actions: Vec<ActionBox<I>>,
-    env: Environment<I>,
+pub struct TestBuilder {
+    setup: Option<Setup>,
+    actions: Vec<ActionBox>,
+    env: Environment,
 }
 
-impl<I> Default for TestBuilder<I>
-where
-    I: EngineTypes,
-{
+impl Default for TestBuilder {
     fn default() -> Self {
         Self { setup: None, actions: Vec::new(), env: Default::default() }
     }
 }
 
-impl<I> TestBuilder<I>
-where
-    I: EngineTypes + 'static,
-{
+impl TestBuilder {
     /// Create a new test builder
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the test setup
-    pub fn with_setup(mut self, setup: Setup<I>) -> Self {
+    pub fn with_setup(mut self, setup: Setup) -> Self {
         self.setup = Some(setup);
         self
     }
@@ -318,9 +288,9 @@ where
     /// Add an action to the test
     pub fn with_action<A>(mut self, action: A) -> Self
     where
-        A: Action<I>,
+        A: Action,
     {
-        self.actions.push(ActionBox::<I>::new(action));
+        self.actions.push(ActionBox::new(action));
         self
     }
 
@@ -328,7 +298,7 @@ where
     pub fn with_actions<II, A>(mut self, actions: II) -> Self
     where
         II: IntoIterator<Item = A>,
-        A: Action<I>,
+        A: Action,
     {
         self.actions.extend(actions.into_iter().map(ActionBox::new));
         self
@@ -337,7 +307,7 @@ where
     /// Run the test scenario
     pub async fn run<N>(mut self) -> Result<()>
     where
-        N: NodeBuilderHelper<Payload = I>,
+        N: NodeBuilderHelper,
     {
         let mut setup = self.setup.take();
 

@@ -47,13 +47,8 @@ impl SendNewPayload {
     }
 }
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for SendNewPayload
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for SendNewPayload {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             if self.node_idx >= env.node_clients.len() {
                 return Err(eyre::eyre!("Target node index out of bounds: {}", self.node_idx));
@@ -124,7 +119,7 @@ impl<
 
             // Send the payload to the target node
             let target_engine = env.node_clients[self.node_idx].engine.http_client();
-            let result = EngineApiClient::<Engine>::new_payload_v3(
+            let result = EngineApiClient::new_payload_v3(
                 &target_engine,
                 payload,
                 vec![],
@@ -251,13 +246,8 @@ impl Default for SendNewPayloads {
     }
 }
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for SendNewPayloads
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for SendNewPayloads {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             // Validate required fields
             let target_node =

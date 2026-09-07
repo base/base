@@ -10,7 +10,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use base_common_consensus::BaseTxEnvelope;
-use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use reth_payload_primitives::BasePayloadBuilderAttributes;
 extern crate alloc;
 
 use alloy_consensus::BlockHeader;
@@ -25,7 +25,6 @@ use reth_payload_primitives::{
 use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_storage_api::{StateProviderBox, errors::ProviderResult};
 use reth_trie_common::HashedPostState;
-use serde::{Serialize, de::DeserializeOwned};
 
 mod error;
 pub use error::*;
@@ -46,75 +45,6 @@ pub use invalid_block_hook::{InvalidBlockHook, InvalidBlockHooks, NoopInvalidBlo
 
 pub mod config;
 pub use config::*;
-
-/// This type defines the versioned types of the engine API based on the [ethereum engine API](https://github.com/ethereum/execution-apis/tree/main/src/engine).
-///
-/// This includes the execution payload types and payload attributes that are used to trigger a
-/// payload job. Payload data and builder attributes use concrete Base types.
-///
-/// Implementations of this type are intended to be stateless and just define the types as
-/// associated types.
-/// This type is intended for non-ethereum chains that closely mirror the ethereum engine API spec,
-/// but may have different payload, for example opstack, but structurally equivalent otherwise (same
-/// engine API RPC endpoints for example).
-pub trait EngineTypes:
-    Send + Sync + Unpin + core::fmt::Debug + Clone + 'static + DeserializeOwned + Serialize
-{
-    /// Execution Payload V1 envelope type.
-    type ExecutionPayloadEnvelopeV1: TryFrom<BaseBuiltPayload>
-        + DeserializeOwned
-        + Serialize
-        + Clone
-        + Unpin
-        + Send
-        + Sync
-        + 'static;
-    /// Execution Payload V2  envelope type.
-    type ExecutionPayloadEnvelopeV2: TryFrom<BaseBuiltPayload>
-        + DeserializeOwned
-        + Serialize
-        + Clone
-        + Unpin
-        + Send
-        + Sync
-        + 'static;
-    /// Execution Payload V3 envelope type.
-    type ExecutionPayloadEnvelopeV3: TryFrom<BaseBuiltPayload>
-        + DeserializeOwned
-        + Serialize
-        + Clone
-        + Unpin
-        + Send
-        + Sync
-        + 'static;
-    /// Execution Payload V4 envelope type.
-    type ExecutionPayloadEnvelopeV4: TryFrom<BaseBuiltPayload>
-        + DeserializeOwned
-        + Serialize
-        + Clone
-        + Unpin
-        + Send
-        + Sync
-        + 'static;
-    /// Execution Payload V5 envelope type.
-    type ExecutionPayloadEnvelopeV5: TryFrom<BaseBuiltPayload>
-        + DeserializeOwned
-        + Serialize
-        + Clone
-        + Unpin
-        + Send
-        + Sync
-        + 'static;
-    /// Execution Payload V6 envelope type.
-    type ExecutionPayloadEnvelopeV6: TryFrom<BaseBuiltPayload>
-        + DeserializeOwned
-        + Serialize
-        + Clone
-        + Unpin
-        + Send
-        + Sync
-        + 'static;
-}
 
 /// Validates engine API requests at the RPC layer, before payloads and attributes
 /// are forwarded to the engine for processing.
@@ -270,8 +200,3 @@ pub trait PayloadValidator: Send + Sync + Unpin + 'static {
 pub mod test_utils;
 #[cfg(feature = "test-utils")]
 pub use test_utils::TestEngineValidator;
-
-#[cfg(feature = "test-utils")]
-mod test_payload;
-#[cfg(feature = "test-utils")]
-pub use test_payload::TestEngineTypes;

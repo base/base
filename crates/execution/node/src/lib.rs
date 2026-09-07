@@ -17,10 +17,8 @@ pub use args::{
     ProofsHistoryRocksdbArgs, RollupArgs, TWELVE_HOURS_IN_BLOCKS, TxpoolOrdering,
 };
 
-/// Exports Base-specific implementations of the [`EngineTypes`](reth_node_api::EngineTypes)
-/// trait.
+/// Base engine validation.
 pub mod engine;
-pub use engine::BaseEngineTypes;
 
 pub mod node;
 pub use node::*;

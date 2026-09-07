@@ -1,6 +1,6 @@
 //! Test setup utilities for configuring the initial state.
 
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
@@ -9,7 +9,7 @@ use base_common_consensus::BaseTxEnvelope;
 use eyre::{Result, eyre};
 use reth_chainspec::ChainSpec;
 use reth_ethereum_primitives::Block;
-use reth_node_api::{EngineTypes, TreeConfig};
+use reth_node_api::TreeConfig;
 use reth_node_core::primitives::RecoveredBlock;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use revm::state::EvmState;
@@ -23,7 +23,7 @@ use crate::{E2ETestSetupBuilder, NodeBuilderHelper, testsuite::Environment};
 
 /// Configuration for setting up test environment
 #[derive(Debug)]
-pub struct Setup<I: EngineTypes> {
+pub struct Setup {
     /// Chain specification to use
     pub chain_spec: Option<Arc<ChainSpec>>,
     /// Genesis block to use
@@ -43,11 +43,9 @@ pub struct Setup<I: EngineTypes> {
     /// Conversion for chain-specific payload attributes.
     pub payload_attributes_converter:
         Option<fn(PayloadAttributes) -> BasePayloadBuilderAttributes<BaseTxEnvelope>>,
-    /// Tracks instance generic.
-    _phantom: PhantomData<I>,
 }
 
-impl<I: EngineTypes> Default for Setup<I> {
+impl Default for Setup {
     fn default() -> Self {
         Self {
             chain_spec: None,
@@ -58,13 +56,13 @@ impl<I: EngineTypes> Default for Setup<I> {
             tree_config: TreeConfig::default(),
             shutdown_tx: None,
             is_dev: true,
-            _phantom: Default::default(),
+
             payload_attributes_converter: None,
         }
     }
 }
 
-impl<I: EngineTypes> Drop for Setup<I> {
+impl Drop for Setup {
     fn drop(&mut self) {
         // Send shutdown signal if the channel exists
         if let Some(tx) = self.shutdown_tx.take() {
@@ -73,10 +71,7 @@ impl<I: EngineTypes> Drop for Setup<I> {
     }
 }
 
-impl<I> Setup<I>
-where
-    I: EngineTypes,
-{
+impl Setup {
     /// Supplies chain-specific fields when the framework creates payload attributes.
     pub fn with_payload_attributes_converter(
         mut self,
@@ -135,18 +130,18 @@ where
     }
 
     /// Apply the setup to the environment
-    pub async fn apply<N>(&mut self, env: &mut Environment<I>) -> Result<()>
+    pub async fn apply<N>(&mut self, env: &mut Environment) -> Result<()>
     where
-        N: NodeBuilderHelper<Payload = I>,
+        N: NodeBuilderHelper,
     {
         // Note: this future is quite large so we box it
         Box::pin(self.apply_::<N>(env)).await
     }
 
     /// Apply the setup to the environment
-    async fn apply_<N>(&mut self, env: &mut Environment<I>) -> Result<()>
+    async fn apply_<N>(&mut self, env: &mut Environment) -> Result<()>
     where
-        N: NodeBuilderHelper<Payload = I>,
+        N: NodeBuilderHelper,
     {
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;
@@ -221,7 +216,7 @@ where
     /// Common finalization logic for both apply methods
     async fn finalize_setup(
         &self,
-        env: &mut Environment<I>,
+        env: &mut Environment,
         node_clients: Vec<crate::testsuite::NodeClient>,
         use_latest_block: bool,
     ) -> Result<()> {

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_node_core::{BaseEngineTypes, BaseNode};
+use base_node_core::BaseNode;
 use eyre::Result;
 use fixtures::BaseTestPayload;
 use reth_e2e_test_utils::{
@@ -102,7 +102,7 @@ async fn test_testsuite_reorg_with_tagging() -> Result<()> {
         // block production finalizes the produced blocks, so re-establish finality at the fork
         // base: building below the finalized block is rejected as a too deep reorg
         .with_action(
-            FinalizeBlock::<BaseEngineTypes>::new(BlockReference::Tag("fork_base".to_string()))
+            FinalizeBlock::new(BlockReference::Tag("fork_base".to_string()))
                 .with_head(BlockReference::Tag("main_tip".to_string())),
         )
         // fork from block 1, produce blocks 2', 3'

@@ -2,21 +2,17 @@ use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, BaseTxEnvelope, Predeploys};
 use base_common_evm::BaseTime;
-use base_common_rpc_types_engine::{
-    BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    ExecutionData,
-};
+use base_common_rpc_types_engine::ExecutionData;
 use base_execution_consensus::{BaseConsensusError, isthmus};
 use base_execution_payload_builder::BaseExecutionPayloadValidator;
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_chainspec::EthChainSpec;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
-    EngineApiValidator, EngineTypes, InsertBlockErrorKind, PayloadValidator,
+    EngineApiValidator, InsertBlockErrorKind, PayloadValidator,
     payload::{
         EngineApiMessageVersion, EngineObjectValidationError, MessageValidationKind,
         NewPayloadError, PayloadOrAttributes, VersionSpecificValidationError,
@@ -25,30 +21,12 @@ use reth_node_api::{
     validate_version_specific_fields,
 };
 use reth_payload_primitives::{
-    BaseBuiltPayload, BasePayloadBuilderAttributes, InvalidPayloadAttributesError,
-    PayloadAttributes,
+    BasePayloadBuilderAttributes, InvalidPayloadAttributesError, PayloadAttributes,
 };
 use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SealedHeader, SignedTransaction};
 use reth_provider::StateProvider;
 use reth_storage_api::{StateProviderBox, errors::ProviderResult};
 use reth_trie_common::{HashedPostState, KeyHasher};
-
-/// The types used in the Base beacon consensus engine.
-#[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
-#[non_exhaustive]
-pub struct BaseEngineTypes {}
-
-impl EngineTypes for BaseEngineTypes
-where
-    ExecutionData: From<BaseBuiltPayload>,
-{
-    type ExecutionPayloadEnvelopeV1 = ExecutionPayloadV1;
-    type ExecutionPayloadEnvelopeV2 = ExecutionPayloadEnvelopeV2;
-    type ExecutionPayloadEnvelopeV3 = BaseExecutionPayloadEnvelopeV3;
-    type ExecutionPayloadEnvelopeV4 = BaseExecutionPayloadEnvelopeV4;
-    type ExecutionPayloadEnvelopeV5 = BaseExecutionPayloadEnvelopeV5;
-    type ExecutionPayloadEnvelopeV6 = BaseExecutionPayloadEnvelopeV5;
-}
 
 /// Validator for Base engine API.
 #[derive(Debug)]

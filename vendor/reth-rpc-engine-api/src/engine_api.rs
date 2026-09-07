@@ -1,5 +1,4 @@
 use std::{
-    marker::PhantomData,
     sync::Arc,
     time::{Instant, SystemTime},
 };
@@ -13,18 +12,19 @@ use alloy_eips::{
 use alloy_primitives::{B128, B256, BlockHash, BlockNumber, Bytes, Sealable, U64};
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadBodiesV2,
-    ExecutionPayloadBodyV1, ExecutionPayloadBodyV2, ExecutionPayloadInputV2, ExecutionPayloadV1,
-    ExecutionPayloadV3, ExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated, PayloadId,
-    PayloadStatus, PraguePayloadFields,
+    ExecutionPayloadBodyV1, ExecutionPayloadBodyV2, ExecutionPayloadEnvelopeV2,
+    ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV3, ExecutionPayloadV4,
+    ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus, PraguePayloadFields,
 };
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, BaseExecutionPayloadV4, ExecutionData,
 };
 use jsonrpsee_core::{RpcResult, server::RpcModule};
 use reth_chainspec::EthereumHardforks;
-use reth_engine_primitives::{ConsensusEngineHandle, EngineApiValidator, EngineTypes};
+use reth_engine_primitives::{ConsensusEngineHandle, EngineApiValidator};
 use reth_network_api::{CellCustody, NetworkInfo};
 use reth_payload_builder::PayloadStore;
 use reth_payload_primitives::{
@@ -55,25 +55,12 @@ const MAX_BLOB_LIMIT: usize = 128;
 /// The Engine API implementation that grants the Consensus layer access to data and
 /// functions in the Execution layer that are crucial for the consensus process.
 ///
-/// This type is generic over [`EngineTypes`] and intended to be used as the entrypoint for engine
-/// API processing. It can be reused by other non L1 engine APIs that deviate from the L1 spec but
-/// are still follow the engine API model.
-///
-/// ## Implementers
-///
-/// Implementing support for an engine API jsonrpsee RPC handler is done by defining the engine API
-/// server trait and implementing it on a type that can either wrap this [`EngineApi`] type or
-/// use a custom [`EngineTypes`] implementation if it mirrors ethereum's versioned engine API
-/// endpoints (e.g. opstack).
-/// See also [`EngineApiServer`] implementation for this type which is the
-/// L1 implementation.
-pub struct EngineApi<Provider, PayloadT: EngineTypes, Pool, Validator, ChainSpec> {
-    inner: Arc<EngineApiInner<Provider, PayloadT, Pool, Validator, ChainSpec>>,
+/// Uses concrete Base payloads and versioned engine API responses.
+pub struct EngineApi<Provider, Pool, Validator, ChainSpec> {
+    inner: Arc<EngineApiInner<Provider, Pool, Validator, ChainSpec>>,
 }
 
-impl<Provider, PayloadT: EngineTypes, Pool, Validator, ChainSpec>
-    EngineApi<Provider, PayloadT, Pool, Validator, ChainSpec>
-{
+impl<Provider, Pool, Validator, ChainSpec> EngineApi<Provider, Pool, Validator, ChainSpec> {
     /// Returns the configured chainspec.
     pub fn chain_spec(&self) -> &Arc<ChainSpec> {
         &self.inner.chain_spec
@@ -85,11 +72,9 @@ impl<Provider, PayloadT: EngineTypes, Pool, Validator, ChainSpec>
     }
 }
 
-impl<Provider, PayloadT, Pool, Validator, ChainSpec>
-    EngineApi<Provider, PayloadT, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator, ChainSpec> EngineApi<Provider, Pool, Validator, ChainSpec>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
-    PayloadT: EngineTypes,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator,
     ChainSpec: EthereumHardforks + Send + Sync + 'static,
@@ -112,7 +97,6 @@ where
         let cell_custody = network.cell_custody().clone();
         let is_syncing = Arc::new(move || network.is_syncing());
         let inner = Arc::new(EngineApiInner {
-            _engine: PhantomData,
             provider,
             chain_spec,
             beacon_consensus,
@@ -305,11 +289,9 @@ where
     }
 }
 
-impl<Provider, EngineT, Pool, Validator, ChainSpec>
-    EngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator, ChainSpec> EngineApi<Provider, Pool, Validator, ChainSpec>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
-    EngineT: EngineTypes,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator,
     ChainSpec: EthereumHardforks + Send + Sync + 'static,
@@ -470,7 +452,7 @@ where
     pub async fn get_payload_v1(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV1> {
+    ) -> EngineApiResult<ExecutionPayloadV1> {
         self.get_built_payload(payload_id).await?.try_into().map_err(|_| {
             warn!(version = ?EngineApiMessageVersion::V1, "could not transform built payload");
             EngineApiError::UnknownPayload
@@ -481,7 +463,7 @@ where
     pub async fn get_payload_v1_metered(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV1> {
+    ) -> EngineApiResult<ExecutionPayloadV1> {
         let start = Instant::now();
         let res = Self::get_payload_v1(self, payload_id).await;
         self.inner.metrics.latency.get_payload_v1.record(start.elapsed());
@@ -498,7 +480,7 @@ where
     pub async fn get_payload_v2(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV2> {
+    ) -> EngineApiResult<ExecutionPayloadEnvelopeV2> {
         self.get_payload_inner(payload_id, EngineApiMessageVersion::V2).await
     }
 
@@ -506,7 +488,7 @@ where
     pub async fn get_payload_v2_metered(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV2> {
+    ) -> EngineApiResult<ExecutionPayloadEnvelopeV2> {
         let start = Instant::now();
         let res = Self::get_payload_v2(self, payload_id).await;
         self.inner.metrics.latency.get_payload_v2.record(start.elapsed());
@@ -523,7 +505,7 @@ where
     pub async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV3> {
+    ) -> EngineApiResult<BaseExecutionPayloadEnvelopeV3> {
         self.get_payload_inner(payload_id, EngineApiMessageVersion::V3).await
     }
 
@@ -531,7 +513,7 @@ where
     pub async fn get_payload_v3_metered(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV3> {
+    ) -> EngineApiResult<BaseExecutionPayloadEnvelopeV3> {
         let start = Instant::now();
         let res = Self::get_payload_v3(self, payload_id).await;
         self.inner.metrics.latency.get_payload_v3.record(start.elapsed());
@@ -548,7 +530,7 @@ where
     pub async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV4> {
+    ) -> EngineApiResult<BaseExecutionPayloadEnvelopeV4> {
         self.get_payload_inner(payload_id, EngineApiMessageVersion::V4).await
     }
 
@@ -556,7 +538,7 @@ where
     pub async fn get_payload_v4_metered(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV4> {
+    ) -> EngineApiResult<BaseExecutionPayloadEnvelopeV4> {
         let start = Instant::now();
         let res = Self::get_payload_v4(self, payload_id).await;
         self.inner.metrics.latency.get_payload_v4.record(start.elapsed());
@@ -575,7 +557,7 @@ where
     pub async fn get_payload_v5(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV5> {
+    ) -> EngineApiResult<BaseExecutionPayloadEnvelopeV5> {
         self.get_payload_inner(payload_id, EngineApiMessageVersion::V5).await
     }
 
@@ -583,7 +565,7 @@ where
     pub async fn get_payload_v5_metered(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV5> {
+    ) -> EngineApiResult<BaseExecutionPayloadEnvelopeV5> {
         let start = Instant::now();
         let res = Self::get_payload_v5(self, payload_id).await;
         self.inner.metrics.latency.get_payload_v5.record(start.elapsed());
@@ -598,7 +580,7 @@ where
     pub async fn get_payload_v6(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV6> {
+    ) -> EngineApiResult<BaseExecutionPayloadEnvelopeV5> {
         self.get_payload_inner(payload_id, EngineApiMessageVersion::V6).await
     }
 
@@ -606,7 +588,7 @@ where
     pub async fn get_payload_v6_metered(
         &self,
         payload_id: PayloadId,
-    ) -> EngineApiResult<EngineT::ExecutionPayloadEnvelopeV6> {
+    ) -> EngineApiResult<BaseExecutionPayloadEnvelopeV5> {
         let start = Instant::now();
         let res = Self::get_payload_v6(self, payload_id).await;
         self.inner.metrics.latency.get_payload_v6.record(start.elapsed());
@@ -1174,13 +1156,12 @@ where
     }
 }
 
-// This is the concrete ethereum engine API implementation.
+// Engine RPC endpoints backed by Base payload validation.
 #[async_trait]
-impl<Provider, EngineT, Pool, Validator, ChainSpec> EngineApiServer<EngineT>
-    for EngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator, ChainSpec> EngineApiServer
+    for EngineApi<Provider, Pool, Validator, ChainSpec>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
-    EngineT: EngineTypes,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator,
     ChainSpec: EthereumHardforks + Send + Sync + 'static,
@@ -1336,10 +1317,7 @@ where
     ///
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
-    async fn get_payload_v1(
-        &self,
-        payload_id: PayloadId,
-    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV1> {
+    async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV1");
         Ok(self.get_payload_v1_metered(payload_id).await?)
     }
@@ -1353,10 +1331,7 @@ where
     ///
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
-    async fn get_payload_v2(
-        &self,
-        payload_id: PayloadId,
-    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV2> {
+    async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2> {
         debug!(target: "rpc::engine", id = %payload_id, "Serving engine_getPayloadV2");
         Ok(self.get_payload_v2_metered(payload_id).await?)
     }
@@ -1373,7 +1348,7 @@ where
     async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV3> {
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV3> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV3");
         Ok(self.get_payload_v3_metered(payload_id).await?)
     }
@@ -1390,7 +1365,7 @@ where
     async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV4> {
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV4> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV4");
         Ok(self.get_payload_v4_metered(payload_id).await?)
     }
@@ -1407,7 +1382,7 @@ where
     async fn get_payload_v5(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV5> {
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV5> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV5");
         Ok(self.get_payload_v5_metered(payload_id).await?)
     }
@@ -1420,7 +1395,7 @@ where
     async fn get_payload_v6(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV6> {
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV5> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV6");
         Ok(self.get_payload_v6_metered(payload_id).await?)
     }
@@ -1548,31 +1523,26 @@ where
     }
 }
 
-impl<Provider, EngineT, Pool, Validator, ChainSpec> IntoEngineApiRpcModule
-    for EngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator, ChainSpec> IntoEngineApiRpcModule
+    for EngineApi<Provider, Pool, Validator, ChainSpec>
 where
-    EngineT: EngineTypes,
-    Self: EngineApiServer<EngineT>,
+    Self: EngineApiServer,
 {
     fn into_rpc_module(self) -> RpcModule<()> {
-        EngineApiServer::<EngineT>::into_rpc(self).remove_context()
+        EngineApiServer::into_rpc(self).remove_context()
     }
 }
 
-impl<Provider, PayloadT, Pool, Validator, ChainSpec> std::fmt::Debug
-    for EngineApi<Provider, PayloadT, Pool, Validator, ChainSpec>
-where
-    PayloadT: EngineTypes,
+impl<Provider, Pool, Validator, ChainSpec> std::fmt::Debug
+    for EngineApi<Provider, Pool, Validator, ChainSpec>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EngineApi").finish_non_exhaustive()
     }
 }
 
-impl<Provider, PayloadT, Pool, Validator, ChainSpec> Clone
-    for EngineApi<Provider, PayloadT, Pool, Validator, ChainSpec>
-where
-    PayloadT: EngineTypes,
+impl<Provider, Pool, Validator, ChainSpec> Clone
+    for EngineApi<Provider, Pool, Validator, ChainSpec>
 {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
@@ -1580,8 +1550,7 @@ where
 }
 
 /// The container type for the engine API internals.
-struct EngineApiInner<Provider, PayloadT: EngineTypes, Pool, Validator, ChainSpec> {
-    _engine: PhantomData<PayloadT>,
+struct EngineApiInner<Provider, Pool, Validator, ChainSpec> {
     /// The provider to interact with the chain.
     provider: Provider,
     /// Consensus configuration
@@ -1620,7 +1589,7 @@ mod tests {
     use base_common_consensus::BaseBlock as Block;
     use reth_chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
     use reth_engine_primitives::{
-        BeaconEngineMessage, OnForkChoiceUpdated, TestEngineTypes, test_utils::TestEngineValidator,
+        BeaconEngineMessage, OnForkChoiceUpdated, test_utils::TestEngineValidator,
     };
     use reth_network_api::{
         EthProtocolInfo, NetworkError, NetworkInfo, NetworkStatus, noop::NoopNetwork,
@@ -1635,13 +1604,7 @@ mod tests {
 
     fn setup_engine_api() -> (
         EngineApiTestHandle,
-        EngineApi<
-            Arc<MockEthProvider>,
-            TestEngineTypes,
-            NoopTransactionPool,
-            TestEngineValidator,
-            ChainSpec,
-        >,
+        EngineApi<Arc<MockEthProvider>, NoopTransactionPool, TestEngineValidator, ChainSpec>,
     ) {
         let client = ClientVersionV1 {
             code: ClientCode::RH,
@@ -1655,7 +1618,7 @@ mod tests {
         let payload_store = spawn_test_payload_service();
         let (to_engine, engine_rx) = unbounded_channel();
         let task_executor = Runtime::test();
-        let api = EngineApi::<_, TestEngineTypes, _, _, _>::new(
+        let api = EngineApi::<_, _, _, _>::new(
             provider.clone(),
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1720,7 +1683,7 @@ mod tests {
         let chain_spec: Arc<ChainSpec> = MAINNET.clone();
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel();
-        let api = EngineApi::<_, TestEngineTypes, _, _, _>::new(
+        let api = EngineApi::<_, _, _, _>::new(
             provider.clone(),
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1775,7 +1738,7 @@ mod tests {
         let chain_spec: Arc<ChainSpec> = MAINNET.clone();
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel();
-        let api = EngineApi::<_, TestEngineTypes, _, _, _>::new(
+        let api = EngineApi::<_, _, _, _>::new(
             provider.clone(),
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1838,7 +1801,7 @@ mod tests {
     async fn rejects_ethereum_slot_payload_before_forwarding() {
         let (mut handle, api) = setup_engine_api();
         let payload = ExecutionPayloadV4::from_block_slow(&Block::default());
-        let error = EngineApiServer::<TestEngineTypes>::new_payload_v5(
+        let error = EngineApiServer::new_payload_v5(
             &api,
             payload,
             vec![],
@@ -1861,7 +1824,7 @@ mod tests {
         let payload_store = spawn_test_payload_service();
         let (to_engine, mut engine_rx) = unbounded_channel();
 
-        let api = EngineApi::<_, TestEngineTypes, _, _, _>::new(
+        let api = EngineApi::<_, _, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1962,7 +1925,7 @@ mod tests {
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage>();
 
-        let api = EngineApi::<_, TestEngineTypes, _, _, _>::new(
+        let api = EngineApi::<_, _, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1993,7 +1956,7 @@ mod tests {
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage>();
 
-        let api = EngineApi::<_, TestEngineTypes, _, _, _>::new(
+        let api = EngineApi::<_, _, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -2026,7 +1989,7 @@ mod tests {
         let network = NoopNetwork::default();
         let cell_custody = network.cell_custody().clone();
 
-        let api = EngineApi::<_, TestEngineTypes, _, _, _>::new(
+        let api = EngineApi::<_, _, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -2092,7 +2055,7 @@ mod tests {
         let network = NoopNetwork::default();
         let cell_custody = network.cell_custody().clone();
 
-        let api = EngineApi::<_, TestEngineTypes, _, _, _>::new(
+        let api = EngineApi::<_, _, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),

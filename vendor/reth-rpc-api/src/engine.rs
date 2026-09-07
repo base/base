@@ -11,17 +11,19 @@ use alloy_eips::{
 use alloy_json_rpc::RpcObject;
 use alloy_primitives::{Address, B128, B256, BlockHash, Bytes, U64, U256};
 use alloy_rpc_types_engine::{
-    ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadBodiesV2, ExecutionPayloadInputV2,
-    ExecutionPayloadV1, ExecutionPayloadV3, ExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated,
-    PayloadId, PayloadStatus,
+    ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadBodiesV2,
+    ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV3,
+    ExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
 use alloy_rpc_types_eth::{
     BlockOverrides, EIP1186AccountProofResponse, Filter, SyncStatus, state::StateOverride,
 };
 use alloy_serde::JsonStorageKey;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
+};
 use jsonrpsee::{RpcModule, core::RpcResult, proc_macros::rpc};
-use reth_engine_primitives::EngineTypes;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use serde_json::Value;
 
@@ -35,16 +37,9 @@ pub trait IntoEngineApiRpcModule {
     fn into_rpc_module(self) -> RpcModule<()>;
 }
 
-// NOTE: We can't use associated types in the `EngineApi` trait because of jsonrpsee, so we use a
-// generic here. It would be nice if the rpc macro would understand which types need to have serde.
-// By default, if the trait has a generic, the rpc macro will add e.g. `Engine: DeserializeOwned` to
-// the trait bounds, which is not what we want, because `Types` is not used directly in any of the
-// trait methods. Instead, we have to add the bounds manually. This would be disastrous if we had
-// more than one associated type used in the trait methods.
-
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "engine"), server_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::DeserializeOwned))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "engine", client_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::Serialize + Clone), server_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::DeserializeOwned)))]
-pub trait EngineApi<Engine: EngineTypes> {
+#[cfg_attr(not(feature = "client"), rpc(server, namespace = "engine"))]
+#[cfg_attr(feature = "client", rpc(server, client, namespace = "engine"))]
+pub trait EngineApi {
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/paris.md#engine_newpayloadv1>
     /// Caution: This should not accept the `withdrawals` field
     #[method(name = "newPayloadV1")]
@@ -163,10 +158,7 @@ pub trait EngineApi<Engine: EngineTypes> {
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     #[method(name = "getPayloadV1")]
-    async fn get_payload_v1(
-        &self,
-        payload_id: PayloadId,
-    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV1>;
+    async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1>;
 
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/shanghai.md#engine_getpayloadv2>
     ///
@@ -174,10 +166,7 @@ pub trait EngineApi<Engine: EngineTypes> {
     /// payload build process at the time of receiving this call. Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     #[method(name = "getPayloadV2")]
-    async fn get_payload_v2(
-        &self,
-        payload_id: PayloadId,
-    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV2>;
+    async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2>;
 
     /// Post Cancun payload handler which also returns a blobs bundle.
     ///
@@ -190,7 +179,7 @@ pub trait EngineApi<Engine: EngineTypes> {
     async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV3>;
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV3>;
 
     /// Post Prague payload handler.
     ///
@@ -203,7 +192,7 @@ pub trait EngineApi<Engine: EngineTypes> {
     async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV4>;
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV4>;
 
     /// Post Osaka payload handler.
     ///
@@ -216,7 +205,7 @@ pub trait EngineApi<Engine: EngineTypes> {
     async fn get_payload_v5(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV5>;
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV5>;
 
     /// Post Amsterdam payload handler.
     ///
@@ -229,7 +218,7 @@ pub trait EngineApi<Engine: EngineTypes> {
     async fn get_payload_v6(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV6>;
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV5>;
 
     /// See also <https://github.com/ethereum/execution-apis/blob/6452a6b194d7db269bf1dbd087a267251d3cc7f8/src/engine/shanghai.md#engine_getpayloadbodiesbyhashv1>
     #[method(name = "getPayloadBodiesByHashV1")]
@@ -361,8 +350,8 @@ pub trait EngineApi<Engine: EngineTypes> {
 /// This also includes additional eth functions required by optimism.
 ///
 /// Specifically for the engine auth server: <https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#underlying-protocol>
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "eth"))]
+#[cfg_attr(not(feature = "client"), rpc(server, namespace = "engine"))]
+#[cfg_attr(feature = "client", rpc(server, client, namespace = "engine"))]
 pub trait EngineEthApi<TxReq: RpcObject, B: RpcObject, R: RpcObject, L: RpcObject> {
     /// Returns an object with data about the sync status or false.
     #[method(name = "syncing")]

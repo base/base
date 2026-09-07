@@ -319,7 +319,6 @@ mod test {
     use reth_chainspec::ChainSpec;
     use reth_consensus::noop::NoopConsensus;
     use reth_db_api::mock::DatabaseMock;
-    use reth_engine_primitives::TestEngineTypes;
     use reth_evm::{MockEvmConfig, noop::NoopEvmConfig};
     use reth_network::primitives::BasicNetworkPrimitives;
     use reth_network_api::noop::NoopNetwork;
@@ -351,11 +350,7 @@ mod test {
         let task_executor = Runtime::test();
 
         let node: NodeAdapter<
-            FullNodeTypesAdapter<
-                AnyNodeTypes<ChainSpec, TestEngineTypes>,
-                DatabaseMock,
-                NoopProvider,
-            >,
+            FullNodeTypesAdapter<AnyNodeTypes<ChainSpec>, DatabaseMock, NoopProvider>,
             _,
         > = NodeAdapter { components, task_executor, provider: NoopProvider::default() };
 

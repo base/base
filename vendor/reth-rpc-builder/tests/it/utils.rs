@@ -3,9 +3,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use alloy_rpc_types_engine::{ClientCode, ClientVersionV1};
 use reth_chainspec::MAINNET;
 use reth_consensus::noop::NoopConsensus;
-use reth_engine_primitives::{
-    ConsensusEngineHandle, TestEngineTypes, test_utils::TestEngineValidator,
-};
+use reth_engine_primitives::{ConsensusEngineHandle, test_utils::TestEngineValidator};
 use reth_evm::TestEvmConfig;
 use reth_network_api::noop::NoopNetwork;
 use reth_payload_builder::test_utils::spawn_test_payload_service;
@@ -51,7 +49,7 @@ where
         commit: "defa64b2".to_string(),
     };
 
-    let engine_api = EngineApi::<_, TestEngineTypes, _, _, _>::new(
+    let engine_api = EngineApi::<_, _, _, _>::new(
         NoopProvider::default(),
         MAINNET.clone(),
         beacon_engine_handle,

@@ -4,8 +4,8 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_txpool::GuardLimits;
 use base_node_core::{
-    BaseComponentsBuilder, BaseEngineTypes, BaseNetworkBuilder, BaseNodeComponentBuilder,
-    BaseNodeTypes, BasePayloadServiceBuilder,
+    BaseComponentsBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes,
+    BasePayloadServiceBuilder,
     args::RollupArgs,
     node::{BasePayloadBuilder, BasePoolBuilder},
 };
@@ -167,5 +167,4 @@ impl BaseNode {
 
 impl NodeTypes for BaseNode {
     type ChainSpec = BaseChainSpec;
-    type Payload = BaseEngineTypes;
 }

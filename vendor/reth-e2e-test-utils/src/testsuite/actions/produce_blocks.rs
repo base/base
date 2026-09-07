@@ -11,7 +11,6 @@ use base_common_consensus::BaseTxEnvelope;
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use reth_ethereum_primitives::TransactionSigned;
-use reth_node_api::EngineTypes;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_api::clients::{EngineApiClient, EthApiClient};
 use tokio::time::sleep;
@@ -49,13 +48,8 @@ impl AssertMineBlock {
     }
 }
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for AssertMineBlock
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for AssertMineBlock {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             if self.node_idx >= env.node_clients.len() {
                 return Err(eyre::eyre!("Node index out of bounds: {}", self.node_idx));
@@ -91,7 +85,7 @@ impl<
             };
 
             // Try v2 first for backwards compatibility, fall back to v3 on error.
-            match EngineApiClient::<Engine>::fork_choice_updated_v2(
+            match EngineApiClient::fork_choice_updated_v2(
                 &engine_client,
                 fork_choice_state,
                 Some(self.payload_attributes.clone()),
@@ -104,11 +98,9 @@ impl<
                         PayloadStatusEnum::Valid => {
                             if let Some(payload_id) = fcu_result.payload_id {
                                 debug!(id=%payload_id, "Got payload");
-                                let _engine_payload = EngineApiClient::<Engine>::get_payload_v2(
-                                    &engine_client,
-                                    payload_id,
-                                )
-                                .await?;
+                                let _engine_payload =
+                                    EngineApiClient::get_payload_v2(&engine_client, payload_id)
+                                        .await?;
                                 Ok(())
                             } else {
                                 Err(eyre::eyre!("No payload ID returned from forkchoiceUpdated"))
@@ -122,7 +114,7 @@ impl<
                 }
                 Err(_) => {
                     // If v2 fails due to unsupported fork/missing fields, try v3
-                    let fcu_result = EngineApiClient::<Engine>::fork_choice_updated_v3(
+                    let fcu_result = EngineApiClient::fork_choice_updated_v3(
                         &engine_client,
                         fork_choice_state,
                         Some(self.payload_attributes.clone()),
@@ -134,11 +126,9 @@ impl<
                         PayloadStatusEnum::Valid => {
                             if let Some(payload_id) = fcu_result.payload_id {
                                 debug!(id=%payload_id, "Got payload");
-                                let _engine_payload = EngineApiClient::<Engine>::get_payload_v3(
-                                    &engine_client,
-                                    payload_id,
-                                )
-                                .await?;
+                                let _engine_payload =
+                                    EngineApiClient::get_payload_v3(&engine_client, payload_id)
+                                        .await?;
                                 Ok(())
                             } else {
                                 Err(eyre::eyre!("No payload ID returned from forkchoiceUpdated"))
@@ -166,11 +156,8 @@ impl PickNextBlockProducer {
     }
 }
 
-impl<Engine> Action<Engine> for PickNextBlockProducer
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for PickNextBlockProducer {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let num_clients = env.node_clients.len();
             if num_clients == 0 {
@@ -200,13 +187,8 @@ where
 #[derive(Debug, Default)]
 pub struct GeneratePayloadAttributes {}
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for GeneratePayloadAttributes
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for GeneratePayloadAttributes {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let latest_block = env
                 .current_block_info()
@@ -237,13 +219,8 @@ impl<
 #[derive(Debug, Default)]
 pub struct GenerateNextPayload {}
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for GenerateNextPayload
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for GenerateNextPayload {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let latest_block = env
                 .current_block_info()
@@ -268,7 +245,7 @@ impl<
             let producer_idx =
                 env.last_producer_idx.ok_or_else(|| eyre::eyre!("No block producer selected"))?;
 
-            let fcu_result = EngineApiClient::<Engine>::fork_choice_updated_v3(
+            let fcu_result = EngineApiClient::fork_choice_updated_v3(
                 &env.node_clients[producer_idx].engine.http_client(),
                 fork_choice_state,
                 Some(env.payload_attributes_converter.map_or_else(
@@ -302,7 +279,7 @@ impl<
                     target_gas_limit: None,
                 };
 
-                let fresh_fcu_result = EngineApiClient::<Engine>::fork_choice_updated_v3(
+                let fresh_fcu_result = EngineApiClient::fork_choice_updated_v3(
                     &env.node_clients[producer_idx].engine.http_client(),
                     fork_choice_state,
                     Some(env.payload_attributes_converter.map_or_else(
@@ -334,7 +311,7 @@ impl<
 
             sleep(Duration::from_secs(1)).await;
 
-            let built_payload_envelope = EngineApiClient::<Engine>::get_payload_v3(
+            let built_payload_envelope = EngineApiClient::get_payload_v3(
                 &env.node_clients[producer_idx].engine.http_client(),
                 payload_id,
             )
@@ -357,13 +334,8 @@ impl<
 #[derive(Debug, Default)]
 pub struct BroadcastLatestForkchoice {}
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for BroadcastLatestForkchoice
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for BroadcastLatestForkchoice {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             if env.node_clients.is_empty() {
                 return Err(eyre::eyre!("No node clients available"));
@@ -416,7 +388,7 @@ impl<
             );
 
             for (idx, client) in env.node_clients.iter().enumerate() {
-                match EngineApiClient::<Engine>::fork_choice_updated_v3(
+                match EngineApiClient::fork_choice_updated_v3(
                     &client.engine.http_client(),
                     fork_choice_state,
                     None,
@@ -454,11 +426,8 @@ impl<
 #[derive(Debug, Default)]
 pub struct UpdateBlockInfo {}
 
-impl<Engine> Action<Engine> for UpdateBlockInfo
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for UpdateBlockInfo {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             // get the latest block from the first client to update environment state
             let rpc_client = &env.node_clients[0].rpc;
@@ -504,13 +473,8 @@ where
 #[derive(Debug, Default)]
 pub struct UpdateBlockInfoToLatestPayload {}
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for UpdateBlockInfoToLatestPayload
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for UpdateBlockInfoToLatestPayload {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let payload_envelope = env
                 .active_node_state()?
@@ -550,12 +514,8 @@ impl<
 #[derive(Debug, Default)]
 pub struct CheckPayloadAccepted {}
 
-impl<Engine> Action<Engine> for CheckPayloadAccepted
-where
-    Engine: EngineTypes,
-    Engine::ExecutionPayloadEnvelopeV3: Into<ExecutionPayloadEnvelopeV3>,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for CheckPayloadAccepted {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let mut accepted_check: bool = false;
 
@@ -594,11 +554,9 @@ where
                     .as_ref()
                     .ok_or_else(|| eyre::eyre!("No next built payload found"))?;
 
-                let built_payload = EngineApiClient::<Engine>::get_payload_v3(
-                    &client.engine.http_client(),
-                    payload_id,
-                )
-                .await?;
+                let built_payload =
+                    EngineApiClient::get_payload_v3(&client.engine.http_client(), payload_id)
+                        .await?;
 
                 let execution_payload_envelope: ExecutionPayloadEnvelopeV3 = built_payload.into();
                 let new_payload_block_hash = execution_payload_envelope
@@ -679,13 +637,8 @@ impl BroadcastNextNewPayload {
     }
 }
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for BroadcastNextNewPayload
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for BroadcastNextNewPayload {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             // Get the next new payload to broadcast
             let next_new_payload = env
@@ -713,7 +666,7 @@ impl<
                 let active_idx = env.active_node_idx;
                 let engine = env.node_clients[active_idx].engine.http_client();
 
-                let result = EngineApiClient::<Engine>::new_payload_v3(
+                let result = EngineApiClient::new_payload_v3(
                     &engine,
                     execution_payload.clone(),
                     vec![],
@@ -745,7 +698,7 @@ impl<
                     let engine = client.engine.http_client();
 
                     // Broadcast the execution payload
-                    let result = EngineApiClient::<Engine>::new_payload_v3(
+                    let result = EngineApiClient::new_payload_v3(
                         &engine,
                         execution_payload.clone(),
                         vec![],
@@ -809,13 +762,8 @@ impl Default for ProduceBlocks {
     }
 }
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for ProduceBlocks
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for ProduceBlocks {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             for _ in 0..self.num_blocks {
                 // create a fresh sequence for each block to avoid state pollution
@@ -851,11 +799,8 @@ impl TestFcuToTag {
     }
 }
 
-impl<Engine> Action<Engine> for TestFcuToTag
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for TestFcuToTag {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             // get the target block from the registry
             let (target_block, _node_idx) = env
@@ -872,8 +817,7 @@ where
             };
 
             let fcu_response =
-                EngineApiClient::<Engine>::fork_choice_updated_v2(&engine_client, fcu_state, None)
-                    .await?;
+                EngineApiClient::fork_choice_updated_v2(&engine_client, fcu_state, None).await?;
 
             // validate the response matches expected status
             match (&fcu_response.payload_status.status, &self.expected_status) {
@@ -940,11 +884,8 @@ impl ExpectFcuStatus {
     }
 }
 
-impl<Engine> Action<Engine> for ExpectFcuStatus
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for ExpectFcuStatus {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let mut test_fcu = TestFcuToTag::new(&self.target_tag, self.expected_status.clone());
             test_fcu.execute(env).await
@@ -966,11 +907,8 @@ impl ValidateCanonicalTag {
     }
 }
 
-impl<Engine> Action<Engine> for ValidateCanonicalTag
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for ValidateCanonicalTag {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let mut expect_valid = ExpectFcuStatus::valid(&self.tag);
             expect_valid.execute(env).await?;
@@ -1002,13 +940,8 @@ impl Default for ProduceBlocksLocally {
     }
 }
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for ProduceBlocksLocally
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for ProduceBlocksLocally {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             // Remember the active node to ensure all blocks are produced on the same node
             let producer_idx = env.active_node_idx;
@@ -1057,13 +990,8 @@ impl ProduceInvalidBlocks {
     }
 }
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for ProduceInvalidBlocks
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for ProduceInvalidBlocks {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             for block_index in 0..self.num_blocks {
                 let is_invalid = self.invalid_indices.contains(&block_index);
@@ -1103,7 +1031,7 @@ impl<
                     // use a random parent beacon block root since this is for invalid block testing
                     let parent_beacon_block_root = B256::random();
 
-                    let new_payload_response = EngineApiClient::<Engine>::new_payload_v3(
+                    let new_payload_response = EngineApiClient::new_payload_v3(
                         &engine_client,
                         corrupted_payload.clone(),
                         versioned_hashes,

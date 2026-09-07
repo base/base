@@ -4,14 +4,14 @@ use alloy_eips::{BlockNumberOrTag, eip7685::Requests};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
 use base_common_consensus::BaseTxEnvelope;
-use base_common_rpc_types_engine::BaseExecutionPayloadV4;
+use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
+};
 use base_execution_rpc::BaseEngineApiClient;
-use base_node_core::BaseEngineTypes;
 use jsonrpsee::{
     core::{RpcResult, client::SubscriptionClientT},
     proc_macros::rpc,
 };
-use reth_node_api::EngineTypes;
 use reth_payload_builder::PayloadId;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
@@ -163,10 +163,9 @@ impl<P: Protocol> EngineApi<P> {
     pub async fn get_payload(
         &self,
         payload_id: PayloadId,
-    ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
+    ) -> eyre::Result<BaseExecutionPayloadEnvelopeV4> {
         debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload");
-        Ok(BaseEngineApiClient::<BaseEngineTypes>::get_payload_v4(&self.client().await, payload_id)
-            .await?)
+        Ok(BaseEngineApiClient::get_payload_v4(&self.client().await, payload_id).await?)
     }
 
     /// Fetches an execution payload by its identifier via `engine_getPayloadV5`, required from
@@ -174,10 +173,9 @@ impl<P: Protocol> EngineApi<P> {
     pub async fn get_payload_v5(
         &self,
         payload_id: PayloadId,
-    ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV5> {
+    ) -> eyre::Result<BaseExecutionPayloadEnvelopeV5> {
         debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload (v5)");
-        Ok(BaseEngineApiClient::<BaseEngineTypes>::get_payload_v5(&self.client().await, payload_id)
-            .await?)
+        Ok(BaseEngineApiClient::get_payload_v5(&self.client().await, payload_id).await?)
     }
 
     /// Submits a new execution payload for validation.
@@ -189,7 +187,7 @@ impl<P: Protocol> EngineApi<P> {
         execution_requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
         debug!(timestamp = %chrono::Utc::now(), "Submitting new payload");
-        Ok(BaseEngineApiClient::<BaseEngineTypes>::new_payload_v4(
+        Ok(BaseEngineApiClient::new_payload_v4(
             &self.client().await,
             payload,
             versioned_hashes,
@@ -207,7 +205,7 @@ impl<P: Protocol> EngineApi<P> {
         payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> eyre::Result<ForkchoiceUpdated> {
         debug!(timestamp = %chrono::Utc::now(), "Updating forkchoice");
-        Ok(BaseEngineApiClient::<BaseEngineTypes>::fork_choice_updated_v3(
+        Ok(BaseEngineApiClient::fork_choice_updated_v3(
             &self.client().await,
             ForkchoiceState {
                 head_block_hash: new_head,

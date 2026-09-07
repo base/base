@@ -3,16 +3,19 @@
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{B256, BlockHash, U64};
 use alloy_rpc_types_engine::{
-    ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadInputV2, ExecutionPayloadV3,
-    ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
+    ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
+    ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
 use base_common_consensus::BaseTxEnvelope;
-use base_common_rpc_types_engine::{BaseExecutionPayloadV4, ExecutionData};
+use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
+    BaseExecutionPayloadV4, ExecutionData,
+};
 use derive_more::Constructor;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
 use reth_chainspec::EthereumHardforks;
-use reth_node_api::{EngineApiValidator, EngineTypes};
+use reth_node_api::EngineApiValidator;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_rpc_engine_api::EngineApi;
@@ -46,9 +49,9 @@ pub const ENGINE_CAPABILITIES: &[&str] = &[
 ///
 /// This follows the Base specs that can be found at:
 /// <https://specs.base.org/protocol/execution#engine-api>
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "engine"), server_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::DeserializeOwned))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "engine", client_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::Serialize + Clone), server_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::DeserializeOwned)))]
-pub trait BaseEngineApi<Engine: EngineTypes> {
+#[cfg_attr(not(feature = "client"), rpc(server, namespace = "engine"))]
+#[cfg_attr(feature = "client", rpc(server, client, namespace = "engine"))]
+pub trait BaseEngineApi {
     /// Sends the given payload to the execution layer client, as specified for the Shanghai fork.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_newpayloadv2>
@@ -110,7 +113,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/shanghai.md#engine_forkchoiceupdatedv2>
     ///
     /// Rollup modifications:
-    /// - The `payload_attributes` parameter is extended with the [`EngineTypes::PayloadAttributes`](EngineTypes) type as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
+    /// - The `payload_attributes` parameter is extended with the [`BasePayloadBuilderAttributes`] type as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
     #[method(name = "forkchoiceUpdatedV2")]
     async fn fork_choice_updated_v2(
         &self,
@@ -126,7 +129,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     /// Rollup modifications:
     /// - Must be called with an Ecotone payload
     /// - Attributes must contain the parent beacon block root field
-    /// - The `payload_attributes` parameter is extended with the [`EngineTypes::PayloadAttributes`](EngineTypes) type as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
+    /// - The `payload_attributes` parameter is extended with the [`BasePayloadBuilderAttributes`] type as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
     #[method(name = "forkchoiceUpdatedV3")]
     async fn fork_choice_updated_v3(
         &self,
@@ -144,10 +147,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     ///
     /// No modifications needed for rollup compatibility.
     #[method(name = "getPayloadV2")]
-    async fn get_payload_v2(
-        &self,
-        payload_id: PayloadId,
-    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV2>;
+    async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2>;
 
     /// Retrieves an execution payload from a previously started build process, as specified for the
     /// Cancun fork.
@@ -158,12 +158,12 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
     /// Rollup modifications:
-    /// - the response type is extended to [`EngineTypes::ExecutionPayloadEnvelopeV3`].
+    /// - the response type is extended to [`base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3`].
     #[method(name = "getPayloadV3")]
     async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV3>;
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV3>;
 
     /// Returns the most recent version of the payload that is available in the corresponding
     /// payload build process at the time of receiving this call.
@@ -174,12 +174,12 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
     /// Rollup modifications:
-    /// - the response type is extended to [`EngineTypes::ExecutionPayloadEnvelopeV4`].
+    /// - the response type is extended to [`base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV4`].
     #[method(name = "getPayloadV4")]
     async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV4>;
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV4>;
 
     /// Returns the most recent version of the payload that is available in the corresponding
     /// payload build process at the time of receiving this call.
@@ -196,7 +196,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     async fn get_payload_v5(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV5>;
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV5>;
 
     /// Returns the execution payload bodies by the given hash.
     ///
@@ -248,14 +248,12 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
 /// The Engine API implementation that grants the Consensus layer access to data and
 /// functions in the Execution layer that are crucial for the consensus process.
 #[derive(Debug, Constructor)]
-pub struct BaseEngineApi<Provider, EngineT: EngineTypes, Pool, Validator, ChainSpec> {
-    inner: EngineApi<Provider, EngineT, Pool, Validator, ChainSpec>,
+pub struct BaseEngineApi<Provider, Pool, Validator, ChainSpec> {
+    inner: EngineApi<Provider, Pool, Validator, ChainSpec>,
 }
 
-impl<Provider, PayloadT, Pool, Validator, ChainSpec> Clone
-    for BaseEngineApi<Provider, PayloadT, Pool, Validator, ChainSpec>
-where
-    PayloadT: EngineTypes,
+impl<Provider, Pool, Validator, ChainSpec> Clone
+    for BaseEngineApi<Provider, Pool, Validator, ChainSpec>
 {
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone() }
@@ -263,11 +261,10 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Provider, EngineT, Pool, Validator, ChainSpec> BaseEngineApiServer<EngineT>
-    for BaseEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator, ChainSpec> BaseEngineApiServer
+    for BaseEngineApi<Provider, Pool, Validator, ChainSpec>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
-    EngineT: EngineTypes,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator,
     ChainSpec: EthereumHardforks + Send + Sync + 'static,
@@ -369,10 +366,7 @@ where
     }
 
     #[instrument(level = "debug", target = "rpc::engine", skip_all, fields(id = %payload_id))]
-    async fn get_payload_v2(
-        &self,
-        payload_id: PayloadId,
-    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV2> {
+    async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2> {
         debug!(target: "rpc::engine", "Serving engine_getPayloadV2");
         Ok(self.inner.get_payload_v2_metered(payload_id).await?)
     }
@@ -381,7 +375,7 @@ where
     async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV3> {
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV3> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV3");
         Ok(self.inner.get_payload_v3_metered(payload_id).await?)
     }
@@ -390,7 +384,7 @@ where
     async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV4> {
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV4> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV4");
         Ok(self.inner.get_payload_v4_metered(payload_id).await?)
     }
@@ -399,7 +393,7 @@ where
     async fn get_payload_v5(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV5> {
+    ) -> RpcResult<BaseExecutionPayloadEnvelopeV5> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV5");
         Ok(self.inner.get_payload_v5_metered(payload_id).await?)
     }
@@ -434,11 +428,10 @@ where
     }
 }
 
-impl<Provider, EngineT, Pool, Validator, ChainSpec> IntoEngineApiRpcModule
-    for BaseEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator, ChainSpec> IntoEngineApiRpcModule
+    for BaseEngineApi<Provider, Pool, Validator, ChainSpec>
 where
-    EngineT: EngineTypes,
-    Self: BaseEngineApiServer<EngineT>,
+    Self: BaseEngineApiServer,
 {
     fn into_rpc_module(self) -> RpcModule<()> {
         self.into_rpc().remove_context()

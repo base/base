@@ -6,7 +6,6 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatusEnum};
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_node_api::EngineTypes;
 use reth_rpc_api::clients::EngineApiClient;
 use tracing::debug;
 
@@ -39,29 +38,23 @@ pub use reorg::{ReorgTarget, ReorgTo, SetReorgTarget};
 /// Actions execute operations and potentially make assertions in a single step.
 /// The action name indicates what it does (e.g., `AssertMineBlock` would both
 /// mine a block and assert it worked).
-pub trait Action<I>: Send + 'static
-where
-    I: EngineTypes,
-{
+pub trait Action: Send + 'static {
     /// Executes the action
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<I>) -> BoxFuture<'a, Result<()>>;
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>>;
 }
 
 /// Simplified action container for storage in tests
 #[expect(missing_debug_implementations)]
-pub struct ActionBox<I>(Box<dyn Action<I>>);
+pub struct ActionBox(Box<dyn Action>);
 
-impl<I> ActionBox<I>
-where
-    I: EngineTypes + 'static,
-{
+impl ActionBox {
     /// Constructor for [`ActionBox`].
-    pub fn new<A: Action<I>>(action: A) -> Self {
+    pub fn new<A: Action>(action: A) -> Self {
         Self(Box::new(action))
     }
 
     /// Executes an [`ActionBox`] with the given [`Environment`] reference.
-    pub async fn execute(mut self, env: &mut Environment<I>) -> Result<()> {
+    pub async fn execute(mut self, env: &mut Environment) -> Result<()> {
         self.0.execute(env).await
     }
 }
@@ -70,36 +63,32 @@ where
 /// reference and returns a Future resolving to Result<()>.
 ///
 /// This allows using closures directly as actions with `.with_action(async move |env| {...})`.
-impl<I, F, Fut> Action<I> for F
+impl<F, Fut> Action for F
 where
-    I: EngineTypes,
-    F: FnMut(&Environment<I>) -> Fut + Send + 'static,
+    F: FnMut(&Environment) -> Fut + Send + 'static,
     Fut: Future<Output = Result<()>> + Send + 'static,
 {
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<I>) -> BoxFuture<'a, Result<()>> {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(self(env))
     }
 }
 
 /// Run a sequence of actions in series.
 #[expect(missing_debug_implementations)]
-pub struct Sequence<I> {
+pub struct Sequence {
     /// Actions to execute in sequence
-    pub actions: Vec<Box<dyn Action<I>>>,
+    pub actions: Vec<Box<dyn Action>>,
 }
 
-impl<I> Sequence<I> {
+impl Sequence {
     /// Create a new sequence of actions
-    pub fn new(actions: Vec<Box<dyn Action<I>>>) -> Self {
+    pub fn new(actions: Vec<Box<dyn Action>>) -> Self {
         Self { actions }
     }
 }
 
-impl<I> Action<I> for Sequence<I>
-where
-    I: EngineTypes + Sync + Send + 'static,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<I>) -> BoxFuture<'a, Result<()>> {
+impl Action for Sequence {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             // Execute each action in sequence
             for action in &mut self.actions {
@@ -130,13 +119,8 @@ impl MakeCanonical {
     }
 }
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for MakeCanonical
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for MakeCanonical {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             if self.active_node_only {
                 // Only update the active node
@@ -156,12 +140,9 @@ impl<
                 let active_idx = env.active_node_idx;
                 let engine = env.node_clients[active_idx].engine.http_client();
 
-                let fcu_response = EngineApiClient::<Engine>::fork_choice_updated_v3(
-                    &engine,
-                    fork_choice_state,
-                    None,
-                )
-                .await?;
+                let fcu_response =
+                    EngineApiClient::fork_choice_updated_v3(&engine, fork_choice_state, None)
+                        .await?;
 
                 debug!(
                     "Active node {}: Forkchoice update status: {:?}",
@@ -173,7 +154,7 @@ impl<
                 Ok(())
             } else {
                 // Original broadcast behavior
-                let mut actions: Vec<Box<dyn Action<Engine>>> = vec![
+                let mut actions: Vec<Box<dyn Action>> = vec![
                     Box::new(BroadcastLatestForkchoice::default()),
                     Box::new(UpdateBlockInfo::default()),
                 ];
@@ -209,11 +190,8 @@ impl CaptureBlock {
     }
 }
 
-impl<Engine> Action<Engine> for CaptureBlock
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for CaptureBlock {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let current_block = env
                 .current_block_info()

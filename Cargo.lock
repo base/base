@@ -4546,7 +4546,6 @@ dependencies = [
  "reth-trie-db",
  "revm",
  "rstest",
- "serde",
  "serde_json",
  "tokio",
  "tokio-stream",
@@ -15759,6 +15758,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "base-common-consensus",
+ "base-common-rpc-types-engine",
  "derive_more",
  "eyre",
  "futures-util",
@@ -16236,7 +16236,6 @@ dependencies = [
  "reth-consensus",
  "reth-db",
  "reth-db-common",
- "reth-engine-primitives",
  "reth-evm",
  "reth-execution-types",
  "reth-exex",
@@ -16792,7 +16791,6 @@ dependencies = [
  "alloy-consensus",
  "reth-chainspec",
  "reth-db-api",
- "reth-engine-primitives",
  "reth-primitives-traits",
 ]
 

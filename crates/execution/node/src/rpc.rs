@@ -95,9 +95,7 @@ use std::sync::Arc;
 use alloy_rpc_types_engine::ClientVersionV1;
 use base_execution_rpc::{BaseEngineApi, engine::ENGINE_CAPABILITIES};
 use reth_chainspec::EthereumHardforks;
-use reth_node_api::{
-    AddOnsContext, EngineApiValidator, EngineTypes, FullNodeComponents, NodeTypes,
-};
+use reth_node_api::{AddOnsContext, EngineApiValidator, FullNodeComponents, NodeTypes};
 use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
 use reth_node_core::version::{CLIENT_CODE, version_metadata};
 use reth_payload_builder::PayloadStore;
@@ -113,17 +111,12 @@ pub struct BaseEngineApiBuilder<EV> {
 
 impl<N, EV> EngineApiBuilder<N> for BaseEngineApiBuilder<EV>
 where
-    N: FullNodeComponents<Types: NodeTypes<ChainSpec: EthereumHardforks, Payload: EngineTypes>>,
+    N: FullNodeComponents<Types: NodeTypes<ChainSpec: EthereumHardforks>>,
     EV: PayloadValidatorBuilder<N>,
     EV::Validator: EngineApiValidator,
 {
-    type EngineApi = BaseEngineApi<
-        N::Provider,
-        <N::Types as NodeTypes>::Payload,
-        N::Pool,
-        EV::Validator,
-        <N::Types as NodeTypes>::ChainSpec,
-    >;
+    type EngineApi =
+        BaseEngineApi<N::Provider, N::Pool, EV::Validator, <N::Types as NodeTypes>::ChainSpec>;
 
     async fn build_engine_api(self, ctx: &AddOnsContext<'_, N>) -> eyre::Result<Self::EngineApi> {
         let Self { engine_validator_builder } = self;

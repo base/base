@@ -40,8 +40,7 @@ use reth_network::{
 };
 use reth_network_peers::NodeRecord;
 use reth_node_api::{
-    AddOnsContext, BuildNextEnv, EngineTypes, FullNodeComponents, NodeAddOns,
-    PayloadAttributesBuilder,
+    AddOnsContext, BuildNextEnv, FullNodeComponents, NodeAddOns, PayloadAttributesBuilder,
 };
 use reth_node_builder::{
     BuilderContext, DebugNodeConfig, NodeAdapter,
@@ -67,7 +66,7 @@ use reth_trie_common::KeccakKeyHasher;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
-    BaseComponentsBuilder, BaseEngineApiBuilder, BaseEngineTypes, BasePayloadServiceBuilder,
+    BaseComponentsBuilder, BaseEngineApiBuilder, BasePayloadServiceBuilder,
     args::{RollupArgs, TxpoolOrdering},
     engine::BaseEngineValidator,
 };
@@ -76,15 +75,15 @@ use crate::{
 pub const BASE_V0_PROTOCOL_VERSION: [u8; 6] = *b"basev0";
 
 /// Marker trait for Base node types with standard engine, chain spec, and primitives.
-pub trait BaseNodeTypes: NodeTypes<Payload = BaseEngineTypes, ChainSpec = BaseChainSpec> {}
+pub trait BaseNodeTypes: NodeTypes<ChainSpec = BaseChainSpec> {}
 /// Blanket impl for all node types that conform to the Base spec.
-impl<N> BaseNodeTypes for N where N: NodeTypes<Payload = BaseEngineTypes, ChainSpec = BaseChainSpec> {}
+impl<N> BaseNodeTypes for N where N: NodeTypes<ChainSpec = BaseChainSpec> {}
 
 /// Helper trait for Base node types with full configuration including storage and execution
 /// data.
-pub trait BaseFullNodeTypes: NodeTypes<ChainSpec = BaseChainSpec, Payload: EngineTypes> {}
+pub trait BaseFullNodeTypes: NodeTypes<ChainSpec = BaseChainSpec> {}
 
-impl<N> BaseFullNodeTypes for N where N: NodeTypes<ChainSpec = BaseChainSpec, Payload: EngineTypes> {}
+impl<N> BaseFullNodeTypes for N where N: NodeTypes<ChainSpec = BaseChainSpec> {}
 
 /// Local payload attributes builder for Base.
 #[derive(Debug)]
@@ -333,7 +332,6 @@ impl BaseNode {
 
 impl NodeTypes for BaseNode {
     type ChainSpec = BaseChainSpec;
-    type Payload = BaseEngineTypes;
 }
 
 /// Add-ons w.r.t. Base.

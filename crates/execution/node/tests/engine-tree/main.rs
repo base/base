@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::PayloadStatusEnum;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_node_core::{BaseEngineTypes, BaseNode};
+use base_node_core::BaseNode;
 use eyre::Result;
 use reth_e2e_test_utils::testsuite::{
     TestBuilder,
@@ -25,7 +25,7 @@ use reth_e2e_test_utils::testsuite::{
 use reth_node_api::TreeConfig;
 
 /// Creates the standard setup for engine tree e2e tests.
-fn default_engine_tree_setup() -> Setup<BaseEngineTypes> {
+fn default_engine_tree_setup() -> Setup {
     Setup::default()
         .with_payload_attributes_converter(BaseTestPayload::attributes)
         .with_chain_spec(Arc::new(
@@ -44,7 +44,7 @@ fn default_engine_tree_setup() -> Setup<BaseEngineTypes> {
 ///
 /// v2 mode uses keccak256-hashed slot keys in static file changesets and rocksdb history
 /// instead of plain keys in MDBX.
-fn v2_engine_tree_setup() -> Setup<BaseEngineTypes> {
+fn v2_engine_tree_setup() -> Setup {
     default_engine_tree_setup()
 }
 
@@ -85,7 +85,7 @@ async fn test_engine_tree_fcu_reorg_with_all_blocks_e2e() -> Result<()> {
         // block production finalizes the produced blocks, so re-establish finality at the fork
         // base: building below the finalized block is rejected as a too deep reorg
         .with_action(
-            FinalizeBlock::<BaseEngineTypes>::new(BlockReference::Tag("fork_base".to_string()))
+            FinalizeBlock::new(BlockReference::Tag("fork_base".to_string()))
                 .with_head(BlockReference::Tag("main_tip".to_string())),
         )
         // create a fork from block 2 with 3 additional blocks
@@ -126,7 +126,7 @@ async fn test_engine_tree_valid_forks_with_older_canonical_head_e2e() -> Result<
         // producing chain A finalized its blocks, so re-establish finality at the fork point
         // before building below it again
         .with_action(
-            FinalizeBlock::<BaseEngineTypes>::new(BlockReference::Tag("fork_point".to_string()))
+            FinalizeBlock::new(BlockReference::Tag("fork_point".to_string()))
                 .with_head(BlockReference::Tag("chain_a_tip".to_string())),
         )
         // create second competing chain (chain B) from same fork point with 10 blocks
@@ -168,7 +168,7 @@ async fn test_engine_tree_valid_and_invalid_forks_with_older_canonical_head_e2e(
         // producing chain B finalized its blocks, so re-establish finality at the fork point
         // before building below it again
         .with_action(
-            FinalizeBlock::<BaseEngineTypes>::new(BlockReference::Tag("fork_point".to_string()))
+            FinalizeBlock::new(BlockReference::Tag("fork_point".to_string()))
                 .with_head(BlockReference::Tag("chain_b_tip".to_string())),
         )
         .with_action(ProduceBlocks::new(10))
@@ -398,7 +398,7 @@ async fn test_engine_tree_fcu_reorg_with_all_blocks_v2_e2e() -> Result<()> {
         // block production finalizes the produced blocks, so re-establish finality at the fork
         // base: building below the finalized block is rejected as a too deep reorg
         .with_action(
-            FinalizeBlock::<BaseEngineTypes>::new(BlockReference::Tag("fork_base".to_string()))
+            FinalizeBlock::new(BlockReference::Tag("fork_base".to_string()))
                 .with_head(BlockReference::Tag("main_tip".to_string())),
         )
         .with_action(CreateFork::new_from_tag("fork_base", 3))
@@ -434,7 +434,7 @@ async fn test_engine_tree_fcu_extends_canon_chain_v2_e2e() -> Result<()> {
 /// Uses unconnected nodes so fork blocks can be produced independently on Node 1 and then
 /// sent to Node 0 via newPayload only (no FCU), keeping Node 0's persisted chain intact
 /// until the final `ReorgTo` triggers `find_disk_reorg`.
-fn disk_reorg_setup() -> Setup<BaseEngineTypes> {
+fn disk_reorg_setup() -> Setup {
     let setup = Setup::default()
         .with_payload_attributes_converter(BaseTestPayload::attributes)
         .with_chain_spec(Arc::new(
@@ -457,7 +457,7 @@ fn disk_reorg_setup() -> Setup<BaseEngineTypes> {
 /// 3. Node 1 builds an 8-block fork from block 3 (its canonical head)
 /// 4. Fork blocks are sent to Node 0 via newPayload (no FCU, old chain stays on disk)
 /// 5. FCU to fork tip on Node 0 triggers `find_disk_reorg` → `RemoveBlocksAbove(3)`
-fn disk_reorg_test() -> TestBuilder<BaseEngineTypes> {
+fn disk_reorg_test() -> TestBuilder {
     TestBuilder::new()
         .with_setup(disk_reorg_setup())
         .with_action(SelectActiveNode::new(0))
@@ -478,7 +478,7 @@ fn disk_reorg_test() -> TestBuilder<BaseEngineTypes> {
                 .with_total_blocks(8),
         )
         .with_action(
-            SendForkchoiceUpdate::<BaseEngineTypes>::new(
+            SendForkchoiceUpdate::new(
                 BlockReference::Tag("fork_tip".into()),
                 BlockReference::Tag("fork_tip".into()),
                 BlockReference::Tag("fork_tip".into()),

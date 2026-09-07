@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_node_core::{BaseEngineTypes, BaseNode};
+use base_node_core::BaseNode;
 use eyre::Result;
 use reth_e2e_test_utils::testsuite::{
     TestBuilder,
@@ -18,7 +18,7 @@ use reth_node_api::TreeConfig;
 use crate::fixtures::BaseTestPayload;
 
 /// Creates the standard setup for engine tree e2e tests.
-fn default_engine_tree_setup() -> Setup<BaseEngineTypes> {
+fn default_engine_tree_setup() -> Setup {
     Setup::default()
         .with_payload_attributes_converter(BaseTestPayload::attributes)
         .with_chain_spec(Arc::new(
@@ -51,13 +51,13 @@ async fn test_fcu_to_canonical_ancestor_around_finalized() -> Result<()> {
         .with_action(MakeCanonical::new())
         // Establish block 7 as the latest known finalized block.
         .with_action(
-            FinalizeBlock::<BaseEngineTypes>::new(BlockReference::Tag("block_7".to_string()))
+            FinalizeBlock::new(BlockReference::Tag("block_7".to_string()))
                 .with_head(BlockReference::Tag("block_10".to_string())),
         )
         // Block 8 is above finality: without payload attributes the FCU is acknowledged, but the
         // canonical head does not move.
         .with_action(
-            SendForkchoiceUpdate::<BaseEngineTypes>::new(
+            SendForkchoiceUpdate::new(
                 BlockReference::Tag("block_7".to_string()),
                 BlockReference::Tag("block_7".to_string()),
                 BlockReference::Tag("block_8".to_string()),

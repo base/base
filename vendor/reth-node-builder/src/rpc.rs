@@ -20,8 +20,8 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardfor
 use reth_engine_tree::tree::WaitForCaches;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_api::{
-    AddOnsContext, EngineApiValidator, EngineTypes, FullNodeComponents, FullNodeTypes, NodeAddOns,
-    NodeTypes, PayloadValidator, TreeConfig,
+    AddOnsContext, EngineApiValidator, FullNodeComponents, FullNodeTypes, NodeAddOns, NodeTypes,
+    PayloadValidator, TreeConfig,
 };
 use reth_node_core::{
     cli::config::RethTransactionPoolConfig,
@@ -1475,9 +1475,7 @@ where
 
 /// Builder for basic [`EngineApi`] implementation.
 ///
-/// This provides a basic default implementation for opstack and ethereum engine API via
-/// [`EngineTypes`] and uses the general purpose [`EngineApi`] implementation as the builder's
-/// output.
+/// Builds [`EngineApi`] with Base payload types and the configured payload validator.
 #[derive(Debug, Default)]
 pub struct BasicEngineApiBuilder<PVB> {
     payload_validator_builder: PVB,
@@ -1485,17 +1483,12 @@ pub struct BasicEngineApiBuilder<PVB> {
 
 impl<N, PVB> EngineApiBuilder<N> for BasicEngineApiBuilder<PVB>
 where
-    N: FullNodeComponents<Types: NodeTypes<ChainSpec: EthereumHardforks, Payload: EngineTypes>>,
+    N: FullNodeComponents<Types: NodeTypes<ChainSpec: EthereumHardforks>>,
     PVB: PayloadValidatorBuilder<N>,
     PVB::Validator: EngineApiValidator,
 {
-    type EngineApi = EngineApi<
-        N::Provider,
-        <N::Types as NodeTypes>::Payload,
-        N::Pool,
-        PVB::Validator,
-        <N::Types as NodeTypes>::ChainSpec,
-    >;
+    type EngineApi =
+        EngineApi<N::Provider, N::Pool, PVB::Validator, <N::Types as NodeTypes>::ChainSpec>;
 
     async fn build_engine_api(self, ctx: &AddOnsContext<'_, N>) -> eyre::Result<Self::EngineApi> {
         let Self { payload_validator_builder } = self;

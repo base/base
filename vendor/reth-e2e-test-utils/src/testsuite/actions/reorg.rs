@@ -4,7 +4,6 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_node_api::EngineTypes;
 use tracing::debug;
 
 use crate::testsuite::{
@@ -40,13 +39,8 @@ impl ReorgTo {
     }
 }
 
-impl<
-    Engine: reth_engine_primitives::EngineTypes<
-            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
-        >,
-> Action<Engine> for ReorgTo
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for ReorgTo {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             // resolve the target block info from either direct hash or tag
             let target_block_info = match &self.target {
@@ -88,11 +82,8 @@ impl SetReorgTarget {
     }
 }
 
-impl<Engine> Action<Engine> for SetReorgTarget
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for SetReorgTarget {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let block_info = self.target_block_info;
 

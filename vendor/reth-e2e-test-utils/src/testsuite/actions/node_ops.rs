@@ -6,7 +6,6 @@ use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionReques
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use reth_ethereum_primitives::TransactionSigned;
-use reth_node_api::EngineTypes;
 use reth_rpc_api::clients::EthApiClient;
 use tokio::time::{sleep, timeout};
 use tracing::debug;
@@ -27,11 +26,8 @@ impl SelectActiveNode {
     }
 }
 
-impl<Engine> Action<Engine> for SelectActiveNode
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for SelectActiveNode {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             env.set_active_node(self.node_idx)?;
             debug!("Set active node to {}", self.node_idx);
@@ -63,11 +59,8 @@ impl CompareNodeChainTips {
     }
 }
 
-impl<Engine> Action<Engine> for CompareNodeChainTips
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for CompareNodeChainTips {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             if self.node_a >= env.node_count() || self.node_b >= env.node_count() {
                 return Err(eyre::eyre!("Node index out of bounds"));
@@ -157,11 +150,8 @@ impl CaptureBlockOnNode {
     }
 }
 
-impl<Engine> Action<Engine> for CaptureBlockOnNode
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for CaptureBlockOnNode {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let node_state = env.node_state(self.node_idx)?;
             let current_block = node_state.current_block_info.ok_or_else(|| {
@@ -201,11 +191,8 @@ impl ValidateBlockTag {
     }
 }
 
-impl<Engine> Action<Engine> for ValidateBlockTag
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for ValidateBlockTag {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let (block_info, node_idx) = env
                 .block_registry
@@ -266,11 +253,8 @@ impl WaitForSync {
     }
 }
 
-impl<Engine> Action<Engine> for WaitForSync
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for WaitForSync {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             if self.node_a >= env.node_count() || self.node_b >= env.node_count() {
                 return Err(eyre::eyre!("Node index out of bounds"));
@@ -373,11 +357,8 @@ impl AssertChainTip {
     }
 }
 
-impl<Engine> Action<Engine> for AssertChainTip
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for AssertChainTip {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let current_block = env
                 .current_block_info()

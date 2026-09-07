@@ -6,7 +6,7 @@ use std::{
 };
 
 use reth_db::DatabaseEnv;
-use reth_node_api::{EngineTypes, FullNodeComponents};
+use reth_node_api::FullNodeComponents;
 // re-export the node api types
 pub use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_node_core::{
@@ -75,7 +75,6 @@ where
     AO: Clone + Debug + Send + Sync + Unpin + 'static,
 {
     type ChainSpec = <N::Types as NodeTypes>::ChainSpec;
-    type Payload = <N::Types as NodeTypes>::Payload;
 }
 
 impl<N, C, AO> Node<N> for AnyNode<N, C, AO>
@@ -164,25 +163,22 @@ where
     }
 }
 
-impl<Engine, Node, AddOns> FullNode<Node, AddOns>
+impl<Node, AddOns> FullNode<Node, AddOns>
 where
-    Engine: EngineTypes,
-    Node: FullNodeComponents<Types: NodeTypes<Payload = Engine>>,
+    Node: FullNodeComponents<Types: NodeTypes>,
     AddOns: RethRpcAddOns<Node>,
 {
     /// Returns the [`EngineApiClient`] interface for the authenticated engine API.
     ///
     /// This will send authenticated http requests to the node's auth server.
-    pub fn engine_http_client(&self) -> impl EngineApiClient<Engine> + use<Engine, Node, AddOns> {
+    pub fn engine_http_client(&self) -> impl EngineApiClient + use<Node, AddOns> {
         self.auth_server_handle().http_client()
     }
 
     /// Returns the [`EngineApiClient`] interface for the authenticated engine API.
     ///
     /// This will send authenticated ws requests to the node's auth server.
-    pub async fn engine_ws_client(
-        &self,
-    ) -> impl EngineApiClient<Engine> + use<Engine, Node, AddOns> {
+    pub async fn engine_ws_client(&self) -> impl EngineApiClient + use<Node, AddOns> {
         self.auth_server_handle().ws_client().await
     }
 
@@ -190,9 +186,7 @@ where
     ///
     /// This will send not authenticated IPC requests to the node's auth server.
     #[cfg(unix)]
-    pub async fn engine_ipc_client(
-        &self,
-    ) -> Option<impl EngineApiClient<Engine> + use<Engine, Node, AddOns>> {
+    pub async fn engine_ipc_client(&self) -> Option<impl EngineApiClient + use<Node, AddOns>> {
         self.auth_server_handle().ipc_client().await
     }
 }

@@ -1,12 +1,9 @@
 //! Custom forkchoice update actions for testing specific FCU scenarios.
 
-use std::marker::PhantomData;
-
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadStatusEnum};
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_node_api::EngineTypes;
 use reth_rpc_api::clients::EngineApiClient;
 use tracing::debug;
 
@@ -24,10 +21,7 @@ pub enum BlockReference {
 }
 
 /// Helper function to resolve a block reference to a hash
-pub fn resolve_block_reference<Engine: EngineTypes>(
-    reference: &BlockReference,
-    env: &Environment<Engine>,
-) -> Result<B256> {
+pub fn resolve_block_reference(reference: &BlockReference, env: &Environment) -> Result<B256> {
     match reference {
         BlockReference::Hash(hash) => Ok(*hash),
         BlockReference::Tag(tag) => {
@@ -48,7 +42,7 @@ pub fn resolve_block_reference<Engine: EngineTypes>(
 
 /// Action to send a custom forkchoice update with specific finalized, safe, and head blocks
 #[derive(Debug)]
-pub struct SendForkchoiceUpdate<Engine> {
+pub struct SendForkchoiceUpdate {
     /// The finalized block reference
     pub finalized: BlockReference,
     /// The safe block reference
@@ -59,18 +53,16 @@ pub struct SendForkchoiceUpdate<Engine> {
     pub expected_status: Option<PayloadStatusEnum>,
     /// Node index to send to (None means active node)
     pub node_idx: Option<usize>,
-    /// Tracks engine type
-    _phantom: PhantomData<Engine>,
 }
 
-impl<Engine> SendForkchoiceUpdate<Engine> {
+impl SendForkchoiceUpdate {
     /// Create a new custom forkchoice update action
     pub const fn new(
         finalized: BlockReference,
         safe: BlockReference,
         head: BlockReference,
     ) -> Self {
-        Self { finalized, safe, head, expected_status: None, node_idx: None, _phantom: PhantomData }
+        Self { finalized, safe, head, expected_status: None, node_idx: None }
     }
 
     /// Set expected status for the FCU response
@@ -86,11 +78,8 @@ impl<Engine> SendForkchoiceUpdate<Engine> {
     }
 }
 
-impl<Engine> Action<Engine> for SendForkchoiceUpdate<Engine>
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for SendForkchoiceUpdate {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let finalized_hash = resolve_block_reference(&self.finalized, env)?;
             let safe_hash = resolve_block_reference(&self.safe, env)?;
@@ -113,8 +102,7 @@ where
 
             let engine = env.node_clients[node_idx].engine.http_client();
             let fcu_response =
-                EngineApiClient::<Engine>::fork_choice_updated_v3(&engine, fork_choice_state, None)
-                    .await?;
+                EngineApiClient::fork_choice_updated_v3(&engine, fork_choice_state, None).await?;
 
             debug!(
                 "Node {node_idx}: FCU response - status: {:?}, latest_valid_hash: {:?}",
@@ -164,21 +152,19 @@ where
 
 /// Action to finalize a specific block with a given head
 #[derive(Debug)]
-pub struct FinalizeBlock<Engine> {
+pub struct FinalizeBlock {
     /// Block to finalize
     pub block_to_finalize: BlockReference,
     /// Current head block (if None, uses the finalized block)
     pub head: Option<BlockReference>,
     /// Node index to send to (None means active node)
     pub node_idx: Option<usize>,
-    /// Tracks engine type
-    _phantom: PhantomData<Engine>,
 }
 
-impl<Engine> FinalizeBlock<Engine> {
+impl FinalizeBlock {
     /// Create a new finalize block action
     pub const fn new(block_to_finalize: BlockReference) -> Self {
-        Self { block_to_finalize, head: None, node_idx: None, _phantom: PhantomData }
+        Self { block_to_finalize, head: None, node_idx: None }
     }
 
     /// Set the head block (if different from finalized)
@@ -194,11 +180,8 @@ impl<Engine> FinalizeBlock<Engine> {
     }
 }
 
-impl<Engine> Action<Engine> for FinalizeBlock<Engine>
-where
-    Engine: EngineTypes,
-{
-    fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
+impl Action for FinalizeBlock {
+    fn execute<'a>(&'a mut self, env: &'a mut Environment) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let finalized_hash = resolve_block_reference(&self.block_to_finalize, env)?;
             let head_hash = if let Some(ref head_ref) = self.head {

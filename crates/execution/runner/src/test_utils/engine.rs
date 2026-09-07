@@ -9,12 +9,12 @@ use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 use base_common_consensus::BaseTxEnvelope;
-use base_common_rpc_types_engine::BaseExecutionPayloadV4;
+use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
+};
 use base_execution_rpc::BaseEngineApiClient;
-use base_node_core::BaseEngineTypes;
 use eyre::Result;
 use jsonrpsee::core::client::SubscriptionClientT;
-use reth_node_builder::EngineTypes;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use reth_tracing::tracing::debug;
@@ -127,27 +127,25 @@ impl<P: EngineProtocol> EngineApi<P> {
     pub async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
-    ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
+    ) -> eyre::Result<BaseExecutionPayloadEnvelopeV4> {
         debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload");
-        Ok(BaseEngineApiClient::<BaseEngineTypes>::get_payload_v4(&self.client().await, payload_id)
-            .await?)
+        Ok(BaseEngineApiClient::get_payload_v4(&self.client().await, payload_id).await?)
     }
 
     /// Get an Osaka/Azul payload by ID from the Engine API.
     pub async fn get_payload_v5(
         &self,
         payload_id: PayloadId,
-    ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV5> {
+    ) -> eyre::Result<BaseExecutionPayloadEnvelopeV5> {
         debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload");
-        Ok(BaseEngineApiClient::<BaseEngineTypes>::get_payload_v5(&self.client().await, payload_id)
-            .await?)
+        Ok(BaseEngineApiClient::get_payload_v5(&self.client().await, payload_id).await?)
     }
 
     /// Get a payload by ID from the Engine API.
     pub async fn get_payload(
         &self,
         payload_id: PayloadId,
-    ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
+    ) -> eyre::Result<BaseExecutionPayloadEnvelopeV4> {
         self.get_payload_v4(payload_id).await
     }
 
@@ -160,7 +158,7 @@ impl<P: EngineProtocol> EngineApi<P> {
         execution_requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
         debug!(timestamp = %chrono::Utc::now(), "Submitting new payload");
-        Ok(BaseEngineApiClient::<BaseEngineTypes>::new_payload_v4(
+        Ok(BaseEngineApiClient::new_payload_v4(
             &self.client().await,
             payload,
             versioned_hashes,
@@ -183,7 +181,7 @@ impl<P: EngineProtocol> EngineApi<P> {
             current_head,
             new_head
         );
-        let result = BaseEngineApiClient::<BaseEngineTypes>::fork_choice_updated_v3(
+        let result = BaseEngineApiClient::fork_choice_updated_v3(
             &self.client().await,
             ForkchoiceState {
                 head_block_hash: new_head,

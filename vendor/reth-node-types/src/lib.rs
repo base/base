@@ -13,7 +13,6 @@ use core::{fmt::Debug, marker::PhantomData};
 
 use reth_chainspec::EthChainSpec;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
-use reth_engine_primitives::EngineTypes;
 pub use reth_primitives_traits::{Block, BlockBody, FullBlock, FullReceipt, FullSignedTx};
 
 /// The type that configures the essential types of an Ethereum-like node.
@@ -24,8 +23,6 @@ pub use reth_primitives_traits::{Block, BlockBody, FullBlock, FullReceipt, FullS
 pub trait NodeTypes: Clone + Debug + Send + Sync + Unpin + 'static {
     /// The type used for configuration of the EVM.
     type ChainSpec: EthChainSpec<Header = alloy_consensus::Header>;
-    /// The node's engine types, defining the interaction with the consensus engine.
-    type Payload: EngineTypes;
 }
 
 /// A helper trait that is downstream of the [`NodeTypes`] trait and adds database to the
@@ -57,7 +54,6 @@ where
     DB: Clone + Debug + Send + Sync + Unpin + 'static,
 {
     type ChainSpec = Types::ChainSpec;
-    type Payload = Types::Payload;
 }
 
 impl<Types, DB> NodeTypesWithDB for NodeTypesWithDBAdapter<Types, DB>
@@ -70,71 +66,23 @@ where
 
 /// A [`NodeTypes`] type builder.
 #[derive(Clone, Debug, Default)]
-pub struct AnyNodeTypes<C = (), PL = ()>(PhantomData<C>, PhantomData<PL>);
+pub struct AnyNodeTypes<C = ()>(PhantomData<C>);
 
-impl<C, PL> AnyNodeTypes<C, PL> {
+impl<C> AnyNodeTypes<C> {
     /// Creates a new instance of [`AnyNodeTypes`].
     pub const fn new() -> Self {
-        Self(PhantomData, PhantomData)
+        Self(PhantomData)
     }
 
     /// Sets the `ChainSpec` associated type.
-    pub const fn chain_spec<T>(self) -> AnyNodeTypes<T, PL> {
-        AnyNodeTypes::new()
-    }
-
-    /// Sets the `Payload` associated type.
-    pub const fn payload<T>(self) -> AnyNodeTypes<C, T> {
+    pub const fn chain_spec<T>(self) -> AnyNodeTypes<T> {
         AnyNodeTypes::new()
     }
 }
 
-impl<C, PL> NodeTypes for AnyNodeTypes<C, PL>
+impl<C> NodeTypes for AnyNodeTypes<C>
 where
     C: EthChainSpec<Header = alloy_consensus::Header> + Clone + 'static,
-    PL: EngineTypes + Send + Sync + Unpin + 'static,
 {
     type ChainSpec = C;
-    type Payload = PL;
-}
-
-/// A [`NodeTypes`] type builder.
-#[derive(Clone, Debug, Default)]
-pub struct AnyNodeTypesWithEngine<E = (), C = (), PL = ()> {
-    /// Embedding the basic node types.
-    _base: AnyNodeTypes<C, PL>,
-    /// Phantom data for the engine.
-    _engine: PhantomData<E>,
-}
-
-impl<E, C, PL> AnyNodeTypesWithEngine<E, C, PL> {
-    /// Creates a new instance of [`AnyNodeTypesWithEngine`].
-    pub const fn new() -> Self {
-        Self { _base: AnyNodeTypes::new(), _engine: PhantomData }
-    }
-
-    /// Sets the `Engine` associated type.
-    pub const fn engine<T>(self) -> AnyNodeTypesWithEngine<T, C, PL> {
-        AnyNodeTypesWithEngine::new()
-    }
-
-    /// Sets the `ChainSpec` associated type.
-    pub const fn chain_spec<T>(self) -> AnyNodeTypesWithEngine<E, T, PL> {
-        AnyNodeTypesWithEngine::new()
-    }
-
-    /// Sets the `Payload` associated type.
-    pub const fn payload<T>(self) -> AnyNodeTypesWithEngine<E, C, T> {
-        AnyNodeTypesWithEngine::new()
-    }
-}
-
-impl<E, C, PL> NodeTypes for AnyNodeTypesWithEngine<E, C, PL>
-where
-    E: EngineTypes + Send + Sync + Unpin,
-    C: EthChainSpec<Header = alloy_consensus::Header> + Clone + 'static,
-    PL: EngineTypes + Send + Sync + Unpin + 'static,
-{
-    type ChainSpec = C;
-    type Payload = PL;
 }
