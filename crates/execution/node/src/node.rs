@@ -69,7 +69,6 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
     BaseComponentsBuilder, BaseEngineApiBuilder, BaseEngineTypes, BasePayloadServiceBuilder,
-    BaseStorage,
     args::{RollupArgs, TxpoolOrdering},
     engine::BaseEngineValidator,
 };
@@ -85,20 +84,12 @@ impl<N> BaseNodeTypes for N where N: NodeTypes<Payload = BaseEngineTypes, ChainS
 /// Helper trait for Base node types with full configuration including storage and execution
 /// data.
 pub trait BaseFullNodeTypes:
-    NodeTypes<
-        ChainSpec = BaseChainSpec,
-        Storage = BaseStorage,
-        Payload: EngineTypes<ExecutionData = ExecutionData>,
-    >
+    NodeTypes<ChainSpec = BaseChainSpec, Payload: EngineTypes<ExecutionData = ExecutionData>>
 {
 }
 
 impl<N> BaseFullNodeTypes for N where
-    N: NodeTypes<
-            ChainSpec = BaseChainSpec,
-            Storage = BaseStorage,
-            Payload: EngineTypes<ExecutionData = ExecutionData>,
-        >
+    N: NodeTypes<ChainSpec = BaseChainSpec, Payload: EngineTypes<ExecutionData = ExecutionData>>
 {
 }
 
@@ -349,7 +340,6 @@ impl BaseNode {
 
 impl NodeTypes for BaseNode {
     type ChainSpec = BaseChainSpec;
-    type Storage = BaseStorage;
     type Payload = BaseEngineTypes;
 }
 

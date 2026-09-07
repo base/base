@@ -42,7 +42,7 @@ use reth_node_core::node_config::NodeConfig;
 use reth_payload_builder::noop::NoopPayloadBuilderService;
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{
-    BaseBodyStorage, BlockReader, ProviderFactory,
+    BlockReader, ProviderFactory,
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
 use reth_tasks::Runtime;
@@ -59,7 +59,6 @@ pub struct TestNode;
 
 impl NodeTypes for TestNode {
     type ChainSpec = ChainSpec;
-    type Storage = BaseBodyStorage;
     type Payload = TestEngineTypes;
 }
 

@@ -37,7 +37,6 @@ pub use reth_chain_state::test_utils::TestCanonStateSubscriptions;
 pub type MockNodeTypes = reth_node_types::AnyNodeTypesWithEngine<
     reth_engine_primitives::TestEngineTypes,
     reth_chainspec::ChainSpec,
-    crate::BaseBodyStorage,
     TestEngineTypes,
 >;
 

@@ -75,9 +75,6 @@ where
     AO: Clone + Debug + Send + Sync + Unpin + 'static,
 {
     type ChainSpec = <N::Types as NodeTypes>::ChainSpec;
-
-    type Storage = <N::Types as NodeTypes>::Storage;
-
     type Payload = <N::Types as NodeTypes>::Payload;
 }
 

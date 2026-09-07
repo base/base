@@ -38,14 +38,11 @@ pub use rocksdb::{
 /// [`ProviderNodeTypes`].
 pub trait NodeTypesForProvider
 where
-    Self: NodeTypes<ChainSpec: EthereumHardforks, Storage: ChainStorage>,
+    Self: NodeTypes<ChainSpec: EthereumHardforks>,
 {
 }
 
-impl<T> NodeTypesForProvider for T where
-    T: NodeTypes<ChainSpec: EthereumHardforks, Storage: ChainStorage>
-{
-}
+impl<T> NodeTypesForProvider for T where T: NodeTypes<ChainSpec: EthereumHardforks> {}
 
 /// Helper trait keeping common requirements of providers for [`NodeTypesWithDB`].
 pub trait ProviderNodeTypes

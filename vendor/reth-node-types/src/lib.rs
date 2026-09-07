@@ -25,8 +25,6 @@ pub use reth_primitives_traits::{Block, BlockBody, FullBlock, FullReceipt, FullS
 pub trait NodeTypes: Clone + Debug + Send + Sync + Unpin + 'static {
     /// The type used for configuration of the EVM.
     type ChainSpec: EthChainSpec<Header = alloy_consensus::Header>;
-    /// The type responsible for writing chain primitives to storage.
-    type Storage: Default + Send + Sync + Unpin + Debug + 'static;
     /// The node's engine types, defining the interaction with the consensus engine.
     type Payload: PayloadTypes;
 }
@@ -60,7 +58,6 @@ where
     DB: Clone + Debug + Send + Sync + Unpin + 'static,
 {
     type ChainSpec = Types::ChainSpec;
-    type Storage = Types::Storage;
     type Payload = Types::Payload;
 }
 
@@ -74,86 +71,72 @@ where
 
 /// A [`NodeTypes`] type builder.
 #[derive(Clone, Debug, Default)]
-pub struct AnyNodeTypes<C = (), S = (), PL = ()>(PhantomData<C>, PhantomData<S>, PhantomData<PL>);
+pub struct AnyNodeTypes<C = (), PL = ()>(PhantomData<C>, PhantomData<PL>);
 
-impl<C, S, PL> AnyNodeTypes<C, S, PL> {
+impl<C, PL> AnyNodeTypes<C, PL> {
     /// Creates a new instance of [`AnyNodeTypes`].
     pub const fn new() -> Self {
-        Self(PhantomData, PhantomData, PhantomData)
+        Self(PhantomData, PhantomData)
     }
 
     /// Sets the `ChainSpec` associated type.
-    pub const fn chain_spec<T>(self) -> AnyNodeTypes<T, S, PL> {
-        AnyNodeTypes::new()
-    }
-
-    /// Sets the `Storage` associated type.
-    pub const fn storage<T>(self) -> AnyNodeTypes<C, T, PL> {
+    pub const fn chain_spec<T>(self) -> AnyNodeTypes<T, PL> {
         AnyNodeTypes::new()
     }
 
     /// Sets the `Payload` associated type.
-    pub const fn payload<T>(self) -> AnyNodeTypes<C, S, T> {
+    pub const fn payload<T>(self) -> AnyNodeTypes<C, T> {
         AnyNodeTypes::new()
     }
 }
 
-impl<C, S, PL> NodeTypes for AnyNodeTypes<C, S, PL>
+impl<C, PL> NodeTypes for AnyNodeTypes<C, PL>
 where
     C: EthChainSpec<Header = alloy_consensus::Header> + Clone + 'static,
-    S: Default + Clone + Send + Sync + Unpin + Debug + 'static,
     PL: PayloadTypes + Send + Sync + Unpin + 'static,
 {
     type ChainSpec = C;
-    type Storage = S;
     type Payload = PL;
 }
 
 /// A [`NodeTypes`] type builder.
 #[derive(Clone, Debug, Default)]
-pub struct AnyNodeTypesWithEngine<E = (), C = (), S = (), PL = ()> {
+pub struct AnyNodeTypesWithEngine<E = (), C = (), PL = ()> {
     /// Embedding the basic node types.
-    _base: AnyNodeTypes<C, S, PL>,
+    _base: AnyNodeTypes<C, PL>,
     /// Phantom data for the engine.
     _engine: PhantomData<E>,
 }
 
-impl<E, C, S, PL> AnyNodeTypesWithEngine<E, C, S, PL> {
+impl<E, C, PL> AnyNodeTypesWithEngine<E, C, PL> {
     /// Creates a new instance of [`AnyNodeTypesWithEngine`].
     pub const fn new() -> Self {
         Self { _base: AnyNodeTypes::new(), _engine: PhantomData }
     }
 
     /// Sets the `Engine` associated type.
-    pub const fn engine<T>(self) -> AnyNodeTypesWithEngine<T, C, S, PL> {
+    pub const fn engine<T>(self) -> AnyNodeTypesWithEngine<T, C, PL> {
         AnyNodeTypesWithEngine::new()
     }
 
     /// Sets the `ChainSpec` associated type.
-    pub const fn chain_spec<T>(self) -> AnyNodeTypesWithEngine<E, T, S, PL> {
-        AnyNodeTypesWithEngine::new()
-    }
-
-    /// Sets the `Storage` associated type.
-    pub const fn storage<T>(self) -> AnyNodeTypesWithEngine<E, C, T, PL> {
+    pub const fn chain_spec<T>(self) -> AnyNodeTypesWithEngine<E, T, PL> {
         AnyNodeTypesWithEngine::new()
     }
 
     /// Sets the `Payload` associated type.
-    pub const fn payload<T>(self) -> AnyNodeTypesWithEngine<E, C, S, T> {
+    pub const fn payload<T>(self) -> AnyNodeTypesWithEngine<E, C, T> {
         AnyNodeTypesWithEngine::new()
     }
 }
 
-impl<E, C, S, PL> NodeTypes for AnyNodeTypesWithEngine<E, C, S, PL>
+impl<E, C, PL> NodeTypes for AnyNodeTypesWithEngine<E, C, PL>
 where
     E: EngineTypes + Send + Sync + Unpin,
     C: EthChainSpec<Header = alloy_consensus::Header> + Clone + 'static,
-    S: Default + Clone + Send + Sync + Unpin + Debug + 'static,
     PL: PayloadTypes + Send + Sync + Unpin + 'static,
 {
     type ChainSpec = C;
-    type Storage = S;
     type Payload = PL;
 }
 

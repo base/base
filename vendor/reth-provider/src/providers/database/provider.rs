@@ -74,7 +74,7 @@ use crate::{
     prepare_history_shard_writes_parallel,
     providers::{
         NodeTypesForProvider, StaticFileProvider,
-        database::{DatabaseProviderMetrics, chain::ChainStorage, metrics},
+        database::{DatabaseProviderMetrics, metrics},
         rocksdb::{PendingRocksDBBatches, RocksDBProvider, RocksDBWriteCtx},
         static_file::{StaticFileWriteCtx, StaticFileWriter},
     },
@@ -194,7 +194,7 @@ pub struct DatabaseProvider<TX, N: NodeTypes> {
     /// Pruning configuration
     prune_modes: PruneModes,
     /// Node storage handler.
-    storage: Arc<N::Storage>,
+
     /// Storage configuration settings for this node
     storage_settings: Arc<RwLock<StorageSettings>>,
     /// `RocksDB` provider
@@ -224,7 +224,6 @@ impl<TX: Debug, N: NodeTypes> Debug for DatabaseProvider<TX, N> {
             .field("chain_spec", &self.chain_spec)
             .field("static_file_provider", &self.static_file_provider)
             .field("prune_modes", &self.prune_modes)
-            .field("storage", &self.storage)
             .field("storage_settings", &self.storage_settings)
             .field("rocksdb_provider", &self.rocksdb_provider)
             .field("overlay_manager", &self.overlay_manager)
@@ -403,7 +402,7 @@ impl<TX: DbTxMut, N: NodeTypes> DatabaseProvider<TX, N> {
         chain_spec: Arc<N::ChainSpec>,
         static_file_provider: StaticFileProvider,
         prune_modes: PruneModes,
-        storage: Arc<N::Storage>,
+
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
@@ -417,7 +416,7 @@ impl<TX: DbTxMut, N: NodeTypes> DatabaseProvider<TX, N> {
             chain_spec,
             static_file_provider,
             prune_modes,
-            storage,
+
             storage_settings,
             rocksdb_provider,
             overlay_manager,
@@ -438,7 +437,7 @@ impl<TX: DbTxMut, N: NodeTypes> DatabaseProvider<TX, N> {
         chain_spec: Arc<N::ChainSpec>,
         static_file_provider: StaticFileProvider,
         prune_modes: PruneModes,
-        storage: Arc<N::Storage>,
+
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
@@ -451,7 +450,6 @@ impl<TX: DbTxMut, N: NodeTypes> DatabaseProvider<TX, N> {
             chain_spec,
             static_file_provider,
             prune_modes,
-            storage,
             storage_settings,
             rocksdb_provider,
             overlay_manager,
@@ -469,7 +467,7 @@ impl<TX: DbTxMut, N: NodeTypes> DatabaseProvider<TX, N> {
         chain_spec: Arc<N::ChainSpec>,
         static_file_provider: StaticFileProvider,
         prune_modes: PruneModes,
-        storage: Arc<N::Storage>,
+
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
@@ -482,7 +480,6 @@ impl<TX: DbTxMut, N: NodeTypes> DatabaseProvider<TX, N> {
             chain_spec,
             static_file_provider,
             prune_modes,
-            storage,
             storage_settings,
             rocksdb_provider,
             overlay_manager,
@@ -1006,7 +1003,7 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
         chain_spec: Arc<N::ChainSpec>,
         static_file_provider: StaticFileProvider,
         prune_modes: PruneModes,
-        storage: Arc<N::Storage>,
+
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
@@ -1019,7 +1016,7 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
             chain_spec,
             static_file_provider,
             prune_modes,
-            storage,
+
             storage_settings,
             rocksdb_provider,
             overlay_manager,
@@ -1097,12 +1094,12 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
             self.transactions_by_tx_range(tx_range.clone())?
         };
 
-        let body = self
-            .storage
-            .reader()
-            .read_block_bodies(self, vec![(header.as_ref(), transactions)])?
-            .pop()
-            .ok_or(ProviderError::InvalidStorageOutput)?;
+        let body = reth_storage_api::BaseBodyStorage::read_block_bodies(
+            self,
+            vec![(header.as_ref(), transactions)],
+        )?
+        .pop()
+        .ok_or(ProviderError::InvalidStorageOutput)?;
 
         let senders = if tx_range.is_empty() {
             vec![]
@@ -1182,7 +1179,7 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
             inputs.push((header.as_ref(), transactions));
         }
 
-        let bodies = self.storage.reader().read_block_bodies(self, inputs)?;
+        let bodies = reth_storage_api::BaseBodyStorage::read_block_bodies(self, inputs)?;
 
         for ((tx_range, header), body) in present_headers.into_iter().zip(bodies) {
             blocks.push(assemble_block(header, body, tx_range)?);
@@ -1672,12 +1669,12 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> BlockReader for DatabaseProvid
                 return Ok(None);
             };
 
-            let body = self
-                .storage
-                .reader()
-                .read_block_bodies(self, vec![(&header, transactions)])?
-                .pop()
-                .ok_or(ProviderError::InvalidStorageOutput)?;
+            let body = reth_storage_api::BaseBodyStorage::read_block_bodies(
+                self,
+                vec![(&header, transactions)],
+            )?
+            .pop()
+            .ok_or(ProviderError::InvalidStorageOutput)?;
 
             return Ok(Some(Self::Block::new(header, body)));
         }

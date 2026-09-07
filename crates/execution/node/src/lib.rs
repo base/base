@@ -34,8 +34,8 @@ pub use payload_service::{BasePayloadServiceBuilder, BasePayloadServiceMode};
 mod components;
 pub use components::{BaseComponentsBuilder, BaseNodeComponents, BaseNodePool};
 
+#[cfg(test)]
 mod storage;
-pub use storage::BaseStorage;
 
 pub mod version;
 pub use version::CLIENT_NAME;

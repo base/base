@@ -1,9 +1,4 @@
-//! Base node storage type aliases.
-
-use reth_storage_api::BaseBodyStorage;
-
-/// Base storage implementation.
-pub type BaseStorage = BaseBodyStorage;
+//! Storage format compatibility tests.
 
 #[cfg(test)]
 mod tests {

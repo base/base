@@ -12,7 +12,6 @@ pub struct BaseBodyStorage;
 impl BaseBodyStorage {
     /// Assembles bodies with empty ommers and fork-dependent empty withdrawals.
     pub fn read_block_bodies<Provider>(
-        &self,
         provider: &Provider,
         inputs: Vec<(&Header, Vec<BaseTxEnvelope>)>,
     ) -> ProviderResult<Vec<BaseBlockBody>>

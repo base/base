@@ -60,9 +60,6 @@ pub use builder::{ProviderFactoryBuilder, ReadOnlyConfig};
 mod metrics;
 pub use metrics::DatabaseProviderMetrics;
 
-mod chain;
-pub use chain::*;
-
 /// Sync state for read-only [`ProviderFactory`] instances.
 struct ReadOnlySyncState {
     /// Last MDBX txn ID we synced `RocksDB` secondary / static file indexes to.
@@ -83,8 +80,7 @@ pub struct ProviderFactory<N: NodeTypesWithDB> {
     static_file_provider: StaticFileProvider,
     /// Optional pruning configuration
     prune_modes: PruneModes,
-    /// The node storage handler.
-    storage: Arc<N::Storage>,
+
     /// Storage configuration settings for this node
     storage_settings: Arc<RwLock<StorageSettings>>,
     /// `RocksDB` provider
@@ -140,7 +136,6 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
             chain_spec.clone(),
             static_file_provider.clone(),
             Default::default(),
-            Default::default(),
             Arc::new(RwLock::new(default_settings)),
             rocksdb_provider.clone(),
             overlay_manager.clone(),
@@ -163,7 +158,7 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
             chain_spec,
             static_file_provider,
             prune_modes: PruneModes::default(),
-            storage: Default::default(),
+
             storage_settings: Arc::new(RwLock::new(storage_settings)),
             rocksdb_provider,
             overlay_manager,
@@ -407,7 +402,6 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
             self.chain_spec.clone(),
             self.static_file_provider.clone(),
             self.prune_modes.clone(),
-            self.storage.clone(),
             self.storage_settings.clone(),
             self.rocksdb_provider.clone(),
             self.overlay_manager.clone(),
@@ -430,7 +424,6 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
                 self.chain_spec.clone(),
                 self.static_file_provider.clone(),
                 self.prune_modes.clone(),
-                self.storage.clone(),
                 self.storage_settings.clone(),
                 self.rocksdb_provider.clone(),
                 self.overlay_manager.clone(),
@@ -458,7 +451,6 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
             self.chain_spec.clone(),
             self.static_file_provider.clone(),
             self.prune_modes.clone(),
-            self.storage.clone(),
             self.storage_settings.clone(),
             self.rocksdb_provider.clone(),
             self.overlay_manager.clone(),
@@ -964,7 +956,7 @@ impl<N: ProviderNodeTypes> MetadataProvider for ProviderFactory<N> {
 
 impl<N> fmt::Debug for ProviderFactory<N>
 where
-    N: NodeTypesWithDB<DB: fmt::Debug, ChainSpec: fmt::Debug, Storage: fmt::Debug>,
+    N: NodeTypesWithDB<DB: fmt::Debug, ChainSpec: fmt::Debug>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
@@ -972,7 +964,7 @@ where
             chain_spec,
             static_file_provider,
             prune_modes,
-            storage,
+
             storage_settings,
             rocksdb_provider,
             overlay_manager,
@@ -987,7 +979,6 @@ where
             .field("chain_spec", &chain_spec)
             .field("static_file_provider", &static_file_provider)
             .field("prune_modes", &prune_modes)
-            .field("storage", &storage)
             .field("storage_settings", &*storage_settings.read())
             .field("rocksdb_provider", &rocksdb_provider)
             .field("overlay_manager", &overlay_manager)
@@ -1009,7 +1000,7 @@ impl<N: NodeTypesWithDB> Clone for ProviderFactory<N> {
             chain_spec: self.chain_spec.clone(),
             static_file_provider: self.static_file_provider.clone(),
             prune_modes: self.prune_modes.clone(),
-            storage: self.storage.clone(),
+
             storage_settings: self.storage_settings.clone(),
             rocksdb_provider: self.rocksdb_provider.clone(),
             overlay_manager: self.overlay_manager.clone(),
@@ -1041,7 +1032,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        BlockHashReader, BlockNumReader, BlockWriter, DBProvider, HeaderSyncGapProvider,
+        BlockHashReader, BlockNumReader, BlockWriter, HeaderSyncGapProvider,
         MetadataWriter, TransactionsProvider,
         providers::{StaticFileProvider, StaticFileWriter},
         test_utils::{MockNodeTypesWithDB, blocks::TEST_BLOCK, create_test_provider_factory},
