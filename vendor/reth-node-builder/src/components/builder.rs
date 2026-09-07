@@ -4,14 +4,12 @@ use std::future::Future;
 
 use base_common_consensus::BaseTxEnvelope;
 use reth_consensus::FullConsensus;
-use reth_evm::BaseEvmConfig;
 use reth_network_api::FullNetwork;
-use reth_payload_builder::PayloadBuilderHandle;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 use crate::{
     BuilderContext, FullNodeTypes,
-    components::{Components, NodeComponents, PayloadServiceBuilder},
+    components::{Components, NodeComponents},
 };
 
 /// Constructs the components used during node launch.
@@ -46,24 +44,5 @@ where
         ctx: &BuilderContext<Node>,
     ) -> impl Future<Output = eyre::Result<Self::Components>> + Send {
         self(ctx)
-    }
-}
-
-/// Builds [`PayloadBuilderHandle::noop`].
-#[derive(Debug, Clone, Default)]
-pub struct NoopPayloadBuilder;
-
-impl<N, Pool> PayloadServiceBuilder<N, Pool> for NoopPayloadBuilder
-where
-    N: FullNodeTypes,
-    Pool: TransactionPool,
-{
-    async fn spawn_payload_builder_service(
-        self,
-        _ctx: &BuilderContext<N>,
-        _pool: Pool,
-        _evm_config: BaseEvmConfig,
-    ) -> eyre::Result<PayloadBuilderHandle> {
-        Ok(PayloadBuilderHandle::noop())
     }
 }
