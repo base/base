@@ -16,7 +16,7 @@ use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
-    Attributes, BasePayloadBuilderAttributes,
+    BasePayloadBuilderAttributes,
     config::{BaseDAConfig, GasLimitConfig},
 };
 use base_execution_rpc::{
@@ -64,7 +64,6 @@ use reth_transaction_pool::{
     blobstore::DiskFileBlobStore,
 };
 use reth_trie_common::KeccakKeyHasher;
-use serde::de::DeserializeOwned;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
@@ -526,13 +525,22 @@ where
     }
 }
 
-impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> NodeAddOns<N>
+impl<N, EthB, PVB, EB, EVB, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
+            Types: BaseNodeTypes
+                       + NodeTypes<
+                Payload: PayloadTypes<
+                    PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                >,
+            >,
             Evm: ConfigureEvm<
-                NextBlockEnvCtx: BuildNextEnv<Attrs, alloy_consensus::Header, BaseChainSpec>,
+                NextBlockEnvCtx: BuildNextEnv<
+                    BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                    alloy_consensus::Header,
+                    BaseChainSpec,
+                >,
             >,
             Pool: TransactionPool<Transaction: BasePooledTx>,
         >,
@@ -541,10 +549,6 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: Attributes<
-            Transaction = BaseTxEnvelope,
-            RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
-        >,
 {
     type Handle = RpcHandle<N, EthB::EthApi>;
 
@@ -562,7 +566,7 @@ where
             ctx.node.evm_config().clone(),
         );
         // Install additional rollup-specific RPC methods.
-        let debug_ext = BaseDebugWitnessApi::<_, _, _, Attrs>::new(
+        let debug_ext = BaseDebugWitnessApi::<_, _, _>::new(
             ctx.node.provider().clone(),
             ctx.node.task_executor().clone(),
             builder,
@@ -603,13 +607,22 @@ where
     }
 }
 
-impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> RethRpcAddOns<N>
+impl<N, EthB, PVB, EB, EVB, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
+            Types: BaseNodeTypes
+                       + NodeTypes<
+                Payload: PayloadTypes<
+                    PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                >,
+            >,
             Evm: ConfigureEvm<
-                NextBlockEnvCtx: BuildNextEnv<Attrs, alloy_consensus::Header, BaseChainSpec>,
+                NextBlockEnvCtx: BuildNextEnv<
+                    BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                    alloy_consensus::Header,
+                    BaseChainSpec,
+                >,
             >,
         >,
     <<N as FullNodeComponents>::Pool as TransactionPool>::Transaction: BasePooledTx,
@@ -618,10 +631,6 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: Attributes<
-            Transaction = BaseTxEnvelope,
-            RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
-        >,
 {
     type EthApi = EthB::EthApi;
 
@@ -1270,10 +1279,14 @@ pub struct BasePayloadValidatorBuilder;
 impl<Node> PayloadValidatorBuilder<Node> for BasePayloadValidatorBuilder
 where
     Node: FullNodeComponents<
-        Types: NodeTypes<ChainSpec: Upgrades, Payload: PayloadTypes<ExecutionData = ExecutionData>>,
+        Types: NodeTypes<
+            ChainSpec: Upgrades,
+            Payload: PayloadTypes<
+                ExecutionData = ExecutionData,
+                PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
+            >,
+        >,
     >,
-    <<Node::Types as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes:
-        Attributes<Transaction = BaseTxEnvelope>,
 {
     type Validator = BaseEngineValidator<BaseTxEnvelope, <Node::Types as NodeTypes>::ChainSpec>;
 

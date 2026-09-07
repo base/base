@@ -1,6 +1,6 @@
 //! Base payload builder implementation.
+
 use std::{
-    marker::PhantomData,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -14,6 +14,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope, CoinbaseTip, Predeploys};
 use base_common_evm::L1BlockInfo;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
@@ -36,7 +37,7 @@ use reth_evm::{
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
+use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadAttributes};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_revm::{
@@ -51,11 +52,11 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
-    InclusionTracker, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-    ParkedPredicateIndex, PredicateLoadTracker, PredicateReadRecorder, StateChangeEffects,
-    ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
-    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability, InclusionTracker,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PredicateLoadTracker, PredicateReadRecorder, StateChangeEffects, ValidityMetrics,
+    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
+    payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -93,13 +94,7 @@ macro_rules! emit_native_validity_event {
 
 /// Base payload builder
 #[derive(Debug)]
-pub struct BasePayloadBuilder<
-    Pool,
-    Client,
-    Evm,
-    Txs = (),
-    Attrs = BasePayloadBuilderAttributes<BaseTxEnvelope>,
-> {
+pub struct BasePayloadBuilder<Pool, Client, Evm, Txs = ()> {
     /// The type responsible for creating the evm.
     pub evm_config: Evm,
     /// Transaction pool.
@@ -111,11 +106,9 @@ pub struct BasePayloadBuilder<
     /// The type responsible for yielding the best transactions for the payload if mempool
     /// transactions are allowed.
     pub best_transactions: Txs,
-    /// Marker for the payload attributes type.
-    _pd: PhantomData<Attrs>,
 }
 
-impl<Pool, Client, Evm, Txs, Attrs> Clone for BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs>
+impl<Pool, Client, Evm, Txs> Clone for BasePayloadBuilder<Pool, Client, Evm, Txs>
 where
     Pool: Clone,
     Client: Clone,
@@ -129,12 +122,11 @@ where
             client: self.client.clone(),
             config: self.config.clone(),
             best_transactions: self.best_transactions.clone(),
-            _pd: PhantomData,
         }
     }
 }
 
-impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, (), Attrs> {
+impl<Pool, Client, Evm> BasePayloadBuilder<Pool, Client, Evm, ()> {
     /// `BasePayloadBuilder` constructor.
     ///
     /// Configures the builder with the default settings.
@@ -149,36 +141,38 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, (), Attrs> 
         evm_config: Evm,
         config: BaseBuilderConfig,
     ) -> Self {
-        Self { pool, client, evm_config, config, best_transactions: (), _pd: PhantomData }
+        Self { pool, client, evm_config, config, best_transactions: () }
     }
 }
 
-impl<Pool, Client, Evm, Txs, Attrs> BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs> {
+impl<Pool, Client, Evm, Txs> BasePayloadBuilder<Pool, Client, Evm, Txs> {
     /// Configures the type responsible for yielding the transactions that should be included in the
     /// payload.
     pub fn with_transactions<T>(
         self,
         best_transactions: T,
-    ) -> BasePayloadBuilder<Pool, Client, Evm, T, Attrs> {
+    ) -> BasePayloadBuilder<Pool, Client, Evm, T> {
         BasePayloadBuilder {
             pool: self.pool,
             client: self.client,
             evm_config: self.evm_config,
             best_transactions,
             config: self.config,
-            _pd: PhantomData,
         }
     }
 }
 
-impl<Pool, Client, Evm, T, Attrs> BasePayloadBuilder<Pool, Client, Evm, T, Attrs>
+impl<Pool, Client, Evm, T> BasePayloadBuilder<Pool, Client, Evm, T>
 where
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader,
     Evm: ConfigureEvm<
-        NextBlockEnvCtx: BuildNextEnv<Attrs, alloy_consensus::Header, Client::ChainSpec>,
+        NextBlockEnvCtx: BuildNextEnv<
+            BasePayloadBuilderAttributes<BaseTxEnvelope>,
+            alloy_consensus::Header,
+            Client::ChainSpec,
+        >,
     >,
-    Attrs: Attributes<Transaction = BaseTxEnvelope>,
 {
     /// Constructs a Base payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -194,7 +188,7 @@ where
     )]
     fn build_payload<'a, Txs>(
         &self,
-        args: BuildArguments<Attrs, BaseBuiltPayload>,
+        args: BuildArguments<BasePayloadBuilderAttributes<BaseTxEnvelope>, BaseBuiltPayload>,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
     ) -> Result<BuildOutcome<BaseBuiltPayload>, PayloadBuilderError>
     where
@@ -234,7 +228,7 @@ where
         }
         let state = StateProviderDatabase::new(state_provider.as_ref());
 
-        if ctx.attributes().no_tx_pool() {
+        if ctx.attributes().no_tx_pool {
             builder.build(state, state_provider.as_ref(), state_root_handle, ctx)
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
@@ -252,13 +246,11 @@ where
     pub fn payload_witness(
         &self,
         parent: SealedHeader<alloy_consensus::Header>,
-        attributes: Attrs::RpcPayloadAttributes,
-    ) -> Result<ExecutionWitness, PayloadBuilderError>
-    where
-        Attrs: Attributes,
-    {
+        attributes: BasePayloadAttributes,
+    ) -> Result<ExecutionWitness, PayloadBuilderError> {
         let attributes =
-            Attrs::try_new(parent.hash(), attributes, 3).map_err(PayloadBuilderError::other)?;
+            BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(parent.hash(), attributes, 3)
+                .map_err(PayloadBuilderError::other)?;
 
         let payload_id = attributes.payload_id(&parent.hash());
         let config = PayloadConfig::new(Arc::new(parent), attributes, payload_id);
@@ -279,18 +271,20 @@ where
 }
 
 /// Implementation of the [`PayloadBuilder`] trait for [`BasePayloadBuilder`].
-impl<Pool, Client, Evm, Txs, Attrs> PayloadBuilder
-    for BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs>
+impl<Pool, Client, Evm, Txs> PayloadBuilder for BasePayloadBuilder<Pool, Client, Evm, Txs>
 where
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader + Clone,
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>>,
     Evm: ConfigureEvm<
-        NextBlockEnvCtx: BuildNextEnv<Attrs, alloy_consensus::Header, Client::ChainSpec>,
+        NextBlockEnvCtx: BuildNextEnv<
+            BasePayloadBuilderAttributes<BaseTxEnvelope>,
+            alloy_consensus::Header,
+            Client::ChainSpec,
+        >,
     >,
     Txs: BasePayloadTransactions<Pool>,
-    Attrs: Attributes<Transaction = BaseTxEnvelope>,
 {
-    type Attributes = Attrs;
+    type Attributes = BasePayloadBuilderAttributes<BaseTxEnvelope>;
     type BuiltPayload = BaseBuiltPayload;
 
     fn try_build(
@@ -361,20 +355,25 @@ impl<'a, Txs> Builder<'a, Txs> {
 
 impl<Txs> Builder<'_, Txs> {
     /// Builds the payload on top of the state.
-    pub fn build<Evm, ChainSpec, Attrs>(
+    pub fn build<Evm, ChainSpec>(
         self,
         db: impl Database<Error = ProviderError>,
         state_provider: &dyn StateProvider,
         mut state_root_handle: Option<PayloadStateRootHandle>,
-        ctx: BasePayloadBuilderCtx<Evm, ChainSpec, Attrs>,
+        ctx: BasePayloadBuilderCtx<Evm, ChainSpec>,
     ) -> Result<BuildOutcomeKind<BaseBuiltPayload>, PayloadBuilderError>
     where
-        Evm: ConfigureEvm<NextBlockEnvCtx: BuildNextEnv<Attrs, alloy_consensus::Header, ChainSpec>>,
+        Evm: ConfigureEvm<
+            NextBlockEnvCtx: BuildNextEnv<
+                BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                alloy_consensus::Header,
+                ChainSpec,
+            >,
+        >,
         ChainSpec: EthChainSpec + Upgrades,
         Txs: ParkablePayloadTransactions<
             Transaction: PoolTransaction<Consensus = BaseTxEnvelope> + BasePooledTx,
         >,
-        Attrs: Attributes<Transaction = BaseTxEnvelope>,
     {
         let Self { best } = self;
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
@@ -402,7 +401,7 @@ impl<Txs> Builder<'_, Txs> {
         let mut info = ctx.execute_sequencer_transactions(&mut builder)?;
 
         // 3. if mem pool transactions are requested we execute them
-        if !ctx.attributes().no_tx_pool() {
+        if !ctx.attributes().no_tx_pool {
             let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()));
             if ctx.execute_best_transactions(&mut info, &mut builder, best_txs)?.is_some() {
                 return Ok(BuildOutcomeKind::Cancelled);
@@ -464,7 +463,7 @@ impl<Txs> Builder<'_, Txs> {
             trie_updates: Arc::new(trie_updates),
         };
 
-        let no_tx_pool = ctx.attributes().no_tx_pool();
+        let no_tx_pool = ctx.attributes().no_tx_pool;
 
         let payload = BaseBuiltPayload::new(
             ctx.payload_id(),
@@ -487,17 +486,22 @@ impl<Txs> Builder<'_, Txs> {
     }
 
     /// Builds the payload and returns its [`ExecutionWitness`] based on the state after execution.
-    pub fn witness<Evm, ChainSpec, Attrs>(
+    pub fn witness<Evm, ChainSpec>(
         self,
         state_provider: impl StateProvider,
         header_provider: impl reth_storage_api::HeaderProvider,
-        ctx: &BasePayloadBuilderCtx<Evm, ChainSpec, Attrs>,
+        ctx: &BasePayloadBuilderCtx<Evm, ChainSpec>,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
-        Evm: ConfigureEvm<NextBlockEnvCtx: BuildNextEnv<Attrs, alloy_consensus::Header, ChainSpec>>,
+        Evm: ConfigureEvm<
+            NextBlockEnvCtx: BuildNextEnv<
+                BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                alloy_consensus::Header,
+                ChainSpec,
+            >,
+        >,
         ChainSpec: EthChainSpec + Upgrades,
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>,
-        Attrs: Attributes<Transaction = BaseTxEnvelope>,
     {
         let mut db = State::builder()
             .with_database(StateProviderDatabase::new(&state_provider))
@@ -660,11 +664,7 @@ impl ExecutionInfo {
 
 /// Container type that holds all necessities to build a new payload.
 #[derive(derive_more::Debug)]
-pub struct BasePayloadBuilderCtx<
-    Evm: ConfigureEvm,
-    ChainSpec,
-    Attrs = BasePayloadBuilderAttributes<BaseTxEnvelope>,
-> {
+pub struct BasePayloadBuilderCtx<Evm: ConfigureEvm, ChainSpec> {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: Evm,
     /// Additional config for the builder/sequencer, e.g. DA and gas limit
@@ -672,18 +672,24 @@ pub struct BasePayloadBuilderCtx<
     /// The chainspec
     pub chain_spec: Arc<ChainSpec>,
     /// How to build the payload.
-    pub config: PayloadConfig<Attrs, alloy_consensus::Header>,
+    pub config:
+        PayloadConfig<BasePayloadBuilderAttributes<BaseTxEnvelope>, alloy_consensus::Header>,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancelOnDrop,
     /// The currently best payload.
     pub best_payload: Option<BaseBuiltPayload>,
 }
 
-impl<Evm, ChainSpec, Attrs> BasePayloadBuilderCtx<Evm, ChainSpec, Attrs>
+impl<Evm, ChainSpec> BasePayloadBuilderCtx<Evm, ChainSpec>
 where
-    Evm: ConfigureEvm<NextBlockEnvCtx: BuildNextEnv<Attrs, alloy_consensus::Header, ChainSpec>>,
+    Evm: ConfigureEvm<
+        NextBlockEnvCtx: BuildNextEnv<
+            BasePayloadBuilderAttributes<BaseTxEnvelope>,
+            alloy_consensus::Header,
+            ChainSpec,
+        >,
+    >,
     ChainSpec: EthChainSpec + Upgrades,
-    Attrs: Attributes<Transaction = BaseTxEnvelope>,
 {
     /// Returns the parent block the payload will be build on.
     pub fn parent(&self) -> &reth_primitives_traits::SealedHeader {
@@ -691,7 +697,7 @@ where
     }
 
     /// Returns the builder attributes.
-    pub const fn attributes(&self) -> &Attrs {
+    pub const fn attributes(&self) -> &BasePayloadBuilderAttributes<BaseTxEnvelope> {
         &self.config.attributes
     }
 
@@ -760,9 +766,9 @@ where
         builder: &mut impl BlockBuilder,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::new();
-        let no_tx_pool = self.attributes().no_tx_pool();
+        let no_tx_pool = self.attributes().no_tx_pool;
 
-        for sequencer_tx in self.attributes().sequencer_transactions() {
+        for sequencer_tx in &self.attributes().transactions {
             // A sequencer's block should never contain blob transactions.
             if sequencer_tx.value().is_eip4844() {
                 return Err(PayloadBuilderError::other(

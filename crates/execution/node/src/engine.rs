@@ -12,7 +12,7 @@ use base_common_rpc_types_engine::{
 };
 use base_execution_consensus::{BaseConsensusError, isthmus};
 use base_execution_payload_builder::{
-    Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
+    BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
 };
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_chainspec::EthChainSpec;
@@ -145,8 +145,10 @@ impl<Tx, ChainSpec, Types> PayloadValidator<Types> for BaseEngineValidator<Tx, C
 where
     Tx: BaseTransaction + SignedTransaction + Unpin + 'static,
     ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
-    Types: PayloadTypes<ExecutionData = ExecutionData>,
-    Types::PayloadAttributes: Attributes<Transaction = Tx>,
+    Types: PayloadTypes<
+            ExecutionData = ExecutionData,
+            PayloadAttributes = BasePayloadBuilderAttributes<Tx>,
+        >,
 {
     type Block = alloy_consensus::Block<Tx>;
 
@@ -234,7 +236,7 @@ where
             InvalidPayloadAttributesError::InvalidParams(Box::new(error))
         };
         let transaction = attributes
-            .sequencer_transactions()
+            .transactions
             .get(1)
             .ok_or_else(|| invalid_metadata(BaseTimeMetadataError::Missing))?;
         let deposit = transaction

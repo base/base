@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_builder::{
-    Attributes,
+    BasePayloadBuilderAttributes,
     config::{BaseDAConfig, GasLimitConfig},
 };
 use base_execution_rpc::{
@@ -27,7 +27,6 @@ use reth_rpc_api::DebugApiServer;
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
 use reth_transaction_pool::TransactionPool;
-use serde::de::DeserializeOwned;
 
 /// Add-ons w.r.t. Base.
 ///
@@ -176,14 +175,21 @@ where
     }
 }
 
-impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> NodeAddOns<N>
+impl<N, EthB, PVB, EB, EVB, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
+            Types: BaseNodeTypes
+                       + NodeTypes<
+                Payload: PayloadTypes<
+                    PayloadAttributes = BasePayloadBuilderAttributes<
+                        base_common_consensus::BaseTxEnvelope,
+                    >,
+                >,
+            >,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
-                    Attrs,
+                    BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>,
                     alloy_consensus::Header,
                     base_execution_chainspec::BaseChainSpec,
                 >,
@@ -195,10 +201,6 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: Attributes<
-            Transaction = BaseTxEnvelope,
-            RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
-        >,
 {
     type Handle = RpcHandle<N, EthB::EthApi>;
 
@@ -216,7 +218,7 @@ where
             ctx.node.evm_config().clone(),
         );
         // Install additional rollup-specific RPC methods.
-        let debug_ext = BaseDebugWitnessApi::<_, _, _, Attrs>::new(
+        let debug_ext = BaseDebugWitnessApi::<_, _, _>::new(
             ctx.node.provider().clone(),
             ctx.node.task_executor().clone(),
             builder,
@@ -257,14 +259,21 @@ where
     }
 }
 
-impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> RethRpcAddOns<N>
+impl<N, EthB, PVB, EB, EVB, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
+            Types: BaseNodeTypes
+                       + NodeTypes<
+                Payload: PayloadTypes<
+                    PayloadAttributes = BasePayloadBuilderAttributes<
+                        base_common_consensus::BaseTxEnvelope,
+                    >,
+                >,
+            >,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
-                    Attrs,
+                    BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>,
                     alloy_consensus::Header,
                     base_execution_chainspec::BaseChainSpec,
                 >,
@@ -276,10 +285,6 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: Attributes<
-            Transaction = BaseTxEnvelope,
-            RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
-        >,
 {
     type EthApi = EthB::EthApi;
 

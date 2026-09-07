@@ -6,7 +6,8 @@ use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chains::Upgrades;
 use base_common_consensus::BaseTxEnvelope;
-use base_execution_payload_builder::{Attributes, BasePayloadBuilder};
+use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_execution_payload_builder::{BasePayloadBuilder, BasePayloadBuilderAttributes};
 use base_execution_txpool::BasePooledTx;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
@@ -37,16 +38,16 @@ pub trait DebugExecutionWitnessApi<Attributes> {
 }
 
 /// An extension to the `debug_` namespace of the RPC API.
-pub struct BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs> {
-    inner: Arc<BaseDebugWitnessApiInner<Pool, Provider, EvmConfig, Attrs>>,
+pub struct BaseDebugWitnessApi<Pool, Provider, EvmConfig> {
+    inner: Arc<BaseDebugWitnessApiInner<Pool, Provider, EvmConfig>>,
 }
 
-impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs> {
+impl<Pool, Provider, EvmConfig> BaseDebugWitnessApi<Pool, Provider, EvmConfig> {
     /// Creates a new instance of the `BaseDebugWitnessApi`.
     pub fn new(
         provider: Provider,
         task_spawner: Runtime,
-        builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
+        builder: BasePayloadBuilder<Pool, Provider, EvmConfig, ()>,
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(3));
         let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
@@ -54,7 +55,7 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
     }
 }
 
-impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs>
+impl<Pool, Provider, EvmConfig> BaseDebugWitnessApi<Pool, Provider, EvmConfig>
 where
     EvmConfig: ConfigureEvm,
     Provider: BlockReaderIdExt,
@@ -72,8 +73,8 @@ where
 }
 
 #[async_trait]
-impl<Pool, Provider, EvmConfig, Attrs> DebugExecutionWitnessApiServer<Attrs::RpcPayloadAttributes>
-    for BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs>
+impl<Pool, Provider, EvmConfig> DebugExecutionWitnessApiServer<BasePayloadAttributes>
+    for BaseDebugWitnessApi<Pool, Provider, EvmConfig>
 where
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + 'static,
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
@@ -81,15 +82,18 @@ where
         + ChainSpecProvider<ChainSpec: Upgrades>
         + Clone
         + 'static,
-    EvmConfig: ConfigureEvm<NextBlockEnvCtx: BuildNextEnv<Attrs, Provider::Header, Provider::ChainSpec>>
-        + 'static,
-    Attrs: Attributes<Transaction = BaseTxEnvelope>,
-    Attrs::RpcPayloadAttributes: Send + Sync + 'static,
+    EvmConfig: ConfigureEvm<
+            NextBlockEnvCtx: BuildNextEnv<
+                BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                Provider::Header,
+                Provider::ChainSpec,
+            >,
+        > + 'static,
 {
     async fn execute_payload(
         &self,
         parent_block_hash: B256,
-        attributes: Attrs::RpcPayloadAttributes,
+        attributes: BasePayloadAttributes,
     ) -> RpcResult<ExecutionWitness> {
         let _permit = self.inner.semaphore.acquire().await;
 
@@ -108,24 +112,20 @@ where
     }
 }
 
-impl<Pool, Provider, EvmConfig, Attrs> Clone
-    for BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs>
-{
+impl<Pool, Provider, EvmConfig> Clone for BaseDebugWitnessApi<Pool, Provider, EvmConfig> {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
 }
-impl<Pool, Provider, EvmConfig, Attrs> Debug
-    for BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs>
-{
+impl<Pool, Provider, EvmConfig> Debug for BaseDebugWitnessApi<Pool, Provider, EvmConfig> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BaseDebugWitnessApi").finish_non_exhaustive()
     }
 }
 
-struct BaseDebugWitnessApiInner<Pool, Provider, EvmConfig, Attrs> {
+struct BaseDebugWitnessApiInner<Pool, Provider, EvmConfig> {
     provider: Provider,
-    builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
+    builder: BasePayloadBuilder<Pool, Provider, EvmConfig, ()>,
     task_spawner: Runtime,
     semaphore: Arc<Semaphore>,
 }

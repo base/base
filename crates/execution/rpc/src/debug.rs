@@ -1,6 +1,6 @@
 //! Historical proofs RPC server implementation for `debug_` namespace.
 
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
@@ -9,8 +9,9 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_chains::Upgrades;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_payload_builder::{
-    Attributes,
+    BasePayloadBuilderAttributes,
     builder::{BasePayloadBuilderCtx, Builder},
 };
 use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
@@ -72,11 +73,11 @@ pub trait DebugApiOverride<Attributes> {
 
 #[derive(Debug)]
 /// Overrides applied to the `debug_` namespace of the RPC API for the proofs `ExEx`.
-pub struct DebugApiExt<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs> {
-    inner: Arc<DebugApiExtInner<Eth, Storage, Provider, EvmConfig, Attrs>>,
+pub struct DebugApiExt<Eth: FullEthApi, Storage, Provider, EvmConfig> {
+    inner: Arc<DebugApiExtInner<Eth, Storage, Provider, EvmConfig>>,
 }
 
-impl<Eth, Storage, Provider, EvmConfig, Attrs> DebugApiExt<Eth, Storage, Provider, EvmConfig, Attrs>
+impl<Eth, Storage, Provider, EvmConfig> DebugApiExt<Eth, Storage, Provider, EvmConfig>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
@@ -106,7 +107,7 @@ where
 
 #[derive(Debug)]
 /// Overrides applied to the `debug_` namespace of the RPC API for historical proofs `ExEx`.
-pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs> {
+pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig> {
     provider: Provider,
     eth_api: Eth,
     storage: BaseProofsStorage<Storage>,
@@ -114,10 +115,9 @@ pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs
     evm_config: EvmConfig,
     task_spawner: Runtime,
     semaphore: Semaphore,
-    _attrs: PhantomData<Attrs>,
 }
 
-impl<Eth, P, Provider, EvmConfig, Attrs> DebugApiExtInner<Eth, P, Provider, EvmConfig, Attrs>
+impl<Eth, P, Provider, EvmConfig> DebugApiExtInner<Eth, P, Provider, EvmConfig>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
@@ -138,12 +138,11 @@ where
             evm_config,
             task_spawner,
             semaphore: Semaphore::new(3),
-            _attrs: PhantomData,
         }
     }
 }
 
-impl<Eth, P, Provider, EvmConfig, Attrs> DebugApiExt<Eth, P, Provider, EvmConfig, Attrs>
+impl<Eth, P, Provider, EvmConfig> DebugApiExt<Eth, P, Provider, EvmConfig>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
@@ -162,16 +161,18 @@ where
 }
 
 #[async_trait]
-impl<Eth, P, Provider, EvmConfig, Attrs> DebugApiOverrideServer<Attrs::RpcPayloadAttributes>
-    for DebugApiExt<Eth, P, Provider, EvmConfig, Attrs>
+impl<Eth, P, Provider, EvmConfig> DebugApiOverrideServer<BasePayloadAttributes>
+    for DebugApiExt<Eth, P, Provider, EvmConfig>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'static,
-    Attrs: Attributes<Transaction = BaseTxEnvelope>,
-    Attrs::RpcPayloadAttributes: Send + Sync + 'static,
     EvmConfig: ConfigureEvm<
-            NextBlockEnvCtx: BuildNextEnv<Attrs, alloy_consensus::Header, Provider::ChainSpec>,
+            NextBlockEnvCtx: BuildNextEnv<
+                BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                alloy_consensus::Header,
+                Provider::ChainSpec,
+            >,
         > + 'static,
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + StateProviderFactory
@@ -183,7 +184,7 @@ where
     async fn execute_payload(
         &self,
         parent_block_hash: B256,
-        attributes: Attrs::RpcPayloadAttributes,
+        attributes: BasePayloadAttributes,
     ) -> RpcResult<ExecutionWitness> {
         DebugApiExtMetrics::record_operation_async(DebugApis::DebugExecutePayload, async {
             let _permit = self.inner.semaphore.acquire().await;
@@ -196,9 +197,13 @@ where
             self.inner.task_spawner.spawn_blocking_task(async move {
                 let result = async {
                     let parent_hash = parent_header.hash();
-                    let attributes = Attrs::try_new(parent_hash, attributes, 3)
-                        .map_err(PayloadBuilderError::other)?;
-                    let payload_id = attributes.payload_job_id();
+                    let attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+                        parent_hash,
+                        attributes,
+                        3,
+                    )
+                    .map_err(PayloadBuilderError::other)?;
+                    let payload_id = attributes.payload_attributes.id;
 
                     let config =
                         PayloadConfig::new(Arc::new(parent_header), attributes, payload_id);
