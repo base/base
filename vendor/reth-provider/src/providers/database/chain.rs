@@ -1,6 +1,6 @@
 use base_common_consensus::BaseTxEnvelope;
-use reth_db_api::transaction::{DbTx, DbTxMut};
-use reth_storage_api::{BlockBodyReader, BlockBodyWriter, EmptyBodyStorage, EthStorage};
+use reth_db_api::transaction::DbTx;
+use reth_storage_api::{BlockBodyReader, EmptyBodyStorage, EthStorage};
 
 use crate::{DatabaseProvider, providers::NodeTypesForProvider};
 
@@ -12,14 +12,6 @@ pub trait ChainStorage: Send + Sync {
     ) -> impl BlockBodyReader<DatabaseProvider<TX, Types>, Block = base_common_consensus::BaseBlock>
     where
         TX: DbTx + 'static,
-        Types: NodeTypesForProvider;
-
-    /// Provides access to the chain writer.
-    fn writer<TX, Types>(
-        &self,
-    ) -> impl BlockBodyWriter<DatabaseProvider<TX, Types>, base_common_consensus::BaseBlockBody>
-    where
-        TX: DbTxMut + DbTx + 'static,
         Types: NodeTypesForProvider;
 }
 
@@ -33,16 +25,6 @@ impl ChainStorage for EthStorage<BaseTxEnvelope, alloy_consensus::Header> {
     {
         self
     }
-
-    fn writer<TX, Types>(
-        &self,
-    ) -> impl BlockBodyWriter<DatabaseProvider<TX, Types>, base_common_consensus::BaseBlockBody>
-    where
-        TX: DbTxMut + DbTx + 'static,
-        Types: NodeTypesForProvider,
-    {
-        self
-    }
 }
 
 impl ChainStorage for EmptyBodyStorage<BaseTxEnvelope, alloy_consensus::Header> {
@@ -51,16 +33,6 @@ impl ChainStorage for EmptyBodyStorage<BaseTxEnvelope, alloy_consensus::Header> 
     ) -> impl BlockBodyReader<DatabaseProvider<TX, Types>, Block = base_common_consensus::BaseBlock>
     where
         TX: DbTx + 'static,
-        Types: NodeTypesForProvider,
-    {
-        self
-    }
-
-    fn writer<TX, Types>(
-        &self,
-    ) -> impl BlockBodyWriter<DatabaseProvider<TX, Types>, base_common_consensus::BaseBlockBody>
-    where
-        TX: DbTxMut + DbTx + 'static,
         Types: NodeTypesForProvider,
     {
         self

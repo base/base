@@ -2,42 +2,13 @@ use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
 
 use alloy_consensus::Header;
-use alloy_primitives::BlockNumber;
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
-use reth_db_api::{
-    DbTxUnwindExt,
-    cursor::{DbCursorRO, DbCursorRW},
-    models::StoredBlockOmmers,
-    tables,
-    transaction::{DbTx, DbTxMut},
-};
-use reth_db_models::StoredBlockWithdrawals;
+use reth_db_api::{cursor::DbCursorRO, tables, transaction::DbTx};
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::{Block, BlockBody, FullBlockHeader, SignedTransaction};
 use reth_storage_errors::provider::ProviderResult;
 
 use crate::DBProvider;
-
-/// Trait that implements how block bodies are written to the storage.
-///
-/// Note: Within the current abstraction, this should only write to tables unrelated to
-/// transactions. Writing of transactions is handled separately.
-#[auto_impl::auto_impl(&, Arc)]
-pub trait BlockBodyWriter<Provider, Body: BlockBody> {
-    /// Writes a set of block bodies to the storage.
-    fn write_block_bodies(
-        &self,
-        provider: &Provider,
-        bodies: Vec<(BlockNumber, Option<&Body>)>,
-    ) -> ProviderResult<()>;
-
-    /// Removes all block bodies above the given block number from the database.
-    fn remove_block_bodies_above(
-        &self,
-        provider: &Provider,
-        block: BlockNumber,
-    ) -> ProviderResult<()>;
-}
 
 /// Input for reading a block body. Contains a header of block being read and a list of pre-fetched
 /// transactions.
@@ -69,54 +40,6 @@ pub struct EthStorage<T = TransactionSigned, H = Header>(PhantomData<(T, H)>);
 impl<T, H> Default for EthStorage<T, H> {
     fn default() -> Self {
         Self(Default::default())
-    }
-}
-
-impl<Provider, T, H> BlockBodyWriter<Provider, alloy_consensus::BlockBody<T, H>>
-    for EthStorage<T, H>
-where
-    Provider: DBProvider<Tx: DbTxMut>,
-    T: SignedTransaction,
-    H: FullBlockHeader,
-{
-    fn write_block_bodies(
-        &self,
-        provider: &Provider,
-        bodies: Vec<(u64, Option<&alloy_consensus::BlockBody<T, H>>)>,
-    ) -> ProviderResult<()> {
-        let mut ommers_cursor = provider.tx_ref().cursor_write::<tables::BlockOmmers<H>>()?;
-        let mut withdrawals_cursor =
-            provider.tx_ref().cursor_write::<tables::BlockWithdrawals>()?;
-
-        for (block_number, body) in bodies {
-            let Some(body) = body else { continue };
-
-            // Write ommers if any
-            if !body.ommers.is_empty() {
-                ommers_cursor
-                    .append(block_number, &StoredBlockOmmers { ommers: body.ommers.clone() })?;
-            }
-
-            // Write withdrawals if any
-            if let Some(withdrawals) = body.withdrawals.clone()
-                && !withdrawals.is_empty()
-            {
-                withdrawals_cursor.append(block_number, &StoredBlockWithdrawals { withdrawals })?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn remove_block_bodies_above(
-        &self,
-        provider: &Provider,
-        block: BlockNumber,
-    ) -> ProviderResult<()> {
-        provider.tx_ref().unwind_table_by_num::<tables::BlockWithdrawals>(block)?;
-        provider.tx_ref().unwind_table_by_num::<tables::BlockOmmers<H>>(block)?;
-
-        Ok(())
     }
 }
 
@@ -181,31 +104,6 @@ pub struct EmptyBodyStorage<T, H>(PhantomData<(T, H)>);
 impl<T, H> Default for EmptyBodyStorage<T, H> {
     fn default() -> Self {
         Self(PhantomData)
-    }
-}
-
-impl<Provider, T, H> BlockBodyWriter<Provider, alloy_consensus::BlockBody<T, H>>
-    for EmptyBodyStorage<T, H>
-where
-    T: SignedTransaction,
-    H: FullBlockHeader,
-{
-    fn write_block_bodies(
-        &self,
-        _provider: &Provider,
-        _bodies: Vec<(u64, Option<&alloy_consensus::BlockBody<T, H>>)>,
-    ) -> ProviderResult<()> {
-        // noop
-        Ok(())
-    }
-
-    fn remove_block_bodies_above(
-        &self,
-        _provider: &Provider,
-        _block: BlockNumber,
-    ) -> ProviderResult<()> {
-        // noop
-        Ok(())
     }
 }
 

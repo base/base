@@ -50,13 +50,22 @@ impl BaseTestData {
         Self::sign_tx_with_key_pair(generators::generate_key(rng), tx)
     }
 
-    /// Generates a sealed block with signed legacy transactions.
+    /// Generates a sealed Base block with signed legacy transactions and no ommers.
     pub fn random_block<R: Rng>(
         rng: &mut R,
         number: u64,
         params: BlockParams,
     ) -> SealedBlock<BaseBlock> {
-        let (block, hash) = generators::random_block(rng, number, params).split();
+        let (block, hash) = generators::random_block(
+            rng,
+            number,
+            BlockParams {
+                ommers_count: Some(0),
+                withdrawals_count: params.withdrawals_count.map(|_| 0),
+                ..params
+            },
+        )
+        .split();
         SealedBlock::new_unchecked(
             block.map_transactions(|tx| {
                 BaseTxEnvelope::try_from(alloy_consensus::TxEnvelope::from(tx)).unwrap()
@@ -71,18 +80,24 @@ impl BaseTestData {
         numbers: RangeInclusive<BlockNumber>,
         params: BlockRangeParams,
     ) -> Vec<SealedBlock<BaseBlock>> {
-        generators::random_block_range(rng, numbers, params)
-            .into_iter()
-            .map(|block| {
-                let (block, hash) = block.split();
-                SealedBlock::new_unchecked(
-                    block.map_transactions(|tx| {
-                        BaseTxEnvelope::try_from(alloy_consensus::TxEnvelope::from(tx)).unwrap()
-                    }),
-                    hash,
-                )
-            })
-            .collect()
+        let mut blocks: Vec<SealedBlock<BaseBlock>> = Vec::new();
+        for number in numbers {
+            let tx_count = rng.random_range(params.tx_count.clone());
+            let requests_count = params.requests_count.clone().map(|range| rng.random_range(range));
+            let parent = blocks.last().map(|block| block.hash()).or(params.parent);
+            blocks.push(Self::random_block(
+                rng,
+                number,
+                BlockParams {
+                    parent,
+                    tx_count: Some(tx_count),
+                    ommers_count: Some(0),
+                    requests_count,
+                    withdrawals_count: params.withdrawals_count.as_ref().map(|_| 0),
+                },
+            ));
+        }
+        blocks
     }
 
     /// Generates a receipt matching a signed transaction's type.

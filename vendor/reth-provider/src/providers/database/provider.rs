@@ -62,13 +62,13 @@ use tracing::{debug, instrument, trace};
 
 use super::SaveBlocksInput;
 use crate::{
-    AccountReader, BlockBodyWriter, BlockExecutionWriter, BlockHashReader, BlockNumReader,
-    BlockReader, BlockWriter, BundleStateInit, ChainStateBlockReader, ChainStateBlockWriter,
-    DBProvider, DbTxProvider, EitherReader, EitherWriter, HashingWriter, HeaderProvider,
-    HeaderSyncGapProvider, HistoricalStateProvider, HistoricalStateProviderRef, HistoryWriter,
-    LatestStateProvider, LatestStateProviderRef, OriginalValuesKnown, PersistenceFrontiers,
-    ProviderError, PruneCheckpointReader, PruneCheckpointWriter, RawRocksDBBatch, RevertsInit,
-    RocksBatchArg, RocksDBProviderFactory, StageCheckpointReader, StateProviderBox, StateWriter,
+    AccountReader, BlockExecutionWriter, BlockHashReader, BlockNumReader, BlockReader, BlockWriter,
+    BundleStateInit, ChainStateBlockReader, ChainStateBlockWriter, DBProvider, DbTxProvider,
+    EitherReader, EitherWriter, HashingWriter, HeaderProvider, HeaderSyncGapProvider,
+    HistoricalStateProvider, HistoricalStateProviderRef, HistoryWriter, LatestStateProvider,
+    LatestStateProviderRef, OriginalValuesKnown, PersistenceFrontiers, ProviderError,
+    PruneCheckpointReader, PruneCheckpointWriter, RawRocksDBBatch, RevertsInit, RocksBatchArg,
+    RocksDBProviderFactory, StageCheckpointReader, StateProviderBox, StateWriter,
     StaticFileProviderFactory, StatsReader, StorageReader, StorageTrieWriter, TransactionVariant,
     TransactionsProvider, TransactionsProviderExt, TrieWriter,
     prepare_history_shard_writes_parallel,
@@ -837,17 +837,15 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
         self.tx.put::<tables::HeaderNumbers>(block.hash(), block_number)?;
         self.metrics.record_duration(metrics::Action::InsertHeaderNumbers, start.elapsed());
 
-        self.write_block_body_indices(block_number, block.body(), first_tx_num, tx_count)?;
+        self.write_block_body_indices(block_number, first_tx_num, tx_count)?;
 
         Ok(StoredBlockBodyIndices { first_tx_num, tx_count })
     }
 
-    /// Writes MDBX block body indices (`BlockBodyIndices`, `TransactionBlocks`,
-    /// `Ommers`/`Withdrawals`).
+    /// Writes MDBX block body indices (`BlockBodyIndices`, `TransactionBlocks`).
     fn write_block_body_indices(
         &self,
         block_number: BlockNumber,
-        body: &alloy_consensus::BlockBody<BaseTxEnvelope>,
         first_tx_num: TxNumber,
         tx_count: u64,
     ) -> ProviderResult<()> {
@@ -866,9 +864,6 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
                 .append(first_tx_num + tx_count - 1, &block_number)?;
             self.metrics.record_duration(metrics::Action::InsertTransactionBlocks, start.elapsed());
         }
-
-        // MDBX: Ommers/Withdrawals
-        self.storage.writer().write_block_bodies(self, vec![(block_number, Some(body))])?;
 
         Ok(())
     }
@@ -3174,8 +3169,6 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> BlockWriter
             }
         }
 
-        self.storage.writer().write_block_bodies(self, bodies)?;
-
         Ok(())
     }
 
@@ -3242,8 +3235,6 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> BlockWriter
     }
 
     fn remove_bodies_above(&self, block: BlockNumber) -> ProviderResult<()> {
-        self.storage.writer().remove_block_bodies_above(self, block)?;
-
         // First transaction to be removed
         let unwind_tx_from = self
             .block_body_indices(block)?
