@@ -34,7 +34,7 @@ mod tests {
         Address, StorageKey, StorageValue, U256,
         map::{AddressMap, B256Map},
     };
-    use reth_evm::TestEvmConfig;
+    use reth_evm::BaseEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
         ChainSpecProvider,
@@ -45,12 +45,12 @@ mod tests {
     use super::*;
 
     fn noop_eth_api() -> EthApi<
-        RpcNodeCoreAdapter<NoopProvider, crate::test_utils::TestPool, NoopNetwork, TestEvmConfig>,
+        RpcNodeCoreAdapter<NoopProvider, crate::test_utils::TestPool, NoopNetwork>,
         crate::test_utils::TestRpcConverter,
     > {
         let provider = NoopProvider::default();
         let pool = crate::test_utils::RpcTestUtils::pool();
-        let evm_config = TestEvmConfig::default();
+        let evm_config = BaseEvmConfig::default();
 
         crate::test_utils::RpcTestUtils::api_builder(
             provider,
@@ -64,20 +64,13 @@ mod tests {
     fn mock_eth_api(
         accounts: AddressMap<ExtendedAccount>,
     ) -> EthApi<
-        RpcNodeCoreAdapter<
-            MockEthProvider,
-            crate::test_utils::TestPool,
-            NoopNetwork,
-            TestEvmConfig,
-        >,
+        RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>,
         crate::test_utils::TestRpcConverter,
     > {
         let pool = crate::test_utils::RpcTestUtils::pool();
         let mock_provider = MockEthProvider::default();
 
-        let evm_config = TestEvmConfig::new(std::sync::Arc::new(
-            mock_provider.chain_spec().runtime_chain_spec(),
-        ));
+        let evm_config = BaseEvmConfig::new(mock_provider.chain_spec());
         mock_provider.extend_accounts(accounts);
 
         crate::test_utils::RpcTestUtils::api_builder(

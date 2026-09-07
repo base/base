@@ -84,8 +84,8 @@ where
     Eth: FullEthApi + LoadPendingBlock + Clone + Send + Sync + 'static,
     Eth::Error: FromEthApiError,
     <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
-    TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
-    EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
+    TxEnvFor: From<BaseRevm<TxEnv>>,
+    EvmFactoryFor: EvmFactory<BlockEnv = BlockEnv>,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
     async fn get_transaction_count(

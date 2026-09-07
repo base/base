@@ -9,7 +9,7 @@ use base_common_consensus::{BaseReceipt, BaseTransactionInfo, BaseTxEnvelope};
 use base_common_rpc_types::{BaseLogResponse, BaseTransactionReceipt, BaseTransactionRequest};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_txpool::BasePooledTransaction;
-use reth_evm::{EvmEnvFor, TestEvmConfig};
+use reth_evm::{BaseEvmConfig, EvmEnvFor, TxEnvFor};
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_convert::{
     RpcConverter, TxInfoMapper,
@@ -20,7 +20,6 @@ use reth_rpc_eth_types::{EthApiError, receipt::build_receipt};
 use reth_transaction_pool::{
     CoinbaseTipOrdering, Pool, blobstore::InMemoryBlobStore, noop::MockTransactionValidator,
 };
-use revm::context::TxEnv;
 
 use crate::EthApiBuilder;
 
@@ -103,18 +102,11 @@ impl TxInfoMapper<BaseTxEnvelope> for TestTxInfoMapper {
 
 /// Request conversion function used by the Ethereum interpreter fixture.
 pub type TestTxEnvBuilder =
-    fn(BaseTransactionRequest, &EvmEnvFor<TestEvmConfig>) -> Result<TxEnv, EthTxEnvError>;
+    fn(BaseTransactionRequest, &EvmEnvFor) -> Result<TxEnvFor, EthTxEnvError>;
 
 /// Converter used to test the shared RPC handlers against Base transactions.
-pub type TestRpcConverter = RpcConverter<
-    TestEvmConfig,
-    TestReceiptConverter,
-    (),
-    TestTxInfoMapper,
-    (),
-    (),
-    TestTxEnvBuilder,
->;
+pub type TestRpcConverter =
+    RpcConverter<TestReceiptConverter, (), TestTxInfoMapper, (), (), TestTxEnvBuilder>;
 
 /// Constructs the Base fixtures for shared RPC tests.
 #[derive(Debug)]
@@ -133,8 +125,7 @@ impl RpcTestUtils {
 
     /// Creates a converter preserving transaction types and receipt log metadata.
     pub fn converter() -> TestRpcConverter {
-        let tx_env: TestTxEnvBuilder =
-            |request, evm_env| request.as_ref().clone().try_into_tx_env(evm_env);
+        let tx_env: TestTxEnvBuilder = |request, evm_env| request.try_into_tx_env(evm_env);
         RpcConverter::new(TestReceiptConverter)
             .with_mapper(TestTxInfoMapper)
             .with_tx_env_converter(tx_env)
@@ -145,15 +136,11 @@ impl RpcTestUtils {
         provider: Provider,
         pool: TestPool,
         network: Network,
-        evm: TestEvmConfig,
-    ) -> EthApiBuilder<
-        RpcNodeCoreAdapter<Provider, TestPool, Network, TestEvmConfig>,
-        TestRpcConverter,
-    >
+        evm: BaseEvmConfig,
+    ) -> EthApiBuilder<RpcNodeCoreAdapter<Provider, TestPool, Network>, TestRpcConverter>
     where
         Provider: ChainSpecProvider,
-        RpcNodeCoreAdapter<Provider, TestPool, Network, TestEvmConfig>:
-            RpcNodeCore<Provider = Provider, Evm = TestEvmConfig>,
+        RpcNodeCoreAdapter<Provider, TestPool, Network>: RpcNodeCore<Provider = Provider>,
     {
         let converter = Self::converter();
         EthApiBuilder::new(provider, pool, network, evm).map_converter(|_| converter)

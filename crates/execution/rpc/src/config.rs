@@ -10,7 +10,7 @@ use alloy_eips::{
 use base_common_chains::Upgrades;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_rpc_eth_api::helpers::config::{EthConfigApiServer, EthConfigHandler};
 use reth_storage_api::BlockReaderIdExt;
 
@@ -71,19 +71,18 @@ pub trait BaseEthConfigApi {
 
 /// Base-specific handler for the `eth_config` RPC endpoint.
 #[derive(Debug, Clone)]
-pub struct BaseEthConfigHandler<Provider: ChainSpecProvider, Evm> {
+pub struct BaseEthConfigHandler<Provider: ChainSpecProvider> {
     chain_spec: Arc<BaseChainSpec>,
-    eth_config: EthConfigHandler<Provider, Evm>,
+    eth_config: EthConfigHandler<Provider>,
 }
 
-impl<Provider, Evm> BaseEthConfigHandler<Provider, Evm>
+impl<Provider> BaseEthConfigHandler<Provider>
 where
     Provider:
         ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header> + Clone + 'static,
-    Evm: ConfigureEvm + Clone + 'static,
 {
     /// Creates a new [`BaseEthConfigHandler`].
-    pub fn new(provider: Provider, evm_config: Evm) -> Self {
+    pub fn new(provider: Provider, evm_config: BaseEvmConfig) -> Self {
         let chain_spec = provider.chain_spec();
         let eth_config = EthConfigHandler::new(provider, evm_config);
         Self { chain_spec, eth_config }
@@ -102,11 +101,10 @@ where
     }
 }
 
-impl<Provider, Evm> BaseEthConfigApiServer for BaseEthConfigHandler<Provider, Evm>
+impl<Provider> BaseEthConfigApiServer for BaseEthConfigHandler<Provider>
 where
     Provider:
         ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header> + Clone + 'static,
-    Evm: ConfigureEvm + Clone + 'static,
 {
     fn config(&self) -> RpcResult<EthConfig> {
         let mut config = EthConfigApiServer::config(&self.eth_config)?;

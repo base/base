@@ -1,11 +1,5 @@
 //! L1 `eth` API types.
 
-use reth_rpc_convert::RpcConverter;
-use reth_rpc_eth_types::receipt::EthReceiptConverter;
-
-/// An [`RpcConverter`] for Ethereum-compatible RPC with an explicit EVM configuration.
-pub type EthRpcConverter<Evm> = RpcConverter<Evm, EthReceiptConverter>;
-
 //tests for simulate
 #[cfg(test)]
 mod tests {

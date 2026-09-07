@@ -7,16 +7,16 @@ use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::B256;
 use base_common_consensus::BaseBlock;
 use reth_chain_state::{ExecutedBlock, ExecutionTimingStats};
-use reth_evm::{ConfigureEvm, EvmEnvFor};
+use reth_evm::EvmEnvFor;
 use reth_execution_cache::TxPoolPrewarmCacheSnapshot;
 
 use crate::tree::error::InsertPayloadError;
 
 /// EVM context required to execute a block.
 #[derive(Debug, Clone)]
-pub struct ExecutionEnv<Evm: ConfigureEvm> {
+pub struct ExecutionEnv {
     /// Evm environment.
-    pub evm_env: EvmEnvFor<Evm>,
+    pub evm_env: EvmEnvFor,
     /// Hash of the block being executed.
     pub hash: B256,
     /// Hash of the parent block.
@@ -43,9 +43,9 @@ pub struct ExecutionEnv<Evm: ConfigureEvm> {
     pub txpool_snapshot: Option<TxPoolPrewarmCacheSnapshot>,
 }
 
-impl<Evm: ConfigureEvm> ExecutionEnv<Evm>
+impl ExecutionEnv
 where
-    EvmEnvFor<Evm>: Default,
+    EvmEnvFor: Default,
 {
     /// Creates a new [`ExecutionEnv`] with default values for testing.
     #[cfg(any(test, feature = "test-utils"))]

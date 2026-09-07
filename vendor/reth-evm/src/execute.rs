@@ -26,7 +26,7 @@ use revm::{
     state::bal::Bal,
 };
 
-use crate::{ConfigureEvm, Database, OnStateHook, TxEnvFor};
+use crate::{Database, OnStateHook, TxEnvFor};
 
 /// A type that knows how to execute a block. It is assumed to operate on a
 /// [`crate::Evm`] internally and use [`State`] as database.
@@ -555,24 +555,23 @@ where
 /// A generic block executor that uses a [`BlockExecutor`] to
 /// execute blocks.
 #[expect(missing_debug_implementations)]
-pub struct BasicBlockExecutor<F, DB> {
+pub struct BasicBlockExecutor<DB> {
     /// Block execution strategy.
-    pub(crate) strategy_factory: F,
+    pub(crate) strategy_factory: crate::BaseEvmConfig,
     /// Database.
     pub(crate) db: State<DB>,
 }
 
-impl<F, DB: Database> BasicBlockExecutor<F, DB> {
+impl<DB: Database> BasicBlockExecutor<DB> {
     /// Creates a new `BasicBlockExecutor` with the given strategy.
-    pub fn new(strategy_factory: F, db: DB) -> Self {
+    pub fn new(strategy_factory: crate::BaseEvmConfig, db: DB) -> Self {
         let db = State::builder().with_database(db).with_bundle_update().build();
         Self { strategy_factory, db }
     }
 }
 
-impl<F, DB> Executor<DB> for BasicBlockExecutor<F, DB>
+impl<DB> Executor<DB> for BasicBlockExecutor<DB>
 where
-    F: ConfigureEvm,
     DB: Database,
 {
     type Error = BlockExecutionError;
@@ -652,13 +651,13 @@ where
 
 /// A helper trait marking a 'static type that can be converted into an [`ExecutableTxParts`] for
 /// block executor.
-pub trait ExecutableTxFor<Evm: ConfigureEvm>:
-    ExecutableTxParts<TxEnvFor<Evm>, BaseTxEnvelope> + RecoveredTx<BaseTxEnvelope>
+pub trait ExecutableTxFor:
+    ExecutableTxParts<TxEnvFor, BaseTxEnvelope> + RecoveredTx<BaseTxEnvelope>
 {
 }
 
-impl<T, Evm: ConfigureEvm> ExecutableTxFor<Evm> for T where
-    T: ExecutableTxParts<TxEnvFor<Evm>, BaseTxEnvelope> + RecoveredTx<BaseTxEnvelope>
+impl<T> ExecutableTxFor for T where
+    T: ExecutableTxParts<TxEnvFor, BaseTxEnvelope> + RecoveredTx<BaseTxEnvelope>
 {
 }
 

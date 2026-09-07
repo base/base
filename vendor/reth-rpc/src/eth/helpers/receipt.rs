@@ -9,7 +9,7 @@ use crate::EthApi;
 impl<N, Rpc> LoadReceipt for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    EthApiError: FromEvmError<N::Evm>,
+    EthApiError: FromEvmError,
     Rpc: RpcConvert<Error = EthApiError>,
 {
 }

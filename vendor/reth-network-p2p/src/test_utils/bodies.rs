@@ -4,8 +4,8 @@ use std::{
 };
 
 use alloy_primitives::B256;
+use base_common_consensus::BaseBlockBody as BlockBody;
 use futures::FutureExt;
-use reth_ethereum_primitives::BlockBody;
 use reth_network_peers::PeerId;
 use tokio::sync::oneshot;
 
@@ -43,7 +43,7 @@ where
     F: Fn(Vec<B256>) -> PeerRequestResult<Vec<BlockBody>> + Send + Sync,
 {
     type Body = BlockBody;
-    type Output = BodiesFut;
+    type Output = BodiesFut<BlockBody>;
 
     fn get_block_bodies_with_priority_and_range_hint(
         &self,

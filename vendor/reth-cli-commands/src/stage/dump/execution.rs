@@ -7,7 +7,7 @@ use reth_db_api::{
     cursor::DbCursorRO, database::Database, table::TableImporter, tables, transaction::DbTx,
 };
 use reth_db_common::DbTool;
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_node_api::NodeTypesWithDB;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{
@@ -20,19 +20,18 @@ use tracing::info;
 use super::setup;
 
 #[expect(clippy::too_many_arguments)]
-pub(crate) async fn dump_execution_stage<N, E, C>(
+pub(crate) async fn dump_execution_stage<N, C>(
     db_tool: &DbTool<N>,
     from: u64,
     to: u64,
     output_datadir: ChainPath<DataDirPath>,
     should_run: bool,
-    evm_config: E,
+    evm_config: BaseEvmConfig,
     consensus: C,
     runtime: reth_tasks::Runtime,
 ) -> eyre::Result<()>
 where
     N: NodeTypesWithDB<DB = DatabaseEnv>,
-    E: ConfigureEvm + 'static,
     C: FullConsensus + 'static,
 {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
@@ -139,7 +138,7 @@ fn unwind_and_copy<N: NodeTypesWithDB>(
     from: u64,
     tip_block_number: u64,
     output_db: &DatabaseEnv,
-    evm_config: impl ConfigureEvm,
+    evm_config: BaseEvmConfig,
 ) -> eyre::Result<()> {
     let provider = db_tool.provider_factory.database_provider_rw()?;
 
@@ -165,16 +164,15 @@ fn unwind_and_copy<N: NodeTypesWithDB>(
 }
 
 /// Try to re-execute the stage without committing
-fn dry_run<N, E, C>(
+fn dry_run<N, C>(
     output_provider_factory: ProviderFactory<N>,
     to: u64,
     from: u64,
-    evm_config: E,
+    evm_config: BaseEvmConfig,
     consensus: C,
 ) -> eyre::Result<()>
 where
     N: NodeTypesWithDB,
-    E: ConfigureEvm + 'static,
     C: FullConsensus + 'static,
 {
     info!(target: "reth::cli", "Executing stage. [dry-run]");

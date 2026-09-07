@@ -6,7 +6,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;
-use reth_evm::{ConfigureEvm, execute::Executor};
+use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_provider::{BlockExecutionOutput, StateProvider, StateProviderBox, StateProviderFactory};
 use reth_revm::{
@@ -182,11 +182,11 @@ fn generate(
 /// This hook captures the execution state and generates witness data that can be used
 /// for debugging and analysis of invalid block execution.
 #[derive(Debug)]
-pub struct InvalidBlockWitnessHook<P, E> {
+pub struct InvalidBlockWitnessHook<P> {
     /// The provider to read the historical state and do the EVM execution.
     provider: P,
     /// The EVM configuration to use for the execution.
-    evm_config: E,
+    evm_config: BaseEvmConfig,
     /// The directory to write the witness to. Additionally, diff files will be written to this
     /// directory in case of failed sanity checks.
     output_directory: PathBuf,
@@ -194,11 +194,11 @@ pub struct InvalidBlockWitnessHook<P, E> {
     healthy_node_client: Option<jsonrpsee::http_client::HttpClient>,
 }
 
-impl<P, E> InvalidBlockWitnessHook<P, E> {
+impl<P> InvalidBlockWitnessHook<P> {
     /// Creates a new witness hook.
     pub const fn new(
         provider: P,
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         output_directory: PathBuf,
         healthy_node_client: Option<jsonrpsee::http_client::HttpClient>,
     ) -> Self {
@@ -206,10 +206,9 @@ impl<P, E> InvalidBlockWitnessHook<P, E> {
     }
 }
 
-impl<P, E> InvalidBlockWitnessHook<P, E>
+impl<P> InvalidBlockWitnessHook<P>
 where
     P: StateProviderFactory + Send + Sync + 'static,
-    E: ConfigureEvm + 'static,
 {
     /// Re-executes the block and collects execution data
     fn re_execute_block(
@@ -395,10 +394,9 @@ where
     }
 }
 
-impl<P, E> InvalidBlockHook for InvalidBlockWitnessHook<P, E>
+impl<P> InvalidBlockHook for InvalidBlockWitnessHook<P>
 where
     P: StateProviderFactory + Send + Sync + 'static,
-    E: ConfigureEvm + 'static,
 {
     fn on_invalid_block(
         &self,
@@ -417,7 +415,6 @@ where
 mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Address, B256, Bytes, U256, map::HashMap};
-    use reth_evm::TestEvmConfig;
     use reth_provider::test_utils::MockEthProvider;
     use reth_revm::{
         db::{BundleAccount, BundleState},
@@ -597,13 +594,12 @@ mod tests {
     }
 
     /// Creates test `InvalidBlockWitnessHook` with temporary directory
-    fn create_test_hook()
-    -> (InvalidBlockWitnessHook<MockEthProvider, TestEvmConfig>, PathBuf, TempDir) {
+    fn create_test_hook() -> (InvalidBlockWitnessHook<MockEthProvider>, PathBuf, TempDir) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let output_directory = temp_dir.path().to_path_buf();
 
         let provider = MockEthProvider::default();
-        let evm_config = TestEvmConfig::default();
+        let evm_config = BaseEvmConfig::default();
 
         let hook =
             InvalidBlockWitnessHook::new(provider, evm_config, output_directory.clone(), None);

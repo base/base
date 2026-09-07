@@ -10,7 +10,7 @@ use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_exex::ExExManagerHandle;
 use reth_network_p2p::{
     BlockClient, bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader,
@@ -25,7 +25,7 @@ use tokio::sync::watch;
 
 /// Constructs a [Pipeline] that's wired to the network
 #[expect(clippy::too_many_arguments)]
-pub fn build_networked_pipeline<N, Client, Evm>(
+pub fn build_networked_pipeline<N, Client>(
     config: &StageConfig,
     client: Client,
     consensus: Arc<dyn FullConsensus>,
@@ -35,14 +35,13 @@ pub fn build_networked_pipeline<N, Client, Evm>(
     prune_config: PruneConfig,
     max_block: Option<BlockNumber>,
     static_file_producer: StaticFileProducer<ProviderFactory<N>>,
-    evm_config: Evm,
+    evm_config: BaseEvmConfig,
     exex_manager_handle: ExExManagerHandle,
     disabled_stages: &[StageId],
 ) -> eyre::Result<Pipeline<N>>
 where
     N: NodeTypesWithDB,
     Client: BlockClient<Block = BaseBlock> + 'static,
-    Evm: ConfigureEvm + 'static,
 {
     // building network downloaders using the fetch client
     let header_downloader = ReverseHeadersDownloaderBuilder::new(config.headers)
@@ -73,7 +72,7 @@ where
 
 /// Builds the [Pipeline] with the given [`ProviderFactory`] and downloaders.
 #[expect(clippy::too_many_arguments)]
-pub fn build_pipeline<N, H, B, Evm>(
+pub fn build_pipeline<N, H, B>(
     provider_factory: ProviderFactory<N>,
     stage_config: &StageConfig,
     header_downloader: H,
@@ -83,7 +82,7 @@ pub fn build_pipeline<N, H, B, Evm>(
     metrics_tx: reth_stages::MetricEventsSender,
     prune_config: PruneConfig,
     static_file_producer: StaticFileProducer<ProviderFactory<N>>,
-    evm_config: Evm,
+    evm_config: BaseEvmConfig,
     exex_manager_handle: ExExManagerHandle,
     disabled_stages: &[StageId],
 ) -> eyre::Result<Pipeline<N>>
@@ -91,7 +90,6 @@ where
     N: NodeTypesWithDB,
     H: HeaderDownloader<Header = alloy_consensus::Header> + 'static,
     B: BodyDownloader<Block = BaseBlock> + 'static,
-    Evm: ConfigureEvm + 'static,
 {
     let mut builder = Pipeline::<N>::builder();
 

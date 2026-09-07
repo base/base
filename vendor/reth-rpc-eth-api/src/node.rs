@@ -3,7 +3,7 @@
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::ChainSpecProvider;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_network_api::NetworkInfo;
 use reth_node_api::FullNodeComponents;
 use reth_rpc_eth_types::EthStateCache;
@@ -42,8 +42,7 @@ pub trait RpcNodeCore: Clone + Send + Sync + Unpin + 'static {
         + 'static;
     /// The transaction pool of the node.
     type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>;
-    /// The node's EVM configuration, defining settings for the Ethereum Virtual Machine.
-    type Evm: ConfigureEvm + Send + Sync + 'static;
+
     /// Network API.
     type Network: NetworkInfo + Clone;
 
@@ -51,7 +50,7 @@ pub trait RpcNodeCore: Clone + Send + Sync + Unpin + 'static {
     fn pool(&self) -> &Self::Pool;
 
     /// Returns the node's evm config.
-    fn evm_config(&self) -> &Self::Evm;
+    fn evm_config(&self) -> &BaseEvmConfig;
 
     /// Returns the handle to the network
     fn network(&self) -> &Self::Network;
@@ -66,7 +65,7 @@ where
 {
     type Provider = T::Provider;
     type Pool = T::Pool;
-    type Evm = T::Evm;
+
     type Network = T::Network;
 
     #[inline]
@@ -75,7 +74,7 @@ where
     }
 
     #[inline]
-    fn evm_config(&self) -> &Self::Evm {
+    fn evm_config(&self) -> &BaseEvmConfig {
         FullNodeComponents::evm_config(self)
     }
 
@@ -99,21 +98,26 @@ pub trait RpcNodeCoreExt: RpcNodeCore<Provider: BlockReader> {
 
 /// An adapter that allows to construct [`RpcNodeCore`] from components.
 #[derive(Debug, Clone)]
-pub struct RpcNodeCoreAdapter<Provider, Pool, Network, Evm> {
+pub struct RpcNodeCoreAdapter<Provider, Pool, Network> {
     provider: Provider,
     pool: Pool,
     network: Network,
-    evm_config: Evm,
+    evm_config: BaseEvmConfig,
 }
 
-impl<Provider, Pool, Network, Evm> RpcNodeCoreAdapter<Provider, Pool, Network, Evm> {
+impl<Provider, Pool, Network> RpcNodeCoreAdapter<Provider, Pool, Network> {
     /// Creates a new `RpcNodeCoreAdapter` instance.
-    pub const fn new(provider: Provider, pool: Pool, network: Network, evm_config: Evm) -> Self {
+    pub const fn new(
+        provider: Provider,
+        pool: Pool,
+        network: Network,
+        evm_config: BaseEvmConfig,
+    ) -> Self {
         Self { provider, pool, network, evm_config }
     }
 }
 
-impl<Provider, Pool, Network, Evm> RpcNodeCore for RpcNodeCoreAdapter<Provider, Pool, Network, Evm>
+impl<Provider, Pool, Network> RpcNodeCore for RpcNodeCoreAdapter<Provider, Pool, Network>
 where
     Provider: BlockReaderIdExt<
             Block = BaseBlock,
@@ -131,21 +135,20 @@ where
         + Unpin
         + Clone
         + 'static,
-    Evm: ConfigureEvm + Clone + 'static,
     Pool:
         TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
     Network: NetworkInfo + Clone + Unpin + 'static,
 {
     type Provider = Provider;
     type Pool = Pool;
-    type Evm = Evm;
+
     type Network = Network;
 
     fn pool(&self) -> &Self::Pool {
         &self.pool
     }
 
-    fn evm_config(&self) -> &Self::Evm {
+    fn evm_config(&self) -> &BaseEvmConfig {
         &self.evm_config
     }
 

@@ -9,8 +9,7 @@ use futures::Future;
 use reth_chainspec::MIN_TRANSACTION_GAS;
 use reth_errors::ProviderError;
 use reth_evm::{
-    ConfigureEvm, Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor,
-    env::BlockEnvironment,
+    Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor, env::BlockEnvironment,
 };
 use reth_revm::{
     database::{EvmStateProvider, StateProviderDatabase},
@@ -50,7 +49,7 @@ pub trait EstimateCall: Call {
     ///  - `nonce` is set to `None`
     fn estimate_gas_with<S>(
         &self,
-        mut evm_env: EvmEnvFor<Self::Evm>,
+        mut evm_env: EvmEnvFor,
         mut request: BaseTransactionRequest,
         state: S,
         overrides: EvmOverrides,
@@ -329,8 +328,8 @@ pub trait EstimateCall: Call {
     /// or not
     #[inline]
     fn map_out_of_gas_err<DB>(
-        evm: &mut EvmFor<Self::Evm, DB>,
-        mut tx_env: TxEnvFor<Self::Evm>,
+        evm: &mut EvmFor<DB>,
+        mut tx_env: TxEnvFor,
         max_gas_limit: u64,
     ) -> Result<U256, Self::Error>
     where

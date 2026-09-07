@@ -4,9 +4,9 @@ EVM configuration and execution for Base.
 
 ## Overview
 
-Orchestrates EVM block execution for Base chains. The `BaseEvmConfig` type implements Reth's
-`ConfigureEvm` trait, constructing upgrade-aware execution environments
-by mapping timestamps to `SpecId` values and building the correct EVM context for each block.
+Provides Base's concrete EVM configuration through the shared `reth-evm` crate.
+`BaseEvmConfig` constructs execution environments from the chain's upgrade schedule
+and builds the EVM context for each block.
 Re-exports executor factories, block executors, and error types from the underlying alloy/revm
 layers.
 
@@ -22,8 +22,8 @@ base-execution-evm = { workspace = true }
 ```rust,ignore
 use base_execution_evm::BaseEvmConfig;
 
-let evm_config = BaseEvmConfig::base(chain_spec);
-let env = evm_config.evm_env(&header, &parent)?;
+let evm_config = BaseEvmConfig::new(chain_spec);
+let env = evm_config.evm_env(&header)?;
 ```
 
 ## License

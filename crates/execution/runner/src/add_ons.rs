@@ -1,8 +1,4 @@
-use base_common_consensus::BaseTxEnvelope;
-use base_execution_payload_builder::{
-    BasePayloadBuilderAttributes,
-    config::{BaseDAConfig, GasLimitConfig},
-};
+use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::BaseEthApiBuilder,
@@ -11,8 +7,7 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::BasePooledTx;
 use base_node_core::{BaseEngineApiBuilder, BasePayloadValidatorBuilder};
-use reth_evm::ConfigureEvm;
-use reth_node_api::{BuildNextEnv, FullNodeComponents, NodeAddOns};
+use reth_node_api::{FullNodeComponents, NodeAddOns};
 use reth_node_builder::rpc::{
     BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn, EngineValidatorBuilder,
     EthApiBuilder, Identity, PayloadValidatorBuilder, RethRpcAddOns, RethRpcMiddleware,
@@ -173,16 +168,7 @@ where
 impl<N, EthB, PVB, EB, EVB, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
-    N: FullNodeComponents<
-            Evm: ConfigureEvm<
-                NextBlockEnvCtx: BuildNextEnv<
-                    BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                    alloy_consensus::Header,
-                    base_execution_chainspec::BaseChainSpec,
-                >,
-            >,
-            Pool: TransactionPool<Transaction: BasePooledTx>,
-        >,
+    N: FullNodeComponents<Pool: TransactionPool<Transaction: BasePooledTx>>,
     EthB: EthApiBuilder<N>,
     PVB: Send,
     EB: EngineApiBuilder<N>,
@@ -205,7 +191,7 @@ where
             ctx.node.evm_config().clone(),
         );
         // Install additional rollup-specific RPC methods.
-        let debug_ext = BaseDebugWitnessApi::<_, _, _>::new(
+        let debug_ext = BaseDebugWitnessApi::<_, _>::new(
             ctx.node.provider().clone(),
             ctx.node.task_executor().clone(),
             builder,
@@ -249,15 +235,7 @@ where
 impl<N, EthB, PVB, EB, EVB, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
-    N: FullNodeComponents<
-        Evm: ConfigureEvm<
-            NextBlockEnvCtx: BuildNextEnv<
-                BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                alloy_consensus::Header,
-                base_execution_chainspec::BaseChainSpec,
-            >,
-        >,
-    >,
+    N: FullNodeComponents,
     <<N as FullNodeComponents>::Pool as TransactionPool>::Transaction: BasePooledTx,
     EthB: EthApiBuilder<N>,
     PVB: PayloadValidatorBuilder<N>,

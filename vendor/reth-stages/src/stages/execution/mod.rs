@@ -16,7 +16,7 @@ use reth_chainspec::EthereumHardforks;
 use reth_config::config::ExecutionConfig;
 use reth_consensus::FullConsensus;
 use reth_db::{static_file::HeaderMask, tables};
-use reth_evm::{ConfigureEvm, execute::Executor, metrics::ExecutorMetrics};
+use reth_evm::{BaseEvmConfig, execute::Executor, metrics::ExecutorMetrics};
 use reth_execution_types::Chain;
 use reth_exex::{ExExManagerHandle, ExExNotification, ExExNotificationSource};
 use reth_primitives_traits::format_gas_throughput;
@@ -72,12 +72,9 @@ pub mod slot_preimages;
 ///   values to [`tables::PlainStorageState`]
 // false positive, we cannot derive it if !DB: Debug.
 #[derive(Debug)]
-pub struct ExecutionStage<E>
-where
-    E: ConfigureEvm,
-{
+pub struct ExecutionStage {
     /// The stage's internal block executor
-    evm_config: E,
+    evm_config: BaseEvmConfig,
     /// The consensus instance for validating blocks.
     consensus: Arc<dyn FullConsensus>,
     /// The commit thresholds of the execution stage.
@@ -101,13 +98,10 @@ where
     metrics: ExecutorMetrics,
 }
 
-impl<E> ExecutionStage<E>
-where
-    E: ConfigureEvm,
-{
+impl ExecutionStage {
     /// Create new execution stage with specified config.
     pub fn new(
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         consensus: Arc<dyn FullConsensus>,
         thresholds: ExecutionStageThresholds,
         external_clean_threshold: u64,
@@ -128,7 +122,7 @@ where
     /// Create an execution stage with the provided executor.
     ///
     /// The commit threshold will be set to [`MERKLE_STAGE_DEFAULT_INCREMENTAL_THRESHOLD`].
-    pub fn new_with_executor(evm_config: E, consensus: Arc<dyn FullConsensus>) -> Self {
+    pub fn new_with_executor(evm_config: BaseEvmConfig, consensus: Arc<dyn FullConsensus>) -> Self {
         Self::new(
             evm_config,
             consensus,
@@ -140,7 +134,7 @@ where
 
     /// Create new instance of [`ExecutionStage`] from configuration.
     pub fn from_config(
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         consensus: Arc<dyn FullConsensus>,
         config: ExecutionConfig,
         external_clean_threshold: u64,
@@ -261,9 +255,8 @@ where
     }
 }
 
-impl<E, Provider> Stage<Provider> for ExecutionStage<E>
+impl<Provider> Stage<Provider> for ExecutionStage
 where
-    E: ConfigureEvm,
     Provider: DBProvider
         + BlockReader<Block = BaseBlock, Header = alloy_consensus::Header>
         + StaticFileProviderFactory
@@ -748,7 +741,6 @@ mod tests {
         models::metadata::StorageSettings,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_evm::TestEvmConfig;
     use reth_primitives_traits::{Account, Block as _, Bytecode, SealedBlock, StorageEntry};
     use reth_provider::{
         AccountReader, BlockWriter, DatabaseProviderFactory, HashingWriter, ReceiptProvider,
@@ -764,9 +756,13 @@ mod tests {
     use super::*;
     use crate::stages::MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD;
 
-    fn stage() -> ExecutionStage<TestEvmConfig> {
-        let evm_config =
-            TestEvmConfig::new(Arc::new(ChainSpecBuilder::mainnet().berlin_activated().build()));
+    fn stage() -> ExecutionStage {
+        let evm_config = BaseEvmConfig::new(std::sync::Arc::new(
+            (Arc::new(ChainSpecBuilder::mainnet().berlin_activated().build()))
+                .as_ref()
+                .clone()
+                .into(),
+        ));
         let consensus = Arc::new(TestConsensus::new(Arc::new(
             ChainSpecBuilder::mainnet().berlin_activated().build().into(),
         )));

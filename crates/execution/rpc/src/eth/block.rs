@@ -13,7 +13,7 @@ use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 impl<N, Rpc> EthBlocks for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<N::Evm>,
+    BaseEthApiError: FromEvmError,
     Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     async fn rpc_block_header(
@@ -64,7 +64,7 @@ where
 impl<N, Rpc> LoadBlock for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<N::Evm>,
+    BaseEthApiError: FromEvmError,
     Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }

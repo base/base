@@ -114,7 +114,7 @@ use alloy_primitives::{
     Address, B256,
     map::{AddressMap, B256Set},
 };
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, EIP1559ParamError};
 use reth_chain_state::{CanonicalInMemoryState, ExecutedBlock, ExecutionTimingStats};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
 use reth_engine_primitives::{
@@ -122,7 +122,7 @@ use reth_engine_primitives::{
 };
 use reth_errors::{BlockExecutionError, ProviderResult};
 use reth_evm::{
-    ConfigureEvm, EvmEnvFor, ExecutionCtxFor, OnStateHook, SpecFor, block::BlockExecutor,
+    BaseEvmConfig, EvmEnvFor, ExecutionCtxFor, OnStateHook, SpecFor, block::BlockExecutor,
     execute::ExecutableTxFor,
 };
 use reth_execution_cache::{CacheFillMode, CacheStats};
@@ -232,10 +232,10 @@ impl<'a> TreeCtx<'a> {
 /// Validation still queues JIT work and can use resident compiled code, but helper execution is
 /// paused during validation to minimize latency. Queued work resumes when validation exits, so JIT
 /// compilation is biased toward idle periods instead of competing with payload validation.
-struct JitPauseGuard<Evm: ConfigureEvm>(Evm);
+struct JitPauseGuard(BaseEvmConfig);
 
-impl<Evm: ConfigureEvm> JitPauseGuard<Evm> {
-    fn new(evm_config: &Evm) -> Self {
+impl JitPauseGuard {
+    fn new(evm_config: &BaseEvmConfig) -> Self {
         if let Some(jit_backend) = evm_config.jit_backend() {
             jit_backend.pause();
         }
@@ -243,7 +243,7 @@ impl<Evm: ConfigureEvm> JitPauseGuard<Evm> {
     }
 }
 
-impl<Evm: ConfigureEvm> Drop for JitPauseGuard<Evm> {
+impl Drop for JitPauseGuard {
     fn drop(&mut self) {
         if let Some(jit_backend) = self.0.jit_backend() {
             jit_backend.resume();
@@ -259,22 +259,19 @@ impl<Evm: ConfigureEvm> Drop for JitPauseGuard<Evm> {
 /// used by network-specific payload validators (e.g., Ethereum, Optimism). It is not meant to be
 /// used as a standalone component, but rather as a building block for concrete implementations.
 #[derive(derive_more::Debug)]
-pub struct BasicEngineValidator<P, Evm, V>
-where
-    Evm: ConfigureEvm,
-{
+pub struct BasicEngineValidator<P, V> {
     /// Provider for database access.
     provider: P,
     /// Consensus implementation for validation.
     consensus: Arc<dyn FullConsensus>,
     /// EVM configuration.
-    evm_config: Evm,
+    evm_config: BaseEvmConfig,
     /// Configuration for the tree.
     config: TreeConfig,
     /// Payload processor for transaction conversion, prewarming, and execution caching.
-    payload_processor: PayloadProcessor<Evm>,
+    payload_processor: PayloadProcessor,
     /// Precompile cache map.
-    precompile_cache_map: PrecompileCacheMap<SpecFor<Evm>>,
+    precompile_cache_map: PrecompileCacheMap<SpecFor>,
     /// Precompile cache metrics.
     precompile_cache_metrics: AddressMap<CachedPrecompileMetrics>,
     /// Hook to call when invalid blocks are encountered.
@@ -290,15 +287,15 @@ where
     overlay_manager: OverlayManager,
     /// State-root strategy used to prepare per-block commitment tasks.
     #[debug(skip)]
-    state_root_strategy: Arc<dyn StateRootStrategy<P, Evm>>,
+    state_root_strategy: Arc<dyn StateRootStrategy<P>>,
     /// Persistent txpool prewarming worker and its latest immutable snapshot.
     ///
     /// None if txpool prewarming is disabled.
     #[debug(skip)]
-    txpool_prewarm: Option<txpool_prewarm::Handle<P, Evm>>,
+    txpool_prewarm: Option<txpool_prewarm::Handle<P>>,
 }
 
-impl<P, Evm, V> BasicEngineValidator<P, Evm, V>
+impl<P, V> BasicEngineValidator<P, V>
 where
     P: DatabaseProviderFactory<
             Provider: BlockReader
@@ -318,14 +315,13 @@ where
     OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
         + Clone
         + 'static,
-    Evm: ConfigureEvm + 'static,
 {
     /// Creates a new `TreePayloadValidator`.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         provider: P,
         consensus: Arc<dyn FullConsensus>,
-        evm_config: Evm,
+        evm_config: BaseEvmConfig,
         validator: V,
         config: TreeConfig,
         invalid_block_hook: Box<dyn InvalidBlockHook>,
@@ -360,7 +356,7 @@ where
     /// Sets the state-root strategy used by payload validation.
     pub fn with_state_root_strategy(
         mut self,
-        state_root_strategy: Arc<dyn StateRootStrategy<P, Evm>>,
+        state_root_strategy: Arc<dyn StateRootStrategy<P>>,
     ) -> Self {
         self.state_root_strategy = state_root_strategy;
         self
@@ -395,10 +391,9 @@ where
     }
 
     /// Returns EVM environment for the given payload or block.
-    pub fn evm_env_for(&self, input: &BlockOrPayload) -> Result<EvmEnvFor<Evm>, Evm::Error>
+    pub fn evm_env_for(&self, input: &BlockOrPayload) -> Result<EvmEnvFor, EIP1559ParamError>
     where
         V: PayloadValidator<Block = BaseBlock>,
-        Evm: ConfigureEvm,
     {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.evm_env_for_payload(payload)?),
@@ -410,10 +405,9 @@ where
     pub fn tx_iterator_for<'a>(
         &'a self,
         input: &'a BlockOrPayload,
-    ) -> Result<impl ExecutableTxIterator<Evm>, NewPayloadError>
+    ) -> Result<impl ExecutableTxIterator, NewPayloadError>
     where
         V: PayloadValidator<Block = BaseBlock>,
-        Evm: ConfigureEvm,
     {
         Ok(match input {
             BlockOrPayload::Payload(payload) => {
@@ -435,10 +429,9 @@ where
     pub fn execution_ctx_for<'a>(
         &self,
         input: &'a BlockOrPayload,
-    ) -> Result<ExecutionCtxFor<'a, Evm>, Evm::Error>
+    ) -> Result<ExecutionCtxFor, EIP1559ParamError>
     where
         V: PayloadValidator<Block = BaseBlock>,
-        Evm: ConfigureEvm,
     {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.context_for_payload(payload)?),
@@ -469,7 +462,6 @@ where
     ) -> InsertPayloadResult
     where
         V: PayloadValidator<Block = BaseBlock> + Clone,
-        Evm: ConfigureEvm,
     {
         let parent_hash = input.parent_hash();
         let _txpool_pause = self.txpool_prewarm.as_ref().map(txpool_prewarm::Handle::pause);
@@ -980,9 +972,9 @@ where
     fn execute_block<S, Err>(
         &mut self,
         state_provider: S,
-        env: ExecutionEnv<Evm>,
+        env: ExecutionEnv,
         input: &BlockOrPayload,
-        handle: &mut PayloadHandle<impl ExecutableTxFor<Evm>, Err, BaseReceipt>,
+        handle: &mut PayloadHandle<impl ExecutableTxFor, Err, BaseReceipt>,
         state_hook: Option<Box<dyn OnStateHook + 'static>>,
     ) -> Result<
         (
@@ -997,7 +989,6 @@ where
         S: StateProvider + Send,
         Err: core::error::Error + Send + Sync + 'static,
         V: PayloadValidator<Block = BaseBlock>,
-        Evm: ConfigureEvm,
     {
         debug!(target: "engine::tree::payload_validator", "Executing block");
 
@@ -1115,7 +1106,7 @@ where
     #[expect(clippy::type_complexity)]
     fn execute_block_bal<Tx, Err, MakeStateProvider>(
         &self,
-        env: ExecutionEnv<Evm>,
+        env: ExecutionEnv,
         input: &BlockOrPayload,
         handle: &PayloadHandle<Tx, Err, BaseReceipt>,
         make_state_provider: &MakeStateProvider,
@@ -1129,10 +1120,9 @@ where
         InsertBlockErrorKind,
     >
     where
-        Tx: ExecutableTxFor<Evm> + Send,
+        Tx: ExecutableTxFor + Send,
         Err: core::error::Error + Send + Sync + 'static,
         MakeStateProvider: Fn(bool) -> ProviderResult<StateProviderBox> + Sync,
-        Evm: ConfigureEvm,
         V: PayloadValidator<Block = BaseBlock>,
     {
         debug!(target: "engine::tree::payload_validator", "Executing block via BAL path");
@@ -1354,9 +1344,9 @@ where
             parallel_bal_execution
         )
     )]
-    fn spawn_payload_processor<T: ExecutableTxIterator<Evm>>(
+    fn spawn_payload_processor<T: ExecutableTxIterator>(
         &self,
-        env: ExecutionEnv<Evm>,
+        env: ExecutionEnv,
         txs: T,
         provider_builder: StateProviderBuilder<P>,
         hint_stream: Option<StateRootHintStream>,
@@ -1364,8 +1354,8 @@ where
         parallel_bal_execution: bool,
     ) -> Result<
         PayloadHandle<
-            impl ExecutableTxFor<Evm> + use<P, Evm, V, T>,
-            impl core::error::Error + Send + Sync + 'static + use<P, Evm, V, T>,
+            impl ExecutableTxFor + use<P, V, T>,
+            impl core::error::Error + Send + Sync + 'static + use<P, V, T>,
             BaseReceipt,
         >,
         InsertBlockErrorKind,
@@ -1761,7 +1751,7 @@ pub trait EngineValidator: Send + Sync + 'static {
     ) -> PayloadBuilderResources;
 }
 
-impl<P, Evm, V> EngineValidator for BasicEngineValidator<P, Evm, V>
+impl<P, V> EngineValidator for BasicEngineValidator<P, V>
 where
     P: DatabaseProviderFactory<
             Provider: BlockReader
@@ -1782,7 +1772,6 @@ where
         + Clone
         + 'static,
     V: PayloadValidator<Block = BaseBlock> + Clone,
-    Evm: ConfigureEvm + 'static,
 {
     fn validate_payload_attributes_against_header(
         &self,
@@ -1909,10 +1898,7 @@ where
     }
 }
 
-impl<P, Evm, V> WaitForCaches for BasicEngineValidator<P, Evm, V>
-where
-    Evm: ConfigureEvm,
-{
+impl<P, V> WaitForCaches for BasicEngineValidator<P, V> {
     fn wait_for_caches(&self) -> CacheWaitDurations {
         debug!(target: "engine::tree::payload_validator", "Waiting for execution cache and sparse trie locks");
 

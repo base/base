@@ -13,7 +13,7 @@ use reth_downloaders::{
     file_client::{ChunkedFileReader, DEFAULT_BYTE_LEN_CHUNK_CHAIN_FILE, FileClient},
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_network_p2p::{
     bodies::downloader::BodyDownloader,
     headers::downloader::{HeaderDownloader, SyncTarget},
@@ -87,7 +87,7 @@ pub async fn import_blocks_from_file<N>(
     import_config: ImportConfig,
     provider_factory: ProviderFactory<N>,
     config: &Config,
-    executor: impl ConfigureEvm + 'static,
+    executor: BaseEvmConfig,
     consensus: Arc<impl FullConsensus + 'static>,
     runtime: reth_tasks::Runtime,
 ) -> eyre::Result<ImportResult>
@@ -275,20 +275,19 @@ where
 /// If configured to execute, all stages will run. Otherwise, only stages that don't require state
 /// will run.
 #[expect(clippy::too_many_arguments)]
-pub fn build_import_pipeline_impl<N, C, E>(
+pub fn build_import_pipeline_impl<N, C>(
     config: &Config,
     provider_factory: ProviderFactory<N>,
     consensus: &Arc<C>,
     file_client: Arc<FileClient<BaseBlock>>,
     static_file_producer: StaticFileProducer<ProviderFactory<N>>,
     disable_exec: bool,
-    evm_config: E,
+    evm_config: BaseEvmConfig,
     runtime: reth_tasks::Runtime,
-) -> eyre::Result<(Pipeline<N>, impl futures::Stream<Item = NodeEvent> + use<N, C, E>)>
+) -> eyre::Result<(Pipeline<N>, impl futures::Stream<Item = NodeEvent> + use<N, C>)>
 where
     N: NodeTypesWithDB,
     C: FullConsensus + 'static,
-    E: ConfigureEvm + 'static,
 {
     if !file_client.has_canonical_blocks() {
         eyre::bail!("unable to import non canonical blocks");

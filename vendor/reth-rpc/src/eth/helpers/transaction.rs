@@ -25,7 +25,7 @@ use crate::EthApi;
 impl<N, Rpc> EthTransactions for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    EthApiError: FromEvmError<N::Evm>,
+    EthApiError: FromEvmError,
     Rpc: RpcConvert<Error = EthApiError>,
 {
     #[inline]
@@ -126,7 +126,7 @@ where
 impl<N, Rpc> LoadTransaction for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    EthApiError: FromEvmError<N::Evm>,
+    EthApiError: FromEvmError,
     Rpc: RpcConvert<Error = EthApiError>,
 {
 }
@@ -137,7 +137,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256, map::AddressMap};
     use alloy_rpc_types_eth::request::TransactionRequest;
     use reth_chainspec::ChainSpecBuilder;
-    use reth_evm::TestEvmConfig;
+    use reth_evm::BaseEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
         ChainSpecProvider,
@@ -151,12 +151,7 @@ mod tests {
     fn mock_eth_api(
         accounts: AddressMap<ExtendedAccount>,
     ) -> EthApi<
-        RpcNodeCoreAdapter<
-            MockEthProvider,
-            crate::test_utils::TestPool,
-            NoopNetwork,
-            TestEvmConfig,
-        >,
+        RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>,
         crate::test_utils::TestRpcConverter,
     > {
         mock_eth_api_with_sync_timeout(accounts, Duration::from_secs(30))
@@ -166,21 +161,14 @@ mod tests {
         accounts: AddressMap<ExtendedAccount>,
         send_raw_transaction_sync_timeout: Duration,
     ) -> EthApi<
-        RpcNodeCoreAdapter<
-            MockEthProvider,
-            crate::test_utils::TestPool,
-            NoopNetwork,
-            TestEvmConfig,
-        >,
+        RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>,
         crate::test_utils::TestRpcConverter,
     > {
         let mock_provider = MockEthProvider::default()
             .with_chain_spec(ChainSpecBuilder::mainnet().cancun_activated().build());
         mock_provider.extend_accounts(accounts);
 
-        let evm_config = TestEvmConfig::new(std::sync::Arc::new(
-            mock_provider.chain_spec().runtime_chain_spec(),
-        ));
+        let evm_config = BaseEvmConfig::new(mock_provider.chain_spec());
         let pool = crate::test_utils::RpcTestUtils::pool();
 
         let genesis_header = Header {

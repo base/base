@@ -17,7 +17,7 @@ use futures::StreamExt;
 use itertools::Itertools;
 use metrics::Gauge;
 use reth_chain_state::ForkChoiceStream;
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_metrics::{Metrics, metrics::Counter};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::HeaderProvider;
@@ -97,13 +97,13 @@ impl ExExHandle {
     ///
     /// Returns the handle, as well as a [`UnboundedSender`] for [`ExExEvent`]s and a
     /// [`mpsc::Receiver`] for [`ExExNotification`]s that should be given to the `ExEx`.
-    pub fn new<P, E: ConfigureEvm>(
+    pub fn new<P>(
         id: String,
         node_head: BlockNumHash,
         provider: P,
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         wal_handle: WalHandle,
-    ) -> (Self, UnboundedSender<ExExEvent>, ExExNotifications<P, E>) {
+    ) -> (Self, UnboundedSender<ExExEvent>, ExExNotifications<P>) {
         let (notification_tx, notification_rx) = mpsc::channel(1);
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let notifications =
@@ -681,7 +681,6 @@ mod tests {
     use futures::{StreamExt, TryStreamExt};
     use rand::Rng;
     use reth_db_common::init::init_genesis;
-    use reth_evm::TestEvmConfig;
     use reth_primitives_traits::RecoveredBlock;
     use reth_provider::{
         BlockReader, BlockWriter, Chain, DBProvider, DatabaseProviderFactory, TransactionVariant,
@@ -708,7 +707,7 @@ mod tests {
             "test_exex".to_string(),
             Default::default(),
             (),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -728,7 +727,7 @@ mod tests {
             "test_exex_1".to_string(),
             Default::default(),
             (),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -754,7 +753,7 @@ mod tests {
             "test_exex_1".to_string(),
             Default::default(),
             (),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -780,7 +779,7 @@ mod tests {
             "test_exex".to_string(),
             Default::default(),
             (),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -835,7 +834,7 @@ mod tests {
             "test_exex".to_string(),
             Default::default(),
             (),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -886,7 +885,7 @@ mod tests {
             "test_exex".to_string(),
             Default::default(),
             (),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -941,14 +940,14 @@ mod tests {
             "test_exex1".to_string(),
             Default::default(),
             (),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
         let (exex_handle2, event_tx2, _) = ExExHandle::new(
             "test_exex2".to_string(),
             Default::default(),
             (),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -998,14 +997,14 @@ mod tests {
             "test_exex1".to_string(),
             Default::default(),
             (),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
         let (exex_handle2, event_tx2, _) = ExExHandle::new(
             "test_exex2".to_string(),
             Default::default(),
             (),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -1061,7 +1060,7 @@ mod tests {
             "test_exex_1".to_string(),
             Default::default(),
             (),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -1130,7 +1129,7 @@ mod tests {
             "test_exex".to_string(),
             Default::default(),
             provider,
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -1185,7 +1184,7 @@ mod tests {
             "test_exex".to_string(),
             Default::default(),
             provider,
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -1235,7 +1234,7 @@ mod tests {
             "test_exex".to_string(),
             Default::default(),
             provider,
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -1278,7 +1277,7 @@ mod tests {
             "test_exex".to_string(),
             Default::default(),
             provider,
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -1338,7 +1337,7 @@ mod tests {
             "test_exex".to_string(),
             Default::default(),
             provider.clone(),
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 
@@ -1437,7 +1436,7 @@ mod tests {
             "test_exex".to_string(),
             Default::default(),
             provider,
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             wal.handle(),
         );
 

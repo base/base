@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::BaseEvmConfig;
 use reth_cli_commands::common::CliNodeTypes;
 
 /// Base storage, execution, and network configuration for offline commands.
@@ -11,7 +10,6 @@ use reth_cli_commands::common::CliNodeTypes;
 pub struct BaseCliTypes;
 
 impl CliNodeTypes for BaseCliTypes {
-    type Evm = BaseEvmConfig;
     type Consensus = Arc<BaseBeaconConsensus>;
 }
 

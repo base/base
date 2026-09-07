@@ -6,6 +6,7 @@ pub mod transaction;
 
 mod base_time;
 pub use base_time::BaseTimeCache;
+use reth_evm::BaseEvmConfig;
 
 mod block;
 mod call;
@@ -20,7 +21,6 @@ use std::{
 use alloy_primitives::U256;
 use eyre::WrapErr;
 pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
-use reth_evm::ConfigureEvm;
 use reth_node_api::{FullNodeComponents, FullNodeTypes};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
 use reth_rpc::eth::core::EthApiInner;
@@ -29,7 +29,7 @@ use reth_rpc_eth_api::{
     RpcNodeCoreExt,
     helpers::{
         EthApiSpec, EthFees, EthState, GetBlockAccessList, LoadFee, LoadPendingBlock, LoadState,
-        SpawnBlocking, Trace, pending_block::BuildPendingEnv,
+        SpawnBlocking, Trace,
     },
 };
 use reth_rpc_eth_types::{EthStateCache, FeeHistoryCache, GasPriceOracle};
@@ -126,7 +126,7 @@ where
 {
     type Provider = N::Provider;
     type Pool = N::Pool;
-    type Evm = N::Evm;
+
     type Network = N::Network;
 
     #[inline]
@@ -135,7 +135,7 @@ where
     }
 
     #[inline]
-    fn evm_config(&self) -> &Self::Evm {
+    fn evm_config(&self) -> &BaseEvmConfig {
         self.inner.eth_api.evm_config()
     }
 
@@ -201,7 +201,7 @@ where
 impl<N, Rpc> LoadFee for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<N::Evm>,
+    BaseEthApiError: FromEvmError,
     Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     #[inline]
@@ -247,7 +247,7 @@ where
 impl<N, Rpc> EthFees for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<N::Evm>,
+    BaseEthApiError: FromEvmError,
     Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }
@@ -255,16 +255,16 @@ where
 impl<N, Rpc> Trace for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Error = BaseEthApiError, Evm = N::Evm>,
+    BaseEthApiError: FromEvmError,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }
 
 impl<N, Rpc> GetBlockAccessList for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Error = BaseEthApiError, Evm = N::Evm>,
+    BaseEthApiError: FromEvmError,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }
 
@@ -309,7 +309,6 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApiInner<N, Rpc> {
 
 /// Converter for Base RPC types.
 pub type BaseRpcConvert<N> = RpcConverter<
-    <N as FullNodeComponents>::Evm,
     BaseReceiptConverter<<N as FullNodeTypes>::Provider>,
     (),
     BaseTxInfoMapper<<N as FullNodeTypes>::Provider>,
@@ -368,9 +367,7 @@ impl BaseEthApiBuilder {
 
 impl<N> EthApiBuilder<N> for BaseEthApiBuilder
 where
-    N: FullNodeComponents<
-        Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<alloy_consensus::Header>>,
-    >,
+    N: FullNodeComponents,
     BaseRpcConvert<N>: RpcConvert,
     BaseEthApi<N, BaseRpcConvert<N>>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {

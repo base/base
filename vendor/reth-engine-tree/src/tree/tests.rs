@@ -27,7 +27,7 @@ use reth_chain_state::{BlockState, test_utils::TestBlockBuilder};
 use reth_chainspec::{ChainSpec, HOLESKY, MAINNET};
 use reth_consensus_common::test_utils::TestConsensus;
 use reth_engine_primitives::{EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook};
-use reth_evm::MockEvmConfig;
+use reth_evm::BaseEvmConfig;
 use reth_payload_builder::PayloadServiceCommand;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_primitives_traits::Block as _;
@@ -149,8 +149,7 @@ impl TestChannelHandle {
 struct TestHarness {
     tree: EngineApiTreeHandler<
         MockEthProvider,
-        BasicEngineValidator<MockEthProvider, MockEvmConfig, MockEngineValidator>,
-        MockEvmConfig,
+        BasicEngineValidator<MockEthProvider, MockEngineValidator>,
     >,
     to_tree_tx: crossbeam_channel::Sender<FromEngine<EngineApiRequest, BaseBlock>>,
     from_tree_rx: UnboundedReceiver<EngineApiEvent>,
@@ -224,7 +223,7 @@ impl TestHarness {
         let (to_payload_service, payload_command_rx) = unbounded_channel();
         let payload_builder = PayloadBuilderHandle::new(to_payload_service);
 
-        let evm_config = MockEvmConfig::default();
+        let evm_config = BaseEvmConfig::default();
         let engine_validator = BasicEngineValidator::new(
             provider.clone(),
             consensus.clone(),
@@ -419,7 +418,7 @@ pub(crate) struct ValidatorTestHarness {
     /// Basic test harness
     harness: TestHarness,
     /// Direct access to validator for `validate_block_with_state` calls
-    validator: BasicEngineValidator<MockEthProvider, MockEvmConfig, MockEngineValidator>,
+    validator: BasicEngineValidator<MockEthProvider, MockEngineValidator>,
     /// Simple validation metrics
     metrics: TestMetrics,
 }
@@ -432,7 +431,7 @@ impl ValidatorTestHarness {
         let consensus = Arc::new(TestConsensus::new(Arc::new(chain_spec.as_ref().clone().into())));
         let provider = harness.provider.clone();
         let payload_validator = MockEngineValidator;
-        let evm_config = MockEvmConfig::default();
+        let evm_config = BaseEvmConfig::default();
         let overlay_manager = harness.tree.state.tree_state.overlay_manager.clone();
 
         let validator = BasicEngineValidator::new(

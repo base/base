@@ -8,24 +8,24 @@ use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 impl<N, Rpc> EthCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Error = BaseEthApiError, Evm = N::Evm>,
+    BaseEthApiError: FromEvmError,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }
 
 impl<N, Rpc> EstimateCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Error = BaseEthApiError, Evm = N::Evm>,
+    BaseEthApiError: FromEvmError,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }
 
 impl<N, Rpc> Call for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Error = BaseEthApiError, Evm = N::Evm>,
+    BaseEthApiError: FromEvmError,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     #[inline]
     fn call_gas_limit(&self) -> u64 {

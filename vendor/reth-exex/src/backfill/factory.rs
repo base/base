@@ -1,6 +1,7 @@
 use std::{ops::RangeInclusive, time::Duration};
 
 use alloy_primitives::BlockNumber;
+use reth_evm::BaseEvmConfig;
 use reth_node_api::FullNodeComponents;
 use reth_prune_types::PruneModes;
 use reth_stages_api::ExecutionStageThresholds;
@@ -10,17 +11,17 @@ use crate::BackfillJob;
 
 /// Factory for creating new backfill jobs.
 #[derive(Debug, Clone)]
-pub struct BackfillJobFactory<E, P> {
-    evm_config: E,
+pub struct BackfillJobFactory<P> {
+    evm_config: BaseEvmConfig,
     provider: P,
     prune_modes: PruneModes,
     thresholds: ExecutionStageThresholds,
     stream_parallelism: usize,
 }
 
-impl<E, P> BackfillJobFactory<E, P> {
+impl<P> BackfillJobFactory<P> {
     /// Creates a new [`BackfillJobFactory`].
-    pub fn new(evm_config: E, provider: P) -> Self {
+    pub fn new(evm_config: BaseEvmConfig, provider: P) -> Self {
         Self {
             evm_config,
             provider,
@@ -60,9 +61,9 @@ impl<E, P> BackfillJobFactory<E, P> {
     }
 }
 
-impl<E: Clone, P: Clone> BackfillJobFactory<E, P> {
+impl<P: Clone> BackfillJobFactory<P> {
     /// Creates a new backfill job for the given range.
-    pub fn backfill(&self, range: RangeInclusive<BlockNumber>) -> BackfillJob<E, P> {
+    pub fn backfill(&self, range: RangeInclusive<BlockNumber>) -> BackfillJob<P> {
         BackfillJob {
             evm_config: self.evm_config.clone(),
             provider: self.provider.clone(),
@@ -74,14 +75,11 @@ impl<E: Clone, P: Clone> BackfillJobFactory<E, P> {
     }
 }
 
-impl BackfillJobFactory<(), ()> {
+impl BackfillJobFactory<()> {
     /// Creates a new [`BackfillJobFactory`] from [`FullNodeComponents`].
     pub fn new_from_components<Node: FullNodeComponents>(
         components: Node,
-    ) -> BackfillJobFactory<Node::Evm, Node::Provider> {
-        BackfillJobFactory::<_, _>::new(
-            components.evm_config().clone(),
-            components.provider().clone(),
-        )
+    ) -> BackfillJobFactory<Node::Provider> {
+        BackfillJobFactory::<_>::new(components.evm_config().clone(), components.provider().clone())
     }
 }

@@ -8,7 +8,10 @@ use alloy_evm::{
 };
 use alloy_primitives::Address;
 use crossbeam_channel::{Receiver, Sender};
-use reth_evm::{ConfigureEvm, Database, EvmEnvFor, ExecutionCtxFor, execute::ExecutableTxFor};
+use reth_evm::{
+    BaseEvmConfig, BaseExecutorFactory, Database, EvmEnvFor, ExecutionCtxFor,
+    execute::ExecutableTxFor,
+};
 use revm::{database::State, state::bal::Bal as RevmBal};
 
 use super::BalExecutionError;
@@ -43,26 +46,23 @@ pub(super) struct BalWorkerOutput<R> {
     pub(super) result: R,
 }
 
-type WorkerExecutorResult<Cfg> =
-    <<Cfg as ConfigureEvm>::BlockExecutorFactory as BlockExecutorFactory>::TxExecutionResult;
+type WorkerExecutorResult = <BaseExecutorFactory as BlockExecutorFactory>::TxExecutionResult;
 
-type WorkerResultSender<Cfg> =
-    Sender<Result<BalWorkerOutput<WorkerExecutorResult<Cfg>>, BalWorkerError>>;
+type WorkerResultSender = Sender<Result<BalWorkerOutput<WorkerExecutorResult>, BalWorkerError>>;
 
 #[expect(clippy::too_many_arguments)]
-pub(super) fn spawn_worker<'scope, Evm, Tx, Err, DB, MakeDb>(
+pub(super) fn spawn_worker<'scope, Tx, Err, DB, MakeDb>(
     scope: &rayon::Scope<'scope>,
     tx_rx: Receiver<(usize, Result<Tx, Err>)>,
     abort_rx: Receiver<()>,
-    result_tx: WorkerResultSender<Evm>,
-    evm_config: &'scope Evm,
+    result_tx: WorkerResultSender,
+    evm_config: &'scope BaseEvmConfig,
     make_db: &'scope MakeDb,
     received_bal_revm: Arc<RevmBal>,
-    evm_env: EvmEnvFor<Evm>,
-    ctx: ExecutionCtxFor<'scope, Evm>,
+    evm_env: EvmEnvFor,
+    ctx: ExecutionCtxFor,
 ) where
-    Evm: ConfigureEvm + 'scope,
-    Tx: ExecutableTxFor<Evm> + Send + 'scope,
+    Tx: ExecutableTxFor + Send + 'scope,
     Err: core::error::Error + Send + Sync + 'static,
     DB: Database + Send + 'scope,
     MakeDb: Fn(bool) -> Result<DB, BalExecutionError> + Sync + 'scope,

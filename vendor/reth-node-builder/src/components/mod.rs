@@ -8,6 +8,7 @@
 //! Components depend on a fully type configured node: [`FullNodeTypes`].
 
 use base_common_consensus::BaseTxEnvelope;
+use reth_evm::BaseEvmConfig;
 mod builder;
 mod consensus;
 mod execute;
@@ -28,7 +29,7 @@ use reth_network_api::FullNetwork;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
-use crate::{ConfigureEvm, FullNodeTypes};
+use crate::FullNodeTypes;
 
 /// An abstraction over the components of a node, consisting of:
 ///  - evm and executor
@@ -38,9 +39,6 @@ use crate::{ConfigureEvm, FullNodeTypes};
 pub trait NodeComponents<T: FullNodeTypes>: Clone + Debug + Unpin + Send + Sync + 'static {
     /// The transaction pool of the node.
     type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin;
-
-    /// The node's EVM configuration, defining settings for the Ethereum Virtual Machine.
-    type Evm: ConfigureEvm;
 
     /// The consensus type of the node.
     type Consensus: FullConsensus + Clone + Unpin + 'static;
@@ -52,7 +50,7 @@ pub trait NodeComponents<T: FullNodeTypes>: Clone + Debug + Unpin + Send + Sync 
     fn pool(&self) -> &Self::Pool;
 
     /// Returns the node's evm config.
-    fn evm_config(&self) -> &Self::Evm;
+    fn evm_config(&self) -> &BaseEvmConfig;
 
     /// Returns the node's consensus type.
     fn consensus(&self) -> &Self::Consensus;
@@ -69,11 +67,11 @@ pub trait NodeComponents<T: FullNodeTypes>: Clone + Debug + Unpin + Send + Sync 
 ///
 /// This provides access to all the components of the node.
 #[derive(Debug)]
-pub struct Components<Network, Pool, EVM, Consensus> {
+pub struct Components<Network, Pool, Consensus> {
     /// The transaction pool of the node.
     pub transaction_pool: Pool,
     /// The node's EVM configuration, defining settings for the Ethereum Virtual Machine.
-    pub evm_config: EVM,
+    pub evm_config: BaseEvmConfig,
     /// The consensus implementation of the node.
     pub consensus: Consensus,
     /// The network implementation of the node.
@@ -82,17 +80,16 @@ pub struct Components<Network, Pool, EVM, Consensus> {
     pub payload_builder_handle: PayloadBuilderHandle,
 }
 
-impl<Node, Pool, EVM, Cons, Network> NodeComponents<Node> for Components<Network, Pool, EVM, Cons>
+impl<Node, Pool, Cons, Network> NodeComponents<Node> for Components<Network, Pool, Cons>
 where
     Node: FullNodeTypes,
     Network: FullNetwork,
     Pool:
         TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
-    EVM: ConfigureEvm + 'static,
     Cons: FullConsensus + Clone + Unpin + 'static,
 {
     type Pool = Pool;
-    type Evm = EVM;
+
     type Consensus = Cons;
     type Network = Network;
 
@@ -100,7 +97,7 @@ where
         &self.transaction_pool
     }
 
-    fn evm_config(&self) -> &Self::Evm {
+    fn evm_config(&self) -> &BaseEvmConfig {
         &self.evm_config
     }
 
@@ -117,11 +114,10 @@ where
     }
 }
 
-impl<N, Pool, EVM, Cons> Clone for Components<N, Pool, EVM, Cons>
+impl<N, Pool, Cons> Clone for Components<N, Pool, Cons>
 where
     N: Clone,
     Pool: TransactionPool,
-    EVM: ConfigureEvm,
     Cons: Clone,
 {
     fn clone(&self) -> Self {

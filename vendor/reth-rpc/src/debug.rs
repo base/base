@@ -24,7 +24,7 @@ use parking_lot::RwLock;
 use reth_chainspec::EthereumHardforks;
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_errors::RethError;
-use reth_evm::{ConfigureEvm, EvmEnvFor, block::BlockExecutor, execute::Executor};
+use reth_evm::{EvmEnvFor, block::BlockExecutor, execute::Executor};
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
 use reth_revm::{db::State, witness::ExecutionWitnessRecord};
 use reth_rpc_api::DebugApiServer;
@@ -116,7 +116,7 @@ where
     async fn trace_block(
         &self,
         block: Arc<RecoveredBlock<ProviderBlock<Eth::Provider>>>,
-        evm_env: EvmEnvFor<Eth::Evm>,
+        evm_env: EvmEnvFor,
         opts: GethDebugTracingOptions,
     ) -> Result<Vec<TraceResult>, Eth::Error> {
         self.eth_api()

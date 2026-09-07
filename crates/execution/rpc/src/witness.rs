@@ -6,13 +6,11 @@ use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
-use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
-use base_execution_payload_builder::{BasePayloadBuilder, BasePayloadBuilderAttributes};
+use base_execution_chainspec::ChainSpecProvider;
+use base_execution_payload_builder::BasePayloadBuilder;
 use base_execution_txpool::BasePooledTx;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
-use reth_evm::ConfigureEvm;
-use reth_node_api::BuildNextEnv;
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_storage_api::{
@@ -37,16 +35,16 @@ pub trait DebugExecutionWitnessApi<Attributes> {
 }
 
 /// An extension to the `debug_` namespace of the RPC API.
-pub struct BaseDebugWitnessApi<Pool, Provider, EvmConfig> {
-    inner: Arc<BaseDebugWitnessApiInner<Pool, Provider, EvmConfig>>,
+pub struct BaseDebugWitnessApi<Pool, Provider> {
+    inner: Arc<BaseDebugWitnessApiInner<Pool, Provider>>,
 }
 
-impl<Pool, Provider, EvmConfig> BaseDebugWitnessApi<Pool, Provider, EvmConfig> {
+impl<Pool, Provider> BaseDebugWitnessApi<Pool, Provider> {
     /// Creates a new instance of the `BaseDebugWitnessApi`.
     pub fn new(
         provider: Provider,
         task_spawner: Runtime,
-        builder: BasePayloadBuilder<Pool, Provider, EvmConfig, ()>,
+        builder: BasePayloadBuilder<Pool, Provider, ()>,
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(3));
         let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
@@ -54,9 +52,8 @@ impl<Pool, Provider, EvmConfig> BaseDebugWitnessApi<Pool, Provider, EvmConfig> {
     }
 }
 
-impl<Pool, Provider, EvmConfig> BaseDebugWitnessApi<Pool, Provider, EvmConfig>
+impl<Pool, Provider> BaseDebugWitnessApi<Pool, Provider>
 where
-    EvmConfig: ConfigureEvm,
     Provider: BlockReaderIdExt,
 {
     /// Fetches the parent header by hash.
@@ -72,8 +69,8 @@ where
 }
 
 #[async_trait]
-impl<Pool, Provider, EvmConfig> DebugExecutionWitnessApiServer<BasePayloadAttributes>
-    for BaseDebugWitnessApi<Pool, Provider, EvmConfig>
+impl<Pool, Provider> DebugExecutionWitnessApiServer<BasePayloadAttributes>
+    for BaseDebugWitnessApi<Pool, Provider>
 where
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + 'static,
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
@@ -81,13 +78,6 @@ where
         + ChainSpecProvider
         + Clone
         + 'static,
-    EvmConfig: ConfigureEvm<
-            NextBlockEnvCtx: BuildNextEnv<
-                BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                Provider::Header,
-                BaseChainSpec,
-            >,
-        > + 'static,
 {
     async fn execute_payload(
         &self,
@@ -111,20 +101,20 @@ where
     }
 }
 
-impl<Pool, Provider, EvmConfig> Clone for BaseDebugWitnessApi<Pool, Provider, EvmConfig> {
+impl<Pool, Provider> Clone for BaseDebugWitnessApi<Pool, Provider> {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
 }
-impl<Pool, Provider, EvmConfig> Debug for BaseDebugWitnessApi<Pool, Provider, EvmConfig> {
+impl<Pool, Provider> Debug for BaseDebugWitnessApi<Pool, Provider> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BaseDebugWitnessApi").finish_non_exhaustive()
     }
 }
 
-struct BaseDebugWitnessApiInner<Pool, Provider, EvmConfig> {
+struct BaseDebugWitnessApiInner<Pool, Provider> {
     provider: Provider,
-    builder: BasePayloadBuilder<Pool, Provider, EvmConfig, ()>,
+    builder: BasePayloadBuilder<Pool, Provider, ()>,
     task_spawner: Runtime,
     semaphore: Arc<Semaphore>,
 }

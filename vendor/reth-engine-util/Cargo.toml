@@ -23,7 +23,6 @@ itertools = { workspace = true }
 reth-errors = { workspace = true }
 pin-project = { workspace = true }
 reth-fs-util = { workspace = true }
-reth-chainspec = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-engine-tree = { workspace = true }

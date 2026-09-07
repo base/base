@@ -69,7 +69,7 @@ use alloy_primitives::B256;
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
 use reth_errors::ProviderResult;
-use reth_evm::{ConfigureEvm, OnStateHook};
+use reth_evm::OnStateHook;
 use reth_primitives_traits::{
     AlloyBlockHeader, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
@@ -110,16 +110,12 @@ use crate::tree::{
 pub type LazyHashedPostState = reth_tasks::LazyHandle<Arc<HashedPostState>>;
 
 /// Strategy used by engine-tree validation to prepare per-block state-root work.
-pub trait StateRootStrategy<P, Evm>: Send + Sync
-where
-    Evm: ConfigureEvm,
-{
+pub trait StateRootStrategy<P>: Send + Sync {
     /// Prepares a per-block state-root job before execution starts.
     ///
     /// A custom strategy that maintains a reusable sparse trie is responsible for consuming the
     /// pending prune request from the context when it starts the corresponding job.
-    fn prepare(&self, ctx: StateRootJobContext<'_, P, Evm>)
-    -> ProviderResult<PreparedStateRootJob>;
+    fn prepare(&self, ctx: StateRootJobContext<'_, P>) -> ProviderResult<PreparedStateRootJob>;
 
     /// Prepares the optional payload-builder state-root handle used for FCU-triggered block
     /// building.
@@ -234,13 +230,10 @@ impl<'a, P> PayloadStateRootJobContext<'a, P> {
 }
 
 /// Data available while preparing one state-root job.
-pub struct StateRootJobContext<'a, P, Evm>
-where
-    Evm: ConfigureEvm,
-{
+pub struct StateRootJobContext<'a, P> {
     executor: &'a reth_tasks::Runtime,
     overlay_manager: &'a OverlayManager,
-    env: &'a ExecutionEnv<Evm>,
+    env: &'a ExecutionEnv,
     parent_header: &'a SealedHeader<alloy_consensus::Header>,
     provider_builder: StateProviderBuilder<P>,
     overlay_factory: OverlayStateProviderFactory<P>,
@@ -249,10 +242,7 @@ where
     state: &'a mut EngineApiTreeState,
 }
 
-impl<P, Evm> fmt::Debug for StateRootJobContext<'_, P, Evm>
-where
-    Evm: ConfigureEvm,
-{
+impl<P> fmt::Debug for StateRootJobContext<'_, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StateRootJobContext")
             .field("parallel_bal_execution", &self.parallel_bal_execution)
@@ -261,16 +251,13 @@ where
     }
 }
 
-impl<'a, P, Evm> StateRootJobContext<'a, P, Evm>
-where
-    Evm: ConfigureEvm,
-{
+impl<'a, P> StateRootJobContext<'a, P> {
     /// Creates a new state-root job context.
     #[expect(clippy::too_many_arguments)]
     pub(crate) const fn new(
         executor: &'a reth_tasks::Runtime,
         overlay_manager: &'a OverlayManager,
-        env: &'a ExecutionEnv<Evm>,
+        env: &'a ExecutionEnv,
         parent_header: &'a SealedHeader<alloy_consensus::Header>,
         provider_builder: StateProviderBuilder<P>,
         overlay_factory: OverlayStateProviderFactory<P>,
@@ -292,7 +279,7 @@ where
     }
 
     /// Returns the execution environment for the block.
-    pub const fn env(&self) -> &ExecutionEnv<Evm> {
+    pub const fn env(&self) -> &ExecutionEnv {
         self.env
     }
 
@@ -803,7 +790,7 @@ fn published_sparse_trie_anchor_hash(
     oldest_prune_block.recovered_block().parent_hash()
 }
 
-impl<P, Evm> StateRootStrategy<P, Evm> for DefaultStateRootStrategy
+impl<P> StateRootStrategy<P> for DefaultStateRootStrategy
 where
     P: DatabaseProviderFactory + Clone + 'static,
     P::Provider: BlockNumReader
@@ -815,12 +802,8 @@ where
     OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
         + Clone
         + 'static,
-    Evm: ConfigureEvm + 'static,
 {
-    fn prepare(
-        &self,
-        mut ctx: StateRootJobContext<'_, P, Evm>,
-    ) -> ProviderResult<PreparedStateRootJob> {
+    fn prepare(&self, mut ctx: StateRootJobContext<'_, P>) -> ProviderResult<PreparedStateRootJob> {
         if ctx.config.skip_state_root() {
             return Ok(PreparedStateRootJob::new(Box::new(SkippedStateRootJob {}), None));
         }
@@ -1327,7 +1310,7 @@ mod tests {
     use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_chainspec::ChainSpec;
     use reth_db_common::init::init_genesis;
-    use reth_evm::{OnStateHook, TestEvmConfig};
+    use reth_evm::OnStateHook;
     use reth_primitives_traits::{Account, StorageEntry};
     use reth_provider::{
         HashingWriter, providers::BlockchainProvider,
@@ -1484,7 +1467,7 @@ mod tests {
         }
 
         let provider_factory = BlockchainProvider::new(factory).unwrap();
-        let env: ExecutionEnv<TestEvmConfig> = ExecutionEnv::test_default();
+        let env: ExecutionEnv = ExecutionEnv::test_default();
         let runtime = reth_tasks::Runtime::test();
         let overlay_manager = OverlayManager::default();
         let mut state_root_handle = DefaultStateRootStrategy::default().spawn_state_root(

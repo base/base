@@ -1,6 +1,7 @@
 //! Txpool-driven state prewarming and immutable snapshot publication.
 
 use base_common_consensus::BaseTxEnvelope;
+use reth_evm::BaseEvmConfig;
 mod control;
 mod worker;
 
@@ -8,7 +9,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_consensus::transaction::Recovered;
 use alloy_primitives::{Address, B256};
-use reth_evm::{ConfigureEvm, EvmEnvFor};
+use reth_evm::EvmEnvFor;
 use reth_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
@@ -18,23 +19,17 @@ use self::control::Control;
 use crate::tree::{StateProviderBuilder, TxPoolPrewarmCacheSnapshot};
 
 /// Coordinates a long-lived worker and the latest completed immutable snapshot.
-pub(crate) struct Handle<P, Evm>
-where
-    Evm: ConfigureEvm,
-{
-    control: Arc<Control<Job<P, Evm>>>,
+pub(crate) struct Handle<P> {
+    control: Arc<Control<Job<P>>>,
 }
 
-impl<P, Evm> Debug for Handle<P, Evm>
-where
-    Evm: ConfigureEvm,
-{
+impl<P> Debug for Handle<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Handle").field("control", &self.control).finish()
     }
 }
 
-impl<P, Evm> Handle<P, Evm>
+impl<P> Handle<P>
 where
     P: DatabaseProviderFactory + 'static,
     P::Provider: BlockNumReader
@@ -43,14 +38,13 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    Evm: ConfigureEvm + 'static,
 {
     /// Spawns the long-lived worker, which owns its mutable read cache and starts a fresh one for
     /// each new head.
     pub(crate) fn spawn(
         runtime: &reth_tasks::Runtime,
         source: Arc<dyn Source>,
-        evm_config: Evm,
+        evm_config: BaseEvmConfig,
     ) -> Self {
         let (control, commands) = Control::new();
         let publication = control.publication();
@@ -82,7 +76,7 @@ where
     pub(crate) fn start(
         &self,
         parent_hash: B256,
-        evm_env: EvmEnvFor<Evm>,
+        evm_env: EvmEnvFor,
         provider_builder: StateProviderBuilder<P>,
     ) {
         self.control.start(parent_hash, Job { evm_env, provider_builder });
@@ -117,7 +111,7 @@ pub trait Source: Send + Sync + Debug {
 }
 
 /// A request to warm txpool transactions against one fully validated parent state.
-struct Job<P, Evm: ConfigureEvm> {
-    evm_env: EvmEnvFor<Evm>,
+struct Job<P> {
+    evm_env: EvmEnvFor,
     provider_builder: StateProviderBuilder<P>,
 }

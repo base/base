@@ -4,6 +4,7 @@ use alloy_consensus::TxEnvelope;
 use alloy_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
 use eyre::OptionExt;
 use reth_engine_primitives::{InvalidBlockHook, InvalidBlockHooks, NoopInvalidBlockHook};
+use reth_evm::BaseEvmConfig;
 use reth_invalid_block_hooks::InvalidBlockWitnessHook;
 use reth_node_core::{
     args::InvalidBlockHookType,
@@ -30,11 +31,11 @@ impl InvalidBlockHookBuilder {
     /// * `provider` - The blockchain database provider
     /// * `evm_config` - The EVM configuration
     /// * `chain_id` - The chain ID for verification
-    pub async fn build<P, E>(
+    pub async fn build<P>(
         config: &NodeConfig,
         data_dir: &ChainPath<DataDirPath>,
         provider: P,
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         chain_id: u64,
     ) -> eyre::Result<Box<dyn InvalidBlockHook>>
     where
@@ -44,7 +45,6 @@ impl InvalidBlockHookBuilder {
             + Send
             + Sync
             + 'static,
-        E: reth_evm::ConfigureEvm + Clone + 'static,
     {
         let Some(ref hook) = config.debug.invalid_block_hook else {
             return Ok(Box::new(NoopInvalidBlockHook::default()));

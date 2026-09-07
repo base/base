@@ -203,12 +203,11 @@
 //! use reth_transaction_pool::{TransactionValidationTaskExecutor, Pool, TransactionPool};
 //! use reth_transaction_pool::blobstore::InMemoryBlobStore;
 //! use reth_chainspec::EthereumHardforks;
-//! use reth_evm::ConfigureEvm;
+//! use reth_evm::BaseEvmConfig;
 //! use alloy_consensus::Header;
-//! async fn t<C, Evm>(client: C, evm_config: Evm)
+//! async fn t<C>(client: C, evm_config: BaseEvmConfig)
 //! where
 //!     C: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt<Header = Header> + Clone + 'static,
-//!     Evm: ConfigureEvm + 'static,
 //! {
 //!     let blob_store = InMemoryBlobStore::default();
 //!     let runtime = Runtime::test();
@@ -233,33 +232,25 @@
 //!
 //! ```
 //! use futures_util::Stream;
+//! use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+//! use base_execution_chainspec::ChainSpecProvider;
 //! use reth_chain_state::CanonStateNotification;
-//! use reth_chainspec::{MAINNET, ChainSpecProvider, ChainSpec};
 //! use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 //! use reth_tasks::Runtime;
-//! use reth_transaction_pool::{TransactionValidationTaskExecutor, Pool};
-//! use reth_transaction_pool::blobstore::InMemoryBlobStore;
-//! use reth_transaction_pool::maintain::{maintain_transaction_pool_future};
-//! use reth_evm::ConfigureEvm;
-//! use alloy_consensus::Header;
+//! use reth_transaction_pool::{PoolTransaction, TransactionPoolExt};
+//! use reth_transaction_pool::maintain::maintain_transaction_pool_future;
 //!
-//!  async fn t<C, St, Evm>(client: C, stream: St, evm_config: Evm)
-//!    where C: StateProviderFactory + BlockReaderIdExt<Header = Header> + ChainSpecProvider + Clone + 'static,
+//! fn maintain<C, P, St>(client: C, pool: P, stream: St, runtime: Runtime)
+//! where
+//!     C: StateProviderFactory + BlockReaderIdExt<Header = alloy_consensus::Header>
+//!         + ChainSpecProvider + Clone + 'static,
+//!     P: TransactionPoolExt<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>, Block = BaseBlock> + 'static,
 //!     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
-//!     Evm: ConfigureEvm + 'static,
-//!     {
-//!     let blob_store = InMemoryBlobStore::default();
-//!     let runtime = Runtime::test();
-//!     let pool = Pool::eth_pool(
-//!         TransactionValidationTaskExecutor::eth(client.clone(), evm_config, blob_store.clone(), runtime.clone()),
-//!         blob_store,
-//!         Default::default(),
-//!     );
-//!
-//!   // spawn a task that listens for new blocks and updates the pool's transactions, mined transactions etc..
-//!   tokio::task::spawn(maintain_transaction_pool_future(client, pool, stream, runtime.clone(), Default::default()));
-//!
-//! # }
+//! {
+//!     tokio::task::spawn(maintain_transaction_pool_future(
+//!         client, pool, stream, runtime, Default::default(),
+//!     ));
+//! }
 //! ```
 //!
 //! ## Feature Flags
@@ -286,7 +277,6 @@ use aquamarine as _;
 use base_execution_chainspec::ChainSpecProvider;
 pub use imbl::OrdMap;
 use reth_eth_wire_types::HandleMempoolData;
-use reth_evm::ConfigureEvm;
 use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::Recovered;
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
@@ -338,8 +328,8 @@ mod traits;
 pub mod test_utils;
 
 /// Type alias for default ethereum transaction pool
-pub type EthTransactionPool<Client, S, Evm, T = EthPooledTransaction> = Pool<
-    TransactionValidationTaskExecutor<EthTransactionValidator<Client, T, Evm>>,
+pub type EthTransactionPool<Client, S, T = EthPooledTransaction> = Pool<
+    TransactionValidationTaskExecutor<EthTransactionValidator<Client, T>>,
     CoinbaseTipOrdering<T>,
     S,
 >;
@@ -409,7 +399,7 @@ where
     }
 }
 
-impl<Client, S, Evm> EthTransactionPool<Client, S, Evm>
+impl<Client, S> EthTransactionPool<Client, S>
 where
     Client: ChainSpecProvider
         + StateProviderFactory
@@ -417,7 +407,6 @@ where
         + BlockReaderIdExt<Header = alloy_consensus::Header>
         + 'static,
     S: BlobStore,
-    Evm: ConfigureEvm + 'static,
 {
     /// Returns a new [`Pool`] that uses the default [`TransactionValidationTaskExecutor`] when
     /// validating [`EthPooledTransaction`]s and ords via [`CoinbaseTipOrdering`]
@@ -433,12 +422,11 @@ where
     ///     blobstore::InMemoryBlobStore, Pool, TransactionValidationTaskExecutor,
     /// };
     /// use reth_chainspec::EthereumHardforks;
-    /// use reth_evm::ConfigureEvm;
+    /// use reth_evm::BaseEvmConfig;
     /// use alloy_consensus::Header;
-    /// # fn t<C, Evm>(client: C, evm_config: Evm, runtime: Runtime)
+    /// # fn t<C>(client: C, evm_config: BaseEvmConfig, runtime: Runtime)
     /// # where
     /// #     C: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt<Header = Header> + Clone + 'static,
-    /// #     Evm: ConfigureEvm + 'static,
     /// # {
     /// let blob_store = InMemoryBlobStore::default();
     /// let pool = Pool::eth_pool(
@@ -455,7 +443,7 @@ where
     /// ```
     pub fn eth_pool(
         validator: TransactionValidationTaskExecutor<
-            EthTransactionValidator<Client, EthPooledTransaction, Evm>,
+            EthTransactionValidator<Client, EthPooledTransaction>,
         >,
         blob_store: S,
         config: PoolConfig,

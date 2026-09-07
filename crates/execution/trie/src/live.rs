@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Instant};
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use base_common_consensus::BaseBlock;
 use derive_more::Constructor;
-use reth_evm::{ConfigureEvm, execute::Executor};
+use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use reth_provider::{
     DatabaseProviderFactory, HashedPostStateProvider, StateProviderFactory, StateReader,
@@ -25,19 +25,17 @@ use crate::{
 
 /// Live trie collector for external proofs storage.
 #[derive(Debug, Constructor)]
-pub struct LiveTrieCollector<'tx, Evm, Provider, PreimageStore>
+pub struct LiveTrieCollector<'tx, Provider, PreimageStore>
 where
-    Evm: ConfigureEvm,
     Provider: StateReader + DatabaseProviderFactory + StateProviderFactory,
 {
-    evm_config: Evm,
+    evm_config: BaseEvmConfig,
     provider: Provider,
     storage: &'tx BaseProofsStorage<PreimageStore>,
 }
 
-impl<'tx, Evm, Provider, Store> LiveTrieCollector<'tx, Evm, Provider, Store>
+impl<'tx, Provider, Store> LiveTrieCollector<'tx, Provider, Store>
 where
-    Evm: ConfigureEvm,
     Provider: StateReader + DatabaseProviderFactory + StateProviderFactory,
     Store: 'tx + BaseProofsStore + Clone + 'static,
 {
@@ -268,9 +266,8 @@ pub enum BatchBlock {
     Execute(Box<RecoveredBlock<BaseBlock>>),
 }
 
-impl<'tx, Evm, Provider, Store> LiveTrieCollector<'tx, Evm, Provider, Store>
+impl<'tx, Provider, Store> LiveTrieCollector<'tx, Provider, Store>
 where
-    Evm: ConfigureEvm,
     Provider: StateReader + DatabaseProviderFactory + StateProviderFactory,
     Store: 'tx + BaseProofsBatchStore + Clone + 'static,
 {

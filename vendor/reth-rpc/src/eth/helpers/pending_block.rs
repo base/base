@@ -12,7 +12,7 @@ use crate::EthApi;
 impl<N, Rpc> LoadPendingBlock for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    EthApiError: FromEvmError<N::Evm>,
+    EthApiError: FromEvmError,
     Rpc: RpcConvert<Error = EthApiError>,
 {
     #[inline]
@@ -21,7 +21,7 @@ where
     }
 
     #[inline]
-    fn pending_env_builder(&self) -> &dyn PendingEnvBuilder<Self::Evm> {
+    fn pending_env_builder(&self) -> &dyn PendingEnvBuilder {
         self.inner.pending_env_builder()
     }
 

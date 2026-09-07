@@ -26,7 +26,7 @@ use alloy_rlp::Encodable;
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use reth_chainspec::EthereumHardforks;
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_primitives_traits::{
     Account, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };
@@ -81,7 +81,7 @@ pub type StatefulValidationFn<T> = Arc<
 /// - Maximum gas limit
 ///
 /// And adheres to the configured [`LocalTransactionConfig`].
-pub struct EthTransactionValidator<Client, T, Evm> {
+pub struct EthTransactionValidator<Client, T> {
     /// This type fetches account info from the db
     client: Client,
     /// The chain ID transactions must use.
@@ -115,7 +115,7 @@ pub struct EthTransactionValidator<Client, T, Evm> {
     /// Disable balance checks during transaction validation
     disable_balance_check: bool,
     /// EVM configuration for fetching execution limits
-    evm_config: Evm,
+    evm_config: BaseEvmConfig,
     /// Marker for the transaction type
     _marker: PhantomData<T>,
     /// Metrics for tsx pool validation
@@ -134,7 +134,7 @@ pub struct EthTransactionValidator<Client, T, Evm> {
     additional_stateful_validation: Option<StatefulValidationFn<T>>,
 }
 
-impl<Client, Tx, Evm> fmt::Debug for EthTransactionValidator<Client, Tx, Evm> {
+impl<Client, Tx> fmt::Debug for EthTransactionValidator<Client, Tx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EthTransactionValidator")
             .field("fork_tracker", &self.fork_tracker)
@@ -161,7 +161,7 @@ impl<Client, Tx, Evm> fmt::Debug for EthTransactionValidator<Client, Tx, Evm> {
     }
 }
 
-impl<Client, Tx, Evm> EthTransactionValidator<Client, Tx, Evm> {
+impl<Client, Tx> EthTransactionValidator<Client, Tx> {
     /// Returns the configured chain spec
     pub fn chain_spec(&self) -> Arc<BaseChainSpec>
     where
@@ -186,7 +186,7 @@ impl<Client, Tx, Evm> EthTransactionValidator<Client, Tx, Evm> {
     }
 
     /// Returns the EVM config used for transaction validation.
-    pub const fn evm_config(&self) -> &Evm {
+    pub const fn evm_config(&self) -> &BaseEvmConfig {
         &self.evm_config
     }
 
@@ -356,11 +356,10 @@ impl<Client, Tx, Evm> EthTransactionValidator<Client, Tx, Evm> {
     }
 }
 
-impl<Client, Tx, Evm> EthTransactionValidator<Client, Tx, Evm>
+impl<Client, Tx> EthTransactionValidator<Client, Tx>
 where
     Client: ChainSpecProvider + StateProviderFactory,
     Tx: EthPoolTransaction,
-    Evm: ConfigureEvm,
 {
     /// Returns the current max gas limit
     pub fn block_gas_limit(&self) -> u64 {
@@ -981,11 +980,10 @@ where
     }
 }
 
-impl<Client, Tx, Evm> TransactionValidator for EthTransactionValidator<Client, Tx, Evm>
+impl<Client, Tx> TransactionValidator for EthTransactionValidator<Client, Tx>
 where
     Client: ChainSpecProvider + StateProviderFactory,
     Tx: EthPoolTransaction,
-    Evm: ConfigureEvm,
 {
     type Transaction = Tx;
     type Block = BaseBlock;
@@ -1021,12 +1019,12 @@ where
 
 /// A builder for [`EthTransactionValidator`] and [`TransactionValidationTaskExecutor`]
 #[derive(Debug)]
-pub struct EthTransactionValidatorBuilder<Client, Evm> {
+pub struct EthTransactionValidatorBuilder<Client> {
     client: Client,
     /// The chain ID transactions must use.
     chain_id: u64,
     /// The EVM configuration to use for validation.
-    evm_config: Evm,
+    evm_config: BaseEvmConfig,
     /// Fork indicator whether we are in the Shanghai stage.
     shanghai: bool,
     /// Fork indicator whether we are in the Cancun hardfork.
@@ -1082,7 +1080,7 @@ pub struct EthTransactionValidatorBuilder<Client, Evm> {
     eip7594: bool,
 }
 
-impl<Client, Evm> EthTransactionValidatorBuilder<Client, Evm> {
+impl<Client> EthTransactionValidatorBuilder<Client> {
     /// Creates a new builder for the given client and EVM config
     ///
     /// By default this assumes the network is on the `Prague` hardfork and the following
@@ -1092,10 +1090,9 @@ impl<Client, Evm> EthTransactionValidatorBuilder<Client, Evm> {
     ///  - EIP-1559
     ///  - EIP-4844
     ///  - EIP-7702
-    pub fn new(client: Client, evm_config: Evm) -> Self
+    pub fn new(client: Client, evm_config: BaseEvmConfig) -> Self
     where
         Client: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header>,
-        Evm: ConfigureEvm,
     {
         let chain_spec = client.chain_spec();
         let tip = client
@@ -1341,7 +1338,7 @@ impl<Client, Evm> EthTransactionValidatorBuilder<Client, Evm> {
     }
 
     /// Builds a the [`EthTransactionValidator`] without spawning validator tasks.
-    pub fn build<Tx, S>(self, blob_store: S) -> EthTransactionValidator<Client, Tx, Evm>
+    pub fn build<Tx, S>(self, blob_store: S) -> EthTransactionValidator<Client, Tx>
     where
         S: BlobStore,
     {
@@ -1424,7 +1421,7 @@ impl<Client, Evm> EthTransactionValidatorBuilder<Client, Evm> {
         self,
         tasks: Runtime,
         blob_store: S,
-    ) -> TransactionValidationTaskExecutor<EthTransactionValidator<Client, Tx, Evm>>
+    ) -> TransactionValidationTaskExecutor<EthTransactionValidator<Client, Tx>>
     where
         S: BlobStore,
     {
@@ -1552,7 +1549,6 @@ mod tests {
     };
     use alloy_primitives::{Address, B256, Bytes, U256, hex};
     use reth_ethereum_primitives::PooledTransactionVariant;
-    use reth_evm::TestEvmConfig;
     use reth_primitives_traits::SignedTransaction;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use revm::primitives::eip3860::MAX_INITCODE_SIZE;
@@ -1564,8 +1560,8 @@ mod tests {
         traits::PoolTransaction,
     };
 
-    fn test_evm_config() -> TestEvmConfig {
-        TestEvmConfig::default()
+    fn test_evm_config() -> BaseEvmConfig {
+        BaseEvmConfig::default()
     }
 
     fn get_transaction() -> EthPooledTransaction {
@@ -1820,7 +1816,7 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
+        let validator = EthTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
             .set_tx_fee_cap(0) // no cap
             .build(blob_store);
 
@@ -1838,7 +1834,7 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
+        let validator = EthTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
             .set_tx_fee_cap(2e18 as u128) // 2 ETH cap
             .build(blob_store);
 
@@ -1856,7 +1852,7 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
+        let validator = EthTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
             .with_max_tx_gas_limit(Some(500_000)) // Set limit lower than transaction gas limit (1_015_288)
             .build(blob_store.clone());
 
@@ -1888,7 +1884,7 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
+        let validator = EthTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
             .with_max_tx_gas_limit(None) // disabled
             .build(blob_store);
 
@@ -1906,7 +1902,7 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
+        let validator = EthTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
             .with_max_tx_gas_limit(Some(2_000_000)) // Set limit higher than transaction gas limit (1_015_288)
             .build(blob_store);
 
@@ -1930,7 +1926,7 @@ mod tests {
         provider: MockEthProvider,
         minimum_priority_fee: Option<u128>,
         local_config: Option<LocalTransactionConfig>,
-    ) -> EthTransactionValidator<MockEthProvider, EthPooledTransaction, TestEvmConfig> {
+    ) -> EthTransactionValidator<MockEthProvider, EthPooledTransaction> {
         let blob_store = InMemoryBlobStore::default();
         let mut builder = EthTransactionValidatorBuilder::new(provider, test_evm_config())
             .with_minimum_priority_fee(minimum_priority_fee);
@@ -2147,7 +2143,7 @@ mod tests {
 
         // Validate with balance check enabled
         let validator =
-            EthTransactionValidatorBuilder::new(provider.clone(), TestEvmConfig::default())
+            EthTransactionValidatorBuilder::new(provider.clone(), BaseEvmConfig::default())
                 .build(InMemoryBlobStore::default());
 
         let outcome = validator.validate_one(TransactionOrigin::External, transaction.clone());
@@ -2163,7 +2159,7 @@ mod tests {
         }
 
         // Validate with balance check disabled
-        let validator = EthTransactionValidatorBuilder::new(provider, TestEvmConfig::default())
+        let validator = EthTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
             .disable_balance_check()
             .build(InMemoryBlobStore::default());
 

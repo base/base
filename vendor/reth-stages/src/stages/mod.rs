@@ -59,7 +59,7 @@ mod tests {
         tables,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_evm::TestEvmConfig;
+    use reth_evm::BaseEvmConfig;
     use reth_exex::ExExManagerHandle;
     use reth_primitives_traits::{Account, Bytecode, SealedBlock, SignerRecoverable};
     use reth_provider::{
@@ -153,8 +153,11 @@ mod tests {
             // Check execution and create receipts and changesets according to the pruning
             // configuration
             let mut execution_stage = ExecutionStage::new(
-                TestEvmConfig::new(Arc::new(
-                    ChainSpecBuilder::mainnet().berlin_activated().build(),
+                BaseEvmConfig::new(std::sync::Arc::new(
+                    (Arc::new(ChainSpecBuilder::mainnet().berlin_activated().build()))
+                        .as_ref()
+                        .clone()
+                        .into(),
                 )),
                 Arc::new(TestConsensus::new(Arc::new(
                     ChainSpecBuilder::mainnet().berlin_activated().build().into(),

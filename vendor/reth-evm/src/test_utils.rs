@@ -4,7 +4,7 @@ use revm::database::State;
 
 use crate::execute::BasicBlockExecutor;
 
-impl<Factory, DB> BasicBlockExecutor<Factory, DB> {
+impl<DB> BasicBlockExecutor<DB> {
     /// Provides safe read access to the state
     pub fn with_state<F, R>(&self, f: F) -> R
     where

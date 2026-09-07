@@ -7,6 +7,7 @@ use std::{
 
 use base_execution_chainspec::BaseChainSpec;
 use reth_db::DatabaseEnv;
+use reth_evm::BaseEvmConfig;
 use reth_node_api::FullNodeComponents;
 // re-export the node api types
 pub use reth_node_api::FullNodeTypes;
@@ -89,7 +90,7 @@ where
 #[derive(Debug)]
 pub struct FullNode<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> {
     /// The evm configuration.
-    pub evm_config: Node::Evm,
+    pub evm_config: BaseEvmConfig,
     /// The node's transaction pool.
     pub pool: Node::Pool,
     /// Handle to the node's network.

@@ -16,7 +16,7 @@ use crate::{BaseEthApi, BaseEthApiError};
 impl<N, Rpc> LoadPendingBlock for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<N::Evm>,
+    BaseEthApiError: FromEvmError,
     Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     #[inline]
@@ -25,7 +25,7 @@ where
     }
 
     #[inline]
-    fn pending_env_builder(&self) -> &dyn PendingEnvBuilder<Self::Evm> {
+    fn pending_env_builder(&self) -> &dyn PendingEnvBuilder {
         self.inner.eth_api.pending_env_builder()
     }
 

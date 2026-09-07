@@ -20,7 +20,7 @@ use futures::Future;
 use reth_chainspec::EthereumHardforks;
 use reth_errors::{ProviderError, RethError};
 use reth_evm::{
-    ConfigureEvm, Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor, TransactionEnvMut, TxEnvFor,
+    Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor, TransactionEnvMut, TxEnvFor,
     block::BlockExecutor, env::BlockEnvironment, execute::BlockBuilder,
 };
 use reth_primitives_traits::Recovered;
@@ -450,7 +450,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
     /// [`BlockId`].
     fn create_access_list_with(
         &self,
-        evm_env: EvmEnvFor<Self::Evm>,
+        evm_env: EvmEnvFor,
         at: BlockId,
         request: BaseTransactionRequest,
         state_override: Option<StateOverride>,
@@ -499,10 +499,8 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
 /// Executes code on state.
 pub trait Call:
     LoadState<
-        RpcConvert: RpcConvert<Evm = Self::Evm>,
-        Error: FromEvmError<Self::Evm>
-                   + From<<Self::RpcConvert as RpcConvert>::Error>
-                   + From<ProviderError>,
+        RpcConvert: RpcConvert,
+        Error: FromEvmError + From<<Self::RpcConvert as RpcConvert>::Error> + From<ProviderError>,
     > + SpawnBlocking
 {
     /// Returns default gas limit to use for `eth_call` and tracing RPC methods.
@@ -523,8 +521,8 @@ pub trait Call:
     fn caller_gas_allowance(
         &self,
         mut db: impl Database<Error: Into<EthApiError>>,
-        _evm_env: &EvmEnvFor<Self::Evm>,
-        tx_env: &TxEnvFor<Self::Evm>,
+        _evm_env: &EvmEnvFor,
+        tx_env: &TxEnvFor,
     ) -> Result<u64, Self::Error> {
         alloy_evm::call::caller_gas_allowance(&mut db, tx_env).map_err(Self::Error::from_eth_err)
     }
@@ -534,9 +532,9 @@ pub trait Call:
     fn transact<DB>(
         &self,
         db: DB,
-        evm_env: EvmEnvFor<Self::Evm>,
-        tx_env: TxEnvFor<Self::Evm>,
-    ) -> Result<ResultAndState<HaltReasonFor<Self::Evm>>, Self::Error>
+        evm_env: EvmEnvFor,
+        tx_env: TxEnvFor,
+    ) -> Result<ResultAndState<HaltReasonFor>, Self::Error>
     where
         DB: Database<Error = EvmDatabaseError<ProviderError>> + fmt::Debug,
     {
@@ -551,13 +549,13 @@ pub trait Call:
     fn transact_with_inspector<DB, I>(
         &self,
         db: DB,
-        evm_env: EvmEnvFor<Self::Evm>,
-        tx_env: TxEnvFor<Self::Evm>,
+        evm_env: EvmEnvFor,
+        tx_env: TxEnvFor,
         inspector: I,
-    ) -> Result<ResultAndState<HaltReasonFor<Self::Evm>>, Self::Error>
+    ) -> Result<ResultAndState<HaltReasonFor>, Self::Error>
     where
         DB: Database<Error = EvmDatabaseError<ProviderError>> + fmt::Debug,
-        I: InspectorFor<Self::Evm, DB>,
+        I: InspectorFor<DB>,
     {
         let mut evm = self.evm_config().evm_with_env_and_inspector(db, evm_env, inspector);
         let res = evm.transact(tx_env).map_err(Self::Error::from_evm_err)?;
@@ -576,7 +574,7 @@ pub trait Call:
         request: BaseTransactionRequest,
         at: BlockId,
         overrides: EvmOverrides,
-    ) -> impl Future<Output = Result<ResultAndState<HaltReasonFor<Self::Evm>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<ResultAndState<HaltReasonFor>, Self::Error>> + Send
     where
         Self: LoadPendingBlock,
     {
@@ -643,11 +641,7 @@ pub trait Call:
     ) -> impl Future<Output = Result<R, Self::Error>> + Send
     where
         Self: LoadPendingBlock,
-        F: FnOnce(
-                &mut StateCacheDb,
-                EvmEnvFor<Self::Evm>,
-                TxEnvFor<Self::Evm>,
-            ) -> Result<R, Self::Error>
+        F: FnOnce(&mut StateCacheDb, EvmEnvFor, TxEnvFor) -> Result<R, Self::Error>
             + Send
             + 'static,
         R: Send + 'static,
@@ -682,7 +676,7 @@ pub trait Call:
         Self: LoadBlock + LoadTransaction,
         F: FnOnce(
                 TransactionInfo,
-                ResultAndState<HaltReasonFor<Self::Evm>>,
+                ResultAndState<HaltReasonFor>,
                 StateCacheDb,
             ) -> Result<R, Self::Error>
             + Send
@@ -739,13 +733,13 @@ pub trait Call:
     /// replayed.
     fn replay_transactions_until_with_evm<'a, DB, I, Txs>(
         &self,
-        evm: &mut EvmFor<Self::Evm, DB, I>,
+        evm: &mut EvmFor<DB, I>,
         transactions: Txs,
         target_tx_index: usize,
     ) -> Result<(), Self::Error>
     where
         DB: Database<Error = EvmDatabaseError<ProviderError>> + DatabaseCommit + core::fmt::Debug,
-        I: InspectorFor<Self::Evm, DB>,
+        I: InspectorFor<DB>,
         Txs: IntoIterator<Item = Recovered<&'a ProviderTx<Self::Provider>>>,
     {
         for (index, tx) in transactions.into_iter().enumerate() {
@@ -765,10 +759,10 @@ pub trait Call:
     /// `None`, they fall back to the [`reth_evm::EvmEnv`]'s settings.
     fn create_txn_env(
         &self,
-        evm_env: &EvmEnvFor<Self::Evm>,
+        evm_env: &EvmEnvFor,
         mut request: BaseTransactionRequest,
         mut db: impl Database<Error: Into<EthApiError>>,
-    ) -> Result<TxEnvFor<Self::Evm>, Self::Error> {
+    ) -> Result<TxEnvFor, Self::Error> {
         if request.as_ref().nonce().is_none() {
             let nonce = db
                 .basic(request.as_ref().from().unwrap_or_default())
@@ -797,11 +791,11 @@ pub trait Call:
     #[expect(clippy::type_complexity)]
     fn prepare_call_env<DB>(
         &self,
-        mut evm_env: EvmEnvFor<Self::Evm>,
+        mut evm_env: EvmEnvFor,
         mut request: BaseTransactionRequest,
         db: &mut DB,
         overrides: EvmOverrides,
-    ) -> Result<(EvmEnvFor<Self::Evm>, TxEnvFor<Self::Evm>), Self::Error>
+    ) -> Result<(EvmEnvFor, TxEnvFor), Self::Error>
     where
         DB: Database + DatabaseCommit + OverrideBlockHashes,
         EthApiError: From<<DB as Database>::Error>,

@@ -10,7 +10,7 @@ use base_common_consensus::BaseBlock;
 use futures::Stream;
 use reth_consensus::FullConsensus;
 use reth_engine_primitives::BeaconEngineMessage;
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_network_p2p::BlockClient;
 use reth_node_types::NodeTypesWithDB;
 use reth_payload_builder::PayloadBuilderHandle;
@@ -48,7 +48,7 @@ use crate::{
 ///
 /// [`ChainEvent`]: crate::chain::ChainEvent
 #[expect(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn build_engine_orchestrator<N, Client, S, V, C>(
+pub fn build_engine_orchestrator<N, Client, S, V>(
     engine_kind: EngineApiKind,
     consensus: Arc<dyn FullConsensus>,
     client: Client,
@@ -63,7 +63,7 @@ pub fn build_engine_orchestrator<N, Client, S, V, C>(
     overlay_manager: OverlayManager,
     tree_config: TreeConfig,
     sync_metrics_tx: MetricEventsSender,
-    evm_config: C,
+    evm_config: BaseEvmConfig,
     runtime: Runtime,
 ) -> ChainOrchestrator<
     EngineHandler<
@@ -78,7 +78,6 @@ where
     Client: BlockClient<Block = BaseBlock> + 'static,
     S: Stream<Item = BeaconEngineMessage> + Send + Sync + Unpin + 'static,
     V: EngineValidator + WaitForCaches,
-    C: ConfigureEvm + 'static,
 {
     let downloader = BasicBlockDownloader::new(client, consensus.clone());
 

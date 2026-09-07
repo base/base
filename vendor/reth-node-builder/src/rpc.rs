@@ -208,14 +208,8 @@ where
 #[derive(Debug, Clone)]
 #[expect(clippy::type_complexity)]
 pub struct RpcRegistry<Node: FullNodeComponents, EthApi: EthApiTypes> {
-    pub(crate) registry: RpcRegistryInner<
-        Node::Provider,
-        Node::Pool,
-        Node::Network,
-        EthApi,
-        Node::Evm,
-        Node::Consensus,
-    >,
+    pub(crate) registry:
+        RpcRegistryInner<Node::Provider, Node::Pool, Node::Network, EthApi, Node::Consensus>,
 }
 
 impl<Node, EthApi> Deref for RpcRegistry<Node, EthApi>
@@ -223,14 +217,8 @@ where
     Node: FullNodeComponents,
     EthApi: EthApiTypes,
 {
-    type Target = RpcRegistryInner<
-        Node::Provider,
-        Node::Pool,
-        Node::Network,
-        EthApi,
-        Node::Evm,
-        Node::Consensus,
-    >;
+    type Target =
+        RpcRegistryInner<Node::Provider, Node::Pool, Node::Network, EthApi, Node::Consensus>;
 
     fn deref(&self) -> &Self::Target {
         &self.registry
@@ -1423,7 +1411,7 @@ where
     EV: PayloadValidatorBuilder<Node>,
     EV::Validator: reth_engine_primitives::PayloadValidator<Block = BaseBlock> + Clone,
 {
-    type EngineValidator = BasicEngineValidator<Node::Provider, Node::Evm, EV::Validator>;
+    type EngineValidator = BasicEngineValidator<Node::Provider, EV::Validator>;
 
     async fn build_tree_validator(
         self,

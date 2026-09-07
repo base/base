@@ -75,17 +75,16 @@ impl AccountStateDiff {
 pub struct BaseTransactionPool<
     Client,
     S,
-    Evm,
     T = crate::BasePooledTransaction,
     O = crate::BaseOrdering<T>,
 > where
-    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    BaseTransactionValidator<Client, T>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
 {
     protocol_pool:
-        Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>,
+        Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T>>, O, S>,
     ordering: O,
     nonce_pool: Arc<RwLock<TwoDNoncePool<T>>>,
     listeners: Arc<RwLock<SidecarListeners<T>>>,
@@ -101,11 +100,10 @@ pub struct BaseTransactionPool<
     protocol_admission_lock: Arc<Mutex<()>>,
 }
 
-impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
+impl<Client, S, T, O> fmt::Debug for BaseTransactionPool<Client, S, T, O>
 where
     Client: 'static,
-    Evm: 'static,
-    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    BaseTransactionValidator<Client, T>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
@@ -115,11 +113,10 @@ where
     }
 }
 
-impl<Client, S, Evm, T, O> Clone for BaseTransactionPool<Client, S, Evm, T, O>
+impl<Client, S, T, O> Clone for BaseTransactionPool<Client, S, T, O>
 where
     Client: 'static,
-    Evm: 'static,
-    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    BaseTransactionValidator<Client, T>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
@@ -137,22 +134,20 @@ where
     }
 }
 
-impl<Client, S, Evm, T, O> Unpin for BaseTransactionPool<Client, S, Evm, T, O>
+impl<Client, S, T, O> Unpin for BaseTransactionPool<Client, S, T, O>
 where
     Client: 'static,
-    Evm: 'static,
-    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    BaseTransactionValidator<Client, T>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
 {
 }
 
-impl<Client, S, Evm, T, O> BaseTransactionPool<Client, S, Evm, T, O>
+impl<Client, S, T, O> BaseTransactionPool<Client, S, T, O>
 where
     Client: 'static,
-    Evm: 'static,
-    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    BaseTransactionValidator<Client, T>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
@@ -160,7 +155,7 @@ where
     /// Creates a new wrapper around the reth protocol pool.
     pub fn new(
         protocol_pool: Pool<
-            TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>,
+            TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T>>,
             O,
             S,
         >,
@@ -207,15 +202,14 @@ where
     /// Returns the wrapped reth pool.
     pub const fn protocol_pool(
         &self,
-    ) -> &Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>
-    {
+    ) -> &Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T>>, O, S> {
         &self.protocol_pool
     }
 
     /// Returns the validator backing the wrapped reth pool.
     pub fn validator(
         &self,
-    ) -> &TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> {
+    ) -> &TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T>> {
         self.protocol_pool.validator()
     }
 
@@ -814,11 +808,10 @@ where
     }
 }
 
-impl<Client, S, Evm, T, O> StateDiffInvalidation for BaseTransactionPool<Client, S, Evm, T, O>
+impl<Client, S, T, O> StateDiffInvalidation for BaseTransactionPool<Client, S, T, O>
 where
     Client: 'static,
-    Evm: 'static,
-    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    BaseTransactionValidator<Client, T>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
@@ -832,11 +825,10 @@ where
     }
 }
 
-impl<Client, S, Evm, T, O> TransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
+impl<Client, S, T, O> TransactionPool for BaseTransactionPool<Client, S, T, O>
 where
     Client: 'static,
-    Evm: 'static,
-    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    BaseTransactionValidator<Client, T>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
@@ -1445,11 +1437,10 @@ where
     }
 }
 
-impl<Client, S, Evm, T, O> ParkableTransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
+impl<Client, S, T, O> ParkableTransactionPool for BaseTransactionPool<Client, S, T, O>
 where
     Client: 'static,
-    Evm: 'static,
-    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    BaseTransactionValidator<Client, T>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
@@ -1469,16 +1460,15 @@ where
     }
 }
 
-impl<Client, S, Evm, T, O> TransactionPoolExt for BaseTransactionPool<Client, S, Evm, T, O>
+impl<Client, S, T, O> TransactionPoolExt for BaseTransactionPool<Client, S, T, O>
 where
     Client: 'static,
-    Evm: 'static,
-    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    BaseTransactionValidator<Client, T>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
 {
-    type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
+    type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T>> as TransactionValidator>::Block;
 
     fn set_block_info(&self, info: BlockInfo) {
         self.protocol_pool.set_block_info(info)
@@ -2023,14 +2013,14 @@ mod tests {
         assert!(nonce_pool.get(&replacement_hash).is_some());
     }
 
-    type IntegrationPool = BaseTransactionPool<MockEthProvider, InMemoryBlobStore, BaseEvmConfig>;
+    type IntegrationPool = BaseTransactionPool<MockEthProvider, InMemoryBlobStore>;
 
     fn build_integration_pool() -> (IntegrationPool, MockEthProvider) {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
         let client = MockEthProvider::new()
             .with_chain_spec(chain_spec.as_ref().clone())
             .with_genesis_block();
-        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
         let blob_store = InMemoryBlobStore::default();
         let validator = EthTransactionValidatorBuilder::new(client.clone(), evm_config)
             .no_shanghai()

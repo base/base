@@ -8,7 +8,7 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use reth_evm::{
-    ConfigureEvm,
+    BaseEvmConfig,
     execute::{BlockExecutionError, BlockExecutionOutput, Executor},
 };
 use reth_node_api::{Block as _, BlockBody as _};
@@ -32,8 +32,8 @@ pub(super) type BackfillJobResult<T> = Result<T, BlockExecutionError>;
 /// and yields [`Chain`]. In other words, this iterator can yield multiple items for the given range
 /// depending on the configured thresholds.
 #[derive(Debug)]
-pub struct BackfillJob<E, P> {
-    pub(crate) evm_config: E,
+pub struct BackfillJob<P> {
+    pub(crate) evm_config: BaseEvmConfig,
     pub(crate) provider: P,
     pub(crate) prune_modes: PruneModes,
     pub(crate) thresholds: ExecutionStageThresholds,
@@ -41,9 +41,8 @@ pub struct BackfillJob<E, P> {
     pub(crate) stream_parallelism: usize,
 }
 
-impl<E, P> Iterator for BackfillJob<E, P>
+impl<P> Iterator for BackfillJob<P>
 where
-    E: ConfigureEvm + 'static,
     P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
 {
     type Item = BackfillJobResult<Chain>;
@@ -57,18 +56,17 @@ where
     }
 }
 
-impl<E, P> BackfillJob<E, P>
+impl<P> BackfillJob<P>
 where
-    E: ConfigureEvm + 'static,
     P: BlockReader<Block = BaseBlock> + HeaderProvider + StateProviderFactory,
 {
     /// Converts the backfill job into a single block backfill job.
-    pub fn into_single_blocks(self) -> SingleBlockBackfillJob<E, P> {
+    pub fn into_single_blocks(self) -> SingleBlockBackfillJob<P> {
         self.into()
     }
 
     /// Converts the backfill job into a stream.
-    pub fn into_stream(self) -> StreamBackfillJob<E, P, Chain> {
+    pub fn into_stream(self) -> StreamBackfillJob<P, Chain> {
         self.into()
     }
 
@@ -162,16 +160,15 @@ where
 /// It implements [`Iterator`] which executes a block each time the
 /// iterator is advanced and yields ([`RecoveredBlock`], [`BlockExecutionOutput`])
 #[derive(Debug, Clone)]
-pub struct SingleBlockBackfillJob<E, P> {
-    pub(crate) evm_config: E,
+pub struct SingleBlockBackfillJob<P> {
+    pub(crate) evm_config: BaseEvmConfig,
     pub(crate) provider: P,
     pub(crate) range: RangeInclusive<BlockNumber>,
     pub(crate) stream_parallelism: usize,
 }
 
-impl<E, P> Iterator for SingleBlockBackfillJob<E, P>
+impl<P> Iterator for SingleBlockBackfillJob<P>
 where
-    E: ConfigureEvm + 'static,
     P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
 {
     type Item = BackfillJobResult<(RecoveredBlock<P::Block>, BlockExecutionOutput<BaseReceipt>)>;
@@ -181,16 +178,14 @@ where
     }
 }
 
-impl<E, P> SingleBlockBackfillJob<E, P>
+impl<P> SingleBlockBackfillJob<P>
 where
-    E: ConfigureEvm + 'static,
     P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
 {
     /// Converts the single block backfill job into a stream.
     pub fn into_stream(
         self,
-    ) -> StreamBackfillJob<E, P, (RecoveredBlock<BaseBlock>, BlockExecutionOutput<BaseReceipt>)>
-    {
+    ) -> StreamBackfillJob<P, (RecoveredBlock<BaseBlock>, BlockExecutionOutput<BaseReceipt>)> {
         self.into()
     }
 
@@ -222,8 +217,8 @@ where
     }
 }
 
-impl<E, P> From<BackfillJob<E, P>> for SingleBlockBackfillJob<E, P> {
-    fn from(job: BackfillJob<E, P>) -> Self {
+impl<P> From<BackfillJob<P>> for SingleBlockBackfillJob<P> {
+    fn from(job: BackfillJob<P>) -> Self {
         Self {
             evm_config: job.evm_config,
             provider: job.provider,
@@ -237,7 +232,7 @@ impl<E, P> From<BackfillJob<E, P>> for SingleBlockBackfillJob<E, P> {
 mod tests {
     use alloy_consensus::BlockHeader;
     use reth_db_common::init::init_genesis;
-    use reth_evm::TestEvmConfig;
+    use reth_evm::BaseEvmConfig;
     use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
     use reth_provider::{
         providers::BlockchainProvider, test_utils::create_test_provider_factory_with_chain_spec,
@@ -262,7 +257,8 @@ mod tests {
 
         let chain_spec = chain_spec(address);
 
-        let executor = TestEvmConfig::new(chain_spec.clone());
+        let executor =
+            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
         init_genesis(&provider_factory)?;
         let blockchain_db = BlockchainProvider::new(provider_factory.clone())?;
@@ -299,7 +295,8 @@ mod tests {
 
         let chain_spec = chain_spec(address);
 
-        let executor = TestEvmConfig::new(chain_spec.clone());
+        let executor =
+            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
         init_genesis(&provider_factory)?;
         let blockchain_db = BlockchainProvider::new(provider_factory.clone())?;
@@ -349,7 +346,8 @@ mod tests {
 
         let chain_spec = chain_spec(address);
 
-        let executor = TestEvmConfig::new(chain_spec.clone());
+        let executor =
+            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
         init_genesis(&provider_factory)?;
         let blockchain_db = BlockchainProvider::new(provider_factory.clone())?;
@@ -413,7 +411,8 @@ mod tests {
 
         let chain_spec = chain_spec(address);
 
-        let executor = TestEvmConfig::new(chain_spec.clone());
+        let executor =
+            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
         init_genesis(&provider_factory)?;
         let blockchain_db = BlockchainProvider::new(provider_factory.clone())?;
@@ -460,7 +459,8 @@ mod tests {
 
         let chain_spec = chain_spec(address);
 
-        let executor = TestEvmConfig::new(chain_spec.clone());
+        let executor =
+            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
         init_genesis(&provider_factory)?;
         let blockchain_db = BlockchainProvider::new(provider_factory.clone())?;

@@ -12,7 +12,7 @@ use crate::EthApi;
 impl<N, Rpc> EthBlocks for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    EthApiError: FromEvmError<N::Evm>,
+    EthApiError: FromEvmError,
     Rpc: RpcConvert<Error = EthApiError>,
 {
 }

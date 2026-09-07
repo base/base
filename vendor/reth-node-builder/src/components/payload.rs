@@ -7,6 +7,7 @@ use reth_basic_payload_builder::{
     BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig, PayloadBuilder,
 };
 use reth_chain_state::CanonStateSubscriptions;
+use reth_evm::BaseEvmConfig;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService, PayloadServiceCommand};
 use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use reth_transaction_pool::TransactionPool;
@@ -16,9 +17,7 @@ use tracing::warn;
 use crate::{BuilderContext, FullNodeTypes};
 
 /// A type that knows how to spawn the payload service.
-pub trait PayloadServiceBuilder<Node: FullNodeTypes, Pool: TransactionPool, EvmConfig>:
-    Send + Sized
-{
+pub trait PayloadServiceBuilder<Node: FullNodeTypes, Pool: TransactionPool>: Send + Sized {
     /// Spawns the [`PayloadBuilderService`] and returns the handle to it for use by the engine.
     ///
     /// We provide default implementation via [`BasicPayloadJobGenerator`] but it can be overridden
@@ -27,31 +26,29 @@ pub trait PayloadServiceBuilder<Node: FullNodeTypes, Pool: TransactionPool, EvmC
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-        evm_config: EvmConfig,
+        evm_config: BaseEvmConfig,
     ) -> impl Future<Output = eyre::Result<PayloadBuilderHandle>> + Send;
 }
 
-impl<Node, F, Fut, Pool, EvmConfig> PayloadServiceBuilder<Node, Pool, EvmConfig> for F
+impl<Node, F, Fut, Pool> PayloadServiceBuilder<Node, Pool> for F
 where
     Node: FullNodeTypes,
     Pool: TransactionPool,
-    F: Fn(&BuilderContext<Node>, Pool, EvmConfig) -> Fut + Send,
+    F: Fn(&BuilderContext<Node>, Pool, BaseEvmConfig) -> Fut + Send,
     Fut: Future<Output = eyre::Result<PayloadBuilderHandle>> + Send,
 {
     fn spawn_payload_builder_service(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-        evm_config: EvmConfig,
+        evm_config: BaseEvmConfig,
     ) -> impl Future<Output = eyre::Result<PayloadBuilderHandle>> {
         self(ctx, pool, evm_config)
     }
 }
 
 /// A type that knows how to build a payload builder to plug into [`BasicPayloadServiceBuilder`].
-pub trait PayloadBuilderBuilder<Node: FullNodeTypes, Pool: TransactionPool, EvmConfig>:
-    Send + Sized
-{
+pub trait PayloadBuilderBuilder<Node: FullNodeTypes, Pool: TransactionPool>: Send + Sized {
     /// Payload builder implementation.
     type PayloadBuilder: PayloadBuilder<
             Attributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
@@ -66,7 +63,7 @@ pub trait PayloadBuilderBuilder<Node: FullNodeTypes, Pool: TransactionPool, EvmC
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-        evm_config: EvmConfig,
+        evm_config: BaseEvmConfig,
     ) -> impl Future<Output = eyre::Result<Self::PayloadBuilder>> + Send;
 }
 
@@ -101,19 +98,17 @@ where
     }
 }
 
-impl<Node, Pool, PB, EvmConfig> PayloadServiceBuilder<Node, Pool, EvmConfig>
-    for BasicPayloadServiceBuilder<PB>
+impl<Node, Pool, PB> PayloadServiceBuilder<Node, Pool> for BasicPayloadServiceBuilder<PB>
 where
     Node: FullNodeTypes,
     Pool: TransactionPool,
-    EvmConfig: Send,
-    PB: PayloadBuilderBuilder<Node, Pool, EvmConfig>,
+    PB: PayloadBuilderBuilder<Node, Pool>,
 {
     async fn spawn_payload_builder_service(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-        evm_config: EvmConfig,
+        evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle> {
         let Self { payload_builder_builder, pre_cache_state } = self;
         let payload_builder =
@@ -154,17 +149,16 @@ where
 #[non_exhaustive]
 pub struct NoopPayloadServiceBuilder;
 
-impl<Node, Pool, Evm> PayloadServiceBuilder<Node, Pool, Evm> for NoopPayloadServiceBuilder
+impl<Node, Pool> PayloadServiceBuilder<Node, Pool> for NoopPayloadServiceBuilder
 where
     Node: FullNodeTypes,
     Pool: TransactionPool,
-    Evm: Send,
 {
     async fn spawn_payload_builder_service(
         self,
         ctx: &BuilderContext<Node>,
         _pool: Pool,
-        _evm_config: Evm,
+        _evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle> {
         let (tx, mut rx) = mpsc::unbounded_channel();
 

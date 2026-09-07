@@ -27,7 +27,7 @@ use reth_engine_primitives::{
     ForkchoiceStateTracker, NewPayloadTimings, OnForkChoiceUpdated, SlowBlockInfo,
 };
 use reth_errors::{ConsensusError, ProviderResult};
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
 use reth_payload_primitives::{BasePayloadBuilderAttributes, NewPayloadError, PayloadAttributes};
 use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock, SealedBlock, SealedHeader};
@@ -339,10 +339,7 @@ pub enum TreeAction {
 ///
 /// This type is responsible for processing engine API requests, maintaining the canonical state and
 /// emitting events.
-pub struct EngineApiTreeHandler<P, V, C>
-where
-    C: ConfigureEvm + 'static,
-{
+pub struct EngineApiTreeHandler<P, V> {
     provider: P,
     consensus: Arc<dyn FullConsensus>,
     payload_validator: V,
@@ -380,7 +377,7 @@ where
     /// The engine API variant of this handler
     engine_kind: EngineApiKind,
     /// The EVM configuration.
-    evm_config: C,
+    evm_config: BaseEvmConfig,
     /// Timing statistics for executed blocks, keyed by block hash.
     /// Stored here (not in `ExecutedBlock`) to avoid leaking observability concerns into the block
     /// type. Entries are removed when blocks are persisted or invalidated.
@@ -396,10 +393,7 @@ where
     runtime: reth_tasks::Runtime,
 }
 
-impl<P: Debug, V: Debug, C> std::fmt::Debug for EngineApiTreeHandler<P, V, C>
-where
-    C: Debug + ConfigureEvm,
-{
+impl<P: Debug, V: Debug> std::fmt::Debug for EngineApiTreeHandler<P, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EngineApiTreeHandler")
             .field("provider", &self.provider)
@@ -424,7 +418,7 @@ where
     }
 }
 
-impl<P, V, C> EngineApiTreeHandler<P, V, C>
+impl<P, V> EngineApiTreeHandler<P, V>
 where
     P: DatabaseProviderFactory
         + BlockReader<Block = BaseBlock, Header = alloy_consensus::Header>
@@ -441,7 +435,6 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    C: ConfigureEvm + 'static,
     V: EngineValidator + WaitForCaches,
 {
     /// Creates a new [`EngineApiTreeHandler`].
@@ -458,7 +451,7 @@ where
         payload_builder: PayloadBuilderHandle,
         config: TreeConfig,
         engine_kind: EngineApiKind,
-        evm_config: C,
+        evm_config: BaseEvmConfig,
         runtime: reth_tasks::Runtime,
     ) -> Self {
         let (incoming_tx, incoming) = crossbeam_channel::unbounded();
@@ -506,7 +499,7 @@ where
         overlay_manager: OverlayManager,
         config: TreeConfig,
         kind: EngineApiKind,
-        evm_config: C,
+        evm_config: BaseEvmConfig,
         runtime: reth_tasks::Runtime,
     ) -> (Sender<FromEngine<EngineApiRequest, BaseBlock>>, UnboundedReceiver<EngineApiEvent>) {
         let best_block_number = provider.best_block_number().unwrap_or(0);

@@ -10,7 +10,7 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
 use base_common_consensus::BaseBlock;
 use futures::{Stream, StreamExt};
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_exex_types::ExExHead;
 use reth_provider::{BlockNumReader, BlockReader, Chain, HeaderProvider, StateProviderFactory};
 use reth_stages_api::ExecutionStageThresholds;
@@ -23,11 +23,8 @@ use crate::{BackfillJobFactory, ExExNotification, StreamBackfillJob, WalHandle};
 /// stream is configured with a head via [`ExExNotifications::set_with_head`] or
 /// [`ExExNotifications::with_head`], it will run backfill jobs to catch up to the node head.
 #[derive(Debug)]
-pub struct ExExNotifications<P, E>
-where
-    E: ConfigureEvm,
-{
-    inner: ExExNotificationsInner<P, E>,
+pub struct ExExNotifications<P> {
+    inner: ExExNotificationsInner<P>,
 }
 
 /// A trait, that represents a stream of [`ExExNotification`]s. The stream will emit notifications
@@ -74,24 +71,18 @@ pub trait ExExNotificationsStream: Stream<Item = eyre::Result<ExExNotification>>
 }
 
 #[derive(Debug)]
-enum ExExNotificationsInner<P, E>
-where
-    E: ConfigureEvm,
-{
+enum ExExNotificationsInner<P> {
     /// A stream of [`ExExNotification`]s. The stream will emit notifications for all blocks.
-    WithoutHead(ExExNotificationsWithoutHead<P, E>),
+    WithoutHead(ExExNotificationsWithoutHead<P>),
     /// A stream of [`ExExNotification`]s. The stream will only emit notifications for blocks that
     /// are committed or reverted after the given head.
-    WithHead(Box<ExExNotificationsWithHead<P, E>>),
+    WithHead(Box<ExExNotificationsWithHead<P>>),
     /// Internal state used when transitioning between [`ExExNotificationsInner::WithoutHead`] and
     /// [`ExExNotificationsInner::WithHead`].
     Invalid,
 }
 
-impl<P, E> ExExNotificationsInner<P, E>
-where
-    E: ConfigureEvm,
-{
+impl<P> ExExNotificationsInner<P> {
     /// Returns the provider of the underlying stream.
     fn provider(&self) -> &P {
         match self {
@@ -102,15 +93,12 @@ where
     }
 }
 
-impl<P, E> ExExNotifications<P, E>
-where
-    E: ConfigureEvm,
-{
+impl<P> ExExNotifications<P> {
     /// Creates a new stream of [`ExExNotifications`] without a head.
     pub const fn new(
         node_head: BlockNumHash,
         provider: P,
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         notifications: Receiver<ExExNotification>,
         wal_handle: WalHandle,
     ) -> Self {
@@ -161,7 +149,7 @@ where
     }
 }
 
-impl<P, E> ExExNotificationsStream for ExExNotifications<P, E>
+impl<P> ExExNotificationsStream for ExExNotifications<P>
 where
     P: BlockReader<Block = BaseBlock>
         + HeaderProvider
@@ -169,7 +157,6 @@ where
         + Clone
         + Unpin
         + 'static,
-    E: ConfigureEvm + Clone + Unpin + 'static,
 {
     fn set_without_head(&mut self) {
         let current = std::mem::replace(&mut self.inner, ExExNotificationsInner::Invalid);
@@ -223,7 +210,7 @@ where
     }
 }
 
-impl<P, E> Stream for ExExNotifications<P, E>
+impl<P> Stream for ExExNotifications<P>
 where
     P: BlockReader<Block = BaseBlock>
         + HeaderProvider
@@ -231,7 +218,6 @@ where
         + Clone
         + Unpin
         + 'static,
-    E: ConfigureEvm + 'static,
 {
     type Item = eyre::Result<ExExNotification>;
 
@@ -250,21 +236,15 @@ where
 }
 
 /// A stream of [`ExExNotification`]s. The stream will emit notifications for all blocks.
-pub struct ExExNotificationsWithoutHead<P, E>
-where
-    E: ConfigureEvm,
-{
+pub struct ExExNotificationsWithoutHead<P> {
     node_head: BlockNumHash,
     provider: P,
-    evm_config: E,
+    evm_config: BaseEvmConfig,
     notifications: Receiver<ExExNotification>,
     wal_handle: WalHandle,
 }
 
-impl<P: Debug, E> Debug for ExExNotificationsWithoutHead<P, E>
-where
-    E: ConfigureEvm + Debug,
-{
+impl<P: Debug> Debug for ExExNotificationsWithoutHead<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExExNotifications")
             .field("provider", &self.provider)
@@ -274,15 +254,12 @@ where
     }
 }
 
-impl<P, E> ExExNotificationsWithoutHead<P, E>
-where
-    E: ConfigureEvm,
-{
+impl<P> ExExNotificationsWithoutHead<P> {
     /// Creates a new instance of [`ExExNotificationsWithoutHead`].
     const fn new(
         node_head: BlockNumHash,
         provider: P,
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         notifications: Receiver<ExExNotification>,
         wal_handle: WalHandle,
     ) -> Self {
@@ -290,7 +267,7 @@ where
     }
 
     /// Subscribe to notifications with the given head.
-    fn with_head(self, head: ExExHead) -> ExExNotificationsWithHead<P, E> {
+    fn with_head(self, head: ExExHead) -> ExExNotificationsWithHead<P> {
         ExExNotificationsWithHead::new(
             self.node_head,
             self.provider,
@@ -302,10 +279,7 @@ where
     }
 }
 
-impl<P: Unpin, E> Stream for ExExNotificationsWithoutHead<P, E>
-where
-    E: ConfigureEvm,
-{
+impl<P: Unpin> Stream for ExExNotificationsWithoutHead<P> {
     type Item = ExExNotification;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -322,14 +296,11 @@ where
 /// `exex_head.number` of 10 indicates that the ExEx has processed up to block 10, and is ready to
 /// process block 11.
 #[derive(Debug)]
-pub struct ExExNotificationsWithHead<P, E>
-where
-    E: ConfigureEvm,
-{
+pub struct ExExNotificationsWithHead<P> {
     /// The node's local head at launch.
     initial_local_head: BlockNumHash,
     provider: P,
-    evm_config: E,
+    evm_config: BaseEvmConfig,
     notifications: Receiver<ExExNotification>,
     wal_handle: WalHandle,
     /// The exex head at launch
@@ -342,7 +313,7 @@ where
     /// the missing blocks.
     pending_check_backfill: bool,
     /// The backfill job to run before consuming any notifications.
-    backfill_job: Option<StreamBackfillJob<E, P, Chain>>,
+    backfill_job: Option<StreamBackfillJob<P, Chain>>,
     /// Custom thresholds for the backfill job, if set.
     backfill_thresholds: Option<ExecutionStageThresholds>,
     /// Notifications that arrived during backfill and need to be delivered after it completes.
@@ -350,15 +321,12 @@ where
     pending_notifications: VecDeque<ExExNotification>,
 }
 
-impl<P, E> ExExNotificationsWithHead<P, E>
-where
-    E: ConfigureEvm,
-{
+impl<P> ExExNotificationsWithHead<P> {
     /// Creates a new [`ExExNotificationsWithHead`].
     const fn new(
         node_head: BlockNumHash,
         provider: P,
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         notifications: Receiver<ExExNotification>,
         wal_handle: WalHandle,
         exex_head: ExExHead,
@@ -392,7 +360,7 @@ where
     }
 }
 
-impl<P, E> ExExNotificationsWithHead<P, E>
+impl<P> ExExNotificationsWithHead<P>
 where
     P: BlockReader<Block = BaseBlock>
         + HeaderProvider
@@ -400,7 +368,6 @@ where
         + Clone
         + Unpin
         + 'static,
-    E: ConfigureEvm + Clone + Unpin + 'static,
 {
     /// Checks if the ExEx head is on the canonical chain.
     ///
@@ -487,7 +454,7 @@ where
     }
 }
 
-impl<P, E> Stream for ExExNotificationsWithHead<P, E>
+impl<P> Stream for ExExNotificationsWithHead<P>
 where
     P: BlockReader<Block = BaseBlock>
         + HeaderProvider
@@ -495,7 +462,6 @@ where
         + Clone
         + Unpin
         + 'static,
-    E: ConfigureEvm + Clone + Unpin + 'static,
 {
     type Item = eyre::Result<ExExNotification>;
 
@@ -594,7 +560,6 @@ mod tests {
     use eyre::OptionExt;
     use futures::StreamExt;
     use reth_db_common::init::init_genesis;
-    use reth_evm::TestEvmConfig;
     use reth_primitives_traits::Block as _;
     use reth_provider::{
         BlockWriter, Chain, DBProvider, DatabaseProviderFactory, providers::BlockchainProvider,
@@ -656,7 +621,7 @@ mod tests {
         let mut notifications = ExExNotificationsWithoutHead::new(
             node_head,
             provider,
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             notifications_rx,
             wal.handle(),
         )
@@ -702,7 +667,7 @@ mod tests {
             ExExHead { block: BlockNumHash { number: genesis_block.number, hash: genesis_hash } };
         let (notifications_tx, notifications_rx) = mpsc::channel(1);
 
-        let evm_config = TestEvmConfig::default();
+        let evm_config = BaseEvmConfig::default();
         let mut notifications = ExExNotifications::new(
             BlockNumHash { number: genesis_block.number, hash: genesis_hash },
             provider.clone(),
@@ -820,7 +785,7 @@ mod tests {
         let mut notifications = ExExNotificationsWithoutHead::new(
             node_head,
             provider,
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             notifications_rx,
             wal.handle(),
         )
@@ -859,7 +824,7 @@ mod tests {
         provider_rw.commit()?;
         let node_head_notification = ExExNotification::ChainCommitted {
             new: Arc::new(
-                BackfillJobFactory::new(TestEvmConfig::default(), provider.clone())
+                BackfillJobFactory::new(BaseEvmConfig::default(), provider.clone())
                     .backfill(node_head.number..=node_head.number)
                     .next()
                     .ok_or_else(|| eyre::eyre!("failed to backfill"))??,
@@ -903,7 +868,7 @@ mod tests {
         let mut notifications = ExExNotificationsWithoutHead::new(
             node_head,
             provider,
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             notifications_rx,
             wal.handle(),
         )
@@ -981,7 +946,7 @@ mod tests {
         let mut notifications = ExExNotificationsWithoutHead::new(
             node_head,
             provider,
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             notifications_rx,
             wal.handle(),
         )
@@ -1090,7 +1055,7 @@ mod tests {
         let mut notifications = ExExNotificationsWithoutHead::new(
             node_head,
             provider,
-            TestEvmConfig::default(),
+            BaseEvmConfig::default(),
             notifications_rx,
             wal.handle(),
         )

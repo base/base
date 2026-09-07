@@ -23,7 +23,7 @@
 //! # use reth_stages::Pipeline;
 //! # use reth_stages::sets::DefaultStages;
 //! # use tokio::sync::watch;
-//! # use reth_evm::TestEvmConfig;
+//! # use reth_evm::BaseEvmConfig;
 //! # use reth_provider::ProviderFactory;
 //! # use reth_provider::StaticFileProviderFactory;
 //! # use reth_provider::test_utils::{create_test_provider_factory, MockNodeTypesWithDB};
@@ -46,7 +46,7 @@
 //! #    provider_factory.clone()
 //! # );
 //! # let (tip_tx, tip_rx) = watch::channel(B256::default());
-//! # let executor_provider = TestEvmConfig::default();
+//! # let executor_provider = BaseEvmConfig::default();
 //! # let static_file_producer = StaticFileProducer::new(
 //! #    provider_factory.clone(),
 //! #    PruneModes::default()

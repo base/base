@@ -6,7 +6,7 @@ use alloy_primitives::{Address, TxKind, U256, b256};
 use base_common_consensus::{BaseBlock, BaseBlockBody, BaseReceipt, BaseTypedTransaction};
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN_TRANSACTION_GAS};
 use reth_evm::{
-    ConfigureEvm, TestEvmConfig,
+    BaseEvmConfig,
     execute::{BlockExecutionOutput, Executor},
 };
 use reth_node_api::NodeTypesWithDB;
@@ -58,9 +58,10 @@ where
     let provider = provider_factory.provider()?;
 
     // Execute the block to produce a block execution output
-    let mut block_execution_output = TestEvmConfig::new(chain_spec)
-        .batch_executor(StateProviderDatabase::new(LatestStateProvider::new(provider)))
-        .execute(block)?;
+    let mut block_execution_output =
+        BaseEvmConfig::new(std::sync::Arc::new((chain_spec).as_ref().clone().into()))
+            .batch_executor(StateProviderDatabase::new(LatestStateProvider::new(provider)))
+            .execute(block)?;
     block_execution_output.state.reverts.sort();
 
     // Convert the block execution output to an execution outcome for committing to the database
@@ -174,7 +175,7 @@ where
 
     let provider = provider_factory.provider()?;
 
-    let evm_config = TestEvmConfig::new(chain_spec);
+    let evm_config = BaseEvmConfig::new(std::sync::Arc::new((chain_spec).as_ref().clone().into()));
     let executor =
         evm_config.batch_executor(StateProviderDatabase::new(LatestStateProvider::new(provider)));
 

@@ -4,6 +4,7 @@ use std::{future::Future, marker::PhantomData};
 
 use base_common_consensus::BaseTxEnvelope;
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
+use reth_evm::BaseEvmConfig;
 use reth_network_api::{FullNetwork, noop::NoopNetwork};
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_transaction_pool::{
@@ -12,7 +13,7 @@ use reth_transaction_pool::{
 };
 
 use crate::{
-    BuilderContext, ConfigureEvm, FullNodeTypes,
+    BuilderContext, FullNodeTypes,
     components::{
         Components, ConsensusBuilder, ExecutorBuilder, NetworkBuilder, NodeComponents,
         PayloadServiceBuilder, PoolBuilder,
@@ -247,7 +248,7 @@ impl<Node, PoolB, PayloadB, NetworkB, ExecB, ConsB>
 where
     Node: FullNodeTypes,
     ExecB: ExecutorBuilder<Node>,
-    PoolB: PoolBuilder<Node, ExecB::EVM>,
+    PoolB: PoolBuilder<Node>,
 {
     /// Configures the network builder.
     ///
@@ -287,7 +288,7 @@ where
         payload_builder: PB,
     ) -> ComponentsBuilder<Node, PoolB, PB, NetworkB, ExecB, ConsB>
     where
-        PB: PayloadServiceBuilder<Node, PoolB::Pool, ExecB::EVM>,
+        PB: PayloadServiceBuilder<Node, PoolB::Pool>,
     {
         let Self {
             pool_builder,
@@ -354,13 +355,13 @@ impl<Node, PoolB, PayloadB, NetworkB, ExecB, ConsB> NodeComponentsBuilder<Node>
     for ComponentsBuilder<Node, PoolB, PayloadB, NetworkB, ExecB, ConsB>
 where
     Node: FullNodeTypes,
-    PoolB: PoolBuilder<Node, ExecB::EVM, Pool: TransactionPool>,
+    PoolB: PoolBuilder<Node, Pool: TransactionPool>,
     NetworkB: NetworkBuilder<Node, PoolB::Pool, Network: FullNetwork>,
-    PayloadB: PayloadServiceBuilder<Node, PoolB::Pool, ExecB::EVM>,
+    PayloadB: PayloadServiceBuilder<Node, PoolB::Pool>,
     ExecB: ExecutorBuilder<Node>,
     ConsB: ConsensusBuilder<Node>,
 {
-    type Components = Components<NetworkB::Network, PoolB::Pool, ExecB::EVM, ConsB::Consensus>;
+    type Components = Components<NetworkB::Network, PoolB::Pool, ConsB::Consensus>;
 
     async fn build_components(
         self,
@@ -426,18 +427,17 @@ pub trait NodeComponentsBuilder<Node: FullNodeTypes>: Send {
     ) -> impl Future<Output = eyre::Result<Self::Components>> + Send;
 }
 
-impl<Node, Net, F, Fut, Pool, EVM, Cons> NodeComponentsBuilder<Node> for F
+impl<Node, Net, F, Fut, Pool, Cons> NodeComponentsBuilder<Node> for F
 where
     Net: FullNetwork,
     Node: FullNodeTypes,
     F: FnOnce(&BuilderContext<Node>) -> Fut + Send,
-    Fut: Future<Output = eyre::Result<Components<Net, Pool, EVM, Cons>>> + Send,
+    Fut: Future<Output = eyre::Result<Components<Net, Pool, Cons>>> + Send,
     Pool:
         TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
-    EVM: ConfigureEvm + 'static,
     Cons: FullConsensus + Clone + Unpin + 'static,
 {
-    type Components = Components<Net, Pool, EVM, Cons>;
+    type Components = Components<Net, Pool, Cons>;
 
     fn build_components(
         self,
@@ -451,18 +451,17 @@ where
 #[derive(Debug, Clone)]
 pub struct NoopTransactionPoolBuilder<Tx = EthPooledTransaction>(PhantomData<Tx>);
 
-impl<N, Tx, Evm> PoolBuilder<N, Evm> for NoopTransactionPoolBuilder<Tx>
+impl<N, Tx> PoolBuilder<N> for NoopTransactionPoolBuilder<Tx>
 where
     N: FullNodeTypes,
     Tx: EthPoolTransaction<Consensus = BaseTxEnvelope> + Unpin,
-    Evm: Send,
 {
     type Pool = NoopTransactionPool<Tx>;
 
     async fn build_pool(
         self,
         _ctx: &BuilderContext<N>,
-        _evm_config: Evm,
+        _evm_config: BaseEvmConfig,
     ) -> eyre::Result<Self::Pool> {
         Ok(NoopTransactionPool::<Tx>::new())
     }
@@ -513,17 +512,16 @@ where
 #[derive(Debug, Clone, Default)]
 pub struct NoopPayloadBuilder;
 
-impl<N, Pool, EVM> PayloadServiceBuilder<N, Pool, EVM> for NoopPayloadBuilder
+impl<N, Pool> PayloadServiceBuilder<N, Pool> for NoopPayloadBuilder
 where
     N: FullNodeTypes,
     Pool: TransactionPool,
-    EVM: ConfigureEvm + 'static,
 {
     async fn spawn_payload_builder_service(
         self,
         _ctx: &BuilderContext<N>,
         _pool: Pool,
-        _evm_config: EVM,
+        _evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle> {
         Ok(PayloadBuilderHandle::noop())
     }

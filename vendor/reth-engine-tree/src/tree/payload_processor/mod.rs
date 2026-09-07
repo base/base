@@ -16,7 +16,7 @@ use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender
 use prewarm::PrewarmMetrics;
 use rayon::prelude::*;
 use reth_evm::{
-    ConfigureEvm, ConvertTx, ExecutableTxIterator, ExecutableTxTuple, SpecFor, TxEnvFor,
+    BaseEvmConfig, ConvertTx, ExecutableTxIterator, ExecutableTxTuple, SpecFor, TxEnvFor,
     block::ExecutableTxParts,
     execute::{ExecutableTxFor, WithTxEnv},
 };
@@ -54,17 +54,17 @@ pub mod receipt_root_task;
 pub const SMALL_BLOCK_TX_THRESHOLD: usize = 5;
 
 /// Type alias for [`PayloadHandle`] returned by payload processor spawn methods.
-type IteratorTx<Evm, I> = RecoveredTx<TxEnvFor<Evm>, <I as ExecutableTxIterator<Evm>>::Recovered>;
+type IteratorTx<I> = RecoveredTx<TxEnvFor, <I as ExecutableTxIterator>::Recovered>;
 
-type IteratorPayloadHandle<Evm, I> =
-    PayloadHandle<IteratorTx<Evm, I>, <I as ExecutableTxTuple>::Error, BaseReceipt>;
+type IteratorPayloadHandle<I> =
+    PayloadHandle<IteratorTx<I>, <I as ExecutableTxTuple>::Error, BaseReceipt>;
 
-type IteratorPrewarmTxReceiver<Evm, I> =
-    PrewarmTxReceiver<TxEnvFor<Evm>, <I as ExecutableTxIterator<Evm>>::Recovered>;
+type IteratorPrewarmTxReceiver<I> =
+    PrewarmTxReceiver<TxEnvFor, <I as ExecutableTxIterator>::Recovered>;
 
-type IteratorExecuteTxReceiver<Evm, I> = ExecuteTxReceiver<
-    TxEnvFor<Evm>,
-    <I as ExecutableTxIterator<Evm>>::Recovered,
+type IteratorExecuteTxReceiver<I> = ExecuteTxReceiver<
+    TxEnvFor,
+    <I as ExecutableTxIterator>::Recovered,
     <I as ExecutableTxTuple>::Error,
 >;
 
@@ -79,10 +79,7 @@ type ExecuteTxSender<TxEnv, Recovered, Err> = IndexedTxSender<RecoveredTx<TxEnv,
 
 /// Entrypoint for executing the payload.
 #[derive(Debug)]
-pub struct PayloadProcessor<Evm>
-where
-    Evm: ConfigureEvm,
-{
+pub struct PayloadProcessor {
     /// The executor used by to spawn tasks.
     executor: Runtime,
     /// The most recent cache used for execution.
@@ -98,11 +95,11 @@ where
     /// Whether state cache should be disable
     disable_state_cache: bool,
     /// Determines how to configure the evm for execution.
-    evm_config: Evm,
+    evm_config: BaseEvmConfig,
     /// Whether precompile cache should be disabled.
     precompile_cache_disabled: bool,
     /// Precompile cache map.
-    precompile_cache_map: PrecompileCacheMap<SpecFor<Evm>>,
+    precompile_cache_map: PrecompileCacheMap<SpecFor>,
     /// Whether to disable BAL-driven parallel state root computation.
     /// Only valid when BAL parallel execution is also disabled.
     disable_bal_parallel_state_root: bool,
@@ -113,16 +110,13 @@ where
     bal_prewarm_pool: OnceLock<Arc<bal_prewarm_pool::BalPrewarmPool>>,
 }
 
-impl<Evm> PayloadProcessor<Evm>
-where
-    Evm: ConfigureEvm,
-{
+impl PayloadProcessor {
     /// Creates a new payload processor.
     pub fn new(
         executor: Runtime,
-        evm_config: Evm,
+        evm_config: BaseEvmConfig,
         config: &TreeConfig,
-        precompile_cache_map: PrecompileCacheMap<SpecFor<Evm>>,
+        precompile_cache_map: PrecompileCacheMap<SpecFor>,
     ) -> Self {
         Self {
             executor,
@@ -159,22 +153,19 @@ where
     }
 }
 
-impl<Evm> PayloadProcessor<Evm>
-where
-    Evm: ConfigureEvm + 'static,
-{
+impl PayloadProcessor {
     /// Spawns transaction conversion and cache prewarming, optionally wiring prewarm output into
     /// an externally-owned state-root task.
     #[instrument(level = "debug", target = "engine::tree::payload_processor", skip_all)]
-    pub fn spawn_with_state_root_streams<P, I: ExecutableTxIterator<Evm>>(
+    pub fn spawn_with_state_root_streams<P, I: ExecutableTxIterator>(
         &self,
-        env: ExecutionEnv<Evm>,
+        env: ExecutionEnv,
         transactions: I,
         provider_builder: StateProviderBuilder<P>,
         hint_stream: Option<StateRootHintStream>,
         hashed_update_stream: Option<StateRootUpdateStream>,
         parallel_bal_execution: bool,
-    ) -> IteratorPayloadHandle<Evm, I>
+    ) -> IteratorPayloadHandle<I>
     where
         P: DatabaseProviderFactory + Clone + 'static,
         P::Provider: BlockNumReader
@@ -226,12 +217,12 @@ where
     /// When `parallel_bal_execution` is disabled, preserves the original transaction order.
     /// Otherwise, streams results as they become available.
     #[instrument(level = "debug", target = "engine::tree::payload_processor", skip_all)]
-    fn spawn_tx_iterator<I: ExecutableTxIterator<Evm>>(
+    fn spawn_tx_iterator<I: ExecutableTxIterator>(
         &self,
         transactions: I,
         transaction_count: usize,
         parallel_bal_execution: bool,
-    ) -> (IteratorPrewarmTxReceiver<Evm, I>, IteratorExecuteTxReceiver<Evm, I>) {
+    ) -> (IteratorPrewarmTxReceiver<I>, IteratorExecuteTxReceiver<I>) {
         let (prewarm_tx, prewarm_rx) = mpsc::sync_channel(transaction_count);
         let (execute_tx, execute_rx) = crossbeam_channel::bounded(transaction_count);
 
@@ -338,8 +329,8 @@ where
     #[instrument(level = "debug", target = "engine::tree::payload_processor", skip_all)]
     fn spawn_caching_with<P>(
         &self,
-        env: ExecutionEnv<Evm>,
-        transactions: mpsc::Receiver<(usize, impl ExecutableTxFor<Evm> + Clone + Send + 'static)>,
+        env: ExecutionEnv,
+        transactions: mpsc::Receiver<(usize, impl ExecutableTxFor + Clone + Send + 'static)>,
         provider_builder: StateProviderBuilder<P>,
         hint_stream: Option<StateRootHintStream>,
         hashed_update_stream: Option<StateRootUpdateStream>,
@@ -635,7 +626,7 @@ mod tests {
     use alloy_eips::eip1898::{BlockNumHash, BlockWithParent};
     use alloy_primitives::{Address, B256, U256};
     use reth_chainspec::ChainSpec;
-    use reth_evm::TestEvmConfig;
+    use reth_evm::BaseEvmConfig;
     use reth_execution_cache::CachedStatus;
     use reth_revm::db::BundleState;
     use revm::state::AccountInfo;
@@ -730,7 +721,9 @@ mod tests {
     fn on_inserted_executed_block_populates_cache() {
         let payload_processor = PayloadProcessor::new(
             reth_tasks::Runtime::test(),
-            TestEvmConfig::new(Arc::new(ChainSpec::default())),
+            BaseEvmConfig::new(std::sync::Arc::new(
+                (Arc::new(ChainSpec::default())).as_ref().clone().into(),
+            )),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),
         );
@@ -759,7 +752,9 @@ mod tests {
     fn on_inserted_executed_block_skips_on_parent_mismatch() {
         let payload_processor = PayloadProcessor::new(
             reth_tasks::Runtime::test(),
-            TestEvmConfig::new(Arc::new(ChainSpec::default())),
+            BaseEvmConfig::new(std::sync::Arc::new(
+                (Arc::new(ChainSpec::default())).as_ref().clone().into(),
+            )),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),
         );
@@ -794,7 +789,9 @@ mod tests {
     fn on_inserted_executed_block_does_not_mutate_checked_out_parent_cache() {
         let payload_processor = PayloadProcessor::new(
             reth_tasks::Runtime::test(),
-            TestEvmConfig::new(Arc::new(ChainSpec::default())),
+            BaseEvmConfig::new(std::sync::Arc::new(
+                (Arc::new(ChainSpec::default())).as_ref().clone().into(),
+            )),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),
         );

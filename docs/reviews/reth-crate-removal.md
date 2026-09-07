@@ -30,7 +30,7 @@ The three implementation crates are deleted. Base integration tests sit above th
 
 Deleted the crate. `EthTransactionPool` and `EthRpcConverter` now require their EVM parameter explicitly, and callers construct the generic `EthApiBuilder` directly. Base retains the shared transaction validator and `EthApiInner` RPC infrastructure.
 
-Shared execution, storage, networking, pool, RPC, and ExEx tests use `TestEvmConfig` behind `reth-evm/test-utils`. The fixture adapts Alloy's executor to test blocks and receipts. It has no production dependency edge or configurable node implementation; Base uses its own execution provider.
+Shared execution, storage, networking, pool, RPC, and ExEx tests use the same concrete `BaseEvmConfig` as the node. Test chain schedules are supplied explicitly when a fixture needs a particular fork.
 
 ### `reth-ethereum-engine-primitives` (completed)
 

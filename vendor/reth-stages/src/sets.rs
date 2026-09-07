@@ -14,8 +14,7 @@
 //! # use reth_stages::sets::{OfflineStages};
 //! # use reth_chainspec::MAINNET;
 //! # use reth_prune_types::PruneModes;
-//! # use reth_evm::TestEvmConfig;
-//! # use reth_evm::ConfigureEvm;
+//! # use reth_evm::BaseEvmConfig;
 //! # use reth_provider::StaticFileProviderFactory;
 //! # use reth_provider::test_utils::{create_test_provider_factory, MockNodeTypesWithDB};
 //! # use reth_static_file::StaticFileProducer;
@@ -23,7 +22,7 @@
 //! # use std::sync::Arc;
 //! # use reth_consensus::FullConsensus;
 //!
-//! # fn create(exec: impl ConfigureEvm + 'static, consensus: impl FullConsensus + 'static) {
+//! # fn create(exec: BaseEvmConfig, consensus: impl FullConsensus + 'static) {
 //!
 //! let provider_factory = create_test_provider_factory();
 //! let static_file_producer =
@@ -40,7 +39,7 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use reth_config::config::StageConfig;
 use reth_consensus::FullConsensus;
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_network_p2p::{bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader};
 use reth_primitives_traits::Block;
 use reth_provider::HeaderSyncGapProvider;
@@ -81,16 +80,15 @@ use crate::{
 /// - [`PruneStage`] (execute)
 /// - [`FinishStage`]
 #[derive(Debug)]
-pub struct DefaultStages<Provider, H, B, E>
+pub struct DefaultStages<Provider, H, B>
 where
     H: HeaderDownloader,
     B: BodyDownloader,
-    E: ConfigureEvm,
 {
     /// Configuration for the online stages
     online: OnlineStages<Provider, H, B>,
     /// Executor factory needs for execution stage
-    evm_config: E,
+    evm_config: BaseEvmConfig,
     /// Consensus instance
     consensus: Arc<dyn FullConsensus>,
     /// Configuration for each stage in the pipeline
@@ -99,11 +97,10 @@ where
     prune_modes: PruneModes,
 }
 
-impl<Provider, H, B, E> DefaultStages<Provider, H, B, E>
+impl<Provider, H, B> DefaultStages<Provider, H, B>
 where
     H: HeaderDownloader,
     B: BodyDownloader,
-    E: ConfigureEvm,
 {
     /// Create a new set of default stages with default values.
     #[expect(clippy::too_many_arguments)]
@@ -113,7 +110,7 @@ where
         consensus: Arc<dyn FullConsensus>,
         header_downloader: H,
         body_downloader: B,
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         stages_config: StageConfig,
         prune_modes: PruneModes,
     ) -> Self {
@@ -133,22 +130,21 @@ where
     }
 }
 
-impl<P, H, B, E> DefaultStages<P, H, B, E>
+impl<P, H, B> DefaultStages<P, H, B>
 where
-    E: ConfigureEvm,
     H: HeaderDownloader,
     B: BodyDownloader,
 {
     /// Appends the default offline stages and default finish stage to the given builder.
     pub fn add_offline_stages<Provider>(
         default_offline: StageSetBuilder<Provider>,
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         consensus: Arc<dyn FullConsensus>,
         stages_config: StageConfig,
         prune_modes: PruneModes,
     ) -> StageSetBuilder<Provider>
     where
-        OfflineStages<E>: StageSet<Provider>,
+        OfflineStages: StageSet<Provider>,
     {
         StageSetBuilder::default()
             .add_set(default_offline)
@@ -157,14 +153,13 @@ where
     }
 }
 
-impl<P, H, B, E, Provider> StageSet<Provider> for DefaultStages<P, H, B, E>
+impl<P, H, B, Provider> StageSet<Provider> for DefaultStages<P, H, B>
 where
     P: HeaderSyncGapProvider + 'static,
     H: HeaderDownloader + 'static,
     B: BodyDownloader + 'static,
-    E: ConfigureEvm,
     OnlineStages<P, H, B>: StageSet<Provider>,
-    OfflineStages<E>: StageSet<Provider>,
+    OfflineStages: StageSet<Provider>,
 {
     fn builder(self) -> StageSetBuilder<Provider> {
         Self::add_offline_stages(
@@ -284,9 +279,9 @@ where
 /// - [`PruneStage`]
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct OfflineStages<E: ConfigureEvm> {
+pub struct OfflineStages {
     /// Executor factory needs for execution stage
-    evm_config: E,
+    evm_config: BaseEvmConfig,
     /// Consensus instance for validating blocks.
     consensus: Arc<dyn FullConsensus>,
     /// Configuration for each stage in the pipeline
@@ -295,10 +290,10 @@ pub struct OfflineStages<E: ConfigureEvm> {
     prune_modes: PruneModes,
 }
 
-impl<E: ConfigureEvm> OfflineStages<E> {
+impl OfflineStages {
     /// Create a new set of offline stages with default values.
     pub const fn new(
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         consensus: Arc<dyn FullConsensus>,
         stages_config: StageConfig,
         prune_modes: PruneModes,
@@ -307,10 +302,9 @@ impl<E: ConfigureEvm> OfflineStages<E> {
     }
 }
 
-impl<E, Provider> StageSet<Provider> for OfflineStages<E>
+impl<Provider> StageSet<Provider> for OfflineStages
 where
-    E: ConfigureEvm,
-    ExecutionStages<E>: StageSet<Provider>,
+    ExecutionStages: StageSet<Provider>,
     PruneSenderRecoveryStage: Stage<Provider>,
     HashingStages: StageSet<Provider>,
     HistoryIndexingStages: StageSet<Provider>,
@@ -345,9 +339,9 @@ where
 /// A set containing all stages that are required to execute pre-existing block data.
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct ExecutionStages<E: ConfigureEvm> {
+pub struct ExecutionStages {
     /// Executor factory that will create executors.
-    evm_config: E,
+    evm_config: BaseEvmConfig,
     /// Consensus instance for validating blocks.
     consensus: Arc<dyn FullConsensus>,
     /// Configuration for each stage in the pipeline
@@ -356,10 +350,10 @@ pub struct ExecutionStages<E: ConfigureEvm> {
     sender_recovery_prune_mode: Option<PruneMode>,
 }
 
-impl<E: ConfigureEvm> ExecutionStages<E> {
+impl ExecutionStages {
     /// Create a new set of execution stages with default values.
     pub const fn new(
-        executor_provider: E,
+        executor_provider: BaseEvmConfig,
         consensus: Arc<dyn FullConsensus>,
         stages_config: StageConfig,
         sender_recovery_prune_mode: Option<PruneMode>,
@@ -368,11 +362,10 @@ impl<E: ConfigureEvm> ExecutionStages<E> {
     }
 }
 
-impl<E, Provider> StageSet<Provider> for ExecutionStages<E>
+impl<Provider> StageSet<Provider> for ExecutionStages
 where
-    E: ConfigureEvm + 'static,
     SenderRecoveryStage: Stage<Provider>,
-    ExecutionStage<E>: Stage<Provider>,
+    ExecutionStage: Stage<Provider>,
 {
     fn builder(self) -> StageSetBuilder<Provider> {
         StageSetBuilder::default()

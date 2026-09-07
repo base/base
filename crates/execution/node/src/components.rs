@@ -16,11 +16,11 @@ use crate::{BaseNetworkBuilder, BasePayloadBuilder, BasePayloadServiceBuilder, B
 
 /// The concrete transaction pool used by Base nodes.
 pub type BaseNodePool<Node> =
-    BaseTransactionPool<<Node as FullNodeTypes>::Provider, DiskFileBlobStore, BaseEvmConfig>;
+    BaseTransactionPool<<Node as FullNodeTypes>::Provider, DiskFileBlobStore>;
 
 /// Base node components, with only the provider supplied by the launch adapter.
 pub type BaseNodeComponents<Node> =
-    Components<NetworkHandle, BaseNodePool<Node>, BaseEvmConfig, Arc<BaseBeaconConsensus>>;
+    Components<NetworkHandle, BaseNodePool<Node>, Arc<BaseBeaconConsensus>>;
 
 /// Constructs Base components while allowing the payload service to vary.
 #[derive(Debug)]
@@ -67,7 +67,7 @@ where
     type Components = BaseNodeComponents<Node>;
 
     async fn build_components(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Components> {
-        let evm_config = BaseEvmConfig::base(ctx.chain_spec());
+        let evm_config = BaseEvmConfig::new(ctx.chain_spec());
         let pool = self.pool_builder.build_pool(ctx, evm_config.clone()).await?;
         let network = self.network_builder.build_network(ctx, pool.clone()).await?;
         let payload_builder_handle = self

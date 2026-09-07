@@ -1,55 +1,48 @@
-//! Helper aliases when working with [`ConfigureEvm`] and the traits in this crate.
+//! Helper aliases when working with [`crate::BaseEvmConfig`] and the traits in this crate.
 
-use alloy_evm::{
-    Database, EvmEnv, EvmFactory,
-    block::{BlockExecutorFactory, BlockExecutorFor},
-};
+use alloy_evm::{Database, EvmEnv, block::BlockExecutorFor};
 use revm::{Inspector, database::State, inspector::NoOpInspector};
 
-use crate::ConfigureEvm;
+/// Helper to access [`alloy_evm::EvmFactory`] for a given [`crate::BaseEvmConfig`].
+pub type EvmFactoryFor = base_common_evm::BaseEvmFactory;
 
-/// Helper to access [`EvmFactory`] for a given [`ConfigureEvm`].
-pub type EvmFactoryFor<Evm> =
-    <<Evm as ConfigureEvm>::BlockExecutorFactory as BlockExecutorFactory>::EvmFactory;
+/// Helper to access [`alloy_evm::EvmFactory::Spec`] for a given [`crate::BaseEvmConfig`].
+pub type SpecFor = base_common_evm::BaseSpecId;
 
-/// Helper to access [`EvmFactory::Spec`] for a given [`ConfigureEvm`].
-pub type SpecFor<Evm> = <EvmFactoryFor<Evm> as EvmFactory>::Spec;
+/// Helper to access [`alloy_evm::EvmFactory::BlockEnv`] for a given [`crate::BaseEvmConfig`].
+pub type BlockEnvFor = revm::context::BlockEnv;
 
-/// Helper to access [`EvmFactory::BlockEnv`] for a given [`ConfigureEvm`].
-pub type BlockEnvFor<Evm> = <EvmFactoryFor<Evm> as EvmFactory>::BlockEnv;
+/// Helper to access [`alloy_evm::EvmFactory::Evm`] for a given [`crate::BaseEvmConfig`].
+pub type EvmFor<DB, I = NoOpInspector> = base_common_evm::BaseEvm<DB, I>;
 
-/// Helper to access [`EvmFactory::Evm`] for a given [`ConfigureEvm`].
-pub type EvmFor<Evm, DB, I = NoOpInspector> = <EvmFactoryFor<Evm> as EvmFactory>::Evm<DB, I>;
+/// Helper to access [`alloy_evm::EvmFactory::Error`] for a given [`crate::BaseEvmConfig`].
+pub type EvmErrorFor<DB> =
+    revm::context_interface::result::EVMError<DB, base_common_evm::BaseTransactionError>;
 
-/// Helper to access [`EvmFactory::Error`] for a given [`ConfigureEvm`].
-pub type EvmErrorFor<Evm, DB> = <EvmFactoryFor<Evm> as EvmFactory>::Error<DB>;
+/// Helper to access [`alloy_evm::EvmFactory::Context`] for a given [`crate::BaseEvmConfig`].
+pub type EvmContextFor<DB> = base_common_evm::BaseContext<DB>;
 
-/// Helper to access [`EvmFactory::Context`] for a given [`ConfigureEvm`].
-pub type EvmContextFor<Evm, DB> = <EvmFactoryFor<Evm> as EvmFactory>::Context<DB>;
+/// Helper to access [`alloy_evm::EvmFactory::HaltReason`] for a given [`crate::BaseEvmConfig`].
+pub type HaltReasonFor = base_common_evm::BaseHaltReason;
 
-/// Helper to access [`EvmFactory::HaltReason`] for a given [`ConfigureEvm`].
-pub type HaltReasonFor<Evm> = <EvmFactoryFor<Evm> as EvmFactory>::HaltReason;
+/// Helper to access [`alloy_evm::EvmFactory::Tx`] for a given [`crate::BaseEvmConfig`].
+pub type TxEnvFor = base_common_evm::BaseTransaction<revm::context::TxEnv>;
 
-/// Helper to access [`EvmFactory::Tx`] for a given [`ConfigureEvm`].
-pub type TxEnvFor<Evm> = <EvmFactoryFor<Evm> as EvmFactory>::Tx;
+/// Helper to access [`alloy_evm::block::BlockExecutorFactory::ExecutionCtx`] for a given [`crate::BaseEvmConfig`].
+pub type ExecutionCtxFor = base_common_evm::BaseBlockExecutionCtx;
 
-/// Helper to access [`BlockExecutorFactory::ExecutionCtx`] for a given [`ConfigureEvm`].
-pub type ExecutionCtxFor<'a, Evm> =
-    <<Evm as ConfigureEvm>::BlockExecutorFactory as BlockExecutorFactory>::ExecutionCtx<'a>;
+/// Helper to access [`alloy_evm::block::BlockExecutor`] for a given [`crate::BaseEvmConfig`].
+pub type BlockExecutorForEvm<'a, DB, I = NoOpInspector> =
+    BlockExecutorFor<'a, crate::BaseExecutorFactory, &'a mut State<DB>, I>;
 
-/// Helper to access [`alloy_evm::block::BlockExecutor`] for a given [`ConfigureEvm`].
-pub type BlockExecutorForEvm<'a, Evm, DB, I = NoOpInspector> =
-    BlockExecutorFor<'a, <Evm as ConfigureEvm>::BlockExecutorFactory, &'a mut State<DB>, I>;
+/// Type alias for [`EvmEnv`] for a given [`crate::BaseEvmConfig`].
+pub type EvmEnvFor = EvmEnv<SpecFor, BlockEnvFor>;
 
-/// Type alias for [`EvmEnv`] for a given [`ConfigureEvm`].
-pub type EvmEnvFor<Evm> = EvmEnv<SpecFor<Evm>, BlockEnvFor<Evm>>;
-
-/// Helper trait to bound [`Inspector`] for a [`ConfigureEvm`].
-pub trait InspectorFor<Evm: ConfigureEvm, DB: Database>: Inspector<EvmContextFor<Evm, DB>> {}
-impl<T, Evm, DB> InspectorFor<Evm, DB> for T
+/// Helper trait to bound [`Inspector`] for a [`crate::BaseEvmConfig`].
+pub trait InspectorFor<DB: Database>: Inspector<EvmContextFor<DB>> {}
+impl<T, DB> InspectorFor<DB> for T
 where
-    Evm: ConfigureEvm,
     DB: Database,
-    T: Inspector<EvmContextFor<Evm, DB>>,
+    T: Inspector<EvmContextFor<DB>>,
 {
 }

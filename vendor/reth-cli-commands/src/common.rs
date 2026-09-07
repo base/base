@@ -11,7 +11,7 @@ use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_db::{DatabaseEnv, init_db, open_db_read_only};
 use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
-use reth_evm::{ConfigureEvm, noop::NoopEvmConfig};
+use reth_evm::BaseEvmConfig;
 use reth_node_api::FullNodeTypesAdapter;
 use reth_node_builder::{Node, NodeComponents, NodeComponentsBuilder, NodeTypesWithDBAdapter};
 use reth_node_core::{
@@ -235,7 +235,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
                     Arc::new(NoopConsensus::default()),
                     NoopHeaderDownloader::default(),
                     NoopBodiesDownloader::default(),
-                    NoopEvmConfig::<N::Evm>::default(),
+                    BaseEvmConfig::default(),
                     config.stages.clone(),
                     config.prune.segments.clone(),
                 ))
@@ -299,8 +299,6 @@ type FullTypesAdapter =
 
 /// Execution and consensus components used by offline commands.
 pub trait CliNodeTypes {
-    /// EVM used by offline execution commands.
-    type Evm: ConfigureEvm + 'static;
     /// Consensus used by offline validation commands.
     type Consensus: FullConsensus + Clone + Unpin + 'static;
 }
@@ -309,7 +307,6 @@ impl<N> CliNodeTypes for N
 where
     N: Node<FullTypesAdapter>,
 {
-    type Evm = <<N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter>>::Components as NodeComponents<FullTypesAdapter>>::Evm;
     type Consensus = <<N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter>>::Components as NodeComponents<FullTypesAdapter>>::Consensus;
 }
 

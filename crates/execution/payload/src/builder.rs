@@ -29,7 +29,7 @@ use reth_basic_payload_builder::{
     PayloadConfig, is_better_payload,
 };
 use reth_evm::{
-    BlockExecutorForEvm, ConfigureEvm, Database,
+    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockExecutorForEvm, Database,
     execute::{
         BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor, BlockValidationError,
     },
@@ -94,9 +94,9 @@ macro_rules! emit_native_validity_event {
 
 /// Base payload builder
 #[derive(Debug)]
-pub struct BasePayloadBuilder<Pool, Client, Evm, Txs = ()> {
+pub struct BasePayloadBuilder<Pool, Client, Txs = ()> {
     /// The type responsible for creating the evm.
-    pub evm_config: Evm,
+    pub evm_config: BaseEvmConfig,
     /// Transaction pool.
     pub pool: Pool,
     /// Node client.
@@ -108,11 +108,10 @@ pub struct BasePayloadBuilder<Pool, Client, Evm, Txs = ()> {
     pub best_transactions: Txs,
 }
 
-impl<Pool, Client, Evm, Txs> Clone for BasePayloadBuilder<Pool, Client, Evm, Txs>
+impl<Pool, Client, Txs> Clone for BasePayloadBuilder<Pool, Client, Txs>
 where
     Pool: Clone,
     Client: Clone,
-    Evm: ConfigureEvm,
     Txs: Clone,
 {
     fn clone(&self) -> Self {
@@ -126,11 +125,11 @@ where
     }
 }
 
-impl<Pool, Client, Evm> BasePayloadBuilder<Pool, Client, Evm, ()> {
+impl<Pool, Client> BasePayloadBuilder<Pool, Client, ()> {
     /// `BasePayloadBuilder` constructor.
     ///
     /// Configures the builder with the default settings.
-    pub fn new(pool: Pool, client: Client, evm_config: Evm) -> Self {
+    pub fn new(pool: Pool, client: Client, evm_config: BaseEvmConfig) -> Self {
         Self::with_builder_config(pool, client, evm_config, Default::default())
     }
 
@@ -138,20 +137,17 @@ impl<Pool, Client, Evm> BasePayloadBuilder<Pool, Client, Evm, ()> {
     pub const fn with_builder_config(
         pool: Pool,
         client: Client,
-        evm_config: Evm,
+        evm_config: BaseEvmConfig,
         config: BaseBuilderConfig,
     ) -> Self {
         Self { pool, client, evm_config, config, best_transactions: () }
     }
 }
 
-impl<Pool, Client, Evm, Txs> BasePayloadBuilder<Pool, Client, Evm, Txs> {
+impl<Pool, Client, Txs> BasePayloadBuilder<Pool, Client, Txs> {
     /// Configures the type responsible for yielding the transactions that should be included in the
     /// payload.
-    pub fn with_transactions<T>(
-        self,
-        best_transactions: T,
-    ) -> BasePayloadBuilder<Pool, Client, Evm, T> {
+    pub fn with_transactions<T>(self, best_transactions: T) -> BasePayloadBuilder<Pool, Client, T> {
         BasePayloadBuilder {
             pool: self.pool,
             client: self.client,
@@ -162,17 +158,10 @@ impl<Pool, Client, Evm, Txs> BasePayloadBuilder<Pool, Client, Evm, Txs> {
     }
 }
 
-impl<Pool, Client, Evm, T> BasePayloadBuilder<Pool, Client, Evm, T>
+impl<Pool, Client, T> BasePayloadBuilder<Pool, Client, T>
 where
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>>,
     Client: StateProviderFactory + ChainSpecProvider + BlockReader,
-    Evm: ConfigureEvm<
-        NextBlockEnvCtx: BuildNextEnv<
-            BasePayloadBuilderAttributes<BaseTxEnvelope>,
-            alloy_consensus::Header,
-            BaseChainSpec,
-        >,
-    >,
 {
     /// Constructs a Base payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -271,17 +260,10 @@ where
 }
 
 /// Implementation of the [`PayloadBuilder`] trait for [`BasePayloadBuilder`].
-impl<Pool, Client, Evm, Txs> PayloadBuilder for BasePayloadBuilder<Pool, Client, Evm, Txs>
+impl<Pool, Client, Txs> PayloadBuilder for BasePayloadBuilder<Pool, Client, Txs>
 where
     Client: StateProviderFactory + ChainSpecProvider + BlockReader + Clone,
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>>,
-    Evm: ConfigureEvm<
-        NextBlockEnvCtx: BuildNextEnv<
-            BasePayloadBuilderAttributes<BaseTxEnvelope>,
-            alloy_consensus::Header,
-            BaseChainSpec,
-        >,
-    >,
     Txs: BasePayloadTransactions<Pool>,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTxEnvelope>;
@@ -355,21 +337,14 @@ impl<'a, Txs> Builder<'a, Txs> {
 
 impl<Txs> Builder<'_, Txs> {
     /// Builds the payload on top of the state.
-    pub fn build<Evm>(
+    pub fn build(
         self,
         db: impl Database<Error = ProviderError>,
         state_provider: &dyn StateProvider,
         mut state_root_handle: Option<PayloadStateRootHandle>,
-        ctx: BasePayloadBuilderCtx<Evm>,
+        ctx: BasePayloadBuilderCtx,
     ) -> Result<BuildOutcomeKind<BaseBuiltPayload>, PayloadBuilderError>
     where
-        Evm: ConfigureEvm<
-            NextBlockEnvCtx: BuildNextEnv<
-                BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                alloy_consensus::Header,
-                BaseChainSpec,
-            >,
-        >,
         Txs: ParkablePayloadTransactions<
             Transaction: PoolTransaction<Consensus = BaseTxEnvelope> + BasePooledTx,
         >,
@@ -485,20 +460,13 @@ impl<Txs> Builder<'_, Txs> {
     }
 
     /// Builds the payload and returns its [`ExecutionWitness`] based on the state after execution.
-    pub fn witness<Evm>(
+    pub fn witness(
         self,
         state_provider: impl StateProvider,
         header_provider: impl reth_storage_api::HeaderProvider,
-        ctx: &BasePayloadBuilderCtx<Evm>,
+        ctx: &BasePayloadBuilderCtx,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
-        Evm: ConfigureEvm<
-            NextBlockEnvCtx: BuildNextEnv<
-                BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                alloy_consensus::Header,
-                BaseChainSpec,
-            >,
-        >,
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>,
     {
         let mut db = State::builder()
@@ -662,9 +630,9 @@ impl ExecutionInfo {
 
 /// Container type that holds all necessities to build a new payload.
 #[derive(derive_more::Debug)]
-pub struct BasePayloadBuilderCtx<Evm: ConfigureEvm> {
+pub struct BasePayloadBuilderCtx {
     /// The type that knows how to perform system calls and configure the evm.
-    pub evm_config: Evm,
+    pub evm_config: BaseEvmConfig,
     /// Additional config for the builder/sequencer, e.g. DA and gas limit
     pub builder_config: BaseBuilderConfig,
     /// The chainspec
@@ -678,16 +646,7 @@ pub struct BasePayloadBuilderCtx<Evm: ConfigureEvm> {
     pub best_payload: Option<BaseBuiltPayload>,
 }
 
-impl<Evm> BasePayloadBuilderCtx<Evm>
-where
-    Evm: ConfigureEvm<
-        NextBlockEnvCtx: BuildNextEnv<
-            BasePayloadBuilderAttributes<BaseTxEnvelope>,
-            alloy_consensus::Header,
-            BaseChainSpec,
-        >,
-    >,
-{
+impl BasePayloadBuilderCtx {
     /// Returns the parent block the payload will be build on.
     pub fn parent(&self) -> &reth_primitives_traits::SealedHeader {
         self.config.parent_header.as_ref()
@@ -725,15 +684,13 @@ where
     pub fn block_builder<'a, DB: Database>(
         &'a self,
         db: &'a mut State<DB>,
-    ) -> Result<
-        impl BlockBuilder<Executor = BlockExecutorForEvm<'a, Evm, DB>> + 'a,
-        PayloadBuilderError,
-    > {
+    ) -> Result<impl BlockBuilder<Executor = BlockExecutorForEvm<'a, DB>> + 'a, PayloadBuilderError>
+    {
         self.evm_config
             .builder_for_next_block(
                 db,
                 self.parent(),
-                Evm::NextBlockEnvCtx::build_next_env(
+                BaseNextBlockEnvAttributes::build_next_env(
                     self.attributes(),
                     self.parent(),
                     self.chain_spec.as_ref(),
@@ -1387,7 +1344,7 @@ mod tests {
             ..Default::default()
         };
         let ctx = BasePayloadBuilderCtx {
-            evm_config: BaseEvmConfig::base(Arc::clone(&chain_spec)),
+            evm_config: BaseEvmConfig::new(Arc::clone(&chain_spec)),
             builder_config: BaseBuilderConfig::default(),
             chain_spec,
             config: PayloadConfig::new(parent, attributes, payload_id),
@@ -1428,7 +1385,7 @@ mod tests {
 
     const DENIM_TIMESTAMP: u64 = 1;
 
-    fn pool_payload_context(timestamp: u64) -> BasePayloadBuilderCtx<BaseEvmConfig> {
+    fn pool_payload_context(timestamp: u64) -> BasePayloadBuilderCtx {
         let chain_spec = Arc::new(
             BaseChainSpecBuilder::base_mainnet()
                 .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
@@ -1451,7 +1408,7 @@ mod tests {
             ..Default::default()
         };
         BasePayloadBuilderCtx {
-            evm_config: BaseEvmConfig::base(Arc::clone(&chain_spec)),
+            evm_config: BaseEvmConfig::new(Arc::clone(&chain_spec)),
             builder_config: BaseBuilderConfig::default(),
             chain_spec,
             config: PayloadConfig::new(parent, attributes, payload_id),
@@ -1461,7 +1418,7 @@ mod tests {
     }
 
     fn build_pool_payload<Txs>(
-        ctx: BasePayloadBuilderCtx<BaseEvmConfig>,
+        ctx: BasePayloadBuilderCtx,
         transactions: Txs,
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload>
     where
@@ -1476,7 +1433,7 @@ mod tests {
     }
 
     fn build_parkable_pool_payload<Txs>(
-        ctx: BasePayloadBuilderCtx<BaseEvmConfig>,
+        ctx: BasePayloadBuilderCtx,
         transactions: Txs,
         funded_senders: &[Address],
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload>

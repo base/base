@@ -41,7 +41,7 @@ impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     N::Provider: BlockReaderIdExt + ChainSpecProvider,
-    BaseEthApiError: FromEvmError<N::Evm>,
+    BaseEthApiError: FromEvmError,
     Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     fn signers(&self) -> &SignersForRpc<Self::Provider> {
@@ -184,7 +184,7 @@ where
 impl<N, Rpc> LoadTransaction for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<N::Evm>,
+    BaseEthApiError: FromEvmError,
     Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     async fn transaction_by_hash(

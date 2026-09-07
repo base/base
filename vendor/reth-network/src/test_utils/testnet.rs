@@ -16,7 +16,7 @@ use base_execution_chainspec::ChainSpecProvider;
 use futures::{FutureExt, StreamExt};
 use pin_project::pin_project;
 use reth_eth_wire::{DisconnectReason, HelloMessageWithProtocols, protocol::Protocol};
-use reth_evm::TestEvmConfig;
+use reth_evm::BaseEvmConfig;
 use reth_metrics::common::mpsc::memory_bounded_channel;
 use reth_network_api::{
     NetworkEvent, NetworkEventListenerProvider, NetworkInfo, Peers,
@@ -194,13 +194,12 @@ where
     /// Installs an eth pool on each peer
     pub fn with_eth_pool(
         self,
-    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore, TestEvmConfig, BaseTestTransaction>>
-    {
+    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore, BaseTestTransaction>> {
         self.map_pool(|peer| {
             let blob_store = InMemoryBlobStore::default();
             let pool = TransactionValidationTaskExecutor::eth(
                 peer.client.clone(),
-                TestEvmConfig::default(),
+                BaseEvmConfig::default(),
                 blob_store.clone(),
                 Runtime::test(),
             );
@@ -217,8 +216,7 @@ where
     pub fn with_eth_pool_config(
         self,
         tx_manager_config: TransactionsManagerConfig,
-    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore, TestEvmConfig, BaseTestTransaction>>
-    {
+    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore, BaseTestTransaction>> {
         self.with_eth_pool_config_and_policy(tx_manager_config, Default::default())
     }
 
@@ -227,13 +225,12 @@ where
         self,
         tx_manager_config: TransactionsManagerConfig,
         policy: TransactionPropagationKind,
-    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore, TestEvmConfig, BaseTestTransaction>>
-    {
+    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore, BaseTestTransaction>> {
         self.map_pool(|peer| {
             let blob_store = InMemoryBlobStore::default();
             let pool = TransactionValidationTaskExecutor::eth(
                 peer.client.clone(),
-                TestEvmConfig::default(),
+                BaseEvmConfig::default(),
                 blob_store.clone(),
                 Runtime::test(),
             );

@@ -28,7 +28,7 @@ use alloy_evm::{
 use alloy_primitives::Address;
 use base_common_consensus::BaseReceipt;
 use crossbeam_channel::{Receiver, Sender};
-use reth_evm::{ConfigureEvm, Database, EvmEnvFor, ExecutionCtxFor, execute::ExecutableTxFor};
+use reth_evm::{BaseEvmConfig, Database, EvmEnvFor, ExecutionCtxFor, execute::ExecutableTxFor};
 use reth_provider::BlockExecutionOutput;
 use reth_tasks::Runtime;
 use revm::{
@@ -42,20 +42,19 @@ use crate::tree::payload_processor::receipt_root_task::IndexedReceipt;
 
 /// Executes one block on the BAL path using the runtime's persistent BAL worker pool.
 #[expect(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn execute_block<'a, Evm, Tx, Err, DB, MakeDb>(
+pub fn execute_block<'a, Tx, Err, DB, MakeDb>(
     runtime: &Runtime,
-    evm_config: &'a Evm,
+    evm_config: &'a BaseEvmConfig,
     make_db: &'a MakeDb,
     input_bal: Arc<DecodedBal>,
-    evm_env: EvmEnvFor<Evm>,
-    ctx: ExecutionCtxFor<'a, Evm>,
+    evm_env: EvmEnvFor,
+    ctx: ExecutionCtxFor,
     transaction_count: usize,
     txs: Receiver<(usize, Result<Tx, Err>)>,
     receipt_tx: Sender<IndexedReceipt<BaseReceipt>>,
 ) -> Result<(BlockExecutionOutput<BaseReceipt>, Vec<Address>, BlockAccessList), BalExecutionError>
 where
-    Evm: ConfigureEvm + 'static,
-    Tx: ExecutableTxFor<Evm> + Send + 'a,
+    Tx: ExecutableTxFor + Send + 'a,
     Err: core::error::Error + Send + Sync + 'static,
     DB: Database + Send + 'a,
     MakeDb: Fn(bool) -> Result<DB, BalExecutionError> + Sync + 'a,
@@ -81,21 +80,20 @@ where
 }
 
 #[expect(clippy::too_many_arguments, clippy::type_complexity)]
-fn execute_block_inner<'scope, Evm, Tx, Err, DB, MakeDb>(
+fn execute_block_inner<'scope, Tx, Err, DB, MakeDb>(
     scope: &rayon::Scope<'scope>,
-    evm_config: &'scope Evm,
+    evm_config: &'scope BaseEvmConfig,
     make_db: &'scope MakeDb,
     input_bal: Arc<DecodedBal>,
-    evm_env: EvmEnvFor<Evm>,
-    ctx: ExecutionCtxFor<'scope, Evm>,
+    evm_env: EvmEnvFor,
+    ctx: ExecutionCtxFor,
     transaction_count: usize,
     txs: Receiver<(usize, Result<Tx, Err>)>,
     receipt_tx: Sender<IndexedReceipt<BaseReceipt>>,
     worker_count: usize,
 ) -> Result<(BlockExecutionOutput<BaseReceipt>, Vec<Address>, BlockAccessList), BalExecutionError>
 where
-    Evm: ConfigureEvm + 'scope,
-    Tx: ExecutableTxFor<Evm> + Send + 'scope,
+    Tx: ExecutableTxFor + Send + 'scope,
     Err: core::error::Error + Send + Sync + 'static,
     DB: Database + Send + 'scope,
     MakeDb: Fn(bool) -> Result<DB, BalExecutionError> + Sync + 'scope,
@@ -304,8 +302,12 @@ mod tests {
         eip7002::{WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_CODE},
     };
     use alloy_primitives::{B256, U256, keccak256};
-    use base_common_consensus::{BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope};
-    use reth_evm::TestEvmConfig;
+    use base_common_consensus::{
+        BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope, Predeploys, SystemAddresses,
+        TxDeposit,
+    };
+    use base_common_evm::L1BlockInfo;
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_primitives_traits::{Block as _, Recovered, SealedBlock};
     use reth_revm::db::BundleState;
     use reth_tasks::Runtime;
@@ -358,15 +360,49 @@ mod tests {
                 account_id: None,
             },
         );
+        // A Base block begins with an L1-info deposit. This fixture reads the fee slots
+        // used by subsequent user transactions so their accesses appear in the BAL.
+        let mut code = Vec::new();
+        for slot in [
+            L1BlockInfo::L1_BASE_FEE_SLOT,
+            L1BlockInfo::ECOTONE_L1_BLOB_BASE_FEE_SLOT,
+            L1BlockInfo::ECOTONE_L1_FEE_SCALARS_SLOT,
+            L1BlockInfo::L1_OVERHEAD_SLOT,
+        ] {
+            code.extend_from_slice(&[0x60, slot.to::<u8>(), 0x54, 0x50]);
+        }
+        code.push(0x00);
+        let code = Bytecode::new_raw(code.into());
+        db.insert_account_info(
+            Predeploys::L1_BLOCK_INFO,
+            AccountInfo { code_hash: code.hash_slow(), code: Some(code), ..Default::default() },
+        );
         db
     }
 
-    /// Builds a minimal sealed block (empty body, Amsterdam-ready header) for tests.
-    fn empty_amsterdam_block(header_bal_hash: B256) -> SealedBlock<BaseBlock> {
-        empty_amsterdam_block_with_gas_limit(header_bal_hash, 30_000_000)
+    /// Base deposit used to initialize fee-state accesses before user transactions.
+    #[derive(Debug)]
+    pub struct L1InfoDeposit;
+
+    impl L1InfoDeposit {
+        /// Creates the first transaction of the fixture block.
+        pub fn transaction() -> Recovered<BaseTxEnvelope> {
+            let tx = TxDeposit {
+                from: SystemAddresses::DEPOSITOR_ACCOUNT,
+                to: Predeploys::L1_BLOCK_INFO.into(),
+                gas_limit: 100_000,
+                ..Default::default()
+            };
+            Recovered::new_unchecked(tx.into(), SystemAddresses::DEPOSITOR_ACCOUNT)
+        }
     }
 
-    fn empty_amsterdam_block_with_gas_limit(
+    /// Builds a minimal sealed block (empty body, Base header with a BAL commitment) for tests.
+    fn empty_base_bal_block(header_bal_hash: B256) -> SealedBlock<BaseBlock> {
+        empty_base_bal_block_with_gas_limit(header_bal_hash, 30_000_000)
+    }
+
+    fn empty_base_bal_block_with_gas_limit(
         header_bal_hash: B256,
         gas_limit: u64,
     ) -> SealedBlock<BaseBlock> {
@@ -399,7 +435,7 @@ mod tests {
     ///
     /// This intentionally mirrors what `execute_block` does internally,
     /// but without any hash check — the output is the BAL itself, not a pass/fail signal.
-    fn reference_bal_for_empty_block(evm_config: &TestEvmConfig) -> BlockAccessList {
+    fn reference_bal_for_empty_block(evm_config: &BaseEvmConfig) -> BlockAccessList {
         use revm::database::State as RevmState;
 
         let db = system_contracts_db();
@@ -407,7 +443,7 @@ mod tests {
             RevmState::builder().with_database(db).with_bundle_update().with_bal_builder().build();
 
         // Any header_bal_hash on the reference block is fine — we don't check it here.
-        let block = empty_amsterdam_block(B256::ZERO);
+        let block = empty_base_bal_block(B256::ZERO);
         {
             let mut executor =
                 evm_config.executor_for_block(&mut state, &block).expect("build executor");
@@ -421,18 +457,20 @@ mod tests {
     #[test]
     fn empty_block_happy_path_round_trip() {
         // Two-pass end-to-end:
-        //   1. Build the canonical BAL an empty Amsterdam block produces (via
+        //   1. Build the canonical BAL an empty Base block produces (via
         //      `reference_bal_for_empty_block`).
         //   2. Hash it, stamp the header, and run `execute_block` with that BAL. Every check must
         //      pass (A, B, D, F).
-        let evm_config = TestEvmConfig::default();
+        let evm_config = BaseEvmConfig::new(Arc::new(
+            BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
+        ));
 
         let input_bal = reference_bal_for_empty_block(&evm_config);
         let bal_hash = alloy_eip7928::compute_block_access_list_hash(&input_bal);
         // Sanity: reference BAL is non-empty (system calls populated it).
         assert!(!input_bal.is_empty(), "empty BAL means system calls didn't record state");
 
-        let block = empty_amsterdam_block(bal_hash);
+        let block = empty_base_bal_block(bal_hash);
 
         let result = run_execute_block(
             &Runtime::test(),
@@ -467,14 +505,14 @@ mod tests {
 
     fn run_execute_block<Tx, DB, MakeDb>(
         runtime: &Runtime,
-        evm_config: TestEvmConfig,
+        evm_config: BaseEvmConfig,
         make_db: MakeDb,
         input_bal: Arc<DecodedBal>,
         block: &SealedBlock<BaseBlock>,
         txs: Vec<Tx>,
     ) -> Result<BlockExecutionOutput<BaseReceipt>, BalExecutionError>
     where
-        Tx: ExecutableTxFor<TestEvmConfig> + Send,
+        Tx: ExecutableTxFor + Send,
         DB: Database + Send,
         MakeDb: Fn() -> Result<DB, BalExecutionError> + Sync,
     {
@@ -484,14 +522,14 @@ mod tests {
 
     fn run_execute_block_full<Tx, DB, MakeDb>(
         runtime: &Runtime,
-        evm_config: TestEvmConfig,
+        evm_config: BaseEvmConfig,
         make_db: MakeDb,
         input_bal: Arc<DecodedBal>,
         block: &SealedBlock<BaseBlock>,
         txs: Vec<Tx>,
     ) -> Result<(BlockExecutionOutput<BaseReceipt>, BlockAccessList), BalExecutionError>
     where
-        Tx: ExecutableTxFor<TestEvmConfig> + Send,
+        Tx: ExecutableTxFor + Send,
         DB: Database + Send,
         MakeDb: Fn() -> Result<DB, BalExecutionError> + Sync,
     {
@@ -525,13 +563,13 @@ mod tests {
     /// Runs the canonical path on a block with real txs (no hash check) and returns the
     /// composed BAL. Used to build the reference BAL for happy-path multi-tx tests.
     fn reference_bal_for_block<Tx>(
-        evm_config: &TestEvmConfig,
+        evm_config: &BaseEvmConfig,
         mut db: CacheDB<EmptyDB>,
         block: &SealedBlock<BaseBlock>,
         txs: Vec<Tx>,
     ) -> BlockAccessList
     where
-        Tx: ExecutableTxFor<TestEvmConfig>,
+        Tx: ExecutableTxFor,
     {
         use revm::database::State as RevmState;
 
@@ -565,15 +603,16 @@ mod tests {
         // 2. Sign tx1 (alice → carol, 100 wei) and tx2 (bob → carol, 200 wei).
         // 3. Build the reference BAL by running the block through a canonical executor with
         //    `with_bal_builder`.
-        // 4. Feed that BAL into `execute_block` and assert 2 receipts + no rejections.
+        // 4. Feed that BAL into `execute_block` and assert the deposit and user receipts.
         use alloy_consensus::TxLegacy;
         use alloy_primitives::TxKind;
         use base_common_consensus::BaseTypedTransaction as Transaction;
-        use reth_chainspec::MAINNET;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
 
-        let evm_config = TestEvmConfig::default();
+        let evm_config = BaseEvmConfig::new(Arc::new(
+            BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
+        ));
         let carol: alloy_primitives::Address = alloy_primitives::Address::from([0xCA; 20]);
         let sender_balance = U256::from(alloy_consensus::constants::ETH_TO_WEI);
 
@@ -589,7 +628,7 @@ mod tests {
         insert_funded(&mut pre_block_db, bob, sender_balance);
 
         // Sign txs.
-        let chain_id = MAINNET.chain.id();
+        let chain_id = evm_config.chain_spec().chain.id();
         let gas_price = 1u128; // flat low price; block has no base fee in our test header.
         let tx1 = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
             alice_kp,
@@ -619,7 +658,7 @@ mod tests {
         let recovered2 = Recovered::new_unchecked(tx2, bob);
 
         // Reference BAL: run the block canonically through a separate executor.
-        let block_for_ref = empty_amsterdam_block(B256::ZERO);
+        let block_for_ref = empty_base_bal_block(B256::ZERO);
         let reference_bal = reference_bal_for_block::<Recovered<BaseTxEnvelope>>(
             &evm_config,
             {
@@ -648,12 +687,12 @@ mod tests {
                 db
             },
             &block_for_ref,
-            vec![recovered1.clone(), recovered2.clone()],
+            vec![L1InfoDeposit::transaction(), recovered1.clone(), recovered2.clone()],
         );
         assert!(!reference_bal.is_empty(), "expected BAL entries from pre-exec + txs");
 
         let bal_hash = alloy_eip7928::compute_block_access_list_hash(&reference_bal);
-        let block = empty_amsterdam_block(bal_hash);
+        let block = empty_base_bal_block(bal_hash);
 
         let result = run_execute_block(
             &Runtime::test(),
@@ -661,12 +700,12 @@ mod tests {
             db_factory(pre_block_db),
             to_arc_decoded(reference_bal),
             &block,
-            vec![recovered1, recovered2],
+            vec![L1InfoDeposit::transaction(), recovered1, recovered2],
         );
 
         match result {
             Ok(output) => {
-                assert_eq!(output.receipts.len(), 2, "expected 2 receipts");
+                assert_eq!(output.receipts.len(), 3, "expected a deposit and two user receipts");
                 assert!(output.gas_used >= 2 * 21_000, "expected at least 42k gas used");
             }
             Err(e) => panic!("expected success, got {e:?}"),
@@ -693,7 +732,7 @@ mod tests {
     /// Uses a manual state + executor (not `BasicBlockExecutor::execute_one`) so we can both
     /// (a) capture the composed BAL for the BAL-path input and (b) pull the bundle out after.
     fn run_serial_path(
-        evm_config: &TestEvmConfig,
+        evm_config: &BaseEvmConfig,
         canonical_db: CacheDB<EmptyDB>,
         block: &SealedBlock<BaseBlock>,
         txs: &[Recovered<BaseTxEnvelope>],
@@ -737,11 +776,16 @@ mod tests {
 
     /// Shadow harness. Runs the block through both paths; asserts byte-equal outputs.
     fn assert_shadow_equal(
-        evm_config: TestEvmConfig,
+        evm_config: BaseEvmConfig,
         canonical_db_template: CacheDB<EmptyDB>,
         block_header_only: SealedBlock<BaseBlock>,
         txs: Vec<Recovered<BaseTxEnvelope>>,
     ) {
+        let txs = if txs.is_empty() {
+            txs
+        } else {
+            core::iter::once(L1InfoDeposit::transaction()).chain(txs).collect()
+        };
         // Serial run: also produces the reference BAL we'll feed to the BAL path.
         let (serial, reference_bal) =
             run_serial_path(&evm_config, canonical_db_template.clone(), &block_header_only, &txs);
@@ -749,7 +793,7 @@ mod tests {
         // BAL path: stamp the hash of the reference BAL onto the header.
         let bal_hash = alloy_eip7928::compute_block_access_list_hash(&reference_bal);
         let block =
-            empty_amsterdam_block_with_gas_limit(bal_hash, block_header_only.header().gas_limit());
+            empty_base_bal_block_with_gas_limit(bal_hash, block_header_only.header().gas_limit());
 
         let bal_out = run_execute_block(
             &Runtime::test(),
@@ -786,9 +830,11 @@ mod tests {
         // System calls only — no txs. Both paths should produce identical system-call
         // side effects in their BundleState (beacon roots storage, history storage, etc.).
         assert_shadow_equal(
-            TestEvmConfig::default(),
+            BaseEvmConfig::new(Arc::new(
+                BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
+            )),
             system_contracts_db(),
-            empty_amsterdam_block(B256::ZERO),
+            empty_base_bal_block(B256::ZERO),
             Vec::new(),
         );
     }
@@ -800,11 +846,12 @@ mod tests {
         use alloy_consensus::TxLegacy;
         use alloy_primitives::TxKind;
         use base_common_consensus::BaseTypedTransaction as Transaction;
-        use reth_chainspec::MAINNET;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
 
-        let evm_config = TestEvmConfig::default();
+        let evm_config = BaseEvmConfig::new(Arc::new(
+            BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
+        ));
         let carol: alloy_primitives::Address = alloy_primitives::Address::from([0xCA; 20]);
         let sender_balance = U256::from(alloy_consensus::constants::ETH_TO_WEI);
 
@@ -817,7 +864,7 @@ mod tests {
         insert_funded(&mut db, alice, sender_balance);
         insert_funded(&mut db, bob, sender_balance);
 
-        let chain_id = MAINNET.chain.id();
+        let chain_id = evm_config.chain_spec().chain.id();
         let make_tx = |kp, to, value, nonce: u64| {
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 kp,
@@ -835,7 +882,7 @@ mod tests {
         let tx1 = Recovered::new_unchecked(make_tx(alice_kp, carol, 100u64, 0), alice);
         let tx2 = Recovered::new_unchecked(make_tx(bob_kp, carol, 200u64, 0), bob);
 
-        assert_shadow_equal(evm_config, db, empty_amsterdam_block(B256::ZERO), vec![tx1, tx2]);
+        assert_shadow_equal(evm_config, db, empty_base_bal_block(B256::ZERO), vec![tx1, tx2]);
     }
 
     #[test]
@@ -847,11 +894,12 @@ mod tests {
         use alloy_evm::block::BlockValidationError;
         use alloy_primitives::TxKind;
         use base_common_consensus::BaseTypedTransaction as Transaction;
-        use reth_chainspec::MAINNET;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
 
-        let evm_config = TestEvmConfig::default();
+        let evm_config = BaseEvmConfig::new(Arc::new(
+            BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
+        ));
         let carol: alloy_primitives::Address = alloy_primitives::Address::from([0xCA; 20]);
         let sender_balance = U256::from(alloy_consensus::constants::ETH_TO_WEI);
         let block_gas_limit = 1_000_000;
@@ -866,7 +914,7 @@ mod tests {
         insert_funded(&mut pre_block_db, alice, sender_balance);
         insert_funded(&mut pre_block_db, bob, sender_balance);
 
-        let chain_id = MAINNET.chain.id();
+        let chain_id = evm_config.chain_spec().chain.id();
         let make_tx = |kp, value| {
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 kp,
@@ -887,15 +935,15 @@ mod tests {
         // Build the reference BAL under a generous gas limit so both workers can execute.
         // Replaying the same BAL under `block_gas_limit` below should reject in the ordered
         // commit loop before tx2 is committed.
-        let reference_block = empty_amsterdam_block(B256::ZERO);
+        let reference_block = empty_base_bal_block(B256::ZERO);
         let reference_bal = reference_bal_for_block(
             &evm_config,
             pre_block_db.clone(),
             &reference_block,
-            vec![tx1.clone(), tx2.clone()],
+            vec![L1InfoDeposit::transaction(), tx1.clone(), tx2.clone()],
         );
         let bal_hash = alloy_eip7928::compute_block_access_list_hash(&reference_bal);
-        let low_gas_block = empty_amsterdam_block_with_gas_limit(bal_hash, block_gas_limit);
+        let low_gas_block = empty_base_bal_block_with_gas_limit(bal_hash, block_gas_limit);
 
         let result = run_execute_block(
             &Runtime::test(),
@@ -903,7 +951,7 @@ mod tests {
             db_factory(pre_block_db),
             to_arc_decoded(reference_bal),
             &low_gas_block,
-            vec![tx1, tx2],
+            vec![L1InfoDeposit::transaction(), tx1, tx2],
         );
 
         match result {
@@ -926,11 +974,12 @@ mod tests {
         use alloy_consensus::TxLegacy;
         use alloy_primitives::{Bytes, TxKind, keccak256};
         use base_common_consensus::BaseTypedTransaction as Transaction;
-        use reth_chainspec::MAINNET;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
 
-        let evm_config = TestEvmConfig::default();
+        let evm_config = BaseEvmConfig::new(Arc::new(
+            BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
+        ));
         let revert_contract: alloy_primitives::Address =
             alloy_primitives::Address::from([0xDE; 20]);
         let sender_balance = U256::from(alloy_consensus::constants::ETH_TO_WEI);
@@ -958,7 +1007,7 @@ mod tests {
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 alice_kp,
                 Transaction::Legacy(TxLegacy {
-                    chain_id: Some(MAINNET.chain.id()),
+                    chain_id: Some(evm_config.chain_spec().chain.id()),
                     nonce: 0,
                     gas_price: 1,
                     gas_limit: 50_000,
@@ -970,7 +1019,7 @@ mod tests {
             alice,
         );
 
-        assert_shadow_equal(evm_config, db, empty_amsterdam_block(B256::ZERO), vec![tx]);
+        assert_shadow_equal(evm_config, db, empty_base_bal_block(B256::ZERO), vec![tx]);
     }
 
     #[test]
@@ -983,11 +1032,12 @@ mod tests {
         use alloy_consensus::TxLegacy;
         use alloy_primitives::{Bytes, TxKind, keccak256};
         use base_common_consensus::BaseTypedTransaction as Transaction;
-        use reth_chainspec::MAINNET;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
         use reth_testing_utils::generators::{generate_key, rng};
 
-        let evm_config = TestEvmConfig::default();
+        let evm_config = BaseEvmConfig::new(Arc::new(
+            BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
+        ));
         let sstore_contract: alloy_primitives::Address =
             alloy_primitives::Address::from([0x55; 20]);
         let sender_balance = U256::from(alloy_consensus::constants::ETH_TO_WEI);
@@ -1015,7 +1065,7 @@ mod tests {
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 alice_kp,
                 Transaction::Legacy(TxLegacy {
-                    chain_id: Some(MAINNET.chain.id()),
+                    chain_id: Some(evm_config.chain_spec().chain.id()),
                     nonce: 0,
                     gas_price: 1,
                     gas_limit: 100_000,
@@ -1027,7 +1077,7 @@ mod tests {
             alice,
         );
 
-        assert_shadow_equal(evm_config, db, empty_amsterdam_block(B256::ZERO), vec![tx]);
+        assert_shadow_equal(evm_config, db, empty_base_bal_block(B256::ZERO), vec![tx]);
     }
 
     #[test]
@@ -1037,7 +1087,9 @@ mod tests {
         // validator is responsible for comparing that rebuilt hash to the header commitment.
         use alloy_eip7928::AccountChanges;
 
-        let evm_config = TestEvmConfig::default();
+        let evm_config = BaseEvmConfig::new(Arc::new(
+            BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
+        ));
 
         // Real BAL the block would produce.
         let real_bal = reference_bal_for_empty_block(&evm_config);
@@ -1053,7 +1105,7 @@ mod tests {
         let tampered_block_access_list: BlockAccessList = tampered_bal.clone().into();
         let tampered_hash =
             alloy_eip7928::compute_block_access_list_hash(&tampered_block_access_list);
-        let block = empty_amsterdam_block(tampered_hash);
+        let block = empty_base_bal_block(tampered_hash);
 
         let received = {
             let raw = alloy_rlp::encode(&tampered_bal).into();
@@ -1082,8 +1134,10 @@ mod tests {
     fn canonical_make_db_failure() {
         // A make_db that always fails must surface as Provider before any workers are
         // spawned or the BAL is processed.
-        let evm_config = TestEvmConfig::default();
-        let block = empty_amsterdam_block(B256::ZERO);
+        let evm_config = BaseEvmConfig::new(Arc::new(
+            BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
+        ));
+        let block = empty_base_bal_block(B256::ZERO);
 
         let failing_make_db = || -> Result<CacheDB<EmptyDB>, BalExecutionError> {
             Err(reth_provider::ProviderError::BestBlockNotFound.into())
@@ -1109,8 +1163,10 @@ mod tests {
         // A tx recovery failure fed into the worker channel must surface as
         // BalExecutionError::Other. Uses execute_block directly since tx_stream hardcodes
         // Infallible and cannot inject errors.
-        let evm_config = TestEvmConfig::default();
-        let block = empty_amsterdam_block(B256::ZERO);
+        let evm_config = BaseEvmConfig::new(Arc::new(
+            BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
+        ));
+        let block = empty_base_bal_block(B256::ZERO);
 
         let (tx_tx, tx_rx) = crossbeam_channel::unbounded::<(
             usize,

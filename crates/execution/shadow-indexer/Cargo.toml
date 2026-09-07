@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+reth-evm = { workspace = true }
 reth-exex = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }

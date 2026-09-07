@@ -9,7 +9,7 @@ use crate::EthApi;
 impl<N, Rpc> GetBlockAccessList for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    EthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Error = EthApiError, Evm = N::Evm>,
+    EthApiError: FromEvmError,
+    Rpc: RpcConvert<Error = EthApiError>,
 {
 }

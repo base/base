@@ -9,7 +9,7 @@ use base_execution_cli::{
     commands::{GenesisOutputRootCommand, init_state, p2p},
 };
 use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::BaseExecutorProvider;
+use base_execution_evm::BaseEvmConfig;
 use clap::{Parser, Subcommand};
 use reth_cli_commands::{config_cmd, db, dump_genesis, init_cmd, prune, re_execute, stage};
 use reth_cli_runner::CliRunner;
@@ -119,7 +119,7 @@ impl RethSubcommand {
 
     pub(crate) fn base_components(spec: Arc<BaseChainSpec>) -> BaseCliComponents {
         BaseCliComponents {
-            evm_config: BaseExecutorProvider::base(Arc::clone(&spec)),
+            evm_config: BaseEvmConfig::new(Arc::clone(&spec)),
             consensus: Arc::new(BaseBeaconConsensus::new(spec)),
         }
     }

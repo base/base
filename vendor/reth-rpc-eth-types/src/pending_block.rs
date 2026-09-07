@@ -12,7 +12,7 @@ use base_common_rpc_types::BaseTransactionReceipt;
 use derive_more::Constructor;
 use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_ethereum_primitives::Receipt;
-use reth_evm::{ConfigureEvm, EvmEnvFor};
+use reth_evm::EvmEnvFor;
 use reth_primitives_traits::{Block, IndexedTx, RecoveredBlock, SealedHeader};
 use reth_rpc_convert::RpcConvert;
 
@@ -20,9 +20,9 @@ use crate::block::BlockAndReceipts;
 
 /// Configured [`reth_evm::EvmEnv`] for a pending block.
 #[derive(Debug, Clone, Constructor)]
-pub struct PendingBlockEnv<Evm: ConfigureEvm> {
+pub struct PendingBlockEnv {
     /// Configured [`reth_evm::EvmEnv`] for the pending block.
-    pub evm_env: EvmEnvFor<Evm>,
+    pub evm_env: EvmEnvFor,
     /// Origin block for the config
     pub origin: PendingBlockEnvOrigin<BaseBlock, BaseReceipt>,
 }

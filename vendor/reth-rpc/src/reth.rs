@@ -12,7 +12,7 @@ use reth_chain_state::{
     PersistedBlockSubscriptions,
 };
 use reth_errors::{RethError, RethResult};
-use reth_evm::{ConfigureEvm, execute::Executor};
+use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_api::{RethApiServer, RethJitAction};
@@ -27,27 +27,27 @@ use tokio::sync::oneshot;
 /// `reth` API implementation.
 ///
 /// This type provides the functionality for handling `reth` prototype RPC requests.
-pub struct RethApi<Provider, EvmConfig> {
-    inner: Arc<RethApiInner<Provider, EvmConfig>>,
+pub struct RethApi<Provider> {
+    inner: Arc<RethApiInner<Provider>>,
 }
 
 // === impl RethApi ===
 
-impl<Provider, EvmConfig> RethApi<Provider, EvmConfig> {
+impl<Provider> RethApi<Provider> {
     /// The provider that can interact with the chain.
     pub fn provider(&self) -> &Provider {
         &self.inner.provider
     }
 
     /// The evm config.
-    pub fn evm_config(&self) -> &EvmConfig {
+    pub fn evm_config(&self) -> &BaseEvmConfig {
         &self.inner.evm_config
     }
 
     /// Create a new instance of the [`RethApi`]
     pub fn new(
         provider: Provider,
-        evm_config: EvmConfig,
+        evm_config: BaseEvmConfig,
         blocking_task_guard: BlockingTaskGuard,
         task_spawner: Runtime,
     ) -> Self {
@@ -57,10 +57,9 @@ impl<Provider, EvmConfig> RethApi<Provider, EvmConfig> {
     }
 }
 
-impl<Provider, EvmConfig> RethApi<Provider, EvmConfig>
+impl<Provider> RethApi<Provider>
 where
     Provider: BlockReaderIdExt + ChangeSetReader + StateProviderFactory + 'static,
-    EvmConfig: Send + Sync + 'static,
 {
     /// Executes the future on a new blocking task.
     async fn on_blocking_task<C, F, R>(&self, c: C) -> EthResult<R>
@@ -106,7 +105,7 @@ where
     }
 }
 
-impl<Provider, EvmConfig> RethApi<Provider, EvmConfig>
+impl<Provider> RethApi<Provider>
 where
     Provider: BlockReaderIdExt
         + ChangeSetReader
@@ -114,7 +113,6 @@ where
         + BlockReader<Block = BaseBlock>
         + CanonStateSubscriptions
         + 'static,
-    EvmConfig: ConfigureEvm + 'static,
 {
     /// Re-executes one or more consecutive blocks and returns the execution outcome.
     pub async fn block_execution_outcome(
@@ -186,7 +184,7 @@ where
 }
 
 #[async_trait]
-impl<Provider, EvmConfig> RethApiServer for RethApi<Provider, EvmConfig>
+impl<Provider> RethApiServer for RethApi<Provider>
 where
     Provider: BlockReaderIdExt
         + ChangeSetReader
@@ -196,7 +194,6 @@ where
         + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
         + PersistedBlockSubscriptions
         + 'static,
-    EvmConfig: ConfigureEvm + 'static,
 {
     /// Handler for `reth_getBalanceChangesInBlock`
     async fn reth_get_balance_changes_in_block(
@@ -380,23 +377,23 @@ async fn finalized_chain_notifications(
     }
 }
 
-impl<Provider, EvmConfig> std::fmt::Debug for RethApi<Provider, EvmConfig> {
+impl<Provider> std::fmt::Debug for RethApi<Provider> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RethApi").finish_non_exhaustive()
     }
 }
 
-impl<Provider, EvmConfig> Clone for RethApi<Provider, EvmConfig> {
+impl<Provider> Clone for RethApi<Provider> {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
 }
 
-struct RethApiInner<Provider, EvmConfig> {
+struct RethApiInner<Provider> {
     /// The provider that can interact with the chain.
     provider: Provider,
     /// The EVM configuration used to create block executors.
-    evm_config: EvmConfig,
+    evm_config: BaseEvmConfig,
     /// Guard to restrict the number of concurrent block re-execution requests.
     blocking_task_guard: BlockingTaskGuard,
     /// The type that can spawn tasks which would otherwise block.

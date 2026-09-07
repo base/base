@@ -35,7 +35,6 @@ base-execution-chainspec = { workspace = true }
 base-execution-consensus = { workspace = true }
 metrics = { workspace = true, optional = true }
 reth-metrics = { workspace = true, optional = true }
-reth-chainspec = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
@@ -78,7 +77,6 @@ std = [
 metrics = ["std", "dep:metrics", "dep:reth-metrics"]
 test-utils = [
     "std",
-    "dep:reth-chainspec",
     "reth-primitives-traits/test-utils",
     "reth-trie-common/test-utils",
 ]

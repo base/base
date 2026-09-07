@@ -12,7 +12,7 @@ use base_common_consensus::BaseBlock;
 use base_common_rpc_types::BaseTransactionRequest;
 use futures::Future;
 use reth_errors::RethError;
-use reth_evm::{ConfigureEvm, EvmEnvFor};
+use reth_evm::EvmEnvFor;
 use reth_primitives_traits::RecoveredBlock;
 use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_types::{
@@ -310,7 +310,7 @@ pub trait EthState: LoadState + SpawnBlocking {
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` state RPC methods.
 pub trait LoadState:
     LoadPendingBlock
-    + EthApiTypes<Error: FromEvmError<Self::Evm> + FromEthApiError, RpcConvert: RpcConvert>
+    + EthApiTypes<Error: FromEvmError + FromEthApiError, RpcConvert: RpcConvert>
     + RpcNodeCoreExt
 {
     /// Returns the state at the given block number
@@ -368,7 +368,7 @@ pub trait LoadState:
     fn evm_env_for_header(
         &self,
         header: &reth_primitives_traits::SealedHeader,
-    ) -> Result<EvmEnvFor<Self::Evm>, Self::Error> {
+    ) -> Result<EvmEnvFor, Self::Error> {
         self.evm_config()
             .evm_env(header)
             .map_err(RethError::other)
@@ -384,7 +384,7 @@ pub trait LoadState:
     fn evm_env_at(
         &self,
         at: BlockId,
-    ) -> impl Future<Output = Result<(EvmEnvFor<Self::Evm>, BlockId), Self::Error>> + Send
+    ) -> impl Future<Output = Result<(EvmEnvFor, BlockId), Self::Error>> + Send
     where
         Self: SpawnBlocking,
     {
@@ -418,10 +418,7 @@ pub trait LoadState:
         &self,
         at: BlockId,
     ) -> impl Future<
-        Output = Result<
-            (Arc<RecoveredBlock<BaseBlock>>, EvmEnvFor<Self::Evm>, BlockId),
-            Self::Error,
-        >,
+        Output = Result<(Arc<RecoveredBlock<BaseBlock>>, EvmEnvFor, BlockId), Self::Error>,
     > + Send
     where
         Self: SpawnBlocking + LoadBlock,

@@ -1,35 +1,29 @@
 //! EVM component for the node builder.
 use std::future::Future;
 
-use crate::{BuilderContext, ConfigureEvm, FullNodeTypes};
+use reth_evm::BaseEvmConfig;
+
+use crate::{BuilderContext, FullNodeTypes};
 
 /// A type that knows how to build the executor types.
 pub trait ExecutorBuilder<Node: FullNodeTypes>: Send {
-    /// The EVM config to use.
-    ///
-    /// This provides the node with the necessary configuration to configure an EVM.
-    type EVM: ConfigureEvm + 'static;
-
     /// Creates the EVM config.
     fn build_evm(
         self,
         ctx: &BuilderContext<Node>,
-    ) -> impl Future<Output = eyre::Result<Self::EVM>> + Send;
+    ) -> impl Future<Output = eyre::Result<BaseEvmConfig>> + Send;
 }
 
-impl<Node, F, Fut, EVM> ExecutorBuilder<Node> for F
+impl<Node, F, Fut> ExecutorBuilder<Node> for F
 where
     Node: FullNodeTypes,
-    EVM: ConfigureEvm + 'static,
     F: FnOnce(&BuilderContext<Node>) -> Fut + Send,
-    Fut: Future<Output = eyre::Result<EVM>> + Send,
+    Fut: Future<Output = eyre::Result<BaseEvmConfig>> + Send,
 {
-    type EVM = EVM;
-
     fn build_evm(
         self,
         ctx: &BuilderContext<Node>,
-    ) -> impl Future<Output = eyre::Result<Self::EVM>> {
+    ) -> impl Future<Output = eyre::Result<BaseEvmConfig>> {
         self(ctx)
     }
 }

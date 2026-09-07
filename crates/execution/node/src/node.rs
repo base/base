@@ -32,12 +32,9 @@ use base_execution_txpool::{
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::BaseFeeParams;
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
-use reth_evm::ConfigureEvm;
 use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
 use reth_network_peers::NodeRecord;
-use reth_node_api::{
-    AddOnsContext, BuildNextEnv, FullNodeComponents, NodeAddOns, PayloadAttributesBuilder,
-};
+use reth_node_api::{AddOnsContext, FullNodeComponents, NodeAddOns, PayloadAttributesBuilder};
 use reth_node_builder::{
     BuilderContext, DebugNodeConfig, NodeAdapter,
     components::{PoolBuilderConfigOverrides, spawn_maintenance_tasks},
@@ -501,16 +498,7 @@ where
 impl<N, EthB, PVB, EB, EVB, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
-    N: FullNodeComponents<
-            Evm: ConfigureEvm<
-                NextBlockEnvCtx: BuildNextEnv<
-                    BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                    alloy_consensus::Header,
-                    BaseChainSpec,
-                >,
-            >,
-            Pool: TransactionPool<Transaction: BasePooledTx>,
-        >,
+    N: FullNodeComponents<Pool: TransactionPool<Transaction: BasePooledTx>>,
     EthB: EthApiBuilder<N>,
     PVB: Send,
     EB: EngineApiBuilder<N>,
@@ -533,7 +521,7 @@ where
             ctx.node.evm_config().clone(),
         );
         // Install additional rollup-specific RPC methods.
-        let debug_ext = BaseDebugWitnessApi::<_, _, _>::new(
+        let debug_ext = BaseDebugWitnessApi::<_, _>::new(
             ctx.node.provider().clone(),
             ctx.node.task_executor().clone(),
             builder,
@@ -577,15 +565,7 @@ where
 impl<N, EthB, PVB, EB, EVB, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
-    N: FullNodeComponents<
-        Evm: ConfigureEvm<
-            NextBlockEnvCtx: BuildNextEnv<
-                BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                alloy_consensus::Header,
-                BaseChainSpec,
-            >,
-        >,
-    >,
+    N: FullNodeComponents,
     <<N as FullNodeComponents>::Pool as TransactionPool>::Transaction: BasePooledTx,
     EthB: EthApiBuilder<N>,
     PVB: PayloadValidatorBuilder<N>,
@@ -854,9 +834,7 @@ where
         self,
         ctx: &BuilderContext<Node>,
         evm_config: BaseEvmConfig,
-    ) -> eyre::Result<
-        BaseTransactionPool<Node::Provider, DiskFileBlobStore, BaseEvmConfig, T, BaseOrdering<T>>,
-    >
+    ) -> eyre::Result<BaseTransactionPool<Node::Provider, DiskFileBlobStore, T, BaseOrdering<T>>>
     where
         Node: FullNodeTypes,
     {

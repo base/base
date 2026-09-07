@@ -17,7 +17,7 @@ use eyre::WrapErr;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_util::cancellation::CancellationToken;
 use reth_consensus::FullConsensus;
-use reth_evm::{ConfigureEvm, execute::Executor};
+use reth_evm::execute::Executor;
 use reth_node_core::args::JitArgs;
 use reth_primitives_traits::{Account, GotExpected, format_gas_throughput};
 use reth_provider::{

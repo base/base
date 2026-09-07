@@ -3,7 +3,7 @@
 
 use alloy_primitives::Bytes;
 use reth_errors::ProviderError;
-use reth_evm::{ConfigureEvm, EvmErrorFor, HaltReasonFor};
+use reth_evm::{EvmErrorFor, HaltReasonFor};
 use reth_revm::db::bal::EvmDatabaseError;
 use revm::{context::result::ExecutionResult, context_interface::result::HaltReason};
 
@@ -111,18 +111,16 @@ impl AsEthApiError for EthApiError {
 }
 
 /// Helper trait to convert from revm errors.
-pub trait FromEvmError<Evm: ConfigureEvm>:
-    From<EvmErrorFor<Evm, EvmDatabaseError<ProviderError>>>
-    + FromEvmHalt<HaltReasonFor<Evm>>
-    + FromRevert
+pub trait FromEvmError:
+    From<EvmErrorFor<EvmDatabaseError<ProviderError>>> + FromEvmHalt<HaltReasonFor> + FromRevert
 {
     /// Converts from EVM error to this type.
-    fn from_evm_err(err: EvmErrorFor<Evm, EvmDatabaseError<ProviderError>>) -> Self {
+    fn from_evm_err(err: EvmErrorFor<EvmDatabaseError<ProviderError>>) -> Self {
         err.into()
     }
 
     /// Ensures the execution result is successful or returns an error,
-    fn ensure_success(result: ExecutionResult<HaltReasonFor<Evm>>) -> Result<Bytes, Self> {
+    fn ensure_success(result: ExecutionResult<HaltReasonFor>) -> Result<Bytes, Self> {
         match result {
             ExecutionResult::Success { output, .. } => Ok(output.into_data()),
             ExecutionResult::Revert { output, .. } => Err(Self::from_revert(output)),
@@ -133,12 +131,8 @@ pub trait FromEvmError<Evm: ConfigureEvm>:
     }
 }
 
-impl<T, Evm> FromEvmError<Evm> for T
-where
-    T: From<EvmErrorFor<Evm, EvmDatabaseError<ProviderError>>>
-        + FromEvmHalt<HaltReasonFor<Evm>>
-        + FromRevert,
-    Evm: ConfigureEvm,
+impl<T> FromEvmError for T where
+    T: From<EvmErrorFor<EvmDatabaseError<ProviderError>>> + FromEvmHalt<HaltReasonFor> + FromRevert
 {
 }
 
@@ -151,6 +145,15 @@ pub trait FromEvmHalt<Halt> {
 impl FromEvmHalt<HaltReason> for EthApiError {
     fn from_evm_halt(halt: HaltReason, gas_limit: u64) -> Self {
         RpcInvalidTransactionError::halt(halt, gas_limit).into()
+    }
+}
+
+impl FromEvmHalt<HaltReasonFor> for EthApiError {
+    fn from_evm_halt(halt: HaltReasonFor, gas_limit: u64) -> Self {
+        match halt {
+            HaltReasonFor::Base(reason) => Self::from_evm_halt(reason, gas_limit),
+            HaltReasonFor::FailedDeposit => Self::EvmCustom("deposit transaction halted".into()),
+        }
     }
 }
 

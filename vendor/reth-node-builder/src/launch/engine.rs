@@ -100,7 +100,7 @@ impl EngineNodeLauncher {
             // ensure certain settings take effect
             .with_adjusted_configs()
             // Create the provider factory with the shared overlay manager
-            .with_provider_factory::<_, <CB::Components as NodeComponents<T>>::Evm>(
+            .with_provider_factory::<_>(
                 overlay_manager.clone(),
                 rocksdb_provider,
                 disabled_stages,

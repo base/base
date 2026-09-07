@@ -3,6 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use reth_chain_state::CanonStateSubscriptions;
+use reth_evm::BaseEvmConfig;
 use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
     RpcNodeCore, helpers::pending_block::PendingEnvBuilder, node::RpcNodeCoreAdapter,
@@ -50,13 +51,17 @@ pub struct EthApiBuilder<N: RpcNodeCore, Rpc, NextEnv = ()> {
     force_blob_sidecar_upcasting: bool,
 }
 
-impl<Provider, Pool, Network, EvmConfig>
-    EthApiBuilder<RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>, ()>
+impl<Provider, Pool, Network> EthApiBuilder<RpcNodeCoreAdapter<Provider, Pool, Network>, ()>
 where
-    RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>: RpcNodeCore<Evm = EvmConfig>,
+    RpcNodeCoreAdapter<Provider, Pool, Network>: RpcNodeCore,
 {
     /// Creates a new `EthApiBuilder` instance.
-    pub fn new(provider: Provider, pool: Pool, network: Network, evm_config: EvmConfig) -> Self {
+    pub fn new(
+        provider: Provider,
+        pool: Pool,
+        network: Network,
+        evm_config: BaseEvmConfig,
+    ) -> Self {
         Self::new_with_components(RpcNodeCoreAdapter::new(provider, pool, network, evm_config))
     }
 }
@@ -500,7 +505,7 @@ where
     pub fn build_inner(self) -> EthApiInner<N, Rpc>
     where
         Rpc: RpcConvert,
-        NextEnv: PendingEnvBuilder<N::Evm>,
+        NextEnv: PendingEnvBuilder,
     {
         let Self {
             components,
@@ -592,7 +597,7 @@ where
     pub fn build(self) -> EthApi<N, Rpc>
     where
         Rpc: RpcConvert,
-        NextEnv: PendingEnvBuilder<N::Evm>,
+        NextEnv: PendingEnvBuilder,
     {
         EthApi { inner: Arc::new(self.build_inner()) }
     }

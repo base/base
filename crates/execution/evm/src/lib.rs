@@ -14,6 +14,6 @@ pub use error::{BaseBlockExecutionError, L1BlockInfoError};
 mod l1;
 pub use l1::*;
 pub use reth_evm::{
-    BaseBlockAssembler, BaseEvmConfig, BaseEvmEnvBuilder, BaseExecutorProvider,
-    BaseNextBlockEnvAttributes, BaseRethReceiptBuilder,
+    BaseBlockAssembler, BaseEvmConfig, BaseEvmEnvBuilder, BaseNextBlockEnvAttributes,
+    BaseRethReceiptBuilder,
 };

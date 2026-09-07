@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
+use reth_evm::BaseEvmConfig;
 use reth_exex_types::ExExHead;
 use reth_node_api::FullNodeComponents;
 use reth_node_core::node_config::NodeConfig;
@@ -35,7 +36,7 @@ pub struct ExExContext<Node: FullNodeComponents> {
     ///
     /// Once an [`ExExNotification`](crate::ExExNotification) is sent over the channel, it is
     /// considered delivered by the node.
-    pub notifications: ExExNotifications<Node::Provider, Node::Evm>,
+    pub notifications: ExExNotifications<Node::Provider>,
 
     /// Node components
     pub components: Node,
@@ -79,7 +80,7 @@ where
     }
 
     /// Returns the node's evm config.
-    pub fn evm_config(&self) -> &Node::Evm {
+    pub fn evm_config(&self) -> &BaseEvmConfig {
         self.components.evm_config()
     }
 

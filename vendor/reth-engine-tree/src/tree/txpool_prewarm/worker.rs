@@ -6,7 +6,7 @@ use std::{
 use alloy_evm::Evm;
 use alloy_primitives::B256;
 use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
@@ -36,20 +36,17 @@ const HEAD_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// The worker is driven by [`Command`]s: `Start` points it at a new parent state, and
 /// `Pause`/`Resume` bracket cache-sensitive work elsewhere. Commands are only applied between
 /// batches, never while an EVM or state provider is alive.
-pub(super) struct Worker<P, Evm>
-where
-    Evm: ConfigureEvm,
-{
+pub(super) struct Worker<P> {
     /// Control commands from the [`Handle`](super::Handle).
-    commands: Receiver<Command<Job<P, Evm>>>,
+    commands: Receiver<Command<Job<P>>>,
     /// Shared slot the latest snapshot is published into.
     publication: Publication,
     /// The txpool view transactions are drawn from.
     source: Arc<dyn Source>,
     /// Configures the EVM used for speculative execution.
-    evm_config: Evm,
+    evm_config: BaseEvmConfig,
     /// The parent state to warm, from the most recent `Start` command.
-    job: Option<(B256, Job<P, Evm>)>,
+    job: Option<(B256, Job<P>)>,
     /// Outstanding pauses; the worker only warms while this is zero.
     pauses: u64,
     /// Read-through cache filled by execution; replaced whenever the warmed parent changes.
@@ -63,7 +60,7 @@ where
     transactions: Option<(B256, Transactions)>,
 }
 
-impl<P, Evm> Worker<P, Evm>
+impl<P> Worker<P>
 where
     P: DatabaseProviderFactory,
     P::Provider: BlockNumReader
@@ -72,13 +69,12 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    Evm: ConfigureEvm,
 {
     pub(super) fn new(
-        commands: Receiver<Command<Job<P, Evm>>>,
+        commands: Receiver<Command<Job<P>>>,
         publication: Publication,
         source: Arc<dyn Source>,
-        evm_config: Evm,
+        evm_config: BaseEvmConfig,
     ) -> Self {
         Self {
             commands,
@@ -271,7 +267,7 @@ where
     ///
     /// Only called while no EVM or state provider is alive, so a paused worker holds no
     /// execution resources.
-    fn apply(&mut self, command: Command<Job<P, Evm>>) {
+    fn apply(&mut self, command: Command<Job<P>>) {
         match command {
             Command::Start { parent_hash, job } => self.job = Some((parent_hash, job)),
             Command::Pause => {
@@ -325,7 +321,6 @@ mod tests {
     use base_common_consensus::BaseTxEnvelope;
     use crossbeam_channel::{Sender, unbounded};
     use parking_lot::{Mutex, RwLock};
-    use reth_evm::TestEvmConfig;
     use reth_provider::test_utils::MockEthProvider;
     use reth_stages_api::{StageCheckpoint, StageId};
 
@@ -336,7 +331,7 @@ mod tests {
     const WAIT_LIMIT: Duration = Duration::from_secs(5);
     const POLL_INTERVAL: Duration = Duration::from_millis(2);
 
-    type TestJob = Job<MockEthProvider, TestEvmConfig>;
+    type TestJob = Job<MockEthProvider>;
 
     /// Drives a live worker thread through its public seams only: commands in, the publication
     /// slot and the scripted pool out.
@@ -355,7 +350,7 @@ mod tests {
             let worker = thread::spawn({
                 let publication = Arc::clone(&publication);
                 let source: Arc<dyn Source> = pool.clone();
-                move || Worker::new(receiver, publication, source, TestEvmConfig::default()).run()
+                move || Worker::new(receiver, publication, source, BaseEvmConfig::default()).run()
             });
             Self { commands, publication, pool, worker: Some(worker) }
         }

@@ -17,7 +17,7 @@ use reth_evm::{
     Evm, HaltReasonFor,
     execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutor},
 };
-use reth_primitives_traits::{BlockBody as _, Recovered, RecoveredBlock, SealedHeader};
+use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_rpc_convert::RpcConvert;
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
 use reth_storage_api::{StateProvider, noop::NoopProvider};
@@ -490,14 +490,14 @@ where
 /// Handles outputs of the calls execution and builds a [`SimulatedBlock`].
 pub fn build_simulated_block<Err, T>(
     block: RecoveredBlock<BaseBlock>,
-    results: Vec<ExecutionResult<HaltReasonFor<T::Evm>>>,
+    results: Vec<ExecutionResult<HaltReasonFor>>,
     txs_kind: BlockTransactionsKind,
     converter: &T,
 ) -> Result<SimulatedBlock<BaseBlockResponse>, Err>
 where
     Err: std::error::Error
         + FromEthApiError
-        + FromEvmError<T::Evm>
+        + FromEvmError
         + From<T::Error>
         + Into<jsonrpsee_types::ErrorObject<'static>>,
     T: RpcConvert,

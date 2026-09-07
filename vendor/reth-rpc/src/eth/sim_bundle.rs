@@ -12,7 +12,7 @@ use alloy_rpc_types_mev::{
     SimBundleResponse, Validity,
 };
 use jsonrpsee::core::RpcResult;
-use reth_evm::{ConfigureEvm, Evm};
+use reth_evm::Evm;
 use reth_primitives_traits::Recovered;
 use reth_rpc_api::MevSimApiServer;
 use reth_rpc_eth_api::{

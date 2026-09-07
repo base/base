@@ -18,7 +18,7 @@ use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
-use reth_evm::{ConfigureEvm, TestEvmConfig, execute::Executor};
+use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_network_p2p::{
     bodies::downloader::BodyDownloader,
     headers::downloader::{HeaderDownloader, SyncTarget},
@@ -147,8 +147,12 @@ where
 {
     let consensus = NoopConsensus::arc();
     let stages_config = StageConfig::default();
-    let evm_config =
-        TestEvmConfig::new(std::sync::Arc::new(provider_factory.chain_spec().runtime_chain_spec()));
+    let evm_config = BaseEvmConfig::new(std::sync::Arc::new(
+        (std::sync::Arc::new(provider_factory.chain_spec().runtime_chain_spec()))
+            .as_ref()
+            .clone()
+            .into(),
+    ));
 
     let (tip_tx, tip_rx) = watch::channel(B256::ZERO);
     let static_file_producer =
@@ -229,7 +233,8 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
     init_genesis(&provider_factory).expect("init genesis");
 
     let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-    let evm_config = TestEvmConfig::new(chain_spec.clone());
+    let evm_config =
+        BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
 
     // Build blocks by actually executing transactions to get correct state roots
     let mut blocks: Vec<SealedBlock<Block>> = Vec::new();

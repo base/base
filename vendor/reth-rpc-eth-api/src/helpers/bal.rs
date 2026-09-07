@@ -4,7 +4,7 @@ use alloy_eip7928::{BlockAccessList, bal::DecodedBal};
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::BlockId;
 use reth_errors::RethError;
-use reth_evm::{ConfigureEvm, Evm, block::BlockExecutor};
+use reth_evm::{Evm, block::BlockExecutor};
 use reth_revm::{State, database::StateProviderDatabase};
 use reth_rpc_eth_types::{
     EthApiError, cache::db::StateProviderTraitObjWrapper, error::FromEthApiError,

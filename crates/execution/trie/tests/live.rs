@@ -17,7 +17,7 @@ use derive_more::Constructor;
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN_TRANSACTION_GAS};
 use reth_db::Database;
 use reth_db_common::init::init_genesis;
-use reth_evm::{ConfigureEvm, TestEvmConfig, execute::Executor};
+use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_node_api::NodeTypesWithDB;
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
 use reth_provider::{
@@ -161,7 +161,8 @@ where
 {
     let provider = provider_factory.provider()?;
     let db = StateProviderDatabase::new(LatestStateProviderRef::new(&provider));
-    let evm_config = TestEvmConfig::new(Arc::clone(chain_spec));
+    let evm_config =
+        BaseEvmConfig::new(std::sync::Arc::new((Arc::clone(chain_spec)).as_ref().clone().into()));
     let block_executor = evm_config.batch_executor(db);
 
     let execution_result = block_executor.execute(block)?;
@@ -252,7 +253,8 @@ where
     }
 
     // Execute blocks after initialization using live collector
-    let evm_config = TestEvmConfig::new(Arc::clone(&chain_spec));
+    let evm_config =
+        BaseEvmConfig::new(std::sync::Arc::new((Arc::clone(&chain_spec)).as_ref().clone().into()));
 
     for (idx, block_spec) in scenario.blocks_after_initialization.iter().enumerate() {
         let block_number = last_block_number + idx as u64 + 1;
@@ -365,7 +367,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
 
     let blockchain_db = BlockchainProvider::new(provider_factory).unwrap();
     let collector = LiveTrieCollector::new(
-        TestEvmConfig::new(Arc::clone(&chain_spec)),
+        BaseEvmConfig::new(std::sync::Arc::new((Arc::clone(&chain_spec)).as_ref().clone().into())),
         blockchain_db,
         &storage,
     );
@@ -409,7 +411,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
     // Generate a second block normally
     let blockchain_db = BlockchainProvider::new(provider_factory.clone()).unwrap();
     let collector = LiveTrieCollector::new(
-        TestEvmConfig::new(Arc::clone(&chain_spec)),
+        BaseEvmConfig::new(std::sync::Arc::new((Arc::clone(&chain_spec)).as_ref().clone().into())),
         blockchain_db,
         &storage,
     );

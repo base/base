@@ -350,7 +350,7 @@ where
         sync_target: Arc<SyncTarget>,
         storage: BaseProofsStorage<Storage>,
         provider: Node::Provider,
-        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+        collector: &LiveTrieCollector<'_, Node::Provider, Storage>,
         verification_interval: u64,
     ) {
         info!(target: "base::exex", "Starting proofs storage sync loop");
@@ -396,7 +396,7 @@ where
 
     fn handle_revert(
         storage: &BaseProofsStorage<Storage>,
-        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+        collector: &LiveTrieCollector<'_, Node::Provider, Storage>,
         revert_to: BlockWithParent,
     ) {
         let latest = match storage.get_latest_block_number() {
@@ -432,7 +432,7 @@ where
         sync_target: &SyncTarget,
         storage: &BaseProofsStorage<Storage>,
         provider: &Node::Provider,
-        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+        collector: &LiveTrieCollector<'_, Node::Provider, Storage>,
         verification_interval: u64,
         target: u64,
     ) {

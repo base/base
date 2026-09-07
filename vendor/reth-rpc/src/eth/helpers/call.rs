@@ -12,16 +12,16 @@ use crate::EthApi;
 impl<N, Rpc> EthCall for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    EthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Error = EthApiError, Evm = N::Evm>,
+    EthApiError: FromEvmError,
+    Rpc: RpcConvert<Error = EthApiError>,
 {
 }
 
 impl<N, Rpc> Call for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    EthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Error = EthApiError, Evm = N::Evm>,
+    EthApiError: FromEvmError,
+    Rpc: RpcConvert<Error = EthApiError>,
 {
     #[inline]
     fn call_gas_limit(&self) -> u64 {
@@ -47,7 +47,7 @@ where
 impl<N, Rpc> EstimateCall for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    EthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Error = EthApiError, Evm = N::Evm>,
+    EthApiError: FromEvmError,
+    Rpc: RpcConvert<Error = EthApiError>,
 {
 }

@@ -13,7 +13,7 @@ use crate::EthApi;
 impl<N, Rpc> EthFees for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    EthApiError: FromEvmError<N::Evm>,
+    EthApiError: FromEvmError,
     Rpc: RpcConvert<Error = EthApiError>,
 {
 }
@@ -21,7 +21,7 @@ where
 impl<N, Rpc> LoadFee for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    EthApiError: FromEvmError<N::Evm>,
+    EthApiError: FromEvmError,
     Rpc: RpcConvert<Error = EthApiError>,
 {
     #[inline]

@@ -72,13 +72,13 @@ impl Eip8130GasEstimator {
     where
         Eth: FullEthApi + LoadPendingBlock + Clone + Send + Sync + 'static,
         Eth::Error: FromEthApiError,
-        TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
+        TxEnvFor: From<BaseRevm<TxEnv>>,
         // Pin the block env to revm's concrete type so block overrides can be
         // applied directly (Base's `EvmFactory::BlockEnv` is `revm::BlockEnv`).
-        EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
+        EvmFactoryFor: EvmFactory<BlockEnv = BlockEnv>,
         // Surface phase reverts/halts as execution errors, like the standard
         // estimator (`FullEthApi` already guarantees these on `Eth::Error`).
-        Eth::Error: FromRevert + FromEvmHalt<HaltReasonFor<Eth::Evm>>,
+        Eth::Error: FromRevert + FromEvmHalt<HaltReasonFor>,
         ErrorObjectOwned: From<Eth::Error>,
     {
         let (evm_env, at) = eth_api.evm_env_at(block_id).await?;

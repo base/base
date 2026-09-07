@@ -8,7 +8,7 @@ use base_common_consensus::BaseBlock;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
-use reth_evm::{ConfigureEvm, execute::BlockBuilder};
+use reth_evm::execute::BlockBuilder;
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
@@ -84,7 +84,7 @@ where
 
     let evm_start = Instant::now();
     {
-        let evm_config = BaseEvmConfig::base(chain_spec);
+        let evm_config = BaseEvmConfig::new(chain_spec);
         let mut builder = evm_config.builder_for_next_block(&mut db, &parent_header, attributes)?;
 
         builder.apply_pre_execution_changes()?;

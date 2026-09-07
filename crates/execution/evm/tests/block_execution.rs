@@ -10,7 +10,7 @@ use base_common_consensus::{
 };
 use base_common_evm::BaseTime;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
+use base_execution_evm::BaseEvmConfig;
 use base_protocol::BaseTimeUpdateTx;
 use reth_chainspec::{ForkCondition, MIN_TRANSACTION_GAS};
 use reth_evm::execute::{BasicBlockExecutor, Executor};
@@ -50,7 +50,7 @@ fn create_base_state_provider() -> StateProviderTest {
 }
 
 fn evm_config(chain_spec: Arc<BaseChainSpec>) -> BaseEvmConfig {
-    BaseEvmConfig::new(chain_spec, BaseRethReceiptBuilder::default())
+    BaseEvmConfig::new(chain_spec)
 }
 
 fn execute_same_block_base_time_read(getter_selector: [u8; 4]) -> U256 {

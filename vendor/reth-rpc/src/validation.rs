@@ -26,7 +26,7 @@ use reth_consensus::{Consensus, FullConsensus};
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_engine_primitives::PayloadValidator;
 use reth_errors::{BlockExecutionError, ConsensusError, ProviderError};
-use reth_evm::{ConfigureEvm, execute::Executor};
+use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_execution_types::BlockExecutionOutput;
 use reth_metrics::{
     Metrics, metrics,
@@ -46,20 +46,17 @@ use tracing::warn;
 
 /// The type that implements the `validation` rpc namespace trait
 #[derive(Clone, Debug, derive_more::Deref)]
-pub struct ValidationApi<Provider, E: ConfigureEvm> {
+pub struct ValidationApi<Provider> {
     #[deref]
-    inner: Arc<ValidationApiInner<Provider, E>>,
+    inner: Arc<ValidationApiInner<Provider>>,
 }
 
-impl<Provider, E> ValidationApi<Provider, E>
-where
-    E: ConfigureEvm,
-{
+impl<Provider> ValidationApi<Provider> {
     /// Create a new instance of the [`ValidationApi`]
     pub fn new(
         provider: Provider,
         consensus: Arc<dyn FullConsensus>,
-        evm_config: E,
+        evm_config: BaseEvmConfig,
         config: ValidationApiConfig,
         task_spawner: Runtime,
         payload_validator: Arc<dyn PayloadValidator<Block = BaseBlock>>,
@@ -104,13 +101,12 @@ where
     }
 }
 
-impl<Provider, E> ValidationApi<Provider, E>
+impl<Provider> ValidationApi<Provider>
 where
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + ChainSpecProvider
         + StateProviderFactory
         + 'static,
-    E: ConfigureEvm + 'static,
 {
     /// Validates the given block and a [`BidTrace`] against it.
     pub async fn validate_message_against_block(
@@ -534,14 +530,13 @@ where
 }
 
 #[async_trait]
-impl<Provider, E> BlockSubmissionValidationApiServer for ValidationApi<Provider, E>
+impl<Provider> BlockSubmissionValidationApiServer for ValidationApi<Provider>
 where
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + ChainSpecProvider
         + StateProviderFactory
         + Clone
         + 'static,
-    E: ConfigureEvm + 'static,
 {
     async fn validate_builder_submission_v1(
         &self,
@@ -632,7 +627,7 @@ where
     }
 }
 
-pub struct ValidationApiInner<Provider, E: ConfigureEvm> {
+pub struct ValidationApiInner<Provider> {
     /// The provider that can interact with the chain.
     provider: Provider,
     /// Consensus implementation.
@@ -640,7 +635,7 @@ pub struct ValidationApiInner<Provider, E: ConfigureEvm> {
     /// Execution payload validator.
     payload_validator: Arc<dyn PayloadValidator<Block = BaseBlock>>,
     /// Block executor factory.
-    evm_config: E,
+    evm_config: BaseEvmConfig,
     /// Set of disallowed addresses
     disallow: AddressSet,
     /// The maximum block distance - parent to latest - allowed for validation
@@ -672,7 +667,7 @@ fn hash_disallow_list(disallow: &AddressSet) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-impl<Provider, E: ConfigureEvm> fmt::Debug for ValidationApiInner<Provider, E> {
+impl<Provider> fmt::Debug for ValidationApiInner<Provider> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ValidationApiInner").finish_non_exhaustive()
     }

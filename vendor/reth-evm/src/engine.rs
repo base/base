@@ -3,7 +3,7 @@ use alloy_evm::{RecoveredTx, block::ExecutableTxParts};
 use base_common_consensus::BaseTxEnvelope;
 use rayon::prelude::*;
 
-use crate::{ConfigureEvm, TxEnvFor, execute::ExecutableTxFor};
+use crate::{TxEnvFor, execute::ExecutableTxFor};
 
 /// Converts a raw transaction into an executable transaction.
 ///
@@ -105,19 +105,18 @@ where
 ///
 /// See also [`ExecutableTxTuple`] for the raw transaction iterator and converter this extension
 /// trait builds on.
-pub trait ExecutableTxIterator<Evm: ConfigureEvm>:
-    ExecutableTxTuple<Tx: ExecutableTxFor<Evm, Recovered = Self::Recovered>>
+pub trait ExecutableTxIterator:
+    ExecutableTxTuple<Tx: ExecutableTxFor<Recovered = Self::Recovered>>
 {
-    /// HACK: for some reason, this duplicated AT is the only way to enforce the inner Recovered:
-    /// Send + Sync bound. Effectively alias for `Self::Tx::Recovered`.
+    /// Recovered transaction yielded by the iterator.
     type Recovered: RecoveredTx<BaseTxEnvelope> + Send + Sync;
 }
 
-impl<T, Evm: ConfigureEvm> ExecutableTxIterator<Evm> for T
+impl<T> ExecutableTxIterator for T
 where
-    T: ExecutableTxTuple<Tx: ExecutableTxFor<Evm, Recovered: Send + Sync>>,
+    T: ExecutableTxTuple<Tx: ExecutableTxFor<Recovered: Send + Sync>>,
 {
-    type Recovered = <T::Tx as ExecutableTxParts<TxEnvFor<Evm>, BaseTxEnvelope>>::Recovered;
+    type Recovered = <T::Tx as ExecutableTxParts<TxEnvFor, BaseTxEnvelope>>::Recovered;
 }
 
 /// Wraps `Either<L, R>` to implement both [`IntoParallelIterator`] and [`IntoIterator`],

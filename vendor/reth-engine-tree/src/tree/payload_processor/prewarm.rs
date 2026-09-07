@@ -23,7 +23,7 @@ use alloy_primitives::{B256, U256, keccak256};
 use base_common_consensus::BaseReceipt;
 use metrics::{Counter, Gauge, Histogram};
 use rayon::prelude::*;
-use reth_evm::{ConfigureEvm, Evm, EvmFor, RecoveredTx, SpecFor, execute::ExecutableTxFor};
+use reth_evm::{BaseEvmConfig, Evm, EvmFor, RecoveredTx, SpecFor, execute::ExecutableTxFor};
 use reth_metrics::Metrics;
 use reth_primitives_traits::{Account, FastInstant as Instant};
 use reth_provider::{
@@ -74,23 +74,20 @@ pub enum PrewarmMode<Tx> {
 ///
 /// Note: This task runs until cancelled externally.
 #[derive(Debug)]
-pub struct PrewarmCacheTask<P, Evm>
-where
-    Evm: ConfigureEvm,
-{
+pub struct PrewarmCacheTask<P> {
     /// The executor used to spawn execution tasks.
     executor: Runtime,
     /// Shared execution cache.
     execution_cache: PayloadExecutionCache,
     /// Context provided to execution tasks
-    ctx: PrewarmContext<P, Evm>,
+    ctx: PrewarmContext<P>,
     /// Receiver for events produced by tx execution
     actions_rx: Receiver<PrewarmTaskEvent<BaseReceipt>>,
     /// Parent span for tracing
     parent_span: Span,
 }
 
-impl<P, Evm> PrewarmCacheTask<P, Evm>
+impl<P> PrewarmCacheTask<P>
 where
     P: DatabaseProviderFactory + Clone + 'static,
     P::Provider: BlockNumReader
@@ -99,13 +96,12 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    Evm: ConfigureEvm + 'static,
 {
     /// Initializes the task with the given transactions pending execution
     pub fn new(
         executor: Runtime,
         execution_cache: PayloadExecutionCache,
-        ctx: PrewarmContext<P, Evm>,
+        ctx: PrewarmContext<P>,
     ) -> (Self, Sender<PrewarmTaskEvent<BaseReceipt>>) {
         let (actions_tx, actions_rx) = channel();
 
@@ -134,7 +130,7 @@ where
         actions_tx: Sender<PrewarmTaskEvent<BaseReceipt>>,
         state_root_hint_stream: Option<StateRootHintStream>,
     ) where
-        Tx: ExecutableTxFor<Evm> + Send + 'static,
+        Tx: ExecutableTxFor + Send + 'static,
     {
         let executor = self.executor.clone();
         let ctx = self.ctx.clone();
@@ -155,7 +151,7 @@ where
             let state_root_hint_stream = state_root_hint_stream.as_ref();
             pool.in_place_scope(|s| {
                 s.spawn(|_| {
-                    pool.init::<PrewarmEvmState<Evm>>(|_| ctx.evm_for_ctx());
+                    pool.init::<PrewarmEvmState>(|_| ctx.evm_for_ctx());
                 });
 
                 while let Ok((index, tx)) = pending.recv() {
@@ -209,16 +205,15 @@ where
     /// Lazily initialises per-thread [`PrewarmEvmState`] via
     /// [`get_or_init`](reth_tasks::pool::Worker::get_or_init) on first access.
     fn transact_worker<Tx>(
-        ctx: &PrewarmContext<P, Evm>,
+        ctx: &PrewarmContext<P>,
         index: usize,
         tx: Tx,
         state_root_hint_stream: Option<&StateRootHintStream>,
     ) where
-        Tx: ExecutableTxFor<Evm>,
+        Tx: ExecutableTxFor,
     {
         WorkerPool::with_worker_mut(|worker| {
-            let Some(evm) =
-                worker.get_or_init::<PrewarmEvmState<Evm>>(|| ctx.evm_for_ctx()).as_mut()
+            let Some(evm) = worker.get_or_init::<PrewarmEvmState>(|| ctx.evm_for_ctx()).as_mut()
             else {
                 return;
             };
@@ -458,7 +453,7 @@ where
     )]
     pub fn run<Tx>(self, mode: PrewarmMode<Tx>, actions_tx: Sender<PrewarmTaskEvent<BaseReceipt>>)
     where
-        Tx: ExecutableTxFor<Evm> + Send + 'static,
+        Tx: ExecutableTxFor + Send + 'static,
     {
         // Spawn execution tasks based on mode. The state-root capabilities arrive inside the
         // mode and move into the spawned producers, so they die with the producers instead of
@@ -521,14 +516,11 @@ where
 
 /// Context required by tx execution tasks.
 #[derive(Debug, Clone)]
-pub struct PrewarmContext<P, Evm>
-where
-    Evm: ConfigureEvm,
-{
+pub struct PrewarmContext<P> {
     /// The execution environment.
-    pub env: ExecutionEnv<Evm>,
+    pub env: ExecutionEnv,
     /// The EVM configuration.
-    pub evm_config: Evm,
+    pub evm_config: BaseEvmConfig,
     /// The saved cache.
     pub saved_cache: Option<SavedCache>,
     /// Provider to obtain the state
@@ -552,7 +544,7 @@ where
     /// Whether the precompile cache is disabled.
     pub precompile_cache_disabled: bool,
     /// The precompile cache map.
-    pub precompile_cache_map: PrecompileCacheMap<SpecFor<Evm>>,
+    pub precompile_cache_map: PrecompileCacheMap<SpecFor>,
     /// Whether to disable BAL-driven parallel state root computation.
     /// Only valid when BAL parallel execution is also disabled.
     pub disable_bal_parallel_state_root: bool,
@@ -562,10 +554,9 @@ where
 
 /// Per-thread EVM state initialised by [`PrewarmContext::evm_for_ctx`] and stored in
 /// [`WorkerPool`] workers via [`Worker::get_or_init`](reth_tasks::pool::Worker::get_or_init).
-type PrewarmEvmState<Evm> =
-    Option<EvmFor<Evm, StateProviderDatabase<reth_provider::StateProviderBox>>>;
+type PrewarmEvmState = Option<EvmFor<StateProviderDatabase<reth_provider::StateProviderBox>>>;
 
-impl<P, Evm> PrewarmContext<P, Evm>
+impl<P> PrewarmContext<P>
 where
     P: DatabaseProviderFactory,
     P::Provider: BlockNumReader
@@ -574,11 +565,10 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    Evm: ConfigureEvm + 'static,
 {
     /// Creates a per-thread EVM for prewarming.
     #[instrument(level = "debug", target = "engine::tree::payload_processor::prewarm", skip_all)]
-    fn evm_for_ctx(&self) -> PrewarmEvmState<Evm> {
+    fn evm_for_ctx(&self) -> PrewarmEvmState {
         let mut state_provider = match self.provider.build() {
             Ok(provider) => provider,
             Err(err) => {

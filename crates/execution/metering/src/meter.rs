@@ -16,7 +16,7 @@ use base_common_precompiles::{
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
-use reth_evm::{ConfigureEvm, Evm as _, execute::BlockBuilder};
+use reth_evm::{Evm as _, execute::BlockBuilder};
 use reth_primitives_traits::{Account, SealedHeader};
 use reth_revm::{
     database::StateProviderDatabase, db::State, primitives::KECCAK_EMPTY,
@@ -644,7 +644,7 @@ where
 
     let total_start = Instant::now();
     {
-        let evm_config = BaseEvmConfig::base(chain_spec);
+        let evm_config = BaseEvmConfig::new(chain_spec);
         let evm_env = evm_config.next_evm_env(header, &attributes)?;
         let spec = evm_env.cfg_env.spec;
         let metered_opcodes = Arc::new(metered_opcodes.clone().for_spec(spec));

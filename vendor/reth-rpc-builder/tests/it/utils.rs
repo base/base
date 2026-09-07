@@ -4,7 +4,7 @@ use alloy_rpc_types_engine::{ClientCode, ClientVersionV1};
 use reth_chainspec::MAINNET;
 use reth_consensus::noop::NoopConsensus;
 use reth_engine_primitives::{ConsensusEngineHandle, test_utils::TestEngineValidator};
-use reth_evm::TestEvmConfig;
+use reth_evm::BaseEvmConfig;
 use reth_network_api::noop::NoopNetwork;
 use reth_payload_builder::test_utils::spawn_test_payload_service;
 use reth_provider::test_utils::NoopProvider;
@@ -145,18 +145,13 @@ pub async fn launch_http_ws_same_port(modules: impl Into<RpcModuleSelection>) ->
 }
 
 /// Returns an [`RpcModuleBuilder`] with testing components.
-pub fn test_rpc_builder() -> RpcModuleBuilder<
-    NoopProvider,
-    reth_rpc::test_utils::TestPool,
-    NoopNetwork,
-    TestEvmConfig,
-    NoopConsensus,
-> {
+pub fn test_rpc_builder()
+-> RpcModuleBuilder<NoopProvider, reth_rpc::test_utils::TestPool, NoopNetwork, NoopConsensus> {
     RpcModuleBuilder::default()
         .with_provider(NoopProvider::default())
         .with_pool(reth_rpc::test_utils::RpcTestUtils::pool())
         .with_network(NoopNetwork::default())
         .with_executor(Runtime::test())
-        .with_evm_config(TestEvmConfig::default())
+        .with_evm_config(BaseEvmConfig::default())
         .with_consensus(NoopConsensus::default())
 }

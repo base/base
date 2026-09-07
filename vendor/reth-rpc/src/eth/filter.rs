@@ -120,23 +120,16 @@ where
     ///
     /// This also spawns a task that periodically clears stale filters.
     ///
-    /// # Create a new instance with [`EthApi`](crate::EthApi)
+    /// # Create a filter service for an existing API
     ///
     /// ```no_run
-    /// use reth_evm::TestEvmConfig;
-    /// use reth_network_api::noop::NoopNetwork;
-    /// use reth_provider::noop::NoopProvider;
-    /// use reth_rpc::{EthApi, EthFilter};
+    /// use reth_rpc::EthFilter;
+    /// use reth_rpc_eth_api::EthApiTypes;
     /// use reth_tasks::Runtime;
-    /// use reth_transaction_pool::noop::NoopTransactionPool;
-    /// let eth_api = reth_rpc::EthApiBuilder::new(
-    ///     NoopProvider::default(),
-    ///     NoopTransactionPool::default(),
-    ///     NoopNetwork::default(),
-    ///     TestEvmConfig::default(),
-    /// )
-    /// .build();
-    /// let filter = EthFilter::new(eth_api, Default::default(), Runtime::test());
+    ///
+    /// fn filters<Eth: EthApiTypes + 'static>(eth_api: Eth, runtime: Runtime) -> EthFilter<Eth> {
+    ///     EthFilter::new(eth_api, Default::default(), runtime)
+    /// }
     /// ```
     pub fn new(eth_api: Eth, config: EthFilterConfig, task_spawner: Runtime) -> Self {
         let EthFilterConfig { max_blocks_per_filter, max_logs_per_response, stale_filter_ttl } =
@@ -1365,7 +1358,7 @@ mod tests {
     use base_common_consensus::{BaseBlock, BaseReceipt};
     use base_execution_chainspec::ChainSpecProvider;
     use rand::Rng;
-    use reth_evm::TestEvmConfig;
+    use reth_evm::BaseEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::test_utils::MockEthProvider;
     use reth_rpc_eth_api::node::RpcNodeCoreAdapter;
@@ -1402,19 +1395,14 @@ mod tests {
     fn build_test_eth_api(
         provider: MockEthProvider,
     ) -> EthApi<
-        RpcNodeCoreAdapter<
-            MockEthProvider,
-            crate::test_utils::TestPool,
-            NoopNetwork,
-            TestEvmConfig,
-        >,
+        RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>,
         crate::test_utils::TestRpcConverter,
     > {
         crate::test_utils::RpcTestUtils::api_builder(
             provider.clone(),
             crate::test_utils::RpcTestUtils::pool(),
             NoopNetwork::default(),
-            TestEvmConfig::new(std::sync::Arc::new(provider.chain_spec().runtime_chain_spec())),
+            BaseEvmConfig::new(provider.chain_spec()),
         )
         .build()
     }

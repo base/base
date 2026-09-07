@@ -7,7 +7,7 @@ use base_common_consensus::BaseTxEnvelope;
 use reth_consensus::FullConsensus;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_network_api::FullNetwork;
 use reth_node_core::node_config::NodeConfig;
 use reth_node_types::NodeTypesWithDBAdapter;
@@ -45,9 +45,6 @@ pub trait FullNodeComponents: FullNodeTypes + Clone + 'static {
     /// The transaction pool of the node.
     type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin;
 
-    /// The node's EVM configuration, defining settings for the Ethereum Virtual Machine.
-    type Evm: ConfigureEvm;
-
     /// The consensus type of the node.
     type Consensus: FullConsensus + Clone + Unpin + 'static;
 
@@ -58,7 +55,7 @@ pub trait FullNodeComponents: FullNodeTypes + Clone + 'static {
     fn pool(&self) -> &Self::Pool;
 
     /// Returns the node's evm config.
-    fn evm_config(&self) -> &Self::Evm;
+    fn evm_config(&self) -> &BaseEvmConfig;
 
     /// Returns the node's consensus type.
     fn consensus(&self) -> &Self::Consensus;

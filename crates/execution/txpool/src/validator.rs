@@ -31,7 +31,6 @@ use base_precompile_storage::{
 };
 use lru::LruCache;
 use parking_lot::RwLock;
-use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{
     Block, BlockBody, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };
@@ -664,9 +663,9 @@ impl BaseL1BlockInfo {
 
 /// Validator for Base transactions.
 #[derive(Debug, Clone)]
-pub struct BaseTransactionValidator<Client, Tx, Evm> {
+pub struct BaseTransactionValidator<Client, Tx> {
     /// The type that performs the actual validation.
-    inner: Arc<EthTransactionValidator<Client, Tx, Evm>>,
+    inner: Arc<EthTransactionValidator<Client, Tx>>,
     /// Additional block info required for validation.
     block_info: Arc<BaseL1BlockInfo>,
     /// If true, ensure that the transaction's sender has enough balance to cover the L1 gas fee
@@ -685,7 +684,7 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     limit_class_cache_generation: Arc<AtomicU64>,
 }
 
-impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
+impl<Client, Tx> BaseTransactionValidator<Client, Tx> {
     /// Returns the configured chain spec
     pub fn chain_spec(&self) -> Arc<BaseChainSpec>
     where
@@ -802,14 +801,13 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
     }
 }
 
-impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm>
+impl<Client, Tx> BaseTransactionValidator<Client, Tx>
 where
     Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
     Tx: EthPoolTransaction + BasePooledTx,
-    Evm: ConfigureEvm,
 {
     /// Create a new [`BaseTransactionValidator`].
-    pub fn new(inner: EthTransactionValidator<Client, Tx, Evm>) -> Self {
+    pub fn new(inner: EthTransactionValidator<Client, Tx>) -> Self {
         let this = Self::with_block_info(inner, BaseL1BlockInfo::default());
         if let Ok(Some(block)) =
             this.inner.client().block_by_number_or_tag(alloy_eips::BlockNumberOrTag::Latest)
@@ -828,7 +826,7 @@ where
 
     /// Create a new [`BaseTransactionValidator`] with the given [`BaseL1BlockInfo`].
     pub fn with_block_info(
-        inner: EthTransactionValidator<Client, Tx, Evm>,
+        inner: EthTransactionValidator<Client, Tx>,
         block_info: BaseL1BlockInfo,
     ) -> Self {
         let trusted_delegation_targets = Self::default_trusted_delegation_targets();
@@ -2127,11 +2125,10 @@ where
     }
 }
 
-impl<Client, Tx, Evm> TransactionValidator for BaseTransactionValidator<Client, Tx, Evm>
+impl<Client, Tx> TransactionValidator for BaseTransactionValidator<Client, Tx>
 where
     Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
     Tx: EthPoolTransaction + BasePooledTx,
-    Evm: ConfigureEvm,
 {
     type Transaction = Tx;
     type Block = BaseBlock;
@@ -2179,8 +2176,7 @@ mod tests {
     use super::*;
     use crate::BasePooledTransaction;
 
-    type TestValidator =
-        BaseTransactionValidator<MockEthProvider, BasePooledTransaction, BaseEvmConfig>;
+    type TestValidator = BaseTransactionValidator<MockEthProvider, BasePooledTransaction>;
 
     /// Builds a [`BaseTransactionValidator`] configured against the given chain spec with
     /// no accounts seeded.
@@ -2188,7 +2184,7 @@ mod tests {
         let client = MockEthProvider::new()
             .with_chain_spec(chain_spec.as_ref().clone())
             .with_genesis_block();
-        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()
@@ -2210,7 +2206,7 @@ mod tests {
         let client = MockEthProvider::new()
             .with_chain_spec(chain_spec.as_ref().clone())
             .with_genesis_block();
-        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()
@@ -2229,7 +2225,7 @@ mod tests {
             .with_chain_spec(chain_spec.as_ref().clone())
             .with_genesis_block();
         client.add_account(address, account);
-        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()
@@ -3463,7 +3459,7 @@ mod tests {
             .with_chain_spec(chain_spec.as_ref().clone())
             .with_genesis_block();
         client.add_account(sender, ExtendedAccount::new(0, balance));
-        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()
@@ -3528,7 +3524,7 @@ mod tests {
             .with_genesis_block();
         client
             .add_account(sender, ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)));
-        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()
@@ -3598,7 +3594,7 @@ mod tests {
             signer.address(),
             ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
         );
-        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()

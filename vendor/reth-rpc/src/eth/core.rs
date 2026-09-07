@@ -8,6 +8,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
 use derive_more::Deref;
+use reth_evm::BaseEvmConfig;
 use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
     EthApiTypes, RpcNodeCore,
@@ -83,14 +84,14 @@ where
 {
     type Provider = N::Provider;
     type Pool = N::Pool;
-    type Evm = N::Evm;
+
     type Network = N::Network;
 
     fn pool(&self) -> &Self::Pool {
         self.inner.pool()
     }
 
-    fn evm_config(&self) -> &Self::Evm {
+    fn evm_config(&self) -> &BaseEvmConfig {
         self.inner.evm_config()
     }
 
@@ -196,7 +197,7 @@ pub struct EthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     converter: Rpc,
 
     /// Builder for pending block environment.
-    next_env_builder: Box<dyn PendingEnvBuilder<N::Evm>>,
+    next_env_builder: Box<dyn PendingEnvBuilder>,
 
     /// Transaction batch sender for batching tx insertions
     tx_batch_sender:
@@ -238,7 +239,7 @@ where
         task_spawner: Runtime,
         proof_permits: usize,
         converter: Rpc,
-        next_env: impl PendingEnvBuilder<N::Evm>,
+        next_env: impl PendingEnvBuilder,
         max_batch_size: usize,
         max_blocking_io_requests: usize,
         pending_block_kind: PendingBlockKind,
@@ -325,10 +326,10 @@ where
         &self.pending_block
     }
 
-    /// Returns a type that knows how to build a [`reth_evm::ConfigureEvm::NextBlockEnvCtx`] for a
+    /// Returns a type that knows how to build a [`reth_evm::BaseNextBlockEnvAttributes`] for a
     /// pending block.
     #[inline]
-    pub const fn pending_env_builder(&self) -> &dyn PendingEnvBuilder<N::Evm> {
+    pub const fn pending_env_builder(&self) -> &dyn PendingEnvBuilder {
         &*self.next_env_builder
     }
 
@@ -348,7 +349,7 @@ where
 
     /// Returns a handle to the EVM config.
     #[inline]
-    pub fn evm_config(&self) -> &N::Evm {
+    pub fn evm_config(&self) -> &BaseEvmConfig {
         self.components.evm_config()
     }
 
@@ -512,7 +513,7 @@ mod tests {
     use jsonrpsee_types::error::INVALID_PARAMS_CODE;
     use rand::Rng;
     use reth_chain_state::CanonStateSubscriptions;
-    use reth_evm::TestEvmConfig;
+    use reth_evm::BaseEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
         PruneCheckpointReader, StageCheckpointReader,
@@ -525,7 +526,7 @@ mod tests {
     use crate::EthApi;
 
     type FakeEthApi<P = MockEthProvider> = EthApi<
-        RpcNodeCoreAdapter<P, crate::test_utils::TestPool, NoopNetwork, TestEvmConfig>,
+        RpcNodeCoreAdapter<P, crate::test_utils::TestPool, NoopNetwork>,
         crate::test_utils::TestRpcConverter,
     >;
 
@@ -552,7 +553,7 @@ mod tests {
             provider.clone(),
             crate::test_utils::RpcTestUtils::pool(),
             NoopNetwork::default(),
-            TestEvmConfig::new(std::sync::Arc::new(provider.chain_spec().runtime_chain_spec())),
+            BaseEvmConfig::new(provider.chain_spec()),
         )
         .build()
     }

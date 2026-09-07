@@ -48,7 +48,7 @@ use reth_db_common::init::{
 };
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_engine_local::MiningMode;
-use reth_evm::{ConfigureEvm, noop::NoopEvmConfig};
+use reth_evm::BaseEvmConfig;
 use reth_exex::ExExManagerHandle;
 use reth_fs_util as fs;
 use reth_network_p2p::headers::client::HeadersClient;
@@ -456,7 +456,7 @@ where
     /// Returns the [`ProviderFactory`] for the attached storage after executing a consistent check
     /// between the database and static files. **It may execute a pipeline unwind if it fails this
     /// check.**
-    pub async fn create_provider_factory<N, Evm>(
+    pub async fn create_provider_factory<N>(
         &self,
         overlay_manager: OverlayManager,
         rocksdb_provider: Option<RocksDBProvider>,
@@ -464,7 +464,6 @@ where
     ) -> eyre::Result<ProviderFactory<N>>
     where
         N: NodeTypesWithDB<DB = DB>,
-        Evm: ConfigureEvm + 'static,
     {
         // Validate static files configuration
         let static_files_config = &self.toml_config().static_files;
@@ -555,7 +554,7 @@ where
                     Arc::new(NoopConsensus::default()),
                     NoopHeaderDownloader::default(),
                     NoopBodiesDownloader::default(),
-                    NoopEvmConfig::<Evm>::default(),
+                    BaseEvmConfig::default(),
                     self.toml_config().stages.clone(),
                     self.prune_modes(),
                 )
@@ -648,7 +647,7 @@ where
     }
 
     /// Creates a new [`ProviderFactory`] and attaches it to the launch context.
-    pub async fn with_provider_factory<N, Evm>(
+    pub async fn with_provider_factory<N>(
         self,
         overlay_manager: OverlayManager,
         rocksdb_provider: Option<RocksDBProvider>,
@@ -656,10 +655,9 @@ where
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, ProviderFactory<N>>>>
     where
         N: NodeTypesWithDB<DB = DB>,
-        Evm: ConfigureEvm + 'static,
     {
         let factory = self
-            .create_provider_factory::<N, Evm>(overlay_manager, rocksdb_provider, disabled_stages)
+            .create_provider_factory::<N>(overlay_manager, rocksdb_provider, disabled_stages)
             .await?;
         let ctx = LaunchContextWith {
             inner: self.inner,

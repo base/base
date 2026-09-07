@@ -28,7 +28,7 @@ use reth_db::{
     },
 };
 use reth_db_common::init::init_genesis;
-use reth_evm::MockEvmConfig;
+use reth_evm::BaseEvmConfig;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
 use reth_network::{NetworkConfigBuilder, NetworkHandle, NetworkManager, config::rng_secret_key};
@@ -65,7 +65,6 @@ pub type Adapter = NodeAdapter<
             CoinbaseTipOrdering<BasePooledTransaction>,
             InMemoryBlobStore,
         >,
-        MockEvmConfig,
         Arc<TestConsensus>,
     >,
 >;
@@ -154,7 +153,7 @@ pub async fn test_exex_context_with_chain_spec(
         InMemoryBlobStore::default(),
         Default::default(),
     );
-    let evm_config = MockEvmConfig::default();
+    let evm_config = BaseEvmConfig::default();
     let consensus = Arc::new(TestConsensus::default());
 
     let (static_dir, _) = create_test_static_files_dir();

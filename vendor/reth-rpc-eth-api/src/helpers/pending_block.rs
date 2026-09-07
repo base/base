@@ -16,7 +16,7 @@ use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_chainspec::EthereumHardforks;
 use reth_errors::{BlockExecutionError, BlockValidationError, ProviderError, RethError};
 use reth_evm::{
-    ConfigureEvm, Evm, EvmEnvFor, NextBlockEnvAttributes,
+    BaseNextBlockEnvAttributes, Evm, EvmEnvFor, NextBlockEnvAttributes,
     block::TxResult,
     execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput},
 };
@@ -47,7 +47,7 @@ use crate::{EthApiTypes, FromEthApiError, FromEvmError, RpcNodeCore};
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` blocks RPC methods.
 pub trait LoadPendingBlock:
-    EthApiTypes<Error: FromEvmError<Self::Evm>, RpcConvert: RpcConvert> + RpcNodeCore
+    EthApiTypes<Error: FromEvmError, RpcConvert: RpcConvert> + RpcNodeCore
 {
     /// Returns a handle to the pending block.
     ///
@@ -55,7 +55,7 @@ pub trait LoadPendingBlock:
     fn pending_block(&self) -> &Mutex<Option<PendingBlock>>;
 
     /// Returns a [`PendingEnvBuilder`] for the pending block.
-    fn pending_env_builder(&self) -> &dyn PendingEnvBuilder<Self::Evm>;
+    fn pending_env_builder(&self) -> &dyn PendingEnvBuilder;
 
     /// Returns the pending block kind
     fn pending_block_kind(&self) -> PendingBlockKind;
@@ -63,7 +63,7 @@ pub trait LoadPendingBlock:
     /// Configures the [`PendingBlockEnv`] for the pending block
     ///
     /// If no pending block is available, this will derive it from the `latest` block
-    fn pending_block_env_and_cfg(&self) -> Result<PendingBlockEnv<Self::Evm>, Self::Error> {
+    fn pending_block_env_and_cfg(&self) -> Result<PendingBlockEnv, Self::Error> {
         if let Some((block, receipts)) =
             self.provider().pending_block_and_receipts().map_err(Self::Error::from_eth_err)?
         {
@@ -99,11 +99,11 @@ pub trait LoadPendingBlock:
         Ok(PendingBlockEnv::new(evm_env, PendingBlockEnvOrigin::DerivedFromLatest(latest)))
     }
 
-    /// Returns [`ConfigureEvm::NextBlockEnvCtx`] for building a local pending block.
+    /// Returns [`BaseNextBlockEnvAttributes`] for building a local pending block.
     fn next_env_attributes(
         &self,
         parent: &SealedHeader<ProviderHeader<Self::Provider>>,
-    ) -> Result<<Self::Evm as ConfigureEvm>::NextBlockEnvCtx, Self::Error> {
+    ) -> Result<BaseNextBlockEnvAttributes, Self::Error> {
         Ok(self.pending_env_builder().pending_env_attributes(parent, None)?)
     }
 
@@ -158,7 +158,7 @@ pub trait LoadPendingBlock:
     fn build_pool_pending_block(
         &self,
         parent: SealedHeader<ProviderHeader<Self::Provider>>,
-        evm_env: EvmEnvFor<Self::Evm>,
+        evm_env: EvmEnvFor,
     ) -> impl Future<Output = Result<Option<PendingBlock>, Self::Error>> + Send
     where
         Self: SpawnBlocking,
@@ -444,9 +444,9 @@ pub trait LoadPendingBlock:
     }
 }
 
-/// A type that knows how to build a [`ConfigureEvm::NextBlockEnvCtx`] for a pending block.
-pub trait PendingEnvBuilder<Evm: ConfigureEvm>: Send + Sync + Unpin + 'static {
-    /// Builds a [`ConfigureEvm::NextBlockEnvCtx`] for a pending block.
+/// A type that knows how to build a [`BaseNextBlockEnvAttributes`] for a pending block.
+pub trait PendingEnvBuilder: Send + Sync + Unpin + 'static {
+    /// Builds a [`BaseNextBlockEnvAttributes`] for a pending block.
     ///
     /// `block_overrides` can be used for values that need to be part of the next block context
     /// before the EVM environment is constructed. Other block overrides are applied directly to the
@@ -455,16 +455,16 @@ pub trait PendingEnvBuilder<Evm: ConfigureEvm>: Send + Sync + Unpin + 'static {
         &self,
         parent: &SealedHeader<alloy_consensus::Header>,
         block_overrides: Option<&BlockOverrides>,
-    ) -> Result<Evm::NextBlockEnvCtx, EthApiError>;
+    ) -> Result<BaseNextBlockEnvAttributes, EthApiError>;
 }
 
-/// Trait that should be implemented on [`ConfigureEvm::NextBlockEnvCtx`] to provide a way for it to
+/// Trait that should be implemented on [`BaseNextBlockEnvAttributes`] to provide a way for it to
 /// build an environment for pending block.
 ///
 /// This assumes that next environment building doesn't require any additional context, for more
 /// complex implementations one should implement [`PendingEnvBuilder`] on their custom type.
 pub trait BuildPendingEnv<Header> {
-    /// Builds a [`ConfigureEvm::NextBlockEnvCtx`] for a pending block.
+    /// Builds a [`BaseNextBlockEnvAttributes`] for a pending block.
     ///
     /// `block_overrides` can be used for values that need to be part of the next block context
     /// before the EVM environment is constructed. Other block overrides are applied directly to the
@@ -475,20 +475,17 @@ pub trait BuildPendingEnv<Header> {
     ) -> Self;
 }
 
-impl<Evm> PendingEnvBuilder<Evm> for ()
-where
-    Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<alloy_consensus::Header>>,
-{
+impl PendingEnvBuilder for () {
     fn pending_env_attributes(
         &self,
         parent: &SealedHeader<alloy_consensus::Header>,
         block_overrides: Option<&BlockOverrides>,
-    ) -> Result<Evm::NextBlockEnvCtx, EthApiError> {
-        Ok(Evm::NextBlockEnvCtx::build_pending_env(parent, block_overrides))
+    ) -> Result<BaseNextBlockEnvAttributes, EthApiError> {
+        Ok(BaseNextBlockEnvAttributes::build_pending_env(parent, block_overrides))
     }
 }
 
-impl<H: alloy_consensus::BlockHeader> BuildPendingEnv<H> for reth_evm::BaseNextBlockEnvAttributes {
+impl<H: alloy_consensus::BlockHeader> BuildPendingEnv<H> for BaseNextBlockEnvAttributes {
     fn build_pending_env(
         parent: &SealedHeader<H>,
         _block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,

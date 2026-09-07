@@ -2,7 +2,7 @@ use std::{fmt, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::BaseExecutorProvider;
+use base_execution_evm::BaseEvmConfig;
 use eyre::{Result, eyre};
 use reth_cli_commands::launcher::Launcher;
 use reth_cli_runner::CliRunner;
@@ -73,7 +73,7 @@ where
         install_prometheus_recorder();
 
         let components = |spec: Arc<BaseChainSpec>| BaseCliComponents {
-            evm_config: BaseExecutorProvider::base(Arc::clone(&spec)),
+            evm_config: BaseEvmConfig::new(Arc::clone(&spec)),
             consensus: Arc::new(BaseBeaconConsensus::new(spec)),
         };
 

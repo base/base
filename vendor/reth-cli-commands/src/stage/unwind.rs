@@ -11,7 +11,7 @@ use reth_config::Config;
 use reth_consensus::noop::NoopConsensus;
 use reth_db::DatabaseEnv;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_exex::ExExManagerHandle;
 use reth_node_api::NodeTypesWithDB;
 use reth_provider::{BlockNumReader, ProviderFactory};
@@ -83,7 +83,7 @@ impl<C: ChainSpecParser> Command<C> {
         self,
         config: Config,
         provider_factory: ProviderFactory<N>,
-        evm_config: impl ConfigureEvm + 'static,
+        evm_config: BaseEvmConfig,
     ) -> Result<Pipeline<N>, eyre::Error> {
         let stage_conf = &config.stages;
         let prune_modes = config.prune.segments.clone();

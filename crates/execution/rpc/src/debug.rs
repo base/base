@@ -9,7 +9,6 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes,
     builder::{BasePayloadBuilderCtx, Builder},
@@ -20,8 +19,8 @@ use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
 use reth_basic_payload_builder::PayloadConfig;
-use reth_evm::{ConfigureEvm, execute::Executor};
-use reth_node_api::{BuildNextEnv, PayloadBuilderError};
+use reth_evm::{BaseEvmConfig, execute::Executor};
+use reth_node_api::PayloadBuilderError;
 use reth_payload_util::NoopPayloadTransactions;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
@@ -73,17 +72,16 @@ pub trait DebugApiOverride<Attributes> {
 
 #[derive(Debug)]
 /// Overrides applied to the `debug_` namespace of the RPC API for the proofs `ExEx`.
-pub struct DebugApiExt<Eth: FullEthApi, Storage, Provider, EvmConfig> {
-    inner: Arc<DebugApiExtInner<Eth, Storage, Provider, EvmConfig>>,
+pub struct DebugApiExt<Eth: FullEthApi, Storage, Provider> {
+    inner: Arc<DebugApiExtInner<Eth, Storage, Provider>>,
 }
 
-impl<Eth, Storage, Provider, EvmConfig> DebugApiExt<Eth, Storage, Provider, EvmConfig>
+impl<Eth, Storage, Provider> DebugApiExt<Eth, Storage, Provider>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
     Storage: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt,
-    EvmConfig: ConfigureEvm + 'static,
 {
     /// Creates a new instance of the `DebugApiExt`.
     pub fn new(
@@ -91,7 +89,7 @@ where
         eth_api: Eth,
         preimage_store: BaseProofsStorage<Storage>,
         task_spawner: Runtime,
-        evm_config: EvmConfig,
+        evm_config: BaseEvmConfig,
     ) -> Self {
         Self {
             inner: Arc::new(DebugApiExtInner::new(
@@ -107,17 +105,17 @@ where
 
 #[derive(Debug)]
 /// Overrides applied to the `debug_` namespace of the RPC API for historical proofs `ExEx`.
-pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig> {
+pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider> {
     provider: Provider,
     eth_api: Eth,
     storage: BaseProofsStorage<Storage>,
     state_provider_factory: BaseStateProviderFactory<Eth, Storage>,
-    evm_config: EvmConfig,
+    evm_config: BaseEvmConfig,
     task_spawner: Runtime,
     semaphore: Semaphore,
 }
 
-impl<Eth, P, Provider, EvmConfig> DebugApiExtInner<Eth, P, Provider, EvmConfig>
+impl<Eth, P, Provider> DebugApiExtInner<Eth, P, Provider>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
@@ -128,7 +126,7 @@ where
         eth_api: Eth,
         storage: BaseProofsStorage<P>,
         task_spawner: Runtime,
-        evm_config: EvmConfig,
+        evm_config: BaseEvmConfig,
     ) -> Self {
         Self {
             provider,
@@ -142,7 +140,7 @@ where
     }
 }
 
-impl<Eth, P, Provider, EvmConfig> DebugApiExt<Eth, P, Provider, EvmConfig>
+impl<Eth, P, Provider> DebugApiExt<Eth, P, Provider>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
@@ -161,19 +159,12 @@ where
 }
 
 #[async_trait]
-impl<Eth, P, Provider, EvmConfig> DebugApiOverrideServer<BasePayloadAttributes>
-    for DebugApiExt<Eth, P, Provider, EvmConfig>
+impl<Eth, P, Provider> DebugApiOverrideServer<BasePayloadAttributes>
+    for DebugApiExt<Eth, P, Provider>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'static,
-    EvmConfig: ConfigureEvm<
-            NextBlockEnvCtx: BuildNextEnv<
-                BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                alloy_consensus::Header,
-                BaseChainSpec,
-            >,
-        > + 'static,
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + StateProviderFactory
         + ChainSpecProvider

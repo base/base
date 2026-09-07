@@ -13,7 +13,7 @@ use base_execution_chainspec::ChainSpecProvider;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_chainspec::{EthereumHardforks, Hardforks, Head};
 use reth_errors::{ProviderError, RethError};
-use reth_evm::{ConfigureEvm, Evm, precompiles::PrecompilesMap};
+use reth_evm::{BaseEvmConfig, Evm, precompiles::PrecompilesMap};
 use reth_primitives_traits::header::HeaderMut;
 use reth_revm::db::EmptyDB;
 use reth_rpc_eth_types::EthApiError;
@@ -32,18 +32,17 @@ pub trait EthConfigApi {
 ///
 /// Ref: <https://eips.ethereum.org/EIPS/eip-7910>
 #[derive(Debug, Clone)]
-pub struct EthConfigHandler<Provider, Evm> {
+pub struct EthConfigHandler<Provider> {
     provider: Provider,
-    evm_config: Evm,
+    evm_config: BaseEvmConfig,
 }
 
-impl<Provider, Evm> EthConfigHandler<Provider, Evm>
+impl<Provider> EthConfigHandler<Provider>
 where
     Provider: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header> + 'static,
-    Evm: ConfigureEvm + 'static,
 {
     /// Creates a new [`EthConfigHandler`].
-    pub const fn new(provider: Provider, evm_config: Evm) -> Self {
+    pub const fn new(provider: Provider, evm_config: BaseEvmConfig) -> Self {
         Self { provider, evm_config }
     }
 
@@ -156,10 +155,9 @@ where
     }
 }
 
-impl<Provider, Evm> EthConfigApiServer for EthConfigHandler<Provider, Evm>
+impl<Provider> EthConfigApiServer for EthConfigHandler<Provider>
 where
     Provider: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header> + 'static,
-    Evm: ConfigureEvm + 'static,
 {
     fn config(&self) -> RpcResult<EthConfig> {
         Ok(self.config().map_err(EthApiError::from)?)

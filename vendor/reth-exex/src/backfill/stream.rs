@@ -11,7 +11,7 @@ use futures::{
     stream::{FuturesOrdered, Stream},
 };
 use reth_evm::{
-    ConfigureEvm,
+    BaseEvmConfig,
     execute::{BlockExecutionError, BlockExecutionOutput},
 };
 use reth_primitives_traits::RecoveredBlock;
@@ -50,8 +50,8 @@ type BatchBlockStreamItem = Chain;
 /// This struct manages the execution of [`SingleBlockBackfillJob`] tasks, allowing blocks to be
 /// processed asynchronously but in order within a specified range.
 #[derive(Debug)]
-pub struct StreamBackfillJob<E, P, T> {
-    evm_config: E,
+pub struct StreamBackfillJob<P, T> {
+    evm_config: BaseEvmConfig,
     provider: P,
     prune_modes: PruneModes,
     range: RangeInclusive<BlockNumber>,
@@ -61,7 +61,7 @@ pub struct StreamBackfillJob<E, P, T> {
     thresholds: ExecutionStageThresholds,
 }
 
-impl<E, P, T> StreamBackfillJob<E, P, T>
+impl<P, T> StreamBackfillJob<P, T>
 where
     T: Send + Sync + 'static,
 {
@@ -114,9 +114,8 @@ where
     }
 }
 
-impl<E, P> Stream for StreamBackfillJob<E, P, SingleBlockStreamItem>
+impl<P> Stream for StreamBackfillJob<P, SingleBlockStreamItem>
 where
-    E: ConfigureEvm + 'static,
     P: BlockReader<Block = BaseBlock> + StateProviderFactory + Clone + Unpin + 'static,
 {
     type Item = BackfillJobResult<SingleBlockStreamItem>;
@@ -147,9 +146,8 @@ where
     }
 }
 
-impl<E, P> Stream for StreamBackfillJob<E, P, BatchBlockStreamItem>
+impl<P> Stream for StreamBackfillJob<P, BatchBlockStreamItem>
 where
-    E: ConfigureEvm + 'static,
     P: BlockReader<Block = BaseBlock> + StateProviderFactory + Clone + Unpin + 'static,
 {
     type Item = BackfillJobResult<BatchBlockStreamItem>;
@@ -198,8 +196,8 @@ where
     }
 }
 
-impl<E, P> From<SingleBlockBackfillJob<E, P>> for StreamBackfillJob<E, P, SingleBlockStreamItem> {
-    fn from(job: SingleBlockBackfillJob<E, P>) -> Self {
+impl<P> From<SingleBlockBackfillJob<P>> for StreamBackfillJob<P, SingleBlockStreamItem> {
+    fn from(job: SingleBlockBackfillJob<P>) -> Self {
         Self {
             evm_config: job.evm_config,
             provider: job.provider,
@@ -213,11 +211,8 @@ impl<E, P> From<SingleBlockBackfillJob<E, P>> for StreamBackfillJob<E, P, Single
     }
 }
 
-impl<E, P> From<BackfillJob<E, P>> for StreamBackfillJob<E, P, BatchBlockStreamItem>
-where
-    E: ConfigureEvm,
-{
-    fn from(job: BackfillJob<E, P>) -> Self {
+impl<P> From<BackfillJob<P>> for StreamBackfillJob<P, BatchBlockStreamItem> {
+    fn from(job: BackfillJob<P>) -> Self {
         let batch_size = job.thresholds.max_blocks.map_or(DEFAULT_BATCH_SIZE, |max| max as usize);
         Self {
             evm_config: job.evm_config,
@@ -246,7 +241,6 @@ mod tests {
     use futures::StreamExt;
     use reth_chainspec::{ChainSpec, EthereumHardfork, MIN_TRANSACTION_GAS};
     use reth_db_common::init::init_genesis;
-    use reth_evm::TestEvmConfig;
     use reth_node_api::NodeTypesWithDB;
     use reth_primitives_traits::{Block as _, crypto::secp256k1::public_key_to_address};
     use reth_provider::{
@@ -276,7 +270,8 @@ mod tests {
 
         let chain_spec = chain_spec(address);
 
-        let executor = TestEvmConfig::new(chain_spec.clone());
+        let executor =
+            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
         init_genesis(&provider_factory)?;
         let blockchain_db = BlockchainProvider::new(provider_factory.clone())?;
@@ -313,7 +308,8 @@ mod tests {
 
         let chain_spec = chain_spec(address);
 
-        let executor = TestEvmConfig::new(chain_spec.clone());
+        let executor =
+            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
         init_genesis(&provider_factory)?;
         let blockchain_db = BlockchainProvider::new(provider_factory.clone())?;
@@ -410,7 +406,8 @@ mod tests {
 
         let chain_spec = chain_spec(address);
 
-        let executor = TestEvmConfig::new(chain_spec.clone());
+        let executor =
+            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
         init_genesis(&provider_factory)?;
         let blockchain_db = BlockchainProvider::new(provider_factory.clone())?;

@@ -7,6 +7,7 @@
 
 use std::{fmt, fmt::Debug, future::Future};
 
+use reth_evm::BaseEvmConfig;
 use reth_exex::ExExContext;
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeAddOns};
 use reth_node_core::node_config::NodeConfig;
@@ -96,7 +97,7 @@ impl<T: FullNodeTypes, C: NodeComponents<T>> FullNodeTypes for NodeAdapter<T, C>
 
 impl<T: FullNodeTypes, C: NodeComponents<T>> FullNodeComponents for NodeAdapter<T, C> {
     type Pool = C::Pool;
-    type Evm = C::Evm;
+
     type Consensus = C::Consensus;
     type Network = C::Network;
 
@@ -104,7 +105,7 @@ impl<T: FullNodeTypes, C: NodeComponents<T>> FullNodeComponents for NodeAdapter<
         self.components.pool()
     }
 
-    fn evm_config(&self) -> &Self::Evm {
+    fn evm_config(&self) -> &BaseEvmConfig {
         self.components.evm_config()
     }
 
@@ -318,7 +319,6 @@ mod test {
 
     use reth_consensus::noop::NoopConsensus;
     use reth_db_api::mock::DatabaseMock;
-    use reth_evm::{MockEvmConfig, noop::NoopEvmConfig};
     use reth_network_api::noop::NoopNetwork;
     use reth_node_api::FullNodeTypesAdapter;
     use reth_payload_builder::PayloadBuilderHandle;
@@ -331,10 +331,10 @@ mod test {
 
     #[test]
     fn test_noop_components() {
-        let components = Components::<NoopNetwork, _, NoopEvmConfig<MockEvmConfig>, _> {
+        let components = Components::<NoopNetwork, _, _> {
             transaction_pool:
                 NoopTransactionPool::<base_execution_txpool::BasePooledTransaction>::new(),
-            evm_config: NoopEvmConfig::default(),
+            evm_config: BaseEvmConfig::default(),
             consensus: NoopConsensus::default(),
             network: NoopNetwork::new(),
             payload_builder_handle: PayloadBuilderHandle::noop(),

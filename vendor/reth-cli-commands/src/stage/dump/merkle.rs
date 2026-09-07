@@ -7,7 +7,7 @@ use reth_consensus::FullConsensus;
 use reth_db::DatabaseEnv;
 use reth_db_api::{database::Database, models::BlockNumberAddress, table::TableImporter, tables};
 use reth_db_common::DbTool;
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_exex::ExExManagerHandle;
 use reth_node_api::NodeTypesWithDB;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
@@ -33,7 +33,7 @@ pub(crate) async fn dump_merkle_stage<N>(
     to: BlockNumber,
     output_datadir: ChainPath<DataDirPath>,
     should_run: bool,
-    evm_config: impl ConfigureEvm,
+    evm_config: BaseEvmConfig,
     consensus: impl FullConsensus + 'static,
     runtime: reth_tasks::Runtime,
 ) -> Result<()>
@@ -83,7 +83,7 @@ fn unwind_and_copy<N: NodeTypesWithDB>(
     range: (u64, u64),
     tip_block_number: u64,
     output_db: &DatabaseEnv,
-    evm_config: impl ConfigureEvm,
+    evm_config: BaseEvmConfig,
     consensus: impl FullConsensus + 'static,
 ) -> eyre::Result<()> {
     let (from, to) = range;

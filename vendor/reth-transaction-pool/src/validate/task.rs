@@ -4,7 +4,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use base_execution_chainspec::ChainSpecProvider;
 use futures_util::{StreamExt, lock::Mutex};
-use reth_evm::ConfigureEvm;
+use reth_evm::BaseEvmConfig;
 use reth_primitives_traits::SealedBlock;
 use reth_storage_api::BlockReaderIdExt;
 use reth_tasks::Runtime;
@@ -121,13 +121,12 @@ impl<V> Clone for TransactionValidationTaskExecutor<V> {
 
 impl TransactionValidationTaskExecutor<()> {
     /// Convenience method to create a [`EthTransactionValidatorBuilder`]
-    pub fn eth_builder<Client, Evm>(
+    pub fn eth_builder<Client>(
         client: Client,
-        evm_config: Evm,
-    ) -> EthTransactionValidatorBuilder<Client, Evm>
+        evm_config: BaseEvmConfig,
+    ) -> EthTransactionValidatorBuilder<Client>
     where
         Client: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header>,
-        Evm: ConfigureEvm,
     {
         EthTransactionValidatorBuilder::new(client, evm_config)
     }
@@ -151,15 +150,19 @@ impl<V> TransactionValidationTaskExecutor<V> {
     }
 }
 
-impl<Client, Tx, Evm> TransactionValidationTaskExecutor<EthTransactionValidator<Client, Tx, Evm>> {
+impl<Client, Tx> TransactionValidationTaskExecutor<EthTransactionValidator<Client, Tx>> {
     /// Creates a new instance for the given client
     ///
     /// This will spawn a single validation tasks that performs the actual validation.
     /// See [`TransactionValidationTaskExecutor::eth_with_additional_tasks`]
-    pub fn eth<S: BlobStore>(client: Client, evm_config: Evm, blob_store: S, tasks: Runtime) -> Self
+    pub fn eth<S: BlobStore>(
+        client: Client,
+        evm_config: BaseEvmConfig,
+        blob_store: S,
+        tasks: Runtime,
+    ) -> Self
     where
         Client: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header>,
-        Evm: ConfigureEvm,
     {
         Self::eth_with_additional_tasks(client, evm_config, blob_store, tasks, 0)
     }
@@ -175,14 +178,13 @@ impl<Client, Tx, Evm> TransactionValidationTaskExecutor<EthTransactionValidator<
     /// `num_additional_tasks` additional tasks.
     pub fn eth_with_additional_tasks<S: BlobStore>(
         client: Client,
-        evm_config: Evm,
+        evm_config: BaseEvmConfig,
         blob_store: S,
         tasks: Runtime,
         num_additional_tasks: usize,
     ) -> Self
     where
         Client: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header>,
-        Evm: ConfigureEvm,
     {
         EthTransactionValidatorBuilder::new(client, evm_config)
             .with_additional_tasks(num_additional_tasks)

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use futures::{Future, Stream};
 use reth_engine_primitives::BeaconEngineMessage;
+use reth_evm::BaseEvmConfig;
 use tokio_util::either::Either;
 
 pub mod engine_store;
@@ -27,8 +28,8 @@ pub mod reorg;
 use reorg::EngineReorg;
 
 /// The result type for `maybe_reorg` method.
-type MaybeReorgResult<S, Provider, Evm, Validator, E> =
-    Result<Either<EngineReorg<S, Provider, Evm, Validator>, S>, E>;
+type MaybeReorgResult<S, Provider, Validator, E> =
+    Result<Either<EngineReorg<S, Provider, Validator>, S>, E>;
 
 /// The collection of stream extensions for engine API message stream.
 pub trait EngineMessageStreamExt: Stream<Item = BeaconEngineMessage> {
@@ -104,14 +105,14 @@ pub trait EngineMessageStreamExt: Stream<Item = BeaconEngineMessage> {
     }
 
     /// Creates reorgs with specified frequency.
-    fn reorg<Provider, Evm, Validator>(
+    fn reorg<Provider, Validator>(
         self,
         provider: Provider,
-        evm_config: Evm,
+        evm_config: BaseEvmConfig,
         payload_validator: Validator,
         frequency: usize,
         depth: Option<usize>,
-    ) -> EngineReorg<Self, Provider, Evm, Validator>
+    ) -> EngineReorg<Self, Provider, Validator>
     where
         Self: Sized,
     {
@@ -130,18 +131,17 @@ pub trait EngineMessageStreamExt: Stream<Item = BeaconEngineMessage> {
     ///
     /// The `payload_validator_fn` closure is only called if `frequency` is `Some`,
     /// allowing for lazy initialization of the validator.
-    fn maybe_reorg<Provider, Evm, Validator, E, F, Fut>(
+    fn maybe_reorg<Provider, Validator, E, F, Fut>(
         self,
         provider: Provider,
-        evm_config: Evm,
+        evm_config: BaseEvmConfig,
         payload_validator_fn: F,
         frequency: Option<usize>,
         depth: Option<usize>,
-    ) -> impl Future<Output = MaybeReorgResult<Self, Provider, Evm, Validator, E>> + Send
+    ) -> impl Future<Output = MaybeReorgResult<Self, Provider, Validator, E>> + Send
     where
         Self: Sized + Send,
         Provider: Send,
-        Evm: Send,
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<Validator, E>> + Send,
     {
