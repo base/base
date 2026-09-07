@@ -43,14 +43,10 @@ impl<T: FullNodeTypes> NodeBuilderWithProvider<T> {
     }
 
     /// Advances the state of the node builder to the next state where all components are configured
-    pub fn with_components<CB>(
+    pub fn with_components(
         self,
-        components_builder: ComponentBuilder<T, CB>,
-    ) -> NodeBuilderWithComponents<T, CB, ()>
-    where
-        CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-        NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
-    {
+        components_builder: ComponentBuilder<T>,
+    ) -> NodeBuilderWithComponents<T, ()> {
         let Self { config, adapter, rocksdb_provider } = self;
 
         NodeBuilderWithComponents {
@@ -85,23 +81,21 @@ impl<T: FullNodeTypes> fmt::Debug for NodeTypesAdapter<T> {
 /// Container for the node's types and the components and other internals that can be used by
 /// addons of the node.
 #[derive(Debug)]
-pub struct NodeAdapter<T: FullNodeTypes, C> {
+pub struct NodeAdapter<T: FullNodeTypes> {
     /// The components of the node.
-    pub components: C,
+    pub components: Components<T>,
     /// The task executor for the node.
     pub task_executor: TaskExecutor,
     /// The provider of the node.
     pub provider: T::Provider,
 }
 
-impl<T: FullNodeTypes, C: Clone + Debug + Send + Sync + Unpin + 'static> FullNodeTypes
-    for NodeAdapter<T, C>
-{
+impl<T: FullNodeTypes> FullNodeTypes for NodeAdapter<T> {
     type DB = T::DB;
     type Provider = T::Provider;
 }
 
-impl<T: FullNodeTypes> FullNodeComponents for NodeAdapter<T, Components<T>> {
+impl<T: FullNodeTypes> FullNodeComponents for NodeAdapter<T> {
     type Pool = base_execution_txpool::BaseTransactionPool<
         T::Provider,
         reth_transaction_pool::blobstore::DiskFileBlobStore,
@@ -138,7 +132,7 @@ impl<T: FullNodeTypes> FullNodeComponents for NodeAdapter<T, Components<T>> {
     }
 }
 
-impl<T: FullNodeTypes, C: Clone> Clone for NodeAdapter<T, C> {
+impl<T: FullNodeTypes> Clone for NodeAdapter<T> {
     fn clone(&self) -> Self {
         Self {
             components: self.components.clone(),
@@ -151,12 +145,10 @@ impl<T: FullNodeTypes, C: Clone> Clone for NodeAdapter<T, C> {
 /// A fully type configured node builder.
 ///
 /// Supports adding additional addons to the node.
-pub struct NodeBuilderWithComponents<T, CB, AO>
+pub struct NodeBuilderWithComponents<T, AO>
 where
     T: FullNodeTypes,
-    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
-    AO: NodeAddOns<NodeAdapter<T, CB>>,
+    AO: NodeAddOns<NodeAdapter<T>>,
 {
     /// All settings for how the node should be configured.
     pub config: NodeConfig,
@@ -165,22 +157,20 @@ where
     /// An optional [`RocksDBProvider`] to use instead of creating one during launch.
     pub rocksdb_provider: Option<RocksDBProvider>,
     /// container for type specific components
-    pub components_builder: ComponentBuilder<T, CB>,
+    pub components_builder: ComponentBuilder<T>,
     /// Additional node extensions.
-    pub add_ons: AddOns<NodeAdapter<T, CB>, AO>,
+    pub add_ons: AddOns<NodeAdapter<T>, AO>,
 }
 
-impl<T, CB> NodeBuilderWithComponents<T, CB, ()>
+impl<T> NodeBuilderWithComponents<T, ()>
 where
     T: FullNodeTypes,
-    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
 {
     /// Advances the state of the node builder to the next state where all customizable
     /// [`NodeAddOns`] types are configured.
-    pub fn with_add_ons<AO>(self, add_ons: AO) -> NodeBuilderWithComponents<T, CB, AO>
+    pub fn with_add_ons<AO>(self, add_ons: AO) -> NodeBuilderWithComponents<T, AO>
     where
-        AO: NodeAddOns<NodeAdapter<T, CB>>,
+        AO: NodeAddOns<NodeAdapter<T>>,
     {
         let Self { config, adapter, rocksdb_provider, components_builder, .. } = self;
 
@@ -194,17 +184,15 @@ where
     }
 }
 
-impl<T, CB, AO> NodeBuilderWithComponents<T, CB, AO>
+impl<T, AO> NodeBuilderWithComponents<T, AO>
 where
     T: FullNodeTypes,
-    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
-    AO: NodeAddOns<NodeAdapter<T, CB>>,
+    AO: NodeAddOns<NodeAdapter<T>>,
 {
     /// Sets the hook that is run once the node's components are initialized.
     pub fn on_component_initialized<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(NodeAdapter<T, CB>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(NodeAdapter<T>) -> eyre::Result<()> + Send + 'static,
     {
         self.add_ons.hooks.set_on_component_initialized(hook);
         self
@@ -213,7 +201,7 @@ where
     /// Sets the hook that is run once the node has started.
     pub fn on_node_started<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(FullNode<NodeAdapter<T, CB>, AO>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(FullNode<NodeAdapter<T>, AO>) -> eyre::Result<()> + Send + 'static,
     {
         self.add_ons.hooks.set_on_node_started(hook);
         self
@@ -226,7 +214,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex<F, R, E>(mut self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<NodeAdapter<T, CB>>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<NodeAdapter<T>>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
@@ -280,12 +268,10 @@ where
     }
 }
 
-impl<T, CB, AO> NodeBuilderWithComponents<T, CB, AO>
+impl<T, AO> NodeBuilderWithComponents<T, AO>
 where
     T: FullNodeTypes,
-    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
-    AO: RethRpcAddOns<NodeAdapter<T, CB>>,
+    AO: RethRpcAddOns<NodeAdapter<T>>,
 {
     /// Launches the node with the given launcher.
     pub fn launch_with<L>(self, launcher: L) -> L::Future
@@ -299,7 +285,7 @@ where
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, NodeAdapter<T, CB>, AO::EthApi>,
+                RpcContext<'_, NodeAdapter<T>, AO::EthApi>,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -314,9 +300,7 @@ where
     /// Sets the hook that is run to configure the rpc modules.
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
-        F: FnOnce(RpcContext<'_, NodeAdapter<T, CB>, AO::EthApi>) -> eyre::Result<()>
-            + Send
-            + 'static,
+        F: FnOnce(RpcContext<'_, NodeAdapter<T>, AO::EthApi>) -> eyre::Result<()> + Send + 'static,
     {
         self.map_add_ons(|mut add_ons| {
             add_ons.hooks_mut().set_extend_rpc_modules(hook);

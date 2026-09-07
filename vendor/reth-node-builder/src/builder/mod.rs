@@ -330,14 +330,10 @@ where
 
 impl<T: FullNodeTypes> WithLaunchContext<NodeBuilderWithProvider<T>> {
     /// Advances the state of the node builder to the next state where all components are configured
-    pub fn with_components<CB>(
+    pub fn with_components(
         self,
-        components_builder: ComponentBuilder<T, CB>,
-    ) -> WithLaunchContext<NodeBuilderWithComponents<T, CB, ()>>
-    where
-        CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-        NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
-    {
+        components_builder: ComponentBuilder<T>,
+    ) -> WithLaunchContext<NodeBuilderWithComponents<T, ()>> {
         WithLaunchContext {
             builder: self.builder.with_components(components_builder),
             task_executor: self.task_executor,
@@ -345,20 +341,18 @@ impl<T: FullNodeTypes> WithLaunchContext<NodeBuilderWithProvider<T>> {
     }
 }
 
-impl<T, CB> WithLaunchContext<NodeBuilderWithComponents<T, CB, ()>>
+impl<T> WithLaunchContext<NodeBuilderWithComponents<T, ()>>
 where
     T: FullNodeTypes,
-    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
 {
     /// Advances the state of the node builder to the next state where all customizable
     /// [`NodeAddOns`] types are configured.
     pub fn with_add_ons<AO>(
         self,
         add_ons: AO,
-    ) -> WithLaunchContext<NodeBuilderWithComponents<T, CB, AO>>
+    ) -> WithLaunchContext<NodeBuilderWithComponents<T, AO>>
     where
-        AO: NodeAddOns<NodeAdapter<T, CB>>,
+        AO: NodeAddOns<NodeAdapter<T>>,
     {
         WithLaunchContext {
             builder: self.builder.with_add_ons(add_ons),
@@ -367,12 +361,10 @@ where
     }
 }
 
-impl<T, CB, AO> WithLaunchContext<NodeBuilderWithComponents<T, CB, AO>>
+impl<T, AO> WithLaunchContext<NodeBuilderWithComponents<T, AO>>
 where
     T: FullNodeTypes,
-    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
-    AO: RethRpcAddOns<NodeAdapter<T, CB>>,
+    AO: RethRpcAddOns<NodeAdapter<T>>,
 {
     /// Returns a reference to the node builder's config.
     pub const fn config(&self) -> &NodeConfig {
@@ -429,7 +421,7 @@ where
     /// Sets the hook that is run once the node's components are initialized.
     pub fn on_component_initialized<F>(self, hook: F) -> Self
     where
-        F: FnOnce(NodeAdapter<T, CB>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(NodeAdapter<T>) -> eyre::Result<()> + Send + 'static,
     {
         Self {
             builder: self.builder.on_component_initialized(hook),
@@ -440,7 +432,7 @@ where
     /// Sets the hook that is run once the node has started.
     pub fn on_node_started<F>(self, hook: F) -> Self
     where
-        F: FnOnce(FullNode<NodeAdapter<T, CB>, AO>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(FullNode<NodeAdapter<T>, AO>) -> eyre::Result<()> + Send + 'static,
     {
         Self { builder: self.builder.on_node_started(hook), task_executor: self.task_executor }
     }
@@ -478,7 +470,7 @@ where
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, NodeAdapter<T, CB>, AO::EthApi>,
+                RpcContext<'_, NodeAdapter<T>, AO::EthApi>,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -525,9 +517,7 @@ where
     /// ```
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
-        F: FnOnce(RpcContext<'_, NodeAdapter<T, CB>, AO::EthApi>) -> eyre::Result<()>
-            + Send
-            + 'static,
+        F: FnOnce(RpcContext<'_, NodeAdapter<T>, AO::EthApi>) -> eyre::Result<()> + Send + 'static,
     {
         Self { builder: self.builder.extend_rpc_modules(hook), task_executor: self.task_executor }
     }
@@ -539,7 +529,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex<F, R, E>(self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<NodeAdapter<T, CB>>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<NodeAdapter<T>>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
@@ -556,7 +546,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex_if<F, R, E>(self, cond: bool, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<NodeAdapter<T, CB>>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<NodeAdapter<T>>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
@@ -566,7 +556,7 @@ where
     /// Launches the node with the given launcher.
     pub async fn launch_with<L>(self, launcher: L) -> eyre::Result<L::Node>
     where
-        L: LaunchNode<NodeBuilderWithComponents<T, CB, AO>>,
+        L: LaunchNode<NodeBuilderWithComponents<T, AO>>,
     {
         launcher.launch_node(self.builder).await
     }
@@ -589,9 +579,9 @@ where
     /// Launches the node with the [`EngineNodeLauncher`] that sets up engine API consensus and rpc
     pub async fn launch(
         self,
-    ) -> eyre::Result<<EngineNodeLauncher as LaunchNode<NodeBuilderWithComponents<T, CB, AO>>>::Node>
+    ) -> eyre::Result<<EngineNodeLauncher as LaunchNode<NodeBuilderWithComponents<T, AO>>>::Node>
     where
-        EngineNodeLauncher: LaunchNode<NodeBuilderWithComponents<T, CB, AO>>,
+        EngineNodeLauncher: LaunchNode<NodeBuilderWithComponents<T, AO>>,
     {
         let launcher = self.engine_api_launcher();
         self.builder.launch_with(launcher).await
@@ -605,11 +595,11 @@ where
         self,
         config: DebugNodeConfig<R>,
     ) -> <DebugNodeLauncher<EngineNodeLauncher, R> as LaunchNode<
-        NodeBuilderWithComponents<T, CB, AO>,
+        NodeBuilderWithComponents<T, AO>,
     >>::Future
     where
-        DebugNodeLauncher<EngineNodeLauncher, R>: LaunchNode<NodeBuilderWithComponents<T, CB, AO>>,
-    {
+        DebugNodeLauncher<EngineNodeLauncher, R>: LaunchNode<NodeBuilderWithComponents<T, AO>>,
+{
         let Self { builder, task_executor } = self;
 
         let engine_tree_config = builder.config.tree_config();

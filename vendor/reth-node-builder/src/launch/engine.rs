@@ -62,16 +62,14 @@ impl EngineNodeLauncher {
         Self { ctx: LaunchContext::new(task_executor, data_dir), engine_tree_config }
     }
 
-    async fn launch_node<DB, T, CB, AO>(
+    async fn launch_node<DB, T, AO>(
         self,
-        target: NodeBuilderWithComponents<T, CB, AO>,
-    ) -> eyre::Result<NodeHandle<NodeAdapter<T, CB>, AO>>
+        target: NodeBuilderWithComponents<T, AO>,
+    ) -> eyre::Result<NodeHandle<NodeAdapter<T>, AO>>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
         T: FullNodeTypes<Provider = BlockchainProvider<DB>, DB = DB>,
-        CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-        NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
-        AO: RethRpcAddOns<NodeAdapter<T, CB>>,
+        AO: RethRpcAddOns<NodeAdapter<T>>,
     {
         let Self { ctx, engine_tree_config } = self;
         let NodeBuilderWithComponents {
@@ -429,18 +427,16 @@ impl EngineNodeLauncher {
     }
 }
 
-impl<DB, T, CB, AO> LaunchNode<NodeBuilderWithComponents<T, CB, AO>> for EngineNodeLauncher
+impl<DB, T, AO> LaunchNode<NodeBuilderWithComponents<T, AO>> for EngineNodeLauncher
 where
     T: FullNodeTypes<DB = DB, Provider = BlockchainProvider<DB>>,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
-    AO: RethRpcAddOns<NodeAdapter<T, CB>> + 'static,
+    AO: RethRpcAddOns<NodeAdapter<T>> + 'static,
 {
-    type Node = NodeHandle<NodeAdapter<T, CB>, AO>;
+    type Node = NodeHandle<NodeAdapter<T>, AO>;
     type Future = Pin<Box<dyn Future<Output = eyre::Result<Self::Node>> + Send>>;
 
-    fn launch_node(self, target: NodeBuilderWithComponents<T, CB, AO>) -> Self::Future {
+    fn launch_node(self, target: NodeBuilderWithComponents<T, AO>) -> Self::Future {
         Box::pin(self.launch_node(target))
     }
 }

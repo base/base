@@ -7,7 +7,6 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3;
 use eyre::Result;
 use jsonrpsee::http_client::HttpClient;
-use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_api::FullNodeComponents;
 use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 use reth_payload_builder::PayloadId;
@@ -305,18 +304,12 @@ impl TestBuilder {
     }
 
     /// Run the test scenario
-    pub async fn run<C, AO>(
+    pub async fn run<AO>(
         mut self,
-        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter, C>, AO) + Send + Sync,
+        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
     ) -> Result<()>
     where
-        C: Clone + Debug + Send + Sync + Unpin + 'static,
-        crate::Adapter<C>: FullNodeComponents<
-                DB = crate::TmpDB,
-                Provider = crate::TestProvider,
-                Network: PeersHandleProvider,
-            >,
-        AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
+        AO: RethRpcAddOns<crate::Adapter> + 'static,
     {
         let mut setup = self.setup.take();
 

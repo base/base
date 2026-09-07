@@ -1,13 +1,11 @@
 //! Utilities for end-to-end tests.
 
-use std::{fmt::Debug, sync::Arc};
+use std::sync::Arc;
 
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use node::NodeTestContext;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
-use reth_network_api::test_utils::PeersHandleProvider;
-use reth_node_api::FullNodeComponents;
 use reth_node_builder::{ComponentBuilder, FullNodeTypesAdapter, NodeAdapter, rpc::RethRpcAddOns};
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
@@ -42,8 +40,8 @@ mod setup_builder;
 pub use setup_builder::E2ETestSetupBuilder;
 
 /// Creates and connects the requested number of test nodes.
-pub async fn setup<C, AO>(
-    node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter, C>, AO) + Send + Sync,
+pub async fn setup<AO>(
+    node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
@@ -52,15 +50,9 @@ pub async fn setup<C, AO>(
     + Sync
     + Copy
     + 'static,
-) -> eyre::Result<(Vec<NodeHelperType<C, AO>>, Wallet)>
+) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where
-    C: Clone + Debug + Send + Sync + Unpin + 'static,
-    crate::Adapter<C>: FullNodeComponents<
-            DB = crate::TmpDB,
-            Provider = crate::TestProvider,
-            Network: PeersHandleProvider,
-        >,
-    AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
+    AO: RethRpcAddOns<crate::Adapter> + 'static,
 {
     E2ETestSetupBuilder::new(num_nodes, chain_spec, attributes_generator)
         .with_node_config_modifier(move |config| config.set_dev(is_dev))
@@ -69,8 +61,8 @@ where
 }
 
 /// Creates and connects test nodes with the supplied engine configuration.
-pub async fn setup_engine<C, AO>(
-    node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter, C>, AO) + Send + Sync,
+pub async fn setup_engine<AO>(
+    node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
@@ -80,15 +72,9 @@ pub async fn setup_engine<C, AO>(
     + Sync
     + Copy
     + 'static,
-) -> eyre::Result<(Vec<NodeHelperType<C, AO>>, Wallet)>
+) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where
-    C: Clone + Debug + Send + Sync + Unpin + 'static,
-    crate::Adapter<C>: FullNodeComponents<
-            DB = crate::TmpDB,
-            Provider = crate::TestProvider,
-            Network: PeersHandleProvider,
-        >,
-    AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
+    AO: RethRpcAddOns<crate::Adapter> + 'static,
 {
     setup_engine_with_connection(
         node_factory,
@@ -103,8 +89,8 @@ where
 }
 
 /// Creates test nodes and optionally connects their networks.
-pub async fn setup_engine_with_connection<C, AO>(
-    node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter, C>, AO) + Send + Sync,
+pub async fn setup_engine_with_connection<AO>(
+    node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
@@ -115,15 +101,9 @@ pub async fn setup_engine_with_connection<C, AO>(
     + Copy
     + 'static,
     connect_nodes: bool,
-) -> eyre::Result<(Vec<NodeHelperType<C, AO>>, Wallet)>
+) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
 where
-    C: Clone + Debug + Send + Sync + Unpin + 'static,
-    crate::Adapter<C>: FullNodeComponents<
-            DB = crate::TmpDB,
-            Provider = crate::TestProvider,
-            Network: PeersHandleProvider,
-        >,
-    AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
+    AO: RethRpcAddOns<crate::Adapter> + 'static,
 {
     E2ETestSetupBuilder::new(num_nodes, chain_spec, attributes_generator)
         .with_tree_config_modifier(move |base| {
@@ -146,7 +126,7 @@ pub type TestProvider = BlockchainProvider<TmpDB>;
 pub type TmpNodeAdapter<Provider = TestProvider> = FullNodeTypesAdapter<TmpDB, Provider>;
 
 /// Adapter for a concrete set of test components.
-pub type Adapter<C, Provider = TestProvider> = NodeAdapter<TmpNodeAdapter<Provider>, C>;
+pub type Adapter<Provider = TestProvider> = NodeAdapter<TmpNodeAdapter<Provider>>;
 
 /// Context for a test node with explicit components and add-ons.
-pub type NodeHelperType<C, AO, Provider = TestProvider> = NodeTestContext<Adapter<C, Provider>, AO>;
+pub type NodeHelperType<AO, Provider = TestProvider> = NodeTestContext<Adapter<Provider>, AO>;

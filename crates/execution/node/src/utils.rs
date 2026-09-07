@@ -13,10 +13,7 @@ use tokio::sync::Mutex;
 use crate::BaseNode as OtherOpNode;
 
 /// Base Node Helper type
-pub type BaseNode = NodeHelperType<
-    crate::BaseNodeComponents<reth_e2e_test_utils::TmpNodeAdapter>,
-    crate::BaseNodeAddOns<reth_e2e_test_utils::TmpNodeAdapter>,
->;
+pub type BaseNode = NodeHelperType<crate::BaseNodeAddOns<reth_e2e_test_utils::TmpNodeAdapter>>;
 
 /// Creates the initial setup with `num_nodes` of the node config, started and connected.
 pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<BaseNode>, Wallet)> {

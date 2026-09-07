@@ -10,7 +10,6 @@ use base_execution_chainspec::BaseChainSpec;
 use eyre::{Result, eyre};
 use reth_chainspec::ChainSpec;
 use reth_ethereum_primitives::Block;
-use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_api::{FullNodeComponents, TreeConfig};
 use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 use reth_node_core::primitives::RecoveredBlock;
@@ -133,38 +132,26 @@ impl Setup {
     }
 
     /// Apply the setup to the environment
-    pub async fn apply<C, AO>(
+    pub async fn apply<AO>(
         &mut self,
         env: &mut Environment,
-        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter, C>, AO) + Send + Sync,
+        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
     ) -> Result<()>
     where
-        C: Clone + Debug + Send + Sync + Unpin + 'static,
-        crate::Adapter<C>: FullNodeComponents<
-                DB = crate::TmpDB,
-                Provider = crate::TestProvider,
-                Network: PeersHandleProvider,
-            >,
-        AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
+        AO: RethRpcAddOns<crate::Adapter> + 'static,
     {
         // Note: this future is quite large so we box it
         Box::pin(self.apply_(env, node_factory)).await
     }
 
     /// Apply the setup to the environment
-    async fn apply_<C, AO>(
+    async fn apply_<AO>(
         &mut self,
         env: &mut Environment,
-        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter, C>, AO) + Send + Sync,
+        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
     ) -> Result<()>
     where
-        C: Clone + Debug + Send + Sync + Unpin + 'static,
-        crate::Adapter<C>: FullNodeComponents<
-                DB = crate::TmpDB,
-                Provider = crate::TestProvider,
-                Network: PeersHandleProvider,
-            >,
-        AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
+        AO: RethRpcAddOns<crate::Adapter> + 'static,
     {
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;

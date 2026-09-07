@@ -61,7 +61,7 @@ where
     Txs: BasePayloadTransactions<BaseNodePool<Node>>,
 {
     /// Converts Base component construction into a single launch callback.
-    pub fn into_builder(self) -> ComponentBuilder<Node, BaseNodeComponents<Node>> {
+    pub fn into_builder(self) -> ComponentBuilder<Node> {
         ComponentBuilder { build: Box::new(move |ctx| Box::pin(self.build_components(ctx))) }
     }
 

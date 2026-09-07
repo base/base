@@ -14,7 +14,7 @@ use reth_node_builder::{
     rpc::{RethRpcAddOns, RpcContext},
 };
 
-use crate::types::{BaseNodeAddOns, BaseNodeComponents, BaseNodeTypes};
+use crate::types::{BaseNodeAddOns, BaseNodeTypes};
 
 /// Alias for the default Base components type.
 pub type BaseComponents = base_node_core::BaseNodeComponents<BaseNodeTypes>;
@@ -23,7 +23,7 @@ pub type BaseComponents = base_node_core::BaseNodeComponents<BaseNodeTypes>;
 ///
 /// Because `Components` depends only on pool, network, executor, and consensus builders (not the
 /// payload service builder), this type is identical regardless of which payload service is used.
-pub type BaseNodeAdapter = NodeAdapter<BaseNodeTypes, BaseComponents>;
+pub type BaseNodeAdapter = NodeAdapter<BaseNodeTypes>;
 
 /// Convenience alias for the Base Eth API type exposed by the reth RPC add-ons.
 type BaseEthApi = <BaseNodeAddOns as RethRpcAddOns<BaseNodeAdapter>>::EthApi;
@@ -54,7 +54,7 @@ type BoxExExFactory = Box<
 
 /// The configured Base builder shared by standard and full-block payload services.
 pub type RethNodeBuilder =
-    WithLaunchContext<NodeBuilderWithComponents<BaseNodeTypes, BaseNodeComponents, BaseNodeAddOns>>;
+    WithLaunchContext<NodeBuilderWithComponents<BaseNodeTypes, BaseNodeAddOns>>;
 
 /// Pure hook accumulator for the Base node builder.
 ///

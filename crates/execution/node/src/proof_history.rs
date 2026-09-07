@@ -22,17 +22,13 @@ use tokio::time::sleep;
 use tracing::info;
 
 use crate::{
-    BaseNode, BaseNodeAddOns, BaseNodeComponents,
+    BaseNode, BaseNodeAddOns,
     args::{DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, RollupArgs},
 };
 
 type ProofHistoryNodeTypes = RethFullAdapter<Arc<DatabaseEnv>>;
 type ProofHistoryNodeBuilder = WithLaunchContext<
-    NodeBuilderWithComponents<
-        ProofHistoryNodeTypes,
-        BaseNodeComponents<ProofHistoryNodeTypes>,
-        BaseNodeAddOns<ProofHistoryNodeTypes>,
-    >,
+    NodeBuilderWithComponents<ProofHistoryNodeTypes, BaseNodeAddOns<ProofHistoryNodeTypes>>,
 >;
 
 /// - no proofs history (plain node),

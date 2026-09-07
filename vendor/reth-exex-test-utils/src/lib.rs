@@ -52,7 +52,7 @@ pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
 /// boot the testing environment
 pub type TestFullNodeTypes = FullNodeTypesAdapter<TmpDB, BlockchainProvider<TmpDB>>;
 /// Components needed by an execution extension, without a node launcher or RPC addons.
-pub type Adapter = NodeAdapter<TestFullNodeTypes, Components<TestFullNodeTypes>>;
+pub type Adapter = NodeAdapter<TestFullNodeTypes>;
 /// An [`ExExContext`] using the [`Adapter`] type.
 pub type TestExExContext = ExExContext<Adapter>;
 
@@ -183,7 +183,7 @@ pub async fn test_exex_context_with_chain_spec(
 
     let (_, payload_builder_handle) = NoopPayloadBuilderService::new();
 
-    let components = NodeAdapter::<FullNodeTypesAdapter<_, _>, _> {
+    let components = NodeAdapter::<FullNodeTypesAdapter<_, _>> {
         components: Components {
             transaction_pool,
             evm_config,

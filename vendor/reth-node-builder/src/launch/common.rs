@@ -862,15 +862,11 @@ where
     }
 
     /// Creates a `NodeAdapter` and attaches it to the launch context.
-    pub async fn with_components<CB>(
+    pub async fn with_components(
         self,
-        components_builder: ComponentBuilder<T, CB>,
-        on_component_initialized: Box<dyn OnComponentInitializedHook<NodeAdapter<T, CB>>>,
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents<T, CB>>>>
-    where
-        CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-        NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
-    {
+        components_builder: ComponentBuilder<T>,
+        on_component_initialized: Box<dyn OnComponentInitializedHook<NodeAdapter<T>>>,
+    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents<T>>>> {
         // fetch the head block from the database
         let head = self.lookup_head()?;
 
@@ -913,11 +909,9 @@ where
     }
 }
 
-impl<T, CB> LaunchContextWith<Attached<WithConfigs, WithComponents<T, CB>>>
+impl<T> LaunchContextWith<Attached<WithConfigs, WithComponents<T>>>
 where
     T: FullNodeTypes,
-    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
 {
     /// Returns the configured `ProviderFactory`.
     pub const fn provider_factory(&self) -> &ProviderFactory<T::DB> {
@@ -949,12 +943,12 @@ where
     }
 
     /// Returns the configured `NodeAdapter`.
-    pub const fn node_adapter(&self) -> &NodeAdapter<T, CB> {
+    pub const fn node_adapter(&self) -> &NodeAdapter<T> {
         &self.right().node_adapter
     }
 
     /// Returns mutable reference to the configured `NodeAdapter`.
-    pub const fn node_adapter_mut(&mut self) -> &mut NodeAdapter<T, CB> {
+    pub const fn node_adapter_mut(&mut self) -> &mut NodeAdapter<T> {
         &mut self.right_mut().node_adapter
     }
 
@@ -1082,7 +1076,7 @@ where
     }
 
     /// Returns the node adapter components.
-    pub const fn components(&self) -> &CB {
+    pub const fn components(&self) -> &crate::components::Components<T> {
         &self.node_adapter().components
     }
 
@@ -1090,7 +1084,7 @@ where
     #[expect(clippy::type_complexity)]
     pub async fn launch_exex(
         &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T, CB>>>)>,
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T>>>)>,
     ) -> eyre::Result<Option<ExExManagerHandle>> {
         self.exex_launcher(installed_exex).launch().await
     }
@@ -1109,8 +1103,8 @@ where
     #[expect(clippy::type_complexity)]
     pub fn exex_launcher(
         &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T, CB>>>)>,
-    ) -> ExExLauncher<NodeAdapter<T, CB>> {
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T>>>)>,
+    ) -> ExExLauncher<NodeAdapter<T>> {
         ExExLauncher::new(
             self.head(),
             self.node_adapter().clone(),
@@ -1281,14 +1275,12 @@ where
 
 /// Helper container to bundle the metered providers container and [`NodeAdapter`].
 #[expect(missing_debug_implementations)]
-pub struct WithComponents<T, CB>
+pub struct WithComponents<T>
 where
     T: FullNodeTypes,
-    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
-    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
 {
     db_provider_container: WithMeteredProvider<T::DB>,
-    node_adapter: NodeAdapter<T, CB>,
+    node_adapter: NodeAdapter<T>,
     head: Head,
 }
 

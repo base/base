@@ -8,7 +8,6 @@ use std::{fmt::Debug, sync::Arc};
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use futures_util::future::TryJoinAll;
-use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_api::FullNodeComponents;
 use reth_node_builder::{
     ComponentBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle, rpc::RethRpcAddOns,
@@ -97,18 +96,12 @@ where
     }
 
     /// Builds and launches the test nodes.
-    pub async fn build<C, AO>(
+    pub async fn build<AO>(
         self,
-        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter, C>, AO) + Send + Sync,
-    ) -> eyre::Result<(Vec<NodeHelperType<C, AO>>, Wallet)>
+        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter>, AO) + Send + Sync,
+    ) -> eyre::Result<(Vec<NodeHelperType<AO>>, Wallet)>
     where
-        C: Clone + Debug + Send + Sync + Unpin + 'static,
-        crate::Adapter<C>: FullNodeComponents<
-                DB = crate::TmpDB,
-                Provider = crate::TestProvider,
-                Network: PeersHandleProvider,
-            >,
-        AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
+        AO: RethRpcAddOns<crate::Adapter> + 'static,
     {
         let runtime = Runtime::test();
 

@@ -274,17 +274,14 @@ impl BaseNode {
 }
 
 /// Concrete add-ons for the core Base node and its provider adapter.
-pub type BaseNodeAddOns<N> = BaseAddOns<NodeAdapter<N, crate::BaseNodeComponents<N>>>;
+pub type BaseNodeAddOns<N> = BaseAddOns<NodeAdapter<N>>;
 
 // Compatibility with Reth's generic node test harness.
 #[cfg(feature = "test-utils")]
 impl BaseNode {
     /// Supplies Base components and add-ons for each node in an end-to-end test.
     pub fn test_setup() -> (
-        reth_node_builder::ComponentBuilder<
-            reth_e2e_test_utils::TmpNodeAdapter,
-            crate::BaseNodeComponents<reth_e2e_test_utils::TmpNodeAdapter>,
-        >,
+        reth_node_builder::ComponentBuilder<reth_e2e_test_utils::TmpNodeAdapter>,
         crate::BaseNodeAddOns<reth_e2e_test_utils::TmpNodeAdapter>,
     ) {
         let node = Self::default();
