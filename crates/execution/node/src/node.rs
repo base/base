@@ -40,9 +40,9 @@ use reth_node_builder::{
     components::{PoolBuilderConfigOverrides, spawn_maintenance_tasks},
     node::FullNodeTypes,
     rpc::{
-        BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn,
-        EngineValidatorBuilder, EthApiBuilder, Identity, RethRpcAddOns, RethRpcMiddleware,
-        RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
+        BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn, EthApiBuilder,
+        Identity, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext,
+        RpcHandle,
     },
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
@@ -314,12 +314,11 @@ pub struct BaseAddOns<
     N: FullNodeComponents,
     EthB: EthApiBuilder<N>,
     EB = BaseEngineApiBuilder,
-    EVB = BasicEngineValidatorBuilder,
     RpcMiddleware = Identity,
 > {
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
     /// and eth-api.
-    pub rpc_add_ons: RpcAddOns<N, EthB, EB, EVB, RpcMiddleware>,
+    pub rpc_add_ons: RpcAddOns<N, EthB, EB, RpcMiddleware>,
     /// Data availability configuration for the payload builder.
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the payload builder.
@@ -332,7 +331,7 @@ pub struct BaseAddOns<
     min_suggested_priority_fee: u64,
 }
 
-impl<N, EthB, EB, EVB, RpcMiddleware> BaseAddOns<N, EthB, EB, EVB, RpcMiddleware>
+impl<N, EthB, EB, RpcMiddleware> BaseAddOns<N, EthB, EB, RpcMiddleware>
 where
     N: FullNodeComponents,
     EthB: EthApiBuilder<N>,
@@ -340,7 +339,7 @@ where
     /// Creates a new instance from components.
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
-        rpc_add_ons: RpcAddOns<N, EthB, EB, EVB, RpcMiddleware>,
+        rpc_add_ons: RpcAddOns<N, EthB, EB, RpcMiddleware>,
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
         sequencer_url: Option<String>,
@@ -368,7 +367,7 @@ where
     }
 }
 
-impl<N, RpcMiddleware> BaseAddOns<N, BaseEthApiBuilder, BaseEngineApiBuilder, RpcMiddleware>
+impl<N> BaseAddOns<N, BaseEthApiBuilder, BaseEngineApiBuilder>
 where
     N: FullNodeComponents,
     BaseEthApiBuilder: EthApiBuilder<N>,
@@ -379,7 +378,7 @@ where
     }
 }
 
-impl<N, EthB, EB, EVB, RpcMiddleware> BaseAddOns<N, EthB, EB, EVB, RpcMiddleware>
+impl<N, EthB, EB, RpcMiddleware> BaseAddOns<N, EthB, EB, RpcMiddleware>
 where
     N: FullNodeComponents,
     EthB: EthApiBuilder<N>,
@@ -388,7 +387,7 @@ where
     pub fn with_engine_api<T>(
         self,
         engine_api_builder: T,
-    ) -> BaseAddOns<N, EthB, T, EVB, RpcMiddleware> {
+    ) -> BaseAddOns<N, EthB, T, RpcMiddleware> {
         let Self {
             rpc_add_ons,
             da_config,
@@ -415,7 +414,7 @@ where
     /// layer, allowing you to intercept, modify, or enhance RPC request processing.
     ///
     /// See also [`RpcAddOns::with_rpc_middleware`].
-    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<N, EthB, EB, EVB, T> {
+    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<N, EthB, EB, T> {
         let Self {
             rpc_add_ons,
             da_config,
@@ -456,12 +455,11 @@ where
     }
 }
 
-impl<N, EthB, EB, EVB, RpcMiddleware> NodeAddOns<N> for BaseAddOns<N, EthB, EB, EVB, RpcMiddleware>
+impl<N, EthB, EB, RpcMiddleware> NodeAddOns<N> for BaseAddOns<N, EthB, EB, RpcMiddleware>
 where
     N: FullNodeComponents<Pool: TransactionPool<Transaction: BasePooledTx>>,
     EthB: EthApiBuilder<N>,
     EB: EngineApiBuilder<N>,
-    EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
 {
     type Handle = RpcHandle<N, EthB::EthApi>;
@@ -521,14 +519,12 @@ where
     }
 }
 
-impl<N, EthB, EB, EVB, RpcMiddleware> RethRpcAddOns<N>
-    for BaseAddOns<N, EthB, EB, EVB, RpcMiddleware>
+impl<N, EthB, EB, RpcMiddleware> RethRpcAddOns<N> for BaseAddOns<N, EthB, EB, RpcMiddleware>
 where
     N: FullNodeComponents,
     <<N as FullNodeComponents>::Pool as TransactionPool>::Transaction: BasePooledTx,
     EthB: EthApiBuilder<N>,
     EB: EngineApiBuilder<N>,
-    EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
 {
     type EthApi = EthB::EthApi;
@@ -538,18 +534,14 @@ where
     }
 }
 
-impl<N, EthB, EB, EVB, RpcMiddleware> EngineValidatorAddOn<N>
-    for BaseAddOns<N, EthB, EB, EVB, RpcMiddleware>
+impl<N, EthB, EB, RpcMiddleware> EngineValidatorAddOn<N> for BaseAddOns<N, EthB, EB, RpcMiddleware>
 where
     N: FullNodeComponents,
     EthB: EthApiBuilder<N>,
     EB: EngineApiBuilder<N>,
-    EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: Send,
 {
-    type ValidatorBuilder = EVB;
-
-    fn engine_validator_builder(&self) -> Self::ValidatorBuilder {
+    fn engine_validator_builder(&self) -> BasicEngineValidatorBuilder {
         EngineValidatorAddOn::engine_validator_builder(&self.rpc_add_ons)
     }
 }
@@ -653,12 +645,11 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
 
 impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
     /// Builds an instance of [`BaseAddOns`].
-    pub fn build<N, EB, EVB>(self) -> BaseAddOns<N, BaseEthApiBuilder, EB, EVB, RpcMiddleware>
+    pub fn build<N, EB>(self) -> BaseAddOns<N, BaseEthApiBuilder, EB, RpcMiddleware>
     where
         N: FullNodeComponents,
         BaseEthApiBuilder: EthApiBuilder<N>,
         EB: Default,
-        EVB: Default,
     {
         let Self {
             sequencer_url,
@@ -678,7 +669,6 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
                     .with_sequencer_headers(sequencer_headers.clone())
                     .with_min_suggested_priority_fee(min_suggested_priority_fee),
                 EB::default(),
-                EVB::default(),
                 rpc_middleware,
                 Identity::new(),
             )

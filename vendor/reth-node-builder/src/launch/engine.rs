@@ -39,7 +39,7 @@ use crate::{
     NodeBuilderWithComponents, NodeHandle, NodeTypesAdapter,
     common::{Attached, LaunchContextWith, WithConfigs},
     hooks::NodeHooks,
-    rpc::{EngineShutdown, EngineValidatorAddOn, EngineValidatorBuilder, RethRpcAddOns, RpcHandle},
+    rpc::{EngineShutdown, EngineValidatorAddOn, RethRpcAddOns, RpcHandle},
     setup::build_networked_pipeline,
 };
 
