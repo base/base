@@ -68,8 +68,3 @@ pub trait BlockClient:
     /// The Block type that this client fetches.
     type Block: Block;
 }
-
-/// The [`BlockClient`] providing Ethereum block parts.
-pub trait EthBlockClient: BlockClient<Block = reth_ethereum_primitives::Block> {}
-
-impl<T> EthBlockClient for T where T: BlockClient<Block = reth_ethereum_primitives::Block> {}
