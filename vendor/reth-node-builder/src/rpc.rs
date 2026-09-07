@@ -203,8 +203,13 @@ where
 #[derive(Debug, Clone)]
 #[expect(clippy::type_complexity)]
 pub struct RpcRegistry<Node: FullNodeComponents, EthApi: EthApiTypes> {
-    pub(crate) registry:
-        RpcRegistryInner<Node::Provider, Node::Pool, Node::Network, EthApi, Node::Consensus>,
+    pub(crate) registry: RpcRegistryInner<
+        Node::Provider,
+        reth_node_api::BaseNodePool<Node::Provider>,
+        reth_network::NetworkHandle,
+        EthApi,
+        std::sync::Arc<base_execution_consensus::BaseBeaconConsensus>,
+    >,
 }
 
 impl<Node, EthApi> Deref for RpcRegistry<Node, EthApi>
@@ -212,8 +217,13 @@ where
     Node: FullNodeComponents,
     EthApi: EthApiTypes,
 {
-    type Target =
-        RpcRegistryInner<Node::Provider, Node::Pool, Node::Network, EthApi, Node::Consensus>;
+    type Target = RpcRegistryInner<
+        Node::Provider,
+        reth_node_api::BaseNodePool<Node::Provider>,
+        reth_network::NetworkHandle,
+        EthApi,
+        std::sync::Arc<base_execution_consensus::BaseBeaconConsensus>,
+    >;
 
     fn deref(&self) -> &Self::Target {
         &self.registry
@@ -289,7 +299,7 @@ where
     }
 
     /// Returns the transaction pool instance.
-    pub fn pool(&self) -> &Node::Pool {
+    pub fn pool(&self) -> &reth_node_api::BaseNodePool<Node::Provider> {
         self.node.pool()
     }
 
@@ -299,7 +309,7 @@ where
     }
 
     /// Returns the handle to the network
-    pub fn network(&self) -> &Node::Network {
+    pub fn network(&self) -> &reth_network::NetworkHandle {
         self.node.network()
     }
 
@@ -383,7 +393,9 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcHandle<Node, EthApi> {
     }
 
     /// Returns an instance of the [`AdminApi`] for the rpc server.
-    pub fn admin_api(&self) -> AdminApi<Node::Network, Node::Pool> {
+    pub fn admin_api(
+        &self,
+    ) -> AdminApi<reth_network::NetworkHandle, reth_node_api::BaseNodePool<Node::Provider>> {
         self.rpc_registry.registry.admin_api()
     }
 }
@@ -519,7 +531,10 @@ where
 impl<Node, RpcMiddleware, AuthHttpMiddleware> RpcAddOns<Node, RpcMiddleware, AuthHttpMiddleware>
 where
     Node: FullNodeComponents,
-    BaseNodeEthApi<Node>: FullEthApiServer<Provider = Node::Provider, Pool = Node::Pool>,
+    BaseNodeEthApi<Node>: FullEthApiServer<
+            Provider = Node::Provider,
+            Pool = reth_node_api::BaseNodePool<Node::Provider>,
+        >,
 {
     /// Creates a new instance of the RPC add-ons.
     pub fn new(
@@ -1011,7 +1026,8 @@ impl<N: FullNodeComponents, RpcMiddleware, AuthHttpMiddleware> RethRpcAddOns<N>
     for RpcAddOns<N, RpcMiddleware, AuthHttpMiddleware>
 where
     Self: NodeAddOns<N, Handle = RpcHandle<N, BaseNodeEthApi<N>>>,
-    BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
+    BaseNodeEthApi<N>:
+        FullEthApiServer<Provider = N::Provider, Pool = reth_node_api::BaseNodePool<N::Provider>>,
 {
     type EthApi = BaseNodeEthApi<N>;
 

@@ -15,6 +15,7 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+reth-network = { workspace = true }
 url = { workspace = true }
 revm = { workspace = true }
 tokio = { workspace = true }

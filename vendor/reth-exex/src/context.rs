@@ -75,7 +75,7 @@ where
     Node: FullNodeComponents,
 {
     /// Returns the transaction pool of the node.
-    pub fn pool(&self) -> &Node::Pool {
+    pub fn pool(&self) -> &reth_node_api::BaseNodePool<Node::Provider> {
         self.components.pool()
     }
 
@@ -90,7 +90,7 @@ where
     }
 
     /// Returns the handle to the network
-    pub fn network(&self) -> &Node::Network {
+    pub fn network(&self) -> &reth_network::NetworkHandle {
         self.components.network()
     }
 

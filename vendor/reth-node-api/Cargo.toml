@@ -15,6 +15,9 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+base-execution-consensus = { workspace = true }
+base-execution-txpool = { workspace = true }
+reth-network = { workspace = true }
 reth-evm = { workspace = true }
 reth-tasks = { workspace = true }
 reth-db-api = { workspace = true }

@@ -9,7 +9,6 @@ use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
-use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_api::FullNodeComponents;
 use reth_node_builder::{FullNode, rpc::RethRpcAddOns};
 use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
@@ -38,7 +37,7 @@ where
     /// Context for testing payload-related features.
     pub payload: PayloadTestContext,
     /// Context for testing network functionalities.
-    pub network: NetworkTestContext<Node::Network>,
+    pub network: NetworkTestContext<reth_network::NetworkHandle>,
     /// Context for testing RPC features.
     pub rpc: RpcTestContext<Node, AddOns::EthApi>,
     /// Canonical state events.
@@ -48,7 +47,6 @@ where
 impl<Node, AddOns> NodeTestContext<Node, AddOns>
 where
     Node: FullNodeComponents,
-    Node::Network: PeersHandleProvider,
     AddOns: RethRpcAddOns<Node>,
 {
     /// Creates a new test node

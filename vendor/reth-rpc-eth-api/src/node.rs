@@ -64,9 +64,9 @@ where
     T: FullNodeComponents<Provider: ChainSpecProvider>,
 {
     type Provider = T::Provider;
-    type Pool = T::Pool;
+    type Pool = reth_node_api::BaseNodePool<T::Provider>;
 
-    type Network = T::Network;
+    type Network = reth_network::NetworkHandle;
 
     #[inline]
     fn pool(&self) -> &Self::Pool {

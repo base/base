@@ -111,7 +111,7 @@ where
         >,
     >,
     debug_block_provider: Option<B>,
-    mining_mode: Option<MiningMode<N::Pool>>,
+    mining_mode: Option<MiningMode<reth_node_api::BaseNodePool<N::Provider>>>,
 }
 
 impl<L, Target, N, AddOns, R, B> DebugNodeLauncherFuture<L, Target, N, R, B>
@@ -166,7 +166,10 @@ where
     ///
     /// This overrides the default mining mode that is derived from the node configuration
     /// (instant or interval). This can be used to provide a custom trigger-based mining mode.
-    pub fn with_mining_mode(mut self, mode: MiningMode<N::Pool>) -> Self {
+    pub fn with_mining_mode(
+        mut self,
+        mode: MiningMode<reth_node_api::BaseNodePool<N::Provider>>,
+    ) -> Self {
         self.mining_mode = Some(mode);
         self
     }

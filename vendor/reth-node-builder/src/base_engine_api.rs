@@ -16,8 +16,6 @@ use reth_payload_builder::PayloadStore;
 use reth_rpc_engine_api::{EngineApi, EngineCapabilities};
 use reth_trie_common::KeccakKeyHasher;
 
-
-
 /// Builder for basic [`BaseEngineApi`] implementation.
 #[derive(Debug, Default, Clone)]
 pub struct BaseEngineApiBuilder;
@@ -26,7 +24,11 @@ impl BaseEngineApiBuilder {
     /// Constructs the Base engine API with its fixed validation and capabilities.
     pub fn build_engine_api<N: FullNodeComponents>(
         ctx: &AddOnsContext<'_, N>,
-    ) -> BaseEngineApi<N::Provider, N::Pool, BaseEngineValidator<BaseTxEnvelope>> {
+    ) -> BaseEngineApi<
+        N::Provider,
+        reth_node_api::BaseNodePool<N::Provider>,
+        BaseEngineValidator<BaseTxEnvelope>,
+    > {
         let engine_validator =
             BaseEngineValidator::new::<KeccakKeyHasher>(Arc::clone(&ctx.config.chain));
         let client = ClientVersionV1 {

@@ -348,7 +348,10 @@ impl BaseEthApiBuilder {
     pub async fn build_eth_api<N>(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<BaseNodeEthApi<N>>
     where
         N: FullNodeComponents,
-        BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
+        BaseNodeEthApi<N>: FullEthApiServer<
+                Provider = N::Provider,
+                Pool = reth_node_api::BaseNodePool<N::Provider>,
+            >,
     {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
         let base_time = BaseTimeCache::default();

@@ -96,14 +96,7 @@ impl<T: FullNodeTypes> FullNodeTypes for NodeAdapter<T> {
 }
 
 impl<T: FullNodeTypes> FullNodeComponents for NodeAdapter<T> {
-    type Pool = base_execution_txpool::BaseTransactionPool<
-        T::Provider,
-        reth_transaction_pool::blobstore::DiskFileBlobStore,
-    >;
-    type Consensus = std::sync::Arc<base_execution_consensus::BaseBeaconConsensus>;
-    type Network = reth_network::NetworkHandle;
-
-    fn pool(&self) -> &Self::Pool {
+    fn pool(&self) -> &reth_node_api::BaseNodePool<Self::Provider> {
         &self.components.transaction_pool
     }
 
@@ -111,11 +104,11 @@ impl<T: FullNodeTypes> FullNodeComponents for NodeAdapter<T> {
         &self.components.evm_config
     }
 
-    fn consensus(&self) -> &Self::Consensus {
+    fn consensus(&self) -> &std::sync::Arc<base_execution_consensus::BaseBeaconConsensus> {
         &self.components.consensus
     }
 
-    fn network(&self) -> &Self::Network {
+    fn network(&self) -> &reth_network::NetworkHandle {
         &self.components.network
     }
 

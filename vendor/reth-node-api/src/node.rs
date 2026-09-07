@@ -3,18 +3,14 @@
 use std::{fmt::Debug, future::Future, marker::PhantomData};
 
 use alloy_rpc_types_engine::JwtSecret;
-use base_common_consensus::BaseTxEnvelope;
-use reth_consensus::FullConsensus;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
 use reth_evm::BaseEvmConfig;
-use reth_network_api::FullNetwork;
 use reth_node_core::node_config::NodeConfig;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_provider::FullProvider;
 use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
-use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 /// Database and state provider backends used by the node.
 ///
@@ -39,28 +35,25 @@ where
     type Provider = Provider;
 }
 
+/// Base's transaction pool with its production disk blob store.
+pub type BaseNodePool<Provider> = base_execution_txpool::BaseTransactionPool<
+    Provider,
+    reth_transaction_pool::blobstore::DiskFileBlobStore,
+>;
+
 /// Encapsulates all types and components of the node.
 pub trait FullNodeComponents: FullNodeTypes + Clone + 'static {
-    /// The transaction pool of the node.
-    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin;
-
-    /// The consensus type of the node.
-    type Consensus: FullConsensus + Clone + Unpin + 'static;
-
-    /// Network API.
-    type Network: FullNetwork;
-
     /// Returns the transaction pool of the node.
-    fn pool(&self) -> &Self::Pool;
+    fn pool(&self) -> &BaseNodePool<Self::Provider>;
 
     /// Returns the node's evm config.
     fn evm_config(&self) -> &BaseEvmConfig;
 
     /// Returns the node's consensus type.
-    fn consensus(&self) -> &Self::Consensus;
+    fn consensus(&self) -> &std::sync::Arc<base_execution_consensus::BaseBeaconConsensus>;
 
     /// Returns the handle to the network
-    fn network(&self) -> &Self::Network;
+    fn network(&self) -> &reth_network::NetworkHandle;
 
     /// Returns the handle to the payload builder service handling payload building requests from
     /// the engine.

@@ -325,7 +325,8 @@ pub struct BaseAddOns<N: FullNodeComponents, RpcMiddleware = Identity> {
 impl<N, RpcMiddleware> BaseAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents,
-    BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
+    BaseNodeEthApi<N>:
+        FullEthApiServer<Provider = N::Provider, Pool = reth_node_api::BaseNodePool<N::Provider>>,
 {
     /// Creates a new instance from components.
     #[allow(clippy::too_many_arguments)]
@@ -351,7 +352,8 @@ where
 impl<N> Default for BaseAddOns<N>
 where
     N: FullNodeComponents,
-    BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
+    BaseNodeEthApi<N>:
+        FullEthApiServer<Provider = N::Provider, Pool = reth_node_api::BaseNodePool<N::Provider>>,
 {
     fn default() -> Self {
         Self::builder().build()
@@ -361,7 +363,8 @@ where
 impl<N> BaseAddOns<N>
 where
     N: FullNodeComponents,
-    BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
+    BaseNodeEthApi<N>:
+        FullEthApiServer<Provider = N::Provider, Pool = reth_node_api::BaseNodePool<N::Provider>>,
 {
     /// Build a [`BaseAddOns`] using [`BaseAddOnsBuilder`].
     pub fn builder() -> BaseAddOnsBuilder {
@@ -372,7 +375,8 @@ where
 impl<N, RpcMiddleware> BaseAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents,
-    BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
+    BaseNodeEthApi<N>:
+        FullEthApiServer<Provider = N::Provider, Pool = reth_node_api::BaseNodePool<N::Provider>>,
 {
     /// Sets the RPC middleware stack for processing RPC requests.
     ///
@@ -424,7 +428,7 @@ where
 
 impl<N, RpcMiddleware> NodeAddOns<N> for BaseAddOns<N, RpcMiddleware>
 where
-    N: FullNodeComponents<Pool: TransactionPool<Transaction: BasePooledTx>>,
+    N: FullNodeComponents,
     RpcMiddleware: RethRpcMiddleware,
 {
     type Handle = RpcHandle<N, BaseNodeEthApi<N>>;
@@ -487,7 +491,7 @@ where
 impl<N, RpcMiddleware> RethRpcAddOns<N> for BaseAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents,
-    <<N as FullNodeComponents>::Pool as TransactionPool>::Transaction: BasePooledTx,
+    <reth_node_api::BaseNodePool<N::Provider> as TransactionPool>::Transaction: BasePooledTx,
     RpcMiddleware: RethRpcMiddleware,
 {
     type EthApi = BaseNodeEthApi<N>;
@@ -599,7 +603,10 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
     pub fn build<N>(self) -> BaseAddOns<N, RpcMiddleware>
     where
         N: FullNodeComponents,
-        BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
+        BaseNodeEthApi<N>: FullEthApiServer<
+                Provider = N::Provider,
+                Pool = reth_node_api::BaseNodePool<N::Provider>,
+            >,
     {
         let Self {
             sequencer_url,

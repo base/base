@@ -29,9 +29,9 @@ pub struct FullNode<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> {
     /// The evm configuration.
     pub evm_config: BaseEvmConfig,
     /// The node's transaction pool.
-    pub pool: Node::Pool,
+    pub pool: reth_node_api::BaseNodePool<Node::Provider>,
     /// Handle to the node's network.
-    pub network: Node::Network,
+    pub network: reth_network::NetworkHandle,
     /// Provider to interact with the node's database
     pub provider: Node::Provider,
     /// Handle to the node's payload builder service.
