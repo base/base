@@ -3,12 +3,11 @@ use core::error;
 use std::{error::Error, fmt::Debug};
 
 use alloy_consensus::{error::ValueError, transaction::Recovered};
-use alloy_primitives::Address;
 use alloy_rpc_types_eth::Log;
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_evm::{BlockEnvFor, EvmEnvFor, SpecFor, TxEnvFor};
 use reth_primitives_traits::{SealedBlock, TransactionMeta};
-use reth_rpc_traits::{FromConsensusTx, TryIntoSimTx};
+use reth_rpc_traits::TryIntoSimTx;
 
 use crate::TryIntoTxEnv;
 
@@ -60,62 +59,6 @@ pub trait ReceiptConverter: Debug + 'static {
         _block: &SealedBlock<BaseBlock>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
         self.convert_receipts(receipts)
-    }
-}
-
-/// Converts `Tx` into `RpcTx`
-///
-/// Where:
-/// * `Tx` is a transaction from the consensus layer.
-/// * `RpcTx` is a transaction response object of the RPC API
-///
-/// The conversion function is accompanied by `signer`'s address and `tx_info` providing extra
-/// context about a transaction in a block.
-///
-/// The `RpcTxConverter` has two blanket implementations:
-/// * `()` assuming `RpcTx` implements [`FromConsensusTx`] and is used as default for
-///   `BaseRpcConverter`.
-/// * `Fn(Tx, Address, TxInfo) -> RpcTx` and can be applied using
-///   a custom transaction conversion function.
-///
-/// One should prefer to implement [`FromConsensusTx`] for `RpcTx` to get the `RpcTxConverter`
-/// implementation for free, thanks to the blanket implementation, unless the conversion requires
-/// more context. For example, some configuration parameters or access handles to database, network,
-/// etc.
-pub trait RpcTxConverter<Tx, RpcTx, TxInfo>: Clone + Unpin + Send + Sync + 'static {
-    /// An associated error that can happen during the conversion.
-    type Err;
-
-    /// Performs the conversion of `tx` from `Tx` into `RpcTx`.
-    ///
-    /// See [`RpcTxConverter`] for more information.
-    fn convert_rpc_tx(&self, tx: Tx, signer: Address, tx_info: TxInfo) -> Result<RpcTx, Self::Err>;
-}
-
-impl<Tx, RpcTx> RpcTxConverter<Tx, RpcTx, <RpcTx as FromConsensusTx<Tx>>::TxInfo> for ()
-where
-    RpcTx: FromConsensusTx<Tx>,
-{
-    type Err = RpcTx::Err;
-
-    fn convert_rpc_tx(
-        &self,
-        tx: Tx,
-        signer: Address,
-        tx_info: <RpcTx as FromConsensusTx<Tx>>::TxInfo,
-    ) -> Result<RpcTx, Self::Err> {
-        RpcTx::from_consensus_tx(tx, signer, tx_info)
-    }
-}
-
-impl<Tx, RpcTx, F, TxInfo, E> RpcTxConverter<Tx, RpcTx, TxInfo> for F
-where
-    F: Fn(Tx, Address, TxInfo) -> Result<RpcTx, E> + Clone + Unpin + Send + Sync + 'static,
-{
-    type Err = E;
-
-    fn convert_rpc_tx(&self, tx: Tx, signer: Address, tx_info: TxInfo) -> Result<RpcTx, Self::Err> {
-        self(tx, signer, tx_info)
     }
 }
 
