@@ -17,7 +17,7 @@ use alloy_eips::{
 use alloy_primitives::{Address, B64, B256, BlockNumber, Bytes, TxKind, U256};
 pub use rand::Rng;
 use rand::{SeedableRng, distr::uniform::SampleRange, rngs::StdRng};
-use reth_ethereum_primitives::{Block, BlockBody, Receipt, Transaction, TransactionSigned};
+use reth_ethereum_primitives::{Receipt, Transaction, TransactionSigned};
 use reth_primitives_traits::{
     Account, Block as _, Log, SealedBlock, SealedHeader, StorageEntry,
     crypto::secp256k1::sign_message, proofs,
@@ -202,15 +202,11 @@ pub fn generate_keys<R: Rng>(_rng: &mut R, count: usize) -> Vec<Keypair> {
 /// transactions in the block.
 ///
 /// The ommer headers are not assumed to be valid.
-pub fn random_block<R: Rng>(
-    rng: &mut R,
-    number: u64,
-    block_params: BlockParams,
-) -> SealedBlock<Block> {
+pub fn random_block<R: Rng>(rng: &mut R, number: u64, block_params: BlockParams) -> SealedBlock {
     // Generate transactions
     let tx_count = block_params.tx_count.unwrap_or_else(|| rng.random::<u8>());
-    let transactions: Vec<TransactionSigned> =
-        (0..tx_count).map(|_| random_signed_tx(rng)).collect();
+    let transactions: Vec<base_common_consensus::BaseTxEnvelope> =
+        (0..tx_count).map(|_| crate::BaseTestData::random_signed_tx(rng)).collect();
     let total_gas = transactions.iter().fold(0, |sum, tx| sum + tx.gas_limit());
 
     // Generate ommers
@@ -249,9 +245,13 @@ pub fn random_block<R: Rng>(
         ..Default::default()
     };
 
-    Block {
+    base_common_consensus::BaseBlock {
         header,
-        body: BlockBody { transactions, ommers, withdrawals: withdrawals.map(Withdrawals::new) },
+        body: base_common_consensus::BaseBlockBody {
+            transactions,
+            ommers,
+            withdrawals: withdrawals.map(Withdrawals::new),
+        },
     }
     .seal_slow()
 }
@@ -266,7 +266,7 @@ pub fn random_block_range<R: Rng>(
     rng: &mut R,
     block_numbers: RangeInclusive<BlockNumber>,
     block_range_params: BlockRangeParams,
-) -> Vec<SealedBlock<Block>> {
+) -> Vec<SealedBlock> {
     let mut blocks =
         Vec::with_capacity(block_numbers.end().saturating_sub(*block_numbers.start()) as usize);
     for idx in block_numbers {
@@ -281,7 +281,7 @@ pub fn random_block_range<R: Rng>(
             idx,
             BlockParams {
                 parent: Some(
-                    blocks.last().map(|block: &SealedBlock<Block>| block.hash()).unwrap_or(parent),
+                    blocks.last().map(|block: &SealedBlock| block.hash()).unwrap_or(parent),
                 ),
                 tx_count: Some(tx_count),
                 ommers_count: None,

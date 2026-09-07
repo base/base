@@ -107,8 +107,8 @@ pub struct NewBlock<B = reth_ethereum_primitives::Block> {
     pub td: U128,
 }
 
-impl<B: Block + 'static> NewBlockPayload for NewBlock<B> {
-    type Block = B;
+impl NewBlockPayload for NewBlock<base_common_consensus::BaseBlock> {
+    type Block = base_common_consensus::BaseBlock;
 
     fn block(&self) -> &Self::Block {
         &self.block

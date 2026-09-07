@@ -1474,10 +1474,7 @@ where
         self.protocol_pool.set_block_info(info)
     }
 
-    fn on_canonical_state_change(
-        &self,
-        update: reth_transaction_pool::CanonicalStateUpdate<'_, Self::Block>,
-    ) {
+    fn on_canonical_state_change(&self, update: reth_transaction_pool::CanonicalStateUpdate<'_>) {
         let block_hash = update.hash();
         let now = update.timestamp();
         let block_number = update.number();

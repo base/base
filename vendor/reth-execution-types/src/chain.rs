@@ -3,16 +3,12 @@
 use alloc::{borrow::Cow, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{fmt, ops::RangeInclusive};
 
-use alloy_consensus::{
-    BlockHeader, TxReceipt,
-    transaction::{Recovered, TxHashRef},
-};
+use alloy_consensus::{BlockHeader, TxReceipt, transaction::Recovered};
 use alloy_eips::{BlockNumHash, eip1898::ForkBlock};
 use alloy_primitives::{Address, BlockHash, BlockNumber, Log, TxHash, map::HashSet};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use reth_primitives_traits::{
-    Block, BlockBody, IndexedTx, RecoveredBlock, SealedHeader,
-    transaction::signed::SignedTransaction,
+    BlockBody, IndexedTx, RecoveredBlock, SealedHeader, transaction::signed::SignedTransaction,
 };
 use reth_trie_common::LazyTrieData;
 
@@ -32,7 +28,7 @@ use crate::ExecutionOutcome;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Chain {
     /// All blocks in this chain.
-    blocks: BTreeMap<BlockNumber, Arc<RecoveredBlock<BaseBlock>>>,
+    blocks: BTreeMap<BlockNumber, Arc<RecoveredBlock>>,
     /// The outcome of block execution for this chain.
     ///
     /// This field contains the state of all accounts after the execution of all blocks in this
@@ -46,12 +42,8 @@ pub struct Chain {
     trie_data: BTreeMap<BlockNumber, LazyTrieData>,
 }
 
-type ChainTxReceiptMeta<'a> = (
-    &'a Arc<RecoveredBlock<BaseBlock>>,
-    IndexedTx<'a, BaseBlock>,
-    &'a BaseReceipt,
-    &'a [BaseReceipt],
-);
+type ChainTxReceiptMeta<'a> =
+    (&'a Arc<RecoveredBlock>, IndexedTx<'a>, &'a BaseReceipt, &'a [BaseReceipt]);
 
 impl Default for Chain {
     fn default() -> Self {
@@ -70,7 +62,7 @@ impl Chain {
     ///
     /// A chain of blocks should not be empty.
     pub fn new(
-        blocks: impl IntoIterator<Item: Into<Arc<RecoveredBlock<BaseBlock>>>>,
+        blocks: impl IntoIterator<Item: Into<Arc<RecoveredBlock>>>,
         execution_outcome: ExecutionOutcome<BaseReceipt>,
         trie_data: BTreeMap<BlockNumber, LazyTrieData>,
     ) -> Self {
@@ -88,7 +80,7 @@ impl Chain {
 
     /// Create new Chain from a single block and its state.
     pub fn from_block(
-        block: impl Into<Arc<RecoveredBlock<BaseBlock>>>,
+        block: impl Into<Arc<RecoveredBlock>>,
         execution_outcome: ExecutionOutcome<BaseReceipt>,
         trie_data: LazyTrieData,
     ) -> Self {
@@ -98,12 +90,12 @@ impl Chain {
     }
 
     /// Get the blocks in this chain.
-    pub const fn blocks(&self) -> &BTreeMap<BlockNumber, Arc<RecoveredBlock<BaseBlock>>> {
+    pub const fn blocks(&self) -> &BTreeMap<BlockNumber, Arc<RecoveredBlock>> {
         &self.blocks
     }
 
     /// Consumes the type and only returns the blocks in this chain.
-    pub fn into_blocks(self) -> BTreeMap<BlockNumber, Arc<RecoveredBlock<BaseBlock>>> {
+    pub fn into_blocks(self) -> BTreeMap<BlockNumber, Arc<RecoveredBlock>> {
         self.blocks
     }
 
@@ -148,7 +140,7 @@ impl Chain {
     }
 
     /// Returns the block with matching hash.
-    pub fn recovered_block(&self, block_hash: BlockHash) -> Option<&RecoveredBlock<BaseBlock>> {
+    pub fn recovered_block(&self, block_hash: BlockHash) -> Option<&RecoveredBlock> {
         self.blocks
             .iter()
             .find_map(|(_num, block)| (block.hash() == block_hash).then_some(block.as_ref()))
@@ -178,18 +170,15 @@ impl Chain {
     #[expect(clippy::type_complexity)]
     pub fn into_inner(
         self,
-    ) -> (
-        ChainBlocks<'static, BaseBlock>,
-        ExecutionOutcome<BaseReceipt>,
-        BTreeMap<BlockNumber, LazyTrieData>,
-    ) {
+    ) -> (ChainBlocks<'static>, ExecutionOutcome<BaseReceipt>, BTreeMap<BlockNumber, LazyTrieData>)
+    {
         (ChainBlocks { blocks: Cow::Owned(self.blocks) }, self.execution_outcome, self.trie_data)
     }
 
     /// Destructure the chain into its inner components:
     /// 1. A reference to the blocks contained in the chain.
     /// 2. A reference to the execution outcome representing the final state.
-    pub const fn inner(&self) -> (ChainBlocks<'_, BaseBlock>, &ExecutionOutcome<BaseReceipt>) {
+    pub const fn inner(&self) -> (ChainBlocks<'_>, &ExecutionOutcome<BaseReceipt>) {
         (ChainBlocks { blocks: Cow::Borrowed(&self.blocks) }, &self.execution_outcome)
     }
 
@@ -209,7 +198,7 @@ impl Chain {
     }
 
     /// Returns an iterator over all blocks in the chain with increasing block number.
-    pub fn blocks_iter(&self) -> impl Iterator<Item = &Arc<RecoveredBlock<BaseBlock>>> + '_ {
+    pub fn blocks_iter(&self) -> impl Iterator<Item = &Arc<RecoveredBlock>> + '_ {
         self.blocks().values()
     }
 
@@ -233,7 +222,7 @@ impl Chain {
     /// Returns an iterator over all blocks and their receipts in the chain.
     pub fn blocks_and_receipts(
         &self,
-    ) -> impl Iterator<Item = (&Arc<RecoveredBlock<BaseBlock>>, &Vec<BaseReceipt>)> + '_ {
+    ) -> impl Iterator<Item = (&Arc<RecoveredBlock>, &Vec<BaseReceipt>)> + '_ {
         self.blocks_iter().zip(self.block_receipts_iter())
     }
 
@@ -270,7 +259,7 @@ impl Chain {
     ///
     /// If chain doesn't have any blocks.
     #[track_caller]
-    pub fn first(&self) -> &RecoveredBlock<BaseBlock> {
+    pub fn first(&self) -> &RecoveredBlock {
         self.blocks.first_key_value().expect("Chain should have at least one block").1
     }
 
@@ -280,7 +269,7 @@ impl Chain {
     ///
     /// If chain doesn't have any blocks.
     #[track_caller]
-    pub fn tip(&self) -> &RecoveredBlock<BaseBlock> {
+    pub fn tip(&self) -> &RecoveredBlock {
         self.blocks.last_key_value().expect("Chain should have at least one block").1
     }
 
@@ -335,7 +324,7 @@ impl Chain {
     /// This method assumes that blocks attachment to the chain has already been validated.
     pub fn append_block(
         &mut self,
-        block: impl Into<Arc<RecoveredBlock<BaseBlock>>>,
+        block: impl Into<Arc<RecoveredBlock>>,
         execution_outcome: ExecutionOutcome<BaseReceipt>,
         trie_data: LazyTrieData,
     ) {
@@ -370,11 +359,9 @@ impl Chain {
 
 /// Wrapper type for `blocks` display in `Chain`
 #[derive(Debug)]
-pub struct DisplayBlocksChain<'a, B: reth_primitives_traits::Block>(
-    pub &'a BTreeMap<BlockNumber, Arc<RecoveredBlock<B>>>,
-);
+pub struct DisplayBlocksChain<'a>(pub &'a BTreeMap<BlockNumber, Arc<RecoveredBlock>>);
 
-impl<B: reth_primitives_traits::Block> fmt::Display for DisplayBlocksChain<'_, B> {
+impl fmt::Display for DisplayBlocksChain<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut list = f.debug_list();
         let mut values = self.0.values().map(|block| block.num_hash());
@@ -391,22 +378,22 @@ impl<B: reth_primitives_traits::Block> fmt::Display for DisplayBlocksChain<'_, B
 
 /// All blocks in the chain
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ChainBlocks<'a, B: Block> {
-    blocks: Cow<'a, BTreeMap<BlockNumber, Arc<RecoveredBlock<B>>>>,
+pub struct ChainBlocks<'a> {
+    blocks: Cow<'a, BTreeMap<BlockNumber, Arc<RecoveredBlock>>>,
 }
 
-impl<B: Block<Body: BlockBody<Transaction: SignedTransaction>>> ChainBlocks<'_, B> {
+impl ChainBlocks<'_> {
     /// Creates a consuming iterator over all blocks in the chain with increasing block number.
     ///
     /// Note: this always yields at least one block.
     #[inline]
-    pub fn into_blocks(self) -> impl Iterator<Item = Arc<RecoveredBlock<B>>> {
+    pub fn into_blocks(self) -> impl Iterator<Item = Arc<RecoveredBlock>> {
         self.blocks.into_owned().into_values()
     }
 
     /// Creates an iterator over all blocks in the chain with increasing block number.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = (&BlockNumber, &RecoveredBlock<B>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&BlockNumber, &RecoveredBlock)> {
         self.blocks.iter().map(|(number, block)| (number, block.as_ref()))
     }
 
@@ -416,7 +403,7 @@ impl<B: Block<Body: BlockBody<Transaction: SignedTransaction>>> ChainBlocks<'_, 
     ///
     /// Chains always have at least one block.
     #[inline]
-    pub fn tip(&self) -> &RecoveredBlock<B> {
+    pub fn tip(&self) -> &RecoveredBlock {
         self.blocks.last_key_value().expect("Chain should have at least one block").1.as_ref()
     }
 
@@ -426,13 +413,16 @@ impl<B: Block<Body: BlockBody<Transaction: SignedTransaction>>> ChainBlocks<'_, 
     ///
     /// Chains always have at least one block.
     #[inline]
-    pub fn first(&self) -> &RecoveredBlock<B> {
+    pub fn first(&self) -> &RecoveredBlock {
         self.blocks.first_key_value().expect("Chain should have at least one block").1.as_ref()
     }
 
     /// Returns an iterator over all transactions in the chain.
     #[inline]
-    pub fn transactions(&self) -> impl Iterator<Item = &<B::Body as BlockBody>::Transaction> + '_ {
+    pub fn transactions(
+        &self,
+    ) -> impl Iterator<Item = &<base_common_consensus::BaseBlockBody as BlockBody>::Transaction> + '_
+    {
         self.blocks.values().flat_map(|block| block.body().transactions_iter())
     }
 
@@ -440,7 +430,9 @@ impl<B: Block<Body: BlockBody<Transaction: SignedTransaction>>> ChainBlocks<'_, 
     #[inline]
     pub fn transactions_with_sender(
         &self,
-    ) -> impl Iterator<Item = (&Address, &<B::Body as BlockBody>::Transaction)> + '_ {
+    ) -> impl Iterator<
+        Item = (&Address, &<base_common_consensus::BaseBlockBody as BlockBody>::Transaction),
+    > + '_ {
         self.blocks.values().flat_map(|block| block.transactions_with_sender())
     }
 
@@ -450,7 +442,9 @@ impl<B: Block<Body: BlockBody<Transaction: SignedTransaction>>> ChainBlocks<'_, 
     #[inline]
     pub fn transactions_ecrecovered(
         &self,
-    ) -> impl Iterator<Item = Recovered<<B::Body as BlockBody>::Transaction>> + '_ {
+    ) -> impl Iterator<
+        Item = Recovered<<base_common_consensus::BaseBlockBody as BlockBody>::Transaction>,
+    > + '_ {
         self.transactions_with_sender().map(|(signer, tx)| tx.clone().with_signer(*signer))
     }
 
@@ -459,13 +453,13 @@ impl<B: Block<Body: BlockBody<Transaction: SignedTransaction>>> ChainBlocks<'_, 
     pub fn transaction_hashes(&self) -> impl Iterator<Item = TxHash> + '_ {
         self.blocks
             .values()
-            .flat_map(|block| block.body().transactions_iter().map(|tx| *tx.tx_hash()))
+            .flat_map(|block| block.body().transactions_iter().map(|tx| tx.tx_hash()))
     }
 
     /// Returns all transaction hashes in a pre-allocated vector.
     #[inline]
     pub fn transaction_hashes_vec(&self) -> Vec<TxHash> {
-        let capacity = self.blocks.values().map(|block| block.body().transactions().len()).sum();
+        let capacity = self.blocks.values().map(|block| block.body().transactions.len()).sum();
 
         let mut hashes = Vec::with_capacity(capacity);
         hashes.extend(self.transaction_hashes());
@@ -475,7 +469,7 @@ impl<B: Block<Body: BlockBody<Transaction: SignedTransaction>>> ChainBlocks<'_, 
     /// Returns all transaction hashes in a pre-allocated set.
     #[inline]
     pub fn transaction_hashes_set(&self) -> HashSet<TxHash> {
-        let capacity = self.blocks.values().map(|block| block.body().transactions().len()).sum();
+        let capacity = self.blocks.values().map(|block| block.body().transactions.len()).sum();
 
         let mut hashes = HashSet::with_capacity_and_hasher(capacity, Default::default());
         hashes.extend(self.transaction_hashes());
@@ -483,9 +477,9 @@ impl<B: Block<Body: BlockBody<Transaction: SignedTransaction>>> ChainBlocks<'_, 
     }
 }
 
-impl<B: Block> IntoIterator for ChainBlocks<'_, B> {
-    type Item = (BlockNumber, Arc<RecoveredBlock<B>>);
-    type IntoIter = alloc::collections::btree_map::IntoIter<BlockNumber, Arc<RecoveredBlock<B>>>;
+impl IntoIterator for ChainBlocks<'_> {
+    type Item = (BlockNumber, Arc<RecoveredBlock>);
+    type IntoIter = alloc::collections::btree_map::IntoIter<BlockNumber, Arc<RecoveredBlock>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.blocks.into_owned().into_iter()
@@ -686,14 +680,14 @@ pub(super) mod serde_bincode_compat {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, map::HashMap};
-    use base_common_consensus::{BaseBlock, BaseReceipt};
+    use base_common_consensus::BaseReceipt;
     use revm::{database::BundleState, state::AccountInfo};
 
     use super::*;
 
     #[test]
     fn chain_append() {
-        let block: RecoveredBlock<BaseBlock> = Default::default();
+        let block: RecoveredBlock = Default::default();
         let block1_hash = B256::new([0x01; 32]);
         let block2_hash = B256::new([0x02; 32]);
         let block3_hash = B256::new([0x03; 32]);
@@ -761,13 +755,13 @@ mod tests {
             vec![],
         );
 
-        let mut block1: RecoveredBlock<BaseBlock> = Default::default();
+        let mut block1: RecoveredBlock = Default::default();
         let block1_hash = B256::new([15; 32]);
         block1.set_block_number(1);
         block1.set_hash(block1_hash);
         block1.push_sender(Address::new([4; 20]));
 
-        let mut block2: RecoveredBlock<BaseBlock> = Default::default();
+        let mut block2: RecoveredBlock = Default::default();
         let block2_hash = B256::new([16; 32]);
         block2.set_block_number(2);
         block2.set_hash(block2_hash);
@@ -791,7 +785,7 @@ mod tests {
     #[test]
     fn receipts_by_block_hash() {
         // Create a default RecoveredBlock object
-        let block: RecoveredBlock<BaseBlock> = Default::default();
+        let block: RecoveredBlock = Default::default();
 
         // Define block hashes for block1 and block2
         let block1_hash = B256::new([0x01; 32]);

@@ -4,18 +4,18 @@
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::map::B256Map;
-use reth_ethereum_primitives::BlockBody;
+use base_common_consensus::BaseBlockBody as BlockBody;
 use reth_network_p2p::bodies::response::BlockResponse;
-use reth_primitives_traits::{Block, SealedBlock, SealedHeader};
+use reth_primitives_traits::{SealedBlock, SealedHeader};
 use reth_provider::{
     ProviderFactory, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
     test_utils::MockNodeDatabase,
 };
 
-pub(crate) fn zip_blocks<'a, B: Block>(
+pub(crate) fn zip_blocks<'a>(
     headers: impl Iterator<Item = &'a SealedHeader>,
-    bodies: &mut B256Map<B::Body>,
-) -> Vec<BlockResponse<B>> {
+    bodies: &mut B256Map<base_common_consensus::BaseBlockBody>,
+) -> Vec<BlockResponse> {
     headers
         .into_iter()
         .map(|header| {
@@ -32,7 +32,7 @@ pub(crate) fn zip_blocks<'a, B: Block>(
 pub(crate) fn create_raw_bodies(
     headers: impl IntoIterator<Item = SealedHeader>,
     bodies: &mut B256Map<BlockBody>,
-) -> Vec<reth_ethereum_primitives::Block> {
+) -> Vec<base_common_consensus::BaseBlock> {
     headers
         .into_iter()
         .map(|header| {

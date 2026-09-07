@@ -204,13 +204,13 @@ impl BlockReader for NoopProvider {
         Ok(None)
     }
 
-    fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock>> {
         Ok(None)
     }
 
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock<Self::Block>, Vec<Self::Receipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
         Ok(None)
     }
 
@@ -218,7 +218,7 @@ impl BlockReader for NoopProvider {
         &self,
         _id: BlockHashOrNumber,
         _transaction_kind: TransactionVariant,
-    ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Option<RecoveredBlock>> {
         Ok(None)
     }
 
@@ -226,7 +226,7 @@ impl BlockReader for NoopProvider {
         &self,
         _id: BlockHashOrNumber,
         _transaction_kind: TransactionVariant,
-    ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Option<RecoveredBlock>> {
         Ok(None)
     }
 
@@ -237,14 +237,14 @@ impl BlockReader for NoopProvider {
     fn block_with_senders_range(
         &self,
         _range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Vec<RecoveredBlock>> {
         Ok(Vec::new())
     }
 
     fn recovered_block_range(
         &self,
         _range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Vec<RecoveredBlock>> {
         Ok(Vec::new())
     }
 

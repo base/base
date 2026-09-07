@@ -2,7 +2,7 @@
 
 use alloy_consensus::{BlockBody, Transaction, Typed2718};
 use alloy_rpc_types_engine::{CancunPayloadFields, PayloadError};
-use reth_primitives_traits::{AlloyBlockHeader, Block, SealedBlock};
+use reth_primitives_traits::{AlloyBlockHeader, SealedBlock};
 
 /// Checks block and sidecar w.r.t new Cancun fields and new transaction type EIP-4844.
 ///
@@ -11,15 +11,14 @@ use reth_primitives_traits::{AlloyBlockHeader, Block, SealedBlock};
 /// - doesn't contain EIP-4844 transactions unless Cancun is active
 /// - checks blob versioned hashes in block and sidecar match
 #[inline]
-pub fn ensure_well_formed_fields<T, B, H>(
-    block: &SealedBlock<B>,
+pub fn ensure_well_formed_fields<T, H>(
+    block: &SealedBlock,
     cancun_sidecar_fields: Option<&CancunPayloadFields>,
     is_cancun_active: bool,
 ) -> Result<(), PayloadError>
 where
     T: Transaction + Typed2718,
     H: AlloyBlockHeader,
-    B: Block<Body = BlockBody<T, H>>,
 {
     ensure_well_formed_header_and_sidecar_fields(block, cancun_sidecar_fields, is_cancun_active)?;
     ensure_well_formed_transactions_field_with_sidecar(
@@ -31,8 +30,8 @@ where
 
 /// Checks that Cancun fields on block header and sidecar are present if Cancun is active and vv.
 #[inline]
-pub fn ensure_well_formed_header_and_sidecar_fields<T: Block>(
-    block: &SealedBlock<T>,
+pub fn ensure_well_formed_header_and_sidecar_fields(
+    block: &SealedBlock,
     cancun_sidecar_fields: Option<&CancunPayloadFields>,
     is_cancun_active: bool,
 ) -> Result<(), PayloadError> {

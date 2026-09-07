@@ -3,7 +3,6 @@ use std::{
     cmp::Reverse,
     collections::{HashMap, VecDeque},
     fmt::Debug,
-    hash::Hash,
     ops::RangeInclusive,
     pin::Pin,
     sync::Arc,
@@ -12,13 +11,13 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_eip7928::bal::RawBal;
-use alloy_primitives::{B256, Bytes, Sealable};
+use alloy_primitives::{B256, Bytes};
 use base_common_consensus::BaseBlock;
 use futures::FutureExt;
 use reth_consensus::Consensus;
 use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
 use reth_network_peers::{PeerId, WithPeerId};
-use reth_primitives_traits::{Block, SealedBlock, SealedBlockWith, SealedHeader};
+use reth_primitives_traits::{SealedBlock, SealedBlockWith, SealedHeader};
 use tracing::{debug, trace};
 
 use super::headers::client::HeadersRequest;
@@ -33,7 +32,7 @@ use crate::{
 };
 
 /// A sealed block with optional validated raw block access-list data.
-pub type SealedBlockWithAccessList<B> = SealedBlockWith<B, Option<RawBal>>;
+pub type SealedBlockWithAccessList = SealedBlockWith<Option<RawBal>>;
 
 /// A Client that can fetch full blocks from the network.
 #[derive(Debug, Clone)]
@@ -42,7 +41,7 @@ where
     Client: BlockClient,
 {
     client: Client,
-    consensus: Arc<dyn Consensus<Client::Block>>,
+    consensus: Arc<dyn Consensus>,
 }
 
 impl<Client> FullBlockClient<Client>
@@ -50,7 +49,7 @@ where
     Client: BlockClient,
 {
     /// Creates a new instance of `FullBlockClient`.
-    pub fn new(client: Client, consensus: Arc<dyn Consensus<Client::Block>>) -> Self {
+    pub fn new(client: Client, consensus: Arc<dyn Consensus>) -> Self {
         Self { client, consensus }
     }
 
@@ -196,7 +195,7 @@ where
     Client: BlockClient,
 {
     client: Client,
-    consensus: Arc<dyn Consensus<Client::Block>>,
+    consensus: Arc<dyn Consensus>,
     hash: B256,
     request: FullBlockRequest<Client>,
     header: Option<SealedHeader>,
@@ -207,7 +206,7 @@ impl<Client> FetchFullBlockFuture<Client>
 where
     Client: BlockClient,
 {
-    fn new(client: Client, consensus: Arc<dyn Consensus<Client::Block>>, hash: B256) -> Self {
+    fn new(client: Client, consensus: Arc<dyn Consensus>, hash: B256) -> Self {
         Self {
             hash,
             consensus,
@@ -232,7 +231,7 @@ where
     }
 
     /// Returns the [`SealedBlock`] if the request is complete and valid.
-    fn take_block(&mut self) -> Option<SealedBlock<Client::Block>> {
+    fn take_block(&mut self) -> Option<SealedBlock> {
         if self.header.is_none() || self.body.is_none() {
             return None;
         }
@@ -274,7 +273,7 @@ impl<Client> Future for FetchFullBlockFuture<Client>
 where
     Client: BlockClient + 'static,
 {
-    type Output = SealedBlock<Client::Block>;
+    type Output = SealedBlock;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -352,7 +351,7 @@ where
     Client: BlockClient + BlockAccessListsClient,
 {
     block: FetchFullBlockFuture<Client>,
-    block_result: Option<SealedBlock<Client::Block>>,
+    block_result: Option<SealedBlock>,
     bal_request_state: BalRequestState<<Client as BlockAccessListsClient>::Output>,
 }
 
@@ -428,7 +427,7 @@ where
     /// The BAL lookup must be ready even when it resolved to `None`, which prevents a fast block
     /// response from racing a still-pending BAL response and incorrectly dropping available BAL
     /// data.
-    fn take_block_and_access_lists(&mut self) -> Option<SealedBlockWithAccessList<Client::Block>> {
+    fn take_block_and_access_lists(&mut self) -> Option<SealedBlockWithAccessList> {
         let BalRequestState::Ready(bal) = &mut self.bal_request_state else { return None };
         let block = self.block_result.take()?;
         let raw_bal =
@@ -447,7 +446,7 @@ impl<Client> Future for FetchFullBlockWithBalFuture<Client>
 where
     Client: BlockClient + BlockAccessListsClient + 'static,
 {
-    type Output = SealedBlockWithAccessList<Client::Block>;
+    type Output = SealedBlockWithAccessList;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -507,7 +506,7 @@ where
 {
     blocks: FetchFullBlockRangeFuture<Client>,
     client: Client,
-    block_result: Option<Vec<SealedBlock<Client::Block>>>,
+    block_result: Option<Vec<SealedBlock>>,
     access_lists: OptionalBlockAccessListsState<<Client as BlockAccessListsClient>::Output>,
 }
 
@@ -572,7 +571,7 @@ where
     }
 
     /// Returns the block range once blocks and the optional BAL lookup are both complete.
-    fn take_response(&mut self) -> Option<Vec<SealedBlockWithAccessList<Client::Block>>> {
+    fn take_response(&mut self) -> Option<Vec<SealedBlockWithAccessList>> {
         let OptionalBlockAccessListsState::Ready(access_lists) = &mut self.access_lists else {
             return None;
         };
@@ -587,7 +586,7 @@ impl<Client> Future for FetchFullBlockRangeWithBalFuture<Client>
 where
     Client: BlockClient + BlockAccessListsClient + 'static,
 {
-    type Output = Vec<SealedBlockWithAccessList<Client::Block>>;
+    type Output = Vec<SealedBlockWithAccessList>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -705,7 +704,7 @@ where
     /// The client used to fetch headers and bodies.
     client: Client,
     /// The consensus instance used to validate the blocks.
-    consensus: Arc<dyn Consensus<Client::Block>>,
+    consensus: Arc<dyn Consensus>,
     /// The block hash to start fetching from (inclusive).
     start_hash: B256,
     /// How many blocks to fetch: `len([start_hash, ..]) == count`
@@ -758,7 +757,7 @@ where
     ///
     /// These are returned in falling order starting with the requested `hash`, i.e. with
     /// descending block numbers.
-    fn take_blocks(&mut self) -> Option<Vec<SealedBlock<Client::Block>>> {
+    fn take_blocks(&mut self) -> Option<Vec<SealedBlock>> {
         if !self.is_bodies_complete() {
             // not done with bodies yet
             return None;
@@ -791,8 +790,7 @@ where
                     }
                 };
 
-                valid_responses
-                    .push(SealedBlock::<Client::Block>::from_sealed_parts(header.clone(), body));
+                valid_responses.push(SealedBlock::from_sealed_parts(header.clone(), body));
             }
         }
 
@@ -876,7 +874,7 @@ impl<Client> Future for FetchFullBlockRangeFuture<Client>
 where
     Client: BlockClient + 'static,
 {
-    type Output = Vec<SealedBlock<Client::Block>>;
+    type Output = Vec<SealedBlock>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -1120,8 +1118,8 @@ impl Default for NoopFullBlockClient {
 /// Returns `Ok(Some(_))` for a matching entry, `Ok(None)` when the block has no access-list hash
 /// or the peer returned an unavailable entry, and `Err(peer)` for a hash mismatch that should be
 /// reported as a bad message.
-fn seal_block_access_list_for_block<B: Block>(
-    block: &SealedBlock<B>,
+fn seal_block_access_list_for_block(
+    block: &SealedBlock,
     bal: WithPeerId<Option<Bytes>>,
 ) -> Result<Option<RawBal>, PeerId> {
     let Some(expected) = block.header().block_access_list_hash() else { return Ok(None) };
@@ -1152,9 +1150,9 @@ fn seal_block_access_list_for_block<B: Block>(
 /// already validated prefix is preserved.
 fn seal_blocks_with_access_lists<Client>(
     client: &Client,
-    blocks: Vec<SealedBlock<Client::Block>>,
+    blocks: Vec<SealedBlock>,
     access_lists: Option<WithPeerId<BlockAccessLists>>,
-) -> Vec<SealedBlockWithAccessList<Client::Block>>
+) -> Vec<SealedBlockWithAccessList>
 where
     Client: BlockClient,
 {
@@ -1216,8 +1214,8 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{Bytes, keccak256, map::B256Map};
+    use base_common_consensus::BaseBlockBody as BlockBody;
     use parking_lot::Mutex;
-    use reth_ethereum_primitives::BlockBody;
 
     use super::*;
     use crate::{error::RequestError, test_utils::TestFullBlockClient};
@@ -1231,9 +1229,7 @@ mod tests {
         SealedHeader::seal_slow(header)
     }
 
-    fn range_access_lists<B: Block>(
-        blocks: &[SealedBlockWithAccessList<B>],
-    ) -> Vec<Option<RawBal>> {
+    fn range_access_lists(blocks: &[SealedBlockWithAccessList]) -> Vec<Option<RawBal>> {
         blocks.iter().map(|block| block.data().clone()).collect()
     }
 
@@ -1651,7 +1647,7 @@ mod tests {
     }
 
     impl BlockClient for FullBlockWithAccessListsClient {
-        type Block = reth_ethereum_primitives::Block;
+        type Block = base_common_consensus::BaseBlock;
     }
 
     #[derive(Clone, Debug)]
@@ -1709,7 +1705,7 @@ mod tests {
     }
 
     impl BlockClient for FailingBodiesClient {
-        type Block = reth_ethereum_primitives::Block;
+        type Block = base_common_consensus::BaseBlock;
     }
 
     #[tokio::test]

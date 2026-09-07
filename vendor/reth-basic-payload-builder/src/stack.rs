@@ -2,7 +2,6 @@ use std::{error::Error, fmt};
 
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{B256, Bytes, U256};
-use base_common_consensus::BaseBlock;
 use reth_payload_builder::PayloadId;
 use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::SealedBlock;
@@ -117,7 +116,7 @@ where
     L: BuiltPayload,
     R: BuiltPayload,
 {
-    fn block(&self) -> &SealedBlock<BaseBlock> {
+    fn block(&self) -> &SealedBlock {
         match self {
             Self::Left(l) => l.block(),
             Self::Right(r) => r.block(),

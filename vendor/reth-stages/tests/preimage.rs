@@ -387,14 +387,14 @@ async fn test_pipeline_v2_single_block_intra_block_and_intra_tx_wipes_use_plain_
 
 struct SelfdestructScenario {
     chain_spec: Arc<reth_chainspec::ChainSpec>,
-    blocks: Vec<SealedBlock<Block>>,
+    blocks: Vec<SealedBlock>,
     selfdestruct_contract: Address,
     expected_slots: [B256; 2],
 }
 
 struct Create2SelfdestructScenario {
     chain_spec: Arc<reth_chainspec::ChainSpec>,
-    block: SealedBlock<Block>,
+    block: SealedBlock,
     child_contract: Address,
     child_was_destroyed: bool,
     hashed_state: HashedPostState,
@@ -582,21 +582,21 @@ fn setup_create2_selfdestruct_scenario() -> eyre::Result<Create2SelfdestructScen
 
 struct RevertedSlotSelfdestructScenario {
     chain_spec: Arc<reth_chainspec::ChainSpec>,
-    blocks: Vec<SealedBlock<Block>>,
+    blocks: Vec<SealedBlock>,
     selfdestruct_contract: Address,
     expected_slot: (B256, U256),
 }
 
 struct SameAddressDoubleWipeScenario {
     chain_spec: Arc<reth_chainspec::ChainSpec>,
-    blocks: Vec<SealedBlock<Block>>,
+    blocks: Vec<SealedBlock>,
     child_contract: Address,
     expected_slots: [(B256, U256); 2],
 }
 
 struct SameAddressDifferentSlotsDoubleWipeScenario {
     chain_spec: Arc<reth_chainspec::ChainSpec>,
-    blocks: Vec<SealedBlock<Block>>,
+    blocks: Vec<SealedBlock>,
     child_contract: Address,
     expected_slots_first_wipe: [(B256, U256); 2],
     expected_slots_second_wipe: [(B256, U256); 2],
@@ -605,7 +605,7 @@ struct SameAddressDifferentSlotsDoubleWipeScenario {
 
 struct IntraBlockAndIntraTxSelfdestructScenario {
     chain_spec: Arc<reth_chainspec::ChainSpec>,
-    blocks: Vec<SealedBlock<Block>>,
+    blocks: Vec<SealedBlock>,
     multi_tx_contract: Address,
     intra_tx_contract: Address,
     expected_multi_tx_slots: Vec<(B256, U256)>,
@@ -1087,7 +1087,7 @@ fn execute_and_commit_block(
     block_num: u64,
     timestamp: u64,
     transactions: Vec<TransactionSigned>,
-) -> eyre::Result<SealedBlock<Block>> {
+) -> eyre::Result<SealedBlock> {
     let tx_root = calculate_transaction_root(&transactions);
     let temp_header = build_execution_header(parent_hash, block_num, timestamp);
     let provider = provider_factory.database_provider_rw()?;
@@ -1139,7 +1139,7 @@ fn execute_and_commit_block(
         ..Default::default()
     };
 
-    let block: SealedBlock<Block> = SealedBlock::seal_parts(
+    let block: SealedBlock = SealedBlock::seal_parts(
         header,
         BlockBody { transactions, ommers: Vec::new(), withdrawals: None },
     );
@@ -1282,7 +1282,7 @@ where
     Ok(())
 }
 
-fn create_file_client_from_blocks(blocks: Vec<SealedBlock<Block>>) -> Arc<FileClient<Block>> {
+fn create_file_client_from_blocks(blocks: Vec<SealedBlock>) -> Arc<FileClient> {
     Arc::new(FileClient::from_blocks(blocks))
 }
 
@@ -1339,7 +1339,7 @@ where
 
 async fn run_pipeline_range(
     provider_factory: TestProviderFactory,
-    file_client: Arc<FileClient<Block>>,
+    file_client: Arc<FileClient>,
     local_head: reth_primitives_traits::SealedHeader,
     download_range: std::ops::RangeInclusive<u64>,
     max_block: u64,

@@ -4,9 +4,7 @@ use std::ops::RangeInclusive;
 
 use alloy_consensus::{SignableTransaction, Transaction as _};
 use alloy_primitives::{B256, BlockNumber};
-use base_common_consensus::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, OpTxType,
-};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, OpTxType};
 use rand::Rng;
 use reth_primitives_traits::{SealedBlock, crypto::secp256k1::sign_message};
 use secp256k1::Keypair;
@@ -51,12 +49,8 @@ impl BaseTestData {
     }
 
     /// Generates a sealed Base block with signed legacy transactions and no ommers.
-    pub fn random_block<R: Rng>(
-        rng: &mut R,
-        number: u64,
-        params: BlockParams,
-    ) -> SealedBlock<BaseBlock> {
-        let (block, hash) = generators::random_block(
+    pub fn random_block<R: Rng>(rng: &mut R, number: u64, params: BlockParams) -> SealedBlock {
+        generators::random_block(
             rng,
             number,
             BlockParams {
@@ -65,13 +59,6 @@ impl BaseTestData {
                 ..params
             },
         )
-        .split();
-        SealedBlock::new_unchecked(
-            block.map_transactions(|tx| {
-                BaseTxEnvelope::try_from(alloy_consensus::TxEnvelope::from(tx)).unwrap()
-            }),
-            hash,
-        )
     }
 
     /// Generates parent-linked blocks with signed legacy transactions.
@@ -79,8 +66,8 @@ impl BaseTestData {
         rng: &mut R,
         numbers: RangeInclusive<BlockNumber>,
         params: BlockRangeParams,
-    ) -> Vec<SealedBlock<BaseBlock>> {
-        let mut blocks: Vec<SealedBlock<BaseBlock>> = Vec::new();
+    ) -> Vec<SealedBlock> {
+        let mut blocks: Vec<SealedBlock> = Vec::new();
         for number in numbers {
             let tx_count = rng.random_range(params.tx_count.clone());
             let requests_count = params.requests_count.clone().map(|range| rng.random_range(range));

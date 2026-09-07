@@ -114,7 +114,7 @@ where
     pub fn convert_receipts_with_block(
         &self,
         receipts: Vec<ConvertReceiptInput<'_>>,
-        block: &SealedBlock<BaseBlock>,
+        block: &SealedBlock,
     ) -> Result<Vec<BaseTransactionReceipt>, BaseEthApiError> {
         self.receipt_converter.convert_receipts_with_block(receipts, block)
     }

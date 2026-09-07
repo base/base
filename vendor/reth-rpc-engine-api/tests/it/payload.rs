@@ -8,13 +8,13 @@ use alloy_rpc_types_engine::{
     PayloadError,
 };
 use assert_matches::assert_matches;
-use reth_ethereum_primitives::{Block, TransactionSigned};
+use base_common_consensus::{BaseBlock as Block, BaseTxEnvelope as TransactionSigned};
 use reth_primitives_traits::{SealedBlock, proofs};
 use reth_testing_utils::generators::{
     self, BlockParams, BlockRangeParams, Rng, random_block, random_block_range,
 };
 
-fn transform_block<F: FnOnce(Block) -> Block>(src: SealedBlock<Block>, f: F) -> ExecutionPayload {
+fn transform_block<F: FnOnce(Block) -> Block>(src: SealedBlock, f: F) -> ExecutionPayload {
     let unsealed = src.into_block();
     let mut transformed: Block = f(unsealed);
     // Recalculate roots

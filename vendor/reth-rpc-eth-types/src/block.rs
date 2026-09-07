@@ -4,28 +4,28 @@ use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader, TxReceipt, transaction::TransactionMeta};
 use alloy_primitives::TxHash;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 use base_common_rpc_types::BaseTransactionReceipt;
-use reth_primitives_traits::{Block, BlockBody, IndexedTx, Recovered, RecoveredBlock, SealedBlock};
+use reth_primitives_traits::{BlockBody, IndexedTx, Recovered, RecoveredBlock, SealedBlock};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 
 use crate::{TransactionSource, utils::calculate_gas_used_and_next_log_index};
 
 /// Cached data for a transaction lookup.
 #[derive(Debug, Clone)]
-pub struct CachedTransaction<B: Block, R> {
+pub struct CachedTransaction<R> {
     /// The block containing this transaction.
-    pub block: Arc<RecoveredBlock<B>>,
+    pub block: Arc<RecoveredBlock>,
     /// Index of the transaction within the block.
     pub tx_index: usize,
     /// Receipts for the block, if available.
     pub receipts: Option<Arc<Vec<R>>>,
 }
 
-impl<B: Block, R> CachedTransaction<B, R> {
+impl<R> CachedTransaction<R> {
     /// Creates a new cached transaction entry.
     pub const fn new(
-        block: Arc<RecoveredBlock<B>>,
+        block: Arc<RecoveredBlock>,
         tx_index: usize,
         receipts: Option<Arc<Vec<R>>>,
     ) -> Self {
@@ -33,7 +33,9 @@ impl<B: Block, R> CachedTransaction<B, R> {
     }
 
     /// Returns the `Recovered<&T>` transaction at the cached index.
-    pub fn recovered_transaction(&self) -> Option<Recovered<&<B::Body as BlockBody>::Transaction>> {
+    pub fn recovered_transaction(
+        &self,
+    ) -> Option<Recovered<&<base_common_consensus::BaseBlockBody as BlockBody>::Transaction>> {
         self.block.recovered_transaction(self.tx_index)
     }
 
@@ -42,7 +44,8 @@ impl<B: Block, R> CachedTransaction<B, R> {
     /// Returns `None` if the transaction index is out of bounds.
     pub fn to_transaction_source(
         &self,
-    ) -> Option<TransactionSource<<B::Body as BlockBody>::Transaction>> {
+    ) -> Option<TransactionSource<<base_common_consensus::BaseBlockBody as BlockBody>::Transaction>>
+    {
         let tx = self.recovered_transaction()?;
         Some(TransactionSource::Block {
             transaction: tx.cloned(),
@@ -83,17 +86,14 @@ impl<B: Block, R> CachedTransaction<B, R> {
 #[derive(Debug, Clone)]
 pub struct BlockAndReceipts {
     /// The recovered block.
-    pub block: Arc<RecoveredBlock<BaseBlock>>,
+    pub block: Arc<RecoveredBlock>,
     /// The receipts for the block.
     pub receipts: Arc<Vec<BaseReceipt>>,
 }
 
 impl BlockAndReceipts {
     /// Creates a new [`BlockAndReceipts`] instance.
-    pub const fn new(
-        block: Arc<RecoveredBlock<BaseBlock>>,
-        receipts: Arc<Vec<BaseReceipt>>,
-    ) -> Self {
+    pub const fn new(block: Arc<RecoveredBlock>, receipts: Arc<Vec<BaseReceipt>>) -> Self {
         Self { block, receipts }
     }
 
@@ -103,14 +103,14 @@ impl BlockAndReceipts {
     pub fn find_transaction_and_receipt_by_hash(
         &self,
         tx_hash: TxHash,
-    ) -> Option<(IndexedTx<'_, BaseBlock>, &BaseReceipt)> {
+    ) -> Option<(IndexedTx<'_>, &BaseReceipt)> {
         let indexed_tx = self.block.find_indexed(tx_hash)?;
         let receipt = self.receipts.get(indexed_tx.index())?;
         Some((indexed_tx, receipt))
     }
 
     /// Returns the underlying sealed block.
-    pub fn sealed_block(&self) -> &SealedBlock<BaseBlock> {
+    pub fn sealed_block(&self) -> &SealedBlock {
         self.block.sealed_block()
     }
 
@@ -148,9 +148,9 @@ impl BlockAndReceipts {
 
 /// Converts a transaction and its receipt into the rpc receipt format using the given converter.
 pub fn convert_transaction_receipt<C>(
-    block: &RecoveredBlock<BaseBlock>,
+    block: &RecoveredBlock,
     all_receipts: &[BaseReceipt],
-    tx: IndexedTx<'_, BaseBlock>,
+    tx: IndexedTx<'_>,
     receipt: &BaseReceipt,
     converter: &crate::BaseRpcConverter<C>,
 ) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
@@ -185,7 +185,7 @@ where
         .transpose()
 }
 
-impl CachedTransaction<BaseBlock, BaseReceipt> {
+impl CachedTransaction<BaseReceipt> {
     /// Converts this cached transaction into an RPC receipt using the given converter.
     ///
     /// Returns `None` if receipts are not available or the transaction index is out of bounds.

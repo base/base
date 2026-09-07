@@ -9,8 +9,7 @@ use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use eyre::{Result, eyre};
 use reth_chainspec::ChainSpec;
-use reth_ethereum_primitives::Block;
-use reth_node_api::{FullNodeComponents, TreeConfig};
+use reth_node_api::TreeConfig;
 use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 use reth_node_core::primitives::RecoveredBlock;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
@@ -31,7 +30,7 @@ pub struct Setup {
     /// Genesis block to use
     pub genesis: Option<Genesis>,
     /// Blocks to replay during setup
-    pub blocks: Vec<RecoveredBlock<Block>>,
+    pub blocks: Vec<RecoveredBlock>,
     /// Initial state to load
     pub state: Option<EvmState>,
     /// Network configuration
@@ -96,13 +95,13 @@ impl Setup {
     }
 
     /// Add a block to replay during setup
-    pub fn with_block(mut self, block: RecoveredBlock<Block>) -> Self {
+    pub fn with_block(mut self, block: RecoveredBlock) -> Self {
         self.blocks.push(block);
         self
     }
 
     /// Add multiple blocks to replay during setup
-    pub fn with_blocks(mut self, blocks: Vec<RecoveredBlock<Block>>) -> Self {
+    pub fn with_blocks(mut self, blocks: Vec<RecoveredBlock>) -> Self {
         self.blocks.extend(blocks);
         self
     }

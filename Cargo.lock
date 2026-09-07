@@ -15445,7 +15445,6 @@ dependencies = [
 name = "reth-consensus"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus",
  "alloy-eip7928",
  "alloy-primitives",
  "auto_impl",
@@ -15697,6 +15696,7 @@ dependencies = [
  "alloy-rlp",
  "assert_matches",
  "async-compression",
+ "base-common-consensus",
  "futures",
  "futures-util",
  "itertools 0.14.0",
@@ -15845,7 +15845,6 @@ dependencies = [
  "base-execution-chainspec",
  "futures",
  "reth-chain-state",
- "reth-chainspec",
  "reth-errors",
  "reth-evm",
  "reth-execution-errors",
@@ -16224,7 +16223,6 @@ name = "reth-exex-test-utils"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
- "base-common-consensus",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-txpool",
@@ -16232,14 +16230,12 @@ dependencies = [
  "futures-util",
  "reth-chainspec",
  "reth-config",
- "reth-consensus",
  "reth-db",
  "reth-db-common",
  "reth-evm",
  "reth-execution-types",
  "reth-exex",
  "reth-network",
- "reth-node-api",
  "reth-node-builder",
  "reth-node-core",
  "reth-payload-builder",
@@ -16669,6 +16665,7 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-rpc-types-engine",
+ "base-common-consensus",
  "base-execution-chainspec",
  "clap",
  "derive_more",
@@ -16883,6 +16880,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-trie",
  "arbitrary",
+ "base-common-consensus",
  "byteorder",
  "bytes",
  "dashmap",

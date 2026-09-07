@@ -23,9 +23,7 @@ use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 use reth_node_api::FullNodeComponents;
-use reth_provider::{
-    BlockNumReader, BlockReader, TransactionVariant, providers::BlockchainProvider,
-};
+use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
 use tracing::{debug, error, info};
@@ -703,7 +701,7 @@ mod tests {
 
     use alloy_consensus::private::alloy_primitives::B256;
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
-    use base_common_consensus::{BaseBlock as Block, BaseReceipt as Receipt};
+    use base_common_consensus::BaseReceipt as Receipt;
     use base_execution_trie::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
@@ -734,8 +732,8 @@ mod tests {
         // B256::new(out)
     }
 
-    fn mk_block(num: u64) -> RecoveredBlock<Block> {
-        let mut b: RecoveredBlock<Block> = Default::default();
+    fn mk_block(num: u64) -> RecoveredBlock {
+        let mut b: RecoveredBlock = Default::default();
         b.set_block_number(num);
         b.set_hash(hash_for_num(num));
         b.set_parent_hash(hash_for_num(num - 1));
@@ -743,7 +741,7 @@ mod tests {
     }
 
     fn mk_chain_with_updates(from: u64, to: u64, hash_override: Option<B256>) -> Chain {
-        let mut blocks: Vec<RecoveredBlock<Block>> = Vec::new();
+        let mut blocks: Vec<RecoveredBlock> = Vec::new();
         let mut trie_data = BTreeMap::new();
 
         for n in from..=to {

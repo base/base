@@ -674,7 +674,6 @@ impl Clone for ExExManagerHandle {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_common_consensus::BaseBlock;
     use futures::{StreamExt, TryStreamExt};
     use rand::Rng;
     use reth_db_common::init::init_genesis;
@@ -785,7 +784,7 @@ mod tests {
             ExExManager::new((), vec![exex_handle], 10, wal, empty_finalized_header_stream());
 
         // Define the notification for testing
-        let mut block1: RecoveredBlock<BaseBlock> = Default::default();
+        let mut block1: RecoveredBlock = Default::default();
         block1.set_hash(B256::new([0x01; 32]));
         block1.set_block_number(10);
 
@@ -803,7 +802,7 @@ mod tests {
         assert_eq!(exex_manager.next_id, 1);
 
         // Push another notification
-        let mut block2: RecoveredBlock<BaseBlock> = Default::default();
+        let mut block2: RecoveredBlock = Default::default();
         block2.set_hash(B256::new([0x02; 32]));
         block2.set_block_number(20);
 
@@ -846,7 +845,7 @@ mod tests {
         );
 
         // Push some notifications to fill part of the buffer
-        let mut block1: RecoveredBlock<BaseBlock> = Default::default();
+        let mut block1: RecoveredBlock = Default::default();
         block1.set_hash(B256::new([0x01; 32]));
         block1.set_block_number(10);
 
@@ -1135,11 +1134,11 @@ mod tests {
         assert_eq!(exex_handle.next_notification_id, 0);
 
         // Setup two blocks for the chain commit notification
-        let mut block1: RecoveredBlock<BaseBlock> = Default::default();
+        let mut block1: RecoveredBlock = Default::default();
         block1.set_hash(B256::new([0x01; 32]));
         block1.set_block_number(10);
 
-        let mut block2: RecoveredBlock<BaseBlock> = Default::default();
+        let mut block2: RecoveredBlock = Default::default();
         block2.set_hash(B256::new([0x02; 32]));
         block2.set_block_number(11);
 
@@ -1188,7 +1187,7 @@ mod tests {
         // Set finished_height to a value higher than the block tip
         exex_handle.finished_height = Some(BlockNumHash::new(15, B256::random()));
 
-        let mut block1: RecoveredBlock<BaseBlock> = Default::default();
+        let mut block1: RecoveredBlock = Default::default();
         block1.set_hash(B256::new([0x01; 32]));
         block1.set_block_number(10);
 

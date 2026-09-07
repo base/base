@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use alloy_consensus::{BlockHeader, constants::KECCAK_EMPTY};
-use alloy_primitives::{B256, BlockNumber, Sealable};
+use alloy_primitives::{B256, BlockNumber};
 use reth_codecs::Compact;
 use reth_consensus::ConsensusError;
 use reth_db_api::{
@@ -477,7 +477,6 @@ mod tests {
     use std::collections::BTreeMap;
 
     use assert_matches::assert_matches;
-    use base_common_consensus::BaseBlock;
     use reth_db_api::cursor::{DbCursorRO, DbDupCursorRO};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::{
@@ -674,7 +673,7 @@ mod tests {
     }
 
     impl ExecuteStageTestRunner for MerkleTestRunner {
-        type Seed = Vec<SealedBlock<BaseBlock>>;
+        type Seed = Vec<SealedBlock>;
 
         fn seed_execution(&mut self, input: ExecInput) -> Result<Self::Seed, TestRunnerError> {
             let stage_progress = input.checkpoint().block_number;
@@ -719,8 +718,7 @@ mod tests {
                     .into_iter()
                     .map(|(address, account)| (address, (account, std::iter::empty()))),
             );
-            let sealed_head =
-                SealedBlock::<BaseBlock>::from_sealed_parts(SealedHeader::seal_slow(header), body);
+            let sealed_head = SealedBlock::from_sealed_parts(SealedHeader::seal_slow(header), body);
 
             let head_hash = sealed_head.hash();
             let mut blocks = vec![sealed_head];

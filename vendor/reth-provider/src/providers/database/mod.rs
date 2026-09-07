@@ -757,13 +757,13 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader for P
         self.provider()?.block(id)
     }
 
-    fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock>> {
         self.provider()?.pending_block()
     }
 
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock<Self::Block>, Vec<Self::Receipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
         self.provider()?.pending_block_and_receipts()
     }
 
@@ -771,7 +771,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader for P
         &self,
         id: BlockHashOrNumber,
         transaction_kind: TransactionVariant,
-    ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Option<RecoveredBlock>> {
         self.provider()?.recovered_block(id, transaction_kind)
     }
 
@@ -779,7 +779,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader for P
         &self,
         id: BlockHashOrNumber,
         transaction_kind: TransactionVariant,
-    ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Option<RecoveredBlock>> {
         self.provider()?.sealed_block_with_senders(id, transaction_kind)
     }
 
@@ -790,14 +790,14 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader for P
     fn block_with_senders_range(
         &self,
         range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Vec<RecoveredBlock>> {
         self.provider()?.block_with_senders_range(range)
     }
 
     fn recovered_block_range(
         &self,
         range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Vec<RecoveredBlock>> {
         self.provider()?.recovered_block_range(range)
     }
 

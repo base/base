@@ -57,10 +57,7 @@ impl reth_engine_primitives::PayloadValidator for MockEngineValidator {
     fn convert_payload_to_block(
         &self,
         payload: ExecutionData,
-    ) -> Result<
-        reth_primitives_traits::SealedBlock<Self::Block>,
-        reth_payload_primitives::NewPayloadError,
-    > {
+    ) -> Result<reth_primitives_traits::SealedBlock, reth_payload_primitives::NewPayloadError> {
         let block = payload.payload.try_into_block_with_sidecar(&payload.sidecar).map_err(|e| {
             reth_payload_primitives::NewPayloadError::Other(format!("{e:?}").into())
         })?;
@@ -151,7 +148,7 @@ struct TestHarness {
         MockEthProvider,
         BasicEngineValidator<MockEthProvider, MockEngineValidator>,
     >,
-    to_tree_tx: crossbeam_channel::Sender<FromEngine<EngineApiRequest, BaseBlock>>,
+    to_tree_tx: crossbeam_channel::Sender<FromEngine<EngineApiRequest>>,
     from_tree_rx: UnboundedReceiver<EngineApiEvent>,
     payload_command_rx: UnboundedReceiver<PayloadServiceCommand>,
     blocks: Vec<ExecutedBlock>,
@@ -379,7 +376,7 @@ impl TestHarness {
         }
     }
 
-    fn persist_blocks(&self, blocks: Vec<RecoveredBlock<BaseBlock>>) {
+    fn persist_blocks(&self, blocks: Vec<RecoveredBlock>) {
         let mut block_data: Vec<(B256, BaseBlock)> = Vec::with_capacity(blocks.len());
 
         for block in &blocks {
@@ -468,7 +465,7 @@ impl ValidatorTestHarness {
     }
 
     /// Call `validate_block_with_state` directly with block
-    fn validate_block_direct(&mut self, block: SealedBlock<BaseBlock>) -> ValidationOutcome {
+    fn validate_block_direct(&mut self, block: SealedBlock) -> ValidationOutcome {
         let ctx = TreeCtx::new(
             &mut self.harness.tree.state,
             &self.harness.tree.canonical_in_memory_state,
@@ -495,7 +492,7 @@ impl TestBlockFactory {
     }
 
     /// Create block that triggers consensus violation by corrupting state root
-    fn create_invalid_consensus_block(&mut self, parent_hash: B256) -> SealedBlock<BaseBlock> {
+    fn create_invalid_consensus_block(&mut self, parent_hash: B256) -> SealedBlock {
         let mut block = self.builder.generate_random_block(1, parent_hash).into_block();
 
         // Corrupt state root to trigger consensus violation
@@ -505,7 +502,7 @@ impl TestBlockFactory {
     }
 
     /// Create block that triggers execution failure
-    fn create_invalid_execution_block(&mut self, parent_hash: B256) -> SealedBlock<BaseBlock> {
+    fn create_invalid_execution_block(&mut self, parent_hash: B256) -> SealedBlock {
         let mut block = self.builder.generate_random_block(1, parent_hash).into_block();
 
         // Create transaction that will fail execution
@@ -516,7 +513,7 @@ impl TestBlockFactory {
     }
 
     /// Create valid block
-    fn create_valid_block(&mut self, parent_hash: B256) -> SealedBlock<BaseBlock> {
+    fn create_valid_block(&mut self, parent_hash: B256) -> SealedBlock {
         let block = self.builder.generate_random_block(1, parent_hash).into_block();
         block.seal_slow()
     }
@@ -1025,7 +1022,7 @@ fn test_validated_payload_bal_is_inserted_into_store() {
             child_block.block_with_parent(),
             child,
             |_, executed, _| {
-                Ok::<_, InsertPayloadError<BaseBlock>>(
+                Ok::<_, InsertPayloadError>(
                     ValidationOutput::new(executed, None)
                         .with_raw_bal(Some(RawBal::from(raw_bal.clone()))),
                 )

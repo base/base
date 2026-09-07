@@ -2,7 +2,7 @@
 use alloy_consensus::BlockHeader;
 use metrics::{Counter, Gauge, Histogram};
 use reth_metrics::Metrics;
-use reth_primitives_traits::{Block, FastInstant as Instant, RecoveredBlock};
+use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock};
 
 /// Executor metrics.
 #[derive(Metrics, Clone)]
@@ -62,11 +62,9 @@ impl ExecutorMetrics {
     /// This is a simple helper that tracks execution time and gas usage.
     /// For more complex metrics tracking (like state changes), use the
     /// metered execution functions in the engine/tree module.
-    pub fn metered_one<F, R, B>(&self, block: &RecoveredBlock<B>, f: F) -> R
+    pub fn metered_one<F, R>(&self, block: &RecoveredBlock, f: F) -> R
     where
-        F: FnOnce(&RecoveredBlock<B>) -> R,
-        B: Block,
-        alloy_consensus::Header: BlockHeader,
+        F: FnOnce(&RecoveredBlock) -> R,
     {
         self.metered(|| (block.header().gas_used(), f(block)))
     }
@@ -76,12 +74,12 @@ impl ExecutorMetrics {
 mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::B256;
-    use reth_ethereum_primitives::Block;
+    use base_common_consensus::BaseBlock as Block;
     use reth_primitives_traits::Block as BlockTrait;
 
     use super::*;
 
-    fn create_test_block_with_gas(gas_used: u64) -> RecoveredBlock<Block> {
+    fn create_test_block_with_gas(gas_used: u64) -> RecoveredBlock {
         let header = Header { gas_used, ..Default::default() };
         let block = Block { header, body: Default::default() };
         // Use a dummy hash for testing

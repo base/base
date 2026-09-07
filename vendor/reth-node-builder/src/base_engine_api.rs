@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use alloy_rpc_types::engine::ClientVersionV1;
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_builder::BaseEngineValidator;
 use base_execution_rpc::{BaseEngineApi, engine::ENGINE_CAPABILITIES};
 use reth_node_api::{AddOnsContext, FullNodeComponents};
@@ -24,11 +23,8 @@ impl BaseEngineApiBuilder {
     /// Constructs the Base engine API with its fixed validation and capabilities.
     pub fn build_engine_api<N: FullNodeComponents>(
         ctx: &AddOnsContext<'_, N>,
-    ) -> BaseEngineApi<
-        N::Provider,
-        reth_node_api::BaseNodePool<N::Provider>,
-        BaseEngineValidator<BaseTxEnvelope>,
-    > {
+    ) -> BaseEngineApi<N::Provider, reth_node_api::BaseNodePool<N::Provider>, BaseEngineValidator>
+    {
         let engine_validator =
             BaseEngineValidator::new::<KeccakKeyHasher>(Arc::clone(&ctx.config.chain));
         let client = ClientVersionV1 {

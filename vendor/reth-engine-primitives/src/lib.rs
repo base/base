@@ -127,7 +127,7 @@ pub trait PayloadValidator: Send + Sync + Unpin + 'static {
     fn convert_payload_to_block(
         &self,
         payload: base_common_rpc_types_engine::ExecutionData,
-    ) -> Result<SealedBlock<Self::Block>, NewPayloadError>;
+    ) -> Result<SealedBlock, NewPayloadError>;
 
     /// Ensures that the given payload does not violate any consensus rules that concern the block's
     /// layout.
@@ -140,7 +140,7 @@ pub trait PayloadValidator: Send + Sync + Unpin + 'static {
     fn ensure_well_formed_payload(
         &self,
         payload: base_common_rpc_types_engine::ExecutionData,
-    ) -> Result<RecoveredBlock<Self::Block>, NewPayloadError> {
+    ) -> Result<RecoveredBlock, NewPayloadError> {
         let sealed_block = self.convert_payload_to_block(payload)?;
         sealed_block.try_recover().map_err(|e| NewPayloadError::Other(e.into()))
     }
@@ -158,7 +158,7 @@ pub trait PayloadValidator: Send + Sync + Unpin + 'static {
     fn validate_block_post_execution_with_hashed_state<'a>(
         &self,
         _state_updates: impl FnOnce() -> &'a HashedPostState,
-        _block: &RecoveredBlock<Self::Block>,
+        _block: &RecoveredBlock,
         _parent_header: &SealedHeader,
         _parent_state: impl FnOnce() -> ProviderResult<StateProviderBox>,
     ) -> Result<(), InsertBlockErrorKind>

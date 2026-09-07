@@ -3,9 +3,9 @@ use std::{ops::RangeInclusive, sync::Arc};
 use alloy_consensus::Header;
 use alloy_eips::{BlockHashOrNumber, BlockNumHash};
 use alloy_primitives::{B256, Bytes, map::B256Map};
+use base_common_consensus::BaseBlockBody as BlockBody;
 use parking_lot::Mutex;
 use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
-use reth_ethereum_primitives::{Block, BlockBody};
 use reth_network_peers::{PeerId, WithPeerId};
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 
@@ -62,7 +62,7 @@ impl TestFullBlockClient {
     }
 
     /// Get the block with the highest block number.
-    pub fn highest_block(&self) -> Option<SealedBlock<Block>> {
+    pub fn highest_block(&self) -> Option<SealedBlock> {
         self.headers.lock().iter().max_by_key(|(_, header)| header.number).and_then(
             |(hash, header)| {
                 self.bodies.lock().get(hash).map(|body| {
@@ -177,7 +177,7 @@ impl BodiesClient for TestFullBlockClient {
 }
 
 impl BlockClient for TestFullBlockClient {
-    type Block = reth_ethereum_primitives::Block;
+    type Block = base_common_consensus::BaseBlock;
 }
 
 impl BlockAccessListsClient for TestFullBlockClient {

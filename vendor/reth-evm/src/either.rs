@@ -1,7 +1,7 @@
 //! Helper type that represents one of two possible executor types
 
 // re-export Either
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 pub use futures_util::future::Either;
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
 use reth_primitives_traits::RecoveredBlock;
@@ -18,7 +18,7 @@ where
 
     fn execute_one(
         &mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
     ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error> {
         match self {
             Self::Left(a) => a.execute_one(block),
@@ -28,7 +28,7 @@ where
 
     fn execute_one_with_state_hook<F>(
         &mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         state_hook: F,
     ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>
     where
@@ -42,7 +42,7 @@ where
 
     fn execute(
         self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
     ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error> {
         match self {
             Self::Left(a) => a.execute(block),
@@ -52,7 +52,7 @@ where
 
     fn execute_with_state_closure<F>(
         self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         state: F,
     ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
     where

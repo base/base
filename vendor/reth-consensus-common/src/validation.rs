@@ -7,7 +7,7 @@ use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::{EthereumHardfork, EthereumHardforks};
 use reth_consensus::ConsensusError;
 use reth_primitives_traits::{
-    Block, BlockBody, BlockHeader, GotExpected, SealedBlock, SealedHeader,
+    BlockBody, BlockHeader, GotExpected, SealedBlock, SealedHeader,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT},
 };
 
@@ -53,9 +53,7 @@ pub fn validate_header_base_fee<H: BlockHeader>(
 ///
 /// [EIP-4895]: https://eips.ethereum.org/EIPS/eip-4895
 #[inline]
-pub fn validate_shanghai_withdrawals<B: Block>(
-    block: &SealedBlock<B>,
-) -> Result<(), ConsensusError> {
+pub fn validate_shanghai_withdrawals(block: &SealedBlock) -> Result<(), ConsensusError> {
     let withdrawals = block.body().withdrawals().ok_or(ConsensusError::BodyWithdrawalsMissing)?;
     let withdrawals_root = alloy_consensus::proofs::calculate_withdrawals_root(withdrawals);
     let header_withdrawals_root =
@@ -74,7 +72,7 @@ pub fn validate_shanghai_withdrawals<B: Block>(
 ///
 /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
 #[inline]
-pub fn validate_cancun_gas<B: Block>(block: &SealedBlock<B>) -> Result<(), ConsensusError> {
+pub fn validate_cancun_gas(block: &SealedBlock) -> Result<(), ConsensusError> {
     // Check that the blob gas used in the header matches the sum of the blob gas used by each
     // blob tx
     let header_blob_gas_used = block.blob_gas_used().ok_or(ConsensusError::BlobGasUsedMissing)?;
@@ -139,13 +137,10 @@ where
 /// - Compares the ommer hash in the block header to the block body
 /// - Compares the transactions root in the block header to the block body
 /// - Pre-execution transaction validation
-pub fn validate_block_pre_execution<B>(
-    block: &SealedBlock<B>,
+pub fn validate_block_pre_execution(
+    block: &SealedBlock,
     chain_spec: &BaseChainSpec,
-) -> Result<(), ConsensusError>
-where
-    B: Block,
-{
+) -> Result<(), ConsensusError> {
     validate_block_pre_execution_with_tx_root(block, chain_spec, None)
 }
 
@@ -158,14 +153,11 @@ where
 /// If `transaction_root` is provided, it is used instead of recomputing the transaction trie
 /// root from the block body. The caller must ensure this value was derived from
 /// `block.body().calculate_tx_root()`.
-pub fn validate_block_pre_execution_with_tx_root<B>(
-    block: &SealedBlock<B>,
+pub fn validate_block_pre_execution_with_tx_root(
+    block: &SealedBlock,
     chain_spec: &BaseChainSpec,
     transaction_root: Option<B256>,
-) -> Result<(), ConsensusError>
-where
-    B: Block,
-{
+) -> Result<(), ConsensusError> {
     post_merge_hardfork_fields(block, chain_spec)?;
 
     // Check transaction root
@@ -190,22 +182,15 @@ where
 /// * EIP-4844 blob gas validation, if cancun is active based on the given chainspec. See more
 ///   information about the specific checks in [`validate_cancun_gas`].
 /// * EIP-7934 block size limit validation, if osaka is active based on the given chainspec.
-pub fn post_merge_hardfork_fields<B>(
-    block: &SealedBlock<B>,
+pub fn post_merge_hardfork_fields(
+    block: &SealedBlock,
     chain_spec: &BaseChainSpec,
-) -> Result<(), ConsensusError>
-where
-    B: Block,
-{
+) -> Result<(), ConsensusError> {
     // Check ommers hash
     let ommers_hash = block.body().calculate_ommers_root();
-    if Some(block.ommers_hash()) != ommers_hash {
+    if block.ommers_hash() != ommers_hash {
         return Err(ConsensusError::BodyOmmersHashDiff(
-            GotExpected {
-                got: ommers_hash.unwrap_or(EMPTY_OMMER_ROOT_HASH),
-                expected: block.ommers_hash(),
-            }
-            .into(),
+            GotExpected { got: ommers_hash, expected: block.ommers_hash() }.into(),
         ));
     }
 
@@ -447,38 +432,20 @@ pub fn validate_against_parent_4844<H: BlockHeader>(
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{BlockBody, Header, TxEip4844};
-    use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip4895::Withdrawals};
-    use alloy_primitives::{Address, Bytes, Signature, U256};
+    use alloy_consensus::{BlockBody, Header};
+    use alloy_eips::eip4895::Withdrawals;
+    use alloy_primitives::{Bytes, Signature, U256};
     use base_execution_chainspec::BaseChainSpec;
-    use rand::Rng;
     use reth_chainspec::ChainSpecBuilder;
-    use reth_ethereum_primitives::{Transaction, TransactionSigned};
     use reth_primitives_traits::proofs;
 
     use super::*;
 
-    fn mock_blob_tx(nonce: u64, num_blobs: usize) -> TransactionSigned {
-        let mut rng = rand::rng();
-        let request = Transaction::Eip4844(TxEip4844 {
-            chain_id: 1u64,
-            nonce,
-            max_fee_per_gas: 0x28f000fff,
-            max_priority_fee_per_gas: 0x28f000fff,
-            max_fee_per_blob_gas: 0x7,
-            gas_limit: 10,
-            to: Address::default(),
-            value: U256::from(3_u64),
-            input: Bytes::from(vec![1, 2]),
-            access_list: Default::default(),
-            blob_versioned_hashes: std::iter::repeat_with(|| rng.random())
-                .take(num_blobs)
-                .collect(),
-        });
-
-        let signature = Signature::new(U256::default(), U256::default(), true);
-
-        TransactionSigned::new_unhashed(request, signature)
+    fn mock_tx(nonce: u64) -> base_common_consensus::BaseTxEnvelope {
+        base_common_consensus::BaseTxEnvelope::Legacy(alloy_consensus::Signed::new_unhashed(
+            alloy_consensus::TxLegacy { nonce, ..Default::default() },
+            Signature::new(U256::ZERO, U256::ZERO, true),
+        ))
     }
 
     #[test]
@@ -486,8 +453,8 @@ mod tests {
         let chain_spec =
             BaseChainSpec::from(ChainSpecBuilder::mainnet().cancun_activated().build());
 
-        // create a tx with 10 blobs
-        let transaction = mock_blob_tx(1, 10);
+        // Base transactions do not carry blob gas.
+        let transaction = mock_tx(1);
 
         let header = Header {
             base_fee_per_gas: Some(1337),
@@ -506,8 +473,7 @@ mod tests {
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
 
-        // 10 blobs times the blob gas per blob.
-        let expected_blob_gas_used = 10 * DATA_GAS_PER_BLOB;
+        let expected_blob_gas_used = 0;
 
         // validate blob, it should fail blob gas used validation
         assert!(matches!(
@@ -539,14 +505,14 @@ mod tests {
         let chain_spec =
             BaseChainSpec::from(ChainSpecBuilder::mainnet().cancun_activated().build());
 
-        let transaction = mock_blob_tx(1, 1);
+        let transaction = mock_tx(1);
         let tx_root = proofs::calculate_transaction_root(std::slice::from_ref(&transaction));
 
         let header = Header {
             base_fee_per_gas: Some(1337),
             withdrawals_root: Some(proofs::calculate_withdrawals_root(&[])),
             transactions_root: tx_root,
-            blob_gas_used: Some(DATA_GAS_PER_BLOB),
+            blob_gas_used: Some(0),
             excess_blob_gas: Some(0),
             ..Default::default()
         };
@@ -570,14 +536,14 @@ mod tests {
         let chain_spec =
             BaseChainSpec::from(ChainSpecBuilder::mainnet().cancun_activated().build());
 
-        let transaction = mock_blob_tx(1, 1);
+        let transaction = mock_tx(1);
         let tx_root = proofs::calculate_transaction_root(std::slice::from_ref(&transaction));
 
         let header = Header {
             base_fee_per_gas: Some(1337),
             withdrawals_root: Some(proofs::calculate_withdrawals_root(&[])),
             transactions_root: tx_root,
-            blob_gas_used: Some(DATA_GAS_PER_BLOB),
+            blob_gas_used: Some(0),
             excess_blob_gas: Some(0),
             ..Default::default()
         };

@@ -8,13 +8,12 @@ use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutorFactory;
 use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
-use base_common_consensus::BaseReceipt;
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use base_common_evm::BaseBlockExecutionCtx;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
-use reth_primitives_traits::SignedTransaction;
 use revm::context::Block as _;
 
 use crate::execute::{BlockAssembler, BlockAssemblerInput};
@@ -33,11 +32,11 @@ impl BaseBlockAssembler {
 }
 
 impl BaseBlockAssembler {
-    /// Builds a block for `input` without any bounds on header `H`.
+    /// Builds a Base block from the execution result.
     pub fn assemble_block<
         F: for<'a> BlockExecutorFactory<
                 ExecutionCtx<'a>: Into<BaseBlockExecutionCtx>,
-                Transaction: SignedTransaction,
+                Transaction = BaseTxEnvelope,
                 Receipt = BaseReceipt,
             >,
     >(
@@ -140,7 +139,7 @@ impl<F> BlockAssembler<F> for BaseBlockAssembler
 where
     F: for<'a> BlockExecutorFactory<
             ExecutionCtx<'a> = BaseBlockExecutionCtx,
-            Transaction: SignedTransaction,
+            Transaction = BaseTxEnvelope,
             Receipt = BaseReceipt,
         >,
 {

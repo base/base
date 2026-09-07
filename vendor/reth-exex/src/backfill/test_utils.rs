@@ -50,7 +50,7 @@ pub(crate) fn chain_spec(address: Address) -> Arc<ChainSpec> {
 pub(crate) fn execute_block_and_commit_to_database<DB>(
     provider_factory: &ProviderFactory<DB>,
     chain_spec: Arc<ChainSpec>,
-    block: &RecoveredBlock<BaseBlock>,
+    block: &RecoveredBlock,
 ) -> eyre::Result<BlockExecutionOutput<BaseReceipt>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
@@ -79,7 +79,7 @@ where
 fn blocks(
     chain_spec: Arc<ChainSpec>,
     key_pair: Keypair,
-) -> eyre::Result<(RecoveredBlock<BaseBlock>, RecoveredBlock<BaseBlock>)> {
+) -> eyre::Result<(RecoveredBlock, RecoveredBlock)> {
     // First block has a transaction that transfers some ETH to zero address
     let block1 = BaseBlock {
         header: Header {
@@ -149,7 +149,7 @@ pub(crate) fn blocks_and_execution_outputs<DB>(
     provider_factory: ProviderFactory<DB>,
     chain_spec: Arc<ChainSpec>,
     key_pair: Keypair,
-) -> eyre::Result<Vec<(RecoveredBlock<BaseBlock>, BlockExecutionOutput<BaseReceipt>)>>
+) -> eyre::Result<Vec<(RecoveredBlock, BlockExecutionOutput<BaseReceipt>)>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
@@ -167,7 +167,7 @@ pub(crate) fn blocks_and_execution_outcome<DB>(
     provider_factory: ProviderFactory<DB>,
     chain_spec: Arc<ChainSpec>,
     key_pair: Keypair,
-) -> eyre::Result<(Vec<RecoveredBlock<BaseBlock>>, ExecutionOutcome<BaseReceipt>)>
+) -> eyre::Result<(Vec<RecoveredBlock>, ExecutionOutcome<BaseReceipt>)>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {

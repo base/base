@@ -108,7 +108,7 @@ where
     /// Validates the given block and a [`BidTrace`] against it.
     pub async fn validate_message_against_block(
         &self,
-        block: RecoveredBlock<BaseBlock>,
+        block: RecoveredBlock,
         message: BidTrace,
         registered_gas_limit: u64,
         decoded_bal: Option<DecodedBal>,
@@ -270,7 +270,7 @@ where
     /// to checking the latest block transaction.
     fn ensure_payment(
         &self,
-        block: &SealedBlock<BaseBlock>,
+        block: &SealedBlock,
         output: &BlockExecutionOutput<BaseReceipt>,
         message: &BidTrace,
     ) -> Result<(), ValidationApiError> {
@@ -360,7 +360,7 @@ where
     pub fn validate_relay_payload(
         &self,
         data: ExecutionData,
-    ) -> Result<RecoveredBlock<BaseBlock>, ValidationApiError> {
+    ) -> Result<RecoveredBlock, ValidationApiError> {
         let block_hash = data.payload.block_hash();
         let block_access_list =
             data.payload.as_v4().map(|payload| payload.block_access_list.clone());

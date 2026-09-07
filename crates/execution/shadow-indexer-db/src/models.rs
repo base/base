@@ -1,4 +1,4 @@
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 use chrono::{DateTime, Utc};
 use reth_primitives_traits::RecoveredBlock;
 use serde::{Deserialize, Serialize};
@@ -51,7 +51,7 @@ pub struct ShadowBlockPayload {
     /// Writer-stamped builder version.
     pub builder_version: String,
     /// Recovered block.
-    pub block: RecoveredBlock<BaseBlock>,
+    pub block: RecoveredBlock,
     /// Transaction-ordered receipts.
     pub receipts: Vec<BaseReceipt>,
 }

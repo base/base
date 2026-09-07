@@ -206,7 +206,7 @@ where
         &self,
         _peer_id: PeerId,
         request: GetBlockBodies,
-        response: oneshot::Sender<RequestResult<BlockBodies<<C::Block as Block>::Body>>>,
+        response: oneshot::Sender<RequestResult<BlockBodies<base_common_consensus::BaseBlockBody>>>,
     ) {
         self.metrics.eth_bodies_requests_received_total.increment(1);
         let mut bodies = Vec::new();

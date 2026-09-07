@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::{BlockHeader, transaction::TxHashRef};
+use alloy_consensus::BlockHeader;
 use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
@@ -16,7 +16,7 @@ use futures::{Stream, StreamExt, stream::FuturesOrdered};
 use reth_chain_state::CanonStateNotification;
 use reth_errors::{ProviderError, ProviderResult};
 use reth_execution_types::Chain;
-use reth_primitives_traits::{Block, BlockBody, InMemorySize, RecoveredBlock};
+use reth_primitives_traits::{InMemorySize, RecoveredBlock};
 use reth_revm::{
     bytecode::Bytecode,
     primitives::{StorageKey, StorageValue},
@@ -44,31 +44,30 @@ pub mod metrics;
 pub mod multi_consumer;
 
 /// The type that can send the response to a requested [`RecoveredBlock`]
-type BlockWithSendersResponseSender<B> =
-    oneshot::Sender<ProviderResult<Option<Arc<RecoveredBlock<B>>>>>;
+type BlockWithSendersResponseSender = oneshot::Sender<ProviderResult<Option<Arc<RecoveredBlock>>>>;
 
 /// The type that can send the response to the requested receipts of a block.
 type ReceiptsResponseSender<R> = oneshot::Sender<ProviderResult<Option<Arc<Vec<R>>>>>;
 
-type CachedBlockResponseSender<B> = oneshot::Sender<Option<Arc<RecoveredBlock<B>>>>;
+type CachedBlockResponseSender = oneshot::Sender<Option<Arc<RecoveredBlock>>>;
 
-type CachedBlockAndReceiptsResponseSender<B, R> =
-    oneshot::Sender<(Option<Arc<RecoveredBlock<B>>>, Option<Arc<Vec<R>>>)>;
+type CachedBlockAndReceiptsResponseSender<R> =
+    oneshot::Sender<(Option<Arc<RecoveredBlock>>, Option<Arc<Vec<R>>>)>;
 
 /// The type that can send the response to a requested header
 type HeaderResponseSender<H> = oneshot::Sender<ProviderResult<H>>;
 
 /// The type that can send the response with a chain of cached blocks
-type CachedParentBlocksResponseSender<B> = oneshot::Sender<Vec<Arc<RecoveredBlock<B>>>>;
+type CachedParentBlocksResponseSender = oneshot::Sender<Vec<Arc<RecoveredBlock>>>;
 
 /// The type that can send the response for a transaction hash lookup
-type TransactionHashResponseSender<B, R> = oneshot::Sender<Option<CachedTransaction<B, R>>>;
+type TransactionHashResponseSender<R> = oneshot::Sender<Option<CachedTransaction<R>>>;
 
 /// The type that can send the response to a requested revm BAL.
 type BalResponseSender = oneshot::Sender<ProviderResult<Option<CachedRevmBal>>>;
 
-type BlockLruCache<B, L> =
-    MultiConsumerLruCache<B256, Arc<RecoveredBlock<B>>, L, BlockWithSendersResponseSender<B>>;
+type BlockLruCache<L> =
+    MultiConsumerLruCache<B256, Arc<RecoveredBlock>, L, BlockWithSendersResponseSender>;
 
 type ReceiptsLruCache<R, L> =
     MultiConsumerLruCache<B256, Arc<Vec<R>>, L, ReceiptsResponseSender<R>>;
@@ -83,7 +82,7 @@ type BalLruCache<L> = MultiConsumerLruCache<B256, CachedRevmBal, L, BalResponseS
 /// task.
 #[derive(Debug)]
 pub struct EthStateCache {
-    to_service: UnboundedSender<CacheAction<BaseBlock, BaseReceipt>>,
+    to_service: UnboundedSender<CacheAction<BaseReceipt>>,
 }
 
 impl Clone for EthStateCache {
@@ -155,7 +154,7 @@ impl EthStateCache {
     pub async fn get_recovered_block(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<Option<Arc<RecoveredBlock<BaseBlock>>>> {
+    ) -> ProviderResult<Option<Arc<RecoveredBlock>>> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetBlockWithSenders { block_hash, response_tx });
         rx.await.map_err(|_| CacheServiceUnavailable)?
@@ -165,7 +164,7 @@ impl EthStateCache {
     pub async fn get_maybe_block(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<Option<Arc<RecoveredBlock<BaseBlock>>>> {
+    ) -> ProviderResult<Option<Arc<RecoveredBlock>>> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetCachedBlock { block_hash, response_tx });
         rx.await.map_err(|_| CacheServiceUnavailable.into())
@@ -187,7 +186,7 @@ impl EthStateCache {
     pub async fn get_block_and_receipts(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<Option<(Arc<RecoveredBlock<BaseBlock>>, Arc<Vec<BaseReceipt>>)>> {
+    ) -> ProviderResult<Option<(Arc<RecoveredBlock>, Arc<Vec<BaseReceipt>>)>> {
         let block = self.get_recovered_block(block_hash);
         let receipts = self.get_receipts(block_hash);
 
@@ -200,8 +199,7 @@ impl EthStateCache {
     pub async fn get_receipts_and_maybe_block(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<Option<(Arc<Vec<BaseReceipt>>, Option<Arc<RecoveredBlock<BaseBlock>>>)>>
-    {
+    ) -> ProviderResult<Option<(Arc<Vec<BaseReceipt>>, Option<Arc<RecoveredBlock>>)>> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetCachedBlock { block_hash, response_tx });
 
@@ -217,8 +215,7 @@ impl EthStateCache {
     pub async fn maybe_cached_block_and_receipts(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<(Option<Arc<RecoveredBlock<BaseBlock>>>, Option<Arc<Vec<BaseReceipt>>>)>
-    {
+    ) -> ProviderResult<(Option<Arc<RecoveredBlock>>, Option<Arc<Vec<BaseReceipt>>>)> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self
             .to_service
@@ -232,9 +229,7 @@ impl EthStateCache {
         &'a self,
         hashes: Vec<B256>,
     ) -> impl Stream<
-        Item = ProviderResult<
-            Option<(Arc<Vec<BaseReceipt>>, Option<Arc<RecoveredBlock<BaseBlock>>>)>,
-        >,
+        Item = ProviderResult<Option<(Arc<Vec<BaseReceipt>>, Option<Arc<RecoveredBlock>>)>>,
     > + 'a {
         let futures = hashes.into_iter().map(move |hash| self.get_receipts_and_maybe_block(hash));
 
@@ -261,7 +256,7 @@ impl EthStateCache {
         &self,
         block_hash: B256,
         max_blocks: usize,
-    ) -> Option<Vec<Arc<RecoveredBlock<BaseBlock>>>> {
+    ) -> Option<Vec<Arc<RecoveredBlock>>> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetCachedParentBlocks {
             block_hash,
@@ -280,7 +275,7 @@ impl EthStateCache {
     pub async fn get_transaction_by_hash(
         &self,
         tx_hash: TxHash,
-    ) -> Option<CachedTransaction<BaseBlock, BaseReceipt>> {
+    ) -> Option<CachedTransaction<BaseReceipt>> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetTransactionByHash { tx_hash, response_tx });
         rx.await.ok()?
@@ -337,7 +332,7 @@ pub(crate) struct EthStateCacheService<
     LimitBals = ByLength,
 > where
     Provider: BlockReader + BalProvider,
-    LimitBlocks: Limiter<B256, Arc<RecoveredBlock<Provider::Block>>>,
+    LimitBlocks: Limiter<B256, Arc<RecoveredBlock>>,
     LimitReceipts: Limiter<B256, Arc<Vec<Provider::Receipt>>>,
     LimitHeaders: Limiter<B256, alloy_consensus::Header>,
     LimitBals: Limiter<B256, CachedRevmBal>,
@@ -345,7 +340,7 @@ pub(crate) struct EthStateCacheService<
     /// The type used to lookup data from disk
     provider: Provider,
     /// The LRU cache for full blocks grouped by their block hash.
-    full_block_cache: BlockLruCache<Provider::Block, LimitBlocks>,
+    full_block_cache: BlockLruCache<LimitBlocks>,
     /// The LRU cache for block receipts grouped by the block hash.
     receipts_cache: ReceiptsLruCache<Provider::Receipt, LimitReceipts>,
     /// The LRU cache for headers.
@@ -356,9 +351,9 @@ pub(crate) struct EthStateCacheService<
     /// The LRU cache for revm BALs grouped by the block hash.
     bal_cache: BalLruCache<LimitBals>,
     /// Sender half of the action channel.
-    action_tx: UnboundedSender<CacheAction<Provider::Block, Provider::Receipt>>,
+    action_tx: UnboundedSender<CacheAction<Provider::Receipt>>,
     /// Receiver half of the action channel.
-    action_rx: UnboundedReceiverStream<CacheAction<Provider::Block, Provider::Receipt>>,
+    action_rx: UnboundedReceiverStream<CacheAction<Provider::Receipt>>,
     /// The type that's used to spawn tasks that do the actual work
     action_task_spawner: Tasks,
     /// Rate limiter for spawned fetch tasks.
@@ -374,25 +369,21 @@ where
     Provider: BlockReader + BalProvider + Clone + Unpin + 'static,
 {
     /// Indexes all transactions in a block by transaction hash.
-    fn index_block_transactions(&mut self, block: &RecoveredBlock<Provider::Block>) {
+    fn index_block_transactions(&mut self, block: &RecoveredBlock) {
         let block_hash = block.hash();
-        for (tx_idx, tx) in block.body().transactions().iter().enumerate() {
-            self.tx_hash_index.insert(*tx.tx_hash(), (block_hash, tx_idx));
+        for (tx_idx, tx) in block.body().transactions.iter().enumerate() {
+            self.tx_hash_index.insert(tx.tx_hash(), (block_hash, tx_idx));
         }
     }
 
     /// Removes transaction index entries for a reorged block.
-    fn remove_block_transactions(&mut self, block: &RecoveredBlock<Provider::Block>) {
+    fn remove_block_transactions(&mut self, block: &RecoveredBlock) {
         for tx in block.body().transactions() {
-            self.tx_hash_index.remove(tx.tx_hash());
+            self.tx_hash_index.remove(&tx.tx_hash());
         }
     }
 
-    fn on_new_block(
-        &mut self,
-        block_hash: B256,
-        res: ProviderResult<Option<Arc<RecoveredBlock<Provider::Block>>>>,
-    ) {
+    fn on_new_block(&mut self, block_hash: B256, res: ProviderResult<Option<Arc<RecoveredBlock>>>) {
         if let Some(queued) = self.full_block_cache.remove(&block_hash) {
             // send the response to queued senders
             for tx in queued {
@@ -439,7 +430,7 @@ where
     fn on_reorg_block(
         &mut self,
         block_hash: B256,
-        res: ProviderResult<Option<Arc<RecoveredBlock<Provider::Block>>>>,
+        res: ProviderResult<Option<Arc<RecoveredBlock>>>,
     ) {
         if let Some(queued) = self.full_block_cache.remove(&block_hash) {
             // send the response to queued senders
@@ -741,10 +732,10 @@ where
 }
 
 /// All message variants sent through the channel
-enum CacheAction<B: Block, R> {
+enum CacheAction<R> {
     GetBlockWithSenders {
         block_hash: B256,
-        response_tx: BlockWithSendersResponseSender<B>,
+        response_tx: BlockWithSendersResponseSender,
     },
     GetHeader {
         block_hash: B256,
@@ -760,15 +751,15 @@ enum CacheAction<B: Block, R> {
     },
     GetCachedBlock {
         block_hash: B256,
-        response_tx: CachedBlockResponseSender<B>,
+        response_tx: CachedBlockResponseSender,
     },
     GetCachedBlockAndReceipts {
         block_hash: B256,
-        response_tx: CachedBlockAndReceiptsResponseSender<B, R>,
+        response_tx: CachedBlockAndReceiptsResponseSender<R>,
     },
     BlockWithSendersResult {
         block_hash: B256,
-        res: ProviderResult<Option<Arc<RecoveredBlock<B>>>>,
+        res: ProviderResult<Option<Arc<RecoveredBlock>>>,
     },
     ReceiptsResult {
         block_hash: B256,
@@ -783,20 +774,20 @@ enum CacheAction<B: Block, R> {
         res: ProviderResult<Option<CachedRevmBal>>,
     },
     CacheNewCanonicalChain {
-        chain_change: ChainChange<B, R>,
+        chain_change: ChainChange<R>,
     },
     RemoveReorgedChain {
-        chain_change: ChainChange<B, R>,
+        chain_change: ChainChange<R>,
     },
     GetCachedParentBlocks {
         block_hash: B256,
         max_blocks: usize,
-        response_tx: CachedParentBlocksResponseSender<B>,
+        response_tx: CachedParentBlocksResponseSender,
     },
     /// Look up a transaction's cached data by its hash
     GetTransactionByHash {
         tx_hash: TxHash,
-        response_tx: TransactionHashResponseSender<B, R>,
+        response_tx: TransactionHashResponseSender<R>,
     },
 }
 
@@ -806,12 +797,12 @@ struct BlockReceipts<R> {
 }
 
 /// A change of the canonical chain
-struct ChainChange<B: Block, R> {
-    blocks: Vec<Arc<RecoveredBlock<B>>>,
+struct ChainChange<R> {
+    blocks: Vec<Arc<RecoveredBlock>>,
     receipts: Vec<BlockReceipts<R>>,
 }
 
-impl ChainChange<BaseBlock, BaseReceipt> {
+impl ChainChange<BaseReceipt> {
     fn new(chain: Arc<Chain>) -> Self {
         let (blocks, receipts): (Vec<_>, Vec<_>) = chain
             .blocks_and_receipts()
@@ -841,18 +832,18 @@ enum CacheKind {
 ///
 /// This type wraps a sender and in case the sender is still present on drop emit an error response.
 #[derive(Debug)]
-struct ActionSender<B: Block, R: Send + Sync> {
+struct ActionSender<R: Send + Sync> {
     kind: CacheKind,
     blockhash: B256,
-    tx: Option<UnboundedSender<CacheAction<B, R>>>,
+    tx: Option<UnboundedSender<CacheAction<R>>>,
 }
 
-impl<R: Send + Sync, B: Block> ActionSender<B, R> {
-    const fn new(kind: CacheKind, blockhash: B256, tx: UnboundedSender<CacheAction<B, R>>) -> Self {
+impl<R: Send + Sync> ActionSender<R> {
+    const fn new(kind: CacheKind, blockhash: B256, tx: UnboundedSender<CacheAction<R>>) -> Self {
         Self { kind, blockhash, tx: Some(tx) }
     }
 
-    fn send_block(&mut self, block_sender: Result<Option<Arc<RecoveredBlock<B>>>, ProviderError>) {
+    fn send_block(&mut self, block_sender: Result<Option<Arc<RecoveredBlock>>, ProviderError>) {
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(CacheAction::BlockWithSendersResult {
                 block_hash: self.blockhash,
@@ -883,7 +874,7 @@ impl<R: Send + Sync, B: Block> ActionSender<B, R> {
         }
     }
 }
-impl<R: Send + Sync, B: Block> Drop for ActionSender<B, R> {
+impl<R: Send + Sync> Drop for ActionSender<R> {
     fn drop(&mut self) {
         if let Some(tx) = self.tx.take() {
             let msg = match self.kind {
@@ -1050,7 +1041,7 @@ mod tests {
         DecodedBal::new(Arc::new(RevmBal::default()), Bytes::from_static(&[0xc0]))
     }
 
-    fn test_block() -> RecoveredBlock<Block> {
+    fn test_block() -> RecoveredBlock {
         RecoveredBlock::new_unhashed(
             Block {
                 header: Header { number: 1, ..Default::default() },
@@ -1446,13 +1437,13 @@ mod tests {
             Ok(None)
         }
 
-        fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+        fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock>> {
             Ok(None)
         }
 
         fn pending_block_and_receipts(
             &self,
-        ) -> ProviderResult<Option<(RecoveredBlock<Self::Block>, Vec<Self::Receipt>)>> {
+        ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
             Ok(None)
         }
 
@@ -1460,7 +1451,7 @@ mod tests {
             &self,
             _id: BlockHashOrNumber,
             _transaction_kind: TransactionVariant,
-        ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+        ) -> ProviderResult<Option<RecoveredBlock>> {
             Ok(None)
         }
 
@@ -1468,7 +1459,7 @@ mod tests {
             &self,
             _id: BlockHashOrNumber,
             _transaction_kind: TransactionVariant,
-        ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+        ) -> ProviderResult<Option<RecoveredBlock>> {
             Ok(None)
         }
 
@@ -1482,14 +1473,14 @@ mod tests {
         fn block_with_senders_range(
             &self,
             _range: RangeInclusive<BlockNumber>,
-        ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+        ) -> ProviderResult<Vec<RecoveredBlock>> {
             Ok(Vec::new())
         }
 
         fn recovered_block_range(
             &self,
             _range: RangeInclusive<BlockNumber>,
-        ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+        ) -> ProviderResult<Vec<RecoveredBlock>> {
             Ok(Vec::new())
         }
 

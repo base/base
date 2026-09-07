@@ -62,10 +62,7 @@ pub trait BlockWriter {
     ///
     /// Return [`StoredBlockBodyIndices`] that contains indices of the first and last transactions
     /// and transition in the block.
-    fn insert_block(
-        &self,
-        block: &RecoveredBlock<Self::Block>,
-    ) -> ProviderResult<StoredBlockBodyIndices>;
+    fn insert_block(&self, block: &RecoveredBlock) -> ProviderResult<StoredBlockBodyIndices>;
 
     /// Appends a batch of block bodies extending the canonical chain. This is invoked during
     /// `Bodies` stage and does not write to `TransactionHashNumbers` and `TransactionSenders`
@@ -74,7 +71,7 @@ pub trait BlockWriter {
     /// Bodies are passed as [`Option`]s, if body is `None` the corresponding block is empty.
     fn append_block_bodies(
         &self,
-        bodies: Vec<(BlockNumber, Option<&<Self::Block as Block>::Body>)>,
+        bodies: Vec<(BlockNumber, Option<&base_common_consensus::BaseBlockBody>)>,
     ) -> ProviderResult<()>;
 
     /// Removes all blocks above the given block number from the database.
@@ -101,7 +98,7 @@ pub trait BlockWriter {
     /// Returns `Ok(())` on success, or an error if any operation fails.
     fn append_blocks_with_state(
         &self,
-        blocks: Vec<RecoveredBlock<Self::Block>>,
+        blocks: Vec<RecoveredBlock>,
         execution_outcome: &ExecutionOutcome<Self::Receipt>,
         hashed_state: HashedPostStateSorted,
     ) -> ProviderResult<()>;

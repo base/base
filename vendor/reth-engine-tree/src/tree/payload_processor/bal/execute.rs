@@ -398,14 +398,11 @@ mod tests {
     }
 
     /// Builds a minimal sealed block (empty body, Base header with a BAL commitment) for tests.
-    fn empty_base_bal_block(header_bal_hash: B256) -> SealedBlock<BaseBlock> {
+    fn empty_base_bal_block(header_bal_hash: B256) -> SealedBlock {
         empty_base_bal_block_with_gas_limit(header_bal_hash, 30_000_000)
     }
 
-    fn empty_base_bal_block_with_gas_limit(
-        header_bal_hash: B256,
-        gas_limit: u64,
-    ) -> SealedBlock<BaseBlock> {
+    fn empty_base_bal_block_with_gas_limit(header_bal_hash: B256, gas_limit: u64) -> SealedBlock {
         let header = Header {
             timestamp: 1,
             number: 1,
@@ -508,7 +505,7 @@ mod tests {
         evm_config: BaseEvmConfig,
         make_db: MakeDb,
         input_bal: Arc<DecodedBal>,
-        block: &SealedBlock<BaseBlock>,
+        block: &SealedBlock,
         txs: Vec<Tx>,
     ) -> Result<BlockExecutionOutput<BaseReceipt>, BalExecutionError>
     where
@@ -525,7 +522,7 @@ mod tests {
         evm_config: BaseEvmConfig,
         make_db: MakeDb,
         input_bal: Arc<DecodedBal>,
-        block: &SealedBlock<BaseBlock>,
+        block: &SealedBlock,
         txs: Vec<Tx>,
     ) -> Result<(BlockExecutionOutput<BaseReceipt>, BlockAccessList), BalExecutionError>
     where
@@ -565,7 +562,7 @@ mod tests {
     fn reference_bal_for_block<Tx>(
         evm_config: &BaseEvmConfig,
         mut db: CacheDB<EmptyDB>,
-        block: &SealedBlock<BaseBlock>,
+        block: &SealedBlock,
         txs: Vec<Tx>,
     ) -> BlockAccessList
     where
@@ -734,7 +731,7 @@ mod tests {
     fn run_serial_path(
         evm_config: &BaseEvmConfig,
         canonical_db: CacheDB<EmptyDB>,
-        block: &SealedBlock<BaseBlock>,
+        block: &SealedBlock,
         txs: &[Recovered<BaseTxEnvelope>],
     ) -> (ShadowOutput, BlockAccessList) {
         use revm::database::State as RevmState;
@@ -778,7 +775,7 @@ mod tests {
     fn assert_shadow_equal(
         evm_config: BaseEvmConfig,
         canonical_db_template: CacheDB<EmptyDB>,
-        block_header_only: SealedBlock<BaseBlock>,
+        block_header_only: SealedBlock,
         txs: Vec<Recovered<BaseTxEnvelope>>,
     ) {
         let txs = if txs.is_empty() {

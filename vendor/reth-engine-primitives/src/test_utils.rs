@@ -35,7 +35,7 @@ impl PayloadValidator for TestEngineValidator {
     fn convert_payload_to_block(
         &self,
         data: ExecutionData,
-    ) -> Result<SealedBlock<Block>, NewPayloadError> {
+    ) -> Result<SealedBlock, NewPayloadError> {
         Ok(data
             .payload
             .try_into_block_with_sidecar(&data.sidecar)

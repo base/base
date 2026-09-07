@@ -8,7 +8,6 @@ use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_eth::{Account, AccountInfo, EIP1186AccountProofResponse};
 use alloy_serde::JsonStorageKey;
-use base_common_consensus::BaseBlock;
 use base_common_rpc_types::BaseTransactionRequest;
 use futures::Future;
 use reth_errors::RethError;
@@ -413,9 +412,7 @@ pub trait LoadState: LoadPendingBlock + EthApiTypes + RpcNodeCoreExt {
     fn evm_env_and_recovered_block_at(
         &self,
         at: BlockId,
-    ) -> impl Future<
-        Output = Result<(Arc<RecoveredBlock<BaseBlock>>, EvmEnvFor, BlockId), BaseEthApiError>,
-    > + Send
+    ) -> impl Future<Output = Result<(Arc<RecoveredBlock>, EvmEnvFor, BlockId), BaseEthApiError>> + Send
     where
         Self: SpawnBlocking + LoadBlock,
     {

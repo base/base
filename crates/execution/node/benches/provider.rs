@@ -102,7 +102,7 @@ impl HistoricalReadFixture {
         Self { factory, account_queries, storage_queries }
     }
 
-    fn blocks(mut parent_hash: B256) -> Vec<RecoveredBlock<Block>> {
+    fn blocks(mut parent_hash: B256) -> Vec<RecoveredBlock> {
         (1..=HISTORY_BLOCKS)
             .map(|number| {
                 let block = RecoveredBlock::new_unhashed(

@@ -170,7 +170,7 @@ impl<P> Iterator for SingleBlockBackfillJob<P>
 where
     P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
 {
-    type Item = BackfillJobResult<(RecoveredBlock<P::Block>, BlockExecutionOutput<BaseReceipt>)>;
+    type Item = BackfillJobResult<(RecoveredBlock, BlockExecutionOutput<BaseReceipt>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.range.next().map(|block_number| self.execute_block(block_number))
@@ -184,7 +184,7 @@ where
     /// Converts the single block backfill job into a stream.
     pub fn into_stream(
         self,
-    ) -> StreamBackfillJob<P, (RecoveredBlock<BaseBlock>, BlockExecutionOutput<BaseReceipt>)> {
+    ) -> StreamBackfillJob<P, (RecoveredBlock, BlockExecutionOutput<BaseReceipt>)> {
         self.into()
     }
 
@@ -192,7 +192,7 @@ where
     pub(crate) fn execute_block(
         &self,
         block_number: u64,
-    ) -> BackfillJobResult<(RecoveredBlock<P::Block>, BlockExecutionOutput<BaseReceipt>)> {
+    ) -> BackfillJobResult<(RecoveredBlock, BlockExecutionOutput<BaseReceipt>)> {
         // Fetch the block with senders for execution.
         let block_with_senders = self
             .provider

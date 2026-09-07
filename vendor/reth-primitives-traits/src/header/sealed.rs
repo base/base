@@ -3,7 +3,7 @@ use core::mem;
 pub use alloy_consensus::Header;
 use alloy_consensus::{BlockHeader, Sealed};
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
-use alloy_primitives::{BlockHash, Sealable, keccak256};
+use alloy_primitives::{BlockHash, keccak256};
 use alloy_rlp::{Decodable, Encodable};
 use bytes::BufMut;
 use derive_more::{AsRef, Deref};
@@ -79,7 +79,7 @@ impl SealedHeader {
     /// Returns the block hash.
     ///
     /// Note: if the hash has not been computed yet, this will compute the hash:
-    /// [`Sealable::hash_slow`].
+    /// [`alloy_primitives::Sealable::hash_slow`].
     pub fn hash_ref(&self) -> &BlockHash {
         self.hash.get_or_init(|| self.header.hash_slow())
     }

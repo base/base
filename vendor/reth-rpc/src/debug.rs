@@ -15,7 +15,6 @@ use alloy_rpc_types_trace::geth::{
     BlockTraceResult, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult,
 };
 use async_trait::async_trait;
-use base_common_consensus::BaseBlock;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::ChainSpecProvider;
 use futures::Stream;
@@ -115,7 +114,7 @@ where
     /// Trace the entire block asynchronously
     async fn trace_block(
         &self,
-        block: Arc<RecoveredBlock<ProviderBlock<Eth::Provider>>>,
+        block: Arc<RecoveredBlock>,
         evm_env: EvmEnvFor,
         opts: GethDebugTracingOptions,
     ) -> Result<Vec<TraceResult>, BaseEthApiError> {
@@ -517,7 +516,7 @@ where
     /// Generates an execution witness, using the given recovered block.
     pub async fn debug_execution_witness_for_block(
         &self,
-        block: Arc<RecoveredBlock<ProviderBlock<Eth::Provider>>>,
+        block: Arc<RecoveredBlock>,
         mode: ExecutionWitnessMode,
     ) -> Result<ExecutionWitness, BaseEthApiError> {
         let block_number = block.header().number();
@@ -806,7 +805,7 @@ where
     /// Handler for `debug_getRawTransactions`
     /// Returns the bytes of the transaction for the given hash.
     async fn raw_transactions(&self, block_id: BlockId) -> RpcResult<Vec<Bytes>> {
-        let block: RecoveredBlock<BaseBlock> = self
+        let block: RecoveredBlock = self
             .provider()
             .block_with_senders_by_id(block_id, TransactionVariant::NoHash)
             .to_rpc_result()?
@@ -1213,24 +1212,24 @@ struct DebugApiInner<Eth: RpcNodeCore> {
     // restrict the number of concurrent calls to blocking calls
     blocking_task_guard: BlockingTaskGuard,
     /// Cache for bad blocks.
-    bad_block_store: BadBlockStore<BaseBlock>,
+    bad_block_store: BadBlockStore,
 }
 
 /// A bounded, deduplicating store of recently observed bad blocks.
 #[derive(Clone, Debug)]
-struct BadBlockStore<B: BlockTrait> {
-    inner: Arc<RwLock<VecDeque<BadBlockEntry<B>>>>,
+struct BadBlockStore {
+    inner: Arc<RwLock<VecDeque<BadBlockEntry>>>,
     limit: usize,
 }
 
 /// A cached bad block paired with the reason it was rejected.
 #[derive(Clone, Debug)]
-struct BadBlockEntry<B: BlockTrait> {
-    block: Arc<RecoveredBlock<B>>,
+struct BadBlockEntry {
+    block: Arc<RecoveredBlock>,
     reason: String,
 }
 
-impl<B: BlockTrait> BadBlockStore<B> {
+impl BadBlockStore {
     /// Creates a new store with the given capacity.
     fn new(limit: usize) -> Self {
         Self { inner: Arc::new(RwLock::new(VecDeque::with_capacity(limit))), limit }
@@ -1238,7 +1237,7 @@ impl<B: BlockTrait> BadBlockStore<B> {
 
     /// Inserts a recovered block with its rejection reason, keeping only the most recent `limit`
     /// entries and deduplicating by block hash.
-    fn insert(&self, block: RecoveredBlock<B>, reason: String) {
+    fn insert(&self, block: RecoveredBlock, reason: String) {
         let hash = block.hash();
         let mut guard = self.inner.write();
 
@@ -1254,19 +1253,19 @@ impl<B: BlockTrait> BadBlockStore<B> {
     }
 
     /// Returns all cached bad block entries ordered from newest to oldest.
-    fn all(&self) -> Vec<BadBlockEntry<B>> {
+    fn all(&self) -> Vec<BadBlockEntry> {
         let guard = self.inner.read();
         guard.iter().rev().cloned().collect()
     }
 
     /// Returns the bad block entry with the given hash, if cached.
-    fn get(&self, hash: B256) -> Option<BadBlockEntry<B>> {
+    fn get(&self, hash: B256) -> Option<BadBlockEntry> {
         let guard = self.inner.read();
         guard.iter().find(|entry| entry.block.hash() == hash).cloned()
     }
 }
 
-impl<B: BlockTrait> Default for BadBlockStore<B> {
+impl Default for BadBlockStore {
     fn default() -> Self {
         Self::new(64)
     }

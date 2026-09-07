@@ -8,7 +8,6 @@ use core::{
 
 use alloy_eips::BlockNumHash;
 use alloy_rpc_types_engine::ForkchoiceState;
-use base_common_consensus::BaseBlock;
 use reth_chain_state::{ExecutedBlock, ExecutionTimingStats};
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 
@@ -34,7 +33,7 @@ pub enum ConsensusEngineEvent {
     /// The consensus engine processed an invalid block.
     InvalidBlock {
         /// The invalid block.
-        block: Box<SealedBlock<BaseBlock>>,
+        block: Box<SealedBlock>,
         /// The validation error that caused the block to be rejected.
         error: String,
     },

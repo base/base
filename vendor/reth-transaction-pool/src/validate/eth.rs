@@ -1012,7 +1012,7 @@ where
         self.validate_batch_with_origin(origin, transactions)
     }
 
-    fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
+    fn on_new_head_block(&self, new_tip_block: &SealedBlock) {
         Self::on_new_head_block(self, new_tip_block.header())
     }
 }

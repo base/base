@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
 use alloy_eips::{BlockHashOrNumber, BlockNumHash};
 use alloy_primitives::{B256, BlockNumber, TxHash, map::B256Map};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use parking_lot::RwLock;
 use reth_chainspec::ChainInfo;
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};
@@ -169,7 +169,7 @@ impl CanonicalInMemoryStateInner {
     }
 }
 
-type PendingBlockAndReceipts = (RecoveredBlock<BaseBlock>, Vec<BaseReceipt>);
+type PendingBlockAndReceipts = (RecoveredBlock, Vec<BaseReceipt>);
 
 /// This type is responsible for providing the blocks, receipts, and state for
 /// all canonical blocks not on disk yet and keeps track of the block range that
@@ -492,13 +492,13 @@ impl CanonicalInMemoryState {
     }
 
     /// Returns the `SealedBlock` corresponding to the pending state.
-    pub fn pending_block(&self) -> Option<SealedBlock<BaseBlock>> {
+    pub fn pending_block(&self) -> Option<SealedBlock> {
         self.pending_state()
             .map(|block_state| block_state.block_ref().recovered_block().sealed_block().clone())
     }
 
     /// Returns the `RecoveredBlock` corresponding to the pending state.
-    pub fn pending_recovered_block(&self) -> Option<RecoveredBlock<BaseBlock>> {
+    pub fn pending_recovered_block(&self) -> Option<RecoveredBlock> {
         self.pending_state().map(|block_state| block_state.block_ref().recovered_block().clone())
     }
 
@@ -746,7 +746,7 @@ impl BlockState {
     }
 
     /// Finds a transaction by hash and returns it with its index and block context.
-    pub fn find_indexed(&self, tx_hash: TxHash) -> Option<IndexedTx<'_, BaseBlock>> {
+    pub fn find_indexed(&self, tx_hash: TxHash) -> Option<IndexedTx<'_>> {
         self.block_ref().recovered_block().find_indexed(tx_hash)
     }
 }
@@ -755,7 +755,7 @@ impl BlockState {
 #[derive(Clone, Debug)]
 pub struct ExecutedBlock {
     /// Recovered Block
-    pub recovered_block: Arc<RecoveredBlock<BaseBlock>>,
+    pub recovered_block: Arc<RecoveredBlock>,
     /// Block's execution outcome.
     pub execution_output: Arc<BlockExecutionOutput<BaseReceipt>>,
     /// Deferred trie data produced by execution.
@@ -797,7 +797,7 @@ impl ExecutedBlock {
     /// Use this constructor when trie data is available immediately (e.g., sequencers,
     /// payload builders). This is the safe default path.
     pub fn new(
-        recovered_block: Arc<RecoveredBlock<BaseBlock>>,
+        recovered_block: Arc<RecoveredBlock>,
         execution_output: Arc<BlockExecutionOutput<BaseReceipt>>,
         trie_data: ComputedTrieData,
     ) -> Self {
@@ -818,7 +818,7 @@ impl ExecutedBlock {
     ///
     /// Use [`Self::new()`] instead when trie data is already computed and available immediately.
     pub const fn with_deferred_trie_data(
-        recovered_block: Arc<RecoveredBlock<BaseBlock>>,
+        recovered_block: Arc<RecoveredBlock>,
         execution_output: Arc<BlockExecutionOutput<BaseReceipt>>,
         trie_data: LazyTrieData,
     ) -> Self {
@@ -827,13 +827,13 @@ impl ExecutedBlock {
 
     /// Returns a reference to an inner [`SealedBlock`]
     #[inline]
-    pub fn sealed_block(&self) -> &SealedBlock<BaseBlock> {
+    pub fn sealed_block(&self) -> &SealedBlock {
         self.recovered_block.sealed_block()
     }
 
     /// Returns a reference to [`RecoveredBlock`]
     #[inline]
-    pub fn recovered_block(&self) -> &RecoveredBlock<BaseBlock> {
+    pub fn recovered_block(&self) -> &RecoveredBlock {
         &self.recovered_block
     }
 
@@ -965,7 +965,7 @@ impl NewCanonicalChain {
     ///
     /// Returns the new tip for [`Self::Reorg`] and [`Self::Commit`] variants which commit at least
     /// 1 new block.
-    pub fn tip(&self) -> &RecoveredBlock<BaseBlock> {
+    pub fn tip(&self) -> &RecoveredBlock {
         match self {
             Self::Commit { new } | Self::Reorg { new, .. } => {
                 new.last().expect("non empty blocks").recovered_block()

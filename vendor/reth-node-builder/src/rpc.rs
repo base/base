@@ -7,7 +7,6 @@ use std::{
     sync::Arc,
 };
 
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_payload_builder::BaseEngineValidator;
 use base_execution_rpc::eth::{BaseEthApiBuilder, BaseNodeEthApi, EthApiCtx};
@@ -1045,8 +1044,7 @@ impl BasicEngineValidatorBuilder {
         ctx: &AddOnsContext<'_, Node>,
         tree_config: TreeConfig,
         overlay_manager: OverlayManager,
-    ) -> eyre::Result<BasicEngineValidator<Node::Provider, BaseEngineValidator<BaseTxEnvelope>>>
-    {
+    ) -> eyre::Result<BasicEngineValidator<Node::Provider, BaseEngineValidator>> {
         let validator = BaseEngineValidator::new::<KeccakKeyHasher>(Arc::clone(&ctx.config.chain));
         let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());
         let invalid_block_hook = InvalidBlockHookBuilder::build(

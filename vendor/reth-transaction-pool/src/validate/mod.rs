@@ -237,7 +237,7 @@ pub trait TransactionValidator: Debug + Send + Sync {
     /// Invoked when the head block changes.
     ///
     /// This can be used to update fork specific values (timestamp).
-    fn on_new_head_block(&self, _new_tip_block: &SealedBlock<Self::Block>) {}
+    fn on_new_head_block(&self, _new_tip_block: &SealedBlock) {}
 }
 
 impl<A, B> TransactionValidator for Either<A, B>
@@ -281,7 +281,7 @@ where
         }
     }
 
-    fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
+    fn on_new_head_block(&self, new_tip_block: &SealedBlock) {
         match self {
             Self::Left(v) => v.on_new_head_block(new_tip_block),
             Self::Right(v) => v.on_new_head_block(new_tip_block),

@@ -326,7 +326,7 @@ impl MockEthProvider {
     /// This is useful for tests that require a valid latest block (e.g., transaction validation).
     pub fn with_genesis_block(self) -> Self
     where
-        <BaseBlock as Block>::Body: Default,
+        base_common_consensus::BaseBlockBody: Default,
     {
         let genesis_hash = self.chain_spec.genesis_hash();
         let genesis_header = self.chain_spec.genesis_header().clone();
@@ -832,13 +832,13 @@ impl BlockReader for MockEthProvider {
         }
     }
 
-    fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock>> {
         Ok(None)
     }
 
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock<Self::Block>, Vec<BaseReceipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<BaseReceipt>)>> {
         Ok(None)
     }
 
@@ -846,7 +846,7 @@ impl BlockReader for MockEthProvider {
         &self,
         _id: BlockHashOrNumber,
         _transaction_kind: TransactionVariant,
-    ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Option<RecoveredBlock>> {
         Ok(None)
     }
 
@@ -854,7 +854,7 @@ impl BlockReader for MockEthProvider {
         &self,
         _id: BlockHashOrNumber,
         _transaction_kind: TransactionVariant,
-    ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Option<RecoveredBlock>> {
         Ok(None)
     }
 
@@ -874,14 +874,14 @@ impl BlockReader for MockEthProvider {
     fn block_with_senders_range(
         &self,
         _range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Vec<RecoveredBlock>> {
         Ok(vec![])
     }
 
     fn recovered_block_range(
         &self,
         _range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Vec<RecoveredBlock>> {
         Ok(vec![])
     }
 

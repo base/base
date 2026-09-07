@@ -10,7 +10,7 @@ use alloy_rpc_types_eth::{
     simulate::{SimBlock, SimCallResult, SimulateError, SimulatedBlock},
     state::StateOverride,
 };
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
 use reth_evm::{
@@ -504,7 +504,7 @@ where
 
 /// Handles outputs of the calls execution and builds a [`SimulatedBlock`].
 pub fn build_simulated_block<Err, T>(
-    block: RecoveredBlock<BaseBlock>,
+    block: RecoveredBlock,
     results: Vec<ExecutionResult<HaltReasonFor>>,
     txs_kind: BlockTransactionsKind,
     converter: &crate::BaseRpcConverter<T>,

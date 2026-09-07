@@ -460,7 +460,7 @@ struct FailedSenderRecoveryError {
 mod tests {
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
-    use base_common_consensus::{BaseBlock as Block, BaseTxEnvelope as TransactionSigned};
+    use base_common_consensus::BaseTxEnvelope as TransactionSigned;
     use reth_db_api::{cursor::DbCursorRO, models::StorageSettings};
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use reth_provider::{
@@ -768,7 +768,7 @@ mod tests {
     }
 
     impl ExecuteStageTestRunner for SenderRecoveryTestRunner {
-        type Seed = Vec<SealedBlock<Block>>;
+        type Seed = Vec<SealedBlock>;
 
         fn seed_execution(&mut self, input: ExecInput) -> Result<Self::Seed, TestRunnerError> {
             let mut rng = generators::rng();

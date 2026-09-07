@@ -102,7 +102,7 @@ fn create_block_from_spec(
     chain_spec: &Arc<ChainSpec>,
     key_pair: Keypair,
     nonce_counter: &mut u64,
-) -> RecoveredBlock<Block> {
+) -> RecoveredBlock {
     let transactions: Vec<TransactionSigned> = spec
         .txs
         .iter()
@@ -152,7 +152,7 @@ fn create_block_from_spec(
 
 /// Executes a block and returns the updated block with correct state root
 fn execute_block<DB>(
-    block: &mut RecoveredBlock<Block>,
+    block: &mut RecoveredBlock,
     provider_factory: &ProviderFactory<DB>,
     chain_spec: &Arc<ChainSpec>,
 ) -> eyre::Result<reth_evm::execute::BlockExecutionOutput<Receipt>>
@@ -178,7 +178,7 @@ where
 
 /// Commits a block and its execution output to the database
 fn commit_block_to_database<DB>(
-    block: &RecoveredBlock<Block>,
+    block: &RecoveredBlock,
     execution_output: &reth_evm::execute::BlockExecutionOutput<Receipt>,
     provider_factory: &ProviderFactory<DB>,
 ) -> eyre::Result<()>

@@ -321,7 +321,7 @@ where
         }
     }
 
-    fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
+    fn on_new_head_block(&self, new_tip_block: &SealedBlock) {
         self.validator.on_new_head_block(new_tip_block)
     }
 }
@@ -357,7 +357,7 @@ mod tests {
 
     impl TransactionValidator for NoopValidator {
         type Transaction = MockTransaction;
-        type Block = reth_ethereum_primitives::Block;
+        type Block = base_common_consensus::BaseBlock;
 
         async fn validate_transaction(
             &self,
@@ -404,7 +404,7 @@ mod tests {
 
     impl TransactionValidator for SameOriginBatchValidator {
         type Transaction = MockTransaction;
-        type Block = reth_ethereum_primitives::Block;
+        type Block = base_common_consensus::BaseBlock;
 
         async fn validate_transaction(
             &self,

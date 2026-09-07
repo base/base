@@ -7,9 +7,7 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, Log, Signature, TxKind, U256, b256, hex_literal::hex,
     map::HashMap,
 };
-use base_common_consensus::{
-    BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction,
-};
+use base_common_consensus::{BaseBlockBody, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction};
 use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables};
 use reth_primitives_traits::{Account, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_trie::root::{state_root_unhashed, storage_root_unhashed};
@@ -18,10 +16,7 @@ use revm::{database::BundleState, state::AccountInfo};
 use crate::{DBProvider, DatabaseProviderRW, ExecutionOutcome};
 
 /// Assert genesis block
-pub fn assert_genesis_block<DB: Database>(
-    provider: &DatabaseProviderRW<DB>,
-    g: SealedBlock<BaseBlock>,
-) {
+pub fn assert_genesis_block<DB: Database>(provider: &DatabaseProviderRW<DB>, g: SealedBlock) {
     let n = g.number;
     let h = B256::ZERO;
     let tx = provider;
@@ -60,7 +55,7 @@ pub fn assert_genesis_block<DB: Database>(
     // StageCheckpoints is not updated in tests
 }
 
-pub(crate) static TEST_BLOCK: LazyLock<SealedBlock<BaseBlock>> = LazyLock::new(|| {
+pub(crate) static TEST_BLOCK: LazyLock<SealedBlock> = LazyLock::new(|| {
     SealedBlock::from_sealed_parts(
         SealedHeader::new(
             Header {
@@ -121,9 +116,9 @@ pub(crate) static TEST_BLOCK: LazyLock<SealedBlock<BaseBlock>> = LazyLock::new(|
 #[derive(Debug)]
 pub struct BlockchainTestData {
     /// Genesis
-    pub genesis: SealedBlock<BaseBlock>,
+    pub genesis: SealedBlock,
     /// Blocks with its execution result
-    pub blocks: Vec<(RecoveredBlock<BaseBlock>, ExecutionOutcome<BaseReceipt>)>,
+    pub blocks: Vec<(RecoveredBlock, ExecutionOutcome<BaseReceipt>)>,
 }
 
 impl BlockchainTestData {
@@ -158,7 +153,7 @@ impl Default for BlockchainTestData {
 }
 
 /// Genesis block
-pub fn genesis() -> SealedBlock<BaseBlock> {
+pub fn genesis() -> SealedBlock {
     SealedBlock::from_sealed_parts(
         SealedHeader::new(
             Header { number: 0, difficulty: U256::from(1), ..Default::default() },
@@ -188,7 +183,7 @@ fn bundle_state_root(execution_outcome: &ExecutionOutcome<BaseReceipt>) -> B256 
 }
 
 /// Block one that points to genesis
-fn block1(number: BlockNumber) -> (RecoveredBlock<BaseBlock>, ExecutionOutcome<BaseReceipt>) {
+fn block1(number: BlockNumber) -> (RecoveredBlock, ExecutionOutcome<BaseReceipt>) {
     // block changes
     let account1: Address = [0x60; 20].into();
     let account2: Address = [0x61; 20].into();
@@ -237,7 +232,7 @@ fn block2(
     number: BlockNumber,
     parent_hash: B256,
     prev_execution_outcome: &ExecutionOutcome<BaseReceipt>,
-) -> (RecoveredBlock<BaseBlock>, ExecutionOutcome<BaseReceipt>) {
+) -> (RecoveredBlock, ExecutionOutcome<BaseReceipt>) {
     // block changes
     let account: Address = [0x60; 20].into();
     let slot = U256::from(5);
@@ -294,7 +289,7 @@ fn block3(
     number: BlockNumber,
     parent_hash: B256,
     prev_execution_outcome: &ExecutionOutcome<BaseReceipt>,
-) -> (RecoveredBlock<BaseBlock>, ExecutionOutcome<BaseReceipt>) {
+) -> (RecoveredBlock, ExecutionOutcome<BaseReceipt>) {
     let address_range = 1..=20;
     let slot_range = 1..=100;
 
@@ -351,7 +346,7 @@ fn block4(
     number: BlockNumber,
     parent_hash: B256,
     prev_execution_outcome: &ExecutionOutcome<BaseReceipt>,
-) -> (RecoveredBlock<BaseBlock>, ExecutionOutcome<BaseReceipt>) {
+) -> (RecoveredBlock, ExecutionOutcome<BaseReceipt>) {
     let address_range = 1..=20;
     let slot_range = 1..=100;
 
@@ -433,7 +428,7 @@ fn block5(
     number: BlockNumber,
     parent_hash: B256,
     prev_execution_outcome: &ExecutionOutcome<BaseReceipt>,
-) -> (RecoveredBlock<BaseBlock>, ExecutionOutcome<BaseReceipt>) {
+) -> (RecoveredBlock, ExecutionOutcome<BaseReceipt>) {
     let address_range = 1..=20;
     let slot_range = 1..=100;
 

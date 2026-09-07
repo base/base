@@ -190,7 +190,6 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_common_consensus::BaseBlock as Block;
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use reth_provider::{
         TransactionsProvider, TransactionsProviderExt, providers::StaticFileWriter,
@@ -230,7 +229,7 @@ mod tests {
     }
 
     impl ExecuteStageTestRunner for PruneTestRunner {
-        type Seed = Vec<SealedBlock<Block>>;
+        type Seed = Vec<SealedBlock>;
 
         fn seed_execution(&mut self, input: ExecInput) -> Result<Self::Seed, TestRunnerError> {
             let mut rng = generators::rng();

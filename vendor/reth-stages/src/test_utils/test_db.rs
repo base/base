@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fmt::Debug, path::Path, sync::Arc};
 
 use alloy_primitives::{Address, B256, BlockNumber, TxHash, TxNumber, keccak256};
-use base_common_consensus::{BaseBlock as Block, BaseReceipt as Receipt, BaseTxEnvelope};
+use base_common_consensus::{BaseReceipt as Receipt, BaseTxEnvelope};
 use reth_chainspec::MAINNET;
 use reth_db::{
     DatabaseEnv,
@@ -251,7 +251,7 @@ impl TestStageDB {
     /// Assumes that there's a single transition for each transaction (i.e. no block rewards).
     pub fn insert_blocks<'a, I>(&self, blocks: I, storage_kind: StorageKind) -> ProviderResult<()>
     where
-        I: IntoIterator<Item = &'a SealedBlock<Block>>,
+        I: IntoIterator<Item = &'a SealedBlock>,
     {
         let provider = self.factory.static_file_provider();
 

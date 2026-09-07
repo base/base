@@ -41,7 +41,7 @@ use core::{error::Error, fmt::Display};
 
 use alloy_eip7928::BlockAccessListGasError;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bloom};
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 
 /// Pre-computed receipt root and logs bloom.
 ///
@@ -56,7 +56,7 @@ pub type ReceiptRootBloom = (B256, Bloom);
 pub type TransactionRoot = B256;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
-    Block, GotExpected, GotExpectedBoxed, RecoveredBlock, SealedBlock, SealedHeader,
+    GotExpected, GotExpectedBoxed, RecoveredBlock, SealedBlock, SealedHeader,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT},
     transaction::error::InvalidTransactionError,
 };
@@ -71,7 +71,7 @@ pub mod test_utils;
 /// [`Consensus`] implementation which knows full node primitives and is able to validation block's
 /// execution outcome.
 #[auto_impl::auto_impl(&, Arc)]
-pub trait FullConsensus: Consensus<BaseBlock> {
+pub trait FullConsensus: Consensus {
     /// Validate a block considering world state, i.e. things that can not be checked before
     /// execution.
     ///
@@ -83,7 +83,7 @@ pub trait FullConsensus: Consensus<BaseBlock> {
     /// Note: validating blocks does not include other validations of the Consensus
     fn validate_block_post_execution(
         &self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         result: &BlockExecutionResult<BaseReceipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
         block_access_list_hash: Option<B256>,
@@ -92,11 +92,11 @@ pub trait FullConsensus: Consensus<BaseBlock> {
 
 /// Consensus is a protocol that chooses canonical chain.
 #[auto_impl::auto_impl(&, Arc)]
-pub trait Consensus<B: Block>: HeaderValidator {
+pub trait Consensus: HeaderValidator {
     /// Ensures that body field values match the header.
     fn validate_body_against_header(
         &self,
-        body: &B::Body,
+        body: &base_common_consensus::BaseBlockBody,
         header: &SealedHeader,
     ) -> Result<(), ConsensusError>;
 
@@ -110,7 +110,7 @@ pub trait Consensus<B: Block>: HeaderValidator {
     /// **This should not be called for the genesis block**.
     ///
     /// Note: validating blocks does not include other validations of the Consensus
-    fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError>;
+    fn validate_block_pre_execution(&self, block: &SealedBlock) -> Result<(), ConsensusError>;
 
     /// Returns `true` if the given consensus error is transient and may resolve on its own.
     ///
@@ -133,7 +133,7 @@ pub trait Consensus<B: Block>: HeaderValidator {
     /// By default this falls back to [`Self::validate_block_pre_execution`].
     fn validate_block_pre_execution_with_tx_root(
         &self,
-        block: &SealedBlock<B>,
+        block: &SealedBlock,
         transaction_root: Option<TransactionRoot>,
     ) -> Result<(), ConsensusError> {
         let _ = transaction_root;

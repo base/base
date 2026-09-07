@@ -6,14 +6,13 @@ use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader as _, TxReceipt, proofs::calculate_receipt_root};
 use alloy_primitives::{B256, Bloom};
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::EthereumHardforks;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
-    Block, GotExpected, RecoveredBlock, SealedBlock, SealedHeader,
-    receipt::gas_spent_by_transactions,
+    GotExpected, RecoveredBlock, SealedBlock, SealedHeader, receipt::gas_spent_by_transactions,
 };
 
 use crate::validation::{
@@ -53,19 +52,16 @@ impl HeaderValidator for TestConsensus {
     }
 }
 
-impl<B> Consensus<B> for TestConsensus
-where
-    B: Block,
-{
+impl Consensus for TestConsensus {
     fn validate_body_against_header(
         &self,
-        body: &B::Body,
+        body: &base_common_consensus::BaseBlockBody,
         header: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         validate_body_against_header(body, header.header())
     }
 
-    fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {
+    fn validate_block_pre_execution(&self, block: &SealedBlock) -> Result<(), ConsensusError> {
         validate_block_pre_execution(block, &self.chain_spec)
     }
 }
@@ -73,7 +69,7 @@ where
 impl FullConsensus for TestConsensus {
     fn validate_block_post_execution(
         &self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         result: &BlockExecutionResult<BaseReceipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
         block_access_list_hash: Option<B256>,

@@ -16,7 +16,6 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
-use base_common_consensus::BaseBlock;
 use base_execution_chainspec::ChainSpecProvider;
 use futures_util::FutureExt;
 use reth_chainspec::{ChainSpec, MAINNET};
@@ -59,7 +58,7 @@ pub type TestExExContext = ExExContext<Adapter>;
 #[derive(Debug)]
 pub struct TestExExHandle {
     /// Genesis block that was inserted into the storage
-    pub genesis: RecoveredBlock<BaseBlock>,
+    pub genesis: RecoveredBlock,
     /// Provider Factory for accessing the emphemeral storage of the host node
     pub provider_factory: ProviderFactory<TmpDB>,
     /// Channel for receiving events from the Execution Extension

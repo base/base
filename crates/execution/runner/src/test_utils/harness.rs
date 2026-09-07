@@ -8,7 +8,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::BaseTxEnvelope;
 use base_common_network::Base;
 use base_common_rpc_types::GenesisInfo;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -289,7 +289,7 @@ impl TestHarness {
     }
 
     /// Return the latest recovered block as seen by the local blockchain provider.
-    pub fn latest_block(&self) -> RecoveredBlock<BaseBlock> {
+    pub fn latest_block(&self) -> RecoveredBlock {
         let provider = self.blockchain_provider();
         let best_number = provider.best_block_number().expect("able to read best block number");
         let block = provider

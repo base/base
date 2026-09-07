@@ -186,7 +186,7 @@ pub struct EngineApiTreeState {
     /// Tracks the forkchoice state updates received by the CL.
     forkchoice_state_tracker: ForkchoiceStateTracker,
     /// Buffer of detached blocks.
-    buffer: BlockBuffer<BaseBlock>,
+    buffer: BlockBuffer,
     /// Tracks the header of invalid payloads that were rejected by the engine because they're
     /// invalid.
     invalid_headers: InvalidHeaderCache,
@@ -353,9 +353,9 @@ pub struct EngineApiTreeHandler<P, V> {
     /// them one by one so that we can handle incoming engine API in between and don't become
     /// unresponsive. This can happen during live sync transition where we're trying to close the
     /// gap (up to 3 epochs of blocks in the worst case).
-    incoming_tx: Sender<FromEngine<EngineApiRequest, BaseBlock>>,
+    incoming_tx: Sender<FromEngine<EngineApiRequest>>,
     /// Incoming engine API requests.
-    incoming: Receiver<FromEngine<EngineApiRequest, BaseBlock>>,
+    incoming: Receiver<FromEngine<EngineApiRequest>>,
     /// Outgoing events that are emitted to the handler.
     outgoing: UnboundedSender<EngineApiEvent>,
     /// Channels to the persistence layer.
@@ -501,7 +501,7 @@ where
         kind: EngineApiKind,
         evm_config: BaseEvmConfig,
         runtime: reth_tasks::Runtime,
-    ) -> (Sender<FromEngine<EngineApiRequest, BaseBlock>>, UnboundedReceiver<EngineApiEvent>) {
+    ) -> (Sender<FromEngine<EngineApiRequest>>, UnboundedReceiver<EngineApiEvent>) {
         let best_block_number = provider.best_block_number().unwrap_or(0);
         let header = provider.sealed_header(best_block_number).ok().flatten().unwrap_or_default();
 
@@ -553,7 +553,7 @@ where
     }
 
     /// Returns a new [`Sender`] to send messages to this type.
-    pub fn sender(&self) -> Sender<FromEngine<EngineApiRequest, BaseBlock>> {
+    pub fn sender(&self) -> Sender<FromEngine<EngineApiRequest>> {
         self.incoming_tx.clone()
     }
 
@@ -773,7 +773,7 @@ where
     /// block request processing isn't blocked for a long time.
     fn on_downloaded(
         &mut self,
-        mut blocks: Vec<SealedBlock<BaseBlock>>,
+        mut blocks: Vec<SealedBlock>,
     ) -> Result<Option<TreeEvent>, InsertBlockFatalError> {
         if blocks.is_empty() {
             // nothing to execute
@@ -1703,7 +1703,7 @@ where
     /// Returns `ControlFlow::Break(())` if the engine should terminate.
     fn on_engine_message(
         &mut self,
-        msg: FromEngine<EngineApiRequest, BaseBlock>,
+        msg: FromEngine<EngineApiRequest>,
     ) -> Result<ops::ControlFlow<()>, InsertBlockFatalError> {
         match msg {
             FromEngine::Event(event) => match event {
@@ -2548,7 +2548,7 @@ where
     fn check_invalid_ancestor_with_head(
         &mut self,
         check: B256,
-        head: &SealedBlock<BaseBlock>,
+        head: &SealedBlock,
     ) -> ProviderResult<Option<PayloadStatus>> {
         // check if the check hash was previously marked as invalid
         let Some(header) = self.state.invalid_headers.get(&check) else { return Ok(None) };
@@ -2559,7 +2559,7 @@ where
     /// Invoked when a new payload received is invalid.
     fn on_invalid_new_payload(
         &mut self,
-        head: SealedBlock<BaseBlock>,
+        head: SealedBlock,
         invalid: BlockWithParent,
     ) -> ProviderResult<PayloadStatus> {
         // populate the latest valid hash field
@@ -2659,7 +2659,7 @@ where
 
     /// Validate if block is correct and satisfies all the consensus rules that concern the header
     /// and block body itself.
-    fn validate_block(&self, block: &SealedBlock<BaseBlock>) -> Result<(), ConsensusError> {
+    fn validate_block(&self, block: &SealedBlock) -> Result<(), ConsensusError> {
         if let Err(e) = self.consensus.validate_header(block.sealed_header()) {
             error!(target: "engine::tree", ?block, "Failed to validate header {}: {e}", block.hash());
             return Err(e);
@@ -2719,10 +2719,7 @@ where
     }
 
     /// Pre-validates the block and inserts it into the buffer.
-    fn buffer_block(
-        &mut self,
-        block: SealedBlock<BaseBlock>,
-    ) -> Result<(), InsertBlockError<BaseBlock>> {
+    fn buffer_block(&mut self, block: SealedBlock) -> Result<(), InsertBlockError> {
         if let Err(err) = self.validate_block(&block) {
             return Err(InsertBlockError::consensus_error(err, block));
         }
@@ -3044,7 +3041,7 @@ where
     #[instrument(level = "debug", target = "engine::tree", skip_all, fields(block_hash = %block.hash(), block_num = %block.number()))]
     fn on_downloaded_block(
         &mut self,
-        block: SealedBlock<BaseBlock>,
+        block: SealedBlock,
     ) -> Result<Option<TreeEvent>, InsertBlockFatalError> {
         let block_num_hash = block.num_hash();
         let lowest_buffered_ancestor = self.lowest_buffered_ancestor_or(block_num_hash.hash);
@@ -3097,7 +3094,7 @@ where
     fn insert_payload(
         &mut self,
         payload: base_common_rpc_types_engine::ExecutionData,
-    ) -> Result<InsertPayloadOk, InsertPayloadError<BaseBlock>> {
+    ) -> Result<InsertPayloadOk, InsertPayloadError> {
         self.insert_block_or_payload(
             payload.block_with_parent(),
             payload,
@@ -3106,10 +3103,7 @@ where
         )
     }
 
-    fn insert_block(
-        &mut self,
-        block: SealedBlock<BaseBlock>,
-    ) -> Result<InsertPayloadOk, InsertPayloadError<BaseBlock>> {
+    fn insert_block(&mut self, block: SealedBlock) -> Result<InsertPayloadOk, InsertPayloadError> {
         self.insert_block_or_payload(
             block.block_with_parent(),
             block,
@@ -3140,10 +3134,10 @@ where
         block_id: BlockWithParent,
         input: Input,
         execute: impl FnOnce(&mut V, Input, TreeCtx<'_>) -> Result<ValidationOutput, Err>,
-        convert_to_block: impl FnOnce(&mut Self, Input) -> Result<SealedBlock<BaseBlock>, Err>,
+        convert_to_block: impl FnOnce(&mut Self, Input) -> Result<SealedBlock, Err>,
     ) -> Result<InsertPayloadOk, Err>
     where
-        Err: From<InsertBlockError<BaseBlock>>,
+        Err: From<InsertBlockError>,
     {
         let block_insert_start = Instant::now();
         let block_num_hash = block_id.block;
@@ -3277,7 +3271,7 @@ where
     /// Returns the proper payload status response if the block is invalid.
     fn on_insert_block_error(
         &mut self,
-        error: InsertBlockError<BaseBlock>,
+        error: InsertBlockError,
     ) -> Result<PayloadStatus, InsertBlockFatalError> {
         let (block, error) = error.split();
 
@@ -3577,7 +3571,7 @@ where
 #[derive(Debug)]
 enum LoopEvent {
     /// An engine API message was received.
-    EngineMessage(FromEngine<EngineApiRequest, BaseBlock>),
+    EngineMessage(FromEngine<EngineApiRequest>),
     /// A persistence task completed.
     PersistenceComplete {
         /// The unified result of the persistence operation.

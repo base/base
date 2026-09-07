@@ -5,7 +5,6 @@ use std::sync::Arc;
 use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{BlockId, TransactionInfo};
-use base_common_consensus::BaseBlock;
 use futures::Future;
 use reth_errors::RethError;
 use reth_evm::{
@@ -14,7 +13,7 @@ use reth_evm::{
 };
 use reth_primitives_traits::{BlockBody, Recovered, RecoveredBlock};
 use reth_rpc_eth_types::{BaseEthApiError, cache::db::StateCacheDb};
-use reth_storage_api::{ProviderBlock, ProviderTx};
+use reth_storage_api::ProviderTx;
 use revm::{context::Block, context_interface::result::ResultAndState};
 use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 
@@ -135,7 +134,7 @@ pub trait Trace: LoadState + Call {
     fn replay_block_until(
         &self,
         db: &mut StateCacheDb,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         target_tx_index: usize,
     ) -> Result<(), BaseEthApiError> {
         self.apply_pre_execution_changes(block, db)?;
@@ -154,7 +153,7 @@ pub trait Trace: LoadState + Call {
     #[expect(clippy::type_complexity)]
     fn inspect_transaction_in_block<'a>(
         &self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         db: &'a mut StateCacheDb,
         inspector: impl InspectorFor<&'a mut StateCacheDb>,
         target_tx_index: usize,
@@ -187,7 +186,7 @@ pub trait Trace: LoadState + Call {
     fn trace_block_until<F, R>(
         &self,
         block_id: BlockId,
-        block: Option<Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>>,
+        block: Option<Arc<RecoveredBlock>>,
         highest_index: Option<u64>,
         config: TracingInspectorConfig,
         f: F,
@@ -228,7 +227,7 @@ pub trait Trace: LoadState + Call {
     fn trace_block_until_with_inspector<Setup, Insp, F, R>(
         &self,
         block_id: BlockId,
-        block: Option<Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>>,
+        block: Option<Arc<RecoveredBlock>>,
         highest_index: Option<u64>,
         mut inspector_setup: Setup,
         f: F,
@@ -323,7 +322,7 @@ pub trait Trace: LoadState + Call {
     fn trace_block_with<F, R>(
         &self,
         block_id: BlockId,
-        block: Option<Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>>,
+        block: Option<Arc<RecoveredBlock>>,
         config: TracingInspectorConfig,
         f: F,
     ) -> impl Future<Output = Result<Option<Vec<R>>, BaseEthApiError>> + Send
@@ -363,7 +362,7 @@ pub trait Trace: LoadState + Call {
     fn trace_block_inspector<Setup, Insp, F, R>(
         &self,
         block_id: BlockId,
-        block: Option<Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>>,
+        block: Option<Arc<RecoveredBlock>>,
         insp_setup: Setup,
         f: F,
     ) -> impl Future<Output = Result<Option<Vec<R>>, BaseEthApiError>> + Send
@@ -395,7 +394,7 @@ pub trait Trace: LoadState + Call {
     /// already applied.
     fn apply_pre_execution_changes(
         &self,
-        block: &RecoveredBlock<ProviderBlock<Self::Provider>>,
+        block: &RecoveredBlock,
         db: &mut StateCacheDb,
     ) -> Result<(), BaseEthApiError> {
         self.evm_config()

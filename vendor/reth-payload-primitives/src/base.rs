@@ -11,14 +11,14 @@ use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
     ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes, PayloadId,
 };
-use base_common_consensus::{BaseBlock, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
+use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 /// Re-export for use in downstream arguments.
 pub use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4,
 };
-use reth_primitives_traits::{Block as _, SealedBlock, SignedTransaction, WithEncoded};
+use reth_primitives_traits::{Block as _, SealedBlock, WithEncoded};
 
 use crate::{BuiltPayload, BuiltPayloadExecutedBlock};
 
@@ -261,7 +261,7 @@ pub struct BaseBuiltPayload {
     /// Identifier of the payload
     pub id: PayloadId,
     /// Sealed block
-    pub block: Arc<SealedBlock<BaseBlock>>,
+    pub block: Arc<SealedBlock>,
     /// Block execution data for the payload, if any.
     pub executed_block: Option<BuiltPayloadExecutedBlock>,
     /// Amsterdam block access list RLP bytes, if any.
@@ -275,7 +275,7 @@ pub struct BaseBuiltPayload {
 impl BaseBuiltPayload {
     /// Converts a sealed Base block into its Engine API execution data.
     pub fn block_to_payload(
-        block: SealedBlock<BaseBlock>,
+        block: SealedBlock,
         bal: Option<Bytes>,
     ) -> base_common_rpc_types_engine::ExecutionData {
         base_common_rpc_types_engine::ExecutionData::from_block_unchecked_with_extras(
@@ -288,7 +288,7 @@ impl BaseBuiltPayload {
     /// Initializes the payload with the given initial block.
     pub const fn new(
         id: PayloadId,
-        block: Arc<SealedBlock<BaseBlock>>,
+        block: Arc<SealedBlock>,
         fees: U256,
         executed_block: Option<BuiltPayloadExecutedBlock>,
         block_access_list: Option<Bytes>,
@@ -302,7 +302,7 @@ impl BaseBuiltPayload {
     }
 
     /// Returns the built block(sealed)
-    pub fn block(&self) -> &SealedBlock<BaseBlock> {
+    pub fn block(&self) -> &SealedBlock {
         &self.block
     }
 
@@ -312,13 +312,13 @@ impl BaseBuiltPayload {
     }
 
     /// Converts the value into [`SealedBlock`].
-    pub fn into_sealed_block(self) -> SealedBlock<BaseBlock> {
+    pub fn into_sealed_block(self) -> SealedBlock {
         Arc::unwrap_or_clone(self.block)
     }
 }
 
 impl BuiltPayload for BaseBuiltPayload {
-    fn block(&self) -> &SealedBlock<BaseBlock> {
+    fn block(&self) -> &SealedBlock {
         self.block()
     }
 

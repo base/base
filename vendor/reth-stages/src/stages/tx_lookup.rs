@@ -283,7 +283,6 @@ mod tests {
 
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
-    use base_common_consensus::BaseBlock as Block;
     use reth_db_api::{cursor::DbCursorRO, transaction::DbTx};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::{
@@ -527,7 +526,7 @@ mod tests {
     }
 
     impl ExecuteStageTestRunner for TransactionLookupTestRunner {
-        type Seed = Vec<SealedBlock<Block>>;
+        type Seed = Vec<SealedBlock>;
 
         fn seed_execution(&mut self, input: ExecInput) -> Result<Self::Seed, TestRunnerError> {
             let stage_progress = input.checkpoint().block_number;

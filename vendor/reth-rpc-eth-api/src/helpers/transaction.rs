@@ -26,7 +26,7 @@ use reth_rpc_eth_types::{
     utils::binary_search,
 };
 use reth_storage_api::{
-    BlockNumReader, BlockReaderIdExt, ProviderBlock, ProviderReceipt, ProviderTx, ReceiptProvider,
+    BlockNumReader, BlockReaderIdExt, ProviderReceipt, ProviderTx, ReceiptProvider,
     TransactionsProvider,
 };
 use reth_transaction_pool::{
@@ -301,7 +301,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                 TransactionMeta,
                 ProviderReceipt<Self::Provider>,
                 Option<Arc<Vec<ProviderReceipt<Self::Provider>>>>,
-                Option<Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>>,
+                Option<Arc<RecoveredBlock>>,
             )>,
             BaseEthApiError,
         >,
@@ -789,10 +789,7 @@ pub trait LoadTransaction: SpawnBlocking + FullEthApiTypes + RpcNodeCoreExt {
         hash: B256,
     ) -> impl Future<
         Output = Result<
-            Option<(
-                TransactionSource<ProviderTx<Self::Provider>>,
-                Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>,
-            )>,
+            Option<(TransactionSource<ProviderTx<Self::Provider>>, Arc<RecoveredBlock>)>,
             BaseEthApiError,
         >,
     > + Send {

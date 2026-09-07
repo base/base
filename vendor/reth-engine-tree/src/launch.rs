@@ -66,11 +66,7 @@ pub fn build_engine_orchestrator<DB, Client, S, V>(
     evm_config: BaseEvmConfig,
     runtime: Runtime,
 ) -> ChainOrchestrator<
-    EngineHandler<
-        EngineApiRequestHandler<EngineApiRequest>,
-        S,
-        BasicBlockDownloader<Client, BaseBlock>,
-    >,
+    EngineHandler<EngineApiRequestHandler<EngineApiRequest>, S, BasicBlockDownloader<Client>>,
     PipelineSync<DB>,
 >
 where

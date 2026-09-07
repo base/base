@@ -636,7 +636,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader
         &self,
         hash: B256,
         source: BlockSource,
-    ) -> ProviderResult<Option<SealedOrRecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Option<SealedOrRecoveredBlock>> {
         if matches!(source, BlockSource::Canonical | BlockSource::Any)
             && let Some(block) = self.get_in_memory_or_storage_by_block(
                 hash.into(),
@@ -673,13 +673,13 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader
         )
     }
 
-    fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock>> {
         Ok(self.canonical_in_memory_state.pending_recovered_block())
     }
 
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock<Self::Block>, Vec<Self::Receipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
         Ok(self.canonical_in_memory_state.pending_block_and_receipts())
     }
 
@@ -693,7 +693,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader
         &self,
         id: BlockHashOrNumber,
         transaction_kind: TransactionVariant,
-    ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Option<RecoveredBlock>> {
         self.get_in_memory_or_storage_by_block(
             id,
             |db_provider| db_provider.recovered_block(id, transaction_kind),
@@ -705,7 +705,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader
         &self,
         id: BlockHashOrNumber,
         transaction_kind: TransactionVariant,
-    ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Option<RecoveredBlock>> {
         self.get_in_memory_or_storage_by_block(
             id,
             |db_provider| db_provider.sealed_block_with_senders(id, transaction_kind),
@@ -725,7 +725,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader
     fn block_with_senders_range(
         &self,
         range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Vec<RecoveredBlock>> {
         self.get_in_memory_or_storage_by_block_range_while(
             range,
             |db_provider, range, _| db_provider.block_with_senders_range(range),
@@ -737,7 +737,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader
     fn recovered_block_range(
         &self,
         range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Vec<RecoveredBlock>> {
         self.get_in_memory_or_storage_by_block_range_while(
             range,
             |db_provider, range, _| db_provider.recovered_block_range(range),
@@ -1510,7 +1510,7 @@ mod tests {
 
     use alloy_eips::BlockHashOrNumber;
     use alloy_primitives::B256;
-    use base_common_consensus::{BaseBlock, BaseReceipt};
+    use base_common_consensus::BaseReceipt;
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
@@ -1537,7 +1537,7 @@ mod tests {
         requests_count: Option<Range<u8>>,
         withdrawals_count: Option<Range<u8>>,
         tx_count: impl RangeBounds<u8>,
-    ) -> (Vec<SealedBlock<BaseBlock>>, Vec<SealedBlock<BaseBlock>>) {
+    ) -> (Vec<SealedBlock>, Vec<SealedBlock>) {
         let block_range = (database_blocks + in_memory_blocks - 1) as u64;
 
         let tx_start = match tx_count.start_bound() {

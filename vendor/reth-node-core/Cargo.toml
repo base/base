@@ -53,6 +53,7 @@ reth-net-nat = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
 reth-tracing-otlp = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-tracing = { workspace = true, features = ["default", "std"] }
 reth-primitives-traits = { workspace = true, features = ["rayon"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }

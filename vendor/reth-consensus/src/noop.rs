@@ -21,9 +21,9 @@
 use alloc::sync::Arc;
 
 use alloy_primitives::B256;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 use reth_execution_types::BlockExecutionResult;
-use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SealedHeader};
+use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 
 use crate::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 
@@ -58,18 +58,18 @@ impl HeaderValidator for NoopConsensus {
     }
 }
 
-impl<B: Block> Consensus<B> for NoopConsensus {
+impl Consensus for NoopConsensus {
     /// Validates body against header (no-op implementation).
     fn validate_body_against_header(
         &self,
-        _body: &B::Body,
+        _body: &base_common_consensus::BaseBlockBody,
         _header: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         Ok(())
     }
 
     /// Validates block before execution (no-op implementation).
-    fn validate_block_pre_execution(&self, _block: &SealedBlock<B>) -> Result<(), ConsensusError> {
+    fn validate_block_pre_execution(&self, _block: &SealedBlock) -> Result<(), ConsensusError> {
         Ok(())
     }
 }
@@ -78,7 +78,7 @@ impl FullConsensus for NoopConsensus {
     /// Validates block after execution (no-op implementation).
     fn validate_block_post_execution(
         &self,
-        _block: &RecoveredBlock<BaseBlock>,
+        _block: &RecoveredBlock,
         _result: &BlockExecutionResult<BaseReceipt>,
         _receipt_root_bloom: Option<ReceiptRootBloom>,
         _block_access_list_hash: Option<B256>,

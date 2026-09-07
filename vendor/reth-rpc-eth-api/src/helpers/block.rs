@@ -23,10 +23,7 @@ use crate::{FromEthApiError, FullEthApiTypes, node::RpcNodeCoreExt};
 pub type BlockReceiptsResult<E> = Result<Option<Vec<BaseTransactionReceipt>>, E>;
 /// Result type of the fetched block and its receipts.
 pub type BlockAndReceiptsResult = Result<
-    Option<(
-        Arc<RecoveredBlock<base_common_consensus::BaseBlock>>,
-        Arc<Vec<base_common_consensus::BaseReceipt>>,
-    )>,
+    Option<(Arc<RecoveredBlock>, Arc<Vec<base_common_consensus::BaseReceipt>>)>,
     BaseEthApiError,
 >;
 
@@ -258,12 +255,7 @@ pub trait LoadBlock: LoadPendingBlock + SpawnBlocking + RpcNodeCoreExt {
     fn recovered_block(
         &self,
         block_id: BlockId,
-    ) -> impl Future<
-        Output = Result<
-            Option<Arc<RecoveredBlock<<Self::Provider as BlockReader>::Block>>>,
-            BaseEthApiError,
-        >,
-    > + Send {
+    ) -> impl Future<Output = Result<Option<Arc<RecoveredBlock>>, BaseEthApiError>> + Send {
         async move {
             if block_id.is_pending() {
                 if self.pending_block_kind().is_none() {

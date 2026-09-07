@@ -30,7 +30,7 @@ pub trait BlockDownloader: Send + Sync {
     fn on_action(&mut self, action: DownloadAction);
 
     /// Advance in progress requests if any
-    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<DownloadOutcome<Self::Block>>;
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<DownloadOutcome>;
 }
 
 /// Actions that can be performed by the block downloader.
@@ -44,9 +44,9 @@ pub enum DownloadAction {
 
 /// Outcome of downloaded blocks.
 #[derive(Debug)]
-pub enum DownloadOutcome<B: Block> {
+pub enum DownloadOutcome {
     /// Downloaded blocks.
-    Blocks(Vec<SealedBlock<B>>),
+    Blocks(Vec<SealedBlock>),
     /// New download started.
     NewDownloadStarted {
         /// How many blocks are pending in this download.
@@ -58,7 +58,7 @@ pub enum DownloadOutcome<B: Block> {
 
 /// Basic [`BlockDownloader`].
 #[expect(missing_debug_implementations)]
-pub struct BasicBlockDownloader<Client, B: Block>
+pub struct BasicBlockDownloader<Client>
 where
     Client: BlockClient + 'static,
 {
@@ -70,20 +70,19 @@ where
     inflight_block_range_requests: Vec<FetchFullBlockRangeFuture<Client>>,
     /// Buffered blocks from downloads - this is a min-heap of blocks, using the block number for
     /// ordering. This means the blocks will be popped from the heap with ascending block numbers.
-    set_buffered_blocks: BinaryHeap<Reverse<OrderedSealedBlock<B>>>,
+    set_buffered_blocks: BinaryHeap<Reverse<OrderedSealedBlock>>,
     /// Engine download metrics.
     metrics: BlockDownloaderMetrics,
     /// Pending events to be emitted.
-    pending_events: VecDeque<DownloadOutcome<B>>,
+    pending_events: VecDeque<DownloadOutcome>,
 }
 
-impl<Client, B> BasicBlockDownloader<Client, B>
+impl<Client> BasicBlockDownloader<Client>
 where
-    Client: BlockClient<Block = B> + 'static,
-    B: Block,
+    Client: BlockClient<Block = base_common_consensus::BaseBlock> + 'static,
 {
     /// Create a new instance
-    pub fn new(client: Client, consensus: Arc<dyn Consensus<B>>) -> Self {
+    pub fn new(client: Client, consensus: Arc<dyn Consensus>) -> Self {
         Self {
             full_block_client: FullBlockClient::new(client, consensus),
             inflight_full_block_requests: Vec::new(),
@@ -180,22 +179,21 @@ where
     }
 
     /// Adds a pending event to the FIFO queue.
-    fn push_pending_event(&mut self, pending_event: DownloadOutcome<B>) {
+    fn push_pending_event(&mut self, pending_event: DownloadOutcome) {
         self.pending_events.push_back(pending_event);
     }
 
     /// Removes a pending event from the FIFO queue.
-    fn pop_pending_event(&mut self) -> Option<DownloadOutcome<B>> {
+    fn pop_pending_event(&mut self) -> Option<DownloadOutcome> {
         self.pending_events.pop_front()
     }
 }
 
-impl<Client, B> BlockDownloader for BasicBlockDownloader<Client, B>
+impl<Client> BlockDownloader for BasicBlockDownloader<Client>
 where
-    Client: BlockClient<Block = B>,
-    B: Block,
+    Client: BlockClient<Block = base_common_consensus::BaseBlock>,
 {
-    type Block = B;
+    type Block = base_common_consensus::BaseBlock;
 
     /// Handles incoming download actions.
     fn on_action(&mut self, action: DownloadAction) {
@@ -206,7 +204,7 @@ where
     }
 
     /// Advances the download process.
-    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<DownloadOutcome<B>> {
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<DownloadOutcome> {
         if let Some(pending_event) = self.pop_pending_event() {
             return Poll::Ready(pending_event);
         }
@@ -262,28 +260,28 @@ where
 /// A wrapper type around [`SealedBlock`] that implements the [Ord]
 /// trait by block number.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct OrderedSealedBlock<B: Block>(SealedBlock<B>);
+struct OrderedSealedBlock(SealedBlock);
 
-impl<B: Block> PartialOrd for OrderedSealedBlock<B> {
+impl PartialOrd for OrderedSealedBlock {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<B: Block> Ord for OrderedSealedBlock<B> {
+impl Ord for OrderedSealedBlock {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.number().cmp(&other.0.number())
     }
 }
 
-impl<B: Block> From<SealedBlock<B>> for OrderedSealedBlock<B> {
-    fn from(block: SealedBlock<B>) -> Self {
+impl From<SealedBlock> for OrderedSealedBlock {
+    fn from(block: SealedBlock) -> Self {
         Self(block)
     }
 }
 
-impl<B: Block> From<OrderedSealedBlock<B>> for SealedBlock<B> {
-    fn from(value: OrderedSealedBlock<B>) -> Self {
+impl From<OrderedSealedBlock> for SealedBlock {
+    fn from(value: OrderedSealedBlock) -> Self {
         value.0
     }
 }
@@ -293,12 +291,12 @@ impl<B: Block> From<OrderedSealedBlock<B>> for SealedBlock<B> {
 #[non_exhaustive]
 pub struct NoopBlockDownloader<B>(core::marker::PhantomData<B>);
 
-impl<B: Block> BlockDownloader for NoopBlockDownloader<B> {
-    type Block = B;
+impl BlockDownloader for NoopBlockDownloader<base_common_consensus::BaseBlock> {
+    type Block = base_common_consensus::BaseBlock;
 
     fn on_action(&mut self, _event: DownloadAction) {}
 
-    fn poll(&mut self, _cx: &mut Context<'_>) -> Poll<DownloadOutcome<B>> {
+    fn poll(&mut self, _cx: &mut Context<'_>) -> Poll<DownloadOutcome> {
         Poll::Pending
     }
 }
@@ -319,8 +317,7 @@ mod tests {
     use crate::test_utils::insert_headers_into_client;
 
     struct TestHarness {
-        block_downloader:
-            BasicBlockDownloader<TestFullBlockClient, reth_ethereum_primitives::Block>,
+        block_downloader: BasicBlockDownloader<TestFullBlockClient>,
         client: TestFullBlockClient,
     }
 

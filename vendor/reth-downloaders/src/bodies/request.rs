@@ -15,7 +15,7 @@ use reth_network_p2p::{
     priority::Priority,
 };
 use reth_network_peers::{PeerId, WithPeerId};
-use reth_primitives_traits::{Block, GotExpected, InMemorySize, SealedBlock, SealedHeader};
+use reth_primitives_traits::{GotExpected, InMemorySize, SealedBlock, SealedHeader};
 
 use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};
 
@@ -38,9 +38,10 @@ use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};
 /// All errors regarding the response cause the peer to get penalized, meaning that adversaries
 /// that try to give us bodies that do not match the requested order are going to be penalized
 /// and eventually disconnected.
-pub(crate) struct BodiesRequestFuture<B: Block, C: BodiesClient<Body = B::Body>> {
+pub(crate) struct BodiesRequestFuture<C: BodiesClient<Body = base_common_consensus::BaseBlockBody>>
+{
     client: Arc<C>,
-    consensus: Arc<dyn Consensus<B>>,
+    consensus: Arc<dyn Consensus>,
     metrics: BodyDownloaderMetrics,
     /// Metrics for individual responses. This can be used to observe how the size (in bytes) of
     /// responses change while bodies are being downloaded.
@@ -48,21 +49,20 @@ pub(crate) struct BodiesRequestFuture<B: Block, C: BodiesClient<Body = B::Body>>
     // Headers to download. The collection is shrunk as responses are buffered.
     pending_headers: VecDeque<SealedHeader>,
     /// Internal buffer for all blocks
-    buffer: Vec<BlockResponse<B>>,
+    buffer: Vec<BlockResponse>,
     fut: Option<C::Output>,
     /// Tracks how many bodies we requested in the last request.
     last_request_len: Option<usize>,
 }
 
-impl<B, C> BodiesRequestFuture<B, C>
+impl<C> BodiesRequestFuture<C>
 where
-    B: Block,
-    C: BodiesClient<Body = B::Body> + 'static,
+    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
 {
     /// Returns an empty future. Use [`BodiesRequestFuture::with_headers`] to set the request.
     pub(crate) fn new(
         client: Arc<C>,
-        consensus: Arc<dyn Consensus<B>>,
+        consensus: Arc<dyn Consensus>,
         metrics: BodyDownloaderMetrics,
     ) -> Self {
         Self {
@@ -117,10 +117,10 @@ where
 
     /// Process block response.
     /// Returns an error if the response is invalid.
-    fn on_block_response(&mut self, response: WithPeerId<Vec<B::Body>>) -> DownloadResult<()>
-    where
-        B::Body: InMemorySize,
-    {
+    fn on_block_response(
+        &mut self,
+        response: WithPeerId<Vec<base_common_consensus::BaseBlockBody>>,
+    ) -> DownloadResult<()> {
         let (peer_id, bodies) = response.split();
         let request_len = self.last_request_len.unwrap_or_default();
         let response_len = bodies.len();
@@ -211,12 +211,11 @@ where
     }
 }
 
-impl<B, C> Future for BodiesRequestFuture<B, C>
+impl<C> Future for BodiesRequestFuture<C>
 where
-    B: Block + 'static,
-    C: BodiesClient<Body = B::Body> + 'static,
+    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
 {
-    type Output = DownloadResult<Vec<BlockResponse<B>>>;
+    type Output = DownloadResult<Vec<BlockResponse>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -257,7 +256,6 @@ where
 #[cfg(test)]
 mod tests {
     use reth_consensus::test_utils::TestConsensus;
-    use reth_ethereum_primitives::Block;
     use reth_testing_utils::{generators, generators::random_header_range};
 
     use super::*;
@@ -273,7 +271,7 @@ mod tests {
         let headers = random_header_range(&mut rng, 0..20, B256::ZERO);
 
         let client = Arc::new(TestBodiesClient::default());
-        let fut = BodiesRequestFuture::<Block, _>::new(
+        let fut = BodiesRequestFuture::<_>::new(
             client.clone(),
             Arc::new(TestConsensus::default()),
             BodyDownloaderMetrics::default(),
@@ -297,7 +295,7 @@ mod tests {
         let client = Arc::new(
             TestBodiesClient::default().with_bodies(bodies.clone()).with_max_batch_size(batch_size),
         );
-        let fut = BodiesRequestFuture::<Block, _>::new(
+        let fut = BodiesRequestFuture::<_>::new(
             client.clone(),
             Arc::new(TestConsensus::default()),
             BodyDownloaderMetrics::default(),

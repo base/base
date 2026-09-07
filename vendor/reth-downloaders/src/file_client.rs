@@ -2,7 +2,7 @@ use std::{collections::HashMap, io, ops::RangeInclusive, path::Path, sync::Arc};
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockHashOrNumber;
-use alloy_primitives::{B256, BlockHash, BlockNumber, Sealable};
+use alloy_primitives::{B256, BlockHash, BlockNumber};
 use async_compression::tokio::bufread::GzipDecoder;
 use futures::Future;
 use itertools::{Either, Itertools};
@@ -16,7 +16,7 @@ use reth_network_p2p::{
     priority::Priority,
 };
 use reth_network_peers::PeerId;
-use reth_primitives_traits::{Block, BlockBody, FullBlock, SealedBlock, SealedHeader};
+use reth_primitives_traits::{SealedBlock, SealedHeader};
 use thiserror::Error;
 use tokio::{
     fs::File,
@@ -46,7 +46,7 @@ pub const DEFAULT_BYTE_LEN_CHUNK_CHAIN_FILE: u64 = 1_000_000_000;
 ///
 /// This reads the entire file into memory, so it is not suitable for large files.
 #[derive(Debug, Clone)]
-pub struct FileClient<B: Block> {
+pub struct FileClient {
     /// The buffered headers retrieved when fetching new bodies.
     headers: HashMap<BlockNumber, alloy_consensus::Header>,
 
@@ -54,7 +54,7 @@ pub struct FileClient<B: Block> {
     hash_to_number: HashMap<BlockHash, BlockNumber>,
 
     /// The buffered bodies retrieved when fetching new headers.
-    bodies: HashMap<BlockHash, B::Body>,
+    bodies: HashMap<BlockHash, base_common_consensus::BaseBlockBody>,
 }
 
 /// An error that can occur when constructing and using a [`FileClient`].
@@ -83,9 +83,9 @@ impl From<&'static str> for FileClientError {
     }
 }
 
-impl<B: FullBlock> FileClient<B> {
+impl FileClient {
     /// Create a new file client from a slice of sealed blocks.
-    pub fn from_blocks(blocks: impl IntoIterator<Item = SealedBlock<B>>) -> Self {
+    pub fn from_blocks(blocks: impl IntoIterator<Item = SealedBlock>) -> Self {
         let blocks: Vec<_> = blocks.into_iter().collect();
         let capacity = blocks.len();
 
@@ -109,7 +109,7 @@ impl<B: FullBlock> FileClient<B> {
     /// Create a new file client from a file path.
     pub async fn new<P: AsRef<Path>>(
         path: P,
-        consensus: Arc<dyn Consensus<B>>,
+        consensus: Arc<dyn Consensus>,
     ) -> Result<Self, FileClientError> {
         let file = File::open(path).await?;
         Self::from_file(file, consensus).await
@@ -118,7 +118,7 @@ impl<B: FullBlock> FileClient<B> {
     /// Initialize the [`FileClient`] with a file directly.
     pub(crate) async fn from_file(
         mut file: File,
-        consensus: Arc<dyn Consensus<B>>,
+        consensus: Arc<dyn Consensus>,
     ) -> Result<Self, FileClientError> {
         // get file len from metadata before reading
         let metadata = file.metadata().await?;
@@ -170,7 +170,10 @@ impl<B: FullBlock> FileClient<B> {
     }
 
     /// Use the provided bodies as the file client's block body buffer.
-    pub fn with_bodies(mut self, bodies: HashMap<BlockHash, B::Body>) -> Self {
+    pub fn with_bodies(
+        mut self,
+        bodies: HashMap<BlockHash, base_common_consensus::BaseBlockBody>,
+    ) -> Self {
         self.bodies = bodies;
         self
     }
@@ -202,7 +205,9 @@ impl<B: FullBlock> FileClient<B> {
     /// Returns a mutable iterator over bodies in the client.
     ///
     /// Panics, if file client headers and bodies are not mapping 1-1.
-    pub fn bodies_iter_mut(&mut self) -> impl Iterator<Item = (u64, &mut B::Body)> {
+    pub fn bodies_iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (u64, &mut base_common_consensus::BaseBlockBody)> {
         let bodies = &mut self.bodies;
         let numbers = &self.hash_to_number;
         bodies.iter_mut().map(|(hash, body)| (numbers[hash], body))
@@ -210,19 +215,19 @@ impl<B: FullBlock> FileClient<B> {
 
     /// Returns the current number of transactions in the client.
     pub fn total_transactions(&self) -> usize {
-        self.bodies.iter().fold(0, |acc, (_, body)| acc + body.transactions().len())
+        self.bodies.iter().fold(0, |acc, (_, body)| acc + body.transactions.len())
     }
 }
 
-struct FileClientBuilder<B: Block> {
-    pub consensus: Arc<dyn Consensus<B>>,
+struct FileClientBuilder {
+    pub consensus: Arc<dyn Consensus>,
     pub parent_header: Option<SealedHeader>,
     pub skip_invalid_blocks: bool,
 }
 
-impl<B: FullBlock> FromReader for FileClientBuilder<B> {
+impl FromReader for FileClientBuilder {
     type Error = FileClientError;
-    type Output = FileClient<B>;
+    type Output = FileClient;
 
     /// Initialize the [`FileClient`] from bytes that have been read from file.
     fn build<R>(
@@ -238,8 +243,11 @@ impl<B: FullBlock> FromReader for FileClientBuilder<B> {
         let mut bodies = HashMap::default();
 
         // use with_capacity to make sure the internal buffer contains the entire chunk
-        let mut stream =
-            FramedRead::with_capacity(reader, BlockFileCodec::<B>::default(), num_bytes as usize);
+        let mut stream = FramedRead::with_capacity(
+            reader,
+            BlockFileCodec::<base_common_consensus::BaseBlock>::default(),
+            num_bytes as usize,
+        );
 
         trace!(target: "downloaders::file",
             target_num_bytes=num_bytes,
@@ -335,7 +343,7 @@ impl<B: FullBlock> FromReader for FileClientBuilder<B> {
     }
 }
 
-impl<B: FullBlock> HeadersClient for FileClient<B> {
+impl HeadersClient for FileClient {
     type Output = HeadersFut;
 
     fn get_headers_with_priority(
@@ -385,9 +393,9 @@ impl<B: FullBlock> HeadersClient for FileClient<B> {
     }
 }
 
-impl<B: FullBlock> BodiesClient for FileClient<B> {
-    type Body = B::Body;
-    type Output = BodiesFut<B::Body>;
+impl BodiesClient for FileClient {
+    type Body = base_common_consensus::BaseBlockBody;
+    type Output = BodiesFut<base_common_consensus::BaseBlockBody>;
 
     fn get_block_bodies_with_priority_and_range_hint(
         &self,
@@ -411,7 +419,7 @@ impl<B: FullBlock> BodiesClient for FileClient<B> {
     }
 }
 
-impl<B: FullBlock> DownloadClient for FileClient<B> {
+impl DownloadClient for FileClient {
     fn report_bad_message(&self, _peer_id: PeerId) {
         trace!("Reported a bad message on a file client, the file may be corrupted or invalid");
         // noop
@@ -423,8 +431,8 @@ impl<B: FullBlock> DownloadClient for FileClient<B> {
     }
 }
 
-impl<B: FullBlock> BlockClient for FileClient<B> {
-    type Block = B;
+impl BlockClient for FileClient {
+    type Block = base_common_consensus::BaseBlock;
 }
 
 /// File reader type for handling different compression formats.
@@ -602,21 +610,21 @@ impl ChunkedFileReader {
     ///
     /// For gzipped files, this method accumulates data until at least `chunk_byte_len` bytes
     /// are available before processing. For plain files, it uses the original chunking logic.
-    pub async fn next_chunk<B: FullBlock>(
+    pub async fn next_chunk(
         &mut self,
-        consensus: Arc<dyn Consensus<B>>,
+        consensus: Arc<dyn Consensus>,
         parent_header: Option<SealedHeader>,
-    ) -> Result<Option<FileClient<B>>, FileClientError> {
+    ) -> Result<Option<FileClient>, FileClientError> {
         self.next_chunk_with_invalid_block_handling(consensus, parent_header, false).await
     }
 
     /// Read next chunk from file, optionally skipping blocks that fail consensus pre-checks.
-    pub async fn next_chunk_with_invalid_block_handling<B: FullBlock>(
+    pub async fn next_chunk_with_invalid_block_handling(
         &mut self,
-        consensus: Arc<dyn Consensus<B>>,
+        consensus: Arc<dyn Consensus>,
         parent_header: Option<SealedHeader>,
         skip_invalid_blocks: bool,
-    ) -> Result<Option<FileClient<B>>, FileClientError> {
+    ) -> Result<Option<FileClient>, FileClientError> {
         let Some(chunk_len) = self.read_next_chunk().await? else { return Ok(None) };
 
         // make new file client from chunk
@@ -704,7 +712,6 @@ mod tests {
     use futures_util::stream::StreamExt;
     use rand::Rng;
     use reth_consensus::{ConsensusError, noop::NoopConsensus, test_utils::TestConsensus};
-    use reth_ethereum_primitives::Block;
     use reth_network_p2p::{
         bodies::downloader::BodyDownloader,
         headers::downloader::{HeaderDownloader, SyncTarget},
@@ -736,13 +743,13 @@ mod tests {
         // create an empty file
         let file = tempfile::tempfile().unwrap();
 
-        let client: Arc<FileClient<Block>> = Arc::new(
+        let client: Arc<FileClient> = Arc::new(
             FileClient::from_file(file.into(), NoopConsensus::arc())
                 .await
                 .unwrap()
                 .with_bodies(bodies.clone().into_iter().collect()),
         );
-        let mut downloader = BodiesDownloaderBuilder::default().build::<Block, _, _>(
+        let mut downloader = BodiesDownloaderBuilder::default().build::<_, _>(
             client.clone(),
             Arc::new(TestConsensus::default()),
             factory,
@@ -765,7 +772,7 @@ mod tests {
         let p0 = child_header(&p1);
 
         let file = tempfile::tempfile().unwrap();
-        let client: Arc<FileClient<Block>> = Arc::new(
+        let client: Arc<FileClient> = Arc::new(
             FileClient::from_file(file.into(), NoopConsensus::arc()).await.unwrap().with_headers(
                 HashMap::from([
                     (0u64, p0.clone_header()),
@@ -796,7 +803,7 @@ mod tests {
         // Generate some random blocks
         let (file, headers, _) = generate_bodies_file(0..=19).await;
         // now try to read them back
-        let client: Arc<FileClient<Block>> =
+        let client: Arc<FileClient> =
             Arc::new(FileClient::from_file(file, NoopConsensus::arc()).await.unwrap());
 
         // construct headers downloader and use first header
@@ -822,13 +829,13 @@ mod tests {
         let (file, headers, mut bodies) = generate_bodies_file(0..=19).await;
 
         // now try to read them back
-        let client: Arc<FileClient<Block>> =
+        let client: Arc<FileClient> =
             Arc::new(FileClient::from_file(file, NoopConsensus::arc()).await.unwrap());
 
         // insert headers in db for the bodies downloader
         insert_headers(&factory, &headers);
 
-        let mut downloader = BodiesDownloaderBuilder::default().build::<Block, _, _>(
+        let mut downloader = BodiesDownloaderBuilder::default().build::<_, _>(
             client.clone(),
             Arc::new(TestConsensus::default()),
             factory,
@@ -849,7 +856,7 @@ mod tests {
         let consensus = Arc::new(TestConsensus::default());
         consensus.set_fail_validation(true);
 
-        let err = reader.next_chunk::<Block>(consensus, None).await.unwrap_err();
+        let err = reader.next_chunk(consensus, None).await.unwrap_err();
 
         assert_matches!(err, FileClientError::Consensus(ConsensusError::BaseFeeMissing));
     }
@@ -863,7 +870,7 @@ mod tests {
         consensus.set_fail_validation(true);
 
         let client = reader
-            .next_chunk_with_invalid_block_handling::<Block>(consensus, None, true)
+            .next_chunk_with_invalid_block_handling(consensus, None, true)
             .await
             .unwrap()
             .unwrap();
@@ -883,7 +890,7 @@ mod tests {
         let mut reader =
             ChunkedFileReader::from_file(file, block.len() as u64, false).await.unwrap();
 
-        let err = reader.next_chunk::<Block>(NoopConsensus::arc(), None).await.unwrap_err();
+        let err = reader.next_chunk(NoopConsensus::arc(), None).await.unwrap_err();
 
         assert_matches!(
             err,
@@ -912,9 +919,7 @@ mod tests {
         let mut local_header = headers.first().unwrap().clone();
 
         // test
-        while let Some(client) =
-            reader.next_chunk::<Block>(NoopConsensus::arc(), None).await.unwrap()
-        {
+        while let Some(client) = reader.next_chunk(NoopConsensus::arc(), None).await.unwrap() {
             let sync_target = client.tip_header().unwrap();
 
             let sync_target_hash = sync_target.hash();
@@ -983,9 +988,7 @@ mod tests {
         let mut local_header = headers.first().unwrap().clone();
 
         // test
-        while let Some(client) =
-            reader.next_chunk::<Block>(NoopConsensus::arc(), None).await.unwrap()
-        {
+        while let Some(client) = reader.next_chunk(NoopConsensus::arc(), None).await.unwrap() {
             if client.headers_len() == 0 {
                 continue;
             }

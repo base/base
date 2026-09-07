@@ -144,7 +144,7 @@ pub trait EngineRequestHandler: Send + Sync {
     type Block: Block;
 
     /// Informs the handler about an event from the [`EngineHandler`].
-    fn on_event(&mut self, event: FromEngine<Self::Request, Self::Block>);
+    fn on_event(&mut self, event: FromEngine<Self::Request>);
 
     /// Advances the handler.
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<RequestHandlerEvent<Self::Event>>;
@@ -172,7 +172,7 @@ pub trait EngineRequestHandler: Send + Sync {
 #[derive(Debug)]
 pub struct EngineApiRequestHandler<Request> {
     /// channel to send messages to the tree to execute the payload.
-    to_tree: Sender<FromEngine<Request, BaseBlock>>,
+    to_tree: Sender<FromEngine<Request>>,
     /// channel to receive messages from the tree.
     from_tree: UnboundedReceiver<EngineApiEvent>,
 }
@@ -180,7 +180,7 @@ pub struct EngineApiRequestHandler<Request> {
 impl<Request> EngineApiRequestHandler<Request> {
     /// Creates a new `EngineApiRequestHandler`.
     pub const fn new(
-        to_tree: Sender<FromEngine<Request, BaseBlock>>,
+        to_tree: Sender<FromEngine<Request>>,
         from_tree: UnboundedReceiver<EngineApiEvent>,
     ) -> Self {
         Self { to_tree, from_tree }
@@ -195,7 +195,7 @@ where
     type Request = Request;
     type Block = BaseBlock;
 
-    fn on_event(&mut self, event: FromEngine<Self::Request, Self::Block>) {
+    fn on_event(&mut self, event: FromEngine<Self::Request>) {
         // delegate to the tree
         let _ = self.to_tree.send(event);
     }
@@ -266,7 +266,7 @@ impl From<BeaconEngineMessage> for EngineApiRequest {
     }
 }
 
-impl From<EngineApiRequest> for FromEngine<EngineApiRequest, BaseBlock> {
+impl From<EngineApiRequest> for FromEngine<EngineApiRequest> {
     fn from(req: EngineApiRequest) -> Self {
         Self::Request(req)
     }
@@ -299,16 +299,16 @@ impl From<ConsensusEngineEvent> for EngineApiEvent {
 
 /// Events received from the engine.
 #[derive(Debug)]
-pub enum FromEngine<Req, B: Block> {
+pub enum FromEngine<Req> {
     /// Event from the top level orchestrator.
     Event(FromOrchestrator),
     /// Request from the engine.
     Request(Req),
     /// Downloaded blocks from the network.
-    DownloadedBlocks(Vec<SealedBlock<B>>),
+    DownloadedBlocks(Vec<SealedBlock>),
 }
 
-impl<Req: Display, B: Block> Display for FromEngine<Req, B> {
+impl<Req: Display> Display for FromEngine<Req> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Event(ev) => write!(f, "Event({ev:?})"),
@@ -320,7 +320,7 @@ impl<Req: Display, B: Block> Display for FromEngine<Req, B> {
     }
 }
 
-impl<Req, B: Block> From<FromOrchestrator> for FromEngine<Req, B> {
+impl<Req> From<FromOrchestrator> for FromEngine<Req> {
     fn from(event: FromOrchestrator) -> Self {
         Self::Event(event)
     }

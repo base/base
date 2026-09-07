@@ -353,10 +353,7 @@ where
 
     /// Converts a [`BlockOrPayload`] to a recovered block.
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
-    pub fn convert_to_block(
-        &self,
-        input: BlockOrPayload,
-    ) -> Result<SealedBlock<BaseBlock>, NewPayloadError>
+    pub fn convert_to_block(&self, input: BlockOrPayload) -> Result<SealedBlock, NewPayloadError>
     where
         V: PayloadValidator<Block = BaseBlock>,
     {
@@ -876,7 +873,7 @@ where
         &self,
         input: &BlockOrPayload,
         parent: SealedHeader,
-    ) -> LazyHandle<Result<SealedBlock<BaseBlock>, InsertPayloadError<BaseBlock>>>
+    ) -> LazyHandle<Result<SealedBlock, InsertPayloadError>>
     where
         V: PayloadValidator<Block = BaseBlock> + Clone,
     {
@@ -1263,7 +1260,7 @@ where
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
     fn validate_post_execution(
         &self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         parent_block: &SealedHeader,
         output: &BlockExecutionOutput<BaseReceipt>,
         ctx: &mut TreeCtx<'_>,
@@ -1374,7 +1371,7 @@ where
     fn on_invalid_block(
         &self,
         parent_header: &SealedHeader,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         output: &BlockExecutionOutput<BaseReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,
         state: &mut EngineApiTreeState,
@@ -1451,7 +1448,7 @@ where
     /// task.
     fn spawn_deferred_trie_task(
         &self,
-        block: Arc<RecoveredBlock<BaseBlock>>,
+        block: Arc<RecoveredBlock>,
         execution_outcome: Arc<BlockExecutionOutput<BaseReceipt>>,
         hashed_state: LazyHashedPostState,
         trie_output: Arc<TrieUpdates>,
@@ -1502,7 +1499,7 @@ where
 
     fn calculate_timing_stats(
         &self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         provider_stats: Arc<StateProviderStats>,
         cache_stats: Option<Arc<CacheStats>>,
         output: &BlockExecutionOutput<BaseReceipt>,
@@ -1684,7 +1681,7 @@ pub trait EngineValidator: Send + Sync + 'static {
     fn convert_payload_to_block(
         &self,
         payload: base_common_rpc_types_engine::ExecutionData,
-    ) -> Result<SealedBlock<BaseBlock>, NewPayloadError>;
+    ) -> Result<SealedBlock, NewPayloadError>;
 
     /// Validates a payload received from engine API.
     fn validate_payload(
@@ -1694,11 +1691,7 @@ pub trait EngineValidator: Send + Sync + 'static {
     ) -> ValidationOutcome;
 
     /// Validates a block downloaded from the network.
-    fn validate_block(
-        &mut self,
-        block: SealedBlock<BaseBlock>,
-        ctx: TreeCtx<'_>,
-    ) -> ValidationOutcome;
+    fn validate_block(&mut self, block: SealedBlock, ctx: TreeCtx<'_>) -> ValidationOutcome;
 
     /// Hook called after an executed block is inserted directly into the tree.
     ///
@@ -1759,7 +1752,7 @@ where
     fn convert_payload_to_block(
         &self,
         payload: base_common_rpc_types_engine::ExecutionData,
-    ) -> Result<SealedBlock<BaseBlock>, NewPayloadError> {
+    ) -> Result<SealedBlock, NewPayloadError> {
         let block = self.validator.convert_payload_to_block(payload)?;
         Ok(block)
     }
@@ -1772,11 +1765,7 @@ where
         self.validate_block_with_state(BlockOrPayload::Payload(payload), ctx)
     }
 
-    fn validate_block(
-        &mut self,
-        block: SealedBlock<BaseBlock>,
-        ctx: TreeCtx<'_>,
-    ) -> ValidationOutcome {
+    fn validate_block(&mut self, block: SealedBlock, ctx: TreeCtx<'_>) -> ValidationOutcome {
         self.validate_block_with_state(BlockOrPayload::Block(block), ctx)
     }
 
@@ -1908,7 +1897,7 @@ pub enum BlockOrPayload {
     /// Payload.
     Payload(base_common_rpc_types_engine::ExecutionData),
     /// Block.
-    Block(SealedBlock<BaseBlock>),
+    Block(SealedBlock),
 }
 
 impl BlockOrPayload {

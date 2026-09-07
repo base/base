@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, fmt::Debug, fs::File, io::Write, path::PathBuf}
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;
 use reth_evm::{BaseEvmConfig, execute::Executor};
@@ -214,7 +214,7 @@ where
     fn re_execute_block(
         &self,
         parent_header: &SealedHeader,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
     ) -> eyre::Result<(ExecutionWitness, BundleState)> {
         let mut executor = self.evm_config.batch_executor(StateProviderDatabase::new(
             self.provider.state_by_block_hash(parent_header.hash())?,
@@ -302,7 +302,7 @@ where
     fn validate_state_root_and_trie(
         &self,
         parent_header: &SealedHeader,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         bundle_state: &BundleState,
         trie_updates: Option<(&TrieUpdates, B256)>,
         block_prefix: &str,
@@ -348,7 +348,7 @@ where
     fn on_invalid_block(
         &self,
         parent_header: &SealedHeader,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         output: &BlockExecutionOutput<BaseReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,
     ) -> eyre::Result<()> {
@@ -401,7 +401,7 @@ where
     fn on_invalid_block(
         &self,
         parent_header: &SealedHeader,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         output: &BlockExecutionOutput<BaseReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,
     ) {

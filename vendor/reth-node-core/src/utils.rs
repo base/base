@@ -11,7 +11,7 @@ use reth_consensus::Consensus;
 use reth_network_p2p::{
     bodies::client::BodiesClient, headers::client::HeadersClient, priority::Priority,
 };
-use reth_primitives_traits::{Block, SealedBlock, SealedHeader};
+use reth_primitives_traits::{SealedBlock, SealedHeader};
 use tracing::{debug, info};
 
 /// Parses a user-specified path into a [`PathBuf`].
@@ -65,14 +65,13 @@ where
 }
 
 /// Get a body from the network based on header
-pub async fn get_single_body<B, Client>(
+pub async fn get_single_body<Client>(
     client: Client,
     header: SealedHeader,
-    consensus: impl Consensus<B>,
-) -> Result<SealedBlock<B>>
+    consensus: impl Consensus,
+) -> Result<SealedBlock>
 where
-    B: Block,
-    Client: BodiesClient<Body = B::Body>,
+    Client: BodiesClient<Body = base_common_consensus::BaseBlockBody>,
 {
     let (peer_id, response) = client.get_block_body(header.hash()).await?.split();
 

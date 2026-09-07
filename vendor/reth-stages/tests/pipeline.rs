@@ -62,7 +62,7 @@ const INCREMENT_SELECTOR: [u8; 4] = [0xd0, 0x9d, 0xe0, 0x8a];
 const CONTRACT_ADDRESS: Address = Address::new([0x42; 20]);
 
 /// Creates a `FileClient` populated with the given blocks.
-fn create_file_client_from_blocks(blocks: Vec<SealedBlock<Block>>) -> Arc<FileClient<Block>> {
+fn create_file_client_from_blocks(blocks: Vec<SealedBlock>) -> Arc<FileClient> {
     Arc::new(FileClient::from_blocks(blocks))
 }
 
@@ -100,7 +100,7 @@ fn assert_changesets_queryable(
 
 /// Builds downloaders from a `FileClient`.
 fn build_downloaders_from_file_client(
-    file_client: Arc<FileClient<Block>>,
+    file_client: Arc<FileClient>,
     genesis: reth_primitives_traits::SealedHeader,
     stages_config: StageConfig,
     consensus: Arc<NoopConsensus>,
@@ -230,7 +230,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
         BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
 
     // Build blocks by actually executing transactions to get correct state roots
-    let mut blocks: Vec<SealedBlock<Block>> = Vec::new();
+    let mut blocks: Vec<SealedBlock> = Vec::new();
     let mut parent_hash = genesis.hash();
 
     let gas_price = INITIAL_BASE_FEE as u128;
@@ -341,7 +341,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
             ..Default::default()
         };
 
-        let block: SealedBlock<Block> = SealedBlock::seal_parts(
+        let block: SealedBlock = SealedBlock::seal_parts(
             header.clone(),
             BlockBody { transactions, ommers: Vec::new(), withdrawals: None },
         );

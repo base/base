@@ -23,7 +23,6 @@ reth-tasks = { workspace = true }
 reth-config = { workspace = true }
 futures-util = { workspace = true }
 reth-network = { workspace = true }
-reth-node-api = { workspace = true }
 reth-chainspec = { workspace = true }
 reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
@@ -38,7 +37,5 @@ tempfile = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-evm = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-consensus = { workspace = true, features = ["test-utils"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 reth-node-builder = { workspace = true, features = ["default", "test-utils"] }

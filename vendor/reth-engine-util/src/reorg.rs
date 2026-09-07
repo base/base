@@ -224,7 +224,7 @@ fn create_reorg_head<Provider, Validator>(
     payload_validator: &Validator,
     mut depth: usize,
     next_payload: base_common_rpc_types_engine::ExecutionData,
-) -> RethResult<(SealedBlock<BaseBlock>, Option<Bytes>)>
+) -> RethResult<(SealedBlock, Option<Bytes>)>
 where
     Provider: BlockReader<Block = BaseBlock> + StateProviderFactory + ChainSpecProvider,
     Validator: EngineValidator,

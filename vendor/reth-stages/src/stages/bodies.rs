@@ -59,7 +59,7 @@ pub struct BodyStage<D: BodyDownloader> {
     /// The body downloader.
     downloader: D,
     /// Block response buffer.
-    buffer: Option<Vec<BlockResponse<D::Block>>>,
+    buffer: Option<Vec<BlockResponse>>,
 }
 
 impl<D: BodyDownloader> BodyStage<D> {
@@ -516,7 +516,7 @@ mod tests {
         pub(crate) const GENESIS_HASH: B256 = B256::ZERO;
 
         /// A helper to create a collection of block bodies keyed by their hash.
-        pub(crate) fn body_by_hash(block: &SealedBlock<Block>) -> (B256, BlockBody) {
+        pub(crate) fn body_by_hash(block: &SealedBlock) -> (B256, BlockBody) {
             (block.hash(), block.body().clone())
         }
 
@@ -560,7 +560,7 @@ mod tests {
         }
 
         impl ExecuteStageTestRunner for BodyTestRunner {
-            type Seed = Vec<SealedBlock<Block>>;
+            type Seed = Vec<SealedBlock>;
 
             fn seed_execution(&mut self, input: ExecInput) -> Result<Self::Seed, TestRunnerError> {
                 let start = input.checkpoint().block_number;
@@ -783,7 +783,7 @@ mod tests {
         }
 
         impl Stream for TestBodyDownloader {
-            type Item = BodyDownloaderResult<Block>;
+            type Item = BodyDownloaderResult;
             fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
                 let this = self.get_mut();
 

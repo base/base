@@ -3,10 +3,11 @@
 use alloc::vec::Vec;
 use core::ops::Deref;
 
-use alloy_consensus::BlockHeader as _;
+use alloy_consensus::{BlockHeader as _, Header};
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
-use alloy_primitives::{Address, B256, BlockHash, Sealable, Sealed};
+use alloy_primitives::{Address, B256, BlockHash, Sealed};
 use alloy_rlp::{Decodable, Encodable};
+use base_common_consensus::{BaseBlock, BaseBlockBody};
 use bytes::BufMut;
 
 use crate::{
@@ -21,19 +22,19 @@ use crate::{
 /// [`SealedHeader`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SealedBlock<B: Block> {
+pub struct SealedBlock {
     /// Sealed Header.
     header: SealedHeader,
     /// the block's body.
-    body: B::Body,
+    body: BaseBlockBody,
 }
 
-impl<B: Block> SealedBlock<B> {
+impl SealedBlock {
     /// Hashes the header and creates a sealed block.
     ///
     /// This calculates the header hash. To create a [`SealedBlock`] without calculating the hash
     /// upfront see [`SealedBlock::new_unhashed`]
-    pub fn seal_slow(block: B) -> Self {
+    pub fn seal_slow(block: BaseBlock) -> Self {
         let hash = block.header().hash_slow();
         Self::new_unchecked(block, hash)
     }
@@ -42,14 +43,14 @@ impl<B: Block> SealedBlock<B> {
     ///
     /// Caution: This assumes the given hash is the block's hash.
     #[inline]
-    pub fn new_unchecked(block: B, hash: BlockHash) -> Self {
+    pub fn new_unchecked(block: BaseBlock, hash: BlockHash) -> Self {
         let (header, body) = block.split();
         Self { header: SealedHeader::new(header, hash), body }
     }
 
     /// Creates a `SealedBlock` from the block without the available hash
     #[inline]
-    pub fn new_unhashed(block: B) -> Self {
+    pub fn new_unhashed(block: BaseBlock) -> Self {
         let (header, body) = block.split();
         Self { header: SealedHeader::new_unhashed(header), body }
     }
@@ -59,36 +60,32 @@ impl<B: Block> SealedBlock<B> {
     ///
     /// This calculates the header hash. To create a [`SealedBlock`] from its parts without
     /// calculating the hash upfront see [`SealedBlock::from_parts_unhashed`]
-    pub fn seal_parts(header: alloy_consensus::Header, body: B::Body) -> Self {
-        Self::seal_slow(B::new(header, body))
+    pub fn seal_parts(header: Header, body: BaseBlockBody) -> Self {
+        Self::seal_slow(BaseBlock::new(header, body))
     }
 
     /// Creates the [`SealedBlock`] from the block's parts without calculating the hash upfront.
     #[inline]
-    pub fn from_parts_unhashed(header: alloy_consensus::Header, body: B::Body) -> Self {
-        Self::new_unhashed(B::new(header, body))
+    pub fn from_parts_unhashed(header: Header, body: BaseBlockBody) -> Self {
+        Self::new_unhashed(BaseBlock::new(header, body))
     }
 
     /// Creates the [`SealedBlock`] from the block's parts.
     #[inline]
-    pub fn from_parts_unchecked(
-        header: alloy_consensus::Header,
-        body: B::Body,
-        hash: BlockHash,
-    ) -> Self {
-        Self::new_unchecked(B::new(header, body), hash)
+    pub fn from_parts_unchecked(header: Header, body: BaseBlockBody, hash: BlockHash) -> Self {
+        Self::new_unchecked(BaseBlock::new(header, body), hash)
     }
 
     /// Creates the [`SealedBlock`] from the [`SealedHeader`] and the body.
     #[inline]
-    pub fn from_sealed_parts(header: SealedHeader, body: B::Body) -> Self {
+    pub fn from_sealed_parts(header: SealedHeader, body: BaseBlockBody) -> Self {
         let (header, hash) = header.split();
         Self::from_parts_unchecked(header, body, hash)
     }
 
     /// Decodes the block from RLP and seals it.
     pub fn decode_sealed(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        B::decode_sealed(buf)
+        BaseBlock::decode_sealed(buf).map(Into::into)
     }
 
     /// Returns a reference to the block hash.
@@ -106,34 +103,34 @@ impl<B: Block> SealedBlock<B> {
     /// Consumes the type and returns its components.
     #[doc(alias = "into_components")]
     #[inline]
-    pub fn split(self) -> (B, BlockHash) {
+    pub fn split(self) -> (BaseBlock, BlockHash) {
         let (header, hash) = self.header.split();
-        (B::new(header, self.body), hash)
+        (BaseBlock::new(header, self.body), hash)
     }
 
     /// Consumes the type and returns the block.
     #[inline]
-    pub fn into_block(self) -> B {
+    pub fn into_block(self) -> BaseBlock {
         self.unseal()
     }
 
     /// Consumes the type and returns the block.
     #[inline]
-    pub fn unseal(self) -> B {
+    pub fn unseal(self) -> BaseBlock {
         let header = self.header.unseal();
-        B::new(header, self.body)
+        BaseBlock::new(header, self.body)
     }
 
     /// Clones the wrapped block.
-    pub fn clone_block(&self) -> B {
-        B::new(self.header.clone_header(), self.body.clone())
+    pub fn clone_block(&self) -> BaseBlock {
+        BaseBlock::new(self.header.clone_header(), self.body.clone())
     }
 
     /// Converts this block into a [`RecoveredBlock`] with the given senders
     ///
     /// Note: This method assumes the senders are correct and does not validate them.
     #[inline]
-    pub const fn with_senders(self, senders: Vec<Address>) -> RecoveredBlock<B> {
+    pub const fn with_senders(self, senders: Vec<Address>) -> RecoveredBlock {
         RecoveredBlock::new_sealed(self, senders)
     }
 
@@ -147,7 +144,7 @@ impl<B: Block> SealedBlock<B> {
     pub fn try_with_senders(
         self,
         senders: Vec<Address>,
-    ) -> Result<RecoveredBlock<B>, BlockRecoveryError<Self>> {
+    ) -> Result<RecoveredBlock, BlockRecoveryError<Self>> {
         RecoveredBlock::try_recover_sealed_with_senders(self, senders)
     }
 
@@ -161,7 +158,7 @@ impl<B: Block> SealedBlock<B> {
     pub fn try_with_senders_unchecked(
         self,
         senders: Vec<Address>,
-    ) -> Result<RecoveredBlock<B>, BlockRecoveryError<Self>> {
+    ) -> Result<RecoveredBlock, BlockRecoveryError<Self>> {
         RecoveredBlock::try_recover_sealed_with_senders_unchecked(self, senders)
     }
 
@@ -169,7 +166,7 @@ impl<B: Block> SealedBlock<B> {
     /// [`SignedTransaction::recover_signer`](crate::transaction::signed::SignedTransaction).
     ///
     /// Returns an error if any of the transactions fail to recover the sender.
-    pub fn try_recover(self) -> Result<RecoveredBlock<B>, BlockRecoveryError<Self>> {
+    pub fn try_recover(self) -> Result<RecoveredBlock, BlockRecoveryError<Self>> {
         RecoveredBlock::try_recover_sealed(self)
     }
 
@@ -177,25 +174,25 @@ impl<B: Block> SealedBlock<B> {
     /// [`SignedTransaction::recover_signer_unchecked`](crate::transaction::signed::SignedTransaction).
     ///
     /// Returns an error if any of the transactions fail to recover the sender.
-    pub fn try_recover_unchecked(self) -> Result<RecoveredBlock<B>, BlockRecoveryError<Self>> {
+    pub fn try_recover_unchecked(self) -> Result<RecoveredBlock, BlockRecoveryError<Self>> {
         RecoveredBlock::try_recover_sealed_unchecked(self)
     }
 
     /// Returns reference to block header.
     #[inline]
-    pub const fn header(&self) -> &alloy_consensus::Header {
+    pub const fn header(&self) -> &Header {
         self.header.header()
     }
 
     /// Returns reference to block body.
     #[inline]
-    pub const fn body(&self) -> &B::Body {
+    pub const fn body(&self) -> &BaseBlockBody {
         &self.body
     }
 
     /// Returns the length of the block.
     pub fn rlp_length(&self) -> usize {
-        B::rlp_length(self.header(), self.body())
+        BaseBlock::rlp_length(self.header(), self.body())
     }
 
     /// Recovers all senders from the transactions in the block.
@@ -236,25 +233,25 @@ impl<B: Block> SealedBlock<B> {
 
     /// Consumes the block and returns the header.
     #[inline]
-    pub fn into_header(self) -> alloy_consensus::Header {
+    pub fn into_header(self) -> Header {
         self.header.unseal()
     }
 
     /// Consumes the block and returns the body.
     #[inline]
-    pub fn into_body(self) -> B::Body {
+    pub fn into_body(self) -> BaseBlockBody {
         self.body
     }
 
     /// Splits the block into body and header into separate components
     #[inline]
-    pub fn split_header_body(self) -> (alloy_consensus::Header, B::Body) {
+    pub fn split_header_body(self) -> (Header, BaseBlockBody) {
         let header = self.header.unseal();
         (header, self.body)
     }
 
     /// Splits the block into body and header into separate components.
-    pub fn split_sealed_header_body(self) -> (SealedHeader, B::Body) {
+    pub fn split_sealed_header_body(self) -> (SealedHeader, BaseBlockBody) {
         (self.header, self.body)
     }
 
@@ -296,35 +293,29 @@ impl<B: Block> SealedBlock<B> {
     }
 }
 
-impl<B> From<B> for SealedBlock<B>
-where
-    B: Block,
-{
+impl From<BaseBlock> for SealedBlock {
     #[inline]
-    fn from(block: B) -> Self {
+    fn from(block: BaseBlock) -> Self {
         Self::seal_slow(block)
     }
 }
 
-impl<B> Default for SealedBlock<B>
-where
-    B: Block + Default,
-{
+impl Default for SealedBlock {
     #[inline]
     fn default() -> Self {
         Self::seal_slow(Default::default())
     }
 }
 
-impl<B: Block> InMemorySize for SealedBlock<B> {
+impl InMemorySize for SealedBlock {
     #[inline]
     fn size(&self) -> usize {
         self.body.size() + self.header.size()
     }
 }
 
-impl<B: Block> Deref for SealedBlock<B> {
-    type Target = alloy_consensus::Header;
+impl Deref for SealedBlock {
+    type Target = Header;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -332,9 +323,9 @@ impl<B: Block> Deref for SealedBlock<B> {
     }
 }
 
-impl<B: Block> Encodable for SealedBlock<B> {
+impl Encodable for SealedBlock {
     fn encode(&self, out: &mut dyn BufMut) {
-        B::rlp_encode(self.header(), self.body(), out);
+        BaseBlock::rlp_encode(self.header(), self.body(), out);
     }
 
     fn length(&self) -> usize {
@@ -342,44 +333,41 @@ impl<B: Block> Encodable for SealedBlock<B> {
     }
 }
 
-impl<B: Block> Decodable for SealedBlock<B> {
+impl Decodable for SealedBlock {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        B::decode_sealed(buf)
+        BaseBlock::decode_sealed(buf).map(Into::into)
     }
 }
 
-impl<B: Block> From<SealedBlock<B>> for Sealed<B> {
+impl From<SealedBlock> for Sealed<BaseBlock> {
     #[inline]
-    fn from(value: SealedBlock<B>) -> Self {
+    fn from(value: SealedBlock) -> Self {
         let (block, hash) = value.split();
         Self::new_unchecked(block, hash)
     }
 }
 
-impl<B: Block> From<Sealed<B>> for SealedBlock<B> {
+impl From<Sealed<BaseBlock>> for SealedBlock {
     #[inline]
-    fn from(value: Sealed<B>) -> Self {
+    fn from(value: Sealed<BaseBlock>) -> Self {
         let (block, hash) = value.into_parts();
         Self::new_unchecked(block, hash)
     }
 }
 
 #[cfg(any(test, feature = "arbitrary"))]
-impl<'a, B> arbitrary::Arbitrary<'a> for SealedBlock<B>
-where
-    B: Block + arbitrary::Arbitrary<'a>,
-{
+impl<'a> arbitrary::Arbitrary<'a> for SealedBlock {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let block = B::arbitrary(u)?;
+        let block = BaseBlock::arbitrary(u)?;
         Ok(Self::seal_slow(block))
     }
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-impl<B: crate::test_utils::TestBlock> SealedBlock<B> {
+impl SealedBlock {
     /// Returns a mutable reference to the header.
     #[inline]
-    pub const fn header_mut(&mut self) -> &mut alloy_consensus::Header {
+    pub const fn header_mut(&mut self) -> &mut Header {
         self.header.header_mut()
     }
 
@@ -391,7 +379,7 @@ impl<B: crate::test_utils::TestBlock> SealedBlock<B> {
 
     /// Returns a mutable reference to the body.
     #[inline]
-    pub const fn body_mut(&mut self) -> &mut B::Body {
+    pub const fn body_mut(&mut self) -> &mut BaseBlockBody {
         &mut self.body
     }
 
@@ -435,27 +423,27 @@ impl<B: crate::test_utils::TestBlock> SealedBlock<B> {
 #[cfg_attr(
     feature = "serde",
     serde(bound(
-        serialize = "SealedBlock<B>: serde::Serialize, T: serde::Serialize",
-        deserialize = "SealedBlock<B>: serde::Deserialize<'de>, T: serde::Deserialize<'de>"
+        serialize = "SealedBlock: serde::Serialize, T: serde::Serialize",
+        deserialize = "SealedBlock: serde::Deserialize<'de>, T: serde::Deserialize<'de>"
     ))
 )]
-pub struct SealedBlockWith<B: Block, T> {
+pub struct SealedBlockWith<T> {
     /// The sealed block.
-    block: SealedBlock<B>,
+    block: SealedBlock,
     /// Associated data for the sealed block.
     data: T,
 }
 
-impl<B: Block, T> SealedBlockWith<B, T> {
+impl<T> SealedBlockWith<T> {
     /// Creates a new sealed block with associated data.
     #[inline]
-    pub const fn new(block: SealedBlock<B>, data: T) -> Self {
+    pub const fn new(block: SealedBlock, data: T) -> Self {
         Self { block, data }
     }
 
     /// Returns the sealed block.
     #[inline]
-    pub const fn block(&self) -> &SealedBlock<B> {
+    pub const fn block(&self) -> &SealedBlock {
         &self.block
     }
 
@@ -468,42 +456,42 @@ impl<B: Block, T> SealedBlockWith<B, T> {
     /// Consumes the type and returns its components.
     #[doc(alias = "into_parts")]
     #[inline]
-    pub fn split(self) -> (SealedBlock<B>, T) {
+    pub fn split(self) -> (SealedBlock, T) {
         (self.block, self.data)
     }
 }
 
-impl<B: Block, T> SealedBlockWith<B, Option<T>> {
+impl<T> SealedBlockWith<Option<T>> {
     /// Creates a sealed block without associated data.
     #[inline]
-    pub const fn from_block(block: SealedBlock<B>) -> Self {
+    pub const fn from_block(block: SealedBlock) -> Self {
         Self::new(block, None)
     }
 }
 
-impl<B: Block, T> From<(SealedBlock<B>, T)> for SealedBlockWith<B, T> {
+impl<T> From<(SealedBlock, T)> for SealedBlockWith<T> {
     #[inline]
-    fn from((block, data): (SealedBlock<B>, T)) -> Self {
+    fn from((block, data): (SealedBlock, T)) -> Self {
         Self::new(block, data)
     }
 }
 
-impl<B: Block, T> From<SealedBlock<B>> for SealedBlockWith<B, Option<T>> {
+impl<T> From<SealedBlock> for SealedBlockWith<Option<T>> {
     #[inline]
-    fn from(block: SealedBlock<B>) -> Self {
+    fn from(block: SealedBlock) -> Self {
         Self::from_block(block)
     }
 }
 
-impl<B: Block, T: InMemorySize> InMemorySize for SealedBlockWith<B, T> {
+impl<T: InMemorySize> InMemorySize for SealedBlockWith<T> {
     #[inline]
     fn size(&self) -> usize {
         self.block.size() + self.data.size()
     }
 }
 
-impl<B: Block, T> Deref for SealedBlockWith<B, T> {
-    type Target = SealedBlock<B>;
+impl<T> Deref for SealedBlockWith<T> {
+    type Target = SealedBlock;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -513,12 +501,14 @@ impl<B: Block, T> Deref for SealedBlockWith<B, T> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::Header;
     use alloy_rlp::{Decodable, Encodable};
+    use base_common_consensus::BaseTxEnvelope;
 
     use super::*;
 
-    fn sample_alloy_block() -> alloy_consensus::Block<alloy_consensus::TxEnvelope> {
-        let header = alloy_consensus::Header {
+    fn sample_alloy_block() -> alloy_consensus::Block<BaseTxEnvelope> {
+        let header = Header {
             number: 42,
             gas_limit: 30_000_000,
             gas_used: 21_000,
@@ -537,12 +527,11 @@ mod tests {
             input: alloy_primitives::Bytes::default(),
         };
 
-        let tx_signed =
-            alloy_consensus::TxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
-                tx,
-                alloy_primitives::Signature::test_signature(),
-                B256::ZERO,
-            ));
+        let tx_signed = BaseTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
+            tx,
+            alloy_primitives::Signature::test_signature(),
+            B256::ZERO,
+        ));
 
         let body = alloy_consensus::BlockBody {
             transactions: vec![tx_signed],
@@ -556,7 +545,7 @@ mod tests {
     #[test]
     fn test_sealed_block_rlp_roundtrip() {
         // Create a sample block using alloy_consensus::Block
-        let header = alloy_consensus::Header {
+        let header = Header {
             number: 42,
             gas_limit: 30_000_000,
             gas_used: 21_000,
@@ -576,12 +565,11 @@ mod tests {
             input: alloy_primitives::Bytes::default(),
         };
 
-        let tx_signed =
-            alloy_consensus::TxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
-                tx,
-                alloy_primitives::Signature::test_signature(),
-                B256::ZERO,
-            ));
+        let tx_signed = BaseTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
+            tx,
+            alloy_primitives::Signature::test_signature(),
+            B256::ZERO,
+        ));
 
         // Create block body with the transaction
         let body = alloy_consensus::BlockBody {
@@ -601,10 +589,8 @@ mod tests {
         sealed_block.encode(&mut encoded);
 
         // Decode the sealed block
-        let decoded = SealedBlock::<
-            alloy_consensus::Block<alloy_consensus::TxEnvelope, alloy_consensus::Header>,
-        >::decode(&mut encoded.as_slice())
-        .expect("Failed to decode sealed block");
+        let decoded =
+            SealedBlock::decode(&mut encoded.as_slice()).expect("Failed to decode sealed block");
 
         // Verify the roundtrip
         assert_eq!(sealed_block.hash(), decoded.hash());
@@ -621,7 +607,7 @@ mod tests {
         block.encode(&mut block_encoded);
 
         let mut borrowed_encoded = Vec::new();
-        <alloy_consensus::Block<alloy_consensus::TxEnvelope> as Block>::rlp_encode(
+        <alloy_consensus::Block<BaseTxEnvelope> as Block>::rlp_encode(
             &block.header,
             &block.body,
             &mut borrowed_encoded,
@@ -639,7 +625,7 @@ mod tests {
     #[test]
     fn test_decode_sealed_produces_correct_hash() {
         // Create a sample block using alloy_consensus::Block
-        let header = alloy_consensus::Header {
+        let header = Header {
             number: 42,
             gas_limit: 30_000_000,
             gas_used: 21_000,
@@ -659,12 +645,11 @@ mod tests {
             input: alloy_primitives::Bytes::default(),
         };
 
-        let tx_signed =
-            alloy_consensus::TxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
-                tx,
-                alloy_primitives::Signature::test_signature(),
-                B256::ZERO,
-            ));
+        let tx_signed = BaseTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
+            tx,
+            alloy_primitives::Signature::test_signature(),
+            B256::ZERO,
+        ));
 
         // Create block body with the transaction
         let body = alloy_consensus::BlockBody {
@@ -682,10 +667,7 @@ mod tests {
         block.encode(&mut encoded);
 
         // Decode using decode_sealed - this should compute hash from raw RLP
-        let decoded =
-            SealedBlock::<alloy_consensus::Block<alloy_consensus::TxEnvelope>>::decode_sealed(
-                &mut encoded.as_slice(),
-            )
+        let decoded = SealedBlock::decode_sealed(&mut encoded.as_slice())
             .expect("Failed to decode sealed block");
 
         // Verify the hash matches
@@ -696,18 +678,17 @@ mod tests {
 
     #[test]
     fn test_sealed_block_from_sealed() {
-        let header = alloy_consensus::Header::default();
-        let body = alloy_consensus::BlockBody::<alloy_consensus::TxEnvelope>::default();
+        let header = Header::default();
+        let body = alloy_consensus::BlockBody::<BaseTxEnvelope>::default();
         let block = alloy_consensus::Block::new(header, body);
         let hash = block.header.hash_slow();
 
         // Create Sealed<Block>
-        let sealed: Sealed<alloy_consensus::Block<alloy_consensus::TxEnvelope>> =
+        let sealed: Sealed<alloy_consensus::Block<BaseTxEnvelope>> =
             Sealed::new_unchecked(block.clone(), hash);
 
         // Convert to SealedBlock
-        let sealed_block: SealedBlock<alloy_consensus::Block<alloy_consensus::TxEnvelope>> =
-            SealedBlock::from(sealed);
+        let sealed_block: SealedBlock = SealedBlock::from(sealed);
 
         assert_eq!(sealed_block.hash(), hash);
         assert_eq!(sealed_block.header().number, block.header.number);
@@ -715,7 +696,7 @@ mod tests {
 
     #[test]
     fn test_sealed_block_with_data() {
-        let block = alloy_consensus::Block::<alloy_consensus::TxEnvelope>::default();
+        let block = alloy_consensus::Block::<BaseTxEnvelope>::default();
         let sealed_block = SealedBlock::seal_slow(block);
 
         let with_data = SealedBlockWith::new(sealed_block.clone(), Some(42u64));
@@ -732,14 +713,14 @@ mod tests {
 
     #[test]
     fn test_sealed_block_with_from_block() {
-        let block = alloy_consensus::Block::<alloy_consensus::TxEnvelope>::default();
+        let block = alloy_consensus::Block::<BaseTxEnvelope>::default();
         let sealed_block = SealedBlock::seal_slow(block);
 
-        let with_data = SealedBlockWith::<_, Option<u64>>::from_block(sealed_block.clone());
+        let with_data = SealedBlockWith::<Option<u64>>::from_block(sealed_block.clone());
         assert_eq!(with_data.block(), &sealed_block);
         assert_eq!(with_data.data(), &None);
 
-        let from_block: SealedBlockWith<_, Option<u64>> = sealed_block.into();
+        let from_block: SealedBlockWith<Option<u64>> = sealed_block.into();
         assert_eq!(from_block.data(), &None);
     }
 }

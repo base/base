@@ -17,7 +17,7 @@ use futures::{
 };
 use metrics::atomics::AtomicU64;
 use reth_chain_state::CanonStateNotification;
-use reth_primitives_traits::{Block, BlockBody, SealedBlock};
+use reth_primitives_traits::{BlockBody, SealedBlock};
 use reth_rpc_server_types::constants::gas_oracle::MAX_HEADER_HISTORY;
 use reth_storage_api::BlockReaderIdExt;
 use serde::{Deserialize, Serialize};
@@ -72,11 +72,10 @@ impl FeeHistoryCache {
     }
 
     /// Insert block data into the cache.
-    async fn insert_blocks<'a, I, B, R>(&self, blocks: I, chain_spec: &BaseChainSpec)
+    async fn insert_blocks<'a, I, R>(&self, blocks: I, chain_spec: &BaseChainSpec)
     where
-        B: Block + 'a,
         R: TxReceipt + 'a,
-        I: IntoIterator<Item = (&'a SealedBlock<B>, &'a [R])>,
+        I: IntoIterator<Item = (&'a SealedBlock, &'a [R])>,
     {
         let mut entries = self.inner.entries.write().await;
 
@@ -90,7 +89,7 @@ impl FeeHistoryCache {
             fee_history_entry.rewards = calculate_reward_percentiles_for_block(
                 &percentiles,
                 fee_history_entry.header.base_fee_per_gas().unwrap_or_default(),
-                block.body().transactions(),
+                &block.body().transactions,
                 receipts,
             )
             .unwrap_or_default();
@@ -358,10 +357,7 @@ impl FeeHistoryEntry {
     /// Creates a new entry from a sealed block.
     ///
     /// Note: This does not calculate the rewards for the block.
-    pub fn new<B>(block: &SealedBlock<B>, blob_params: Option<BlobParams>) -> Self
-    where
-        B: Block,
-    {
+    pub fn new(block: &SealedBlock, blob_params: Option<BlobParams>) -> Self {
         let header = block.header();
         Self {
             header: block.header().clone(),

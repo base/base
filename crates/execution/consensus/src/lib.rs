@@ -18,7 +18,7 @@ use alloy_consensus::{
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{B64, B256};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::BaseReceipt;
 use base_execution_chainspec::BaseChainSpec;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
@@ -26,9 +26,7 @@ use reth_consensus_common::validation::{
     validate_cancun_gas, validate_header_base_fee, validate_header_extra_data, validate_header_gas,
 };
 use reth_execution_types::BlockExecutionResult;
-use reth_primitives_traits::{
-    Block, BlockBody, GotExpected, RecoveredBlock, SealedBlock, SealedHeader,
-};
+use reth_primitives_traits::{GotExpected, RecoveredBlock, SealedBlock, SealedHeader};
 
 mod proof;
 pub use proof::{calculate_receipt_root, calculate_receipt_root_no_memo};
@@ -71,7 +69,7 @@ impl BaseBeaconConsensus {
 impl FullConsensus for BaseBeaconConsensus {
     fn validate_block_post_execution(
         &self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         result: &BlockExecutionResult<BaseReceipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
         _block_access_list_hash: Option<B256>,
@@ -80,13 +78,10 @@ impl FullConsensus for BaseBeaconConsensus {
     }
 }
 
-impl<B> Consensus<B> for BaseBeaconConsensus
-where
-    B: Block<Body: BlockBody<Transaction = BaseTxEnvelope>>,
-{
+impl Consensus for BaseBeaconConsensus {
     fn validate_body_against_header(
         &self,
-        body: &B::Body,
+        body: &base_common_consensus::BaseBlockBody,
         header: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         validation::validate_body_against_header_base(&self.chain_spec, body, header.header())?;
@@ -96,21 +91,17 @@ where
             &self.chain_spec,
             header.timestamp(),
             header.number(),
-            body.transactions(),
+            &body.transactions,
         )
         .map_err(ConsensusError::other)
     }
 
-    fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {
+    fn validate_block_pre_execution(&self, block: &SealedBlock) -> Result<(), ConsensusError> {
         // Check ommers hash
         let ommers_hash = block.body().calculate_ommers_root();
-        if Some(block.ommers_hash()) != ommers_hash {
+        if block.ommers_hash() != ommers_hash {
             return Err(ConsensusError::BodyOmmersHashDiff(
-                GotExpected {
-                    got: ommers_hash.unwrap_or(EMPTY_OMMER_ROOT_HASH),
-                    expected: block.ommers_hash(),
-                }
-                .into(),
+                GotExpected { got: ommers_hash, expected: block.ommers_hash() }.into(),
             ));
         }
 
@@ -123,7 +114,7 @@ where
             &self.chain_spec,
             block.timestamp(),
             block.number(),
-            block.body().transactions(),
+            &block.body().transactions,
         )
         .map_err(ConsensusError::other)?;
 

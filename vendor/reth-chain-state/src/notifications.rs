@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 use derive_more::{Deref, DerefMut};
 use reth_execution_types::{BlockReceipts, Chain};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
@@ -128,7 +128,7 @@ impl CanonStateNotification {
     /// # Panics
     ///
     /// If chain doesn't have any blocks.
-    pub fn tip(&self) -> &RecoveredBlock<BaseBlock> {
+    pub fn tip(&self) -> &RecoveredBlock {
         match self {
             Self::Commit { new } | Self::Reorg { new, .. } => new.tip(),
         }
@@ -138,7 +138,7 @@ impl CanonStateNotification {
     ///
     /// If the chain has no blocks, it returns `None`. Otherwise, it returns the new tip for
     /// [`Self::Reorg`] and [`Self::Commit`] variants.
-    pub fn tip_checked(&self) -> Option<&RecoveredBlock<BaseBlock>> {
+    pub fn tip_checked(&self) -> Option<&RecoveredBlock> {
         match self {
             Self::Commit { new } | Self::Reorg { new, .. } => {
                 if new.is_empty() {
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_commit_notification() {
-        let block: RecoveredBlock<BaseBlock> = Default::default();
+        let block: RecoveredBlock = Default::default();
         let block1_hash = B256::new([0x01; 32]);
         let block2_hash = B256::new([0x02; 32]);
 
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_reorg_notification() {
-        let block: RecoveredBlock<BaseBlock> = Default::default();
+        let block: RecoveredBlock = Default::default();
         let block1_hash = B256::new([0x01; 32]);
         let block2_hash = B256::new([0x02; 32]);
         let block3_hash = B256::new([0x03; 32]);
@@ -344,7 +344,7 @@ mod tests {
         let tx = TxLegacy::default().into_signed(Signature::test_signature()).into();
         body.transactions.push(tx);
 
-        let block = SealedBlock::<alloy_consensus::Block<TransactionSigned>>::from_sealed_parts(
+        let block = SealedBlock::from_sealed_parts(
             SealedHeader::seal_slow(alloy_consensus::Header::default()),
             body,
         )
@@ -413,13 +413,12 @@ mod tests {
         // Define block1 for the old chain segment, which will be reverted.
         let mut body = BlockBody::<TransactionSigned>::default();
         body.transactions.push(TxLegacy::default().into_signed(Signature::test_signature()).into());
-        let mut old_block1 =
-            SealedBlock::<alloy_consensus::Block<TransactionSigned>>::from_sealed_parts(
-                SealedHeader::seal_slow(alloy_consensus::Header::default()),
-                body,
-            )
-            .try_recover()
-            .unwrap();
+        let mut old_block1 = SealedBlock::from_sealed_parts(
+            SealedHeader::seal_slow(alloy_consensus::Header::default()),
+            body,
+        )
+        .try_recover()
+        .unwrap();
         old_block1.set_block_number(1);
         old_block1.set_hash(B256::new([0x01; 32]));
 
@@ -441,13 +440,12 @@ mod tests {
         // Define block2 for the new chain segment, which will be committed.
         let mut body = BlockBody::<TransactionSigned>::default();
         body.transactions.push(TxLegacy::default().into_signed(Signature::test_signature()).into());
-        let mut new_block1 =
-            SealedBlock::<alloy_consensus::Block<TransactionSigned>>::from_sealed_parts(
-                SealedHeader::seal_slow(alloy_consensus::Header::default()),
-                body,
-            )
-            .try_recover()
-            .unwrap();
+        let mut new_block1 = SealedBlock::from_sealed_parts(
+            SealedHeader::seal_slow(alloy_consensus::Header::default()),
+            body,
+        )
+        .try_recover()
+        .unwrap();
         new_block1.set_block_number(2);
         new_block1.set_hash(B256::new([0x02; 32]));
 

@@ -2,14 +2,13 @@
 
 use alloc::sync::Arc;
 
-use alloy_consensus::Block;
 use alloy_rpc_types_engine::PayloadError;
 use base_common_rpc_types_engine::{BasePayloadError, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use derive_more::{Constructor, Deref};
 use reth_chainspec::EthereumHardforks;
 use reth_payload_validator::{cancun, prague, shanghai};
-use reth_primitives_traits::{Block as _, SealedBlock, SignedTransaction};
+use reth_primitives_traits::{Block as _, SealedBlock};
 
 /// Execution payload validator.
 #[derive(Clone, Debug, Deref, Constructor)]
@@ -29,10 +28,10 @@ impl BaseExecutionPayloadValidator {
     /// layout.
     ///
     /// See also [`ensure_well_formed_payload`].
-    pub fn ensure_well_formed_payload<T: SignedTransaction>(
+    pub fn ensure_well_formed_payload(
         &self,
         payload: ExecutionData,
-    ) -> Result<SealedBlock<Block<T>>, BasePayloadError> {
+    ) -> Result<SealedBlock, BasePayloadError> {
         ensure_well_formed_payload(self.chain_spec(), payload)
     }
 }
@@ -55,13 +54,10 @@ impl BaseExecutionPayloadValidator {
 /// are empty as well as those passed in the sidecar. If the payload fields are not provided.
 ///
 /// Validation according to specs <https://specs.base.org/protocol/execution#engine-api>.
-pub fn ensure_well_formed_payload<T>(
+pub fn ensure_well_formed_payload(
     chain_spec: &BaseChainSpec,
     payload: ExecutionData,
-) -> Result<SealedBlock<Block<T>>, BasePayloadError>
-where
-    T: SignedTransaction,
-{
+) -> Result<SealedBlock, BasePayloadError> {
     // BAL bytes are carried through `ExecutionData` for Amsterdam-aware paths, but payload
     // well-formedness here is defined by the encoded execution payload + sidecar alone.
     let ExecutionData { payload, sidecar, .. } = payload;

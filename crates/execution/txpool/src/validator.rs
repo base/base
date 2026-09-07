@@ -32,7 +32,7 @@ use base_precompile_storage::{
 use lru::LruCache;
 use parking_lot::RwLock;
 use reth_primitives_traits::{
-    Block, BlockBody, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
+    Block, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };
 use reth_storage_api::{
     AccountInfoReader, AccountReader, BlockReaderIdExt, StateProvider, StateProviderFactory,
@@ -817,7 +817,7 @@ where
             if block.header().number() == 0 {
                 this.block_info.timestamp.store(block.header().timestamp(), Ordering::Relaxed);
             } else {
-                this.update_l1_block_info(block.header(), block.body().transactions().first());
+                this.update_l1_block_info(block.header(), block.body().transactions.first());
             }
         }
 
@@ -2154,7 +2154,7 @@ where
         self.validate_one(origin, transaction).await
     }
 
-    fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
+    fn on_new_head_block(&self, new_tip_block: &SealedBlock) {
         self.inner.on_new_head_block(new_tip_block);
         self.update_l1_block_info(
             new_tip_block.header(),

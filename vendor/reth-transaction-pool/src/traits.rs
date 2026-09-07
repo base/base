@@ -786,7 +786,7 @@ pub trait TransactionPoolExt: TransactionPool {
     /// sidecar must not be removed from the blob store. Only after a blob transaction is
     /// finalized, its sidecar is removed from the blob store. This ensures that in case of a reorg,
     /// the sidecar is still available.
-    fn on_canonical_state_change(&self, update: CanonicalStateUpdate<'_, Self::Block>);
+    fn on_canonical_state_change(&self, update: CanonicalStateUpdate<'_>);
 
     /// Updates the accounts in the pool
     fn update_accounts(&self, accounts: Vec<ChangedAccount>);
@@ -1027,9 +1027,9 @@ pub enum PoolUpdateKind {
 ///
 /// This is used to update the pool state accordingly.
 #[derive(Clone, Debug)]
-pub struct CanonicalStateUpdate<'a, B: Block> {
+pub struct CanonicalStateUpdate<'a> {
     /// Hash of the tip block.
-    pub new_tip: &'a SealedBlock<B>,
+    pub new_tip: &'a SealedBlock,
     /// EIP-1559 Base fee of the _next_ (pending) block
     ///
     /// The base fee of a block depends on the utilization of the last block and its base fee.
@@ -1046,10 +1046,7 @@ pub struct CanonicalStateUpdate<'a, B: Block> {
     pub update_kind: PoolUpdateKind,
 }
 
-impl<B> CanonicalStateUpdate<'_, B>
-where
-    B: Block,
-{
+impl CanonicalStateUpdate<'_> {
     /// Returns the number of the tip block.
     pub fn number(&self) -> u64 {
         self.new_tip.number()
@@ -1077,10 +1074,7 @@ where
     }
 }
 
-impl<B> fmt::Display for CanonicalStateUpdate<'_, B>
-where
-    B: Block,
-{
+impl fmt::Display for CanonicalStateUpdate<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CanonicalStateUpdate")
             .field("hash", &self.hash())

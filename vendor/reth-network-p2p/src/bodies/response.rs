@@ -1,19 +1,16 @@
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{BlockNumber, U256};
-use reth_primitives_traits::{Block, InMemorySize, SealedBlock, SealedHeader};
+use reth_primitives_traits::{InMemorySize, SealedBlock, SealedHeader};
 /// The block response
 #[derive(PartialEq, Eq, Debug, Clone)]
-pub enum BlockResponse<B: Block> {
+pub enum BlockResponse {
     /// Full block response (with transactions or ommers)
-    Full(SealedBlock<B>),
+    Full(SealedBlock),
     /// The empty block response
     Empty(SealedHeader),
 }
 
-impl<B> BlockResponse<B>
-where
-    B: Block,
-{
+impl BlockResponse {
     /// Return the block number
     pub fn block_number(&self) -> BlockNumber {
         match self {
@@ -31,7 +28,7 @@ where
     }
 
     /// Return the reference to the response body
-    pub fn into_body(self) -> Option<B::Body> {
+    pub fn into_body(self) -> Option<base_common_consensus::BaseBlockBody> {
         match self {
             Self::Full(block) => Some(block.into_body()),
             Self::Empty(_) => None,
@@ -39,7 +36,7 @@ where
     }
 
     /// Return the reference to the response body
-    pub const fn body(&self) -> Option<&B::Body> {
+    pub const fn body(&self) -> Option<&base_common_consensus::BaseBlockBody> {
         match self {
             Self::Full(block) => Some(block.body()),
             Self::Empty(_) => None,
@@ -47,7 +44,7 @@ where
     }
 }
 
-impl<B: Block> InMemorySize for BlockResponse<B> {
+impl InMemorySize for BlockResponse {
     #[inline]
     fn size(&self) -> usize {
         match self {

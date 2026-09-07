@@ -37,14 +37,14 @@ pub trait Executor<DB: Database>: Sized {
     /// Executes a single block and returns [`BlockExecutionResult`], without the state changes.
     fn execute_one(
         &mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
     ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>;
 
     /// Executes the EVM with the given input and accepts a state hook closure that is invoked with
     /// the EVM state after execution.
     fn execute_one_with_state_hook<F>(
         &mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         state_hook: F,
     ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>
     where
@@ -59,7 +59,7 @@ pub trait Executor<DB: Database>: Sized {
     /// The output of the block execution.
     fn execute(
         mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
     ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error> {
         let result = self.execute_one(block)?;
         let mut state = self.into_state();
@@ -72,7 +72,7 @@ pub trait Executor<DB: Database>: Sized {
         blocks: I,
     ) -> Result<ExecutionOutcome<BaseReceipt>, Self::Error>
     where
-        I: IntoIterator<Item = &'a RecoveredBlock<BaseBlock>>,
+        I: IntoIterator<Item = &'a RecoveredBlock>,
     {
         let blocks_iter = blocks.into_iter();
         let capacity = blocks_iter.size_hint().0;
@@ -96,7 +96,7 @@ pub trait Executor<DB: Database>: Sized {
     /// the EVM state after execution.
     fn execute_with_state_closure<F>(
         mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         mut f: F,
     ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
     where
@@ -112,7 +112,7 @@ pub trait Executor<DB: Database>: Sized {
     /// with the EVM state after execution, even after failure.
     fn execute_with_state_closure_always<F>(
         mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         mut f: F,
     ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
     where
@@ -129,7 +129,7 @@ pub trait Executor<DB: Database>: Sized {
     /// the EVM state after execution.
     fn execute_with_state_hook<F>(
         mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         state_hook: F,
     ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
     where
@@ -311,7 +311,7 @@ pub struct BlockBuilderOutcome {
     /// Trie updates collected during state root calculation.
     pub trie_updates: TrieUpdates,
     /// The built block.
-    pub block: RecoveredBlock<BaseBlock>,
+    pub block: RecoveredBlock,
     /// Block access list built during execution (EIP-7928, Amsterdam).
     pub block_access_list: Option<BlockAccessList>,
 }
@@ -578,7 +578,7 @@ where
 
     fn execute_one(
         &mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
     ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error> {
         let mut executor = self
             .strategy_factory
@@ -615,7 +615,7 @@ where
 
     fn execute_one_with_state_hook<H>(
         &mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         state_hook: H,
     ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>
     where
@@ -713,7 +713,7 @@ impl<TxEnv, T: RecoveredTx<Tx>, Tx> ExecutableTxParts<TxEnv, Tx> for WithTxEnv<T
 mod tests {
     use core::marker::PhantomData;
 
-    use base_common_consensus::{BaseBlock, BaseReceipt};
+    use base_common_consensus::BaseReceipt;
     use revm::database::{CacheDB, EmptyDB};
 
     use super::*;
@@ -737,14 +737,14 @@ mod tests {
 
         fn execute_one(
             &mut self,
-            _block: &RecoveredBlock<BaseBlock>,
+            _block: &RecoveredBlock,
         ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error> {
             Err(BlockExecutionError::msg("execution unavailable for tests"))
         }
 
         fn execute_one_with_state_hook<F>(
             &mut self,
-            _block: &RecoveredBlock<BaseBlock>,
+            _block: &RecoveredBlock,
             _state_hook: F,
         ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>
         where

@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use reth_ethereum_primitives::Block;
+use base_common_consensus::BaseBlock as Block;
 
 use crate::{
     EthPooledTransaction, PoolTransaction, TransactionOrigin, TransactionValidationOutcome,

@@ -12,8 +12,8 @@ use base_common_rpc_types::BaseLogResponse;
 use jsonrpsee_types::ErrorObject;
 use reth_chainspec::ChainInfo;
 use reth_errors::ProviderError;
-use reth_primitives_traits::{BlockBody, RecoveredBlock, SignedTransaction};
-use reth_storage_api::{BlockReader, ProviderBlock};
+use reth_primitives_traits::{RecoveredBlock, SignedTransaction};
+use reth_storage_api::BlockReader;
 use thiserror::Error;
 
 use crate::EthApiError;
@@ -78,7 +78,7 @@ pub enum ProviderOrBlock<'a, P: BlockReader> {
     /// Provider
     Provider(&'a P),
     /// [`RecoveredBlock`]
-    Block(Arc<RecoveredBlock<ProviderBlock<P>>>),
+    Block(Arc<RecoveredBlock>),
 }
 
 /// Appends all matching and converted logs of a block's receipts.
@@ -129,7 +129,7 @@ where
                 if transaction_hash.is_none() {
                     transaction_hash = match &provider_or_block {
                         ProviderOrBlock::Block(block) => {
-                            block.body().transactions().get(receipt_idx).map(|t| *t.tx_hash())
+                            block.body().transactions.get(receipt_idx).map(|t| t.tx_hash())
                         }
                         ProviderOrBlock::Provider(provider) => {
                             let first_tx_num = match loaded_first_tx_num {

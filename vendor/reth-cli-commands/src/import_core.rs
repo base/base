@@ -3,7 +3,6 @@
 use std::{path::Path, sync::Arc};
 
 use alloy_primitives::B256;
-use base_common_consensus::BaseBlock;
 use futures::StreamExt;
 use reth_config::Config;
 use reth_consensus::FullConsensus;
@@ -130,7 +129,7 @@ where
 
     let skip_invalid_blocks = !import_config.fail_on_invalid_block;
     while let Some(file_client) = reader
-        .next_chunk_with_invalid_block_handling::<BaseBlock>(
+        .next_chunk_with_invalid_block_handling(
             consensus.clone(),
             Some(sealed_header.clone()),
             skip_invalid_blocks,
@@ -278,7 +277,7 @@ pub fn build_import_pipeline_impl<DB, C>(
     config: &Config,
     provider_factory: ProviderFactory<DB>,
     consensus: &Arc<C>,
-    file_client: Arc<FileClient<BaseBlock>>,
+    file_client: Arc<FileClient>,
     static_file_producer: StaticFileProducer<ProviderFactory<DB>>,
     disable_exec: bool,
     evm_config: BaseEvmConfig,

@@ -5,7 +5,6 @@ use std::sync::Arc;
 use alloy_eip7928::bal::{DecodedBal, RawBal};
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::B256;
-use base_common_consensus::BaseBlock;
 use reth_chain_state::{ExecutedBlock, ExecutionTimingStats};
 use reth_evm::EvmEnvFor;
 use reth_execution_cache::TxPoolPrewarmCacheSnapshot;
@@ -65,10 +64,10 @@ where
 }
 
 /// Result of block or payload validation.
-pub type ValidationOutcome<E = InsertPayloadError<BaseBlock>> = Result<ValidationOutput, E>;
+pub type ValidationOutcome<E = InsertPayloadError> = Result<ValidationOutput, E>;
 
 /// Result type for block validation with optional timing stats.
-pub(crate) type InsertPayloadResult = Result<ValidationOutput, InsertPayloadError<BaseBlock>>;
+pub(crate) type InsertPayloadResult = Result<ValidationOutput, InsertPayloadError>;
 
 /// Output of block or payload validation.
 #[derive(Clone, Debug)]

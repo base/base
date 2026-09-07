@@ -7,7 +7,7 @@ pub use reth_engine_primitives::{
 };
 use reth_errors::ProviderError;
 use reth_payload_primitives::NewPayloadError;
-use reth_primitives_traits::{Block, BlockBody, SealedBlock};
+use reth_primitives_traits::SealedBlock;
 
 use crate::tree::payload_processor::bal::BalExecutionError;
 
@@ -28,30 +28,30 @@ pub enum AdvancePersistenceError {
     .block.number(),
     .block.parent_hash(),
     .kind)]
-struct InsertBlockErrorData<B: Block> {
-    block: SealedBlock<B>,
+struct InsertBlockErrorData {
+    block: SealedBlock,
     #[source]
     kind: InsertBlockErrorKind,
 }
 
-impl<B: Block> std::fmt::Debug for InsertBlockErrorData<B> {
+impl std::fmt::Debug for InsertBlockErrorData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InsertBlockError")
             .field("error", &self.kind)
             .field("hash", &self.block.hash())
             .field("number", &self.block.number())
             .field("parent_hash", &self.block.parent_hash())
-            .field("num_txs", &self.block.body().transactions().len())
+            .field("num_txs", &self.block.body().transactions.len())
             .finish_non_exhaustive()
     }
 }
 
-impl<B: Block> InsertBlockErrorData<B> {
-    const fn new(block: SealedBlock<B>, kind: InsertBlockErrorKind) -> Self {
+impl InsertBlockErrorData {
+    const fn new(block: SealedBlock, kind: InsertBlockErrorKind) -> Self {
         Self { block, kind }
     }
 
-    fn boxed(block: SealedBlock<B>, kind: InsertBlockErrorKind) -> Box<Self> {
+    fn boxed(block: SealedBlock, kind: InsertBlockErrorKind) -> Box<Self> {
         Box::new(Self::new(block, kind))
     }
 }
@@ -59,26 +59,26 @@ impl<B: Block> InsertBlockErrorData<B> {
 /// Error thrown when inserting a block failed because the block is considered invalid.
 #[derive(thiserror::Error)]
 #[error(transparent)]
-pub struct InsertBlockError<B: Block> {
-    inner: Box<InsertBlockErrorData<B>>,
+pub struct InsertBlockError {
+    inner: Box<InsertBlockErrorData>,
 }
 
 // === impl InsertBlockErrorTwo ===
 
-impl<B: Block> InsertBlockError<B> {
+impl InsertBlockError {
     /// Create a new `InsertInvalidBlockErrorTwo`
-    pub fn new(block: SealedBlock<B>, kind: InsertBlockErrorKind) -> Self {
+    pub fn new(block: SealedBlock, kind: InsertBlockErrorKind) -> Self {
         Self { inner: InsertBlockErrorData::boxed(block, kind) }
     }
 
     /// Create a new `InsertInvalidBlockError` from a consensus error
-    pub fn consensus_error(error: ConsensusError, block: SealedBlock<B>) -> Self {
+    pub fn consensus_error(error: ConsensusError, block: SealedBlock) -> Self {
         Self::new(block, InsertBlockErrorKind::Consensus(error))
     }
 
     /// Consumes the error and returns the block that resulted in the error
     #[inline]
-    pub fn into_block(self) -> SealedBlock<B> {
+    pub fn into_block(self) -> SealedBlock {
         self.inner.block
     }
 
@@ -90,19 +90,19 @@ impl<B: Block> InsertBlockError<B> {
 
     /// Returns the block that resulted in the error
     #[inline]
-    pub const fn block(&self) -> &SealedBlock<B> {
+    pub const fn block(&self) -> &SealedBlock {
         &self.inner.block
     }
 
     /// Consumes the type and returns the block and error kind.
     #[inline]
-    pub fn split(self) -> (SealedBlock<B>, InsertBlockErrorKind) {
+    pub fn split(self) -> (SealedBlock, InsertBlockErrorKind) {
         let inner = *self.inner;
         (inner.block, inner.kind)
     }
 }
 
-impl<B: Block> std::fmt::Debug for InsertBlockError<B> {
+impl std::fmt::Debug for InsertBlockError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.inner, f)
     }
@@ -121,10 +121,10 @@ impl From<BalExecutionError> for InsertBlockErrorKind {
 
 /// Errors that may occur when inserting a payload.
 #[derive(Debug, thiserror::Error)]
-pub enum InsertPayloadError<B: Block> {
+pub enum InsertPayloadError {
     /// Block validation error
     #[error(transparent)]
-    Block(#[from] InsertBlockError<B>),
+    Block(#[from] InsertBlockError),
     /// Payload validation error
     #[error(transparent)]
     Payload(#[from] NewPayloadError),

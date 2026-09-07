@@ -72,8 +72,7 @@
 //! ```rust
 //! # use reth_primitives_traits::{SealedBlock, RecoveredBlock};
 //! # use reth_primitives_traits::block::error::BlockRecoveryError;
-//! # fn example<B: reth_primitives_traits::Block>(sealed_block: SealedBlock<B>) -> Result<(), BlockRecoveryError<SealedBlock<B>>>
-//! # where B::Body: reth_primitives_traits::BlockBody<Transaction: reth_primitives_traits::SignedTransaction> {
+//! # fn example(sealed_block: SealedBlock) -> Result<(), BlockRecoveryError<SealedBlock>> {
 //! // Attempt to recover senders from a sealed block
 //! match sealed_block.try_recover() {
 //!     Ok(recovered) => {

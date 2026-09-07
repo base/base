@@ -814,7 +814,7 @@ impl<TX: DbTx + DbTxMut + 'static> DatabaseProvider<TX> {
     #[instrument(level = "debug", target = "providers::db", skip_all)]
     fn insert_block_mdbx_only(
         &self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         first_tx_num: TxNumber,
     ) -> ProviderResult<StoredBlockBodyIndices> {
         let block_number = block.number();
@@ -1668,13 +1668,13 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
         Ok(None)
     }
 
-    fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock>> {
         Ok(None)
     }
 
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock<Self::Block>, Vec<Self::Receipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock, Vec<Self::Receipt>)>> {
         Ok(None)
     }
 
@@ -1690,7 +1690,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
         &self,
         id: BlockHashOrNumber,
         transaction_kind: TransactionVariant,
-    ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Option<RecoveredBlock>> {
         self.recovered_block(
             id,
             transaction_kind,
@@ -1711,7 +1711,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
         &self,
         id: BlockHashOrNumber,
         transaction_kind: TransactionVariant,
-    ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Option<RecoveredBlock>> {
         self.recovered_block(
             id,
             transaction_kind,
@@ -1739,7 +1739,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
     fn block_with_senders_range(
         &self,
         range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Vec<RecoveredBlock>> {
         self.block_with_senders_range(
             range,
             |range| self.headers_range(range),
@@ -1754,7 +1754,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
     fn recovered_block_range(
         &self,
         range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
+    ) -> ProviderResult<Vec<RecoveredBlock>> {
         self.block_with_senders_range(
             range,
             |range| self.sealed_headers_range(range),
@@ -3061,10 +3061,7 @@ impl<TX: DbTxMut + DbTx + 'static> BlockWriter for DatabaseProvider<TX> {
     ///
     /// This is a convenience method primarily used in tests. For production use,
     /// prefer [`Self::save_blocks`] which handles execution output and trie data.
-    fn insert_block(
-        &self,
-        block: &RecoveredBlock<Self::Block>,
-    ) -> ProviderResult<StoredBlockBodyIndices> {
+    fn insert_block(&self, block: &RecoveredBlock) -> ProviderResult<StoredBlockBodyIndices> {
         let block_number = block.number();
 
         // Wrap block in ExecutedBlock with empty execution output (no receipts/state/trie)
@@ -3241,7 +3238,7 @@ impl<TX: DbTxMut + DbTx + 'static> BlockWriter for DatabaseProvider<TX> {
     /// TODO(joshie): this fn should be moved to `UnifiedStorageWriter` eventually
     fn append_blocks_with_state(
         &self,
-        blocks: Vec<RecoveredBlock<Self::Block>>,
+        blocks: Vec<RecoveredBlock>,
         execution_outcome: &ExecutionOutcome<Self::Receipt>,
         hashed_state: HashedPostStateSorted,
     ) -> ProviderResult<()> {
@@ -3510,7 +3507,7 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{U256, map::B256Map};
-    use base_common_consensus::{BaseBlock, BaseReceipt};
+    use base_common_consensus::BaseReceipt;
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
     use reth_chain_state::test_utils::TestBlockBuilder;
@@ -4566,7 +4563,7 @@ mod tests {
         let accounts_per_block = 5usize;
         let slots_per_account = 3usize;
 
-        let genesis = SealedBlock::<BaseBlock>::from_sealed_parts(
+        let genesis = SealedBlock::from_sealed_parts(
             SealedHeader::new(
                 Header { number: 0, difficulty: U256::from(1), ..Default::default() },
                 B256::ZERO,
@@ -4637,7 +4634,7 @@ mod tests {
                 difficulty: U256::from(1),
                 ..Default::default()
             };
-            let block = SealedBlock::<BaseBlock>::seal_parts(header, Default::default());
+            let block = SealedBlock::seal_parts(header, Default::default());
             parent_hash = block.hash();
 
             let executed = ExecutedBlock::new(

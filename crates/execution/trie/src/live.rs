@@ -3,7 +3,6 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
-use base_common_consensus::BaseBlock;
 use derive_more::Constructor;
 use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
@@ -52,7 +51,7 @@ where
     /// Execute a block and store the updates in the storage.
     pub fn execute_and_store_block_updates(
         &self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
     ) -> Result<(), BaseProofsStorageError> {
         let mut operation_durations = OperationDurations::default();
 
@@ -263,7 +262,7 @@ pub enum BatchBlock {
         sorted_post_state: Arc<HashedPostStateSorted>,
     },
     /// Full block requiring execution against session-local state.
-    Execute(Box<RecoveredBlock<BaseBlock>>),
+    Execute(Box<RecoveredBlock>),
 }
 
 impl<'tx, Provider, Store> LiveTrieCollector<'tx, Provider, Store>
@@ -347,7 +346,7 @@ where
     fn execute_one_in_session<S>(
         &self,
         session: &mut S,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         earliest: u64,
     ) -> Result<WriteCounts, BaseProofsStorageError>
     where

@@ -7,7 +7,7 @@ use alloy_eips::{eip4895::Withdrawal, eip7685::Requests};
 use alloy_primitives::{B256, Bytes, U256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::{PayloadAttributes as EthPayloadAttributes, PayloadId};
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 use either::Either;
 use reth_execution_types::BlockExecutionOutput;
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
@@ -22,7 +22,7 @@ use crate::PayloadBuilderError;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BuiltPayloadExecutedBlock {
     /// Recovered Block
-    pub recovered_block: Arc<RecoveredBlock<BaseBlock>>,
+    pub recovered_block: Arc<RecoveredBlock>,
     /// Block's execution outcome.
     pub execution_output: Arc<BlockExecutionOutput<BaseReceipt>>,
     /// Block's hashed state (unsorted).
@@ -38,7 +38,7 @@ pub struct BuiltPayloadExecutedBlock {
 #[auto_impl::auto_impl(&, Arc)]
 pub trait BuiltPayload: Send + Sync + fmt::Debug {
     /// Returns the built block in its sealed (hash-verified) form.
-    fn block(&self) -> &SealedBlock<BaseBlock>;
+    fn block(&self) -> &SealedBlock;
 
     /// Returns the total fees collected from all transactions in this block.
     fn fees(&self) -> U256;

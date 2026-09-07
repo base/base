@@ -53,7 +53,7 @@
 //! `eth_getProof` and anything else that reads the stored trie will not work for new blocks.
 //! Sparse-trie cache pruning uses node epochs to retain the in-memory block range.
 
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 mod sparse_trie;
 
 use std::{
@@ -406,7 +406,7 @@ impl PreparedStateRootJob {
     /// Completes the job after execution.
     pub fn finish(
         &mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         output: Arc<BlockExecutionOutput<BaseReceipt>>,
         hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {
@@ -424,7 +424,7 @@ pub trait StateRootJob: Send {
     /// Called at most once per prepared job; implementations may panic if called again.
     fn finish(
         &mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         output: Arc<BlockExecutionOutput<BaseReceipt>>,
         hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome>;
@@ -943,7 +943,7 @@ impl StateRootJob for SkippedStateRootJob {
 
     fn finish(
         &mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         _output: Arc<BlockExecutionOutput<BaseReceipt>>,
         _hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {
@@ -972,7 +972,7 @@ where
 
     fn finish(
         &mut self,
-        _block: &RecoveredBlock<BaseBlock>,
+        _block: &RecoveredBlock,
         _output: Arc<BlockExecutionOutput<BaseReceipt>>,
         hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {
@@ -1050,7 +1050,7 @@ where
     /// rejects the block.
     fn verified_sparse_outcome(
         &self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         output: &BlockExecutionOutput<BaseReceipt>,
         outcome: StateRootComputeOutcome,
     ) -> ProviderResult<StateRootJobOutcome> {
@@ -1069,7 +1069,7 @@ where
 
     fn sparse_outcome(
         &self,
-        _block: &RecoveredBlock<BaseBlock>,
+        _block: &RecoveredBlock,
         output: &BlockExecutionOutput<BaseReceipt>,
         outcome: StateRootComputeOutcome,
     ) -> StateRootJobOutcome {
@@ -1122,7 +1122,7 @@ where
 
     fn finish(
         &mut self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         output: Arc<BlockExecutionOutput<BaseReceipt>>,
         _hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {

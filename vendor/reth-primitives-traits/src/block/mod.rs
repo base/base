@@ -4,16 +4,14 @@
 //!
 //! ```rust
 //! # use reth_primitives_traits::{Block, SealedBlock, RecoveredBlock};
-//! # fn example<B: Block + 'static>(block: B) -> Result<(), Box<dyn std::error::Error>>
-//! # where B::Body: reth_primitives_traits::BlockBody<Transaction: reth_primitives_traits::SignedTransaction> {
+//! # fn example(block: base_common_consensus::BaseBlock) -> Result<(), Box<dyn std::error::Error>> {
 //! // Basic block flow
-//! let block: B = block;
 //!
 //! // Seal (compute hash)
-//! let sealed: SealedBlock<B> = block.seal();
+//! let sealed: SealedBlock = block.seal();
 //!
 //! // Recover senders
-//! let recovered: RecoveredBlock<B> = sealed.try_recover()?;
+//! let recovered: RecoveredBlock = sealed.try_recover()?;
 //!
 //! // Access components
 //! let senders = recovered.senders();
@@ -23,6 +21,8 @@
 //! ```
 
 pub(crate) mod sealed;
+use alloy_consensus::Header;
+use base_common_consensus::{BaseBlock, BaseBlockBody, BaseTxEnvelope};
 pub use sealed::{SealedBlock, SealedBlockWith};
 
 pub(crate) mod sealed_or_recovered;
@@ -41,17 +41,17 @@ use alloy_primitives::{Address, B256};
 use alloy_rlp::{Decodable, Encodable};
 
 use crate::{
-    BlockBody, FullBlockBody, InMemorySize, MaybeSerde, SealedHeader, SignedTransaction,
-    block::error::BlockRecoveryError, transaction::signed::RecoveryError,
+    BlockBody, InMemorySize, MaybeSerde, SealedHeader, block::error::BlockRecoveryError,
+    transaction::signed::RecoveryError,
 };
 
 /// Helper trait that unifies all behaviour required by block to support full node operations.
-pub trait FullBlock: Block<Body: FullBlockBody> {}
+pub trait FullBlock: Block {}
 
-impl<T> FullBlock for T where T: Block<Body: FullBlockBody> {}
+impl FullBlock for BaseBlock {}
 
 /// Helper trait to access [`BlockBody::Transaction`] given a [`Block`].
-pub type BlockTx<B> = <<B as Block>::Body as BlockBody>::Transaction;
+pub type BlockTx = BaseTxEnvelope;
 
 /// Abstraction of block data type.
 ///
@@ -71,17 +71,14 @@ pub trait Block:
     + MaybeSerde
     + Encodable
     + Decodable
+    + Into<BaseBlock>
 {
-    /// The block's body contains the transactions in the block and additional data, e.g.
-    /// withdrawals in ethereum.
-    type Body: BlockBody<OmmerHeader = alloy_consensus::Header>;
-
     /// Create new block instance.
-    fn new(header: alloy_consensus::Header, body: Self::Body) -> Self;
+    fn new(header: Header, body: BaseBlockBody) -> Self;
 
     /// Create new a sealed block instance from a sealed header and the block body.
     #[inline]
-    fn new_sealed(header: SealedHeader, body: Self::Body) -> SealedBlock<Self> {
+    fn new_sealed(header: SealedHeader, body: BaseBlockBody) -> SealedBlock {
         SealedBlock::from_sealed_parts(header, body)
     }
 
@@ -89,77 +86,70 @@ pub trait Block:
     ///
     /// WARNING: This method does not perform validation whether the hash is correct.
     #[inline]
-    fn seal_unchecked(self, hash: B256) -> SealedBlock<Self> {
-        SealedBlock::new_unchecked(self, hash)
+    fn seal_unchecked(self, hash: B256) -> SealedBlock {
+        SealedBlock::new_unchecked(self.into(), hash)
     }
 
     /// Creates the [`SealedBlock`] from the block's parts without calculating the hash upfront.
     #[inline]
-    fn seal(self) -> SealedBlock<Self> {
-        SealedBlock::new_unhashed(self)
+    fn seal(self) -> SealedBlock {
+        SealedBlock::new_unhashed(self.into())
     }
 
     /// Calculate the header hash and seal the block so that it can't be changed.
-    fn seal_slow(self) -> SealedBlock<Self> {
-        SealedBlock::seal_slow(self)
+    fn seal_slow(self) -> SealedBlock {
+        SealedBlock::seal_slow(self.into())
     }
 
     /// Decodes the block from RLP and seals it.
     ///
     /// Implementations can override this to compute the block hash while decoding.
-    fn decode_sealed(buf: &mut &[u8]) -> alloy_rlp::Result<SealedBlock<Self>>
+    fn decode_sealed(buf: &mut &[u8]) -> alloy_rlp::Result<SealedBlock>
     where
         Self: Sized,
     {
         let block = Self::decode(buf)?;
-        Ok(SealedBlock::seal_slow(block))
+        Ok(SealedBlock::seal_slow(block.into()))
     }
 
     /// Returns reference to block header.
-    fn header(&self) -> &alloy_consensus::Header;
+    fn header(&self) -> &Header;
 
     /// Returns reference to block body.
-    fn body(&self) -> &Self::Body;
+    fn body(&self) -> &BaseBlockBody;
 
     /// Splits the block into its header and body.
-    fn split(self) -> (alloy_consensus::Header, Self::Body);
+    fn split(self) -> (Header, BaseBlockBody);
 
     /// Returns a tuple of references to the block's header and body.
     #[inline]
-    fn split_ref(&self) -> (&alloy_consensus::Header, &Self::Body) {
+    fn split_ref(&self) -> (&Header, &BaseBlockBody) {
         (self.header(), self.body())
     }
 
     /// Consumes the block and returns the header.
     #[inline]
-    fn into_header(self) -> alloy_consensus::Header {
+    fn into_header(self) -> Header {
         self.split().0
     }
 
     /// Consumes the block and returns the body.
     #[inline]
-    fn into_body(self) -> Self::Body {
+    fn into_body(self) -> BaseBlockBody {
         self.split().1
     }
 
     /// Encodes the block with the given header and body.
-    fn rlp_encode(
-        header: &alloy_consensus::Header,
-        body: &Self::Body,
-        out: &mut dyn alloy_rlp::bytes::BufMut,
-    ) {
+    fn rlp_encode(header: &Header, body: &BaseBlockBody, out: &mut dyn alloy_rlp::bytes::BufMut) {
         // TODO: https://github.com/paradigmxyz/reth/issues/18002
         Self::new(header.clone(), body.clone()).encode(out)
     }
 
     /// Returns the rlp length of the block with the given header and body.
-    fn rlp_length(header: &alloy_consensus::Header, body: &Self::Body) -> usize;
+    fn rlp_length(header: &Header, body: &BaseBlockBody) -> usize;
 
     /// Expensive operation that recovers transaction signer.
-    fn recover_signers(&self) -> Result<Vec<Address>, RecoveryError>
-    where
-        <Self::Body as BlockBody>::Transaction: SignedTransaction,
-    {
+    fn recover_signers(&self) -> Result<Vec<Address>, RecoveryError> {
         self.body().recover_signers()
     }
 
@@ -172,11 +162,8 @@ pub trait Block:
     fn try_into_recovered_unchecked(
         self,
         senders: Vec<Address>,
-    ) -> Result<RecoveredBlock<Self>, BlockRecoveryError<Self>>
-    where
-        <Self::Body as BlockBody>::Transaction: SignedTransaction,
-    {
-        let senders = if self.body().transactions().len() == senders.len() {
+    ) -> Result<RecoveredBlock, BlockRecoveryError<Self>> {
+        let senders = if self.body().transactions.len() == senders.len() {
             senders
         } else {
             // Fall back to recovery if lengths don't match
@@ -185,29 +172,26 @@ pub trait Block:
             };
             senders
         };
-        Ok(RecoveredBlock::new_unhashed(self, senders))
+        Ok(RecoveredBlock::new_unhashed(self.into(), senders))
     }
 
     /// Transform the block into a [`RecoveredBlock`] using the given signers.
     ///
     /// Note: This method assumes the signers are correct and does not validate them.
     #[inline]
-    fn into_recovered_with_signers(self, signers: Vec<Address>) -> RecoveredBlock<Self>
-    where
-        <Self::Body as BlockBody>::Transaction: SignedTransaction,
-    {
-        RecoveredBlock::new_unhashed(self, signers)
+    fn into_recovered_with_signers(self, signers: Vec<Address>) -> RecoveredBlock {
+        RecoveredBlock::new_unhashed(self.into(), signers)
     }
 
     /// **Expensive**. Transform into a [`RecoveredBlock`] by recovering senders in the contained
     /// transactions.
     ///
     /// Returns the block as error if a signature is invalid.
-    fn try_into_recovered(self) -> Result<RecoveredBlock<Self>, BlockRecoveryError<Self>> {
+    fn try_into_recovered(self) -> Result<RecoveredBlock, BlockRecoveryError<Self>> {
         let Ok(signers) = self.body().recover_signers() else {
             return Err(BlockRecoveryError::new(self));
         };
-        Ok(RecoveredBlock::new_unhashed(self, signers))
+        Ok(RecoveredBlock::new_unhashed(self.into(), signers))
     }
 
     /// A Convenience function to convert this type into the regular ethereum block that
@@ -225,51 +209,42 @@ pub trait Block:
     /// [`alloy_consensus::Block`] only that it can be converted into it which is useful for
     /// the `eth_` RPC namespace (e.g. RPC block).
     #[inline]
-    fn into_ethereum_block(
-        self,
-    ) -> alloy_consensus::Block<<Self::Body as BlockBody>::Transaction, alloy_consensus::Header>
-    {
+    fn into_ethereum_block(self) -> alloy_consensus::Block<BaseTxEnvelope, Header> {
         let (header, body) = self.split();
         alloy_consensus::Block::new(header, body.into_ethereum_body())
     }
 }
 
-impl<T: SignedTransaction> Block for alloy_consensus::Block<T> {
-    type Body = alloy_consensus::BlockBody<T>;
-
+impl Block for BaseBlock {
     #[inline]
-    fn new(header: alloy_consensus::Header, body: Self::Body) -> Self {
+    fn new(header: Header, body: BaseBlockBody) -> Self {
         Self { header, body }
     }
 
     #[inline]
-    fn header(&self) -> &alloy_consensus::Header {
+    fn header(&self) -> &Header {
         &self.header
     }
 
     #[inline]
-    fn body(&self) -> &Self::Body {
+    fn body(&self) -> &BaseBlockBody {
         &self.body
     }
 
     #[inline]
-    fn split(self) -> (alloy_consensus::Header, Self::Body) {
+    fn split(self) -> (Header, BaseBlockBody) {
         (self.header, self.body)
     }
 
-    fn rlp_length(header: &alloy_consensus::Header, body: &Self::Body) -> usize {
+    fn rlp_length(header: &Header, body: &BaseBlockBody) -> usize {
         Self::rlp_length_for(header, body)
     }
 
-    fn rlp_encode(
-        header: &alloy_consensus::Header,
-        body: &Self::Body,
-        out: &mut dyn alloy_rlp::bytes::BufMut,
-    ) {
+    fn rlp_encode(header: &Header, body: &BaseBlockBody, out: &mut dyn alloy_rlp::bytes::BufMut) {
         Self::rlp_encode_from_parts(header, body, out)
     }
 
-    fn decode_sealed(buf: &mut &[u8]) -> alloy_rlp::Result<SealedBlock<Self>> {
+    fn decode_sealed(buf: &mut &[u8]) -> alloy_rlp::Result<SealedBlock> {
         Self::decode_sealed(buf).map(Into::into)
     }
 
@@ -285,13 +260,13 @@ impl<T: SignedTransaction> Block for alloy_consensus::Block<T> {
 #[cfg(any(test, feature = "test-utils"))]
 pub trait TestBlock: Block {
     /// Returns mutable reference to block body.
-    fn body_mut(&mut self) -> &mut Self::Body;
+    fn body_mut(&mut self) -> &mut BaseBlockBody;
 
     /// Returns mutable reference to block header.
-    fn header_mut(&mut self) -> &mut alloy_consensus::Header;
+    fn header_mut(&mut self) -> &mut Header;
 
     /// Updates the block header.
-    fn set_header(&mut self, header: alloy_consensus::Header);
+    fn set_header(&mut self, header: Header);
 
     /// Updates the parent block hash.
     #[inline]
@@ -325,19 +300,19 @@ pub trait TestBlock: Block {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-impl<T: SignedTransaction> TestBlock for alloy_consensus::Block<T> {
+impl TestBlock for BaseBlock {
     #[inline]
-    fn body_mut(&mut self) -> &mut Self::Body {
+    fn body_mut(&mut self) -> &mut BaseBlockBody {
         &mut self.body
     }
 
     #[inline]
-    fn header_mut(&mut self) -> &mut alloy_consensus::Header {
+    fn header_mut(&mut self) -> &mut Header {
         &mut self.header
     }
 
     #[inline]
-    fn set_header(&mut self, header: alloy_consensus::Header) {
+    fn set_header(&mut self, header: Header) {
         self.header = header
     }
 }

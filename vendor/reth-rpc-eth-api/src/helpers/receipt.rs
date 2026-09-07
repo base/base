@@ -12,7 +12,7 @@ use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, error::FromEthApiError,
     utils::calculate_gas_used_and_next_log_index,
 };
-use reth_storage_api::{ProviderBlock, ProviderReceipt, ProviderTx};
+use reth_storage_api::{ProviderReceipt, ProviderTx};
 
 use crate::{EthApiTypes, RpcNodeCoreExt};
 
@@ -29,7 +29,7 @@ pub trait LoadReceipt: EthApiTypes + RpcNodeCoreExt + Send + Sync {
         meta: TransactionMeta,
         receipt: ProviderReceipt<Self::Provider>,
         all_receipts: Option<Arc<Vec<ProviderReceipt<Self::Provider>>>>,
-        block: Option<Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>>,
+        block: Option<Arc<RecoveredBlock>>,
     ) -> impl Future<Output = Result<BaseTransactionReceipt, BaseEthApiError>> + Send {
         async move {
             let hash = meta.block_hash;

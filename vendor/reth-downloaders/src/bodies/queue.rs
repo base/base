@@ -13,7 +13,7 @@ use reth_network_p2p::{
     bodies::{client::BodiesClient, response::BlockResponse},
     error::DownloadResult,
 };
-use reth_primitives_traits::{Block, SealedHeader};
+use reth_primitives_traits::SealedHeader;
 
 use super::request::BodiesRequestFuture;
 use crate::metrics::BodyDownloaderMetrics;
@@ -21,19 +21,18 @@ use crate::metrics::BodyDownloaderMetrics;
 /// The wrapper around [`FuturesUnordered`] that keeps information
 /// about the blocks currently being requested.
 #[derive(Debug)]
-pub(crate) struct BodiesRequestQueue<B: Block, C: BodiesClient<Body = B::Body>> {
+pub(crate) struct BodiesRequestQueue<C: BodiesClient<Body = base_common_consensus::BaseBlockBody>> {
     /// Inner body request queue.
-    inner: FuturesUnordered<BodiesRequestFuture<B, C>>,
+    inner: FuturesUnordered<BodiesRequestFuture<C>>,
     /// The downloader metrics.
     metrics: BodyDownloaderMetrics,
     /// Last requested block number.
     pub(crate) last_requested_block_number: Option<BlockNumber>,
 }
 
-impl<B, C> BodiesRequestQueue<B, C>
+impl<C> BodiesRequestQueue<C>
 where
-    B: Block,
-    C: BodiesClient<Body = B::Body> + 'static,
+    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
 {
     /// Create new instance of request queue.
     pub(crate) fn new(metrics: BodyDownloaderMetrics) -> Self {
@@ -61,7 +60,7 @@ where
     pub(crate) fn push_new_request(
         &mut self,
         client: Arc<C>,
-        consensus: Arc<dyn Consensus<B>>,
+        consensus: Arc<dyn Consensus>,
         request: Vec<SealedHeader>,
     ) {
         // Set last max requested block number
@@ -80,12 +79,11 @@ where
     }
 }
 
-impl<B, C> Stream for BodiesRequestQueue<B, C>
+impl<C> Stream for BodiesRequestQueue<C>
 where
-    B: Block + 'static,
-    C: BodiesClient<Body = B::Body> + 'static,
+    C: BodiesClient<Body = base_common_consensus::BaseBlockBody> + 'static,
 {
-    type Item = DownloadResult<Vec<BlockResponse<B>>>;
+    type Item = DownloadResult<Vec<BlockResponse>>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.get_mut().inner.poll_next_unpin(cx)

@@ -42,7 +42,7 @@ struct BackfillTaskOutput<T> {
 /// Ordered queue of [`JoinHandle`]s that yield [`BackfillTaskOutput`]s.
 type BackfillTasks<T> = FuturesOrdered<JoinHandle<BackfillTaskOutput<T>>>;
 
-type SingleBlockStreamItem = (RecoveredBlock<BaseBlock>, BlockExecutionOutput<BaseReceipt>);
+type SingleBlockStreamItem = (RecoveredBlock, BlockExecutionOutput<BaseReceipt>);
 type BatchBlockStreamItem = Chain;
 
 /// Stream for processing backfill jobs asynchronously.
@@ -339,7 +339,7 @@ mod tests {
         chain_spec: &Arc<ChainSpec>,
         key_pair: Keypair,
         n: u64,
-    ) -> Result<Vec<RecoveredBlock<BaseBlock>>> {
+    ) -> Result<Vec<RecoveredBlock>> {
         let mut blocks = Vec::with_capacity(n as usize);
         let mut parent_hash = chain_spec.genesis_hash();
 
@@ -385,7 +385,7 @@ mod tests {
     fn execute_and_commit_blocks<DB>(
         provider_factory: &ProviderFactory<DB>,
         chain_spec: &Arc<ChainSpec>,
-        blocks: &[RecoveredBlock<BaseBlock>],
+        blocks: &[RecoveredBlock],
     ) -> Result<()>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,

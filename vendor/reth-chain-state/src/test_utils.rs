@@ -9,8 +9,8 @@ use alloy_primitives::{Address, B256, BlockNumber, U256, map::B256HashMap};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{
-    BaseBlock as Block, BaseBlockBody as BlockBody, BaseReceipt as Receipt,
-    BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction,
+    BaseBlockBody as BlockBody, BaseReceipt as Receipt, BaseTxEnvelope as TransactionSigned,
+    BaseTypedTransaction as Transaction,
 };
 use rand::Rng;
 use reth_chainspec::{ChainSpec, EthereumHardfork, MIN_TRANSACTION_GAS};
@@ -103,11 +103,7 @@ impl TestBlockBuilder {
     }
 
     /// Generates a random [`RecoveredBlock`].
-    pub fn generate_random_block(
-        &mut self,
-        number: BlockNumber,
-        parent_hash: B256,
-    ) -> SealedBlock<Block> {
+    pub fn generate_random_block(&mut self, number: BlockNumber, parent_hash: B256) -> SealedBlock {
         let mut rng = rand::rng();
 
         let mock_tx = |nonce: u64| -> Recovered<_> {
@@ -192,11 +188,7 @@ impl TestBlockBuilder {
     }
 
     /// Creates a fork chain with the given base block.
-    pub fn create_fork(
-        &mut self,
-        base_block: &SealedBlock<Block>,
-        length: u64,
-    ) -> Vec<RecoveredBlock<Block>> {
+    pub fn create_fork(&mut self, base_block: &SealedBlock, length: u64) -> Vec<RecoveredBlock> {
         let mut fork = Vec::with_capacity(length as usize);
         let mut parent = base_block.clone();
 
@@ -370,10 +362,7 @@ impl TestBlockBuilder {
     /// Returns the execution outcome for a block created with this builder.
     /// In order to properly include the bundle state, the signer balance is
     /// updated.
-    pub fn get_execution_outcome(
-        &mut self,
-        block: RecoveredBlock<Block>,
-    ) -> ExecutionOutcome<Receipt> {
+    pub fn get_execution_outcome(&mut self, block: RecoveredBlock) -> ExecutionOutcome<Receipt> {
         let num_txs = block.body().transactions.len() as u64;
         let single_cost = Self::single_tx_cost();
 

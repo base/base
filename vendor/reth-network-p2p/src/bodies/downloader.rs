@@ -8,14 +8,14 @@ use super::response::BlockResponse;
 use crate::error::DownloadResult;
 
 /// Body downloader return type.
-pub type BodyDownloaderResult<B> = DownloadResult<Vec<BlockResponse<B>>>;
+pub type BodyDownloaderResult = DownloadResult<Vec<BlockResponse>>;
 
 /// A downloader capable of fetching and yielding block bodies from block headers.
 ///
 /// A downloader represents a distinct strategy for submitting requests to download block bodies,
 /// while a [`BodiesClient`][crate::bodies::client::BodiesClient] represents a client capable of
 /// fulfilling these requests.
-pub trait BodyDownloader: Send + Stream<Item = BodyDownloaderResult<Self::Block>> + Unpin {
+pub trait BodyDownloader: Send + Stream<Item = BodyDownloaderResult> + Unpin {
     /// The Block type this downloader supports
     type Block: Block + 'static;
 

@@ -7,13 +7,13 @@ use std::{sync::Arc, time::Instant};
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, BlockHash, TxHash};
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 use base_common_rpc_types::BaseTransactionReceipt;
 use derive_more::Constructor;
 use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_ethereum_primitives::Receipt;
 use reth_evm::EvmEnvFor;
-use reth_primitives_traits::{Block, IndexedTx, RecoveredBlock, SealedHeader};
+use reth_primitives_traits::{IndexedTx, RecoveredBlock, SealedHeader};
 
 use crate::block::BlockAndReceipts;
 
@@ -23,14 +23,14 @@ pub struct PendingBlockEnv {
     /// Configured [`reth_evm::EvmEnv`] for the pending block.
     pub evm_env: EvmEnvFor,
     /// Origin block for the config
-    pub origin: PendingBlockEnvOrigin<BaseBlock, BaseReceipt>,
+    pub origin: PendingBlockEnvOrigin<BaseReceipt>,
 }
 
 /// The origin for a configured [`PendingBlockEnv`]
 #[derive(Clone, Debug)]
-pub enum PendingBlockEnvOrigin<B: Block = reth_ethereum_primitives::Block, R = Receipt> {
+pub enum PendingBlockEnvOrigin<R = Receipt> {
     /// The pending block as received from the CL.
-    ActualPending(Arc<RecoveredBlock<B>>, Arc<Vec<R>>),
+    ActualPending(Arc<RecoveredBlock>, Arc<Vec<R>>),
     /// The _modified_ header of the latest block.
     ///
     /// This derives the pending state based on the latest header by modifying:
@@ -40,14 +40,14 @@ pub enum PendingBlockEnvOrigin<B: Block = reth_ethereum_primitives::Block, R = R
     DerivedFromLatest(SealedHeader),
 }
 
-impl<B: Block, R> PendingBlockEnvOrigin<B, R> {
+impl<R> PendingBlockEnvOrigin<R> {
     /// Returns true if the origin is the actual pending block as received from the CL.
     pub const fn is_actual_pending(&self) -> bool {
         matches!(self, Self::ActualPending(_, _))
     }
 
     /// Consumes the type and returns the actual pending block.
-    pub fn into_actual_pending(self) -> Option<Arc<RecoveredBlock<B>>> {
+    pub fn into_actual_pending(self) -> Option<Arc<RecoveredBlock>> {
         match self {
             Self::ActualPending(block, _) => Some(block),
             _ => None,
@@ -105,7 +105,7 @@ impl PendingBlock {
     }
 
     /// Returns the locally built pending [`RecoveredBlock`].
-    pub const fn block(&self) -> &Arc<RecoveredBlock<BaseBlock>> {
+    pub const fn block(&self) -> &Arc<RecoveredBlock> {
         &self.executed_block.recovered_block
     }
 
@@ -135,7 +135,7 @@ impl PendingBlock {
     pub fn find_transaction_and_receipt_by_hash(
         &self,
         tx_hash: TxHash,
-    ) -> Option<(IndexedTx<'_, BaseBlock>, &BaseReceipt)> {
+    ) -> Option<(IndexedTx<'_>, &BaseReceipt)> {
         let indexed_tx = self.executed_block.recovered_block().find_indexed(tx_hash)?;
         let receipt = self.receipts.get(indexed_tx.index())?;
         Some((indexed_tx, receipt))

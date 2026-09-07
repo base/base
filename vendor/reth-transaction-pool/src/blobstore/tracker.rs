@@ -2,9 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use alloy_consensus::{BlockHeader, Typed2718, transaction::TxHashRef};
+use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{B256, BlockNumber};
-use reth_primitives_traits::{Block, BlockBody, RecoveredBlock, SignedTransaction};
+use reth_primitives_traits::RecoveredBlock;
 
 /// The type that is used to track canonical blob transactions.
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -39,19 +39,13 @@ impl BlobStoreCanonTracker {
     ///
     /// Note: In case this is a chain that's part of a reorg, this replaces previously tracked
     /// blocks.
-    pub fn add_new_chain_blocks<'a, B>(
+    pub fn add_new_chain_blocks<'a>(
         &mut self,
-        blocks: impl IntoIterator<Item = &'a RecoveredBlock<B>>,
-    ) where
-        B: Block<Body: BlockBody<Transaction: SignedTransaction>> + 'a,
-    {
+        blocks: impl IntoIterator<Item = &'a RecoveredBlock>,
+    ) {
         let blob_txs = blocks.into_iter().map(|block| {
-            let iter = block
-                .body()
-                .transactions()
-                .iter()
-                .filter(|tx| tx.is_eip4844())
-                .map(|tx| *tx.tx_hash());
+            let iter =
+                block.body().transactions().filter(|tx| tx.is_eip4844()).map(|tx| tx.tx_hash());
             (block.header().number(), iter)
         });
         self.add_blocks(blob_txs);
@@ -91,8 +85,7 @@ pub enum BlobStoreUpdates {
 mod tests {
     use alloy_consensus::{Header, Signed};
     use alloy_primitives::Signature;
-    use reth_ethereum_primitives::Transaction;
-    use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
+    use reth_primitives_traits::RecoveredBlock;
 
     use super::*;
 
@@ -118,60 +111,23 @@ mod tests {
     #[test]
     fn test_add_new_chain_blocks() {
         let mut tracker = BlobStoreCanonTracker::default();
-        // Create sample transactions
-        let tx1_signed = Signed::new_unhashed(
-            Transaction::Eip4844(Default::default()),
-            Signature::test_signature(),
-        ); // EIP-4844 transaction
-        let tx2_signed = Signed::new_unhashed(
-            Transaction::Eip4844(Default::default()),
-            Signature::test_signature(),
-        ); // EIP-4844 transaction
-
-        let tx1_hash = *tx1_signed.hash();
-        let tx2_hash = *tx2_signed.hash();
-        // Creating a first block with EIP-4844 transactions
-        let block1: RecoveredBlock<reth_ethereum_primitives::Block> = RecoveredBlock::new_sealed(
-            SealedBlock::from_sealed_parts(
-                SealedHeader::new(Header { number: 10, ..Default::default() }, B256::random()),
-                alloy_consensus::BlockBody {
-                    transactions: vec![
-                        tx1_signed.into(),
-                        tx2_signed.into(),
-                        // Another transaction that is not EIP-4844
-                        Signed::new_unhashed(
-                            Transaction::Eip7702(Default::default()),
-                            Signature::test_signature(),
-                        )
-                        .into(),
-                    ],
+        let block1 = RecoveredBlock::new_unhashed(
+            base_common_consensus::BaseBlock {
+                header: Header { number: 10, ..Default::default() },
+                body: alloy_consensus::BlockBody {
+                    transactions: vec![base_common_consensus::BaseTxEnvelope::Eip7702(
+                        Signed::new_unhashed(Default::default(), Signature::test_signature()),
+                    )],
                     ..Default::default()
                 },
-            ),
+            },
             Default::default(),
         );
-
-        // Creating a second block with EIP-1559 and EIP-2930 transactions
-        // Note: This block does not contain any EIP-4844 transactions
-        let block2: RecoveredBlock<reth_ethereum_primitives::Block> = RecoveredBlock::new_sealed(
-            SealedBlock::from_sealed_parts(
-                SealedHeader::new(Header { number: 11, ..Default::default() }, B256::random()),
-                alloy_consensus::BlockBody {
-                    transactions: vec![
-                        Signed::new_unhashed(
-                            Transaction::Eip1559(Default::default()),
-                            Signature::test_signature(),
-                        )
-                        .into(),
-                        Signed::new_unhashed(
-                            Transaction::Eip2930(Default::default()),
-                            Signature::test_signature(),
-                        )
-                        .into(),
-                    ],
-                    ..Default::default()
-                },
-            ),
+        let block2 = RecoveredBlock::new_unhashed(
+            base_common_consensus::BaseBlock {
+                header: Header { number: 11, ..Default::default() },
+                body: Default::default(),
+            },
             Default::default(),
         );
 
@@ -180,9 +136,8 @@ mod tests {
         // Add new chain blocks to the tracker
         tracker.add_new_chain_blocks(&blocks);
 
-        // Tx1 and tx2 should be in the block containing EIP-4844 transactions
-        assert_eq!(tracker.blob_txs_in_blocks.get(&10).unwrap(), &vec![tx1_hash, tx2_hash]);
-        // No transactions should be in the block containing non-EIP-4844 transactions
+        // Base blocks cannot contain EIP-4844 transactions.
+        assert!(tracker.blob_txs_in_blocks.get(&10).unwrap().is_empty());
         assert!(tracker.blob_txs_in_blocks.get(&11).unwrap().is_empty());
     }
 }

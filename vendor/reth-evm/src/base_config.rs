@@ -11,7 +11,7 @@ use alloy_evm::{
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope, EIP1559ParamError};
+use base_common_consensus::{BaseTxEnvelope, EIP1559ParamError};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId,
 };
@@ -126,7 +126,7 @@ impl BaseEvmConfig {
     /// Builds the context for an existing block.
     pub fn context_for_block(
         &self,
-        block: &'_ SealedBlock<BaseBlock>,
+        block: &'_ SealedBlock,
     ) -> Result<BaseBlockExecutionCtx, EIP1559ParamError> {
         Ok(BaseBlockExecutionCtx {
             parent_hash: block.header().parent_hash(),
@@ -269,7 +269,7 @@ impl BaseEvmConfig {
     pub fn executor_for_block<'a, DB: Database>(
         &'a self,
         db: &'a mut State<DB>,
-        block: &'a SealedBlock<BaseBlock>,
+        block: &'a SealedBlock,
     ) -> Result<BlockExecutorForEvm<'a, DB>, EIP1559ParamError> {
         let evm = self.evm_for_block(db, block.header())?;
         let ctx = self.context_for_block(block)?;
@@ -396,7 +396,7 @@ mod tests {
         Address, B256, LogData, U256, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_common_consensus::{BaseBlock, BaseReceipt};
+    use base_common_consensus::BaseReceipt;
     use base_common_evm::BaseSpecId;
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -609,7 +609,7 @@ mod tests {
     #[test]
     fn receipts_by_block_hash() {
         // Create a default recovered block
-        let block: RecoveredBlock<BaseBlock> = Default::default();
+        let block: RecoveredBlock = Default::default();
 
         // Define block hashes for block1 and block2
         let block1_hash = B256::new([0x01; 32]);

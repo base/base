@@ -1,5 +1,5 @@
 use alloy_eips::BlockNumHash;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseReceipt;
 use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use chrono::Utc;
 use eyre::Result;
@@ -146,7 +146,7 @@ impl ShadowIndexerExEx {
 
     fn build_row(
         &self,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock,
         receipts: &[BaseReceipt],
         canonical_hash: Option<Vec<u8>>,
     ) -> Result<ShadowBlockRow> {
@@ -280,8 +280,8 @@ mod tests {
         B256::new(bytes)
     }
 
-    fn mk_block(number: u64, variant: u8) -> RecoveredBlock<BaseBlock> {
-        let mut block: RecoveredBlock<BaseBlock> = Default::default();
+    fn mk_block(number: u64, variant: u8) -> RecoveredBlock {
+        let mut block: RecoveredBlock = Default::default();
         block.set_block_number(number);
         block.set_hash(block_hash(number, variant));
         block.set_parent_hash(block_hash(number.saturating_sub(1), variant));

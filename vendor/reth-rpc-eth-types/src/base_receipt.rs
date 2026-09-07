@@ -83,7 +83,7 @@ where
     pub fn convert_receipts_with_block(
         &self,
         inputs: Vec<ConvertReceiptInput<'_>>,
-        block: &SealedBlock<BaseBlock>,
+        block: &SealedBlock,
     ) -> Result<Vec<BaseTransactionReceipt>, BaseEthApiError> {
         let block_timestamp_ms = self.base_time.insert_from_transactions(
             block.hash(),

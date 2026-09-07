@@ -78,7 +78,7 @@ where
     Provider: BlockWriter<Block = BaseBlock> + StaticFileProviderFactory,
 {
     provider_rw.insert_block(
-        &SealedBlock::<BaseBlock>::from_sealed_parts(header.clone(), Default::default())
+        &SealedBlock::from_sealed_parts(header.clone(), Default::default())
             .try_recover()
             .expect("no senders or txes"),
     )?;

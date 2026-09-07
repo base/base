@@ -38,8 +38,8 @@ use reth_rpc_eth_types::{
 };
 use reth_rpc_server_types::{ToRpcResult, result::rpc_error_with_code};
 use reth_storage_api::{
-    BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider, ProviderBlock,
-    ProviderReceipt, ReceiptProvider,
+    BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, HeaderProvider, ProviderReceipt,
+    ReceiptProvider,
 };
 use reth_tasks::Runtime;
 use reth_transaction_pool::{NewSubpoolTransactionStream, PoolTransaction, TransactionPool};
@@ -1049,7 +1049,7 @@ where
     /// We always need the entire receipts for the matching block.
     receipts: Arc<Vec<ProviderReceipt<P>>>,
     /// Block can be optional and we can fetch it lazily when needed.
-    recovered_block: Option<Arc<reth_primitives_traits::RecoveredBlock<ProviderBlock<P>>>>,
+    recovered_block: Option<Arc<reth_primitives_traits::RecoveredBlock>>,
     /// The header of the block.
     header: SealedHeader,
 }

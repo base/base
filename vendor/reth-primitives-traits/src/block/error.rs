@@ -12,7 +12,8 @@ use crate::transaction::signed::RecoveryError;
 /// # Example
 ///
 /// ```rust
-/// use alloy_consensus::{Block, BlockBody, Header, Signed, TxEnvelope, TxLegacy};
+/// use alloy_consensus::{Header, Signed, TxLegacy};
+/// use base_common_consensus::{BaseBlock, BaseBlockBody, BaseTxEnvelope};
 /// use alloy_primitives::{Signature, B256};
 /// use reth_primitives_traits::{block::error::SealedBlockRecoveryError, SealedBlock};
 ///
@@ -20,13 +21,13 @@ use crate::transaction::signed::RecoveryError;
 /// let header = Header::default();
 /// let tx = TxLegacy::default();
 /// let signed_tx = Signed::new_unchecked(tx, Signature::test_signature(), B256::ZERO);
-/// let envelope = TxEnvelope::Legacy(signed_tx);
-/// let body = BlockBody { transactions: vec![envelope], ommers: vec![], withdrawals: None };
-/// let block = Block::new(header, body);
+/// let envelope = BaseTxEnvelope::Legacy(signed_tx);
+/// let body = BaseBlockBody { transactions: vec![envelope], ommers: vec![], withdrawals: None };
+/// let block = BaseBlock::new(header, body);
 /// let sealed_block = SealedBlock::new_unchecked(block, B256::ZERO);
 ///
 /// // Simulate a block recovery operation that fails
-/// let block_recovery_result: Result<(), SealedBlockRecoveryError<_>> =
+/// let block_recovery_result: Result<(), SealedBlockRecoveryError> =
 ///     Err(SealedBlockRecoveryError::new(sealed_block));
 ///
 /// // When block recovery fails, you get the error with the original block
@@ -34,7 +35,7 @@ use crate::transaction::signed::RecoveryError;
 /// let failed_block = error.into_inner();
 /// // Now you can inspect the failed block or try recovery again
 /// ```
-pub type SealedBlockRecoveryError<B> = BlockRecoveryError<crate::SealedBlock<B>>;
+pub type SealedBlockRecoveryError = BlockRecoveryError<crate::SealedBlock>;
 
 /// Error when recovering a block from [`SealedBlock`](crate::SealedBlock) to
 /// [`RecoveredBlock`](crate::RecoveredBlock).
