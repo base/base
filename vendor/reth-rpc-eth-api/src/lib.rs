@@ -45,3 +45,10 @@ pub use reth_rpc_eth_types::error::{
 };
 use reth_trie_common as _;
 pub use types::{EthApiTypes, FullEthApiTypes};
+
+mod base_receipt;
+pub use base_receipt::{BaseReceiptBuilder, BaseReceiptConverter, ReceiptFieldsBuilder};
+mod base_time;
+pub use base_time::BaseTimeCache;
+mod base_tx_info;
+pub use base_tx_info::BaseTxInfoMapper;

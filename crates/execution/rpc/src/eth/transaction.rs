@@ -1,18 +1,11 @@
 //! Loads and formats Base transaction RPC response.
 
-use std::{
-    fmt::{Debug, Formatter},
-    future::Future,
-    time::Duration,
-};
+use std::{future::Future, time::Duration};
 
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{B256, Bytes};
-use alloy_rpc_types_eth::TransactionInfo;
 use base_common_chains::Upgrades;
-use base_common_consensus::{
-    BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
-};
+use base_common_consensus::EIP8130_TX_TYPE_ID;
 use base_common_rpc_types::BaseTransactionReceipt;
 use base_execution_chainspec::ChainSpecProvider;
 use base_observability_events::{
@@ -20,21 +13,18 @@ use base_observability_events::{
 };
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_primitives_traits::{SignedTransaction, SignerRecoverable, WithEncoded};
+use reth_primitives_traits::{SignerRecoverable, WithEncoded};
 use reth_rpc_eth_api::{
-    EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, TxInfoMapper,
+    EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore,
     helpers::{EthTransactions, LoadReceipt, LoadTransaction, SpawnBlocking, spec::SignersForRpc},
 };
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
-use reth_storage_api::{
-    BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider, errors::ProviderError,
-};
+use reth_storage_api::{BlockReaderIdExt, ProviderTx, TransactionsProvider};
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
 };
 use tracing::{debug, instrument, warn};
 
-use super::BaseTimeCache;
 use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerClient};
 
 impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
@@ -248,63 +238,4 @@ where
     }
 }
 
-/// Base implementation of [`TxInfoMapper`].
-///
-/// For deposits, receipt is fetched to extract `deposit_nonce` and `deposit_receipt_version`.
-/// Otherwise, it works like regular Ethereum implementation, i.e. uses [`TransactionInfo`].
-pub struct BaseTxInfoMapper<Provider> {
-    provider: Provider,
-    base_time: BaseTimeCache,
-}
-
-impl<Provider: Clone> Clone for BaseTxInfoMapper<Provider> {
-    fn clone(&self) -> Self {
-        Self { provider: self.provider.clone(), base_time: self.base_time.clone() }
-    }
-}
-
-impl<Provider> Debug for BaseTxInfoMapper<Provider> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BaseTxInfoMapper").finish()
-    }
-}
-
-impl<Provider> BaseTxInfoMapper<Provider> {
-    /// Creates a mapper backed by the given provider and `BaseTime` cache.
-    pub const fn new(provider: Provider, base_time: BaseTimeCache) -> Self {
-        Self { provider, base_time }
-    }
-}
-
-impl<T, Provider> TxInfoMapper<T> for BaseTxInfoMapper<Provider>
-where
-    T: BaseTransaction + SignedTransaction,
-    Provider: TransactionsProvider<Transaction = T> + ReceiptProvider<Receipt: DepositReceiptExt>,
-{
-    type Out = BaseTransactionInfo;
-    type Err = ProviderError;
-
-    fn try_map(&self, tx: &T, tx_info: TransactionInfo) -> Result<Self::Out, ProviderError> {
-        let deposit_meta = if tx.is_deposit() {
-            self.provider.receipt_by_hash(*tx.tx_hash())?.and_then(|receipt| {
-                receipt.as_deposit_receipt().map(|receipt| DepositInfo {
-                    deposit_receipt_version: receipt.deposit_receipt_version,
-                    deposit_nonce: receipt.deposit_nonce,
-                })
-            })
-        } else {
-            None
-        }
-        .unwrap_or_default();
-
-        let block_timestamp_ms =
-            match (tx_info.block_hash, tx_info.block_number, tx_info.block_timestamp) {
-                (Some(block_hash), Some(block_number), Some(block_timestamp)) => self
-                    .base_time
-                    .get::<T, _>(&self.provider, block_hash, block_number, block_timestamp)?,
-                _ => None,
-            };
-
-        Ok(BaseTransactionInfo { inner: tx_info, deposit_meta, block_timestamp_ms })
-    }
-}
+pub use reth_rpc_eth_api::BaseTxInfoMapper;

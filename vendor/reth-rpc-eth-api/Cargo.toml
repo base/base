@@ -16,6 +16,7 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+lru = { workspace = true }
 tokio = { workspace = true }
 reth-evm = { workspace = true }
 reth-revm = { workspace = true }
@@ -25,16 +26,21 @@ alloy-eips = { workspace = true }
 alloy-serde = { workspace = true }
 reth-errors = { workspace = true }
 async-trait = { workspace = true }
+base-protocol = { workspace = true }
 alloy-network = { workspace = true }
 reth-node-api = { workspace = true }
 reth-chainspec = { workspace = true }
 alloy-json-rpc = { workspace = true }
+base-common-flz = { workspace = true }
+base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }
 jsonrpsee-types = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-network-api = { workspace = true }
+base-common-chains = { workspace = true }
+base-execution-evm = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-mev = { workspace = true }
@@ -59,6 +65,9 @@ alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
 alloy-evm = { workspace = true, features = ["overrides", "call-util"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
 revm = { workspace = true, features = ["optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "optional_fee_charge", "memory_limit"] }
+[dev-dependencies]
+reth-provider = { workspace = true, features = ["test-utils"] }
+base-protocol = { workspace = true, features = ["test-utils"] }
 [features]
 js-tracer = ["revm-inspectors/js-tracer", "reth-rpc-eth-types/js-tracer"]
 client = ["jsonrpsee/client", "jsonrpsee/async-client"]

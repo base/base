@@ -1,0 +1,774 @@
+//! Loads and formats Base receipt RPC response.
+
+use std::fmt::Debug;
+
+use alloy_consensus::{BlockHeader, Receipt, ReceiptWithBloom, TxReceipt};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_primitives::Address;
+use alloy_rpc_types_eth::{Log, TransactionReceipt};
+use base_common_chains::Upgrades;
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTransaction, BaseTxEnvelope};
+use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
+use base_common_rpc_types::{
+    BaseLogResponse, BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields,
+};
+use base_execution_chainspec::ChainSpecProvider;
+use base_execution_evm::RethL1BlockInfo;
+use reth_primitives_traits::SealedBlock;
+use reth_rpc_convert::transaction::{ConvertReceiptInput, ReceiptConverter};
+use reth_rpc_eth_types::{BaseEthApiError, EthApiError, receipt::build_receipt};
+use reth_storage_api::BlockReader;
+
+use crate::BaseTimeCache;
+
+/// Converter for Base receipts.
+#[derive(Debug, Clone)]
+pub struct BaseReceiptConverter<Provider> {
+    provider: Provider,
+    base_time: BaseTimeCache,
+}
+
+impl<Provider> BaseReceiptConverter<Provider> {
+    /// Creates a new [`BaseReceiptConverter`].
+    pub const fn new(provider: Provider, base_time: BaseTimeCache) -> Self {
+        Self { provider, base_time }
+    }
+}
+
+impl<Provider> ReceiptConverter for BaseReceiptConverter<Provider>
+where
+    Provider: BlockReader<Block = BaseBlock, Transaction = BaseTxEnvelope>
+        + ChainSpecProvider
+        + Debug
+        + 'static,
+{
+    type RpcReceipt = BaseTransactionReceipt;
+    type RpcLog = BaseLogResponse;
+    type Error = BaseEthApiError;
+
+    fn convert_log(
+        &self,
+        log: Log,
+        _receipt: &BaseReceipt,
+        header: &reth_primitives_traits::SealedHeader,
+    ) -> Result<Self::RpcLog, Self::Error> {
+        let block_timestamp_ms = self.base_time.get::<BaseTxEnvelope, _>(
+            &self.provider,
+            header.hash(),
+            header.number(),
+            header.timestamp(),
+        )?;
+
+        Ok(BaseLogResponse { inner: log, block_timestamp_ms })
+    }
+
+    fn convert_receipts(
+        &self,
+        inputs: Vec<ConvertReceiptInput<'_>>,
+    ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
+        let Some(block_number) = inputs.first().map(|r| r.meta.block_number) else {
+            return Ok(Vec::new());
+        };
+
+        let block = self
+            .provider
+            .block_by_number(block_number)?
+            .ok_or(EthApiError::HeaderNotFound(block_number.into()))?;
+
+        self.convert_receipts_with_block(inputs, &SealedBlock::new_unhashed(block))
+    }
+
+    fn convert_receipts_with_block(
+        &self,
+        inputs: Vec<ConvertReceiptInput<'_>>,
+        block: &SealedBlock<BaseBlock>,
+    ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
+        let block_timestamp_ms = self.base_time.insert_from_transactions(
+            block.hash(),
+            block.header().number(),
+            block.header().timestamp(),
+            &block.body().transactions,
+        );
+        let mut l1_block_info = match base_execution_evm::extract_l1_info(block.body()) {
+            Ok(l1_block_info) => l1_block_info,
+            Err(err) => {
+                let genesis_number =
+                    self.provider.chain_spec().genesis().number.unwrap_or_default();
+                // If it is the genesis block (i.e. block number is 0), there is no L1 info, so
+                // we return an empty l1_block_info.
+                if block.header().number() == genesis_number {
+                    return Ok(vec![]);
+                }
+                return Err(err.into());
+            }
+        };
+
+        let mut receipts = Vec::with_capacity(inputs.len());
+
+        for input in inputs {
+            // We must clear this cache as different L2 transactions can have different
+            // L1 costs. A potential improvement here is to only clear the cache if the
+            // new transaction input has changed, since otherwise the L1 cost wouldn't.
+            l1_block_info.clear_tx_l1_cost();
+
+            let mut receipt =
+                BaseReceiptBuilder::new(&self.provider.chain_spec(), input, &mut l1_block_info)?
+                    .build();
+            for log in &mut receipt.inner.inner.receipt.as_receipt_mut().logs {
+                log.block_timestamp_ms = block_timestamp_ms;
+            }
+            receipts.push(receipt);
+        }
+
+        Ok(receipts)
+    }
+}
+
+/// L1 fee and data gas for a non-deposit transaction, or deposit nonce and receipt version for a
+/// deposit transaction.
+#[derive(Debug, Clone)]
+pub struct ReceiptFieldsBuilder {
+    /// Block number.
+    pub block_number: u64,
+    /// Block timestamp.
+    pub block_timestamp: u64,
+    /// The L1 fee for transaction.
+    pub l1_fee: Option<u128>,
+    /// L1 gas used by transaction.
+    pub l1_data_gas: Option<u128>,
+    /// L1 fee scalar.
+    pub l1_fee_scalar: Option<f64>,
+    /* ---------------------------------------- Bedrock ---------------------------------------- */
+    /// The base fee of the L1 origin block.
+    pub l1_base_fee: Option<u128>,
+    /* --------------------------------------- Regolith ---------------------------------------- */
+    /// Deposit nonce, if this is a deposit transaction.
+    pub deposit_nonce: Option<u64>,
+    /* ---------------------------------------- Canyon ----------------------------------------- */
+    /// Deposit receipt version, if this is a deposit transaction.
+    pub deposit_receipt_version: Option<u64>,
+    /* ---------------------------------------- Ecotone ---------------------------------------- */
+    /// The current L1 fee scalar.
+    pub l1_base_fee_scalar: Option<u128>,
+    /// The current L1 blob base fee.
+    pub l1_blob_base_fee: Option<u128>,
+    /// The current L1 blob base fee scalar.
+    pub l1_blob_base_fee_scalar: Option<u128>,
+    /* ---------------------------------------- Isthmus ---------------------------------------- */
+    /// The current operator fee scalar.
+    pub operator_fee_scalar: Option<u128>,
+    /// The current L1 blob base fee scalar.
+    pub operator_fee_constant: Option<u128>,
+    /* ---------------------------------------- Jovian ----------------------------------------- */
+    /// The current DA footprint gas scalar.
+    pub da_footprint_gas_scalar: Option<u16>,
+}
+
+impl ReceiptFieldsBuilder {
+    /// Returns a new builder.
+    pub const fn new(block_timestamp: u64, block_number: u64) -> Self {
+        Self {
+            block_number,
+            block_timestamp,
+            l1_fee: None,
+            l1_data_gas: None,
+            l1_fee_scalar: None,
+            l1_base_fee: None,
+            deposit_nonce: None,
+            deposit_receipt_version: None,
+            l1_base_fee_scalar: None,
+            l1_blob_base_fee: None,
+            l1_blob_base_fee_scalar: None,
+            operator_fee_scalar: None,
+            operator_fee_constant: None,
+            da_footprint_gas_scalar: None,
+        }
+    }
+
+    /// Applies [`L1BlockInfo`](base_common_evm::L1BlockInfo).
+    pub fn l1_block_info<T: Encodable2718 + BaseTransaction>(
+        mut self,
+        chain_spec: &impl Upgrades,
+        tx: &T,
+        l1_block_info: &mut base_common_evm::L1BlockInfo,
+    ) -> Result<Self, BaseEthApiError> {
+        let raw_tx = tx.encoded_2718();
+        let timestamp = self.block_timestamp;
+
+        self.l1_fee = Some(
+            l1_block_info
+                .l1_tx_data_fee(chain_spec, timestamp, &raw_tx, tx.is_deposit())
+                .map_err(|_| BaseEthApiError::L1BlockFeeError)?
+                .saturating_to(),
+        );
+
+        self.l1_data_gas = Some(
+            l1_block_info
+                .l1_data_gas(chain_spec, timestamp, &raw_tx)
+                .map_err(|_| BaseEthApiError::L1BlockGasError)?
+                .saturating_add(l1_block_info.l1_fee_overhead.unwrap_or_default())
+                .saturating_to(),
+        );
+
+        self.l1_fee_scalar = (!chain_spec.is_ecotone_active_at_timestamp(timestamp))
+            .then_some(f64::from(l1_block_info.l1_base_fee_scalar) / 1_000_000.0);
+
+        self.l1_base_fee = Some(l1_block_info.l1_base_fee.saturating_to());
+        self.l1_base_fee_scalar = Some(l1_block_info.l1_base_fee_scalar.saturating_to());
+        self.l1_blob_base_fee = l1_block_info.l1_blob_base_fee.map(|fee| fee.saturating_to());
+        self.l1_blob_base_fee_scalar =
+            l1_block_info.l1_blob_base_fee_scalar.map(|scalar| scalar.saturating_to());
+
+        // If the operator fee params are both set to 0, we don't add them to the receipt.
+        let operator_fee_scalar_has_non_zero_value: bool =
+            l1_block_info.operator_fee_scalar.is_some_and(|scalar| !scalar.is_zero());
+
+        let operator_fee_constant_has_non_zero_value =
+            l1_block_info.operator_fee_constant.is_some_and(|constant| !constant.is_zero());
+
+        if operator_fee_scalar_has_non_zero_value || operator_fee_constant_has_non_zero_value {
+            self.operator_fee_scalar =
+                l1_block_info.operator_fee_scalar.map(|scalar| scalar.saturating_to());
+            self.operator_fee_constant =
+                l1_block_info.operator_fee_constant.map(|constant| constant.saturating_to());
+        }
+
+        self.da_footprint_gas_scalar = l1_block_info.da_footprint_gas_scalar;
+
+        Ok(self)
+    }
+
+    /// Applies deposit transaction metadata: deposit nonce.
+    pub const fn deposit_nonce(mut self, nonce: Option<u64>) -> Self {
+        self.deposit_nonce = nonce;
+        self
+    }
+
+    /// Applies deposit transaction metadata: deposit receipt version.
+    pub const fn deposit_version(mut self, version: Option<u64>) -> Self {
+        self.deposit_receipt_version = version;
+        self
+    }
+
+    /// Builds the [`TransactionReceiptFields`] object.
+    pub const fn build(self) -> TransactionReceiptFields {
+        let Self {
+            block_number: _,    // used to compute other fields
+            block_timestamp: _, // used to compute other fields
+            l1_fee,
+            l1_data_gas: l1_gas_used,
+            l1_fee_scalar,
+            l1_base_fee: l1_gas_price,
+            deposit_nonce,
+            deposit_receipt_version,
+            l1_base_fee_scalar,
+            l1_blob_base_fee,
+            l1_blob_base_fee_scalar,
+            operator_fee_scalar,
+            operator_fee_constant,
+            da_footprint_gas_scalar,
+        } = self;
+
+        TransactionReceiptFields {
+            l1_block_info: L1BlockInfo {
+                l1_gas_price,
+                l1_gas_used,
+                l1_fee,
+                l1_fee_scalar,
+                l1_base_fee_scalar,
+                l1_blob_base_fee,
+                l1_blob_base_fee_scalar,
+                operator_fee_scalar,
+                operator_fee_constant,
+                da_footprint_gas_scalar,
+            },
+            deposit_nonce,
+            deposit_receipt_version,
+        }
+    }
+}
+
+/// Builds an [`BaseTransactionReceipt`].
+#[derive(Debug)]
+pub struct BaseReceiptBuilder {
+    /// Core receipt with all fields from an L1 receipt and used as the basis for the Base receipt.
+    pub core_receipt: TransactionReceipt<ReceiptWithBloom<BaseReceipt<BaseLogResponse>>>,
+    /// Additional Base receipt fields.
+    pub receipt_fields: TransactionReceiptFields,
+    /// EIP-8130 gas payer (sender for self-pay, specified payer for sponsored). `None` for
+    /// non-EIP-8130 transactions.
+    pub payer: Option<Address>,
+    /// EIP-8130 per-phase execution statuses. `None` for non-EIP-8130 transactions;
+    /// `Some` (possibly empty) for EIP-8130 transactions.
+    pub phase_statuses: Option<Vec<u8>>,
+    /// EIP-8130 opaque transaction metadata. `None` for non-EIP-8130 transactions.
+    pub metadata: Option<alloy_primitives::Bytes>,
+}
+
+impl BaseReceiptBuilder {
+    /// Returns a new builder.
+    pub fn new(
+        chain_spec: &impl Upgrades,
+        input: ConvertReceiptInput<'_>,
+        l1_block_info: &mut base_common_evm::L1BlockInfo,
+    ) -> Result<Self, BaseEthApiError> {
+        let timestamp = input.meta.timestamp;
+        let block_number = input.meta.block_number;
+        let tx_signed = *input.tx.inner();
+
+        // EIP-8130 RPC-only fields, derived before `input` is consumed below. The payer is
+        // the sender for self-pay or the explicit payer for sponsored transactions; the
+        // per-phase statuses are persisted on the receipt and surfaced only at RPC.
+        let payer = tx_signed
+            .as_eip8130()
+            .map(|signed| signed.tx().payer.unwrap_or_else(|| input.tx.signer()));
+        // Omit empty metadata rather than serializing it as `"0x"`. Empty
+        // `phase_statuses` is still serialized as `[]` on EIP-8130 receipts;
+        // only metadata is skipped when empty.
+        let metadata = tx_signed
+            .as_eip8130()
+            .map(|signed| signed.tx().metadata.clone())
+            .filter(|metadata| !metadata.is_empty());
+        // `Some` (possibly empty) marks an EIP-8130 receipt so an empty-`calls`
+        // transaction still surfaces `"phaseStatuses": []`; `None` omits the field
+        // entirely for non-EIP-8130 receipts.
+        let phase_statuses = match &input.receipt {
+            BaseReceipt::Eip8130(receipt) => Some(receipt.phase_statuses.clone()),
+            _ => None,
+        };
+
+        let mut core_receipt = build_receipt(input, None, |receipt, next_log_index, meta| {
+            let map_logs = move |receipt: alloy_consensus::Receipt| {
+                let Receipt { status, cumulative_gas_used, logs } = receipt;
+                let logs = Log::collect_for_receipt(next_log_index, meta, logs)
+                    .into_iter()
+                    .map(BaseLogResponse::from)
+                    .collect();
+                Receipt { status, cumulative_gas_used, logs }
+            };
+            let mapped_receipt: BaseReceipt<BaseLogResponse> = match receipt {
+                BaseReceipt::Legacy(receipt) => BaseReceipt::Legacy(map_logs(receipt)),
+                BaseReceipt::Eip2930(receipt) => BaseReceipt::Eip2930(map_logs(receipt)),
+                BaseReceipt::Eip1559(receipt) => BaseReceipt::Eip1559(map_logs(receipt)),
+                BaseReceipt::Eip7702(receipt) => BaseReceipt::Eip7702(map_logs(receipt)),
+                BaseReceipt::Deposit(receipt) => BaseReceipt::Deposit(receipt.map_inner(map_logs)),
+                BaseReceipt::Eip8130(receipt) => BaseReceipt::Eip8130(receipt.map_inner(map_logs)),
+            };
+            mapped_receipt.into_with_bloom()
+        });
+
+        // In jovian, we're using the blob gas used field to store the current da
+        // footprint's value.
+        // We're computing the jovian blob gas used before building the receipt since the inputs get
+        // consumed by the `build_receipt` function.
+        chain_spec.is_jovian_active_at_timestamp(timestamp).then(|| {
+            // Estimate the size of the transaction in bytes and multiply by the DA
+            // footprint gas scalar.
+            // Jovian specs: `https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit`
+            let da_size = estimate_tx_compressed_size(tx_signed.encoded_2718().as_slice())
+                .saturating_div(1_000_000)
+                .saturating_mul(l1_block_info.da_footprint_gas_scalar.unwrap_or_default().into());
+
+            core_receipt.blob_gas_used = Some(da_size);
+        });
+
+        let receipt_fields = ReceiptFieldsBuilder::new(timestamp, block_number)
+            .l1_block_info(chain_spec, tx_signed, l1_block_info)?
+            .build();
+
+        Ok(Self { core_receipt, receipt_fields, payer, phase_statuses, metadata })
+    }
+
+    /// Builds [`BaseTransactionReceipt`] by combining core L1 receipt fields and additional Base
+    /// receipt fields.
+    pub fn build(self) -> BaseTransactionReceipt {
+        let Self { core_receipt: inner, receipt_fields, payer, phase_statuses, metadata } = self;
+
+        let TransactionReceiptFields { l1_block_info, .. } = receipt_fields;
+
+        BaseTransactionReceipt { inner, l1_block_info, payer, phase_statuses, metadata }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::{Block, BlockBody, Eip658Value, TxEip7702, transaction::TransactionMeta};
+    use alloy_eips::eip2718::Decodable2718;
+    use alloy_primitives::{Address, Bytes, Signature, U256, hex};
+    use base_common_chains::ChainConfig;
+    use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction};
+    use base_execution_chainspec::BaseChainSpec;
+    use reth_primitives_traits::Recovered;
+
+    use super::*;
+
+    /// Legacy compatibility fixture transaction at index 0 in block 124665056.
+    ///
+    /// <https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1>
+    const TX_SET_L1_BLOCK_OP_MAINNET_BLOCK_124665056: [u8; 251] = hex!(
+        "7ef8f8a0683079df94aa5b9cf86687d739a60a9b4f0835e520ec4d664e2e415dca17a6df94deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e200000146b000f79c500000000000000040000000066d052e700000000013ad8a3000000000000000000000000000000000000000000000000000000003ef1278700000000000000000000000000000000000000000000000000000000000000012fdf87b89884a61e74b322bbcf60386f543bfae7827725efaaf0ab1de2294a590000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985"
+    );
+
+    /// Legacy compatibility fixture transaction at index 1 in block 124665056.
+    ///
+    /// <https://optimistic.etherscan.io/tx/0x1059e8004daff32caa1f1b1ef97fe3a07a8cf40508f5b835b66d9420d87c4a4a>
+    const TX_1_OP_MAINNET_BLOCK_124665056: [u8; 1176] = hex!(
+        "02f904940a8303fba78401d6d2798401db2b6d830493e0943e6f4f7866654c18f536170780344aa8772950b680b904246a761202000000000000000000000000087000a300de7200382b55d40045000000e5d60e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003a0000000000000000000000000000000000000000000000000000000000000022482ad56cb0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000120000000000000000000000000dc6ff44d5d932cbd77b52e5612ba0529dc6226f1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000044095ea7b300000000000000000000000021c4928109acb0659a88ae5329b5374a3024694c0000000000000000000000000000000000000000000000049b9ca9a6943400000000000000000000000000000000000000000000000000000000000000000000000000000000000021c4928109acb0659a88ae5329b5374a3024694c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000024b6b55f250000000000000000000000000000000000000000000000049b9ca9a694340000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000415ec214a3950bea839a7e6fbb0ba1540ac2076acd50820e2d5ef83d0902cdffb24a47aff7de5190290769c4f0a9c6fabf63012986a0d590b1b571547a8c7050ea1b00000000000000000000000000000000000000000000000000000000000000c080a06db770e6e25a617fe9652f0958bd9bd6e49281a53036906386ed39ec48eadf63a07f47cf51a4a40b4494cf26efc686709a9b03939e20ee27e59682f5faa536667e"
+    );
+
+    /// Timestamp of Base mainnet block 124665056.
+    ///
+    /// <https://optimistic.etherscan.io/block/124665056>
+    const BLOCK_124665056_TIMESTAMP: u64 = 1724928889;
+
+    /// L1 block info for transaction at index 1 in block 124665056.
+    ///
+    /// <https://optimistic.etherscan.io/tx/0x1059e8004daff32caa1f1b1ef97fe3a07a8cf40508f5b835b66d9420d87c4a4a>
+    const TX_META_TX_1_OP_MAINNET_BLOCK_124665056: TransactionReceiptFields =
+        TransactionReceiptFields {
+            l1_block_info: L1BlockInfo {
+                l1_gas_price: Some(1055991687), // since bedrock l1 base fee
+                l1_gas_used: Some(4471),
+                l1_fee: Some(24681034813),
+                l1_fee_scalar: None,
+                l1_base_fee_scalar: Some(5227),
+                l1_blob_base_fee: Some(1),
+                l1_blob_base_fee_scalar: Some(1014213),
+                operator_fee_scalar: None,
+                operator_fee_constant: None,
+                da_footprint_gas_scalar: None,
+            },
+            deposit_nonce: None,
+            deposit_receipt_version: None,
+        };
+
+    #[test]
+    fn base_receipt_fields_from_block_and_tx() {
+        // rig
+        let tx_0 = BaseTransactionSigned::decode_2718(
+            &mut TX_SET_L1_BLOCK_OP_MAINNET_BLOCK_124665056.as_slice(),
+        )
+        .unwrap();
+
+        let tx_1 =
+            BaseTransactionSigned::decode_2718(&mut TX_1_OP_MAINNET_BLOCK_124665056.as_slice())
+                .unwrap();
+
+        let block: Block<BaseTransactionSigned> = Block {
+            body: BlockBody { transactions: [tx_0, tx_1.clone()].to_vec(), ..Default::default() },
+            ..Default::default()
+        };
+
+        let mut l1_block_info =
+            base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
+
+        // test
+        let base_mainnet = BaseChainSpec::mainnet();
+        assert!(Upgrades::is_fjord_active_at_timestamp(&base_mainnet, BLOCK_124665056_TIMESTAMP));
+
+        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
+            .l1_block_info(&base_mainnet, &tx_1, &mut l1_block_info)
+            .expect("should parse revm l1 info")
+            .build();
+
+        let L1BlockInfo {
+            l1_gas_price,
+            l1_gas_used,
+            l1_fee,
+            l1_fee_scalar,
+            l1_base_fee_scalar,
+            l1_blob_base_fee,
+            l1_blob_base_fee_scalar,
+            operator_fee_scalar,
+            operator_fee_constant,
+            da_footprint_gas_scalar,
+        } = receipt_meta.l1_block_info;
+
+        assert_eq!(
+            l1_gas_price, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_gas_price,
+            "incorrect l1 base fee (former gas price)"
+        );
+        assert_eq!(
+            l1_gas_used, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_gas_used,
+            "incorrect l1 gas used"
+        );
+        assert_eq!(
+            l1_fee, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_fee,
+            "incorrect l1 fee"
+        );
+        assert_eq!(
+            l1_fee_scalar, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_fee_scalar,
+            "incorrect l1 fee scalar"
+        );
+        assert_eq!(
+            l1_base_fee_scalar,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_base_fee_scalar,
+            "incorrect l1 base fee scalar"
+        );
+        assert_eq!(
+            l1_blob_base_fee,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_blob_base_fee,
+            "incorrect l1 blob base fee"
+        );
+        assert_eq!(
+            l1_blob_base_fee_scalar,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_blob_base_fee_scalar,
+            "incorrect l1 blob base fee scalar"
+        );
+        assert_eq!(
+            operator_fee_scalar,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.operator_fee_scalar,
+            "incorrect operator fee scalar"
+        );
+        assert_eq!(
+            operator_fee_constant,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.operator_fee_constant,
+            "incorrect operator fee constant"
+        );
+        assert_eq!(
+            da_footprint_gas_scalar,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.da_footprint_gas_scalar,
+            "incorrect da footprint gas scalar"
+        );
+    }
+
+    #[test]
+    fn base_non_zero_operator_fee_params_included_in_receipt() {
+        let tx_1 =
+            BaseTransactionSigned::decode_2718(&mut TX_1_OP_MAINNET_BLOCK_124665056.as_slice())
+                .unwrap();
+
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
+            operator_fee_scalar: Some(U256::ZERO),
+            operator_fee_constant: Some(U256::from(2)),
+            ..Default::default()
+        };
+
+        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
+            .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
+            .expect("should parse revm l1 info")
+            .build();
+
+        let L1BlockInfo { operator_fee_scalar, operator_fee_constant, .. } =
+            receipt_meta.l1_block_info;
+
+        assert_eq!(operator_fee_scalar, Some(0), "incorrect operator fee scalar");
+        assert_eq!(operator_fee_constant, Some(2), "incorrect operator fee constant");
+    }
+
+    #[test]
+    fn base_zero_operator_fee_params_not_included_in_receipt() {
+        let tx_1 =
+            BaseTransactionSigned::decode_2718(&mut TX_1_OP_MAINNET_BLOCK_124665056.as_slice())
+                .unwrap();
+
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
+            operator_fee_scalar: Some(U256::ZERO),
+            operator_fee_constant: Some(U256::ZERO),
+            ..Default::default()
+        };
+
+        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
+            .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
+            .expect("should parse revm l1 info")
+            .build();
+
+        let L1BlockInfo { operator_fee_scalar, operator_fee_constant, .. } =
+            receipt_meta.l1_block_info;
+
+        assert_eq!(operator_fee_scalar, None, "incorrect operator fee scalar");
+        assert_eq!(operator_fee_constant, None, "incorrect operator fee constant");
+    }
+
+    // <https://github.com/paradigmxyz/reth/issues/12177>
+    #[test]
+    fn base_receipt_gas_fields() {
+        // https://basescan.org/tx/0x510fd4c47d78ba9f97c91b0f2ace954d5384c169c9545a77a373cf3ef8254e6e
+        let system = hex!(
+            "7ef8f8a0389e292420bcbf9330741f72074e39562a09ff5a00fd22e4e9eee7e34b81bca494deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000008dd00101c120000000000000004000000006721035b00000000014189960000000000000000000000000000000000000000000000000000000349b4dcdc000000000000000000000000000000000000000000000000000000004ef9325cc5991ce750960f636ca2ffbb6e209bb3ba91412f21dd78c14ff154d1930f1f9a0000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9"
+        );
+        let tx_0 = BaseTransactionSigned::decode_2718(&mut &system[..]).unwrap();
+
+        let block: alloy_consensus::Block<BaseTransactionSigned> = Block {
+            body: BlockBody { transactions: vec![tx_0], ..Default::default() },
+            ..Default::default()
+        };
+        let mut l1_block_info =
+            base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
+
+        // https://basescan.org/tx/0xf9420cbaf66a2dda75a015488d37262cbfd4abd0aad7bb2be8a63e14b1fa7a94
+        let tx = hex!(
+            "02f86c8221058034839a4ae283021528942f16386bb37709016023232523ff6d9daf444be380841249c58bc080a001b927eda2af9b00b52a57be0885e0303c39dd2831732e14051c2336470fd468a0681bf120baf562915841a48601c2b54a6742511e535cf8f71c95115af7ff63bd"
+        );
+        let tx_1 = BaseTransactionSigned::decode_2718(&mut &tx[..]).unwrap();
+
+        let receipt_meta = ReceiptFieldsBuilder::new(1730216981, 21713817)
+            .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
+            .expect("should parse revm l1 info")
+            .build();
+
+        let L1BlockInfo {
+            l1_gas_price,
+            l1_gas_used,
+            l1_fee,
+            l1_fee_scalar,
+            l1_base_fee_scalar,
+            l1_blob_base_fee,
+            l1_blob_base_fee_scalar,
+            operator_fee_scalar,
+            operator_fee_constant,
+            da_footprint_gas_scalar,
+        } = receipt_meta.l1_block_info;
+
+        assert_eq!(l1_gas_price, Some(14121491676), "incorrect l1 base fee (former gas price)");
+        assert_eq!(l1_gas_used, Some(1600), "incorrect l1 gas used");
+        assert_eq!(l1_fee, Some(191150293412), "incorrect l1 fee");
+        assert!(l1_fee_scalar.is_none(), "incorrect l1 fee scalar");
+        assert_eq!(l1_base_fee_scalar, Some(2269), "incorrect l1 base fee scalar");
+        assert_eq!(l1_blob_base_fee, Some(1324954204), "incorrect l1 blob base fee");
+        assert_eq!(l1_blob_base_fee_scalar, Some(1055762), "incorrect l1 blob base fee scalar");
+        assert_eq!(operator_fee_scalar, None, "incorrect operator fee scalar");
+        assert_eq!(operator_fee_constant, None, "incorrect operator fee constant");
+        assert_eq!(da_footprint_gas_scalar, None, "incorrect da footprint gas scalar");
+    }
+
+    #[test]
+    fn da_footprint_gas_scalar_included_in_receipt_post_jovian() {
+        const DA_FOOTPRINT_GAS_SCALAR: u16 = 10;
+
+        let tx = TxEip7702 {
+            chain_id: 1u64,
+            nonce: 0,
+            max_fee_per_gas: 0x28f000fff,
+            max_priority_fee_per_gas: 0x28f000fff,
+            gas_limit: 10,
+            to: Address::default(),
+            value: U256::from(3_u64),
+            input: Bytes::from(vec![1, 2]),
+            access_list: Default::default(),
+            authorization_list: Default::default(),
+        };
+
+        let signature = Signature::new(U256::default(), U256::default(), true);
+
+        let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
+
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
+            da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
+            ..Default::default()
+        };
+
+        let upgrades = BaseChainSpec::mainnet();
+
+        let receipt = ReceiptFieldsBuilder::new(ChainConfig::mainnet().jovian_timestamp, u64::MAX)
+            .l1_block_info(&upgrades, &tx, &mut l1_block_info)
+            .expect("should parse revm l1 info")
+            .build();
+
+        assert_eq!(receipt.l1_block_info.da_footprint_gas_scalar, Some(DA_FOOTPRINT_GAS_SCALAR));
+    }
+
+    #[test]
+    fn blob_gas_used_included_in_receipt_post_jovian() {
+        const DA_FOOTPRINT_GAS_SCALAR: u16 = 100;
+        let tx = TxEip7702 {
+            chain_id: 1u64,
+            nonce: 0,
+            max_fee_per_gas: 0x28f000fff,
+            max_priority_fee_per_gas: 0x28f000fff,
+            gas_limit: 10,
+            to: Address::default(),
+            value: U256::from(3_u64),
+            access_list: Default::default(),
+            authorization_list: Default::default(),
+            input: Bytes::from(vec![0; 1_000_000]),
+        };
+
+        let signature = Signature::new(U256::default(), U256::default(), true);
+
+        let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
+
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
+            da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
+            ..Default::default()
+        };
+
+        let upgrades = BaseChainSpec::mainnet();
+
+        let receipt = BaseReceiptBuilder::new(
+            &upgrades,
+            ConvertReceiptInput {
+                tx: Recovered::new_unchecked(&tx, Address::default()),
+                receipt: BaseReceipt::Eip7702(Receipt {
+                    status: Eip658Value::Eip658(true),
+                    cumulative_gas_used: 100,
+                    logs: vec![],
+                }),
+                gas_used: 100,
+                next_log_index: 0,
+                meta: TransactionMeta {
+                    timestamp: ChainConfig::mainnet().jovian_timestamp,
+                    ..Default::default()
+                },
+            },
+            &mut l1_block_info,
+        )
+        .unwrap();
+
+        let expected_blob_gas_used = estimate_tx_compressed_size(tx.encoded_2718().as_slice())
+            .saturating_div(1_000_000)
+            .saturating_mul(DA_FOOTPRINT_GAS_SCALAR.into());
+
+        assert_eq!(receipt.core_receipt.blob_gas_used, Some(expected_blob_gas_used));
+    }
+
+    #[test]
+    fn blob_gas_used_not_included_in_receipt_post_isthmus() {
+        const DA_FOOTPRINT_GAS_SCALAR: u16 = 100;
+        let tx = TxEip7702 {
+            chain_id: 1u64,
+            nonce: 0,
+            max_fee_per_gas: 0x28f000fff,
+            max_priority_fee_per_gas: 0x28f000fff,
+            gas_limit: 10,
+            to: Address::default(),
+            value: U256::from(3_u64),
+            access_list: Default::default(),
+            authorization_list: Default::default(),
+            input: Bytes::from(vec![0; 1_000_000]),
+        };
+
+        let signature = Signature::new(U256::default(), U256::default(), true);
+
+        let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
+
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
+            da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
+            ..Default::default()
+        };
+
+        let upgrades = BaseChainSpec::mainnet();
+
+        let receipt = BaseReceiptBuilder::new(
+            &upgrades,
+            ConvertReceiptInput {
+                tx: Recovered::new_unchecked(&tx, Address::default()),
+                receipt: BaseReceipt::Eip7702(Receipt {
+                    status: Eip658Value::Eip658(true),
+                    cumulative_gas_used: 100,
+                    logs: vec![],
+                }),
+                gas_used: 100,
+                next_log_index: 0,
+                meta: TransactionMeta {
+                    timestamp: ChainConfig::mainnet().isthmus_timestamp,
+                    ..Default::default()
+                },
+            },
+            &mut l1_block_info,
+        )
+        .unwrap();
+
+        assert_eq!(receipt.core_receipt.blob_gas_used, None);
+    }
+}

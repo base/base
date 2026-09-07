@@ -44,3 +44,6 @@ pub use id_provider::EthSubscriptionIdProvider;
 pub use pending_block::{PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin};
 pub use transaction::TransactionSource;
 pub use tx_forward::ForwardConfig;
+
+mod base_error;
+pub use base_error::{BaseEthApiError, BaseInvalidTransactionError, SequencerClientError};

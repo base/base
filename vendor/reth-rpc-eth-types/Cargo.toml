@@ -31,13 +31,16 @@ reth-errors = { workspace = true }
 alloy-chains = { workspace = true }
 reth-metrics = { workspace = true }
 alloy-network = { workspace = true }
+alloy-json-rpc = { workspace = true }
 reth-chainspec = { workspace = true }
+base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-chain-state = { workspace = true }
+base-execution-evm = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-rpc-server-types = { workspace = true }
