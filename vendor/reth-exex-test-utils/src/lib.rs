@@ -16,7 +16,7 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::BaseBlock;
 use base_execution_txpool::BasePooledTransaction;
 use futures_util::FutureExt;
 use reth_chainspec::{ChainSpec, MAINNET};
@@ -42,7 +42,7 @@ use reth_node_core::node_config::NodeConfig;
 use reth_payload_builder::noop::NoopPayloadBuilderService;
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{
-    BlockReader, EthStorage, ProviderFactory,
+    BaseBodyStorage, BlockReader, ProviderFactory,
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
 use reth_tasks::Runtime;
@@ -59,7 +59,7 @@ pub struct TestNode;
 
 impl NodeTypes for TestNode {
     type ChainSpec = ChainSpec;
-    type Storage = EthStorage<BaseTxEnvelope>;
+    type Storage = BaseBodyStorage;
     type Payload = TestEngineTypes;
 }
 

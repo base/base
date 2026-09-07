@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
-use base_common_consensus::BaseTxEnvelope;
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
 use reth_db::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
 use reth_engine_primitives::TestEngineTypes;
@@ -38,7 +37,7 @@ pub use reth_chain_state::test_utils::TestCanonStateSubscriptions;
 pub type MockNodeTypes = reth_node_types::AnyNodeTypesWithEngine<
     reth_engine_primitives::TestEngineTypes,
     reth_chainspec::ChainSpec,
-    crate::EthStorage<BaseTxEnvelope>,
+    crate::BaseBodyStorage,
     TestEngineTypes,
 >;
 

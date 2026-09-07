@@ -320,7 +320,6 @@ where
 
 #[cfg(test)]
 mod test {
-    use base_common_consensus::BaseTxEnvelope;
     use reth_chainspec::ChainSpec;
     use reth_consensus::noop::NoopConsensus;
     use reth_db_api::mock::DatabaseMock;
@@ -330,7 +329,7 @@ mod test {
     use reth_network_api::noop::NoopNetwork;
     use reth_node_api::{AnyNodeTypes, FullNodeTypesAdapter};
     use reth_payload_builder::PayloadBuilderHandle;
-    use reth_provider::{EthStorage, noop::NoopProvider};
+    use reth_provider::{BaseBodyStorage, noop::NoopProvider};
     use reth_tasks::Runtime;
     use reth_transaction_pool::noop::NoopTransactionPool;
 
@@ -341,7 +340,7 @@ mod test {
     fn test_noop_components() {
         let components = Components::<
             FullNodeTypesAdapter<
-                AnyNodeTypes<ChainSpec, EthStorage<BaseTxEnvelope>, TestEngineTypes>,
+                AnyNodeTypes<ChainSpec, BaseBodyStorage, TestEngineTypes>,
                 DatabaseMock,
                 NoopProvider,
             >,

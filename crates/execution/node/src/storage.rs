@@ -1,11 +1,9 @@
 //! Base node storage type aliases.
 
-use alloy_consensus::Header;
-use base_common_consensus::BaseTransactionSigned;
-use reth_storage_api::EmptyBodyStorage;
+use reth_storage_api::BaseBodyStorage;
 
 /// Base storage implementation.
-pub type BaseStorage<T = BaseTransactionSigned, H = Header> = EmptyBodyStorage<T, H>;
+pub type BaseStorage = BaseBodyStorage;
 
 #[cfg(test)]
 mod tests {

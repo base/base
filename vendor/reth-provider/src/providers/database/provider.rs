@@ -45,8 +45,8 @@ use reth_prune_types::{
 use reth_stages_types::{FinishCheckpoint, StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
-    BlockBodyIndicesProvider, BlockBodyReader, MetadataProvider, MetadataWriter, StateProvider,
-    StateReader, StateWriteConfig, StorageChangeSetReader, StoragePath, StorageSettingsCache,
+    BlockBodyIndicesProvider, MetadataProvider, MetadataWriter, StateProvider, StateReader,
+    StateWriteConfig, StorageChangeSetReader, StoragePath, StorageSettingsCache,
     TryIntoHistoricalStateProvider, WriteStateInput,
 };
 use reth_storage_errors::provider::{ProviderResult, StaticFileWriterError};
@@ -3541,6 +3541,7 @@ mod tests {
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
     use reth_chain_state::test_utils::TestBlockBuilder;
+    use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
     use reth_db_api::models::StorageSettings;
     use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_primitives_traits::SealedBlock;
@@ -3576,6 +3577,41 @@ mod tests {
             None,
             SaveBlocksMode::Full,
         )
+    }
+
+    #[test]
+    fn base_body_roundtrip_across_withdrawals_activation() {
+        let chain_spec = ChainSpecBuilder::mainnet()
+            .with_fork(EthereumHardfork::Shanghai, ForkCondition::Timestamp(100))
+            .build();
+        let factory =
+            crate::test_utils::create_test_provider_factory_with_chain_spec(Arc::new(chain_spec));
+        let mut rng = generators::rng();
+        let mut blocks = Vec::new();
+        let provider = factory.provider_rw().unwrap();
+        for (number, timestamp) in [(0, 99), (1, 100), (2, 101)] {
+            let mut block = reth_testing_utils::BaseTestData::random_block(
+                &mut rng,
+                number,
+                BlockParams {
+                    tx_count: Some(2),
+                    withdrawals_count: (timestamp >= 100).then_some(0),
+                    ..Default::default()
+                },
+            )
+            .into_block();
+            block.header.timestamp = timestamp;
+            let block = SealedBlock::seal_slow(block).try_recover().unwrap();
+            provider.insert_block(&block).unwrap();
+            blocks.push(block.into_block());
+        }
+        provider.commit().unwrap();
+        let actual = BlockReader::block_range(&factory.provider().unwrap(), 0..=2).unwrap();
+        assert_eq!(actual, blocks);
+        assert!(actual[0].body.withdrawals.is_none());
+        assert!(actual[1].body.withdrawals.as_ref().unwrap().is_empty());
+        assert!(actual[2].body.withdrawals.as_ref().unwrap().is_empty());
+        assert!(actual.iter().all(|block| block.body.ommers.is_empty()));
     }
 
     #[test]
