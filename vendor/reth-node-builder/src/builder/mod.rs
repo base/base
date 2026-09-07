@@ -64,7 +64,7 @@ pub type RethFullAdapter<DB> =
 /// Configuring a node starts with a [`NodeConfig`], a database, and a state provider.
 /// Next the runtime components are configured:
 ///
-///  - The EVM and Executor configuration: [`ExecutorBuilder`](crate::components::ExecutorBuilder)
+///  - The EVM and Executor configuration: [`BaseEvmConfig`](reth_evm::BaseEvmConfig)
 ///  - The transaction pool: [`PoolBuilder`](crate::components::PoolBuilder)
 ///  - The network: [`NetworkBuilder`](crate::components::NetworkBuilder)
 ///  - The payload builder: [`PayloadBuilder`](crate::components::PayloadServiceBuilder)
@@ -81,13 +81,8 @@ pub type RethFullAdapter<DB> =
 ///
 /// ## Components
 ///
-/// All components are configured with a [`NodeComponentsBuilder`] that is responsible for actually
-/// creating the node components during the launch process. The
-/// [`ComponentsBuilder`](crate::components::ComponentsBuilder) is a general purpose implementation
-/// of the [`NodeComponentsBuilder`] trait that can be used to configure the executor, network,
-/// transaction pool and payload builder of the node. It enforces the correct order of
-/// configuration, for example the network and the payload builder depend on the transaction pool
-/// type that is configured first.
+/// A [`NodeComponentsBuilder`] creates the node components during launch. Base supplies
+/// its concrete component builder, which creates the pool before the network and payload service.
 ///
 /// All builder traits are generic over the node types and are invoked with the [`BuilderContext`]
 /// that gives access to internals of the that are needed to configure the components. This include

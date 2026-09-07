@@ -11,7 +11,6 @@ use base_common_consensus::BaseTxEnvelope;
 use reth_evm::BaseEvmConfig;
 mod builder;
 mod consensus;
-mod execute;
 mod network;
 mod payload;
 mod pool;
@@ -20,7 +19,6 @@ use std::fmt::Debug;
 
 pub use builder::*;
 pub use consensus::*;
-pub use execute::*;
 pub use network::*;
 pub use payload::*;
 pub use pool::*;
