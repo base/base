@@ -16,7 +16,9 @@ use reth_engine_util::EngineMessageStreamExt;
 use reth_exex::ExExManagerHandle;
 use reth_network::{NetworkSyncUpdater, SyncState, types::BlockRangeUpdate};
 use reth_network_api::BlockDownloaderProvider;
-use reth_node_api::{BuiltPayload, ConsensusEngineHandle, FullNodeTypes, NodeTypesWithDBAdapter};
+use reth_node_api::{
+    BuiltPayload, ConsensusEngineHandle, FullNodeComponents, FullNodeTypes, NodeTypesWithDBAdapter,
+};
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
@@ -33,8 +35,8 @@ use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
-    AddOns, AddOnsContext, BuiltComponents, FullNode, LaunchContext, LaunchNode, NodeAdapter,
-    NodeBuilderWithComponents, NodeComponentsBuilder, NodeHandle, NodeTypesAdapter,
+    AddOns, AddOnsContext, FullNode, LaunchContext, LaunchNode, NodeAdapter,
+    NodeBuilderWithComponents, NodeHandle, NodeTypesAdapter,
     common::{Attached, LaunchContextWith, WithConfigs},
     hooks::NodeHooks,
     rpc::{EngineShutdown, EngineValidatorAddOn, EngineValidatorBuilder, RethRpcAddOns, RpcHandle},
@@ -65,13 +67,13 @@ impl EngineNodeLauncher {
     async fn launch_node<DB, T, CB, AO>(
         self,
         target: NodeBuilderWithComponents<T, CB, AO>,
-    ) -> eyre::Result<NodeHandle<NodeAdapter<T, BuiltComponents<T, CB>>, AO>>
+    ) -> eyre::Result<NodeHandle<NodeAdapter<T, CB>, AO>>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
         T: FullNodeTypes<Provider = BlockchainProvider<NodeTypesWithDBAdapter<DB>>, DB = DB>,
-        CB: NodeComponentsBuilder<T>,
-        AO: RethRpcAddOns<NodeAdapter<T, BuiltComponents<T, CB>>>
-            + EngineValidatorAddOn<NodeAdapter<T, BuiltComponents<T, CB>>>,
+        CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
+        NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
+        AO: RethRpcAddOns<NodeAdapter<T, CB>> + EngineValidatorAddOn<NodeAdapter<T, CB>>,
     {
         let Self { ctx, engine_tree_config } = self;
         let NodeBuilderWithComponents {
@@ -133,7 +135,7 @@ impl EngineNodeLauncher {
         let maybe_exex_manager_handle = ctx.launch_exex(installed_exex).await?;
 
         // create pipeline
-        let network_handle = ctx.components().network.clone();
+        let network_handle = ctx.node_adapter().network().clone();
         let network_client = network_handle.fetch_client().await?;
         let (consensus_engine_tx, consensus_engine_rx) = unbounded_channel();
 
@@ -148,7 +150,7 @@ impl EngineNodeLauncher {
         let static_file_producer_events = static_file_producer.lock().events();
         info!(target: "reth::cli", "StaticFileProducer initialized");
 
-        let consensus = Arc::new(ctx.components().consensus.clone());
+        let consensus = Arc::new(ctx.node_adapter().consensus().clone());
 
         let pipeline = build_networked_pipeline(
             &ctx.toml_config().stages,
@@ -160,7 +162,7 @@ impl EngineNodeLauncher {
             ctx.prune_config(),
             max_block,
             static_file_producer,
-            ctx.components().evm_config.clone(),
+            ctx.node_adapter().evm_config().clone(),
             maybe_exex_manager_handle.clone().unwrap_or_else(ExExManagerHandle::empty),
             disabled_stages,
         )?;
@@ -205,7 +207,7 @@ impl EngineNodeLauncher {
             .maybe_skip_new_payload(node_config.debug.skip_new_payload)
             .maybe_reorg(
                 ctx.blockchain_db().clone(),
-                ctx.components().evm_config.clone(),
+                ctx.node_adapter().evm_config().clone(),
                 || async {
                     validator_builder
                         .build_tree_validator(
@@ -240,12 +242,12 @@ impl EngineNodeLauncher {
             ctx.provider_factory().clone(),
             ctx.blockchain_db().clone(),
             pruner,
-            ctx.components().payload_builder_handle.clone(),
+            ctx.node_adapter().payload_builder_handle().clone(),
             engine_validator,
             overlay_manager,
             engine_tree_config,
             ctx.sync_metrics_tx(),
-            ctx.components().evm_config.clone(),
+            ctx.node_adapter().evm_config().clone(),
             ctx.task_executor().clone(),
         );
 
@@ -263,7 +265,7 @@ impl EngineNodeLauncher {
         ctx.task_executor().spawn_critical_task(
             "events task",
             node::handle_events(
-                Some(Box::new(ctx.components().network.clone())),
+                Some(Box::new(ctx.node_adapter().network().clone())),
                 Some(ctx.head().number),
                 events,
             ),
@@ -283,8 +285,8 @@ impl EngineNodeLauncher {
         // Run consensus engine to completion
         let initial_target = ctx.initial_backfill_target(disabled_stages)?;
         let mut built_payloads = ctx
-            .components()
-            .payload_builder_handle
+            .node_adapter()
+            .payload_builder_handle()
             .subscribe()
             .await
             .map_err(|e| eyre::eyre!("Failed to subscribe to payload builder events: {:?}", e))?
@@ -399,11 +401,11 @@ impl EngineNodeLauncher {
         let engine_events_for_ethstats = engine_events.new_listener();
 
         let full_node = FullNode {
-            evm_config: ctx.components().evm_config.clone(),
-            pool: ctx.components().transaction_pool.clone(),
-            network: ctx.components().network.clone(),
+            evm_config: ctx.node_adapter().evm_config().clone(),
+            pool: ctx.node_adapter().pool().clone(),
+            network: ctx.node_adapter().network().clone(),
             provider: ctx.node_adapter().provider.clone(),
-            payload_builder_handle: ctx.components().payload_builder_handle.clone(),
+            payload_builder_handle: ctx.node_adapter().payload_builder_handle().clone(),
             task_executor: ctx.task_executor().clone(),
             config: ctx.node_config().clone(),
             data_dir: ctx.data_dir().clone(),
@@ -433,12 +435,11 @@ impl<DB, T, CB, AO> LaunchNode<NodeBuilderWithComponents<T, CB, AO>> for EngineN
 where
     T: FullNodeTypes<DB = DB, Provider = BlockchainProvider<NodeTypesWithDBAdapter<DB>>>,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    CB: NodeComponentsBuilder<T> + 'static,
-    AO: RethRpcAddOns<NodeAdapter<T, BuiltComponents<T, CB>>>
-        + EngineValidatorAddOn<NodeAdapter<T, BuiltComponents<T, CB>>>
-        + 'static,
+    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
+    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
+    AO: RethRpcAddOns<NodeAdapter<T, CB>> + EngineValidatorAddOn<NodeAdapter<T, CB>> + 'static,
 {
-    type Node = NodeHandle<NodeAdapter<T, BuiltComponents<T, CB>>, AO>;
+    type Node = NodeHandle<NodeAdapter<T, CB>, AO>;
     type Future = Pin<Box<dyn Future<Output = eyre::Result<Self::Node>> + Send>>;
 
     fn launch_node(self, target: NodeBuilderWithComponents<T, CB, AO>) -> Self::Future {

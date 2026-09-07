@@ -224,7 +224,7 @@ impl LocalInstance {
             .with_database(db)
             .with_launch_context(runtime.clone())
             .with_custom_provider::<BlockchainProvider<_>>()
-            .with_components(components)
+            .with_components(components.into_builder())
             .with_add_ons(base_node.add_ons_builder().build())
             .on_component_initialized(move |_ctx| Ok(()));
 

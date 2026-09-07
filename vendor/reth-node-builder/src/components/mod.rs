@@ -14,7 +14,7 @@ use reth_payload_builder::PayloadBuilderHandle;
 use reth_transaction_pool::TransactionPool;
 
 mod builder;
-pub use builder::{BuiltComponents, NodeComponentsBuilder};
+pub use builder::ComponentBuilder;
 
 mod pool;
 pub use pool::*;

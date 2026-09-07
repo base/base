@@ -22,7 +22,7 @@ use tokio::time::sleep;
 use tracing::info;
 
 use crate::{
-    BaseNode, BaseNodeAddOns, BaseNodeComponentBuilder,
+    BaseNode, BaseNodeAddOns, BaseNodeComponents,
     args::{DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, RollupArgs},
 };
 
@@ -30,7 +30,7 @@ type ProofHistoryNodeTypes = RethFullAdapter<Arc<DatabaseEnv>>;
 type ProofHistoryNodeBuilder = WithLaunchContext<
     NodeBuilderWithComponents<
         ProofHistoryNodeTypes,
-        BaseNodeComponentBuilder<ProofHistoryNodeTypes>,
+        BaseNodeComponents<ProofHistoryNodeTypes>,
         BaseNodeAddOns<ProofHistoryNodeTypes>,
     >,
 >;
@@ -88,7 +88,7 @@ pub async fn launch_node_with_proof_history(
     });
     let mut node_builder = builder
         .with_provider()
-        .with_components(node.components())
+        .with_components(node.components().into_builder())
         .with_add_ons(node.add_ons_builder().build());
 
     if proofs_history {

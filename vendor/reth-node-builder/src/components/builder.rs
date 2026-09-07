@@ -1,60 +1,23 @@
-//! A generic [`NodeComponentsBuilder`]
+//! Component construction callback used during node launch.
 
-use std::future::Future;
+use std::fmt;
 
-use base_common_consensus::BaseTxEnvelope;
-use reth_consensus::FullConsensus;
-use reth_network_api::FullNetwork;
-use reth_transaction_pool::{PoolTransaction, TransactionPool};
+use futures::future::BoxFuture;
 
-use crate::{BuilderContext, FullNodeTypes, components::Components};
+use crate::{BuilderContext, FullNodeTypes};
 
-/// Constructs the components used during node launch.
+/// A single-use callback that constructs the components for a node launch.
 ///
-/// Base supplies its concrete component builder. Closures can supply components for
-/// specialized launch contexts such as offline RPC services.
-pub trait NodeComponentsBuilder<Node: FullNodeTypes>: Send {
-    /// Pool supplied to the node.
-    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>
-        + Unpin
-        + 'static;
-    /// Consensus validator supplied to the node.
-    type Consensus: FullConsensus + Clone + Unpin + 'static;
-    /// Network handle supplied to the node.
-    type Network: FullNetwork;
-
-    /// Consumes the type and returns the created components.
-    fn build_components(
-        self,
-        ctx: &BuilderContext<Node>,
-    ) -> impl Future<Output = eyre::Result<BuiltComponents<Node, Self>>> + Send;
+/// Base supplies its concrete component assembly through this callback. The callback
+/// also supports launch hooks without a separate component-builder trait.
+pub struct ComponentBuilder<Node: FullNodeTypes, C> {
+    /// Constructs the components using the launch context.
+    pub build:
+        Box<dyn for<'a> FnOnce(&'a BuilderContext<Node>) -> BoxFuture<'a, eyre::Result<C>> + Send>,
 }
 
-impl<Node, Net, F, Fut, Pool, Cons> NodeComponentsBuilder<Node> for F
-where
-    Net: FullNetwork,
-    Node: FullNodeTypes,
-    F: FnOnce(&BuilderContext<Node>) -> Fut + Send,
-    Fut: Future<Output = eyre::Result<Components<Net, Pool, Cons>>> + Send,
-    Pool:
-        TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
-    Cons: FullConsensus + Clone + Unpin + 'static,
-{
-    type Pool = Pool;
-    type Consensus = Cons;
-    type Network = Net;
-
-    fn build_components(
-        self,
-        ctx: &BuilderContext<Node>,
-    ) -> impl Future<Output = eyre::Result<BuiltComponents<Node, Self>>> + Send {
-        self(ctx)
+impl<Node: FullNodeTypes, C> fmt::Debug for ComponentBuilder<Node, C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ComponentBuilder").finish_non_exhaustive()
     }
 }
-
-/// Concrete component container produced by a node builder.
-pub type BuiltComponents<Node, Builder> = Components<
-    <Builder as NodeComponentsBuilder<Node>>::Network,
-    <Builder as NodeComponentsBuilder<Node>>::Pool,
-    <Builder as NodeComponentsBuilder<Node>>::Consensus,
->;

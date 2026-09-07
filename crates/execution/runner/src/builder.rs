@@ -14,7 +14,7 @@ use reth_node_builder::{
     rpc::{RethRpcAddOns, RpcContext},
 };
 
-use crate::types::{BaseComponentsBuilder, BaseNodeAddOns, BaseNodeTypes};
+use crate::types::{BaseNodeAddOns, BaseNodeComponents, BaseNodeTypes};
 
 /// Alias for the default Base components type.
 pub type BaseComponents = base_node_core::BaseNodeComponents<BaseNodeTypes>;
@@ -53,9 +53,8 @@ type BoxExExFactory = Box<
 >;
 
 /// The configured Base builder shared by standard and full-block payload services.
-pub type RethNodeBuilder = WithLaunchContext<
-    NodeBuilderWithComponents<BaseNodeTypes, BaseComponentsBuilder, BaseNodeAddOns>,
->;
+pub type RethNodeBuilder =
+    WithLaunchContext<NodeBuilderWithComponents<BaseNodeTypes, BaseNodeComponents, BaseNodeAddOns>>;
 
 /// Pure hook accumulator for the Base node builder.
 ///

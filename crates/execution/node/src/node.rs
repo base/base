@@ -288,11 +288,15 @@ impl<N> reth_node_builder::Node<N> for BaseNode
 where
     N: FullNodeTypes,
 {
-    type ComponentsBuilder = BaseComponentsBuilder<N>;
+    type Pool = crate::BaseNodePool<N>;
+    type Network = reth_network::NetworkHandle;
+    type Consensus = Arc<base_execution_consensus::BaseBeaconConsensus>;
     type AddOns = BaseNodeAddOns<N>;
 
-    fn components_builder(&self) -> Self::ComponentsBuilder {
-        Self::components(self)
+    fn components_builder(
+        &self,
+    ) -> reth_node_builder::ComponentBuilder<N, crate::BaseNodeComponents<N>> {
+        Self::components(self).into_builder()
     }
 
     fn add_ons(&self) -> Self::AddOns {

@@ -307,10 +307,7 @@ impl TestBuilder {
         N: Default
             + reth_node_builder::Node<
                 crate::TmpNodeAdapter,
-                ComponentsBuilder: reth_node_builder::NodeComponentsBuilder<
-                    crate::TmpNodeAdapter,
-                    Network: reth_network_api::test_utils::PeersHandleProvider,
-                >,
+                Network: reth_network_api::test_utils::PeersHandleProvider,
                 AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
                             + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
             >,

@@ -129,7 +129,7 @@ async fn test_custom_block_priority_config() {
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
         .with_custom_provider::<BlockchainProvider<_>>()
-        .with_components(build_components(config.chain.chain_id()))
+        .with_components(build_components(config.chain.chain_id()).into_builder())
         .with_add_ons(BaseNode::new(Default::default()).add_ons())
         .launch_with_fn(|builder| {
             let launcher = EngineNodeLauncher::new(

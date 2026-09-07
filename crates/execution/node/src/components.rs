@@ -7,9 +7,7 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::builder::BasePayloadTransactions;
 use base_execution_txpool::BaseTransactionPool;
 use reth_network::NetworkHandle;
-use reth_node_builder::{
-    BuilderContext, FullNodeTypes, NodeComponentsBuilder, components::Components,
-};
+use reth_node_builder::{BuilderContext, ComponentBuilder, FullNodeTypes, components::Components};
 use reth_transaction_pool::blobstore::DiskFileBlobStore;
 
 use crate::{BaseNetworkBuilder, BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder};
@@ -59,16 +57,18 @@ impl<Node, Payload> BaseComponentsBuilder<Node, Payload> {
     }
 }
 
-impl<Node, Txs> NodeComponentsBuilder<Node> for BaseComponentsBuilder<Node, BasePayloadBuilder<Txs>>
+impl<Node, Txs> BaseComponentsBuilder<Node, BasePayloadBuilder<Txs>>
 where
     Node: FullNodeTypes,
     Txs: BasePayloadTransactions<BaseNodePool<Node>>,
 {
-    type Pool = BaseNodePool<Node>;
-    type Network = NetworkHandle;
-    type Consensus = Arc<BaseBeaconConsensus>;
+    /// Converts Base component construction into a single launch callback.
+    pub fn into_builder(self) -> ComponentBuilder<Node, BaseNodeComponents<Node>> {
+        ComponentBuilder { build: Box::new(move |ctx| Box::pin(self.build_components(ctx))) }
+    }
 
-    async fn build_components(
+    /// Constructs the Base pool, network, payload service, and consensus validator.
+    pub async fn build_components(
         self,
         ctx: &BuilderContext<Node>,
     ) -> eyre::Result<BaseNodeComponents<Node>> {

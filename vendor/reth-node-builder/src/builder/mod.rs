@@ -18,7 +18,9 @@ use reth_network::{
         config::{AnnouncementFilteringPolicy, StrictEthAnnouncementFilter},
     },
 };
-use reth_node_api::{FullNodeTypes, FullNodeTypesAdapter, NodeAddOns, NodeTypesWithDBAdapter};
+use reth_node_api::{
+    FullNodeComponents, FullNodeTypes, FullNodeTypesAdapter, NodeAddOns, NodeTypesWithDBAdapter,
+};
 use reth_node_core::{
     cli::config::{PayloadBuilderConfig, RethTransactionPoolConfig},
     dirs::{ChainPath, DataDirPath},
@@ -36,8 +38,9 @@ use tracing::{info, trace, warn};
 
 use crate::{
     BlockReaderFor, DebugNodeConfig, DebugNodeLauncher, EngineNodeLauncher, LaunchNode, Node,
+    NodeBuiltComponents,
     common::WithConfigs,
-    components::NodeComponentsBuilder,
+    components::ComponentBuilder,
     node::FullNode,
     rpc::{RethRpcAddOns, RethRpcServerHandles, RpcContext},
 };
@@ -81,7 +84,7 @@ pub type RethFullAdapter<DB> =
 ///
 /// ## Components
 ///
-/// A [`NodeComponentsBuilder`] creates the node components during launch. Base supplies
+/// A [`ComponentBuilder`] creates the node components during launch. Base supplies
 /// its concrete component builder, which creates the pool before the network and payload service.
 ///
 /// All builder traits are generic over the node types and are invoked with the [`BuilderContext`]
@@ -106,7 +109,7 @@ pub type RethFullAdapter<DB> =
 /// From there the builder is configured with the node's types, components, and hooks, then launched
 /// with the [`WithLaunchContext::launch`] method. On launch all the builtin internals, such as the
 /// `Database` and its providers [`BlockchainProvider`] are initialized before the configured
-/// [`NodeComponentsBuilder`] is invoked with the [`BuilderContext`] to create the transaction pool,
+/// [`ComponentBuilder`] is invoked with the [`BuilderContext`] to create the transaction pool,
 /// network, and payload builder components. When the RPC is configured, the corresponding hooks are
 /// invoked to allow for custom rpc modules to be injected into the rpc server:
 /// [`NodeBuilderWithComponents::extend_rpc_modules`]
@@ -279,7 +282,11 @@ where
     pub fn node<N>(
         self,
         node: N,
-    ) -> NodeBuilderWithComponents<RethFullAdapter<DB>, N::ComponentsBuilder, N::AddOns>
+    ) -> NodeBuilderWithComponents<
+        RethFullAdapter<DB>,
+        NodeBuiltComponents<RethFullAdapter<DB>, N>,
+        N::AddOns,
+    >
     where
         N: Node<RethFullAdapter<DB>>,
     {
@@ -353,7 +360,11 @@ where
         self,
         node: N,
     ) -> WithLaunchContext<
-        NodeBuilderWithComponents<RethFullAdapter<DB>, N::ComponentsBuilder, N::AddOns>,
+        NodeBuilderWithComponents<
+            RethFullAdapter<DB>,
+            NodeBuiltComponents<RethFullAdapter<DB>, N>,
+            N::AddOns,
+        >,
     >
     where
         N: Node<RethFullAdapter<DB>>,
@@ -371,19 +382,24 @@ where
         node: N,
     ) -> eyre::Result<
         <EngineNodeLauncher as LaunchNode<
-            NodeBuilderWithComponents<RethFullAdapter<DB>, N::ComponentsBuilder, N::AddOns>,
+            NodeBuilderWithComponents<
+                RethFullAdapter<DB>,
+                NodeBuiltComponents<RethFullAdapter<DB>, N>,
+                N::AddOns,
+            >,
         >>::Node,
     >
     where
         N: Node<RethFullAdapter<DB>>,
         N::AddOns: RethRpcAddOns<
-            NodeAdapter<
-                RethFullAdapter<DB>,
-                crate::BuiltComponents<RethFullAdapter<DB>, N::ComponentsBuilder>,
-            >,
+            NodeAdapter<RethFullAdapter<DB>, NodeBuiltComponents<RethFullAdapter<DB>, N>>,
         >,
         EngineNodeLauncher: LaunchNode<
-            NodeBuilderWithComponents<RethFullAdapter<DB>, N::ComponentsBuilder, N::AddOns>,
+            NodeBuilderWithComponents<
+                RethFullAdapter<DB>,
+                NodeBuiltComponents<RethFullAdapter<DB>, N>,
+                N::AddOns,
+            >,
         >,
     {
         self.node(node).launch().await
@@ -394,10 +410,11 @@ impl<T: FullNodeTypes> WithLaunchContext<NodeBuilderWithProvider<T>> {
     /// Advances the state of the node builder to the next state where all components are configured
     pub fn with_components<CB>(
         self,
-        components_builder: CB,
+        components_builder: ComponentBuilder<T, CB>,
     ) -> WithLaunchContext<NodeBuilderWithComponents<T, CB, ()>>
     where
-        CB: NodeComponentsBuilder<T>,
+        CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
+        NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
     {
         WithLaunchContext {
             builder: self.builder.with_components(components_builder),
@@ -409,7 +426,8 @@ impl<T: FullNodeTypes> WithLaunchContext<NodeBuilderWithProvider<T>> {
 impl<T, CB> WithLaunchContext<NodeBuilderWithComponents<T, CB, ()>>
 where
     T: FullNodeTypes,
-    CB: NodeComponentsBuilder<T>,
+    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
+    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
 {
     /// Advances the state of the node builder to the next state where all customizable
     /// [`NodeAddOns`] types are configured.
@@ -418,7 +436,7 @@ where
         add_ons: AO,
     ) -> WithLaunchContext<NodeBuilderWithComponents<T, CB, AO>>
     where
-        AO: NodeAddOns<NodeAdapter<T, crate::BuiltComponents<T, CB>>>,
+        AO: NodeAddOns<NodeAdapter<T, CB>>,
     {
         WithLaunchContext {
             builder: self.builder.with_add_ons(add_ons),
@@ -430,8 +448,9 @@ where
 impl<T, CB, AO> WithLaunchContext<NodeBuilderWithComponents<T, CB, AO>>
 where
     T: FullNodeTypes,
-    CB: NodeComponentsBuilder<T>,
-    AO: RethRpcAddOns<NodeAdapter<T, crate::BuiltComponents<T, CB>>>,
+    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
+    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
+    AO: RethRpcAddOns<NodeAdapter<T, CB>>,
 {
     /// Returns a reference to the node builder's config.
     pub const fn config(&self) -> &NodeConfig {
@@ -488,9 +507,7 @@ where
     /// Sets the hook that is run once the node's components are initialized.
     pub fn on_component_initialized<F>(self, hook: F) -> Self
     where
-        F: FnOnce(NodeAdapter<T, crate::BuiltComponents<T, CB>>) -> eyre::Result<()>
-            + Send
-            + 'static,
+        F: FnOnce(NodeAdapter<T, CB>) -> eyre::Result<()> + Send + 'static,
     {
         Self {
             builder: self.builder.on_component_initialized(hook),
@@ -501,9 +518,7 @@ where
     /// Sets the hook that is run once the node has started.
     pub fn on_node_started<F>(self, hook: F) -> Self
     where
-        F: FnOnce(FullNode<NodeAdapter<T, crate::BuiltComponents<T, CB>>, AO>) -> eyre::Result<()>
-            + Send
-            + 'static,
+        F: FnOnce(FullNode<NodeAdapter<T, CB>, AO>) -> eyre::Result<()> + Send + 'static,
     {
         Self { builder: self.builder.on_node_started(hook), task_executor: self.task_executor }
     }
@@ -541,7 +556,7 @@ where
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, NodeAdapter<T, crate::BuiltComponents<T, CB>>, AO::EthApi>,
+                RpcContext<'_, NodeAdapter<T, CB>, AO::EthApi>,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -586,9 +601,7 @@ where
     /// ```
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
-        F: FnOnce(
-                RpcContext<'_, NodeAdapter<T, crate::BuiltComponents<T, CB>>, AO::EthApi>,
-            ) -> eyre::Result<()>
+        F: FnOnce(RpcContext<'_, NodeAdapter<T, CB>, AO::EthApi>) -> eyre::Result<()>
             + Send
             + 'static,
     {
@@ -602,7 +615,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex<F, R, E>(self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<NodeAdapter<T, crate::BuiltComponents<T, CB>>>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<NodeAdapter<T, CB>>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
@@ -619,7 +632,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex_if<F, R, E>(self, cond: bool, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<NodeAdapter<T, crate::BuiltComponents<T, CB>>>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<NodeAdapter<T, CB>>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {

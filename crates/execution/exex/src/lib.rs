@@ -168,7 +168,7 @@ where
 /// let _builder = NodeBuilder::new(config)
 ///     .with_database(db)
 ///     .with_custom_provider::<BlockchainProvider<NodeTypesWithDBAdapter<_>>>()
-///     .with_components(base_node.components())
+///     .with_components(base_node.components().into_builder())
 ///     .install_exex("proofs-history", move |exex_context| async move {
 ///         Ok(BaseProofsExEx::builder(exex_context, storage_exec)
 ///             .with_proofs_history_window(proofs_history_window)

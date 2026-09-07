@@ -18,7 +18,7 @@ pub use runner::{BaseNodeRunner, LaunchedBaseNode};
 
 mod types;
 pub use types::{
-    BaseComponentsBuilder, BaseNodeAddOns, BaseNodeBuilder, BaseNodeHandle, BaseNodeTypes,
+    BaseNodeAddOns, BaseNodeBuilder, BaseNodeComponents, BaseNodeHandle, BaseNodeTypes,
     BaseProvider,
 };
 

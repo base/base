@@ -7,7 +7,7 @@ use base_execution_chainspec::BaseChainSpec;
 use node::NodeTestContext;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_node_builder::{
-    BuiltComponents, FullNodeTypesAdapter, Node, NodeAdapter, NodeTypesWithDBAdapter,
+    FullNodeTypesAdapter, Node, NodeAdapter, NodeBuiltComponents, NodeTypesWithDBAdapter,
 };
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
@@ -56,10 +56,7 @@ where
     N: Default
         + reth_node_builder::Node<
             crate::TmpNodeAdapter,
-            ComponentsBuilder: reth_node_builder::NodeComponentsBuilder<
-                crate::TmpNodeAdapter,
-                Network: reth_network_api::test_utils::PeersHandleProvider,
-            >,
+            Network: reth_network_api::test_utils::PeersHandleProvider,
             AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
                         + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
         >,
@@ -86,10 +83,7 @@ where
     N: Default
         + reth_node_builder::Node<
             crate::TmpNodeAdapter,
-            ComponentsBuilder: reth_node_builder::NodeComponentsBuilder<
-                crate::TmpNodeAdapter,
-                Network: reth_network_api::test_utils::PeersHandleProvider,
-            >,
+            Network: reth_network_api::test_utils::PeersHandleProvider,
             AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
                         + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
         >,
@@ -122,10 +116,7 @@ where
     N: Default
         + reth_node_builder::Node<
             crate::TmpNodeAdapter,
-            ComponentsBuilder: reth_node_builder::NodeComponentsBuilder<
-                crate::TmpNodeAdapter,
-                Network: reth_network_api::test_utils::PeersHandleProvider,
-            >,
+            Network: reth_network_api::test_utils::PeersHandleProvider,
             AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
                         + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
         >,
@@ -150,13 +141,8 @@ pub type TmpNodeAdapter<Provider = BlockchainProvider<NodeTypesWithDBAdapter<Tmp
     FullNodeTypesAdapter<TmpDB, Provider>;
 
 /// Type alias for a `NodeAdapter`
-pub type Adapter<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>> = NodeAdapter<
-    TmpNodeAdapter<Provider>,
-    BuiltComponents<
-        TmpNodeAdapter<Provider>,
-        <N as Node<TmpNodeAdapter<Provider>>>::ComponentsBuilder,
-    >,
->;
+pub type Adapter<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>> =
+    NodeAdapter<TmpNodeAdapter<Provider>, NodeBuiltComponents<TmpNodeAdapter<Provider>, N>>;
 
 /// Type alias for a type of `NodeHelper`
 pub type NodeHelperType<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>> =

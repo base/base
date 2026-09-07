@@ -52,7 +52,7 @@ use reth_evm::BaseEvmConfig;
 use reth_exex::ExExManagerHandle;
 use reth_fs_util as fs;
 use reth_network_p2p::headers::client::HeadersClient;
-use reth_node_api::{FullNodeTypes, NodeTypesWithDB, NodeTypesWithDBAdapter};
+use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypesWithDB, NodeTypesWithDBAdapter};
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
@@ -98,8 +98,7 @@ use tokio::sync::{
 };
 
 use crate::{
-    BuilderContext, ExExLauncher, NodeAdapter,
-    components::{BuiltComponents, NodeComponentsBuilder},
+    BuilderContext, ExExLauncher, NodeAdapter, components::ComponentBuilder,
     hooks::OnComponentInitializedHook,
 };
 
@@ -865,13 +864,12 @@ where
     /// Creates a `NodeAdapter` and attaches it to the launch context.
     pub async fn with_components<CB>(
         self,
-        components_builder: CB,
-        on_component_initialized: Box<
-            dyn OnComponentInitializedHook<NodeAdapter<T, BuiltComponents<T, CB>>>,
-        >,
+        components_builder: ComponentBuilder<T, CB>,
+        on_component_initialized: Box<dyn OnComponentInitializedHook<NodeAdapter<T, CB>>>,
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents<T, CB>>>>
     where
-        CB: NodeComponentsBuilder<T>,
+        CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
+        NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
     {
         // fetch the head block from the database
         let head = self.lookup_head()?;
@@ -884,7 +882,7 @@ where
         );
 
         debug!(target: "reth::cli", "creating components");
-        let components = components_builder.build_components(&builder_ctx).await?;
+        let components = (components_builder.build)(&builder_ctx).await?;
 
         let blockchain_db = self.blockchain_db().clone();
 
@@ -918,7 +916,8 @@ where
 impl<T, CB> LaunchContextWith<Attached<WithConfigs, WithComponents<T, CB>>>
 where
     T: FullNodeTypes,
-    CB: NodeComponentsBuilder<T>,
+    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
+    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
 {
     /// Returns the configured `ProviderFactory`.
     pub const fn provider_factory(&self) -> &ProviderFactory<NodeTypesWithDBAdapter<T::DB>> {
@@ -952,12 +951,12 @@ where
     }
 
     /// Returns the configured `NodeAdapter`.
-    pub const fn node_adapter(&self) -> &NodeAdapter<T, BuiltComponents<T, CB>> {
+    pub const fn node_adapter(&self) -> &NodeAdapter<T, CB> {
         &self.right().node_adapter
     }
 
     /// Returns mutable reference to the configured `NodeAdapter`.
-    pub const fn node_adapter_mut(&mut self) -> &mut NodeAdapter<T, BuiltComponents<T, CB>> {
+    pub const fn node_adapter_mut(&mut self) -> &mut NodeAdapter<T, CB> {
         &mut self.right_mut().node_adapter
     }
 
@@ -1085,7 +1084,7 @@ where
     }
 
     /// Returns the node adapter components.
-    pub const fn components(&self) -> &BuiltComponents<T, CB> {
+    pub const fn components(&self) -> &CB {
         &self.node_adapter().components
     }
 
@@ -1093,10 +1092,7 @@ where
     #[expect(clippy::type_complexity)]
     pub async fn launch_exex(
         &self,
-        installed_exex: Vec<(
-            String,
-            Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T, BuiltComponents<T, CB>>>>,
-        )>,
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T, CB>>>)>,
     ) -> eyre::Result<Option<ExExManagerHandle>> {
         self.exex_launcher(installed_exex).launch().await
     }
@@ -1115,11 +1111,8 @@ where
     #[expect(clippy::type_complexity)]
     pub fn exex_launcher(
         &self,
-        installed_exex: Vec<(
-            String,
-            Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T, BuiltComponents<T, CB>>>>,
-        )>,
-    ) -> ExExLauncher<NodeAdapter<T, BuiltComponents<T, CB>>> {
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T, CB>>>)>,
+    ) -> ExExLauncher<NodeAdapter<T, CB>> {
         ExExLauncher::new(
             self.head(),
             self.node_adapter().clone(),
@@ -1156,8 +1149,8 @@ where
     {
         let Some(url) = self.node_config().debug.ethstats.as_ref() else { return Ok(()) };
 
-        let network = self.components().network.clone();
-        let pool = self.components().transaction_pool.clone();
+        let network = self.node_adapter().network().clone();
+        let pool = self.node_adapter().pool().clone();
         let provider = self.node_adapter().provider.clone();
 
         info!(target: "reth::cli", "Starting EthStats service at {}", url);
@@ -1293,10 +1286,11 @@ where
 pub struct WithComponents<T, CB>
 where
     T: FullNodeTypes,
-    CB: NodeComponentsBuilder<T>,
+    CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
+    NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
 {
     db_provider_container: WithMeteredProvider<NodeTypesWithDBAdapter<T::DB>>,
-    node_adapter: NodeAdapter<T, BuiltComponents<T, CB>>,
+    node_adapter: NodeAdapter<T, CB>,
     head: Head,
 }
 

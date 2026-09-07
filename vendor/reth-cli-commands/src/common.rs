@@ -13,7 +13,7 @@ use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_evm::BaseEvmConfig;
 use reth_node_api::FullNodeTypesAdapter;
-use reth_node_builder::{Node, NodeComponentsBuilder, NodeTypesWithDBAdapter};
+use reth_node_builder::{Node, NodeTypesWithDBAdapter};
 use reth_node_core::{
     args::{DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs},
     dirs::{ChainPath, DataDirPath},
@@ -307,7 +307,7 @@ impl<N> CliNodeTypes for N
 where
     N: Node<FullTypesAdapter>,
 {
-    type Consensus = <N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter>>::Consensus;
+    type Consensus = N::Consensus;
 }
 
 #[cfg(test)]

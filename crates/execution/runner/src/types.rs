@@ -12,8 +12,8 @@ use crate::{BaseAddOns, BaseNodeAdapter};
 
 /// Alias for the Base node type adapter used by the runner.
 pub type BaseNodeTypes = FullNodeTypesAdapter<DatabaseEnv, BaseProvider>;
-/// Internal alias for the Base node components builder (default payload service).
-pub type BaseComponentsBuilder = base_node_core::BaseComponentsBuilder<BaseNodeTypes>;
+/// Concrete components produced by the Base node runner.
+pub type BaseNodeComponents = base_node_core::BaseNodeComponents<BaseNodeTypes>;
 /// Concrete RPC and engine add-ons for the Base runner.
 pub type BaseNodeAddOns =
     BaseAddOns<BaseNodeAdapter, BaseEthApiBuilder, BasePayloadValidatorBuilder>;
