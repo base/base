@@ -3,7 +3,7 @@
 use std::future::Future;
 
 use base_common_consensus::BaseTxEnvelope;
-use reth_consensus::{FullConsensus, noop::NoopConsensus};
+use reth_consensus::FullConsensus;
 use reth_evm::BaseEvmConfig;
 use reth_network_api::FullNetwork;
 use reth_payload_builder::PayloadBuilderHandle;
@@ -11,7 +11,7 @@ use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 use crate::{
     BuilderContext, FullNodeTypes,
-    components::{Components, ConsensusBuilder, NodeComponents, PayloadServiceBuilder},
+    components::{Components, NodeComponents, PayloadServiceBuilder},
 };
 
 /// Constructs the components used during node launch.
@@ -46,21 +46,6 @@ where
         ctx: &BuilderContext<Node>,
     ) -> impl Future<Output = eyre::Result<Self::Components>> + Send {
         self(ctx)
-    }
-}
-
-/// Builds [`NoopConsensus`].
-#[derive(Debug, Clone, Default)]
-pub struct NoopConsensusBuilder;
-
-impl<N> ConsensusBuilder<N> for NoopConsensusBuilder
-where
-    N: FullNodeTypes,
-{
-    type Consensus = NoopConsensus;
-
-    async fn build_consensus(self, _ctx: &BuilderContext<N>) -> eyre::Result<Self::Consensus> {
-        Ok(NoopConsensus::default())
     }
 }
 
