@@ -73,13 +73,6 @@ pub trait BlockBodyReader<Provider> {
     ) -> ProviderResult<Vec<<Self::Block as Block>::Body>>;
 }
 
-/// Trait that implements how chain-specific types are read from storage.
-pub trait ChainStorageReader<Provider>: BlockBodyReader<Provider, Block = BaseBlock> {}
-impl<T, Provider> ChainStorageReader<Provider> for T where
-    T: BlockBodyReader<Provider, Block = BaseBlock>
-{
-}
-
 /// Ethereum storage implementation.
 #[derive(Debug, Clone, Copy)]
 pub struct EthStorage<T = TransactionSigned, H = Header>(PhantomData<(T, H)>);
