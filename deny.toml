@@ -61,8 +61,8 @@ confidence-threshold = 0.8
 exceptions = []
 
 [bans]
-# Keep Base crates off the upstream aggregate crate; bundled upstream examples use it.
-deny = [{ name = "reth", wrappers = ["my-exex", "remote-exex", "tracking-state"] }]
+# Keep Base crates off the upstream aggregate crate.
+deny = ["reth"]
 multiple-versions = "deny"
 
 # Skip crates with multiple versions from upstream dependencies that we cannot control

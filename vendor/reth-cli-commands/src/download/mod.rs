@@ -1051,9 +1051,9 @@ mod tests {
     use extract::CompressionFormat;
     use manifest::{ComponentManifest, SingleArchive};
     use reth_chainspec::{HOLESKY, MAINNET};
-    use reth_ethereum_cli::chainspec::EthereumChainSpecParser;
 
     use super::*;
+    use crate::test_utils::EthereumChainSpecParser;
 
     #[derive(Parser)]
     struct CommandParser<T: Args> {

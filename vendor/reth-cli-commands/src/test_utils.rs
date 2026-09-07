@@ -1,3 +1,5 @@
+//! Ethereum chain parser used by CLI command tests.
+
 use std::sync::Arc;
 
 use reth_chainspec::{ChainSpec, DEV, HOLESKY, HOODI, MAINNET, SEPOLIA};
@@ -5,21 +7,6 @@ use reth_cli::chainspec::{ChainSpecParser, parse_genesis};
 
 /// Chains supported by reth. First value should be used as the default.
 pub const SUPPORTED_CHAINS: &[&str] = &["mainnet", "sepolia", "holesky", "hoodi", "dev"];
-
-/// Clap value parser for [`ChainSpec`]s.
-///
-/// The value parser matches either a known chain, the path
-/// to a json file, or a json formatted string in-memory. The json needs to be a Genesis struct.
-pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<ChainSpec>, eyre::Error> {
-    Ok(match s {
-        "mainnet" => MAINNET.clone(),
-        "sepolia" => SEPOLIA.clone(),
-        "holesky" => HOLESKY.clone(),
-        "hoodi" => HOODI.clone(),
-        "dev" => DEV.clone(),
-        _ => Arc::new(parse_genesis(s)?.into()),
-    })
-}
 
 /// Ethereum chain specification parser.
 #[derive(Debug, Clone, Default)]
@@ -32,7 +19,14 @@ impl ChainSpecParser for EthereumChainSpecParser {
     const SUPPORTED_CHAINS: &'static [&'static str] = SUPPORTED_CHAINS;
 
     fn parse(s: &str) -> eyre::Result<Arc<ChainSpec>> {
-        chain_value_parser(s)
+        Ok(match s {
+            "mainnet" => MAINNET.clone(),
+            "sepolia" => SEPOLIA.clone(),
+            "holesky" => HOLESKY.clone(),
+            "hoodi" => HOODI.clone(),
+            "dev" => DEV.clone(),
+            _ => Arc::new(parse_genesis(s)?.into()),
+        })
     }
 }
 

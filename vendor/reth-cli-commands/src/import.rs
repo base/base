@@ -143,9 +143,8 @@ impl<C: ChainSpecParser> ImportCommand<C> {
 
 #[cfg(test)]
 mod tests {
-    use reth_ethereum_cli::chainspec::{EthereumChainSpecParser, SUPPORTED_CHAINS};
-
     use super::*;
+    use crate::test_utils::{EthereumChainSpecParser, SUPPORTED_CHAINS};
 
     #[test]
     fn parse_common_import_command_chain_args() {

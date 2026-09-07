@@ -85,7 +85,6 @@ similar-asserts = { workspace = true, features = ["default", "serde"] }
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
 [features]
 default = []
-jit = ["reth-evm-ethereum/jit"]
 gmp = ["reth-evm-ethereum/gmp"]
 asm-keccak = [
     "alloy-primitives/asm-keccak",

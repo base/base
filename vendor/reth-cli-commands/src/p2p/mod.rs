@@ -225,9 +225,8 @@ impl<C: ChainSpecParser> DownloadArgs<C> {
 
 #[cfg(test)]
 mod tests {
-    use reth_ethereum_cli::chainspec::EthereumChainSpecParser;
-
     use super::*;
+    use crate::test_utils::EthereumChainSpecParser;
 
     #[test]
     fn parse_header_cmd() {

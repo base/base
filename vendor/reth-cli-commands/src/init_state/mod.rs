@@ -141,9 +141,9 @@ impl<C: ChainSpecParser> InitStateCommand<C> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::b256;
-    use reth_ethereum_cli::chainspec::EthereumChainSpecParser;
 
     use super::*;
+    use crate::test_utils::EthereumChainSpecParser;
 
     #[test]
     fn parse_init_state_command_with_without_evm() {

@@ -189,9 +189,9 @@ impl Subcommands {
 #[cfg(test)]
 mod tests {
     use reth_chainspec::SEPOLIA;
-    use reth_ethereum_cli::chainspec::EthereumChainSpecParser;
 
     use super::*;
+    use crate::test_utils::EthereumChainSpecParser;
 
     #[test]
     fn parse_unwind() {

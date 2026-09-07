@@ -37,6 +37,3 @@ pub use revm_precompile::install_crypto;
 pub use revm_primitives as primitives;
 #[doc(inline)]
 pub use revm_state as state;
-#[cfg(feature = "test-types")]
-#[doc(inline)]
-pub use revm_statetest_types_42_0_0 as statetest_types;

@@ -42,7 +42,6 @@ revm-primitives = { workspace = true }
 revm-interpreter = { workspace = true }
 revm-context-interface = { workspace = true }
 revm-database-interface = { workspace = true }
-revm-statetest-types = { workspace = true, optional = true }
 [dev-dependencies]
 serde = { workspace = true, features = [
     "derive",
@@ -68,7 +67,7 @@ default = ["std", "secp256k1", "portable", "tracer", "c-kzg", "blst"]
 dev = ["memory_limit", "optional_balance_check", "optional_block_gas_limit", "optional_eip3541", "optional_eip3607", "optional_eip7623", "optional_no_base_fee"]
 gmp = ["revm-precompile/gmp"]
 hashbrown = ["revm-interpreter/hashbrown", "revm-precompile/hashbrown"]
-map-foldhash = ["revm-primitives/map-foldhash", "revm-statetest-types?/map-foldhash"]
+map-foldhash = ["revm-primitives/map-foldhash"]
 memory_limit = ["revm-context/memory_limit", "revm-interpreter/memory_limit"]
 optional_balance_check = ["revm-context/optional_balance_check"]
 optional_block_gas_limit = ["revm-context/optional_block_gas_limit"]
@@ -86,5 +85,4 @@ serde = ["revm-interpreter/serde", "revm-database-interface/serde", "revm-primit
 serde-json = ["serde", "revm-inspector/tracer"]
 sha3-keccak = ["revm-primitives/sha3-keccak"]
 std = ["revm-interpreter/std", "revm-precompile/std", "revm-handler/std", "revm-context/std", "revm-context-interface/std", "revm-bytecode/std", "revm-database/std", "revm-database-interface/std", "revm-inspector/std", "revm-primitives/std", "revm-state/std", "serde/std", "serde_json/std"]
-test-types = ["dep:revm-statetest-types"]
 tracer = ["revm-inspector/tracer"]

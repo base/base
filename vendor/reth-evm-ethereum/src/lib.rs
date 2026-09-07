@@ -18,8 +18,6 @@
 extern crate alloc;
 
 use alloc::{borrow::Cow, sync::Arc};
-#[cfg(feature = "jit")]
-use core::any::Any;
 use core::{convert::Infallible, fmt::Debug};
 
 use alloy_consensus::Header;
@@ -33,7 +31,7 @@ use reth_ethereum_primitives::{Block, EthPrimitives, TransactionSigned};
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, ExecutableTxIterator};
 use reth_evm::{
-    ConfigureEvm, EvmEnv, EvmFactory, JitBackend, NextBlockEnvAttributes, SenderRecoveryCache,
+    ConfigureEvm, EvmEnv, EvmFactory, NextBlockEnvAttributes, SenderRecoveryCache,
     TransactionEnvMut, eth::NextEvmEnvAttributes, precompiles::PrecompilesMap,
 };
 use reth_primitives_traits::{SealedBlock, SealedHeader};
@@ -164,45 +162,6 @@ where
 
     fn block_assembler(&self) -> &Self::BlockAssembler {
         &self.block_assembler
-    }
-
-    fn with_jit_support_enabled(self, enabled: bool) -> Self
-    where
-        Self: Sized,
-    {
-        #[cfg(feature = "jit")]
-        {
-            let mut this = self;
-            let mut evm_factory = this.executor_factory.evm_factory().clone();
-            if let Some(factory) =
-                (&mut evm_factory as &mut dyn Any).downcast_mut::<factory::RethEvmFactory>()
-            {
-                factory.set_jit_support(enabled);
-            }
-            this.executor_factory = EthBlockExecutorFactory::new(
-                *this.executor_factory.receipt_builder(),
-                this.executor_factory.spec().clone(),
-                evm_factory,
-            );
-            this
-        }
-
-        #[cfg(not(feature = "jit"))]
-        {
-            let _ = enabled;
-            self
-        }
-    }
-
-    fn jit_backend(&self) -> Option<&dyn JitBackend> {
-        #[cfg(feature = "jit")]
-        if let Some(factory) = (self.executor_factory.evm_factory() as &dyn Any)
-            .downcast_ref::<factory::RethEvmFactory>()
-        {
-            return Some(factory);
-        }
-
-        None
     }
 
     fn evm_env(&self, header: &Header) -> Result<EvmEnv<SpecId>, Self::Error> {
@@ -551,34 +510,5 @@ mod tests {
         assert_eq!(evm.block, evm_env.block_env);
         assert_eq!(evm.cfg, evm_env.cfg_env);
         assert_eq!(evm.tx, Default::default());
-    }
-
-    #[cfg(feature = "jit")]
-    #[test]
-    fn test_jit_support_downcast_updates_reth_factory() {
-        let evm_config = EthEvmConfig::new_with_evm_factory(
-            MAINNET.clone(),
-            factory::RethEvmFactory::disabled(),
-        );
-
-        assert!(evm_config.jit_backend().is_some());
-        assert!(!evm_config.executor_factory.evm_factory().jit_support_enabled());
-
-        let evm_config = evm_config.with_jit_support();
-        assert!(evm_config.executor_factory.evm_factory().jit_support_enabled());
-
-        let evm_config = evm_config.with_jit_support_enabled(false);
-        assert!(!evm_config.executor_factory.evm_factory().jit_support_enabled());
-    }
-
-    #[cfg(feature = "jit")]
-    #[test]
-    fn test_jit_support_downcast_ignores_plain_factory() {
-        let evm_config = EthEvmConfig::mainnet();
-
-        assert!(evm_config.jit_backend().is_none());
-
-        let evm_config = evm_config.with_jit_support();
-        assert!(evm_config.jit_backend().is_none());
     }
 }

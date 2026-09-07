@@ -67,7 +67,6 @@ alloy-rpc-types-debug = { workspace = true, optional = true }
 alloy-rpc-types-trace = { workspace = true, optional = true }
 alloy-rpc-types-txpool = { workspace = true, optional = true }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
-alloy-rpc-types-tenderly = { workspace = true, optional = true }
 futures-utils-wasm = { workspace = true, features = ["default"] }
 url = { workspace = true, optional = true, features = ["default"] }
 http = { workspace = true, optional = true, features = ["default"] }
@@ -136,7 +135,6 @@ reqwest-native-tls = ["alloy-transport-http?/reqwest-native-tls"]
 reqwest-rustls-tls = ["alloy-transport-http?/reqwest-rustls-tls"]
 rpc-api = ["dep:alloy-rpc-types"]
 tenderly-admin-api = []
-tenderly-api = ["dep:alloy-rpc-types-tenderly", "dep:alloy-rpc-types-trace"]
 throttle = ["alloy-transport/throttle"]
 trace-api = ["dep:alloy-rpc-types-trace"]
 txpool-api = ["dep:alloy-rpc-types-txpool"]

@@ -29,3 +29,6 @@ pub mod stage;
 pub mod test_vectors;
 
 pub use node::NodeCommand;
+
+#[cfg(test)]
+pub mod test_utils;

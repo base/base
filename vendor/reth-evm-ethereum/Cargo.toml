@@ -27,10 +27,7 @@ reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
-metrics = { workspace = true, optional = true }
-reth-metrics = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-revmc = { workspace = true, features = ["llvm-prefer-static", "alloy-evm"], optional = true }
 [dev-dependencies]
 alloy-genesis = { workspace = true }
 reth-testing-utils = { workspace = true }
@@ -54,12 +51,6 @@ std = [
     "reth-ethereum-primitives/std",
     "alloy-rpc-types-engine/std",
     "reth-storage-errors/std",
-]
-jit = [
-    "std",
-    "dep:revmc",
-    "dep:metrics",
-    "dep:reth-metrics",
 ]
 gmp = ["revm/gmp"]
 test-utils = [

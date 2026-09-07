@@ -273,9 +273,9 @@ mod tests {
     };
 
     use reth_discv4::DEFAULT_DISCOVERY_PORT;
-    use reth_ethereum_cli::chainspec::{EthereumChainSpecParser, SUPPORTED_CHAINS};
 
     use super::*;
+    use crate::test_utils::{EthereumChainSpecParser, SUPPORTED_CHAINS};
 
     #[test]
     fn parse_help_node_command() {
