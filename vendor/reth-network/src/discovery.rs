@@ -476,6 +476,7 @@ impl Discovery {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4};
 
+    use futures::FutureExt;
     use secp256k1::SECP256K1;
 
     use super::*;
@@ -632,9 +633,12 @@ mod tests {
             .discv5
             .as_ref()
             .unwrap()
-            .with_discv5(|discv5| discv5.send_ping(discv5_enr_node_2.clone()))
-            .await
-            .unwrap();
+            .with_discv5(|discv5| {
+                Box::pin(discv5.send_ping(discv5_enr_node_2.clone()).map(|result| {
+                    result.expect("discovery ping should succeed");
+                })) as futures::future::BoxFuture<'static, ()>
+            })
+            .await;
 
         // this won't emit an event, since the nodes already discovered each other on discv4, the
         // number of nodes stored for each node on this level remains 1.
@@ -703,9 +707,12 @@ mod tests {
             .discv5
             .as_ref()
             .unwrap()
-            .with_discv5(|discv5| discv5.send_ping(discv5_enr_2))
-            .await
-            .unwrap();
+            .with_discv5(|discv5| {
+                Box::pin(discv5.send_ping(discv5_enr_2).map(|result| {
+                    result.expect("discovery ping should succeed");
+                })) as futures::future::BoxFuture<'static, ()>
+            })
+            .await;
 
         // Both SessionEstablished events should now be buffered in the update channels.
         // Drive both nodes concurrently to collect them.
