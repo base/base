@@ -320,7 +320,6 @@ mod test {
     use reth_consensus::noop::NoopConsensus;
     use reth_db_api::mock::DatabaseMock;
     use reth_evm::{MockEvmConfig, noop::NoopEvmConfig};
-    use reth_network::primitives::BasicNetworkPrimitives;
     use reth_network_api::noop::NoopNetwork;
     use reth_node_api::{AnyNodeTypes, FullNodeTypesAdapter};
     use reth_payload_builder::PayloadBuilderHandle;
@@ -333,12 +332,7 @@ mod test {
 
     #[test]
     fn test_noop_components() {
-        let components = Components::<
-            NoopNetwork<BasicNetworkPrimitives<base_common_consensus::BasePooledTransaction>>,
-            _,
-            NoopEvmConfig<MockEvmConfig>,
-            _,
-        > {
+        let components = Components::<NoopNetwork, _, NoopEvmConfig<MockEvmConfig>, _> {
             transaction_pool:
                 NoopTransactionPool::<base_execution_txpool::BasePooledTransaction>::new(),
             evm_config: NoopEvmConfig::default(),

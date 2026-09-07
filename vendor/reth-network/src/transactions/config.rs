@@ -4,7 +4,6 @@ use std::{fmt::Debug, str::FromStr};
 use alloy_eips::eip2718::IsTyped2718;
 use alloy_primitives::B256;
 use derive_more::{Constructor, Display};
-use reth_eth_wire::NetworkPrimitives;
 use reth_network_types::peers::kind::PeerKind;
 
 use super::{
@@ -164,19 +163,17 @@ impl Default for TransactionFetcherConfig {
 }
 
 /// A policy defining which peers pending transactions are gossiped to.
-pub trait TransactionPropagationPolicy<N: NetworkPrimitives>:
-    Send + Sync + Unpin + fmt::Debug + 'static
-{
+pub trait TransactionPropagationPolicy: Send + Sync + Unpin + fmt::Debug + 'static {
     /// Filter a given peer based on the policy.
     ///
     /// This determines whether transactions can be propagated to this peer.
-    fn can_propagate(&self, peer: &mut PeerMetadata<N>) -> bool;
+    fn can_propagate(&self, peer: &mut PeerMetadata) -> bool;
 
     /// A callback on the policy when a new peer session is established.
-    fn on_session_established(&mut self, peer: &mut PeerMetadata<N>);
+    fn on_session_established(&mut self, peer: &mut PeerMetadata);
 
     /// A callback on the policy when a peer session is closed.
-    fn on_session_closed(&mut self, peer: &mut PeerMetadata<N>);
+    fn on_session_closed(&mut self, peer: &mut PeerMetadata);
 }
 
 /// Determines which peers pending transactions are propagated to.
@@ -194,8 +191,8 @@ pub enum TransactionPropagationKind {
     None,
 }
 
-impl<N: NetworkPrimitives> TransactionPropagationPolicy<N> for TransactionPropagationKind {
-    fn can_propagate(&self, peer: &mut PeerMetadata<N>) -> bool {
+impl TransactionPropagationPolicy for TransactionPropagationKind {
+    fn can_propagate(&self, peer: &mut PeerMetadata) -> bool {
         match self {
             Self::All => true,
             Self::Trusted => peer.peer_kind.is_trusted(),
@@ -203,9 +200,9 @@ impl<N: NetworkPrimitives> TransactionPropagationPolicy<N> for TransactionPropag
         }
     }
 
-    fn on_session_established(&mut self, _peer: &mut PeerMetadata<N>) {}
+    fn on_session_established(&mut self, _peer: &mut PeerMetadata) {}
 
-    fn on_session_closed(&mut self, _peer: &mut PeerMetadata<N>) {}
+    fn on_session_closed(&mut self, _peer: &mut PeerMetadata) {}
 }
 
 impl FromStr for TransactionPropagationKind {
@@ -281,9 +278,7 @@ pub enum AnnouncementAcceptance {
 
 /// A policy that defines how to handle incoming transaction announcements,
 /// particularly concerning transaction types and other announcement metadata.
-pub trait AnnouncementFilteringPolicy<N: NetworkPrimitives>:
-    Send + Sync + Unpin + fmt::Debug + 'static
-{
+pub trait AnnouncementFilteringPolicy: Send + Sync + Unpin + fmt::Debug + 'static {
     /// Decides how to handle a transaction announcement based on its type, hash, and size.
     fn decide_on_announcement(&self, ty: u8, hash: &B256, size: usize) -> AnnouncementAcceptance;
 }
@@ -294,9 +289,9 @@ pub trait AnnouncementFilteringPolicy<N: NetworkPrimitives>:
 #[non_exhaustive]
 pub struct TypedStrictFilter;
 
-impl<N: NetworkPrimitives> AnnouncementFilteringPolicy<N> for TypedStrictFilter {
+impl AnnouncementFilteringPolicy for TypedStrictFilter {
     fn decide_on_announcement(&self, ty: u8, hash: &B256, size: usize) -> AnnouncementAcceptance {
-        if N::PooledTransaction::is_type(ty) {
+        if base_common_consensus::BasePooledTransaction::is_type(ty) {
             AnnouncementAcceptance::Accept
         } else {
             tracing::trace!(target: "net::tx::policy::strict_typed",
@@ -321,9 +316,9 @@ pub type StrictEthAnnouncementFilter = TypedStrictFilter;
 #[non_exhaustive]
 pub struct TypedRelaxedFilter;
 
-impl<N: NetworkPrimitives> AnnouncementFilteringPolicy<N> for TypedRelaxedFilter {
+impl AnnouncementFilteringPolicy for TypedRelaxedFilter {
     fn decide_on_announcement(&self, ty: u8, hash: &B256, size: usize) -> AnnouncementAcceptance {
-        if N::PooledTransaction::is_type(ty) {
+        if base_common_consensus::BasePooledTransaction::is_type(ty) {
             AnnouncementAcceptance::Accept
         } else {
             tracing::trace!(target: "net::tx::policy::relaxed_typed",

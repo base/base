@@ -3,16 +3,13 @@ use reth_eth_wire::{GetPooledTransactions, PooledTransactions};
 use reth_ethereum_primitives::TransactionSigned;
 use reth_network::{
     NetworkEventListenerProvider, PeerRequest,
-    test_utils::{NetworkEventStream, Testnet},
+    test_utils::{NetworkEventStream, NetworkTestData, Testnet},
 };
 use reth_network_api::{NetworkInfo, Peers};
 use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState};
 use reth_primitives_traits::SignedTransaction;
 use reth_provider::test_utils::MockEthProvider;
-use reth_transaction_pool::{
-    TransactionPool,
-    test_utils::{MockTransaction, testing_pool},
-};
+use reth_transaction_pool::{TransactionPool, test_utils::MockTransaction};
 use tokio::sync::oneshot;
 // peer0: `GetPooledTransactions` requester
 // peer1: `GetPooledTransactions` responder
@@ -41,11 +38,13 @@ async fn test_large_tx_req() {
     net.for_each_mut(|peer| peer.install_request_handler());
 
     // insert generated txs into responding peer's pool
-    let pool1 = testing_pool();
-    pool1.add_external_transactions(txs).await;
+    let pool1 = NetworkTestData::pool();
+    pool1
+        .add_external_transactions(txs.into_iter().map(NetworkTestData::transaction).collect())
+        .await;
 
     // install transactions managers
-    net.peers_mut()[0].install_transactions_manager(testing_pool());
+    net.peers_mut()[0].install_transactions_manager(NetworkTestData::pool());
     net.peers_mut()[1].install_transactions_manager(pool1);
 
     // connect peers together and check for connection existence

@@ -4,7 +4,6 @@ use std::sync::Arc;
 use alloy_consensus::TxLegacy;
 use alloy_primitives::{Signature, U256};
 use futures::StreamExt;
-use reth_ethereum_primitives::TransactionSigned;
 use reth_network::{
     NetworkEvent, NetworkEventListenerProvider, Peers,
     test_utils::{NetworkEventStream, Testnet},
@@ -40,7 +39,7 @@ async fn test_tx_gossip() {
     let mut peer1_tx_listener = peer1.pool().unwrap().pending_transactions_listener();
 
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-    let tx = tx_gen.gen_eip1559_pooled();
+    let tx = reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
 
     // ensure the sender has balance
     let sender = tx.sender();
@@ -80,7 +79,7 @@ async fn test_tx_propagation_policy_trusted_only() {
     let mut peer1_tx_listener = peer_1_handle.pool().unwrap().pending_transactions_listener();
 
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-    let tx = tx_gen.gen_eip1559_pooled();
+    let tx = reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
 
     // ensure the sender has balance
     let sender = tx.sender();
@@ -107,7 +106,7 @@ async fn test_tx_propagation_policy_trusted_only() {
     join!(event_stream_0.next_session_established(), event_stream_1.next_session_established());
 
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-    let tx = tx_gen.gen_eip1559_pooled();
+    let tx = reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
 
     // ensure the sender has balance
     let sender = tx.sender();
@@ -151,7 +150,7 @@ async fn test_tx_ingress_policy_trusted_only() {
     let mut peer0_tx_listener = peer_0_handle.pool().unwrap().pending_transactions_listener();
 
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-    let tx = tx_gen.gen_eip1559_pooled();
+    let tx = reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
 
     // ensure the sender has balance
     let sender = tx.sender();
@@ -175,7 +174,7 @@ async fn test_tx_ingress_policy_trusted_only() {
     join!(event_stream_0.next_session_established(), event_stream_1.next_session_established());
 
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-    let tx = tx_gen.gen_eip1559_pooled();
+    let tx = reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
 
     // ensure the sender has balance
     let sender = tx.sender();
@@ -194,54 +193,38 @@ async fn test_tx_ingress_policy_trusted_only() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_4844_tx_gossip_penalization() {
-    reth_tracing::init_test_tracing();
+async fn rejects_blob_transaction_gossip() {
     let provider = MockEthProvider::default().with_genesis_block();
-    let net = Testnet::create_with(2, provider.clone()).await;
-
-    // install request handlers
-    let net = net.with_eth_pool();
-
+    let net = Testnet::create_with(2, provider).await.with_eth_pool();
     let handle = net.spawn();
-
+    handle.connect_peers().await;
     let peer0 = &handle.peers()[0];
     let peer1 = &handle.peers()[1];
+    let mut events = peer1.network().event_listener();
 
-    // connect all the peers
-    handle.connect_peers().await;
-
-    let mut peer1_tx_listener = peer1.pool().unwrap().pending_transactions_listener();
-
+    // Bypass the Base send API to simulate an incompatible peer's raw wire message.
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-
-    // peer 0 will be penalized for sending txs[0] over gossip
-    let txs = vec![tx_gen.gen_eip4844_pooled(), tx_gen.gen_eip1559_pooled()];
-
-    for tx in &txs {
-        let sender = tx.sender();
-        provider.add_account(sender, ExtendedAccount::new(0, U256::from(100_000_000)));
-    }
-
-    let signed_txs: Vec<Arc<TransactionSigned>> =
-        txs.iter().map(|tx| Arc::new(tx.transaction().clone().into_inner())).collect();
-
-    let network_handle = peer0.network();
-
-    let peer0_reputation_before =
-        peer1.peer_handle().peer_by_id(*peer0.peer_id()).await.unwrap().reputation();
-
-    // sends txs directly to peer1
-    network_handle.send_transactions(*peer1.peer_id(), signed_txs);
-
-    let received = peer1_tx_listener.recv().await.unwrap();
-
-    let peer0_reputation_after =
-        peer1.peer_handle().peer_by_id(*peer0.peer_id()).await.unwrap().reputation();
-    assert_ne!(peer0_reputation_before, peer0_reputation_after);
-    assert_eq!(received, *txs[1].transaction().tx_hash());
-
-    // this will return an [`Empty`] error because blob txs are disallowed to be broadcasted
-    assert!(peer1_tx_listener.try_recv().is_err());
+    let blob = tx_gen.gen_eip4844_pooled().into_consensus().into_inner();
+    let encoded = alloy_rlp::encode(reth_eth_wire::Transactions(vec![blob]));
+    peer0.network().send_eth_message(
+        *peer1.peer_id(),
+        reth_network::message::PeerMessage::Other(reth_eth_wire::RawCapabilityMessage::eth(
+            reth_eth_wire::EthMessageID::Transactions,
+            encoded.into(),
+        )),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while let Some(event) = events.next().await {
+            if let NetworkEvent::Peer(PeerEvent::SessionClosed { peer_id, .. }) = event {
+                assert_eq!(peer_id, *peer0.peer_id());
+                assert!(peer1.pool().unwrap().is_empty());
+                return;
+            }
+        }
+        panic!("network event stream ended before the incompatible peer disconnected");
+    })
+    .await
+    .expect("blob gossip should disconnect the incompatible peer");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -275,7 +258,10 @@ async fn test_sending_invalid_transactions() {
             value: Default::default(),
             input: Default::default(),
         };
-        let tx = TransactionSigned::new_unhashed(tx.into(), Signature::test_signature());
+        let tx = base_common_consensus::BaseTxEnvelope::new_unhashed(
+            tx.into(),
+            Signature::test_signature(),
+        );
         peer0.network().send_transactions(*peer1.peer_id(), vec![Arc::new(tx)]);
     }
 

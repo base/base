@@ -1,5 +1,8 @@
 //! Common helpers for network testing.
 
+mod pool;
+pub use pool::{NetworkTestData, TestPool};
+
 mod init;
 mod testnet;
 pub mod transactions;
@@ -10,6 +13,3 @@ pub use init::{
 };
 pub use testnet::{NetworkEventStream, Peer, PeerConfig, PeerHandle, Testnet, TestnetHandle};
 pub use transactions::{buffer_hash_to_tx_fetcher, new_mock_session, new_tx_manager};
-
-mod primitives;
-pub use primitives::TestNetworkPrimitives;

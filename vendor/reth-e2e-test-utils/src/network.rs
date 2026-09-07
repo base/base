@@ -10,7 +10,7 @@ use reth_tracing::tracing::info;
 /// Helper for network operations
 #[derive(Debug)]
 pub struct NetworkTestContext<Network: NetworkEventListenerProvider> {
-    network_events: EventStream<NetworkEvent<PeerRequest<Network::Primitives>>>,
+    network_events: EventStream<NetworkEvent<PeerRequest>>,
     network: Network,
 }
 

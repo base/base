@@ -14,7 +14,7 @@ use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
 use reth_chainspec::{EthChainSpec, ForkFilter, ForkId, Head};
 use reth_discv5::NetworkStackId;
 use reth_ethereum_forks::EnrForkIdEntry;
-use reth_network::{NetworkHandle, NetworkPrimitives};
+use reth_network::NetworkHandle;
 use reth_network_p2p::sync::NetworkSyncUpdater;
 use reth_provider::{BlockNumReader, HeaderProvider};
 use reth_rpc_server_types::RethRpcModule;
@@ -306,7 +306,7 @@ pub trait RuntimeForkFilterNetwork {
     fn install_fork_filter(&self, fork_filter: ForkFilter) -> eyre::Result<()>;
 }
 
-impl<N: NetworkPrimitives> RuntimeForkFilterNetwork for NetworkHandle<N> {
+impl RuntimeForkFilterNetwork for NetworkHandle {
     fn install_fork_filter(&self, fork_filter: ForkFilter) -> eyre::Result<()> {
         let fork_id = fork_filter.current();
 
@@ -872,7 +872,7 @@ mod tests {
         use reth_chainspec::ChainSpecBuilder;
         use reth_discv5::discv5::{ConfigBuilder as Discv5ConfigBuilder, ListenConfig};
         use reth_ethereum_forks::ForkHash;
-        use reth_network::{EthNetworkPrimitives, NetworkConfigBuilder, NetworkManager};
+        use reth_network::{NetworkConfigBuilder, NetworkManager};
         use reth_tasks::Runtime;
 
         // An unnamed chain id makes `NetworkStackId::id` return `None`, so reth's own fork keying
@@ -894,23 +894,22 @@ mod tests {
 
         // Only discv5 is enabled, on ephemeral 127.0.0.1 ports so parallel/repeated runs never
         // collide. discv4/dns are disabled, so the discv4 branch of `install_fork_filter` is skipped.
-        let config =
-            NetworkConfigBuilder::<EthNetworkPrimitives>::with_rng_secret_key(Runtime::test())
-                .with_unused_ports()
-                .disable_discv4_discovery()
-                .disable_dns_discovery()
-                .discovery_v5(
-                    reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 0).into())
-                        .discv5_config(
-                            Discv5ConfigBuilder::new(ListenConfig::Ipv4 {
-                                ip: Ipv4Addr::LOCALHOST,
-                                port: 0,
-                            })
-                            .build(),
-                        )
-                        .fork(NetworkStackId::OPEL, startup_fork_id),
-                )
-                .build_with_noop_provider(std::sync::Arc::clone(&chain_spec));
+        let config = NetworkConfigBuilder::with_rng_secret_key(Runtime::test())
+            .with_unused_ports()
+            .disable_discv4_discovery()
+            .disable_dns_discovery()
+            .discovery_v5(
+                reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 0).into())
+                    .discv5_config(
+                        Discv5ConfigBuilder::new(ListenConfig::Ipv4 {
+                            ip: Ipv4Addr::LOCALHOST,
+                            port: 0,
+                        })
+                        .build(),
+                    )
+                    .fork(NetworkStackId::OPEL, startup_fork_id),
+            )
+            .build_with_noop_provider(std::sync::Arc::clone(&chain_spec));
 
         // `NetworkManager::new` awaits `Discv5::start`, so `discv5()` is live once it returns. The
         // manager future is never polled: the `opel` write goes straight to the discv5 handle's ENR

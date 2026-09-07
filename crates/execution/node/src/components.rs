@@ -13,8 +13,8 @@ use reth_node_builder::{
 use reth_transaction_pool::blobstore::DiskFileBlobStore;
 
 use crate::{
-    BaseNetworkBuilder, BaseNetworkPrimitives, BaseNodeTypes, BasePayloadBuilder,
-    BasePayloadServiceBuilder, BasePoolBuilder,
+    BaseNetworkBuilder, BaseNodeTypes, BasePayloadBuilder, BasePayloadServiceBuilder,
+    BasePoolBuilder,
 };
 
 /// The concrete transaction pool used by Base nodes.
@@ -22,12 +22,8 @@ pub type BaseNodePool<Node> =
     BaseTransactionPool<<Node as FullNodeTypes>::Provider, DiskFileBlobStore, BaseEvmConfig>;
 
 /// Base node components, with only the provider supplied by the launch adapter.
-pub type BaseNodeComponents<Node> = Components<
-    NetworkHandle<BaseNetworkPrimitives>,
-    BaseNodePool<Node>,
-    BaseEvmConfig,
-    Arc<BaseBeaconConsensus>,
->;
+pub type BaseNodeComponents<Node> =
+    Components<NetworkHandle, BaseNodePool<Node>, BaseEvmConfig, Arc<BaseBeaconConsensus>>;
 
 /// Constructs Base components while allowing the payload service to vary.
 #[derive(Debug)]

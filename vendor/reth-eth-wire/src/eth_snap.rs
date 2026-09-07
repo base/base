@@ -21,8 +21,8 @@ use reth_eth_wire_types::{
 use reth_ethereum_forks::ForkFilter;
 
 use crate::{
-    Capability, EthMessage, EthNetworkPrimitives, EthStreamInner, EthVersion, HANDSHAKE_TIMEOUT,
-    NetworkPrimitives, P2PStream, UnifiedStatus,
+    Capability, EthMessage, EthStreamInner, EthVersion, HANDSHAKE_TIMEOUT, P2PStream,
+    UnifiedStatus,
     capability::SharedCapabilities,
     errors::{EthStreamError, P2PStreamError},
     handshake::EthRlpxHandshake,
@@ -36,21 +36,20 @@ use crate::{
 /// [`EthSnapMessage`] (an `eth` message or a `snap/2` message). A single poll surfaces whichever
 /// protocol the next inbound frame belongs to, so the owner drives one stream rather than two.
 #[derive(Debug)]
-pub struct EthSnapStream<St, N: NetworkPrimitives = EthNetworkPrimitives> {
+pub struct EthSnapStream<St> {
     /// The raw `RLPx` stream carrying both `eth` and `snap/2` frames.
     conn: P2PStream<St>,
     /// Transport-free `eth` codec, reused from [`EthStream`](crate::EthStream).
-    eth: EthStreamInner<N>,
+    eth: EthStreamInner,
     /// Relative message-id offset of the `snap/2` capability in the combined message space. Ids at
     /// or above it are snap, rebased to snap-relative and validated by
     /// [`SnapProtocolMessage::decode_versioned`].
     snap_offset: u8,
 }
 
-impl<St, N> EthSnapStream<St, N>
+impl<St> EthSnapStream<St>
 where
     St: Stream<Item = io::Result<BytesMut>> + Sink<Bytes, Error = io::Error> + Unpin + Send + Sync,
-    N: NetworkPrimitives,
 {
     /// Performs the `eth` status handshake over a connection that negotiated both `eth` and
     /// `snap/2`, returning the established [`EthSnapStream`] and the remote's status.
@@ -76,7 +75,7 @@ where
     }
 }
 
-impl<St, N: NetworkPrimitives> EthSnapStream<St, N> {
+impl<St> EthSnapStream<St> {
     /// Returns the negotiated `eth` version.
     #[inline]
     pub const fn version(&self) -> EthVersion {
@@ -108,15 +107,14 @@ impl<St, N: NetworkPrimitives> EthSnapStream<St, N> {
     }
 }
 
-impl<St, N> EthSnapStream<St, N>
+impl<St> EthSnapStream<St>
 where
     St: Stream<Item = io::Result<BytesMut>> + Sink<Bytes, Error = io::Error> + Unpin,
-    N: NetworkPrimitives,
 {
     /// Queues an [`EthBroadcastMessage`] to be sent on the wire.
     pub fn start_send_broadcast(
         &mut self,
-        item: EthBroadcastMessage<N>,
+        item: EthBroadcastMessage,
     ) -> Result<(), EthStreamError> {
         self.conn.start_send_unpin(item.encoded()).map_err(Into::into)
     }
@@ -129,19 +127,18 @@ where
 
 /// A message carried by an [`EthSnapStream`]: either an `eth` message or a `snap/2` message.
 #[derive(Debug)]
-pub enum EthSnapMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub enum EthSnapMessage {
     /// An `eth` protocol message.
-    Eth(EthMessage<N>),
+    Eth(EthMessage),
     /// A `snap/2` (EIP-8189) protocol message.
     Snap(SnapProtocolMessage),
 }
 
-impl<St, N> Stream for EthSnapStream<St, N>
+impl<St> Stream for EthSnapStream<St>
 where
     St: Stream<Item = io::Result<BytesMut>> + Sink<Bytes, Error = io::Error> + Unpin,
-    N: NetworkPrimitives,
 {
-    type Item = Result<EthSnapMessage<N>, EthStreamError>;
+    type Item = Result<EthSnapMessage, EthStreamError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -170,10 +167,9 @@ where
     }
 }
 
-impl<St, N> Sink<EthSnapMessage<N>> for EthSnapStream<St, N>
+impl<St> Sink<EthSnapMessage> for EthSnapStream<St>
 where
     St: Stream<Item = io::Result<BytesMut>> + Sink<Bytes, Error = io::Error> + Unpin,
-    N: NetworkPrimitives,
 {
     type Error = EthStreamError;
 
@@ -181,7 +177,7 @@ where
         self.get_mut().conn.poll_ready_unpin(cx).map_err(Into::into)
     }
 
-    fn start_send(self: Pin<&mut Self>, item: EthSnapMessage<N>) -> Result<(), Self::Error> {
+    fn start_send(self: Pin<&mut Self>, item: EthSnapMessage) -> Result<(), Self::Error> {
         let this = self.get_mut();
         let bytes = match item {
             EthSnapMessage::Eth(msg) => this.eth.encode_message(msg)?,
@@ -345,7 +341,7 @@ mod tests {
             let server_hello = eth_snap_hello();
             let (conn, _) = UnauthedP2PStream::new(stream).handshake(server_hello).await.unwrap();
 
-            let (mut stream, _) = EthSnapStream::<_, EthNetworkPrimitives>::handshake(
+            let (mut stream, _) = EthSnapStream::<_>::handshake(
                 conn,
                 server_status,
                 server_fork_filter,
@@ -368,7 +364,7 @@ mod tests {
 
         // Client: connect, negotiate, send the request, and await the correlated response.
         let conn = connect_passthrough(local_addr, eth_snap_hello()).await;
-        let (mut stream, _) = EthSnapStream::<_, EthNetworkPrimitives>::handshake(
+        let (mut stream, _) = EthSnapStream::<_>::handshake(
             conn,
             status,
             fork_filter,
@@ -419,7 +415,7 @@ mod tests {
                 let stream = crate::PassthroughCodec::default().framed(incoming);
                 let (conn, _) =
                     UnauthedP2PStream::new(stream).handshake(eth_snap_hello()).await.unwrap();
-                let (mut stream, _) = EthSnapStream::<_, EthNetworkPrimitives>::handshake(
+                let (mut stream, _) = EthSnapStream::<_>::handshake(
                     conn,
                     server_status,
                     server_fork_filter,
@@ -433,7 +429,7 @@ mod tests {
             });
 
             let conn = connect_passthrough(local_addr, eth_snap_hello()).await;
-            let (mut stream, _) = EthSnapStream::<_, EthNetworkPrimitives>::handshake(
+            let (mut stream, _) = EthSnapStream::<_>::handshake(
                 conn,
                 status,
                 fork_filter,

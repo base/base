@@ -6,9 +6,8 @@ use alloy_primitives::bytes::BytesMut;
 use futures::{StreamExt, stream::Pending};
 use reth_chainspec::MAINNET;
 use reth_eth_wire::{
-    Capability, EthNetworkPrimitives, StatusBuilder, UnauthedEthStream,
-    capability::SharedCapabilities, handshake::EthHandshake, multiplex::ProtocolConnection,
-    protocol::Protocol,
+    Capability, StatusBuilder, UnauthedEthStream, capability::SharedCapabilities,
+    handshake::EthHandshake, multiplex::ProtocolConnection, protocol::Protocol,
 };
 use reth_eth_wire_types::message::MAX_MESSAGE_SIZE;
 use reth_ethereum_forks::EthereumHardfork;
@@ -109,11 +108,7 @@ fn spy_handlers(spy: &ProtocolSpy) -> RlpxSubProtocolHandlers {
 
 /// Asserts the event reports an identity mismatch of `got` against `expected` and that the
 /// peers manager will treat it as fatal.
-fn assert_identity_mismatch(
-    event: PendingSessionEvent<EthNetworkPrimitives>,
-    got: PeerId,
-    expected: PeerId,
-) {
+fn assert_identity_mismatch(event: PendingSessionEvent, got: PeerId, expected: PeerId) {
     let PendingSessionEvent::Disconnected { error: Some(err), .. } = event else {
         panic!("unexpected event {event:?}")
     };
@@ -144,7 +139,7 @@ async fn incoming_hello_with_spoofed_identity_is_rejected() {
 
     tokio::spawn(async move {
         let (incoming, remote_addr) = listener.accept().await.unwrap();
-        start_pending_incoming_session::<EthNetworkPrimitives>(
+        start_pending_incoming_session(
             Arc::new(EthHandshake::default()),
             MAX_MESSAGE_SIZE,
             disconnect_rx,
@@ -201,7 +196,7 @@ async fn outgoing_hello_with_spoofed_identity_is_rejected() {
     });
 
     tokio::spawn(async move {
-        start_pending_outbound_session::<EthNetworkPrimitives>(
+        start_pending_outbound_session(
             Arc::new(EthHandshake::default()),
             MAX_MESSAGE_SIZE,
             disconnect_rx,
@@ -242,7 +237,7 @@ async fn matching_identity_establishes_session() {
 
     tokio::spawn(async move {
         let (incoming, remote_addr) = listener.accept().await.unwrap();
-        start_pending_incoming_session::<EthNetworkPrimitives>(
+        start_pending_incoming_session(
             Arc::new(EthHandshake::default()),
             MAX_MESSAGE_SIZE,
             disconnect_rx,
@@ -268,10 +263,8 @@ async fn matching_identity_establishes_session() {
 
         let mut status = status();
         status.set_eth_version(p2p_stream.shared_capabilities().eth_version().unwrap());
-        let _eth_stream = UnauthedEthStream::new(p2p_stream)
-            .handshake::<EthNetworkPrimitives>(status, fork_filter())
-            .await
-            .unwrap();
+        let _eth_stream =
+            UnauthedEthStream::new(p2p_stream).handshake(status, fork_filter()).await.unwrap();
 
         let _ = keep_alive_rx.await;
     });

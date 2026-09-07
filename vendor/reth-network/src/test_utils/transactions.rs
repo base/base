@@ -6,16 +6,15 @@ use std::sync::Arc;
 
 use alloy_primitives::TxHash;
 use reth_eth_wire::EthVersion;
-use reth_eth_wire_types::EthNetworkPrimitives;
 use reth_network_api::{PeerKind, PeerRequest, PeerRequestSender};
 use reth_network_peers::PeerId;
 use reth_storage_api::noop::NoopProvider;
 use reth_tasks::Runtime;
-use reth_transaction_pool::test_utils::{TestPool, testing_pool};
 use secp256k1::SecretKey;
 use tokio::sync::mpsc;
 use tracing::trace;
 
+use super::{NetworkTestData, TestPool};
 use crate::{
     NetworkConfigBuilder, NetworkManager,
     cache::LruCache,
@@ -30,8 +29,7 @@ use crate::{
 };
 
 /// A new tx manager for testing.
-pub async fn new_tx_manager()
--> (TransactionsManager<TestPool, EthNetworkPrimitives>, NetworkManager<EthNetworkPrimitives>) {
+pub async fn new_tx_manager() -> (TransactionsManager<TestPool>, NetworkManager) {
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     let client = NoopProvider::default();
 
@@ -41,7 +39,7 @@ pub async fn new_tx_manager()
         .disable_discovery()
         .build(client);
 
-    let pool = testing_pool();
+    let pool = NetworkTestData::pool();
 
     let transactions_manager_config = config.transactions_manager_config.clone();
     let (_network_handle, network, transactions, _) = NetworkManager::new(config)
@@ -88,7 +86,7 @@ pub fn buffer_hash_to_tx_fetcher(
 pub fn new_mock_session(
     peer_id: PeerId,
     version: EthVersion,
-) -> (PeerMetadata<EthNetworkPrimitives>, mpsc::Receiver<PeerRequest>) {
+) -> (PeerMetadata, mpsc::Receiver<PeerRequest>) {
     let (to_mock_session_tx, to_mock_session_rx) = mpsc::channel(1);
 
     (

@@ -17,10 +17,11 @@ use alloy_primitives::{
     B256,
     map::{FbBuildHasher, HashMap},
 };
+use base_common_consensus::BaseBlock;
 use rand::seq::SliceRandom;
 use reth_eth_wire::{
-    BlockHashNumber, Capabilities, DisconnectReason, EthNetworkPrimitives, GetReceipts70,
-    NetworkPrimitives, NewBlockHashes, NewBlockPayload, UnifiedStatus,
+    BlockHashNumber, Capabilities, DisconnectReason, GetReceipts70, NewBlockHashes,
+    NewBlockPayload, UnifiedStatus,
 };
 use reth_ethereum_forks::ForkId;
 use reth_network_api::{DiscoveredEvent, DiscoveryEvent, PeerRequest, PeerRequestSender};
@@ -79,13 +80,13 @@ impl Deref for BlockNumReader {
 ///
 /// This type is also responsible for responding for received request.
 #[derive(Debug)]
-pub struct NetworkState<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub struct NetworkState {
     /// All active peers and their state.
-    active_peers: HashMap<PeerId, ActivePeer<N>, FbBuildHasher<64>>,
+    active_peers: HashMap<PeerId, ActivePeer, FbBuildHasher<64>>,
     /// Manages connections to peers.
     peers_manager: PeersManager,
     /// Buffered messages until polled.
-    queued_messages: VecDeque<StateAction<N>>,
+    queued_messages: VecDeque<StateAction>,
     /// The client type that can interact with the chain.
     ///
     /// This type is used to fetch the block number after we established a session and received the
@@ -98,10 +99,10 @@ pub struct NetworkState<N: NetworkPrimitives = EthNetworkPrimitives> {
     /// The fetcher streams `RLPx` related requests on a per-peer basis to this type. This type
     /// will then queue in the request and notify the fetcher once the result has been
     /// received.
-    state_fetcher: StateFetcher<N>,
+    state_fetcher: StateFetcher,
 }
 
-impl<N: NetworkPrimitives> NetworkState<N> {
+impl NetworkState {
     /// Create a new state instance with the given params
     pub(crate) fn new(
         client: BlockNumReader,
@@ -136,7 +137,7 @@ impl<N: NetworkPrimitives> NetworkState<N> {
     }
 
     /// Returns a new [`FetchClient`]
-    pub(crate) fn fetch_client(&self) -> FetchClient<N> {
+    pub(crate) fn fetch_client(&self) -> FetchClient {
         self.state_fetcher.client()
     }
 
@@ -149,7 +150,7 @@ impl<N: NetworkPrimitives> NetworkState<N> {
     ///
     /// Returns `Ok` if the session is valid, returns an `Err` if the session is not accepted and
     /// should be rejected.
-    pub(crate) fn on_session_activated(&mut self, activation: SessionActivation<N>) {
+    pub(crate) fn on_session_activated(&mut self, activation: SessionActivation) {
         let SessionActivation {
             peer,
             capabilities,
@@ -205,7 +206,10 @@ impl<N: NetworkPrimitives> NetworkState<N> {
     /// > the total number of peers) using the `NewBlock` message.
     ///
     /// See also <https://github.com/ethereum/devp2p/blob/master/caps/eth.md>
-    pub(crate) fn announce_new_block(&mut self, msg: NewBlockMessage<N::NewBlockPayload>) {
+    pub(crate) fn announce_new_block(
+        &mut self,
+        msg: NewBlockMessage<reth_eth_wire_types::NewBlock<BaseBlock>>,
+    ) {
         // send a `NewBlock` message to a fraction of the connected peers (square root of the total
         // number of peers)
         let num_propagate = (self.active_peers.len() as f64).sqrt() as u64 + 1;
@@ -247,7 +251,10 @@ impl<N: NetworkPrimitives> NetworkState<N> {
 
     /// Completes the block propagation process started in [`NetworkState::announce_new_block()`]
     /// but sending `NewBlockHash` broadcast to all peers that haven't seen it yet.
-    pub(crate) fn announce_new_block_hash(&mut self, msg: NewBlockMessage<N::NewBlockPayload>) {
+    pub(crate) fn announce_new_block_hash(
+        &mut self,
+        msg: NewBlockMessage<reth_eth_wire_types::NewBlock<BaseBlock>>,
+    ) {
         let number = msg.block.block().header().number();
         let hashes = NewBlockHashes(vec![BlockHashNumber { hash: msg.hash, number }]);
         for (peer_id, peer) in &mut self.active_peers {
@@ -477,7 +484,7 @@ impl<N: NetworkPrimitives> NetworkState<N> {
     /// Delegates the response result to the fetcher which may return an outcome specific
     /// instruction that needs to be handled in [`Self::on_block_response_outcome`]. This could be
     /// a follow-up request or an instruction to slash the peer's reputation.
-    fn on_eth_response(&mut self, peer: PeerId, resp: PeerResponseResult<N>) {
+    fn on_eth_response(&mut self, peer: PeerId, resp: PeerResponseResult) {
         let outcome = match resp {
             PeerResponseResult::BlockHeaders(res) => {
                 self.state_fetcher.on_block_headers_response(peer, res)
@@ -519,7 +526,7 @@ impl<N: NetworkPrimitives> NetworkState<N> {
     }
 
     /// Advances the state
-    pub(crate) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<StateAction<N>> {
+    pub(crate) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<StateAction> {
         loop {
             // drain buffered messages
             if let Some(message) = self.queued_messages.pop_front() {
@@ -603,22 +610,22 @@ impl<N: NetworkPrimitives> NetworkState<N> {
 ///
 /// For example known blocks,so we can decide what to announce.
 #[derive(Debug)]
-pub(crate) struct ActivePeer<N: NetworkPrimitives> {
+pub(crate) struct ActivePeer {
     /// Best block of the peer.
     pub(crate) best_hash: B256,
     /// The capabilities of the remote peer.
     pub(crate) capabilities: Arc<Capabilities>,
     /// A communication channel directly to the session task.
-    pub(crate) request_tx: PeerRequestSender<PeerRequest<N>>,
+    pub(crate) request_tx: PeerRequestSender<PeerRequest>,
     /// The response receiver for a currently active request to that peer.
-    pub(crate) pending_response: Option<PeerResponse<N>>,
+    pub(crate) pending_response: Option<PeerResponse>,
     /// Blocks we know the peer has.
     pub(crate) blocks: LruCache<B256>,
 }
 
 /// Everything [`NetworkState::on_session_activated`] needs to register a newly established
 /// session.
-pub(crate) struct SessionActivation<N: NetworkPrimitives> {
+pub(crate) struct SessionActivation {
     /// The remote peer's identifier.
     pub(crate) peer: PeerId,
     /// The capabilities the peer announced.
@@ -626,7 +633,7 @@ pub(crate) struct SessionActivation<N: NetworkPrimitives> {
     /// The `Status` message the peer sent during the `eth` handshake.
     pub(crate) status: Arc<UnifiedStatus>,
     /// A communication channel directly to the session task.
-    pub(crate) request_tx: PeerRequestSender<PeerRequest<N>>,
+    pub(crate) request_tx: PeerRequestSender<PeerRequest>,
     /// The maximum time the session waits for a response from the peer.
     pub(crate) timeout: Arc<AtomicU64>,
     /// The range info for the peer.
@@ -637,13 +644,13 @@ pub(crate) struct SessionActivation<N: NetworkPrimitives> {
 
 /// Message variants triggered by the [`NetworkState`]
 #[derive(Debug)]
-pub(crate) enum StateAction<N: NetworkPrimitives> {
+pub(crate) enum StateAction {
     /// Dispatch a `NewBlock` message to the peer
     NewBlock {
         /// Target of the message
         peer_id: PeerId,
         /// The `NewBlock` message
-        block: NewBlockMessage<N::NewBlockPayload>,
+        block: NewBlockMessage<reth_eth_wire_types::NewBlock<BaseBlock>>,
     },
     NewBlockHashes {
         /// Target of the message
@@ -684,8 +691,8 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::B256;
-    use reth_eth_wire::{BlockBodies, Capabilities, Capability, EthNetworkPrimitives, EthVersion};
-    use reth_ethereum_primitives::BlockBody;
+    use base_common_consensus::BaseBlockBody as BlockBody;
+    use reth_eth_wire::{BlockBodies, Capabilities, Capability, EthVersion};
     use reth_network_api::PeerRequestSender;
     use reth_network_p2p::{bodies::client::BodiesClient, error::RequestError};
     use reth_network_peers::PeerId;
@@ -702,7 +709,7 @@ mod tests {
     };
 
     /// Returns a testing instance of the [`NetworkState`].
-    fn state() -> NetworkState<EthNetworkPrimitives> {
+    fn state() -> NetworkState {
         let peers = PeersManager::default();
         let handle = peers.handle();
         NetworkState {

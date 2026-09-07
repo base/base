@@ -7,7 +7,7 @@
 //!
 //! Components depend on a fully type configured node: [`FullNodeTypes`].
 
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::BaseTxEnvelope;
 mod builder;
 mod consensus;
 mod execute;
@@ -24,10 +24,9 @@ pub use network::*;
 pub use payload::*;
 pub use pool::*;
 use reth_consensus::FullConsensus;
-use reth_network::types::NetworkPrimitives;
 use reth_network_api::FullNetwork;
 use reth_payload_builder::PayloadBuilderHandle;
-use reth_transaction_pool::{PoolPooledTx, PoolTransaction, TransactionPool};
+use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 use crate::{ConfigureEvm, FullNodeTypes};
 
@@ -47,14 +46,7 @@ pub trait NodeComponents<T: FullNodeTypes>: Clone + Debug + Unpin + Send + Sync 
     type Consensus: FullConsensus + Clone + Unpin + 'static;
 
     /// Network API.
-    type Network: FullNetwork<
-        Primitives: NetworkPrimitives<
-            BlockHeader = alloy_consensus::Header,
-            BlockBody = base_common_consensus::BaseBlockBody,
-            Block = BaseBlock,
-            Receipt = BaseReceipt,
-        >,
-    >;
+    type Network: FullNetwork;
 
     /// Returns the transaction pool of the node.
     fn pool(&self) -> &Self::Pool;
@@ -93,15 +85,7 @@ pub struct Components<Network, Pool, EVM, Consensus> {
 impl<Node, Pool, EVM, Cons, Network> NodeComponents<Node> for Components<Network, Pool, EVM, Cons>
 where
     Node: FullNodeTypes,
-    Network: FullNetwork<
-        Primitives: NetworkPrimitives<
-            BlockHeader = alloy_consensus::Header,
-            BlockBody = base_common_consensus::BaseBlockBody,
-            Block = BaseBlock,
-            Receipt = BaseReceipt,
-            PooledTransaction = PoolPooledTx<Pool>,
-        >,
-    >,
+    Network: FullNetwork,
     Pool:
         TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
     EVM: ConfigureEvm + 'static,

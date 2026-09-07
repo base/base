@@ -10,12 +10,13 @@ use std::{
 
 use alloy_consensus::{BlockHeader, ReceiptWithBloom};
 use alloy_primitives::{B256, Bytes};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use futures::FutureExt;
 use reth_eth_wire::{
     BlockBodies, BlockHeaders, BlockRangeUpdate, BroadcastPoolTransactions, Cells, EthMessage,
-    EthNetworkPrimitives, GetBlockAccessLists, GetBlockBodies, GetBlockHeaders, GetReceipts,
-    NetworkPrimitives, NewBlock, NewBlockHashes, NewBlockPayload, NewPooledTransactionHashes,
-    NodeData, PooledTransactions, Receipts, SharedTransactions, Transactions, message::RequestPair,
+    GetBlockAccessLists, GetBlockBodies, GetBlockHeaders, GetReceipts, NewBlock, NewBlockHashes,
+    NewBlockPayload, NewPooledTransactionHashes, NodeData, PooledTransactions, Receipts,
+    SharedTransactions, Transactions, message::RequestPair,
 };
 use reth_eth_wire_types::{RawCapabilityMessage, snap::SnapProtocolMessage};
 use reth_network_api::{PeerRequest, RequestMessage};
@@ -49,21 +50,21 @@ impl<P: NewBlockPayload> NewBlockMessage<P> {
 /// All Bi-directional eth-message variants that can be sent to a session or received from a
 /// session.
 #[derive(Debug)]
-pub enum PeerMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub enum PeerMessage {
     /// Announce new block hashes
     NewBlockHashes(NewBlockHashes),
     /// Broadcast new block.
-    NewBlock(NewBlockMessage<N::NewBlockPayload>),
+    NewBlock(NewBlockMessage<reth_eth_wire_types::NewBlock<BaseBlock>>),
     /// Received transactions _from_ the peer
-    ReceivedTransaction(Transactions<N::BroadcastedTransaction>),
+    ReceivedTransaction(Transactions<BaseTxEnvelope>),
     /// Broadcast transactions _from_ local _to_ a peer.
-    SendTransactions(SharedTransactions<N::BroadcastedTransaction>),
+    SendTransactions(SharedTransactions<BaseTxEnvelope>),
     /// Broadcast cached pool transactions _from_ local _to_ a peer.
     SendBroadcastPoolTransactions(BroadcastPoolTransactions),
     /// Send new pooled transactions
     PooledTransactions(NewPooledTransactionHashes),
     /// All `eth` request variants.
-    EthRequest(PeerRequest<N>),
+    EthRequest(PeerRequest),
     /// Announces when `BlockRange` is updated.
     BlockRangeUpdated(BlockRangeUpdate),
     /// Any other or manually crafted eth message.
@@ -72,7 +73,7 @@ pub enum PeerMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
     Other(RawCapabilityMessage),
 }
 
-impl<N: NetworkPrimitives> PeerMessage<N> {
+impl PeerMessage {
     /// Returns a static string identifying the message variant for logging.
     pub const fn message_kind(&self) -> &'static str {
         match self {
@@ -147,21 +148,24 @@ pub enum BlockRequest {
 
 /// Corresponding variant for [`PeerRequest`].
 #[derive(Debug)]
-pub enum PeerResponse<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub enum PeerResponse {
     /// Represents a response to a request for block headers.
     BlockHeaders {
         /// The receiver channel for the response to a block headers request.
-        response: oneshot::Receiver<RequestResult<BlockHeaders<N::BlockHeader>>>,
+        response: oneshot::Receiver<RequestResult<BlockHeaders<alloy_consensus::Header>>>,
     },
     /// Represents a response to a request for block bodies.
     BlockBodies {
         /// The receiver channel for the response to a block bodies request.
-        response: oneshot::Receiver<RequestResult<BlockBodies<N::BlockBody>>>,
+        response:
+            oneshot::Receiver<RequestResult<BlockBodies<base_common_consensus::BaseBlockBody>>>,
     },
     /// Represents a response to a request for pooled transactions.
     PooledTransactions {
         /// The receiver channel for the response to a pooled transactions request.
-        response: oneshot::Receiver<RequestResult<PooledTransactions<N::PooledTransaction>>>,
+        response: oneshot::Receiver<
+            RequestResult<PooledTransactions<base_common_consensus::BasePooledTransaction>>,
+        >,
     },
     /// Represents a response to a request for `NodeData`.
     NodeData {
@@ -171,7 +175,7 @@ pub enum PeerResponse<N: NetworkPrimitives = EthNetworkPrimitives> {
     /// Represents a response to a request for receipts.
     Receipts {
         /// The receiver channel for the response to a receipts request.
-        response: oneshot::Receiver<RequestResult<Receipts<N::Receipt>>>,
+        response: oneshot::Receiver<RequestResult<Receipts<BaseReceipt>>>,
     },
     /// Represents a response to a request for receipts.
     ///
@@ -180,12 +184,12 @@ pub enum PeerResponse<N: NetworkPrimitives = EthNetworkPrimitives> {
     /// response, making it more lightweight.
     Receipts69 {
         /// The receiver channel for the response to a receipts request.
-        response: oneshot::Receiver<RequestResult<Receipts69<N::Receipt>>>,
+        response: oneshot::Receiver<RequestResult<Receipts69<BaseReceipt>>>,
     },
     /// Represents a response to a request for receipts using eth/70.
     Receipts70 {
         /// The receiver channel for the response to a receipts request.
-        response: oneshot::Receiver<RequestResult<Receipts70<N::Receipt>>>,
+        response: oneshot::Receiver<RequestResult<Receipts70<BaseReceipt>>>,
     },
     /// Represents a response to a request for block access lists.
     BlockAccessLists {
@@ -207,9 +211,9 @@ pub enum PeerResponse<N: NetworkPrimitives = EthNetworkPrimitives> {
 
 // === impl PeerResponse ===
 
-impl<N: NetworkPrimitives> PeerResponse<N> {
+impl PeerResponse {
     /// Polls the type to completion.
-    pub(crate) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<PeerResponseResult<N>> {
+    pub(crate) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<PeerResponseResult> {
         macro_rules! poll_request {
             ($response:ident, $item:ident, $cx:ident) => {
                 match ready!($response.poll_unpin($cx)) {
@@ -261,21 +265,21 @@ impl<N: NetworkPrimitives> PeerResponse<N> {
 
 /// All response variants for [`PeerResponse`]
 #[derive(Debug)]
-pub enum PeerResponseResult<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub enum PeerResponseResult {
     /// Represents a result containing block headers or an error.
-    BlockHeaders(RequestResult<Vec<N::BlockHeader>>),
+    BlockHeaders(RequestResult<Vec<alloy_consensus::Header>>),
     /// Represents a result containing block bodies or an error.
-    BlockBodies(RequestResult<Vec<N::BlockBody>>),
+    BlockBodies(RequestResult<Vec<base_common_consensus::BaseBlockBody>>),
     /// Represents a result containing pooled transactions or an error.
-    PooledTransactions(RequestResult<Vec<N::PooledTransaction>>),
+    PooledTransactions(RequestResult<Vec<base_common_consensus::BasePooledTransaction>>),
     /// Represents a result containing node data or an error.
     NodeData(RequestResult<Vec<Bytes>>),
     /// Represents a result containing receipts or an error.
-    Receipts(RequestResult<Vec<Vec<ReceiptWithBloom<N::Receipt>>>>),
+    Receipts(RequestResult<Vec<Vec<ReceiptWithBloom<BaseReceipt>>>>),
     /// Represents a result containing receipts or an error for eth/69.
-    Receipts69(RequestResult<Vec<Vec<N::Receipt>>>),
+    Receipts69(RequestResult<Vec<Vec<BaseReceipt>>>),
     /// Represents a result containing receipts or an error for eth/70.
-    Receipts70(RequestResult<Receipts70<N::Receipt>>),
+    Receipts70(RequestResult<Receipts70<BaseReceipt>>),
     /// Represents a result containing block access lists or an error.
     BlockAccessLists(RequestResult<BlockAccessLists>),
     /// Represents a result containing cells or an error.
@@ -286,11 +290,11 @@ pub enum PeerResponseResult<N: NetworkPrimitives = EthNetworkPrimitives> {
 
 // === impl PeerResponseResult ===
 
-impl<N: NetworkPrimitives> PeerResponseResult<N> {
+impl PeerResponseResult {
     /// Converts this response into the [`RequestMessage`] to send back to the peer: an
     /// [`EthMessage`] for every variant except [`Self::Snap`], which becomes a
     /// [`SnapProtocolMessage`].
-    pub fn try_into_message(self, id: u64) -> RequestResult<RequestMessage<N>> {
+    pub fn try_into_message(self, id: u64) -> RequestResult<RequestMessage> {
         macro_rules! to_message {
             ($response:ident, $item:ident, $request_id:ident) => {
                 match $response {

@@ -5,7 +5,7 @@ use std::time::Duration;
 use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_36M;
 use alloy_primitives::Bytes;
 use reth_chainspec::{Chain, ChainKind, NamedChain};
-use reth_network::{NetworkPrimitives, protocol::IntoRlpxSubProtocol};
+use reth_network::protocol::IntoRlpxSubProtocol;
 use reth_transaction_pool::PoolConfig;
 
 /// 60M gas limit
@@ -69,7 +69,7 @@ pub trait RethNetworkConfig {
     // TODO add more network config methods here
 }
 
-impl<N: NetworkPrimitives> RethNetworkConfig for reth_network::NetworkManager<N> {
+impl RethNetworkConfig for reth_network::NetworkManager {
     fn add_rlpx_sub_protocol(&mut self, protocol: impl IntoRlpxSubProtocol) {
         Self::add_rlpx_sub_protocol(self, protocol);
     }

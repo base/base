@@ -1,11 +1,8 @@
 use futures::Future;
-use reth_eth_wire_types::{
-    NetworkPrimitives,
-    snap::{
-        AccountRangeMessage, BlockAccessListsMessage, ByteCodesMessage, GetAccountRangeMessage,
-        GetBlockAccessListsMessage, GetByteCodesMessage, GetStorageRangesMessage,
-        SnapProtocolMessage, StorageRangesMessage,
-    },
+use reth_eth_wire_types::snap::{
+    AccountRangeMessage, BlockAccessListsMessage, ByteCodesMessage, GetAccountRangeMessage,
+    GetBlockAccessListsMessage, GetByteCodesMessage, GetStorageRangesMessage, SnapProtocolMessage,
+    StorageRangesMessage,
 };
 
 use crate::{
@@ -121,10 +118,7 @@ pub trait SnapClient: DownloadClient {
 
 /// Fails every snap request with [`RequestError::UnsupportedCapability`], so the noop client can
 /// stand in wherever a [`SnapClient`] bound is required but snap is not served.
-impl<Net> SnapClient for NoopFullBlockClient<Net>
-where
-    Net: NetworkPrimitives,
-{
+impl SnapClient for NoopFullBlockClient {
     type Output = futures::future::Ready<PeerRequestResult<SnapResponse>>;
 
     /// Fails the account range request as unsupported.

@@ -2,14 +2,13 @@
 
 use std::{future::Future, marker::PhantomData};
 
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::BaseTxEnvelope;
 use reth_chainspec::EthChainSpec;
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
-use reth_network::{EthNetworkPrimitives, NetworkPrimitives};
 use reth_network_api::{FullNetwork, noop::NoopNetwork};
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_transaction_pool::{
-    EthPoolTransaction, EthPooledTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
+    EthPoolTransaction, EthPooledTransaction, PoolTransaction, TransactionPool,
     noop::NoopTransactionPool,
 };
 
@@ -312,11 +311,11 @@ where
     /// Sets [`NoopNetworkBuilder`].
     pub fn noop_network<Net>(
         self,
-    ) -> ComponentsBuilder<Node, PoolB, PayloadB, NoopNetworkBuilder<Net>, ExecB, ConsB> {
+    ) -> ComponentsBuilder<Node, PoolB, PayloadB, NoopNetworkBuilder, ExecB, ConsB> {
         ComponentsBuilder {
             pool_builder: self.pool_builder,
             payload_builder: self.payload_builder,
-            network_builder: NoopNetworkBuilder::<Net>::default(),
+            network_builder: NoopNetworkBuilder::default(),
             executor_builder: self.executor_builder,
             consensus_builder: self.consensus_builder,
             _marker: self._marker,
@@ -357,19 +356,7 @@ impl<Node, PoolB, PayloadB, NetworkB, ExecB, ConsB> NodeComponentsBuilder<Node>
 where
     Node: FullNodeTypes,
     PoolB: PoolBuilder<Node, ExecB::EVM, Pool: TransactionPool>,
-    NetworkB: NetworkBuilder<
-            Node,
-            PoolB::Pool,
-            Network: FullNetwork<
-                Primitives: NetworkPrimitives<
-                    BlockHeader = alloy_consensus::Header,
-                    BlockBody = base_common_consensus::BaseBlockBody,
-                    Block = BaseBlock,
-                    Receipt = BaseReceipt,
-                    PooledTransaction = PoolPooledTx<PoolB::Pool>,
-                >,
-            >,
-        >,
+    NetworkB: NetworkBuilder<Node, PoolB::Pool, Network: FullNetwork>,
     PayloadB: PayloadServiceBuilder<Node, PoolB::Pool, ExecB::EVM>,
     ExecB: ExecutorBuilder<Node>,
     ConsB: ConsensusBuilder<Node>,
@@ -442,15 +429,7 @@ pub trait NodeComponentsBuilder<Node: FullNodeTypes>: Send {
 
 impl<Node, Net, F, Fut, Pool, EVM, Cons> NodeComponentsBuilder<Node> for F
 where
-    Net: FullNetwork<
-        Primitives: NetworkPrimitives<
-            BlockHeader = alloy_consensus::Header,
-            BlockBody = base_common_consensus::BaseBlockBody,
-            Block = BaseBlock,
-            Receipt = BaseReceipt,
-            PooledTransaction = PoolPooledTx<Pool>,
-        >,
-    >,
+    Net: FullNetwork,
     Node: FullNodeTypes,
     F: FnOnce(&BuilderContext<Node>) -> Fut + Send,
     Fut: Future<Output = eyre::Result<Components<Net, Pool, EVM, Cons>>> + Send,
@@ -497,28 +476,15 @@ impl<Tx> Default for NoopTransactionPoolBuilder<Tx> {
 }
 
 /// Builds [`NoopNetwork`].
-#[derive(Debug, Clone)]
-pub struct NoopNetworkBuilder<Net = EthNetworkPrimitives>(PhantomData<Net>);
+#[derive(Debug, Clone, Default)]
+pub struct NoopNetworkBuilder;
 
-impl NoopNetworkBuilder {
-    /// Returns the instance with ethereum types.
-    pub fn eth() -> Self {
-        Self::default()
-    }
-}
-
-impl<N, Pool, Net> NetworkBuilder<N, Pool> for NoopNetworkBuilder<Net>
+impl<N, Pool> NetworkBuilder<N, Pool> for NoopNetworkBuilder
 where
     N: FullNodeTypes,
     Pool: TransactionPool,
-    Net: NetworkPrimitives<
-            BlockHeader = alloy_consensus::Header,
-            BlockBody = alloy_consensus::BlockBody<BaseTxEnvelope>,
-            Block = BaseBlock,
-            Receipt = BaseReceipt,
-        >,
 {
-    type Network = NoopNetwork<Net>;
+    type Network = NoopNetwork;
 
     async fn build_network(
         self,
@@ -526,12 +492,6 @@ where
         _pool: Pool,
     ) -> eyre::Result<Self::Network> {
         Ok(NoopNetwork::new().with_chain_id(ctx.chain_spec().chain_id()))
-    }
-}
-
-impl<Net> Default for NoopNetworkBuilder<Net> {
-    fn default() -> Self {
-        Self(PhantomData)
     }
 }
 

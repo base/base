@@ -1,6 +1,5 @@
 //! Builder support for configuring the entire setup.
 
-use reth_eth_wire::{EthNetworkPrimitives, NetworkPrimitives};
 use reth_metrics::common::mpsc::memory_bounded_channel;
 use reth_network_api::test_utils::PeersHandleProvider;
 use reth_storage_api::BalProvider;
@@ -26,17 +25,17 @@ pub(crate) const ETH_REQUEST_CHANNEL_CAPACITY: usize = 256;
 
 /// A builder that can configure all components of the network.
 #[expect(missing_debug_implementations)]
-pub struct NetworkBuilder<Tx, Eth, N: NetworkPrimitives = EthNetworkPrimitives> {
-    pub(crate) network: NetworkManager<N>,
+pub struct NetworkBuilder<Tx, Eth> {
+    pub(crate) network: NetworkManager,
     pub(crate) transactions: Tx,
     pub(crate) request_handler: Eth,
 }
 
 // === impl NetworkBuilder ===
 
-impl<Tx, Eth, N: NetworkPrimitives> NetworkBuilder<Tx, Eth, N> {
+impl<Tx, Eth> NetworkBuilder<Tx, Eth> {
     /// Maps the transactions component.
-    pub fn map_transactions<F, NewTx>(self, f: F) -> NetworkBuilder<NewTx, Eth, N>
+    pub fn map_transactions<F, NewTx>(self, f: F) -> NetworkBuilder<NewTx, Eth>
     where
         F: FnOnce(Tx) -> NewTx,
     {
@@ -45,28 +44,28 @@ impl<Tx, Eth, N: NetworkPrimitives> NetworkBuilder<Tx, Eth, N> {
     }
 
     /// Consumes the type and returns all fields.
-    pub fn split(self) -> (NetworkManager<N>, Tx, Eth) {
+    pub fn split(self) -> (NetworkManager, Tx, Eth) {
         let Self { network, transactions, request_handler } = self;
         (network, transactions, request_handler)
     }
 
     /// Returns the network manager.
-    pub const fn network(&self) -> &NetworkManager<N> {
+    pub const fn network(&self) -> &NetworkManager {
         &self.network
     }
 
     /// Returns the mutable network manager.
-    pub const fn network_mut(&mut self) -> &mut NetworkManager<N> {
+    pub const fn network_mut(&mut self) -> &mut NetworkManager {
         &mut self.network
     }
 
     /// Returns the handle to the network.
-    pub fn handle(&self) -> NetworkHandle<N> {
+    pub fn handle(&self) -> NetworkHandle {
         self.network.handle().clone()
     }
 
     /// Consumes the type and returns all fields and also return a [`NetworkHandle`].
-    pub fn split_with_handle(self) -> (NetworkHandle<N>, NetworkManager<N>, Tx, Eth) {
+    pub fn split_with_handle(self) -> (NetworkHandle, NetworkManager, Tx, Eth) {
         let Self { network, transactions, request_handler } = self;
         let handle = network.handle().clone();
         (handle, network, transactions, request_handler)
@@ -76,7 +75,7 @@ impl<Tx, Eth, N: NetworkPrimitives> NetworkBuilder<Tx, Eth, N> {
     pub fn request_handler<Client>(
         self,
         client: Client,
-    ) -> NetworkBuilder<Tx, EthRequestHandler<Client, N>, N>
+    ) -> NetworkBuilder<Tx, EthRequestHandler<Client>>
     where
         Client: BalProvider,
     {
@@ -93,7 +92,7 @@ impl<Tx, Eth, N: NetworkPrimitives> NetworkBuilder<Tx, Eth, N> {
         self,
         client: Client,
         blob_store: Box<dyn BlobStore>,
-    ) -> NetworkBuilder<Tx, EthRequestHandler<Client, N>, N>
+    ) -> NetworkBuilder<Tx, EthRequestHandler<Client>>
     where
         Client: BalProvider,
     {
@@ -108,7 +107,7 @@ impl<Tx, Eth, N: NetworkPrimitives> NetworkBuilder<Tx, Eth, N> {
         self,
         pool: Pool,
         transactions_manager_config: TransactionsManagerConfig,
-    ) -> NetworkBuilder<TransactionsManager<Pool, N>, Eth, N> {
+    ) -> NetworkBuilder<TransactionsManager<Pool>, Eth> {
         self.transactions_with_policy(
             pool,
             transactions_manager_config,
@@ -119,12 +118,12 @@ impl<Tx, Eth, N: NetworkPrimitives> NetworkBuilder<Tx, Eth, N> {
     /// Creates a new [`TransactionsManager`] and wires it to the network.
     ///
     /// Uses the default [`StrictEthAnnouncementFilter`] for announcement filtering.
-    pub fn transactions_with_policy<Pool: TransactionPool, P: TransactionPropagationPolicy<N>>(
+    pub fn transactions_with_policy<Pool: TransactionPool, P: TransactionPropagationPolicy>(
         self,
         pool: Pool,
         transactions_manager_config: TransactionsManagerConfig,
         propagation_policy: P,
-    ) -> NetworkBuilder<TransactionsManager<Pool, N>, Eth, N> {
+    ) -> NetworkBuilder<TransactionsManager<Pool>, Eth> {
         self.transactions_with_policies(
             pool,
             transactions_manager_config,
@@ -139,15 +138,15 @@ impl<Tx, Eth, N: NetworkPrimitives> NetworkBuilder<Tx, Eth, N> {
     /// the announcement filter to accept their transaction types.
     pub fn transactions_with_policies<
         Pool: TransactionPool,
-        P: TransactionPropagationPolicy<N>,
-        A: AnnouncementFilteringPolicy<N>,
+        P: TransactionPropagationPolicy,
+        A: AnnouncementFilteringPolicy,
     >(
         self,
         pool: Pool,
         transactions_manager_config: TransactionsManagerConfig,
         propagation_policy: P,
         announcement_policy: A,
-    ) -> NetworkBuilder<TransactionsManager<Pool, N>, Eth, N> {
+    ) -> NetworkBuilder<TransactionsManager<Pool>, Eth> {
         let Self { mut network, request_handler, .. } = self;
         let (tx, rx) = memory_bounded_channel(
             transactions_manager_config.tx_channel_memory_limit_bytes,

@@ -12,7 +12,7 @@ use reth_eth_wire::{BlockAccessLists, EthVersion, GetBlockAccessLists, HeadersDi
 use reth_network::{
     BlockDownloaderProvider, NetworkEventListenerProvider,
     eth_requests::{MAX_BLOCK_ACCESS_LISTS_SERVE, SOFT_RESPONSE_LIMIT},
-    test_utils::{NetworkEventStream, PeerConfig, Testnet, TestnetHandle},
+    test_utils::{NetworkEventStream, PeerConfig, TestPool, Testnet, TestnetHandle},
 };
 use reth_network_api::{NetworkInfo, Peers};
 use reth_network_p2p::{
@@ -25,7 +25,7 @@ use reth_provider::{
     BalNotificationStream, BalStore, BalStoreHandle, InMemoryBalStore, ProviderError,
     ProviderResult, RawBal, test_utils::MockEthProvider,
 };
-use reth_transaction_pool::test_utils::{TestPool, TransactionGenerator};
+use reth_transaction_pool::test_utils::TransactionGenerator;
 use tokio::sync::oneshot;
 
 type BalTestnetHandle = TestnetHandle<Arc<MockEthProvider>, TestPool>;

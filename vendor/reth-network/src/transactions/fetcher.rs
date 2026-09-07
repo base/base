@@ -43,7 +43,6 @@ use reth_eth_wire::{
     DedupPayload, GetPooledTransactions, HandleMempoolData, HandleVersionedMempoolData,
     PartiallyValidData, RequestTxHashes, ValidAnnouncementData,
 };
-use reth_eth_wire_types::{EthNetworkPrimitives, NetworkPrimitives};
 use reth_network_api::PeerRequest;
 use reth_network_p2p::error::{RequestError, RequestResult};
 use reth_network_peers::PeerId;
@@ -69,7 +68,7 @@ use crate::{
 /// new requests on announced hashes.
 #[derive(Debug)]
 #[pin_project]
-pub struct TransactionFetcher<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub struct TransactionFetcher {
     /// All peers with to which a [`GetPooledTransactions`] request is inflight.
     pub active_peers: LruMap<PeerId, u8, ByLength, FbBuildHasher<64>>,
     /// All currently active [`GetPooledTransactions`] requests.
@@ -78,7 +77,8 @@ pub struct TransactionFetcher<N: NetworkPrimitives = EthNetworkPrimitives> {
     /// It's disjoint from the set of hashes which are awaiting an idle fallback peer in order to
     /// be fetched.
     #[pin]
-    pub inflight_requests: FuturesUnordered<GetPooledTxRequestFut<N::PooledTransaction>>,
+    pub inflight_requests:
+        FuturesUnordered<GetPooledTxRequestFut<base_common_consensus::BasePooledTransaction>>,
     /// Hashes that are awaiting an idle fallback peer so they can be fetched.
     ///
     /// This is a subset of all hashes in the fetcher, and is disjoint from the set of hashes for
@@ -93,7 +93,7 @@ pub struct TransactionFetcher<N: NetworkPrimitives = EthNetworkPrimitives> {
     metrics: TransactionFetcherMetrics,
 }
 
-impl<N: NetworkPrimitives> TransactionFetcher<N> {
+impl TransactionFetcher {
     /// Removes the peer from the active set.
     pub(crate) fn remove_peer(&mut self, peer_id: &PeerId) {
         self.active_peers.remove(peer_id);
@@ -421,7 +421,7 @@ impl<N: NetworkPrimitives> TransactionFetcher<N> {
     /// the request by checking the transactions seen by the peer against the buffer.
     pub fn on_fetch_pending_hashes(
         &mut self,
-        peers: &HashMap<PeerId, PeerMetadata<N>, FbBuildHasher<64>>,
+        peers: &HashMap<PeerId, PeerMetadata, FbBuildHasher<64>>,
         has_capacity_wrt_pending_pool_imports: impl Fn(usize) -> bool,
     ) -> bool {
         let mut hashes_to_request = RequestTxHashes::with_capacity(
@@ -601,7 +601,7 @@ impl<N: NetworkPrimitives> TransactionFetcher<N> {
     pub fn request_transactions_from_peer(
         &mut self,
         new_announced_hashes: RequestTxHashes,
-        peer: &PeerMetadata<N>,
+        peer: &PeerMetadata,
     ) -> Option<RequestTxHashes> {
         let peer_id: PeerId = peer.request_tx.peer_id;
         let conn_eth_version = peer.version;
@@ -858,8 +858,8 @@ impl<N: NetworkPrimitives> TransactionFetcher<N> {
     /// [`TransactionsManager`](super::TransactionsManager).
     pub fn on_resolved_get_pooled_transactions_request_fut(
         &mut self,
-        response: GetPooledTxResponse<N::PooledTransaction>,
-    ) -> FetchEvent<N::PooledTransaction> {
+        response: GetPooledTxResponse<base_common_consensus::BasePooledTransaction>,
+    ) -> FetchEvent<base_common_consensus::BasePooledTransaction> {
         // update peer activity, requests for buffered hashes can only be made to idle
         // fallback peers
         let GetPooledTxResponse { peer_id, mut requested_hashes, result } = response;
@@ -984,8 +984,8 @@ impl<N: NetworkPrimitives> TransactionFetcher<N> {
     }
 }
 
-impl<N: NetworkPrimitives> Stream for TransactionFetcher<N> {
-    type Item = FetchEvent<N::PooledTransaction>;
+impl Stream for TransactionFetcher {
+    type Item = FetchEvent<base_common_consensus::BasePooledTransaction>;
 
     /// Advances all inflight requests and returns the next event.
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -1003,7 +1003,7 @@ impl<N: NetworkPrimitives> Stream for TransactionFetcher<N> {
     }
 }
 
-impl<T: NetworkPrimitives> Default for TransactionFetcher<T> {
+impl Default for TransactionFetcher {
     fn default() -> Self {
         Self {
             active_peers: LruMap::with_hasher(
@@ -1350,7 +1350,7 @@ mod test {
 
         // RIG TEST
 
-        let tx_fetcher = &mut TransactionFetcher::<EthNetworkPrimitives>::default();
+        let tx_fetcher = &mut TransactionFetcher::default();
 
         let eth68_hashes = [
             B256::from_slice(&[1; 32]),
@@ -1399,7 +1399,7 @@ mod test {
     fn pack_eth68_request_does_not_overflow_announced_size() {
         reth_tracing::init_test_tracing();
 
-        let tx_fetcher = &mut TransactionFetcher::<EthNetworkPrimitives>::default();
+        let tx_fetcher = &mut TransactionFetcher::default();
 
         let eth68_hashes =
             [B256::from_slice(&[1; 32]), B256::from_slice(&[2; 32]), B256::from_slice(&[3; 32])];
@@ -1436,7 +1436,7 @@ mod test {
     fn pack_eth72_request_uses_metadata_size_limit() {
         reth_tracing::init_test_tracing();
 
-        let tx_fetcher = &mut TransactionFetcher::<EthNetworkPrimitives>::default();
+        let tx_fetcher = &mut TransactionFetcher::default();
 
         let hashes =
             [B256::from_slice(&[1; 32]), B256::from_slice(&[2; 32]), B256::from_slice(&[3; 32])];

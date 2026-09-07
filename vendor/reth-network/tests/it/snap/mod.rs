@@ -30,7 +30,7 @@ use reth_eth_wire::{
 use reth_network::{
     BlockDownloaderProvider,
     eth_requests::SOFT_RESPONSE_LIMIT,
-    test_utils::{PeerConfig, Testnet, TestnetHandle},
+    test_utils::{PeerConfig, TestPool, Testnet, TestnetHandle},
 };
 use reth_network_p2p::snap::client::{SnapClient, SnapResponse};
 use reth_primitives_traits::{Account, Block as _, StorageEntry};
@@ -45,7 +45,6 @@ use reth_provider::{
 };
 use reth_stages_types::{StageCheckpoint, StageId};
 use reth_testing_utils::generators::{self, BlockParams};
-use reth_transaction_pool::test_utils::TestPool;
 use reth_trie::{HashedPostState, HashedStorage};
 
 mod protocol;

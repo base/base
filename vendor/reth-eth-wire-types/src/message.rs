@@ -14,6 +14,7 @@ use alloy_primitives::{
     bytes::{Buf, BufMut},
 };
 use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 
 use super::{
     BlockAccessLists, BlockBodies, BlockHeaders, GetBlockAccessLists, GetBlockBodies,
@@ -22,9 +23,9 @@ use super::{
     Receipts, Status, StatusEth69, Transactions, broadcast::NewBlockHashes,
 };
 use crate::{
-    BlockRangeUpdate, BroadcastPoolTransactions, Cells, EthNetworkPrimitives, EthVersion, GetCells,
-    NetworkPrimitives, NewPooledTransactionHashes72, RawCapabilityMessage, Receipts69, Receipts70,
-    SharedTransactions, status::StatusMessage,
+    BlockRangeUpdate, BroadcastPoolTransactions, Cells, EthVersion, GetCells,
+    NewPooledTransactionHashes72, RawCapabilityMessage, Receipts69, Receipts70, SharedTransactions,
+    status::StatusMessage,
 };
 
 /// [`MAX_MESSAGE_SIZE`] is the maximum cap on the size of a protocol message.
@@ -60,18 +61,14 @@ pub enum MessageError {
 /// An `eth` protocol message, containing a message ID and payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ProtocolMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub struct ProtocolMessage {
     /// The unique identifier representing the type of the Ethereum message.
     pub message_type: EthMessageID,
     /// The content of the message, including specific data based on the message type.
-    #[cfg_attr(
-        feature = "serde",
-        serde(bound = "EthMessage<N>: serde::Serialize + serde::de::DeserializeOwned")
-    )]
-    pub message: EthMessage<N>,
+    pub message: EthMessage,
 }
 
-impl<N: NetworkPrimitives> ProtocolMessage<N> {
+impl ProtocolMessage {
     /// Decode only a Status message from RLP bytes.
     ///
     /// This is used during the eth handshake where only a Status message is a valid response.
@@ -126,7 +123,7 @@ impl<N: NetworkPrimitives> ProtocolMessage<N> {
                 EthMessage::NewBlockHashes(NewBlockHashes::decode(buf)?)
             }
             EthMessageID::NewBlock => {
-                EthMessage::NewBlock(Box::new(N::NewBlockPayload::decode(buf)?))
+                EthMessage::NewBlock(Box::new(crate::NewBlock::<BaseBlock>::decode(buf)?))
             }
             EthMessageID::Transactions => EthMessage::Transactions(
                 Transactions::decode_with_memory_budget(buf, tx_memory_budget)?,
@@ -238,7 +235,7 @@ impl<N: NetworkPrimitives> ProtocolMessage<N> {
     }
 }
 
-impl<N: NetworkPrimitives> Encodable for ProtocolMessage<N> {
+impl Encodable for ProtocolMessage {
     /// Encodes the protocol message into bytes. The message type is encoded as a single byte and
     /// prepended to the message.
     fn encode(&self, out: &mut dyn BufMut) {
@@ -250,23 +247,23 @@ impl<N: NetworkPrimitives> Encodable for ProtocolMessage<N> {
     }
 }
 
-impl<N: NetworkPrimitives> From<EthMessage<N>> for ProtocolMessage<N> {
-    fn from(message: EthMessage<N>) -> Self {
+impl From<EthMessage> for ProtocolMessage {
+    fn from(message: EthMessage) -> Self {
         Self { message_type: message.message_id(), message }
     }
 }
 
 /// Represents messages that can be sent to multiple peers.
 #[derive(Clone, Debug)]
-pub struct ProtocolBroadcastMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub struct ProtocolBroadcastMessage {
     /// The unique identifier representing the type of the Ethereum message.
     pub message_type: EthMessageID,
     /// The content of the message to be broadcasted, including specific data based on the message
     /// type.
-    pub message: EthBroadcastMessage<N>,
+    pub message: EthBroadcastMessage,
 }
 
-impl<N: NetworkPrimitives> Encodable for ProtocolBroadcastMessage<N> {
+impl Encodable for ProtocolBroadcastMessage {
     /// Encodes the protocol message into bytes. The message type is encoded as a single byte and
     /// prepended to the message.
     fn encode(&self, out: &mut dyn BufMut) {
@@ -278,8 +275,8 @@ impl<N: NetworkPrimitives> Encodable for ProtocolBroadcastMessage<N> {
     }
 }
 
-impl<N: NetworkPrimitives> From<EthBroadcastMessage<N>> for ProtocolBroadcastMessage<N> {
-    fn from(message: EthBroadcastMessage<N>) -> Self {
+impl From<EthBroadcastMessage> for ProtocolBroadcastMessage {
+    fn from(message: EthBroadcastMessage) -> Self {
         Self { message_type: message.message_id(), message }
     }
 }
@@ -311,23 +308,15 @@ impl<N: NetworkPrimitives> From<EthBroadcastMessage<N>> for ProtocolBroadcastMes
 /// The `eth/71` draft extends eth/70 with block access list request/response messages.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum EthMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub enum EthMessage {
     /// Represents a Status message required for the protocol handshake.
     Status(StatusMessage),
     /// Represents a `NewBlockHashes` message broadcast to the network.
     NewBlockHashes(NewBlockHashes),
     /// Represents a `NewBlock` message broadcast to the network.
-    #[cfg_attr(
-        feature = "serde",
-        serde(bound = "N::NewBlockPayload: serde::Serialize + serde::de::DeserializeOwned")
-    )]
-    NewBlock(Box<N::NewBlockPayload>),
+    NewBlock(Box<crate::NewBlock<BaseBlock>>),
     /// Represents a Transactions message broadcast to the network.
-    #[cfg_attr(
-        feature = "serde",
-        serde(bound = "N::BroadcastedTransaction: serde::Serialize + serde::de::DeserializeOwned")
-    )]
-    Transactions(Transactions<N::BroadcastedTransaction>),
+    Transactions(Transactions<BaseTxEnvelope>),
     /// Represents a `NewPooledTransactionHashes` message for eth/66 version.
     NewPooledTransactionHashes66(NewPooledTransactionHashes66),
     /// Represents a `NewPooledTransactionHashes` message for eth/68 version.
@@ -339,27 +328,17 @@ pub enum EthMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
     /// Represents a `GetBlockHeaders` request-response pair.
     GetBlockHeaders(RequestPair<GetBlockHeaders>),
     /// Represents a `BlockHeaders` request-response pair.
-    #[cfg_attr(
-        feature = "serde",
-        serde(bound = "N::BlockHeader: serde::Serialize + serde::de::DeserializeOwned")
-    )]
-    BlockHeaders(RequestPair<BlockHeaders<N::BlockHeader>>),
+    BlockHeaders(RequestPair<BlockHeaders<alloy_consensus::Header>>),
     /// Represents a `GetBlockBodies` request-response pair.
     GetBlockBodies(RequestPair<GetBlockBodies>),
     /// Represents a `BlockBodies` request-response pair.
-    #[cfg_attr(
-        feature = "serde",
-        serde(bound = "N::BlockBody: serde::Serialize + serde::de::DeserializeOwned")
-    )]
-    BlockBodies(RequestPair<BlockBodies<N::BlockBody>>),
+    BlockBodies(RequestPair<BlockBodies<base_common_consensus::BaseBlockBody>>),
     /// Represents a `GetPooledTransactions` request-response pair.
     GetPooledTransactions(RequestPair<GetPooledTransactions>),
     /// Represents a `PooledTransactions` request-response pair.
-    #[cfg_attr(
-        feature = "serde",
-        serde(bound = "N::PooledTransaction: serde::Serialize + serde::de::DeserializeOwned")
-    )]
-    PooledTransactions(RequestPair<PooledTransactions<N::PooledTransaction>>),
+    PooledTransactions(
+        RequestPair<PooledTransactions<base_common_consensus::BasePooledTransaction>>,
+    ),
     /// Represents a `GetNodeData` request-response pair.
     GetNodeData(RequestPair<GetNodeData>),
     /// Represents a `NodeData` request-response pair.
@@ -375,27 +354,15 @@ pub enum EthMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
     /// Represents a `GetBlockAccessLists` request-response pair for eth/71.
     GetBlockAccessLists(RequestPair<GetBlockAccessLists>),
     /// Represents a Receipts request-response pair.
-    #[cfg_attr(
-        feature = "serde",
-        serde(bound = "N::Receipt: serde::Serialize + serde::de::DeserializeOwned")
-    )]
-    Receipts(RequestPair<Receipts<N::Receipt>>),
+    Receipts(RequestPair<Receipts<BaseReceipt>>),
     /// Represents a Receipts request-response pair for eth/69.
-    #[cfg_attr(
-        feature = "serde",
-        serde(bound = "N::Receipt: serde::Serialize + serde::de::DeserializeOwned")
-    )]
-    Receipts69(RequestPair<Receipts69<N::Receipt>>),
+    Receipts69(RequestPair<Receipts69<BaseReceipt>>),
     /// Represents a Receipts request-response pair for eth/70.
-    #[cfg_attr(
-        feature = "serde",
-        serde(bound = "N::Receipt: serde::Serialize + serde::de::DeserializeOwned")
-    )]
     ///
     /// Note: The eth/70 encoding for `Receipts` in EIP-7975 inlines the
     /// request id. The type still wraps a [`RequestPair`], but with a custom
     /// inline encoding.
-    Receipts70(RequestPair<Receipts70<N::Receipt>>),
+    Receipts70(RequestPair<Receipts70<BaseReceipt>>),
     /// Represents a `BlockAccessLists` request-response pair for eth/71.
     BlockAccessLists(RequestPair<BlockAccessLists>),
     /// Represents a `Cells` request-response pair for eth/72.
@@ -403,16 +370,12 @@ pub enum EthMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
     /// Represents a `GetCells` request-response pair for eth/72.
     GetCells(RequestPair<GetCells>),
     /// Represents a `BlockRangeUpdate` message broadcast to the network.
-    #[cfg_attr(
-        feature = "serde",
-        serde(bound = "N::BroadcastedTransaction: serde::Serialize + serde::de::DeserializeOwned")
-    )]
     BlockRangeUpdate(BlockRangeUpdate),
     /// Represents an encoded message that doesn't match any other variant
     Other(RawCapabilityMessage),
 }
 
-impl<N: NetworkPrimitives> EthMessage<N> {
+impl EthMessage {
     /// Returns the message's ID.
     pub const fn message_id(&self) -> EthMessageID {
         match self {
@@ -502,7 +465,7 @@ impl<N: NetworkPrimitives> EthMessage<N> {
     }
 }
 
-impl<N: NetworkPrimitives> Encodable for EthMessage<N> {
+impl Encodable for EthMessage {
     fn encode(&self, out: &mut dyn BufMut) {
         match self {
             Self::Status(status) => status.encode(out),
@@ -573,18 +536,18 @@ impl<N: NetworkPrimitives> Encodable for EthMessage<N> {
 ///
 /// Note: This is only useful for outgoing messages.
 #[derive(Clone, Debug)]
-pub enum EthBroadcastMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub enum EthBroadcastMessage {
     /// Represents a new block broadcast message.
-    NewBlock(Arc<N::NewBlockPayload>),
+    NewBlock(Arc<crate::NewBlock<BaseBlock>>),
     /// Represents a transactions broadcast message.
-    Transactions(SharedTransactions<N::BroadcastedTransaction>),
+    Transactions(SharedTransactions<BaseTxEnvelope>),
     /// Represents cached outbound pool transactions broadcast message.
     BroadcastPoolTransactions(BroadcastPoolTransactions),
 }
 
 // === impl EthBroadcastMessage ===
 
-impl<N: NetworkPrimitives> EthBroadcastMessage<N> {
+impl EthBroadcastMessage {
     /// Returns the message's ID.
     pub const fn message_id(&self) -> EthMessageID {
         match self {
@@ -601,7 +564,7 @@ impl<N: NetworkPrimitives> EthBroadcastMessage<N> {
     }
 }
 
-impl<N: NetworkPrimitives> Encodable for EthBroadcastMessage<N> {
+impl Encodable for EthBroadcastMessage {
     fn encode(&self, out: &mut dyn BufMut) {
         match self {
             Self::NewBlock(new_block) => new_block.encode(out),
@@ -893,13 +856,12 @@ where
 mod tests {
     use alloy_primitives::hex;
     use alloy_rlp::{Decodable, Encodable, Error};
-    use reth_ethereum_primitives::BlockBody;
+    use base_common_consensus::BaseBlockBody as BlockBody;
 
     use super::MessageError;
     use crate::{
-        BlockAccessLists, EthMessage, EthMessageID, EthNetworkPrimitives, EthVersion,
-        GetBlockAccessLists, GetNodeData, NodeData, ProtocolMessage, RawCapabilityMessage,
-        message::RequestPair,
+        BlockAccessLists, EthMessage, EthMessageID, EthVersion, GetBlockAccessLists, GetNodeData,
+        NodeData, ProtocolMessage, RawCapabilityMessage, message::RequestPair,
     };
 
     fn encode<T: Encodable>(value: T) -> Vec<u8> {
@@ -910,66 +872,48 @@ mod tests {
 
     #[test]
     fn test_removed_message_at_eth67() {
-        let get_node_data = EthMessage::<EthNetworkPrimitives>::GetNodeData(RequestPair {
-            request_id: 1337,
-            message: GetNodeData(vec![]),
-        });
+        let get_node_data =
+            EthMessage::GetNodeData(RequestPair { request_id: 1337, message: GetNodeData(vec![]) });
         let buf = encode(ProtocolMessage {
             message_type: EthMessageID::GetNodeData,
             message: get_node_data,
         });
-        let msg = ProtocolMessage::<EthNetworkPrimitives>::decode_message(
-            crate::EthVersion::Eth67,
-            &mut &buf[..],
-        );
+        let msg = ProtocolMessage::decode_message(crate::EthVersion::Eth67, &mut &buf[..]);
         assert!(matches!(msg, Err(MessageError::Invalid(..))));
 
-        let node_data = EthMessage::<EthNetworkPrimitives>::NodeData(RequestPair {
-            request_id: 1337,
-            message: NodeData(vec![]),
-        });
+        let node_data =
+            EthMessage::NodeData(RequestPair { request_id: 1337, message: NodeData(vec![]) });
         let buf =
             encode(ProtocolMessage { message_type: EthMessageID::NodeData, message: node_data });
-        let msg = ProtocolMessage::<EthNetworkPrimitives>::decode_message(
-            crate::EthVersion::Eth67,
-            &mut &buf[..],
-        );
+        let msg = ProtocolMessage::decode_message(crate::EthVersion::Eth67, &mut &buf[..]);
         assert!(matches!(msg, Err(MessageError::Invalid(..))));
     }
 
     #[test]
     fn test_bal_message_version_gating() {
-        let get_block_access_lists =
-            EthMessage::<EthNetworkPrimitives>::GetBlockAccessLists(RequestPair {
-                request_id: 1337,
-                message: GetBlockAccessLists(vec![]),
-            });
+        let get_block_access_lists = EthMessage::GetBlockAccessLists(RequestPair {
+            request_id: 1337,
+            message: GetBlockAccessLists(vec![]),
+        });
         let buf = encode(ProtocolMessage {
             message_type: EthMessageID::GetBlockAccessLists,
             message: get_block_access_lists,
         });
-        let msg = ProtocolMessage::<EthNetworkPrimitives>::decode_message(
-            EthVersion::Eth70,
-            &mut &buf[..],
-        );
+        let msg = ProtocolMessage::decode_message(EthVersion::Eth70, &mut &buf[..]);
         assert!(matches!(
             msg,
             Err(MessageError::Invalid(EthVersion::Eth70, EthMessageID::GetBlockAccessLists))
         ));
 
-        let block_access_lists =
-            EthMessage::<EthNetworkPrimitives>::BlockAccessLists(RequestPair {
-                request_id: 1337,
-                message: BlockAccessLists(vec![]),
-            });
+        let block_access_lists = EthMessage::BlockAccessLists(RequestPair {
+            request_id: 1337,
+            message: BlockAccessLists(vec![]),
+        });
         let buf = encode(ProtocolMessage {
             message_type: EthMessageID::BlockAccessLists,
             message: block_access_lists,
         });
-        let msg = ProtocolMessage::<EthNetworkPrimitives>::decode_message(
-            EthVersion::Eth70,
-            &mut &buf[..],
-        );
+        let msg = ProtocolMessage::decode_message(EthVersion::Eth70, &mut &buf[..]);
         assert!(matches!(
             msg,
             Err(MessageError::Invalid(EthVersion::Eth70, EthMessageID::BlockAccessLists))
@@ -978,15 +922,13 @@ mod tests {
 
     #[test]
     fn test_bal_message_eth71_roundtrip() {
-        let msg = ProtocolMessage::from(EthMessage::<EthNetworkPrimitives>::GetBlockAccessLists(
-            RequestPair { request_id: 42, message: GetBlockAccessLists(vec![]) },
-        ));
+        let msg = ProtocolMessage::from(EthMessage::GetBlockAccessLists(RequestPair {
+            request_id: 42,
+            message: GetBlockAccessLists(vec![]),
+        }));
         let encoded = encode(msg.clone());
-        let decoded = ProtocolMessage::<EthNetworkPrimitives>::decode_message(
-            EthVersion::Eth71,
-            &mut &encoded[..],
-        )
-        .unwrap();
+        let decoded =
+            ProtocolMessage::decode_message(EthVersion::Eth71, &mut &encoded[..]).unwrap();
 
         assert_eq!(decoded, msg);
     }
@@ -1036,11 +978,10 @@ mod tests {
 
     #[test]
     fn empty_block_bodies_protocol() {
-        let empty_block_bodies =
-            ProtocolMessage::from(EthMessage::<EthNetworkPrimitives>::BlockBodies(RequestPair {
-                request_id: 0,
-                message: Default::default(),
-            }));
+        let empty_block_bodies = ProtocolMessage::from(EthMessage::BlockBodies(RequestPair {
+            request_id: 0,
+            message: Default::default(),
+        }));
         let mut buf = Vec::new();
         empty_block_bodies.encode(&mut buf);
         let decoded =
@@ -1050,16 +991,15 @@ mod tests {
 
     #[test]
     fn empty_block_body_protocol() {
-        let empty_block_bodies =
-            ProtocolMessage::from(EthMessage::<EthNetworkPrimitives>::BlockBodies(RequestPair {
-                request_id: 0,
-                message: vec![BlockBody {
-                    transactions: vec![],
-                    ommers: vec![],
-                    withdrawals: Some(Default::default()),
-                }]
-                .into(),
-            }));
+        let empty_block_bodies = ProtocolMessage::from(EthMessage::BlockBodies(RequestPair {
+            request_id: 0,
+            message: vec![BlockBody {
+                transactions: vec![],
+                ommers: vec![],
+                withdrawals: Some(Default::default()),
+            }]
+            .into(),
+        }));
         let mut buf = Vec::new();
         empty_block_bodies.encode(&mut buf);
         let decoded =
@@ -1070,11 +1010,7 @@ mod tests {
     #[test]
     fn decode_block_bodies_message() {
         let buf = hex!("06c48199c1c0");
-        let msg = ProtocolMessage::<EthNetworkPrimitives>::decode_message(
-            EthVersion::Eth68,
-            &mut &buf[..],
-        )
-        .unwrap_err();
+        let msg = ProtocolMessage::decode_message(EthVersion::Eth68, &mut &buf[..]).unwrap_err();
         assert!(matches!(msg, MessageError::RlpError(alloy_rlp::Error::InputTooShort)));
     }
 
@@ -1082,17 +1018,14 @@ mod tests {
     fn custom_message_roundtrip() {
         let custom_payload = vec![1, 2, 3, 4, 5];
         let custom_message = RawCapabilityMessage::new(0x20, custom_payload.into());
-        let protocol_message = ProtocolMessage::<EthNetworkPrimitives> {
+        let protocol_message = ProtocolMessage {
             message_type: EthMessageID::Other(0x20),
             message: EthMessage::Other(custom_message),
         };
 
         let encoded = encode(protocol_message.clone());
-        let decoded = ProtocolMessage::<EthNetworkPrimitives>::decode_message(
-            EthVersion::Eth68,
-            &mut &encoded[..],
-        )
-        .unwrap();
+        let decoded =
+            ProtocolMessage::decode_message(EthVersion::Eth68, &mut &encoded[..]).unwrap();
 
         assert_eq!(protocol_message, decoded);
     }
@@ -1100,17 +1033,14 @@ mod tests {
     #[test]
     fn custom_message_empty_payload_roundtrip() {
         let custom_message = RawCapabilityMessage::new(0x30, vec![].into());
-        let protocol_message = ProtocolMessage::<EthNetworkPrimitives> {
+        let protocol_message = ProtocolMessage {
             message_type: EthMessageID::Other(0x30),
             message: EthMessage::Other(custom_message),
         };
 
         let encoded = encode(protocol_message.clone());
-        let decoded = ProtocolMessage::<EthNetworkPrimitives>::decode_message(
-            EthVersion::Eth68,
-            &mut &encoded[..],
-        )
-        .unwrap();
+        let decoded =
+            ProtocolMessage::decode_message(EthVersion::Eth68, &mut &encoded[..]).unwrap();
 
         assert_eq!(protocol_message, decoded);
     }
@@ -1131,16 +1061,11 @@ mod tests {
             forkid: ForkId { hash: ForkHash([0xb7, 0x15, 0x07, 0x7d]), next: 0 },
         };
 
-        let protocol_message = ProtocolMessage::<EthNetworkPrimitives>::from(EthMessage::Status(
-            StatusMessage::Legacy(status),
-        ));
+        let protocol_message =
+            ProtocolMessage::from(EthMessage::Status(StatusMessage::Legacy(status)));
         let encoded = encode(protocol_message);
 
-        let decoded = ProtocolMessage::<EthNetworkPrimitives>::decode_status(
-            EthVersion::Eth68,
-            &mut &encoded[..],
-        )
-        .unwrap();
+        let decoded = ProtocolMessage::decode_status(EthVersion::Eth68, &mut &encoded[..]).unwrap();
 
         assert!(matches!(decoded, StatusMessage::Legacy(s) if s == status));
     }
@@ -1154,7 +1079,7 @@ mod tests {
 
     #[test]
     fn decode_status_rejects_non_status() {
-        let msg = EthMessage::<EthNetworkPrimitives>::GetBlockBodies(RequestPair {
+        let msg = EthMessage::GetBlockBodies(RequestPair {
             request_id: 1,
             message: crate::GetBlockBodies::default(),
         });
@@ -1162,10 +1087,7 @@ mod tests {
             ProtocolMessage { message_type: EthMessageID::GetBlockBodies, message: msg };
         let encoded = encode(protocol_message);
 
-        let result = ProtocolMessage::<EthNetworkPrimitives>::decode_status(
-            EthVersion::Eth68,
-            &mut &encoded[..],
-        );
+        let result = ProtocolMessage::decode_status(EthVersion::Eth68, &mut &encoded[..]);
 
         assert!(matches!(
             result,

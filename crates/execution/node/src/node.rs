@@ -34,10 +34,7 @@ use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, EthChainSpec, Hardforks};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_evm::ConfigureEvm;
-use reth_network::{
-    NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, NetworkPrimitives,
-    PeersInfo, types::BasicNetworkPrimitives,
-};
+use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
 use reth_network_peers::NodeRecord;
 use reth_node_api::{
     AddOnsContext, BuildNextEnv, FullNodeComponents, NodeAddOns, PayloadAttributesBuilder,
@@ -1077,16 +1074,13 @@ impl BaseDiscoveryConfig {
     }
 
     /// Applies Base discovery settings to the reth network config builder.
-    pub fn apply_to_network_builder<N>(
+    pub fn apply_to_network_builder(
         &self,
-        mut builder: NetworkConfigBuilder<N>,
+        mut builder: NetworkConfigBuilder,
         args: &RethNetworkArgs,
         boot_nodes: impl IntoIterator<Item = NodeRecord>,
         external_addr: Option<IpAddr>,
-    ) -> NetworkConfigBuilder<N>
-    where
-        N: NetworkPrimitives,
-    {
+    ) -> NetworkConfigBuilder {
         if self.should_disable_discv4(&args.discovery) {
             builder = builder.disable_discv4_discovery();
         }
@@ -1195,13 +1189,12 @@ impl BaseNetworkBuilder {
     /// Returns the [`NetworkConfig`] that contains the settings to launch the p2p network.
     ///
     /// This applies the configured [`BaseNetworkBuilder`] settings.
-    pub fn network_config<Node, NetworkP>(
+    pub fn network_config<Node>(
         &self,
         ctx: &BuilderContext<Node>,
-    ) -> eyre::Result<NetworkConfig<Node::Provider, NetworkP>>
+    ) -> eyre::Result<NetworkConfig<Node::Provider>>
     where
         Node: FullNodeTypes<Types: NodeTypes<ChainSpec: Hardforks>>,
-        NetworkP: NetworkPrimitives,
     {
         let discovery_config = BaseDiscoveryConfig::new(self.disable_discovery_v4);
         let args = &ctx.config().network;
@@ -1240,7 +1233,7 @@ impl BaseNetworkBuilder {
         self,
         ctx: &BuilderContext<Node>,
         pool: crate::BaseNodePool<Node>,
-    ) -> eyre::Result<NetworkHandle<BaseNetworkPrimitives>>
+    ) -> eyre::Result<NetworkHandle>
     where
         Node: FullNodeTypes<Types: BaseNodeTypes>,
     {
@@ -1269,10 +1262,6 @@ where
     }
 }
 
-/// Network primitive types used by Base networks.
-pub type BaseNetworkPrimitives =
-    BasicNetworkPrimitives<base_common_consensus::BasePooledTransaction>;
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1282,7 +1271,7 @@ mod tests {
 
     use reth_chainspec::MAINNET;
     use reth_discv5::{build_local_enr, discv5::ListenConfig};
-    use reth_network::{EthNetworkPrimitives, NetworkConfigBuilder, config::rng_secret_key};
+    use reth_network::{NetworkConfigBuilder, config::rng_secret_key};
     use rstest::rstest;
 
     use super::*;
@@ -1335,9 +1324,7 @@ mod tests {
 
         let network_config = discovery_config
             .apply_to_network_builder(
-                NetworkConfigBuilder::<EthNetworkPrimitives>::with_rng_secret_key(
-                    reth_tasks::Runtime::test(),
-                ),
+                NetworkConfigBuilder::with_rng_secret_key(reth_tasks::Runtime::test()),
                 &args,
                 Vec::<NodeRecord>::new(),
                 None,
@@ -1360,9 +1347,7 @@ mod tests {
 
         let network_config = discovery_config
             .apply_to_network_builder(
-                NetworkConfigBuilder::<EthNetworkPrimitives>::with_rng_secret_key(
-                    reth_tasks::Runtime::test(),
-                ),
+                NetworkConfigBuilder::with_rng_secret_key(reth_tasks::Runtime::test()),
                 &args,
                 Vec::<NodeRecord>::new(),
                 None,

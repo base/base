@@ -4,6 +4,9 @@ use std::ops::Deref;
 
 use crate::{Pool, PoolConfig, blobstore::InMemoryBlobStore, noop::MockTransactionValidator};
 
+mod base;
+pub use base::BaseTestTransaction;
+
 mod tx_gen;
 pub use tx_gen::*;
 

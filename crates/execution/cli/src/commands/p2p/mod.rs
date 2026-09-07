@@ -29,7 +29,7 @@ impl Command {
     pub async fn execute<N>(self) -> eyre::Result<()>
     where
         N: CliNodeTypes<ChainSpec = BaseChainSpec>,
-        NetworkHandle<N::NetworkPrimitives>: BlockDownloaderProvider,
+        NetworkHandle: BlockDownloaderProvider,
     {
         match self.command {
             Subcommands::Header { args, id } => {

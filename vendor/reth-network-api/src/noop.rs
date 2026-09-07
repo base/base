@@ -3,14 +3,11 @@
 //! This is useful for wiring components together that don't require network but still need to be
 //! generic over it.
 
-use core::{fmt, marker::PhantomData};
 use std::net::{IpAddr, SocketAddr};
 
 use alloy_rpc_types_admin::EthProtocolInfo;
 use enr::{Enr, secp256k1::SecretKey};
-use reth_eth_wire_types::{
-    DisconnectReason, EthNetworkPrimitives, NetworkPrimitives, ProtocolVersion,
-};
+use reth_eth_wire_types::{DisconnectReason, ProtocolVersion};
 use reth_network_p2p::{NoopFullBlockClient, sync::NetworkSyncUpdater};
 use reth_network_peers::NodeRecord;
 use reth_network_types::{PeerKind, Reputation, ReputationChangeKind};
@@ -31,15 +28,14 @@ use crate::{
 /// Intended for testing purposes where network is not used.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct NoopNetwork<Net = EthNetworkPrimitives> {
+pub struct NoopNetwork {
     chain_id: u64,
     client_version: String,
     peers_handle: PeersHandle,
     cell_custody: CellCustody,
-    _marker: PhantomData<Net>,
 }
 
-impl<Net> NoopNetwork<Net> {
+impl NoopNetwork {
     /// Creates a new [`NoopNetwork`].
     pub fn new() -> Self {
         let (tx, _) = mpsc::unbounded_channel();
@@ -49,7 +45,6 @@ impl<Net> NoopNetwork<Net> {
             client_version: "reth-test".to_string(),
             peers_handle: PeersHandle::new(tx),
             cell_custody: CellCustody::default(),
-            _marker: PhantomData,
         }
     }
 
@@ -66,16 +61,13 @@ impl<Net> NoopNetwork<Net> {
     }
 }
 
-impl Default for NoopNetwork<EthNetworkPrimitives> {
+impl Default for NoopNetwork {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<Net> NetworkInfo for NoopNetwork<Net>
-where
-    Net: Send + Sync,
-{
+impl NetworkInfo for NoopNetwork {
     fn local_addr(&self) -> SocketAddr {
         (IpAddr::from(std::net::Ipv4Addr::UNSPECIFIED), 30303).into()
     }
@@ -113,10 +105,7 @@ where
     }
 }
 
-impl<Net> PeersInfo for NoopNetwork<Net>
-where
-    Net: Send + Sync,
-{
+impl PeersInfo for NoopNetwork {
     fn num_connected_peers(&self) -> usize {
         0
     }
@@ -131,10 +120,7 @@ where
     }
 }
 
-impl<Net> Peers for NoopNetwork<Net>
-where
-    Net: Send + Sync,
-{
+impl Peers for NoopNetwork {
     fn add_trusted_peer_id(&self, _peer: PeerId) {}
 
     fn add_peer_kind(
@@ -188,21 +174,15 @@ where
     }
 }
 
-impl<Net> BlockDownloaderProvider for NoopNetwork<Net>
-where
-    Net: NetworkPrimitives,
-{
-    type Client = NoopFullBlockClient<Net>;
+impl BlockDownloaderProvider for NoopNetwork {
+    type Client = NoopFullBlockClient;
 
     async fn fetch_client(&self) -> Result<Self::Client, oneshot::error::RecvError> {
-        Ok(NoopFullBlockClient::<Net>::default())
+        Ok(NoopFullBlockClient::default())
     }
 }
 
-impl<Net> NetworkSyncUpdater for NoopNetwork<Net>
-where
-    Net: fmt::Debug + Send + Sync + 'static,
-{
+impl NetworkSyncUpdater for NoopNetwork {
     fn update_status(&self, _head: reth_ethereum_forks::Head) {}
 
     fn update_sync_state(&self, _state: reth_network_p2p::sync::SyncState) {}
@@ -210,14 +190,9 @@ where
     fn update_block_range(&self, _: reth_eth_wire_types::BlockRangeUpdate) {}
 }
 
-impl<Net> NetworkEventListenerProvider for NoopNetwork<Net>
-where
-    Net: NetworkPrimitives,
-{
-    type Primitives = Net;
-
-    fn event_listener(&self) -> EventStream<NetworkEvent<PeerRequest<Self::Primitives>>> {
-        let event_sender: EventSender<NetworkEvent<PeerRequest<Net>>> = Default::default();
+impl NetworkEventListenerProvider for NoopNetwork {
+    fn event_listener(&self) -> EventStream<NetworkEvent<PeerRequest>> {
+        let event_sender: EventSender<NetworkEvent<PeerRequest>> = Default::default();
         event_sender.new_listener()
     }
 
@@ -227,20 +202,14 @@ where
     }
 }
 
-impl<Net> NetworkPeersEvents for NoopNetwork<Net>
-where
-    Net: NetworkPrimitives,
-{
+impl NetworkPeersEvents for NoopNetwork {
     fn peer_events(&self) -> PeerEventStream {
-        let event_sender: EventSender<NetworkEvent<PeerRequest<Net>>> = Default::default();
+        let event_sender: EventSender<NetworkEvent<PeerRequest>> = Default::default();
         PeerEventStream::new(event_sender.new_listener())
     }
 }
 
-impl<Net> PeersHandleProvider for NoopNetwork<Net>
-where
-    Net: NetworkPrimitives,
-{
+impl PeersHandleProvider for NoopNetwork {
     fn peers_handle(&self) -> &PeersHandle {
         &self.peers_handle
     }

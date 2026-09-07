@@ -893,7 +893,8 @@ mod tests {
         );
         let tx = PooledTransactionVariant::decode_2718(&mut &tx_bytes[..]).unwrap();
         let provider = MockEthProvider::default().with_genesis_block();
-        let transaction = EthPooledTransaction::from_pooled(tx.try_into_recovered().unwrap());
+        let transaction: EthPooledTransaction =
+            EthPooledTransaction::from_pooled(tx.try_into_recovered().unwrap());
         let tx_to_cmp = transaction.clone();
         let sender = hex!("1f9090aaE28b8a3dCeaDf281B0F12828e676c326").into();
         provider.add_account(sender, ExtendedAccount::new(42, U256::MAX));

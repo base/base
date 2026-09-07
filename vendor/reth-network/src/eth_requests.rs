@@ -11,11 +11,12 @@ use alloy_consensus::{BlockHeader, ReceiptWithBloom, constants::KECCAK_EMPTY};
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Encodable;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use futures::StreamExt;
 use reth_eth_wire::{
-    BlockAccessLists, BlockBodies, BlockHeaders, Cells, EthNetworkPrimitives, GetBlockAccessLists,
-    GetBlockBodies, GetBlockHeaders, GetCells, GetNodeData, GetReceipts, GetReceipts70,
-    HeadersDirection, NetworkPrimitives, NodeData, Receipts, Receipts69, Receipts70,
+    BlockAccessLists, BlockBodies, BlockHeaders, Cells, GetBlockAccessLists, GetBlockBodies,
+    GetBlockHeaders, GetCells, GetNodeData, GetReceipts, GetReceipts70, HeadersDirection, NodeData,
+    Receipts, Receipts69, Receipts70,
     snap::{
         AccountData, AccountRangeMessage, BlockAccessListsMessage, ByteCodesMessage,
         GetAccountRangeMessage, GetStorageRangesMessage, SnapProtocolMessage, StorageData,
@@ -87,7 +88,7 @@ pub const SOFT_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
 /// This can be spawned to another task and is supposed to be run as background service.
 #[derive(Debug)]
 #[must_use = "Manager does nothing unless polled."]
-pub struct EthRequestHandler<C, N: NetworkPrimitives = EthNetworkPrimitives> {
+pub struct EthRequestHandler<C> {
     /// The client type that can interact with the chain.
     client: C,
     /// Blob store used for serving blob cell requests.
@@ -97,15 +98,15 @@ pub struct EthRequestHandler<C, N: NetworkPrimitives = EthNetworkPrimitives> {
     #[expect(dead_code)]
     peers: PeersHandle,
     /// Incoming request from the [`NetworkManager`](crate::NetworkManager).
-    incoming_requests: ReceiverStream<IncomingEthRequest<N>>,
+    incoming_requests: ReceiverStream<IncomingEthRequest>,
     /// Metrics for the eth request handler.
     metrics: EthRequestHandlerMetrics,
 }
 
 // === impl EthRequestHandler ===
-impl<C, N: NetworkPrimitives> EthRequestHandler<C, N> {
+impl<C> EthRequestHandler<C> {
     /// Create a new instance
-    pub fn new(client: C, peers: PeersHandle, incoming: Receiver<IncomingEthRequest<N>>) -> Self {
+    pub fn new(client: C, peers: PeersHandle, incoming: Receiver<IncomingEthRequest>) -> Self {
         Self {
             client,
             blob_store: Box::<NoopBlobStore>::default(),
@@ -122,9 +123,8 @@ impl<C, N: NetworkPrimitives> EthRequestHandler<C, N> {
     }
 }
 
-impl<C, N> EthRequestHandler<C, N>
+impl<C> EthRequestHandler<C>
 where
-    N: NetworkPrimitives,
     C: BlockReader,
 {
     /// Returns the list of requested headers
@@ -394,9 +394,8 @@ where
     }
 }
 
-impl<C, N> EthRequestHandler<C, N>
+impl<C> EthRequestHandler<C>
 where
-    N: NetworkPrimitives,
     C: BalProvider,
 {
     /// Handles [`GetBlockAccessLists`] queries.
@@ -419,9 +418,8 @@ where
     }
 }
 
-impl<C, N> EthRequestHandler<C, N>
+impl<C> EthRequestHandler<C>
 where
-    N: NetworkPrimitives,
     C: BalProvider + StateProviderFactory + StateRangeProviderFactory,
 {
     /// Handles `snap/2` (EIP-8189) requests.
@@ -640,14 +638,13 @@ fn boundary_proof_keys<T>(origin: B256, last: Option<&(B256, T)>) -> Vec<B256> {
 /// An endless future.
 ///
 /// This should be spawned or used as part of `tokio::select!`.
-impl<C, N> Future for EthRequestHandler<C, N>
+impl<C> Future for EthRequestHandler<C>
 where
-    N: NetworkPrimitives,
     C: BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
-        + BlockReader<Block = N::Block, Receipt = N::Receipt>
-        + HeaderProvider<Header = N::BlockHeader>
+        + BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
+        + HeaderProvider<Header = alloy_consensus::Header>
         + Unpin,
 {
     type Output = ();
@@ -709,7 +706,7 @@ where
 
 /// All `eth` request related to blocks delegated by the network.
 #[derive(Debug)]
-pub enum IncomingEthRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub enum IncomingEthRequest {
     /// Request Block headers from the peer.
     ///
     /// The response should be sent through the channel.
@@ -719,7 +716,7 @@ pub enum IncomingEthRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
         /// The specific block headers requested.
         request: GetBlockHeaders,
         /// The channel sender for the response containing block headers.
-        response: oneshot::Sender<RequestResult<BlockHeaders<N::BlockHeader>>>,
+        response: oneshot::Sender<RequestResult<BlockHeaders<alloy_consensus::Header>>>,
     },
     /// Request Block bodies from the peer.
     ///
@@ -730,7 +727,7 @@ pub enum IncomingEthRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
         /// The specific block bodies requested.
         request: GetBlockBodies,
         /// The channel sender for the response containing block bodies.
-        response: oneshot::Sender<RequestResult<BlockBodies<N::BlockBody>>>,
+        response: oneshot::Sender<RequestResult<BlockBodies<base_common_consensus::BaseBlockBody>>>,
     },
     /// Request Node Data from the peer.
     ///
@@ -752,7 +749,7 @@ pub enum IncomingEthRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
         /// The specific receipts requested.
         request: GetReceipts,
         /// The channel sender for the response containing receipts.
-        response: oneshot::Sender<RequestResult<Receipts<N::Receipt>>>,
+        response: oneshot::Sender<RequestResult<Receipts<BaseReceipt>>>,
     },
     /// Request Receipts from the peer without bloom filter.
     ///
@@ -763,7 +760,7 @@ pub enum IncomingEthRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
         /// The specific receipts requested.
         request: GetReceipts,
         /// The channel sender for the response containing Receipts69.
-        response: oneshot::Sender<RequestResult<Receipts69<N::Receipt>>>,
+        response: oneshot::Sender<RequestResult<Receipts69<BaseReceipt>>>,
     },
     /// Request Receipts from the peer using eth/70.
     ///
@@ -774,7 +771,7 @@ pub enum IncomingEthRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
         /// The specific receipts requested including the `firstBlockReceiptIndex`.
         request: GetReceipts70,
         /// The channel sender for the response containing Receipts70.
-        response: oneshot::Sender<RequestResult<Receipts70<N::Receipt>>>,
+        response: oneshot::Sender<RequestResult<Receipts70<BaseReceipt>>>,
     },
     /// Request Block Access Lists from the peer.
     ///
@@ -986,9 +983,7 @@ mod tests {
     }
 
     /// Creates a request handler backed by the mock provider for snap response tests.
-    fn snap_handler(
-        provider: MockEthProvider,
-    ) -> EthRequestHandler<MockEthProvider, EthNetworkPrimitives> {
+    fn snap_handler(provider: MockEthProvider) -> EthRequestHandler<MockEthProvider> {
         let (peers_tx, _) = mpsc::unbounded_channel();
         let (_incoming_tx, incoming_rx) = mpsc::channel(1);
         EthRequestHandler::new(provider, PeersHandle::new(peers_tx), incoming_rx)

@@ -5,7 +5,6 @@ use std::sync::Arc;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
-use base_node_core::BaseNetworkPrimitives;
 use reth_cli_commands::common::CliNodeTypes;
 use reth_node_builder::NodeTypes;
 
@@ -20,7 +19,6 @@ impl NodeTypes for BaseCliTypes {
 impl CliNodeTypes for BaseCliTypes {
     type Evm = BaseEvmConfig;
     type Consensus = Arc<BaseBeaconConsensus>;
-    type NetworkPrimitives = BaseNetworkPrimitives;
 }
 
 /// Concrete execution components used by Base maintenance commands.

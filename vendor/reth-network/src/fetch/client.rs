@@ -9,8 +9,9 @@ use std::{
 };
 
 use alloy_primitives::B256;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use futures::{future, future::Either};
-use reth_eth_wire::{BlockAccessLists, EthNetworkPrimitives, NetworkPrimitives};
+use reth_eth_wire::BlockAccessLists;
 use reth_eth_wire_types::snap::{
     GetAccountRangeMessage, GetBlockAccessListsMessage, GetByteCodesMessage,
     GetStorageRangesMessage, SnapProtocolMessage,
@@ -41,16 +42,16 @@ use crate::{fetch::DownloadRequest, flattened_response::FlattenedResponse};
 ///
 /// include_mmd!("docs/mermaid/fetch-client.mmd")
 #[derive(Debug, Clone)]
-pub struct FetchClient<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub struct FetchClient {
     /// Sender half of the request channel.
-    pub(crate) request_tx: UnboundedSender<DownloadRequest<N>>,
+    pub(crate) request_tx: UnboundedSender<DownloadRequest>,
     /// The handle to the peers
     pub(crate) peers_handle: PeersHandle,
     /// Number of active peer sessions the node's currently handling.
     pub(crate) num_active_peers: Arc<AtomicUsize>,
 }
 
-impl<N: NetworkPrimitives> DownloadClient for FetchClient<N> {
+impl DownloadClient for FetchClient {
     fn report_bad_message(&self, peer_id: PeerId) {
         self.peers_handle.reputation_change(peer_id, ReputationChangeKind::BadMessage);
     }
@@ -60,7 +61,7 @@ impl<N: NetworkPrimitives> DownloadClient for FetchClient<N> {
     }
 }
 
-impl<N: NetworkPrimitives> FetchClient<N> {
+impl FetchClient {
     /// Sends a `snap/2` request to an available peer.
     fn send_snap_request(
         &self,
@@ -81,9 +82,9 @@ impl<N: NetworkPrimitives> FetchClient<N> {
 // or an error.
 type HeadersClientFuture<T> = Either<FlattenedResponse<T>, future::Ready<T>>;
 
-impl<N: NetworkPrimitives> HeadersClient for FetchClient<N> {
-    type Header = N::BlockHeader;
-    type Output = HeadersClientFuture<PeerRequestResult<Vec<N::BlockHeader>>>;
+impl HeadersClient for FetchClient {
+    type Header = alloy_consensus::Header;
+    type Output = HeadersClientFuture<PeerRequestResult<Vec<alloy_consensus::Header>>>;
 
     /// Sends a `GetBlockHeaders` request to an available peer.
     fn get_headers_with_priority(
@@ -104,9 +105,9 @@ impl<N: NetworkPrimitives> HeadersClient for FetchClient<N> {
     }
 }
 
-impl<N: NetworkPrimitives> BodiesClient for FetchClient<N> {
-    type Body = N::BlockBody;
-    type Output = BodiesFut<N::BlockBody>;
+impl BodiesClient for FetchClient {
+    type Body = base_common_consensus::BaseBlockBody;
+    type Output = BodiesFut<base_common_consensus::BaseBlockBody>;
 
     /// Sends a `GetBlockBodies` request to an available peer.
     fn get_block_bodies_with_priority_and_range_hint(
@@ -128,9 +129,9 @@ impl<N: NetworkPrimitives> BodiesClient for FetchClient<N> {
     }
 }
 
-impl<N: NetworkPrimitives> ReceiptsClient for FetchClient<N> {
-    type Receipt = N::Receipt;
-    type Output = ReceiptsFut<N::Receipt>;
+impl ReceiptsClient for FetchClient {
+    type Receipt = BaseReceipt;
+    type Output = ReceiptsFut<BaseReceipt>;
 
     fn get_receipts_with_priority(&self, request: Vec<B256>, priority: Priority) -> Self::Output {
         let (response, rx) = oneshot::channel();
@@ -146,11 +147,11 @@ impl<N: NetworkPrimitives> ReceiptsClient for FetchClient<N> {
     }
 }
 
-impl<N: NetworkPrimitives> BlockClient for FetchClient<N> {
-    type Block = N::Block;
+impl BlockClient for FetchClient {
+    type Block = BaseBlock;
 }
 
-impl<N: NetworkPrimitives> BlockAccessListsClient for FetchClient<N> {
+impl BlockAccessListsClient for FetchClient {
     type Output =
         std::pin::Pin<Box<dyn Future<Output = PeerRequestResult<BlockAccessLists>> + Send + Sync>>;
 
@@ -178,7 +179,7 @@ impl<N: NetworkPrimitives> BlockAccessListsClient for FetchClient<N> {
     }
 }
 
-impl<N: NetworkPrimitives> SnapClient for FetchClient<N> {
+impl SnapClient for FetchClient {
     type Output =
         std::pin::Pin<Box<dyn Future<Output = PeerRequestResult<SnapResponse>> + Send + Sync>>;
 

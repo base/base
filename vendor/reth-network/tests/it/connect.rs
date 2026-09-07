@@ -10,7 +10,7 @@ use reth_eth_wire::{DisconnectReason, HeadersDirection};
 use reth_network::{
     BlockDownloaderProvider, NetworkConfigBuilder, NetworkEvent, NetworkEventListenerProvider,
     NetworkManager, PeersConfig,
-    test_utils::{NetworkEventStream, PeerConfig, TestNetworkPrimitives, Testnet},
+    test_utils::{NetworkEventStream, NetworkTestData, PeerConfig, Testnet},
 };
 use reth_network_api::{
     NetworkInfo, PeerKind, Peers, PeersInfo,
@@ -25,7 +25,6 @@ use reth_provider::test_utils::MockEthProvider;
 use reth_storage_api::noop::NoopProvider;
 use reth_tasks::Runtime;
 use reth_tracing::init_test_tracing;
-use reth_transaction_pool::test_utils::testing_pool;
 use secp256k1::SecretKey;
 use tokio::task;
 use url::Host;
@@ -209,7 +208,7 @@ async fn test_connect_with_boot_nodes() {
     let mut discv4 = Discv4Config::builder();
     discv4.add_boot_nodes(mainnet_nodes());
 
-    let config = NetworkConfigBuilder::<TestNetworkPrimitives>::new(secret_key, Runtime::test())
+    let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .discovery(discv4)
         .build(NoopProvider::default());
     let network = NetworkManager::new(config).await.unwrap();
@@ -232,7 +231,7 @@ async fn test_connect_with_builder() {
     discv4.add_boot_nodes(mainnet_nodes());
 
     let client = NoopProvider::default();
-    let config = NetworkConfigBuilder::<TestNetworkPrimitives>::new(secret_key, Runtime::test())
+    let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .discovery(discv4)
         .build(client.clone());
     let (handle, network, _, requests) = NetworkManager::new(config)
@@ -270,7 +269,7 @@ async fn test_connect_to_trusted_peer() {
     let discv4 = Discv4Config::builder();
 
     let client = NoopProvider::default();
-    let config = NetworkConfigBuilder::<TestNetworkPrimitives>::new(secret_key, Runtime::test())
+    let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .discovery(discv4)
         .build(client.clone());
     let transactions_manager_config = config.transactions_manager_config.clone();
@@ -279,7 +278,7 @@ async fn test_connect_to_trusted_peer() {
         .unwrap()
         .into_builder()
         .request_handler(client)
-        .transactions(testing_pool(), transactions_manager_config)
+        .transactions(NetworkTestData::pool(), transactions_manager_config)
         .split_with_handle();
 
     let mut events = handle.event_listener();
@@ -388,7 +387,7 @@ async fn test_trusted_peer_only() {
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     let peers_config = PeersConfig::test().with_trusted_nodes_only(true);
 
-    let config = NetworkConfigBuilder::<TestNetworkPrimitives>::new(secret_key, Runtime::test())
+    let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .listener_port(0)
         .disable_discovery()
         .peer_config(peers_config)
@@ -451,7 +450,7 @@ async fn test_network_state_change() {
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     let peers_config = PeersConfig::test();
 
-    let config = NetworkConfigBuilder::<TestNetworkPrimitives>::new(secret_key, Runtime::test())
+    let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .listener_port(0)
         .disable_discovery()
         .peer_config(peers_config)
@@ -492,7 +491,7 @@ async fn test_exceed_outgoing_connections() {
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     let peers_config = PeersConfig::test().with_max_outbound(1);
 
-    let config = NetworkConfigBuilder::<TestNetworkPrimitives>::new(secret_key, Runtime::test())
+    let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .listener_port(0)
         .disable_discovery()
         .peer_config(peers_config)
@@ -533,7 +532,7 @@ async fn test_disconnect_incoming_when_exceeded_incoming_connections() {
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     let peers_config = PeersConfig::test().with_max_inbound(0);
 
-    let config = NetworkConfigBuilder::<TestNetworkPrimitives>::new(secret_key, Runtime::test())
+    let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .listener_port(0)
         .disable_discovery()
         .peer_config(peers_config)
@@ -642,10 +641,7 @@ async fn test_rejected_by_already_connect() {
     assert_eq!(handle.num_connected_peers(), 2);
 }
 
-async fn new_random_peer(
-    max_in_bound: usize,
-    trusted_nodes: Vec<TrustedPeer>,
-) -> NetworkManager<TestNetworkPrimitives> {
+async fn new_random_peer(max_in_bound: usize, trusted_nodes: Vec<TrustedPeer>) -> NetworkManager {
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     let peers_config =
         PeersConfig::test().with_max_inbound(max_in_bound).with_trusted_nodes(trusted_nodes);
@@ -722,7 +718,7 @@ async fn test_connect_peer_in_different_network_should_fail() {
     // If the remote disconnect first, then we would not get a fatal protocol error. So set
     // max_backoff_count to 0 to speed up the removal of the peer.
     let peers_config = PeersConfig::default().with_max_backoff_count(0);
-    let config = NetworkConfigBuilder::<TestNetworkPrimitives>::new(secret_key, Runtime::test())
+    let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .listener_port(0)
         .disable_discovery()
         .peer_config(peers_config)

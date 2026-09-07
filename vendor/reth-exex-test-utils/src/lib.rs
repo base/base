@@ -31,10 +31,7 @@ use reth_db_common::init::init_genesis;
 use reth_evm::MockEvmConfig;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
-use reth_network::{
-    NetworkConfigBuilder, NetworkHandle, NetworkManager, config::rng_secret_key,
-    types::BasicNetworkPrimitives,
-};
+use reth_network::{NetworkConfigBuilder, NetworkHandle, NetworkManager, config::rng_secret_key};
 use reth_node_api::{FullNodeTypesAdapter, NodeTypes, NodeTypesWithDBAdapter};
 use reth_node_builder::{NodeAdapter, components::Components};
 use reth_node_core::node_config::NodeConfig;
@@ -73,7 +70,7 @@ pub type TestFullNodeTypes = FullNodeTypesAdapter<
 pub type Adapter = NodeAdapter<
     TestFullNodeTypes,
     Components<
-        NetworkHandle<BasicNetworkPrimitives<base_common_consensus::BasePooledTransaction>>,
+        NetworkHandle,
         Pool<
             MockTransactionValidator<BasePooledTransaction>,
             CoinbaseTipOrdering<BasePooledTransaction>,

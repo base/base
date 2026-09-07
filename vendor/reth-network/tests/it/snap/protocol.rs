@@ -19,12 +19,11 @@ use reth_network::{
     BlockDownloaderProvider,
     eth_requests::SOFT_RESPONSE_LIMIT,
     protocol::{ConnectionHandler, OnNotSupported, ProtocolHandler},
-    test_utils::{PeerConfig, Testnet},
+    test_utils::{PeerConfig, TestPool, Testnet},
 };
 use reth_network_api::{Direction, PeerId};
 use reth_network_p2p::{error::RequestError, snap::client::SnapClient};
 use reth_provider::test_utils::MockEthProvider;
-use reth_transaction_pool::test_utils::TestPool;
 
 /// A [`ProtocolHandler`] that negotiates `protocol` but never sends or expects any messages.
 #[derive(Debug, Clone)]

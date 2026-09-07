@@ -5,7 +5,6 @@
 use std::{any::Any, net::SocketAddr, sync::Arc};
 
 use alloy_eips::BlockHashOrNumber;
-use alloy_primitives::Sealable;
 use clap::Parser;
 use reth_chainspec::{EthChainSpec, EthereumHardforks, Hardforks};
 use reth_cli::chainspec::ChainSpecParser;
@@ -169,7 +168,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
 
                     let network = self
                         .network
-                        .network_config::<N::NetworkPrimitives>(
+                        .network_config(
                             &config,
                             provider_factory.chain_spec(),
                             p2p_secret_key,
@@ -225,7 +224,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
 
                     let network = self
                         .network
-                        .network_config::<N::NetworkPrimitives>(
+                        .network_config(
                             &config,
                             provider_factory.chain_spec(),
                             p2p_secret_key,

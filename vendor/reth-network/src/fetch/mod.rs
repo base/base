@@ -1,5 +1,6 @@
 //! Fetch data from the network.
 
+use base_common_consensus::BaseReceipt;
 mod client;
 
 use std::{
@@ -16,8 +17,8 @@ use alloy_primitives::B256;
 pub use client::FetchClient;
 use futures::StreamExt;
 use reth_eth_wire::{
-    BlockAccessLists, Capabilities, EthNetworkPrimitives, EthVersion, GetBlockAccessLists,
-    GetBlockBodies, GetBlockHeaders, GetReceipts, NetworkPrimitives, snap::SnapProtocolMessage,
+    BlockAccessLists, Capabilities, EthVersion, GetBlockAccessLists, GetBlockBodies,
+    GetBlockHeaders, GetReceipts, snap::SnapProtocolMessage,
 };
 use reth_network_api::test_utils::PeersHandle;
 use reth_network_p2p::{
@@ -48,15 +49,16 @@ type InflightSnapRequest = Request<(), PeerRequestResult<SnapResponse>>;
 ///
 /// This type maintains a list of connected peers that are available for requests.
 #[derive(Debug)]
-pub struct StateFetcher<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub struct StateFetcher {
     /// Currently active [`GetBlockHeaders`] requests
-    inflight_headers_requests: HashMap<PeerId, InflightHeadersRequest<N::BlockHeader>>,
+    inflight_headers_requests: HashMap<PeerId, InflightHeadersRequest<alloy_consensus::Header>>,
     /// Currently active [`GetBlockBodies`] requests
-    inflight_bodies_requests: HashMap<PeerId, InflightBodiesRequest<N::BlockBody>>,
+    inflight_bodies_requests:
+        HashMap<PeerId, InflightBodiesRequest<base_common_consensus::BaseBlockBody>>,
     /// Currently active [`GetBlockAccessLists`] requests
     inflight_bals_requests: HashMap<PeerId, InflightBlockAccessListsRequest>,
     /// Currently active `GetReceipts` requests
-    inflight_receipts_requests: HashMap<PeerId, InflightReceiptsRequest<N::Receipt>>,
+    inflight_receipts_requests: HashMap<PeerId, InflightReceiptsRequest<BaseReceipt>>,
     /// Currently active `snap/2` requests
     inflight_snap_requests: HashMap<PeerId, InflightSnapRequest>,
     /// The list of _available_ peers for requests.
@@ -66,16 +68,16 @@ pub struct StateFetcher<N: NetworkPrimitives = EthNetworkPrimitives> {
     /// Number of active peer sessions the node's currently handling.
     num_active_peers: Arc<AtomicUsize>,
     /// Requests queued for processing
-    queued_requests: VecDeque<DownloadRequest<N>>,
+    queued_requests: VecDeque<DownloadRequest>,
     /// Receiver for new incoming download requests
-    download_requests_rx: UnboundedReceiverStream<DownloadRequest<N>>,
+    download_requests_rx: UnboundedReceiverStream<DownloadRequest>,
     /// Sender for download requests, used to detach a [`FetchClient`]
-    download_requests_tx: UnboundedSender<DownloadRequest<N>>,
+    download_requests_tx: UnboundedSender<DownloadRequest>,
 }
 
 // === impl StateSyncer ===
 
-impl<N: NetworkPrimitives> StateFetcher<N> {
+impl StateFetcher {
     pub(crate) fn new(peers_handle: PeersHandle, num_active_peers: Arc<AtomicUsize>) -> Self {
         let (download_requests_tx, download_requests_rx) = mpsc::unbounded_channel();
         Self {
@@ -295,7 +297,7 @@ impl<N: NetworkPrimitives> StateFetcher<N> {
 
     /// Returns `true` if `request` cannot be served by any currently connected peer and should
     /// fail immediately instead of waiting for future peer churn.
-    fn should_fail_fast(&self, request: &DownloadRequest<N>) -> bool {
+    fn should_fail_fast(&self, request: &DownloadRequest) -> bool {
         (request.is_optional_bal() && !self.has_eth71_peer())
             || (request.is_snap() && !self.has_snap_peer())
     }
@@ -303,7 +305,7 @@ impl<N: NetworkPrimitives> StateFetcher<N> {
     /// Handles a new request to a peer.
     ///
     /// Caution: this assumes the peer exists and is idle
-    fn prepare_block_request(&mut self, peer_id: PeerId, req: DownloadRequest<N>) -> BlockRequest {
+    fn prepare_block_request(&mut self, peer_id: PeerId, req: DownloadRequest) -> BlockRequest {
         // update the peer's state
         if let Some(peer) = self.peers.get_mut(&peer_id) {
             peer.state = req.peer_state();
@@ -316,7 +318,7 @@ impl<N: NetworkPrimitives> StateFetcher<N> {
     fn prepare_inflight_block_request(
         &mut self,
         peer_id: PeerId,
-        req: DownloadRequest<N>,
+        req: DownloadRequest,
     ) -> BlockRequest {
         match req {
             DownloadRequest::GetBlockHeaders { request, response, .. } => {
@@ -381,7 +383,7 @@ impl<N: NetworkPrimitives> StateFetcher<N> {
     pub(crate) fn on_block_headers_response(
         &mut self,
         peer_id: PeerId,
-        res: RequestResult<Vec<N::BlockHeader>>,
+        res: RequestResult<Vec<alloy_consensus::Header>>,
     ) -> Option<BlockResponseOutcome> {
         let is_error = res.is_err();
         let maybe_reputation_change = res.reputation_change_err();
@@ -417,7 +419,7 @@ impl<N: NetworkPrimitives> StateFetcher<N> {
     pub(crate) fn on_block_bodies_response(
         &mut self,
         peer_id: PeerId,
-        res: RequestResult<Vec<N::BlockBody>>,
+        res: RequestResult<Vec<base_common_consensus::BaseBlockBody>>,
     ) -> Option<BlockResponseOutcome> {
         let is_likely_bad_response = res.as_ref().map_or(true, |bodies| bodies.is_empty());
 
@@ -463,7 +465,7 @@ impl<N: NetworkPrimitives> StateFetcher<N> {
     pub(crate) fn on_receipts_response(
         &mut self,
         peer_id: PeerId,
-        res: RequestResult<ReceiptsResponse<N::Receipt>>,
+        res: RequestResult<ReceiptsResponse<BaseReceipt>>,
     ) -> Option<BlockResponseOutcome> {
         let is_likely_bad_response = res.as_ref().map_or(true, |resp| resp.receipts.is_empty());
 
@@ -502,7 +504,7 @@ impl<N: NetworkPrimitives> StateFetcher<N> {
     }
 
     /// Returns a new [`FetchClient`] that can send requests to this type.
-    pub(crate) fn client(&self) -> FetchClient<N> {
+    pub(crate) fn client(&self) -> FetchClient {
         FetchClient {
             request_tx: self.download_requests_tx.clone(),
             peers_handle: self.peers_handle.clone(),
@@ -705,17 +707,17 @@ struct Request<Req, Resp> {
 /// Requests that can be sent to the Syncer from a [`FetchClient`]
 #[derive(Debug)]
 #[expect(clippy::enum_variant_names)]
-pub(crate) enum DownloadRequest<N: NetworkPrimitives> {
+pub(crate) enum DownloadRequest {
     /// Download the requested headers and send response through channel
     GetBlockHeaders {
         request: HeadersRequest,
-        response: oneshot::Sender<PeerRequestResult<Vec<N::BlockHeader>>>,
+        response: oneshot::Sender<PeerRequestResult<Vec<alloy_consensus::Header>>>,
         priority: Priority,
     },
     /// Download the requested bodies and send response through channel
     GetBlockBodies {
         request: Vec<B256>,
-        response: oneshot::Sender<PeerRequestResult<Vec<N::BlockBody>>>,
+        response: oneshot::Sender<PeerRequestResult<Vec<base_common_consensus::BaseBlockBody>>>,
         priority: Priority,
         range_hint: Option<RangeInclusive<u64>>,
     },
@@ -729,7 +731,7 @@ pub(crate) enum DownloadRequest<N: NetworkPrimitives> {
     /// Download receipts for the given block hashes and send response through channel
     GetReceipts {
         request: Vec<B256>,
-        response: oneshot::Sender<PeerRequestResult<ReceiptsResponse<N::Receipt>>>,
+        response: oneshot::Sender<PeerRequestResult<ReceiptsResponse<BaseReceipt>>>,
         priority: Priority,
     },
     /// Send a `snap/2` request and send response through channel
@@ -742,7 +744,7 @@ pub(crate) enum DownloadRequest<N: NetworkPrimitives> {
 
 // === impl DownloadRequest ===
 
-impl<N: NetworkPrimitives> DownloadRequest<N> {
+impl DownloadRequest {
     /// Returns the corresponding state for a peer that handles the request.
     const fn peer_state(&self) -> PeerState {
         match self {
@@ -860,8 +862,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_poll_fetcher() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         poll_fn(move |cx| {
             assert!(fetcher.poll(cx).is_pending());
@@ -882,8 +883,7 @@ mod tests {
     #[tokio::test]
     async fn test_peer_rotation() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
         // Add a few random peers
         let peer1 = B512::random();
         let peer2 = B512::random();
@@ -923,8 +923,7 @@ mod tests {
     #[tokio::test]
     async fn test_peer_prioritization() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
         // Add a few random peers
         let peer1 = B512::random();
         let peer2 = B512::random();
@@ -974,8 +973,7 @@ mod tests {
     #[tokio::test]
     async fn test_on_block_headers_response() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
         let peer_id = B512::random();
 
         assert_eq!(fetcher.on_block_headers_response(peer_id, Ok(vec![Header::default()])), None);
@@ -1005,8 +1003,7 @@ mod tests {
     #[tokio::test]
     async fn test_header_response_outcome() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
         let peer_id = B512::random();
 
         let request_pair = || {
@@ -1507,10 +1504,9 @@ mod tests {
     }
 
     /// Creates a `StateFetcher` with a single idle peer and returns both.
-    fn fetcher_with_peer() -> (StateFetcher<EthNetworkPrimitives>, PeerId) {
+    fn fetcher_with_peer() -> (StateFetcher, PeerId) {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
         let peer_id = B512::random();
 
         fetcher.new_active_peer(NewPeerInfo {
@@ -1528,9 +1524,9 @@ mod tests {
     /// Inserts an inflight receipts request into the fetcher and returns the
     /// `oneshot::Receiver` that the final response will be sent through.
     fn insert_inflight_receipts(
-        fetcher: &mut StateFetcher<EthNetworkPrimitives>,
+        fetcher: &mut StateFetcher,
         peer_id: PeerId,
-    ) -> oneshot::Receiver<PeerRequestResult<ReceiptsResponse<reth_ethereum_primitives::Receipt>>>
+    ) -> oneshot::Receiver<PeerRequestResult<ReceiptsResponse<base_common_consensus::BaseReceipt>>>
     {
         let (tx, rx) = oneshot::channel();
         fetcher.inflight_receipts_requests.insert(peer_id, Request { request: (), response: tx });
@@ -1777,8 +1773,7 @@ mod tests {
     #[tokio::test]
     async fn test_next_best_peer_eth71_no_support() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         let peer = B512::random();
 
@@ -1805,8 +1800,7 @@ mod tests {
     #[tokio::test]
     async fn test_next_best_peer_eth71_supported() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         let peer = B512::random();
 
@@ -1832,8 +1826,7 @@ mod tests {
     #[tokio::test]
     async fn test_next_best_peer_eth71_filters_correctly() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         let peer_no_71 = B512::random();
         let peer_with_71 = B512::random();
@@ -1879,8 +1872,7 @@ mod tests {
         use futures::task::noop_waker;
 
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         // Queue Eth71-required request
         let (tx, _rx) = oneshot::channel();
@@ -1941,8 +1933,7 @@ mod tests {
         use futures::task::noop_waker;
 
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         let peer_old = B512::random();
         let caps_old = Arc::new(Capabilities::new(vec![]));
@@ -1982,8 +1973,7 @@ mod tests {
         use futures::task::noop_waker;
 
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         let peer_71 = B512::random();
         let caps_71 = Arc::new(Capabilities::from(vec![Capability::new("eth".into(), 71)]));
@@ -2023,8 +2013,7 @@ mod tests {
         use futures::task::noop_waker;
 
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         let peer_old = B512::random();
         let caps_old = Arc::new(Capabilities::new(vec![]));
@@ -2078,8 +2067,7 @@ mod tests {
     #[tokio::test]
     async fn test_next_best_peer_snap_no_support() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         let peer = B512::random();
         fetcher.new_active_peer(NewPeerInfo {
@@ -2098,8 +2086,7 @@ mod tests {
     #[tokio::test]
     async fn test_next_best_peer_snap_supported() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         let peer = B512::random();
         fetcher.new_active_peer(NewPeerInfo {
@@ -2118,8 +2105,7 @@ mod tests {
     #[tokio::test]
     async fn test_next_best_peer_snap_filters_correctly() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         let peer_no_snap = B512::random();
         let peer_with_snap = B512::random();
@@ -2157,8 +2143,7 @@ mod tests {
         use futures::task::noop_waker;
 
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         // Only an eth-only peer is connected.
         fetcher.new_active_peer(NewPeerInfo {
@@ -2198,8 +2183,7 @@ mod tests {
     #[tokio::test]
     async fn test_snap_response_triggers_followup() {
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         let peer_id = B512::random();
         fetcher.new_active_peer(NewPeerInfo {
@@ -2248,8 +2232,7 @@ mod tests {
         use futures::task::noop_waker;
 
         let manager = PeersManager::new(PeersConfig::default());
-        let mut fetcher =
-            StateFetcher::<EthNetworkPrimitives>::new(manager.handle(), Default::default());
+        let mut fetcher = StateFetcher::new(manager.handle(), Default::default());
 
         // The only connected peer supports snap but is busy, so the request gets queued.
         let peer = B512::random();

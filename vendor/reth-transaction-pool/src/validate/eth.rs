@@ -1711,7 +1711,7 @@ mod tests {
         let provider = MockEthProvider::default().with_genesis_block();
         let validator = EthTransactionValidatorBuilder::new(provider, test_evm_config())
             .build(InMemoryBlobStore::default());
-        let transaction = |chain_id| {
+        let transaction = |chain_id| -> EthPooledTransaction {
             EthPooledTransaction::try_from_consensus(
                 TransactionBuilder::default()
                     .chain_id(chain_id)

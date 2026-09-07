@@ -83,7 +83,7 @@ where
     async fn check_peer_blocks(
         network: N,
         peer_id: reth_network_api::PeerId,
-        messages: reth_network_api::PeerRequestSender<PeerRequest<N::Primitives>>,
+        messages: reth_network_api::PeerRequestSender<PeerRequest>,
         block_num_hashes: Vec<BlockNumHash>,
         latest_peer_block: u64,
     ) {

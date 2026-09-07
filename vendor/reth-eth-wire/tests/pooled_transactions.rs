@@ -5,7 +5,7 @@ use std::{fs, path::PathBuf};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::hex;
 use alloy_rlp::{Decodable, Encodable};
-use reth_eth_wire::{EthNetworkPrimitives, EthVersion, PooledTransactions, ProtocolMessage};
+use reth_eth_wire::{EthVersion, PooledTransactions, ProtocolMessage};
 use test_fuzz::test_fuzz;
 
 /// Pre-Osaka pooled transaction type using EIP-4844 sidecar format.
@@ -53,13 +53,12 @@ fn decode_pooled_transactions_data() {
 }
 
 #[test]
-fn decode_request_pair_pooled_blob_transactions() {
+fn rejects_pooled_blob_transactions_on_base_network() {
     let network_data_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("testdata/request_pair_pooled_blob_transactions");
     let data = fs::read_to_string(network_data_path).expect("Unable to read file");
     let hex_data = hex::decode(data.trim()).unwrap();
-    let _txs: ProtocolMessage<EthNetworkPrimitives> =
-        ProtocolMessage::decode_message(EthVersion::Eth68, &mut &hex_data[..]).unwrap();
+    assert!(ProtocolMessage::decode_message(EthVersion::Eth68, &mut &hex_data[..]).is_err());
 }
 
 #[test]

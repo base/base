@@ -27,10 +27,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base_common_consensus::BaseBlock;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 use reth_chainspec::EnrForkIdEntry;
-use reth_eth_wire::{DisconnectReason, EthNetworkPrimitives, NetworkPrimitives};
+use reth_eth_wire::DisconnectReason;
 use reth_fs_util::{self as fs, FsPathError};
 use reth_metrics::common::mpsc::MemoryBoundedSender;
 use reth_network_api::{
@@ -107,20 +108,20 @@ use crate::{
 /// ```
 #[derive(Debug)]
 #[must_use = "The NetworkManager does nothing unless polled"]
-pub struct NetworkManager<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub struct NetworkManager {
     /// The type that manages the actual network part, which includes connections.
-    swarm: Swarm<N>,
+    swarm: Swarm,
     /// Underlying network handle that can be shared.
-    handle: NetworkHandle<N>,
+    handle: NetworkHandle,
     /// Receiver half of the command channel set up between this type and the [`NetworkHandle`]
-    from_handle_rx: UnboundedReceiverStream<NetworkHandleMessage<N>>,
+    from_handle_rx: UnboundedReceiverStream<NetworkHandleMessage>,
     /// Handles block imports according to the `eth` protocol.
-    block_import: Box<dyn BlockImport<N::NewBlockPayload>>,
+    block_import: Box<dyn BlockImport<reth_eth_wire_types::NewBlock<BaseBlock>>>,
     /// Sender for high level network events.
-    event_sender: EventSender<NetworkEvent<PeerRequest<N>>>,
+    event_sender: EventSender<NetworkEvent<PeerRequest>>,
     /// Sender half to send events to the
     /// [`TransactionsManager`](crate::transactions::TransactionsManager) task, if configured.
-    to_transactions_manager: Option<MemoryBoundedSender<NetworkTransactionEvent<N>>>,
+    to_transactions_manager: Option<MemoryBoundedSender<NetworkTransactionEvent>>,
     /// Sender half to send events to the
     /// [`EthRequestHandler`](crate::eth_requests::EthRequestHandler) task, if configured.
     ///
@@ -134,7 +135,7 @@ pub struct NetworkManager<N: NetworkPrimitives = EthNetworkPrimitives> {
     /// Thus, we use a bounded channel here to avoid unbounded build up if the node is flooded with
     /// requests. This channel size is set at
     /// [`ETH_REQUEST_CHANNEL_CAPACITY`](crate::builder::ETH_REQUEST_CHANNEL_CAPACITY)
-    to_eth_request_handler: Option<mpsc::Sender<IncomingEthRequest<N>>>,
+    to_eth_request_handler: Option<mpsc::Sender<IncomingEthRequest>>,
     /// Tracks the number of active session (connected peers).
     ///
     /// This is updated via internal events and shared via `Arc` with the [`NetworkHandle`]
@@ -153,7 +154,7 @@ pub struct NetworkManager<N: NetworkPrimitives = EthNetworkPrimitives> {
 }
 
 impl NetworkManager {
-    /// Creates the manager of a new network with [`EthNetworkPrimitives`] types.
+    /// Creates the manager of a new network with Base wire types.
     ///
     /// ```no_run
     /// # async fn f() {
@@ -166,39 +167,36 @@ impl NetworkManager {
     /// # }
     /// ```
     pub async fn eth<C: BlockNumReader + 'static>(
-        config: NetworkConfig<C, EthNetworkPrimitives>,
+        config: NetworkConfig<C>,
     ) -> Result<Self, NetworkError> {
         Self::new(config).await
     }
 }
 
-impl<N: NetworkPrimitives> NetworkManager<N> {
+impl NetworkManager {
     /// Sets the dedicated channel for events intended for the
     /// [`TransactionsManager`](crate::transactions::TransactionsManager).
-    pub fn with_transactions(
-        mut self,
-        tx: MemoryBoundedSender<NetworkTransactionEvent<N>>,
-    ) -> Self {
+    pub fn with_transactions(mut self, tx: MemoryBoundedSender<NetworkTransactionEvent>) -> Self {
         self.set_transactions(tx);
         self
     }
 
     /// Sets the dedicated channel for events intended for the
     /// [`TransactionsManager`](crate::transactions::TransactionsManager).
-    pub fn set_transactions(&mut self, tx: MemoryBoundedSender<NetworkTransactionEvent<N>>) {
+    pub fn set_transactions(&mut self, tx: MemoryBoundedSender<NetworkTransactionEvent>) {
         self.to_transactions_manager = Some(tx);
     }
 
     /// Sets the dedicated channel for events intended for the
     /// [`EthRequestHandler`](crate::eth_requests::EthRequestHandler).
-    pub fn with_eth_request_handler(mut self, tx: mpsc::Sender<IncomingEthRequest<N>>) -> Self {
+    pub fn with_eth_request_handler(mut self, tx: mpsc::Sender<IncomingEthRequest>) -> Self {
         self.set_eth_request_handler(tx);
         self
     }
 
     /// Sets the dedicated channel for events intended for the
     /// [`EthRequestHandler`](crate::eth_requests::EthRequestHandler).
-    pub fn set_eth_request_handler(&mut self, tx: mpsc::Sender<IncomingEthRequest<N>>) {
+    pub fn set_eth_request_handler(&mut self, tx: mpsc::Sender<IncomingEthRequest>) {
         self.to_eth_request_handler = Some(tx);
     }
 
@@ -210,7 +208,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
     /// Returns the [`NetworkHandle`] that can be cloned and shared.
     ///
     /// The [`NetworkHandle`] can be used to interact with this [`NetworkManager`]
-    pub const fn handle(&self) -> &NetworkHandle<N> {
+    pub const fn handle(&self) -> &NetworkHandle {
         &self.handle
     }
 
@@ -237,7 +235,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
     /// The [`NetworkManager`] is an endless future that needs to be polled in order to advance the
     /// state of the entire network.
     pub async fn new<C: BlockNumReader + 'static>(
-        config: NetworkConfig<C, N>,
+        config: NetworkConfig<C>,
     ) -> Result<Self, NetworkError> {
         let NetworkConfig {
             client,
@@ -333,7 +331,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
 
         let (to_manager_tx, from_handle_rx) = mpsc::unbounded_channel();
 
-        let event_sender: EventSender<NetworkEvent<PeerRequest<N>>> = Default::default();
+        let event_sender: EventSender<NetworkEvent<PeerRequest>> = Default::default();
 
         let handle = NetworkHandle::new(
             Arc::clone(&num_active_peers),
@@ -379,7 +377,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
     ///
     /// ```
     /// use reth_network::{
-    ///     config::rng_secret_key, EthNetworkPrimitives, NetworkConfig, NetworkManager,
+    ///     config::rng_secret_key, NetworkConfig, NetworkManager,
     /// };
     /// use reth_network_peers::mainnet_nodes;
     /// use reth_storage_api::noop::NoopProvider;
@@ -392,7 +390,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
     ///     // The key that's used for encrypting sessions and to identify our node.
     ///     let local_key = rng_secret_key();
     ///
-    ///     let config = NetworkConfig::<_, EthNetworkPrimitives>::builder(local_key, Runtime::test())
+    ///     let config = NetworkConfig::<_>::builder(local_key, Runtime::test())
     ///         .boot_nodes(mainnet_nodes())
     ///         .build(client.clone());
     ///     let transactions_manager_config = config.transactions_manager_config.clone();
@@ -407,14 +405,14 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
     /// }
     /// ```
     pub async fn builder<C: BlockNumReader + 'static>(
-        config: NetworkConfig<C, N>,
-    ) -> Result<NetworkBuilder<(), (), N>, NetworkError> {
+        config: NetworkConfig<C>,
+    ) -> Result<NetworkBuilder<(), ()>, NetworkError> {
         let network = Self::new(config).await?;
         Ok(network.into_builder())
     }
 
     /// Create a [`NetworkBuilder`] to configure all components of the network
-    pub const fn into_builder(self) -> NetworkBuilder<(), (), N> {
+    pub const fn into_builder(self) -> NetworkBuilder<(), ()> {
         NetworkBuilder { network: self, transactions: (), request_handler: () }
     }
 
@@ -466,7 +464,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
     ///
     /// The [`FetchClient`] is the entrypoint for sending requests to the network, including
     /// `snap/2` requests via its [`SnapClient`](reth_network_p2p::snap::client::SnapClient) impl.
-    pub fn fetch_client(&self) -> FetchClient<N> {
+    pub fn fetch_client(&self) -> FetchClient {
         self.swarm.state().fetch_client()
     }
 
@@ -497,7 +495,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
 
     /// Sends an event to the [`TransactionsManager`](crate::transactions::TransactionsManager) if
     /// configured.
-    fn notify_tx_manager(&self, event: NetworkTransactionEvent<N>) {
+    fn notify_tx_manager(&self, event: NetworkTransactionEvent) {
         if let Some(ref tx) = self.to_transactions_manager
             && let Err(e) = tx.try_send(event)
         {
@@ -513,7 +511,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
 
     /// Sends an event to the [`EthRequestManager`](crate::eth_requests::EthRequestHandler) if
     /// configured.
-    fn delegate_eth_request(&self, event: IncomingEthRequest<N>) {
+    fn delegate_eth_request(&self, event: IncomingEthRequest) {
         if let Some(ref reqs) = self.to_eth_request_handler {
             let _ = reqs.try_send(event).map_err(|e| {
                 if let TrySendError::Full(_) = e {
@@ -525,7 +523,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
     }
 
     /// Handle an incoming request from the peer
-    fn on_eth_request(&self, peer_id: PeerId, req: PeerRequest<N>) {
+    fn on_eth_request(&self, peer_id: PeerId, req: PeerRequest) {
         match req {
             PeerRequest::GetBlockHeaders { request, response } => {
                 self.delegate_eth_request(IncomingEthRequest::GetBlockHeaders {
@@ -591,7 +589,10 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
     }
 
     /// Invoked after a `NewBlock` message from the peer was validated
-    fn on_block_import_result(&mut self, event: BlockImportEvent<N::NewBlockPayload>) {
+    fn on_block_import_result(
+        &mut self,
+        event: BlockImportEvent<reth_eth_wire_types::NewBlock<BaseBlock>>,
+    ) {
         match event {
             BlockImportEvent::Announcement(validation) => match validation {
                 BlockValidation::ValidHeader { block } => {
@@ -649,7 +650,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
     }
 
     /// Handles a received Message from the peer's session.
-    fn on_peer_message(&mut self, peer_id: PeerId, msg: PeerMessage<N>) {
+    fn on_peer_message(&mut self, peer_id: PeerId, msg: PeerMessage) {
         match msg {
             PeerMessage::NewBlockHashes(hashes) => {
                 self.within_pow_or_disconnect(peer_id, |this| {
@@ -692,7 +693,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
     }
 
     /// Handler for received messages from a handle
-    fn on_handle_message(&mut self, msg: NetworkHandleMessage<N>) {
+    fn on_handle_message(&mut self, msg: NetworkHandleMessage) {
         match msg {
             NetworkHandleMessage::DiscoveryListener(tx) => {
                 self.swarm.state_mut().discovery_mut().add_listener(tx);
@@ -812,7 +813,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
         }
     }
 
-    fn on_swarm_event(&mut self, event: SwarmEvent<N>) {
+    fn on_swarm_event(&mut self, event: SwarmEvent) {
         // handle event
         match event {
             SwarmEvent::ValidMessage { peer_id, message } => self.on_peer_message(peer_id, message),
@@ -1132,7 +1133,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
     }
 }
 
-impl<N: NetworkPrimitives> Future for NetworkManager<N> {
+impl Future for NetworkManager {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

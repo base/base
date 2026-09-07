@@ -7,14 +7,15 @@ use std::{
 };
 
 use alloy_primitives::B256;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use enr::Enr;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use reth_discv4::{Discv4, NatResolver};
 use reth_discv5::Discv5;
 use reth_eth_wire::{
-    BlockRangeUpdate, BroadcastPoolTransactions, DisconnectReason, EthNetworkPrimitives,
-    NetworkPrimitives, NewPooledTransactionHashes, SharedTransactions,
+    BlockRangeUpdate, BroadcastPoolTransactions, DisconnectReason, NewPooledTransactionHashes,
+    SharedTransactions,
 };
 use reth_ethereum_forks::{ForkFilter, Head};
 use reth_network_api::{
@@ -44,20 +45,20 @@ use crate::{
 ///
 /// See also [`NetworkManager`](crate::NetworkManager).
 #[derive(Clone, Debug)]
-pub struct NetworkHandle<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub struct NetworkHandle {
     /// The Arc'ed delegate that contains the state.
-    inner: Arc<NetworkInner<N>>,
+    inner: Arc<NetworkInner>,
 }
 
 // === impl NetworkHandle ===
 
-impl<N: NetworkPrimitives> NetworkHandle<N> {
+impl NetworkHandle {
     /// Creates a single new instance.
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         num_active_peers: Arc<AtomicUsize>,
         listener_address: Arc<Mutex<SocketAddr>>,
-        to_manager_tx: UnboundedSender<NetworkHandleMessage<N>>,
+        to_manager_tx: UnboundedSender<NetworkHandleMessage>,
         secret_key: SecretKey,
         local_peer_id: PeerId,
         peers: PeersHandle,
@@ -66,7 +67,7 @@ impl<N: NetworkPrimitives> NetworkHandle<N> {
         tx_gossip_disabled: bool,
         discv4: Option<Discv4>,
         discv5: Option<Discv5>,
-        event_sender: EventSender<NetworkEvent<PeerRequest<N>>>,
+        event_sender: EventSender<NetworkEvent<PeerRequest>>,
         nat: Option<NatResolver>,
     ) -> Self {
         let inner = NetworkInner {
@@ -95,7 +96,7 @@ impl<N: NetworkPrimitives> NetworkHandle<N> {
         &self.inner.local_peer_id
     }
 
-    fn manager(&self) -> &UnboundedSender<NetworkHandleMessage<N>> {
+    fn manager(&self) -> &UnboundedSender<NetworkHandleMessage> {
         &self.inner.to_manager_tx
     }
 
@@ -105,7 +106,7 @@ impl<N: NetworkPrimitives> NetworkHandle<N> {
     }
 
     /// Sends a [`NetworkHandleMessage`] to the manager
-    pub(crate) fn send_message(&self, msg: NetworkHandleMessage<N>) {
+    pub(crate) fn send_message(&self, msg: NetworkHandleMessage) {
         let _ = self.inner.to_manager_tx.send(msg);
     }
 
@@ -131,12 +132,12 @@ impl<N: NetworkPrimitives> NetworkHandle<N> {
     /// Caution: in `PoS` this is a noop because new blocks are no longer announced over devp2p.
     /// Instead they are sent to the node by CL and can be requested over devp2p.
     /// Broadcasting new blocks is considered a protocol violation.
-    pub fn announce_block(&self, block: N::NewBlockPayload, hash: B256) {
+    pub fn announce_block(&self, block: reth_eth_wire_types::NewBlock<BaseBlock>, hash: B256) {
         self.send_message(NetworkHandleMessage::AnnounceBlock(block, hash))
     }
 
     /// Sends a [`PeerRequest`] to the given peer's session.
-    pub fn send_request(&self, peer_id: PeerId, request: PeerRequest<N>) {
+    pub fn send_request(&self, peer_id: PeerId, request: PeerRequest) {
         self.send_message(NetworkHandleMessage::EthRequest { peer_id, request })
     }
 
@@ -146,7 +147,7 @@ impl<N: NetworkPrimitives> NetworkHandle<N> {
     }
 
     /// Send full transactions to the peer
-    pub fn send_transactions(&self, peer_id: PeerId, msg: Vec<Arc<N::BroadcastedTransaction>>) {
+    pub fn send_transactions(&self, peer_id: PeerId, msg: Vec<Arc<BaseTxEnvelope>>) {
         self.send_message(NetworkHandleMessage::SendTransaction {
             peer_id,
             msg: SharedTransactions(msg),
@@ -163,14 +164,14 @@ impl<N: NetworkPrimitives> NetworkHandle<N> {
     }
 
     /// Send eth message to the peer.
-    pub fn send_eth_message(&self, peer_id: PeerId, message: PeerMessage<N>) {
+    pub fn send_eth_message(&self, peer_id: PeerId, message: PeerMessage) {
         self.send_message(NetworkHandleMessage::EthMessage { peer_id, message })
     }
 
     /// Send message to get the [`TransactionsHandle`].
     ///
     /// Returns `None` if no transaction task is installed.
-    pub async fn transactions_handle(&self) -> Option<TransactionsHandle<N>> {
+    pub async fn transactions_handle(&self) -> Option<TransactionsHandle> {
         let (tx, rx) = oneshot::channel();
         let _ = self.manager().send(NetworkHandleMessage::GetTransactionsHandle(tx));
         rx.await.unwrap()
@@ -228,7 +229,7 @@ impl<N: NetworkPrimitives> NetworkHandle<N> {
 
 // === API Implementations ===
 
-impl<N: NetworkPrimitives> NetworkPeersEvents for NetworkHandle<N> {
+impl NetworkPeersEvents for NetworkHandle {
     /// Returns an event stream of peer-specific network events.
     fn peer_events(&self) -> PeerEventStream {
         let peer_events = self.inner.event_sender.new_listener().map(|event| match event {
@@ -239,10 +240,8 @@ impl<N: NetworkPrimitives> NetworkPeersEvents for NetworkHandle<N> {
     }
 }
 
-impl<N: NetworkPrimitives> NetworkEventListenerProvider for NetworkHandle<N> {
-    type Primitives = N;
-
-    fn event_listener(&self) -> EventStream<NetworkEvent<PeerRequest<Self::Primitives>>> {
+impl NetworkEventListenerProvider for NetworkHandle {
+    fn event_listener(&self) -> EventStream<NetworkEvent<PeerRequest>> {
         self.inner.event_sender.new_listener()
     }
 
@@ -253,13 +252,13 @@ impl<N: NetworkPrimitives> NetworkEventListenerProvider for NetworkHandle<N> {
     }
 }
 
-impl<N: NetworkPrimitives> NetworkProtocols for NetworkHandle<N> {
+impl NetworkProtocols for NetworkHandle {
     fn add_rlpx_sub_protocol(&self, protocol: RlpxSubProtocol) {
         self.send_message(NetworkHandleMessage::AddRlpxSubProtocol(protocol))
     }
 }
 
-impl<N: NetworkPrimitives> PeersInfo for NetworkHandle<N> {
+impl PeersInfo for NetworkHandle {
     fn num_connected_peers(&self) -> usize {
         self.inner.num_active_peers.load(Ordering::Relaxed)
     }
@@ -339,7 +338,7 @@ impl<N: NetworkPrimitives> PeersInfo for NetworkHandle<N> {
     }
 }
 
-impl<N: NetworkPrimitives> Peers for NetworkHandle<N> {
+impl Peers for NetworkHandle {
     fn add_trusted_peer_id(&self, peer: PeerId) {
         self.send_message(NetworkHandleMessage::AddTrustedPeerId(peer));
     }
@@ -445,13 +444,13 @@ impl<N: NetworkPrimitives> Peers for NetworkHandle<N> {
     }
 }
 
-impl<N: NetworkPrimitives> PeersHandleProvider for NetworkHandle<N> {
+impl PeersHandleProvider for NetworkHandle {
     fn peers_handle(&self) -> &PeersHandle {
         &self.inner.peers
     }
 }
 
-impl<N: NetworkPrimitives> NetworkInfo for NetworkHandle<N> {
+impl NetworkInfo for NetworkHandle {
     fn local_addr(&self) -> SocketAddr {
         *self.inner.listener_address.lock()
     }
@@ -479,7 +478,7 @@ impl<N: NetworkPrimitives> NetworkInfo for NetworkHandle<N> {
     }
 }
 
-impl<N: NetworkPrimitives> SyncStateProvider for NetworkHandle<N> {
+impl SyncStateProvider for NetworkHandle {
     fn is_syncing(&self) -> bool {
         self.inner.is_syncing.load(Ordering::Relaxed)
     }
@@ -492,7 +491,7 @@ impl<N: NetworkPrimitives> SyncStateProvider for NetworkHandle<N> {
     }
 }
 
-impl<N: NetworkPrimitives> NetworkSyncUpdater for NetworkHandle<N> {
+impl NetworkSyncUpdater for NetworkHandle {
     fn update_sync_state(&self, state: SyncState) {
         let future_state = state.is_syncing();
         let prev_state = self.inner.is_syncing.swap(future_state, Ordering::Relaxed);
@@ -518,8 +517,8 @@ impl<N: NetworkPrimitives> NetworkSyncUpdater for NetworkHandle<N> {
     }
 }
 
-impl<N: NetworkPrimitives> BlockDownloaderProvider for NetworkHandle<N> {
-    type Client = FetchClient<N>;
+impl BlockDownloaderProvider for NetworkHandle {
+    type Client = FetchClient;
 
     async fn fetch_client(&self) -> Result<Self::Client, oneshot::error::RecvError> {
         let (tx, rx) = oneshot::channel();
@@ -529,11 +528,11 @@ impl<N: NetworkPrimitives> BlockDownloaderProvider for NetworkHandle<N> {
 }
 
 #[derive(Debug)]
-struct NetworkInner<N: NetworkPrimitives = EthNetworkPrimitives> {
+struct NetworkInner {
     /// Number of active peer sessions the node's currently handling.
     num_active_peers: Arc<AtomicUsize>,
     /// Sender half of the message channel to the [`crate::NetworkManager`].
-    to_manager_tx: UnboundedSender<NetworkHandleMessage<N>>,
+    to_manager_tx: UnboundedSender<NetworkHandleMessage>,
     /// The local address that accepts incoming connections.
     listener_address: Arc<Mutex<SocketAddr>>,
     /// The secret key used for authenticating sessions.
@@ -559,7 +558,7 @@ struct NetworkInner<N: NetworkPrimitives = EthNetworkPrimitives> {
     /// The instance of the discv5 service
     discv5: Option<Discv5>,
     /// Sender for high level network events.
-    event_sender: EventSender<NetworkEvent<PeerRequest<N>>>,
+    event_sender: EventSender<NetworkEvent<PeerRequest>>,
     /// The NAT resolver
     nat: Option<NatResolver>,
 }
@@ -572,7 +571,7 @@ pub trait NetworkProtocols: Send + Sync {
 
 /// Internal messages that can be passed to the  [`NetworkManager`](crate::NetworkManager).
 #[derive(Debug)]
-pub(crate) enum NetworkHandleMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub(crate) enum NetworkHandleMessage {
     /// Marks a peer as trusted.
     AddTrustedPeerId(PeerId),
     /// Adds a trusted peer that may use a hostname, registering it for periodic DNS re-resolution.
@@ -588,13 +587,13 @@ pub(crate) enum NetworkHandleMessage<N: NetworkPrimitives = EthNetworkPrimitives
     /// Unbans a peer.
     UnbanPeer(PeerId),
     /// Broadcasts an event to announce a new block to all nodes.
-    AnnounceBlock(N::NewBlockPayload, B256),
+    AnnounceBlock(reth_eth_wire_types::NewBlock<BaseBlock>, B256),
     /// Sends a list of transactions to the given peer.
     SendTransaction {
         /// The ID of the peer to which the transactions are sent.
         peer_id: PeerId,
         /// The shared transactions to send.
-        msg: SharedTransactions<N::BroadcastedTransaction>,
+        msg: SharedTransactions<BaseTxEnvelope>,
     },
     /// Sends cached full pool transactions to the given peer.
     SendBroadcastPoolTransactions {
@@ -615,19 +614,19 @@ pub(crate) enum NetworkHandleMessage<N: NetworkPrimitives = EthNetworkPrimitives
         /// The peer to send the request to.
         peer_id: PeerId,
         /// The request to send to the peer's sessions.
-        request: PeerRequest<N>,
+        request: PeerRequest,
     },
     /// Sends an `eth` protocol message to the peer.
     EthMessage {
         /// The peer to send the message to.
         peer_id: PeerId,
         /// The `eth` protocol message to send to the peer's session.
-        message: PeerMessage<N>,
+        message: PeerMessage,
     },
     /// Applies a reputation change to the given peer.
     ReputationChange(PeerId, ReputationChangeKind),
     /// Returns the client that can be used to interact with the network.
-    FetchClient(oneshot::Sender<FetchClient<N>>),
+    FetchClient(oneshot::Sender<FetchClient>),
     /// Applies a status update.
     StatusUpdate {
         /// The head status to apply.
@@ -651,7 +650,7 @@ pub(crate) enum NetworkHandleMessage<N: NetworkPrimitives = EthNetworkPrimitives
     /// Gets the reputation for a specific peer via a oneshot sender.
     GetReputationById(PeerId, oneshot::Sender<Option<Reputation>>),
     /// Retrieves the `TransactionsHandle` via a oneshot sender.
-    GetTransactionsHandle(oneshot::Sender<Option<TransactionsHandle<N>>>),
+    GetTransactionsHandle(oneshot::Sender<Option<TransactionsHandle>>),
     /// Initiates a graceful shutdown of the network via a oneshot sender.
     Shutdown(oneshot::Sender<()>),
     /// Sets the network state between hibernation and active.

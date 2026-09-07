@@ -1,27 +1,23 @@
-use reth_network::NetworkPrimitives;
-use reth_node_api::BlockBody;
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_provider::BlockReader;
 
-/// This is a type alias to make type bounds simpler, when we have a [`NetworkPrimitives`] and need
-/// a [`BlockReader`] whose associated types match the [`NetworkPrimitives`] associated types.
-pub trait BlockReaderFor<N: NetworkPrimitives>:
+/// Block reader bound for the concrete Base wire types.
+pub trait BlockReaderFor:
     BlockReader<
-        Block = N::Block,
-        Header = N::BlockHeader,
-        Transaction = <N::BlockBody as BlockBody>::Transaction,
-        Receipt = N::Receipt,
+        Block = BaseBlock,
+        Header = alloy_consensus::Header,
+        Transaction = BaseTxEnvelope,
+        Receipt = BaseReceipt,
     >
 {
 }
 
-impl<N, T> BlockReaderFor<N> for T
-where
-    N: NetworkPrimitives,
+impl<T> BlockReaderFor for T where
     T: BlockReader<
-            Block = N::Block,
-            Header = N::BlockHeader,
-            Transaction = <N::BlockBody as BlockBody>::Transaction,
-            Receipt = N::Receipt,
-        >,
+            Block = BaseBlock,
+            Header = alloy_consensus::Header,
+            Transaction = BaseTxEnvelope,
+            Receipt = BaseReceipt,
+        >
 {
 }

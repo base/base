@@ -8,8 +8,7 @@ use std::{
 
 use futures::Stream;
 use reth_eth_wire::{
-    Capabilities, DisconnectReason, EthNetworkPrimitives, EthVersion, NetworkPrimitives,
-    UnifiedStatus, errors::EthStreamError,
+    Capabilities, DisconnectReason, EthVersion, UnifiedStatus, errors::EthStreamError,
 };
 use reth_network_api::{PeerRequest, PeerRequestSender};
 use reth_network_peers::PeerId;
@@ -50,23 +49,23 @@ use crate::{
 /// `include_mmd!("docs/mermaid/swarm.mmd`")
 #[derive(Debug)]
 #[must_use = "Swarm does nothing unless polled"]
-pub(crate) struct Swarm<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub(crate) struct Swarm {
     /// Listens for new incoming connections.
     incoming: ConnectionListener,
     /// All sessions.
-    sessions: SessionManager<N>,
+    sessions: SessionManager,
     /// Tracks the entire state of the network and handles events received from the sessions.
-    state: NetworkState<N>,
+    state: NetworkState,
 }
 
 // === impl Swarm ===
 
-impl<N: NetworkPrimitives> Swarm<N> {
+impl Swarm {
     /// Configures a new swarm instance.
     pub(crate) const fn new(
         incoming: ConnectionListener,
-        sessions: SessionManager<N>,
-        state: NetworkState<N>,
+        sessions: SessionManager,
+        state: NetworkState,
     ) -> Self {
         Self { incoming, sessions, state }
     }
@@ -77,12 +76,12 @@ impl<N: NetworkPrimitives> Swarm<N> {
     }
 
     /// Access to the state.
-    pub(crate) const fn state(&self) -> &NetworkState<N> {
+    pub(crate) const fn state(&self) -> &NetworkState {
         &self.state
     }
 
     /// Mutable access to the state.
-    pub(crate) const fn state_mut(&mut self) -> &mut NetworkState<N> {
+    pub(crate) const fn state_mut(&mut self) -> &mut NetworkState {
         &mut self.state
     }
 
@@ -92,12 +91,12 @@ impl<N: NetworkPrimitives> Swarm<N> {
     }
 
     /// Access to the [`SessionManager`].
-    pub(crate) const fn sessions(&self) -> &SessionManager<N> {
+    pub(crate) const fn sessions(&self) -> &SessionManager {
         &self.sessions
     }
 
     /// Mutable access to the [`SessionManager`].
-    pub(crate) const fn sessions_mut(&mut self) -> &mut SessionManager<N> {
+    pub(crate) const fn sessions_mut(&mut self) -> &mut SessionManager {
         &mut self.sessions
     }
 
@@ -112,7 +111,7 @@ impl<N: NetworkPrimitives> Swarm<N> {
     }
 }
 
-impl<N: NetworkPrimitives> Swarm<N> {
+impl Swarm {
     /// Triggers a new outgoing connection to the given node
     pub(crate) fn dial_outbound(&mut self, remote_addr: SocketAddr, remote_id: PeerId) {
         self.sessions.dial_outbound(remote_addr, remote_id)
@@ -122,7 +121,7 @@ impl<N: NetworkPrimitives> Swarm<N> {
     ///
     /// This either updates the state or produces a new [`SwarmEvent`] that is bubbled up to the
     /// manager.
-    fn on_session_event(&mut self, event: SessionEvent<N>) -> Option<SwarmEvent<N>> {
+    fn on_session_event(&mut self, event: SessionEvent) -> Option<SwarmEvent> {
         match event {
             SessionEvent::SessionEstablished {
                 peer_id,
@@ -192,7 +191,7 @@ impl<N: NetworkPrimitives> Swarm<N> {
     /// Callback for events produced by [`ConnectionListener`].
     ///
     /// Depending on the event, this will produce a new [`SwarmEvent`].
-    fn on_connection(&mut self, event: ListenerEvent) -> Option<SwarmEvent<N>> {
+    fn on_connection(&mut self, event: ListenerEvent) -> Option<SwarmEvent> {
         match event {
             ListenerEvent::Error(err) => return Some(SwarmEvent::TcpListenerError(err)),
             ListenerEvent::ListenerClosed { local_address: address } => {
@@ -238,7 +237,7 @@ impl<N: NetworkPrimitives> Swarm<N> {
     }
 
     /// Hook for actions pulled from the state
-    fn on_state_action(&mut self, event: StateAction<N>) -> Option<SwarmEvent<N>> {
+    fn on_state_action(&mut self, event: StateAction) -> Option<SwarmEvent> {
         match event {
             StateAction::Connect { remote_addr, peer_id } => {
                 self.dial_outbound(remote_addr, peer_id);
@@ -306,8 +305,8 @@ impl<N: NetworkPrimitives> Swarm<N> {
     }
 }
 
-impl<N: NetworkPrimitives> Stream for Swarm<N> {
-    type Item = SwarmEvent<N>;
+impl Stream for Swarm {
+    type Item = SwarmEvent;
 
     /// This advances all components.
     ///
@@ -358,13 +357,13 @@ impl<N: NetworkPrimitives> Stream for Swarm<N> {
 
 /// All events created or delegated by the [`Swarm`] that represents changes to the state of the
 /// network.
-pub(crate) enum SwarmEvent<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub(crate) enum SwarmEvent {
     /// Events related to the actual network protocol.
     ValidMessage {
         /// The peer that sent the message
         peer_id: PeerId,
         /// Message received from the peer
-        message: PeerMessage<N>,
+        message: PeerMessage,
     },
     /// Received a bad message from the peer.
     BadMessage {
@@ -406,7 +405,7 @@ pub(crate) enum SwarmEvent<N: NetworkPrimitives = EthNetworkPrimitives> {
         capabilities: Arc<Capabilities>,
         /// negotiated eth version
         version: EthVersion,
-        messages: PeerRequestSender<PeerRequest<N>>,
+        messages: PeerRequestSender<PeerRequest>,
         status: Arc<UnifiedStatus>,
         direction: Direction,
     },

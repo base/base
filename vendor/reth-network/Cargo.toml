@@ -60,13 +60,13 @@ tokio-stream = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["net"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 reth-network-types = { workspace = true, features = ["serde"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 enr = { workspace = true, features = ["serde", "rust-secp256k1"] }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
-base-common-consensus = { workspace = true, features = ["reth"], optional = true }
 tokio = { workspace = true, features = ["io-util", "net", "macros", "rt-multi-thread", "time"] }
 
 [dev-dependencies]
@@ -89,4 +89,4 @@ reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
 [features]
 serde = ["dep:serde", "secp256k1/serde", "enr/serde", "reth-dns-discovery/serde", "reth-eth-wire/serde", "reth-eth-wire-types/serde", "alloy-consensus/serde", "alloy-eips/serde", "alloy-primitives/serde", "alloy-trie/serde", "discv5-reth/serde", "parking_lot/serde", "rand/serde", "smallvec/serde", "url/serde", "reth-primitives-traits/serde", "reth-ethereum-forks/serde", "reth-network/serde", "reth-transaction-pool/serde", "reth-ethereum-primitives/serde", "reth-network-api/serde", "rand_08/serde", "reth-storage-api/serde", "reth-network-types/serde", "reth-stages-types/serde", "reth-trie/serde", "alloy-eip7928/serde"]
-test-utils = ["dep:base-common-consensus", "reth-transaction-pool/test-utils", "reth-network-types/test-utils", "reth-chainspec/test-utils", "reth-consensus/test-utils", "reth-discv4/test-utils", "reth-network/test-utils", "reth-network-p2p/test-utils", "reth-primitives-traits/test-utils", "reth-provider/test-utils", "reth-ethereum-primitives/test-utils", "reth-tasks/test-utils", "reth-stages-types/test-utils", "reth-trie/test-utils", "reth-evm/test-utils"]
+test-utils = ["reth-transaction-pool/test-utils", "reth-network-types/test-utils", "reth-chainspec/test-utils", "reth-consensus/test-utils", "reth-discv4/test-utils", "reth-network/test-utils", "reth-network-p2p/test-utils", "reth-primitives-traits/test-utils", "reth-provider/test-utils", "reth-ethereum-primitives/test-utils", "reth-tasks/test-utils", "reth-stages-types/test-utils", "reth-trie/test-utils", "reth-evm/test-utils"]

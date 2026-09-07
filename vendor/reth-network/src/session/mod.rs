@@ -28,9 +28,8 @@ pub use handle::{
 use reth_ecies::{ECIESError, stream::ECIESStream};
 use reth_eth_wire::{
     BlockRangeUpdate, Capabilities, DisconnectReason, EthSnapStream, EthStream, EthVersion,
-    HANDSHAKE_TIMEOUT, HelloMessageWithProtocols, NetworkPrimitives, UnauthedP2PStream,
-    UnifiedStatus, errors::EthStreamError, handshake::EthRlpxHandshake,
-    multiplex::RlpxProtocolMultiplexer,
+    HANDSHAKE_TIMEOUT, HelloMessageWithProtocols, UnauthedP2PStream, UnifiedStatus,
+    errors::EthStreamError, handshake::EthRlpxHandshake, multiplex::RlpxProtocolMultiplexer,
 };
 use reth_ethereum_forks::{ForkFilter, ForkId, ForkTransition, Head};
 use reth_metrics::common::mpsc::MeteredPollSender;
@@ -68,7 +67,7 @@ pub struct SessionId(usize);
 /// Manages a set of sessions.
 #[must_use = "Session Manager must be polled to process session events."]
 #[derive(Debug)]
-pub struct SessionManager<N: NetworkPrimitives> {
+pub struct SessionManager {
     /// Tracks the identifier for the next session.
     next_id: usize,
     /// Keeps track of all sessions
@@ -99,21 +98,21 @@ pub struct SessionManager<N: NetworkPrimitives> {
     /// session is authenticated, it can be moved to the `active_session` set.
     pending_sessions: FxHashMap<SessionId, PendingSessionHandle>,
     /// All active sessions that are ready to exchange messages.
-    active_sessions: HashMap<PeerId, ActiveSessionHandle<N>, FbBuildHasher<64>>,
+    active_sessions: HashMap<PeerId, ActiveSessionHandle, FbBuildHasher<64>>,
     /// The original Sender half of the [`PendingSessionEvent`] channel.
     ///
     /// When a new (pending) session is created, the corresponding [`PendingSessionHandle`] will
     /// get a clone of this sender half.
-    pending_sessions_tx: mpsc::Sender<PendingSessionEvent<N>>,
+    pending_sessions_tx: mpsc::Sender<PendingSessionEvent>,
     /// Receiver half that listens for [`PendingSessionEvent`] produced by pending sessions.
-    pending_session_rx: ReceiverStream<PendingSessionEvent<N>>,
+    pending_session_rx: ReceiverStream<PendingSessionEvent>,
     /// The original Sender half of the [`ActiveSessionMessage`] channel.
     ///
     /// When active session state is reached, the corresponding [`ActiveSessionHandle`] will get a
     /// clone of this sender half.
-    active_session_tx: MeteredPollSender<ActiveSessionMessage<N>>,
+    active_session_tx: MeteredPollSender<ActiveSessionMessage>,
     /// Receiver half that listens for [`ActiveSessionMessage`] produced by pending sessions.
-    active_session_rx: ReceiverStream<ActiveSessionMessage<N>>,
+    active_session_rx: ReceiverStream<ActiveSessionMessage>,
     /// Additional `RLPx` sub-protocols to be used by the session manager.
     extra_protocols: RlpxSubProtocols,
     /// Tracks the ongoing graceful disconnections attempts for incoming connections.
@@ -134,7 +133,7 @@ pub struct SessionManager<N: NetworkPrimitives> {
 
 // === impl SessionManager ===
 
-impl<N: NetworkPrimitives> SessionManager<N> {
+impl SessionManager {
     /// Creates a new empty [`SessionManager`].
     #[expect(clippy::too_many_arguments)]
     pub fn new(
@@ -219,7 +218,7 @@ impl<N: NetworkPrimitives> SessionManager<N> {
     /// Returns a borrowed reference to the active sessions.
     pub const fn active_sessions(
         &self,
-    ) -> &HashMap<PeerId, ActiveSessionHandle<N>, FbBuildHasher<64>> {
+    ) -> &HashMap<PeerId, ActiveSessionHandle, FbBuildHasher<64>> {
         &self.active_sessions
     }
 
@@ -413,7 +412,7 @@ impl<N: NetworkPrimitives> SessionManager<N> {
     /// items (across the command channel, overflow channel, and session outgoing queue) is tracked
     /// by a shared atomic counter. If the bounded command channel is full but the broadcast limit
     /// hasn't been reached, the message overflows to a dedicated unbounded channel.
-    pub fn send_message(&self, peer_id: &PeerId, msg: PeerMessage<N>) {
+    pub fn send_message(&self, peer_id: &PeerId, msg: PeerMessage) {
         if let Some(session) = self.active_sessions.get(peer_id)
             && !session.commands.send_message(msg)
         {
@@ -429,7 +428,7 @@ impl<N: NetworkPrimitives> SessionManager<N> {
     }
 
     /// Removes the [`PendingSessionHandle`] if it exists.
-    fn remove_active_session(&mut self, id: &PeerId) -> Option<ActiveSessionHandle<N>> {
+    fn remove_active_session(&mut self, id: &PeerId) -> Option<ActiveSessionHandle> {
         let session = self.active_sessions.remove(id)?;
         self.counter.dec_active(&session.direction);
         Some(session)
@@ -467,7 +466,7 @@ impl<N: NetworkPrimitives> SessionManager<N> {
     /// This polls all the session handles and returns [`SessionEvent`].
     ///
     /// Active sessions are prioritized.
-    pub(crate) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<SessionEvent<N>> {
+    pub(crate) fn poll(&mut self, cx: &mut Context<'_>) -> Poll<SessionEvent> {
         // Poll events from active sessions
         match self.active_session_rx.poll_next_unpin(cx) {
             Poll::Pending => {}
@@ -774,7 +773,7 @@ impl DisconnectionsCounter {
 
 /// Events produced by the [`SessionManager`]
 #[derive(Debug)]
-pub enum SessionEvent<N: NetworkPrimitives> {
+pub enum SessionEvent {
     /// A new session was successfully authenticated.
     ///
     /// This session is now able to exchange data.
@@ -792,7 +791,7 @@ pub enum SessionEvent<N: NetworkPrimitives> {
         /// The Status message the peer sent during the `eth` handshake
         status: Arc<UnifiedStatus>,
         /// The channel for sending messages to the peer with the session
-        messages: PeerRequestSender<PeerRequest<N>>,
+        messages: PeerRequestSender<PeerRequest>,
         /// The direction of the session, either `Inbound` or `Outgoing`
         direction: Direction,
         /// The maximum time that the session waits for a response from the peer before timing out
@@ -817,7 +816,7 @@ pub enum SessionEvent<N: NetworkPrimitives> {
         /// The remote node's public key
         peer_id: PeerId,
         /// Message received from the peer.
-        message: PeerMessage<N>,
+        message: PeerMessage,
     },
     /// Received a bad message from the peer.
     BadMessage {
@@ -914,12 +913,12 @@ impl PendingSessionHandshakeError {
 pub struct ExceedsSessionLimit(pub(crate) u32);
 
 /// Starts a pending session authentication with a timeout.
-pub(crate) async fn pending_session_with_timeout<F, N: NetworkPrimitives>(
+pub(crate) async fn pending_session_with_timeout<F>(
     timeout: Duration,
     session_id: SessionId,
     remote_addr: SocketAddr,
     direction: Direction,
-    events: mpsc::Sender<PendingSessionEvent<N>>,
+    events: mpsc::Sender<PendingSessionEvent>,
     f: F,
 ) where
     F: Future<Output = ()>,
@@ -940,13 +939,13 @@ pub(crate) async fn pending_session_with_timeout<F, N: NetworkPrimitives>(
 ///
 /// This will wait for the _incoming_ handshake request and answer it.
 #[expect(clippy::too_many_arguments)]
-pub(crate) async fn start_pending_incoming_session<N: NetworkPrimitives>(
+pub(crate) async fn start_pending_incoming_session(
     handshake: Arc<dyn EthRlpxHandshake>,
     eth_max_message_size: usize,
     disconnect_rx: oneshot::Receiver<()>,
     session_id: SessionId,
     stream: TcpStream,
-    events: mpsc::Sender<PendingSessionEvent<N>>,
+    events: mpsc::Sender<PendingSessionEvent>,
     remote_addr: SocketAddr,
     secret_key: SecretKey,
     hello: HelloMessageWithProtocols,
@@ -975,11 +974,11 @@ pub(crate) async fn start_pending_incoming_session<N: NetworkPrimitives>(
 /// Starts the authentication process for a connection initiated by a remote peer.
 #[instrument(level = "trace", target = "net::network", skip_all, fields(%remote_addr, peer_id = ?remote_peer_id))]
 #[expect(clippy::too_many_arguments)]
-async fn start_pending_outbound_session<N: NetworkPrimitives>(
+async fn start_pending_outbound_session(
     handshake: Arc<dyn EthRlpxHandshake>,
     eth_max_message_size: usize,
     disconnect_rx: oneshot::Receiver<()>,
-    events: mpsc::Sender<PendingSessionEvent<N>>,
+    events: mpsc::Sender<PendingSessionEvent>,
     session_id: SessionId,
     remote_addr: SocketAddr,
     remote_peer_id: PeerId,
@@ -1028,11 +1027,11 @@ async fn start_pending_outbound_session<N: NetworkPrimitives>(
 
 /// Authenticates a session
 #[expect(clippy::too_many_arguments)]
-async fn authenticate<N: NetworkPrimitives>(
+async fn authenticate(
     handshake: Arc<dyn EthRlpxHandshake>,
     eth_max_message_size: usize,
     disconnect_rx: oneshot::Receiver<()>,
-    events: mpsc::Sender<PendingSessionEvent<N>>,
+    events: mpsc::Sender<PendingSessionEvent>,
     stream: TcpStream,
     session_id: SessionId,
     remote_addr: SocketAddr,
@@ -1115,7 +1114,7 @@ async fn get_ecies_stream<Io: AsyncRead + AsyncWrite + Unpin>(
 /// If additional [`RlpxSubProtocolHandlers`] are provided, the hello message will be updated to
 /// also negotiate the additional protocols.
 #[expect(clippy::too_many_arguments)]
-async fn authenticate_stream<N: NetworkPrimitives>(
+async fn authenticate_stream(
     handshake: Arc<dyn EthRlpxHandshake>,
     eth_max_message_size: usize,
     stream: UnauthedP2PStream<ECIESStream<TcpStream>>,
@@ -1127,7 +1126,7 @@ async fn authenticate_stream<N: NetworkPrimitives>(
     mut status: UnifiedStatus,
     fork_filter: ForkFilter,
     mut extra_handlers: RlpxSubProtocolHandlers,
-) -> PendingSessionEvent<N> {
+) -> PendingSessionEvent {
     // Add extra protocols to the hello message
     extra_handlers.retain(|handler| hello.try_add_protocol(handler.protocol()).is_ok());
 

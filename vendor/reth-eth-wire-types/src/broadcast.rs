@@ -19,7 +19,7 @@ use reth_codecs_derive::{add_arbitrary_tests, generate_tests};
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::{Block, InMemorySize, SignedTransaction, sync::OnceLock};
 
-use crate::{EthMessage, EthVersion, NetworkPrimitives};
+use crate::{EthMessage, EthVersion};
 
 /// Soft limit for the number of hashes in a
 /// [`NewPooledTransactionHashes`] broadcast message.
@@ -528,7 +528,7 @@ impl NewPooledTransactionHashes {
     }
 }
 
-impl<N: NetworkPrimitives> From<NewPooledTransactionHashes> for EthMessage<N> {
+impl From<NewPooledTransactionHashes> for EthMessage {
     fn from(value: NewPooledTransactionHashes) -> Self {
         match value {
             NewPooledTransactionHashes::Eth66(msg) => Self::NewPooledTransactionHashes66(msg),

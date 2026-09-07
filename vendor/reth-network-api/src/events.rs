@@ -8,12 +8,12 @@ use std::{
     task::{Context, Poll},
 };
 
+use base_common_consensus::BaseReceipt;
 use reth_eth_wire_types::{
     BlockAccessLists, BlockBodies, BlockHeaders, Capabilities, Cells, DisconnectReason, EthMessage,
-    EthNetworkPrimitives, EthVersion, GetBlockAccessLists, GetBlockBodies, GetBlockHeaders,
-    GetCells, GetNodeData, GetPooledTransactions, GetReceipts, GetReceipts70, NetworkPrimitives,
-    NodeData, PooledTransactions, Receipts, Receipts69, Receipts70, UnifiedStatus,
-    message::RequestPair, snap::SnapProtocolMessage,
+    EthVersion, GetBlockAccessLists, GetBlockBodies, GetBlockHeaders, GetCells, GetNodeData,
+    GetPooledTransactions, GetReceipts, GetReceipts70, NodeData, PooledTransactions, Receipts,
+    Receipts69, Receipts70, UnifiedStatus, message::RequestPair, snap::SnapProtocolMessage,
 };
 use reth_ethereum_forks::ForkId;
 use reth_network_p2p::{
@@ -141,11 +141,8 @@ pub trait NetworkPeersEvents: Send + Sync {
 /// Provides event subscription for the network.
 #[auto_impl::auto_impl(&, Arc)]
 pub trait NetworkEventListenerProvider: NetworkPeersEvents {
-    /// The primitive types to use in the `PeerRequest` used in the stream.
-    type Primitives: NetworkPrimitives;
-
     /// Creates a new [`NetworkEvent`] listener channel.
-    fn event_listener(&self) -> EventStream<NetworkEvent<PeerRequest<Self::Primitives>>>;
+    fn event_listener(&self) -> EventStream<NetworkEvent<PeerRequest>>;
     /// Returns a new [`DiscoveryEvent`] stream.
     ///
     /// This stream yields [`DiscoveryEvent`]s for each peer that is discovered.
@@ -193,7 +190,7 @@ pub enum DiscoveredEvent {
 
 /// Protocol related request messages that expect a response
 #[derive(Debug)]
-pub enum PeerRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub enum PeerRequest {
     /// Requests block headers from the peer.
     ///
     /// The response should be sent through the channel.
@@ -201,7 +198,7 @@ pub enum PeerRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
         /// The request for block headers.
         request: GetBlockHeaders,
         /// The channel to send the response for block headers.
-        response: oneshot::Sender<RequestResult<BlockHeaders<N::BlockHeader>>>,
+        response: oneshot::Sender<RequestResult<BlockHeaders<alloy_consensus::Header>>>,
     },
     /// Requests block bodies from the peer.
     ///
@@ -210,7 +207,7 @@ pub enum PeerRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
         /// The request for block bodies.
         request: GetBlockBodies,
         /// The channel to send the response for block bodies.
-        response: oneshot::Sender<RequestResult<BlockBodies<N::BlockBody>>>,
+        response: oneshot::Sender<RequestResult<BlockBodies<base_common_consensus::BaseBlockBody>>>,
     },
     /// Requests pooled transactions from the peer.
     ///
@@ -219,7 +216,9 @@ pub enum PeerRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
         /// The request for pooled transactions.
         request: GetPooledTransactions,
         /// The channel to send the response for pooled transactions.
-        response: oneshot::Sender<RequestResult<PooledTransactions<N::PooledTransaction>>>,
+        response: oneshot::Sender<
+            RequestResult<PooledTransactions<base_common_consensus::BasePooledTransaction>>,
+        >,
     },
     /// Requests `NodeData` from the peer.
     ///
@@ -237,7 +236,7 @@ pub enum PeerRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
         /// The request for receipts.
         request: GetReceipts,
         /// The channel to send the response for receipts.
-        response: oneshot::Sender<RequestResult<Receipts<N::Receipt>>>,
+        response: oneshot::Sender<RequestResult<Receipts<BaseReceipt>>>,
     },
     /// Requests receipts from the peer without bloom filter.
     ///
@@ -246,7 +245,7 @@ pub enum PeerRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
         /// The request for receipts.
         request: GetReceipts,
         /// The channel to send the response for receipts.
-        response: oneshot::Sender<RequestResult<Receipts69<N::Receipt>>>,
+        response: oneshot::Sender<RequestResult<Receipts69<BaseReceipt>>>,
     },
     /// Requests receipts from the peer using eth/70 (supports `firstBlockReceiptIndex`).
     ///
@@ -255,7 +254,7 @@ pub enum PeerRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
         /// The request for receipts.
         request: GetReceipts70,
         /// The channel to send the response for receipts.
-        response: oneshot::Sender<RequestResult<Receipts70<N::Receipt>>>,
+        response: oneshot::Sender<RequestResult<Receipts70<BaseReceipt>>>,
     },
     /// Requests block access lists from the peer.
     ///
@@ -289,16 +288,16 @@ pub enum PeerRequest<N: NetworkPrimitives = EthNetworkPrimitives> {
 /// The wire message a [`PeerRequest`] resolves to before it's queued for sending: either an `eth`
 /// message or a `snap/2` message.
 #[derive(Debug)]
-pub enum RequestMessage<N: NetworkPrimitives = EthNetworkPrimitives> {
+pub enum RequestMessage {
     /// An `eth` protocol message.
-    Eth(EthMessage<N>),
+    Eth(EthMessage),
     /// A `snap/2` (EIP-8189) protocol message.
     Snap(SnapProtocolMessage),
 }
 
 // === impl PeerRequest ===
 
-impl<N: NetworkPrimitives> PeerRequest<N> {
+impl PeerRequest {
     /// Invoked if we received a response which does not match the request
     pub fn send_bad_response(self) {
         self.send_err_response(RequestError::BadResponse)
@@ -331,7 +330,7 @@ impl<N: NetworkPrimitives> PeerRequest<N> {
     }
 
     /// Returns the [`RequestMessage`] for this type.
-    pub fn create_request_message(&self, request_id: u64) -> RequestMessage<N> {
+    pub fn create_request_message(&self, request_id: u64) -> RequestMessage {
         match self {
             Self::GetBlockHeaders { request, .. } => {
                 RequestMessage::Eth(EthMessage::GetBlockHeaders(RequestPair {
@@ -444,7 +443,7 @@ mod tests {
     #[test]
     fn test_get_block_access_lists_version_support() {
         let (tx, _rx) = oneshot::channel();
-        let req: PeerRequest<EthNetworkPrimitives> =
+        let req: PeerRequest =
             PeerRequest::GetBlockAccessLists { request: GetBlockAccessLists(vec![]), response: tx };
 
         assert!(!req.is_supported_by_eth_version(EthVersion::Eth70));
@@ -454,8 +453,7 @@ mod tests {
     #[test]
     fn test_get_cells_version_support() {
         let (tx, _rx) = oneshot::channel();
-        let req: PeerRequest<EthNetworkPrimitives> =
-            PeerRequest::GetCells { request: GetCells::default(), response: tx };
+        let req: PeerRequest = PeerRequest::GetCells { request: GetCells::default(), response: tx };
 
         assert!(!req.is_supported_by_eth_version(EthVersion::Eth71));
         assert!(req.is_supported_by_eth_version(EthVersion::Eth72));

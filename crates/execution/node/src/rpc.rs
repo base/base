@@ -17,7 +17,7 @@
 //! };
 //! use base_execution_chainspec::BaseChainSpec;
 //! use base_execution_evm::BaseEvmConfig;
-//! use base_node_core::{BaseNetworkPrimitives, BaseNode};
+//! use base_node_core::{BaseNode};
 //! use base_execution_rpc::BaseEthApiBuilder;
 //! use base_execution_txpool::BasePooledTransaction;
 //! use reth_provider::providers::BlockchainProvider;
@@ -55,7 +55,7 @@
 //!                 .noop_pool::<BasePooledTransaction>()
 //!                 .executor(move |_: &_| std::future::ready(Ok(evm_config)))
 //!                 .noop_consensus()
-//!                 .noop_network::<BaseNetworkPrimitives>()
+//!                 .noop_network()
 //!                 .noop_payload(),
 //!             Box::new(()) as Box<dyn OnComponentInitializedHook<_>>,
 //!         )

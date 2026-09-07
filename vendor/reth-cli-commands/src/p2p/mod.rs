@@ -115,6 +115,7 @@ impl<C: ChainSpecParser> Command<C> {
 pub enum Subcommands<C: ChainSpecParser> {
     /// Download block header
     Header {
+        /// Download and connection options.
         #[command(flatten)]
         args: DownloadArgs<C>,
         /// The header number or hash
@@ -123,13 +124,14 @@ pub enum Subcommands<C: ChainSpecParser> {
     },
     /// Download block body
     Body {
+        /// Download and connection options.
         #[command(flatten)]
         args: DownloadArgs<C>,
         /// The block number or hash
         #[arg(value_parser = hash_or_num_value_parser)]
         id: BlockHashOrNumber,
     },
-    // RLPx utilities
+    /// RLPx utilities
     Rlpx(rlpx::Command),
     /// Bootnode command
     Bootnode(bootnode::Command),
@@ -137,6 +139,7 @@ pub enum Subcommands<C: ChainSpecParser> {
     Enode(enode::Command),
 }
 
+/// Options for downloading headers and bodies from peers.
 #[derive(Debug, Clone, Parser)]
 pub struct DownloadArgs<C: ChainSpecParser> {
     /// The number of retries per request
@@ -168,9 +171,7 @@ pub struct DownloadArgs<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> DownloadArgs<C> {
     /// Creates and spawns the network and returns the handle.
-    pub async fn launch_network<N>(
-        &self,
-    ) -> eyre::Result<reth_network::NetworkHandle<N::NetworkPrimitives>>
+    pub async fn launch_network<N>(&self) -> eyre::Result<reth_network::NetworkHandle>
     where
         C::ChainSpec: EthChainSpec + Hardforks + EthereumHardforks + Send + Sync + 'static,
         N: CliNodeTypes<ChainSpec = C::ChainSpec>,
@@ -199,25 +200,25 @@ impl<C: ChainSpecParser> DownloadArgs<C> {
             .resolved_bootnodes()
             .unwrap_or_else(|| self.chain.bootnodes().unwrap_or_default());
 
-        let net =
-            NetworkConfigBuilder::<N::NetworkPrimitives>::new(p2p_secret_key, Runtime::test())
-                .peer_config(config.peers_config_with_basic_nodes_from_file(None))
-                .sessions_config(config.sessions)
-                .external_ip_resolver(self.network.nat.clone())
-                .network_id(self.network.network_id)
-                .boot_nodes(boot_nodes.clone())
-                .apply(|builder| {
-                    self.network.discovery.apply_to_builder(builder, rlpx_socket, boot_nodes)
-                })
-                .build_with_noop_provider(self.chain.clone())
-                .manager()
-                .await?;
+        let net = NetworkConfigBuilder::new(p2p_secret_key, Runtime::test())
+            .peer_config(config.peers_config_with_basic_nodes_from_file(None))
+            .sessions_config(config.sessions)
+            .external_ip_resolver(self.network.nat.clone())
+            .network_id(self.network.network_id)
+            .boot_nodes(boot_nodes.clone())
+            .apply(|builder| {
+                self.network.discovery.apply_to_builder(builder, rlpx_socket, boot_nodes)
+            })
+            .build_with_noop_provider(self.chain.clone())
+            .manager()
+            .await?;
         let handle = net.handle().clone();
         tokio::task::spawn(net);
 
         Ok(handle)
     }
 
+    /// Builds the retry policy for peer requests.
     pub fn backoff(&self) -> ConstantBuilder {
         ConstantBuilder::default().with_max_times(self.retries.max(1))
     }

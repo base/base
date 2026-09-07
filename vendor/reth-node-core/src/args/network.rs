@@ -27,7 +27,7 @@ use reth_discv5::{
 use reth_net_banlist::IpFilter;
 use reth_net_nat::{DEFAULT_NET_IF_NAME, NatResolver};
 use reth_network::{
-    HelloMessageWithProtocols, NetworkConfigBuilder, NetworkPrimitives,
+    HelloMessageWithProtocols, NetworkConfigBuilder,
     transactions::{
         DEFAULT_SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESP_ON_PACK_GET_POOLED_TRANSACTIONS_REQ,
         SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESPONSE, TransactionFetcherConfig,
@@ -547,14 +547,14 @@ impl NetworkArgs {
     /// 2. `bootnodes` in the config file
     /// 3. Network preset flags (e.g. --holesky)
     /// 4. default to mainnet nodes
-    pub fn network_config<N: NetworkPrimitives>(
+    pub fn network_config(
         &self,
         config: &Config,
         chain_spec: impl EthChainSpec,
         secret_key: SecretKey,
         default_peers_file: PathBuf,
         executor: Runtime,
-    ) -> NetworkConfigBuilder<N> {
+    ) -> NetworkConfigBuilder {
         // `listener_addr` is the concrete RLPx TCP bind address. With `--net-if.experimental`,
         // this is the resolved interface IP and is also used as discv5's default address.
         let listener_addr = self.resolved_addr();
@@ -588,7 +588,7 @@ impl NetworkArgs {
             .with_enforce_enr_fork_id(self.enforce_enr_fork_id);
 
         // Configure basic network stack
-        NetworkConfigBuilder::<N>::new(secret_key, executor)
+        NetworkConfigBuilder::new(secret_key, executor)
             .external_ip_resolver(self.nat.clone())
             .sessions_config(
                 config.sessions.clone().with_upscaled_event_buffer(peers_config.max_peers()),
@@ -996,15 +996,12 @@ pub struct DiscoveryArgs {
 
 impl DiscoveryArgs {
     /// Apply the discovery settings to the given [`NetworkConfigBuilder`]
-    pub fn apply_to_builder<N>(
+    pub fn apply_to_builder(
         &self,
-        mut network_config_builder: NetworkConfigBuilder<N>,
+        mut network_config_builder: NetworkConfigBuilder,
         rlpx_tcp_socket: SocketAddr,
         boot_nodes: impl IntoIterator<Item = NodeRecord>,
-    ) -> NetworkConfigBuilder<N>
-    where
-        N: NetworkPrimitives,
-    {
+    ) -> NetworkConfigBuilder {
         if self.disable_discovery || self.disable_dns_discovery {
             network_config_builder = network_config_builder.disable_dns_discovery();
         }
@@ -1624,7 +1621,7 @@ mod tests {
 
         // Build the network config using a deterministic secret key
         let secret_key = SecretKey::from_byte_array(&[1u8; 32]).unwrap();
-        let builder = args.network_config::<reth_network::EthNetworkPrimitives>(
+        let builder = args.network_config(
             &Config::default(),
             MAINNET.clone(),
             secret_key,
@@ -1650,7 +1647,7 @@ mod tests {
         let secret_key = SecretKey::from_byte_array(&[1u8; 32]).unwrap();
 
         let boot_nodes = |args: &NetworkArgs| {
-            args.network_config::<reth_network::EthNetworkPrimitives>(
+            args.network_config(
                 &config,
                 MAINNET.clone(),
                 secret_key,

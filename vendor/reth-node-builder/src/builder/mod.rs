@@ -6,13 +6,13 @@
 use std::sync::Arc;
 
 use alloy_eips::eip4844::env_settings::EnvKzgSettings;
+use base_common_consensus::BaseTxEnvelope;
 use futures::Future;
 use reth_chainspec::{EthChainSpec, EthereumHardforks, Hardforks};
 use reth_db_api::{database::Database, database_metrics::DatabaseMetrics};
 use reth_exex::ExExContext;
 use reth_network::{
     NetworkBuilder, NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager,
-    NetworkPrimitives,
     transactions::{
         TransactionPropagationPolicy, TransactionsManagerConfig,
         config::{AnnouncementFilteringPolicy, StrictEthAnnouncementFilter},
@@ -821,21 +821,16 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
     ///
     /// Spawns the configured network and associated tasks and returns the [`NetworkHandle`]
     /// connected to that network.
-    pub fn start_network<N, Pool>(
-        &self,
-        builder: NetworkBuilder<(), (), N>,
-        pool: Pool,
-    ) -> NetworkHandle<N>
+    pub fn start_network<Pool>(&self, builder: NetworkBuilder<(), ()>, pool: Pool) -> NetworkHandle
     where
-        N: NetworkPrimitives,
         Pool: TransactionPool<
                 Transaction: PoolTransaction<
-                    Consensus = N::BroadcastedTransaction,
-                    Pooled = N::PooledTransaction,
+                    Consensus = BaseTxEnvelope,
+                    Pooled = base_common_consensus::BasePooledTransaction,
                 >,
             > + Unpin
             + 'static,
-        Node::Provider: BlockReaderFor<N>,
+        Node::Provider: BlockReaderFor,
     {
         self.start_network_with(
             builder,
@@ -852,24 +847,23 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
     ///
     /// Spawns the configured network and associated tasks and returns the [`NetworkHandle`]
     /// connected to that network.
-    pub fn start_network_with<Pool, N, Policy>(
+    pub fn start_network_with<Pool, Policy>(
         &self,
-        builder: NetworkBuilder<(), (), N>,
+        builder: NetworkBuilder<(), ()>,
         pool: Pool,
         tx_config: TransactionsManagerConfig,
         propagation_policy: Policy,
-    ) -> NetworkHandle<N>
+    ) -> NetworkHandle
     where
-        N: NetworkPrimitives,
         Pool: TransactionPool<
                 Transaction: PoolTransaction<
-                    Consensus = N::BroadcastedTransaction,
-                    Pooled = N::PooledTransaction,
+                    Consensus = BaseTxEnvelope,
+                    Pooled = base_common_consensus::BasePooledTransaction,
                 >,
             > + Unpin
             + 'static,
-        Node::Provider: BlockReaderFor<N>,
-        Policy: TransactionPropagationPolicy<N>,
+        Node::Provider: BlockReaderFor,
+        Policy: TransactionPropagationPolicy,
     {
         self.start_network_with_policies(
             builder,
@@ -888,26 +882,25 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
     ///
     /// Spawns the configured network and associated tasks and returns the [`NetworkHandle`]
     /// connected to that network.
-    pub fn start_network_with_policies<Pool, N, PropPolicy, AnnPolicy>(
+    pub fn start_network_with_policies<Pool, PropPolicy, AnnPolicy>(
         &self,
-        builder: NetworkBuilder<(), (), N>,
+        builder: NetworkBuilder<(), ()>,
         pool: Pool,
         tx_config: TransactionsManagerConfig,
         propagation_policy: PropPolicy,
         announcement_policy: AnnPolicy,
-    ) -> NetworkHandle<N>
+    ) -> NetworkHandle
     where
-        N: NetworkPrimitives,
         Pool: TransactionPool<
                 Transaction: PoolTransaction<
-                    Consensus = N::BroadcastedTransaction,
-                    Pooled = N::PooledTransaction,
+                    Consensus = BaseTxEnvelope,
+                    Pooled = base_common_consensus::BasePooledTransaction,
                 >,
             > + Unpin
             + 'static,
-        Node::Provider: BlockReaderFor<N>,
-        PropPolicy: TransactionPropagationPolicy<N>,
-        AnnPolicy: AnnouncementFilteringPolicy<N>,
+        Node::Provider: BlockReaderFor,
+        PropPolicy: TransactionPropagationPolicy,
+        AnnPolicy: AnnouncementFilteringPolicy,
     {
         let (handle, network, txpool, eth) = builder
             .transactions_with_policies(
@@ -961,12 +954,11 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
     }
 
     /// Builds the [`NetworkConfig`].
-    pub fn build_network_config<N>(
+    pub fn build_network_config(
         &self,
-        network_builder: NetworkConfigBuilder<N>,
-    ) -> NetworkConfig<Node::Provider, N>
+        network_builder: NetworkConfigBuilder,
+    ) -> NetworkConfig<Node::Provider>
     where
-        N: NetworkPrimitives,
         Node::Types: NodeTypes<ChainSpec: Hardforks>,
     {
         network_builder.build(self.provider.clone())
@@ -975,29 +967,20 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
 
 impl<Node: FullNodeTypes<Types: NodeTypes<ChainSpec: Hardforks>>> BuilderContext<Node> {
     /// Creates the [`NetworkBuilder`] for the node.
-    pub async fn network_builder<N>(&self) -> eyre::Result<NetworkBuilder<(), (), N>>
-    where
-        N: NetworkPrimitives,
-    {
+    pub async fn network_builder(&self) -> eyre::Result<NetworkBuilder<(), ()>> {
         let network_config = self.network_config()?;
         let builder = NetworkManager::builder(network_config).await?;
         Ok(builder)
     }
 
     /// Returns the default network config for the node.
-    pub fn network_config<N>(&self) -> eyre::Result<NetworkConfig<Node::Provider, N>>
-    where
-        N: NetworkPrimitives,
-    {
+    pub fn network_config(&self) -> eyre::Result<NetworkConfig<Node::Provider>> {
         let network_builder = self.network_config_builder();
         Ok(self.build_network_config(network_builder?))
     }
 
     /// Get the [`NetworkConfigBuilder`].
-    pub fn network_config_builder<N>(&self) -> eyre::Result<NetworkConfigBuilder<N>>
-    where
-        N: NetworkPrimitives,
-    {
+    pub fn network_config_builder(&self) -> eyre::Result<NetworkConfigBuilder> {
         let secret_key = self.network_secret(&self.config().datadir())?;
         let default_peers_path = self.config().datadir().known_peers();
         let builder = self

@@ -4,8 +4,7 @@ use std::{io, net::SocketAddr, sync::Arc, time::Instant};
 
 use reth_ecies::ECIESError;
 use reth_eth_wire::{
-    Capabilities, DisconnectReason, EthVersion, NetworkPrimitives, UnifiedStatus,
-    errors::EthStreamError,
+    Capabilities, DisconnectReason, EthVersion, UnifiedStatus, errors::EthStreamError,
 };
 use reth_network_api::PeerInfo;
 use reth_network_peers::{NodeRecord, PeerId};
@@ -55,7 +54,7 @@ impl PendingSessionHandle {
 /// Within an active session that supports the `Ethereum Wire Protocol`, three high-level tasks can
 /// be performed: chain synchronization, block propagation and transaction exchange.
 #[derive(Debug)]
-pub struct ActiveSessionHandle<N: NetworkPrimitives> {
+pub struct ActiveSessionHandle {
     /// The direction of the session
     pub(crate) direction: Direction,
     /// The assigned id for this session
@@ -69,7 +68,7 @@ pub struct ActiveSessionHandle<N: NetworkPrimitives> {
     /// Announced capabilities of the peer.
     pub(crate) capabilities: Arc<Capabilities>,
     /// Sender for commands to the spawned session with broadcast-aware backpressure.
-    pub(crate) commands: SessionCommandSender<N>,
+    pub(crate) commands: SessionCommandSender,
     /// The client's name and version
     pub(crate) client_version: Arc<str>,
     /// The address we're connected to
@@ -87,7 +86,7 @@ pub struct ActiveSessionHandle<N: NetworkPrimitives> {
 
 // === impl ActiveSessionHandle ===
 
-impl<N: NetworkPrimitives> ActiveSessionHandle<N> {
+impl ActiveSessionHandle {
     /// Sends a disconnect command to the session.
     pub fn disconnect(&self, reason: Option<DisconnectReason>) {
         self.commands.disconnect(reason);
@@ -97,7 +96,7 @@ impl<N: NetworkPrimitives> ActiveSessionHandle<N> {
     pub fn try_disconnect(
         &self,
         reason: Option<DisconnectReason>,
-    ) -> Result<(), SendError<SessionCommand<N>>> {
+    ) -> Result<(), SendError<SessionCommand>> {
         self.commands.try_disconnect(reason)
     }
 
@@ -190,21 +189,21 @@ impl<N: NetworkPrimitives> ActiveSessionHandle<N> {
 /// [`SessionManager`](super::SessionManager) has an accurate view of total in-flight broadcast
 /// pressure.
 #[derive(Debug)]
-pub(crate) struct SessionCommandSender<N: NetworkPrimitives> {
+pub(crate) struct SessionCommandSender {
     /// Bounded channel for all commands (primary path).
-    tx: mpsc::Sender<SessionCommand<N>>,
+    tx: mpsc::Sender<SessionCommand>,
     /// Unbounded channel used for broadcasts that overflow the bounded channel, and for
     /// disconnect commands (which must never be dropped due to backpressure).
-    unbounded_tx: mpsc::UnboundedSender<SessionCommand<N>>,
+    unbounded_tx: mpsc::UnboundedSender<SessionCommand>,
     /// Shared counter of in-flight broadcast items (channels + outgoing queue).
     broadcast_items: BroadcastItemCounter,
 }
 
-impl<N: NetworkPrimitives> SessionCommandSender<N> {
+impl SessionCommandSender {
     /// Creates a new sender with the given bounded channel, unbounded channel, and shared counter.
     pub(crate) const fn new(
-        tx: mpsc::Sender<SessionCommand<N>>,
-        unbounded_tx: mpsc::UnboundedSender<SessionCommand<N>>,
+        tx: mpsc::Sender<SessionCommand>,
+        unbounded_tx: mpsc::UnboundedSender<SessionCommand>,
         broadcast_items: BroadcastItemCounter,
     ) -> Self {
         Self { tx, unbounded_tx, broadcast_items }
@@ -223,7 +222,7 @@ impl<N: NetworkPrimitives> SessionCommandSender<N> {
     pub(crate) fn try_disconnect(
         &self,
         reason: Option<DisconnectReason>,
-    ) -> Result<(), SendError<SessionCommand<N>>> {
+    ) -> Result<(), SendError<SessionCommand>> {
         self.unbounded_tx.send(SessionCommand::Disconnect { reason }).map_err(|e| SendError(e.0))
     }
 
@@ -235,7 +234,7 @@ impl<N: NetworkPrimitives> SessionCommandSender<N> {
     /// item limit). Non-broadcast messages that cannot fit in the bounded channel are dropped.
     ///
     /// Returns `true` if the message was accepted, `false` if it was dropped.
-    pub(crate) fn send_message(&self, msg: PeerMessage<N>) -> bool {
+    pub(crate) fn send_message(&self, msg: PeerMessage) -> bool {
         if msg.is_broadcast() {
             let items = msg.message_item_count();
 
@@ -287,7 +286,7 @@ impl<N: NetworkPrimitives> SessionCommandSender<N> {
 ///
 /// A session starts with a `Handshake`, followed by a `Hello` message which
 #[derive(Debug)]
-pub enum PendingSessionEvent<N: NetworkPrimitives> {
+pub enum PendingSessionEvent {
     /// Represents a successful `Hello` and `Status` exchange: <https://github.com/ethereum/devp2p/blob/6b0abc3d956a626c28dce1307ee9f546db17b6bd/rlpx.md#hello-0x00>
     Established {
         /// An internal identifier for the established session
@@ -304,7 +303,7 @@ pub enum PendingSessionEvent<N: NetworkPrimitives> {
         status: Arc<UnifiedStatus>,
         /// The actual connection stream which can be used to send and receive `eth` protocol
         /// messages
-        conn: EthRlpxConnection<N>,
+        conn: EthRlpxConnection,
         /// The direction of the session, either `Inbound` or `Outgoing`
         direction: Direction,
         /// The remote node's user agent, usually containing the client name and version
@@ -351,20 +350,20 @@ pub enum PendingSessionEvent<N: NetworkPrimitives> {
 
 /// Commands that can be sent to the spawned session.
 #[derive(Debug)]
-pub enum SessionCommand<N: NetworkPrimitives> {
+pub enum SessionCommand {
     /// Disconnect the connection
     Disconnect {
         /// Why the disconnect was initiated
         reason: Option<DisconnectReason>,
     },
     /// Sends a message to the peer
-    Message(PeerMessage<N>),
+    Message(PeerMessage),
 }
 
 /// Message variants an active session can produce and send back to the
 /// [`SessionManager`](crate::session::SessionManager)
 #[derive(Debug)]
-pub enum ActiveSessionMessage<N: NetworkPrimitives> {
+pub enum ActiveSessionMessage {
     /// Session was gracefully disconnected.
     Disconnected {
         /// The remote node's public key
@@ -386,7 +385,7 @@ pub enum ActiveSessionMessage<N: NetworkPrimitives> {
         /// Identifier of the remote peer.
         peer_id: PeerId,
         /// Message received from the peer.
-        message: PeerMessage<N>,
+        message: PeerMessage,
     },
     /// Received a bad message from the peer.
     BadMessage {

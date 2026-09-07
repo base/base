@@ -287,13 +287,10 @@ async fn test_connect_to_non_multiplex_peer() {
 
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
 
-    let config = NetworkConfigBuilder::<reth_network::test_utils::TestNetworkPrimitives>::new(
-        secret_key,
-        Runtime::test(),
-    )
-    .listener_port(0)
-    .disable_discovery()
-    .build(NoopProvider::default());
+    let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
+        .listener_port(0)
+        .disable_discovery()
+        .build(NoopProvider::default());
 
     let mut network = NetworkManager::new(config).await.unwrap();
 

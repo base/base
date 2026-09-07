@@ -14,6 +14,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 /// Shared blob cell custody state.
+use base_common_consensus::BaseBlock;
 pub mod custody;
 pub mod downloaders;
 /// Network Error
@@ -34,8 +35,7 @@ pub use events::{
     PeerRequestSender, RequestMessage,
 };
 use reth_eth_wire_types::{
-    Capability, DisconnectReason, EthVersion, NetworkPrimitives, UnifiedStatus,
-    capability::Capabilities,
+    Capability, DisconnectReason, EthVersion, UnifiedStatus, capability::Capabilities,
 };
 use reth_network_p2p::sync::NetworkSyncUpdater;
 pub use reth_network_p2p::{BlockClient, HeadersClient};
@@ -48,9 +48,8 @@ pub type PeerId = alloy_primitives::B512;
 
 /// Helper trait that unifies network API needed to launch node.
 pub trait FullNetwork:
-    BlockDownloaderProvider<
-        Client: BlockClient<Block = <Self::Primitives as NetworkPrimitives>::Block>,
-    > + NetworkSyncUpdater
+    BlockDownloaderProvider<Client: BlockClient<Block = BaseBlock>>
+    + NetworkSyncUpdater
     + NetworkInfo
     + NetworkEventListenerProvider
     + Peers
@@ -62,9 +61,8 @@ pub trait FullNetwork:
 }
 
 impl<T> FullNetwork for T where
-    T: BlockDownloaderProvider<
-            Client: BlockClient<Block = <Self::Primitives as NetworkPrimitives>::Block>,
-        > + NetworkSyncUpdater
+    T: BlockDownloaderProvider<Client: BlockClient<Block = BaseBlock>>
+        + NetworkSyncUpdater
         + NetworkInfo
         + NetworkEventListenerProvider
         + Peers

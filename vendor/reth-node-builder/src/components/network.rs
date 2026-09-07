@@ -2,8 +2,6 @@
 
 use std::future::Future;
 
-use base_common_consensus::{BaseBlock, BaseReceipt};
-use reth_network::types::NetworkPrimitives;
 use reth_network_api::FullNetwork;
 use reth_transaction_pool::TransactionPool;
 
@@ -12,14 +10,7 @@ use crate::{BuilderContext, FullNodeTypes};
 /// A type that knows how to build the network implementation.
 pub trait NetworkBuilder<Node: FullNodeTypes, Pool: TransactionPool>: Send {
     /// The network built.
-    type Network: FullNetwork<
-        Primitives: NetworkPrimitives<
-            BlockHeader = alloy_consensus::Header,
-            BlockBody = base_common_consensus::BaseBlockBody,
-            Block = BaseBlock,
-            Receipt = BaseReceipt,
-        >,
-    >;
+    type Network: FullNetwork;
 
     /// Launches the network implementation and returns the handle to it.
     fn build_network(
@@ -32,14 +23,7 @@ pub trait NetworkBuilder<Node: FullNodeTypes, Pool: TransactionPool>: Send {
 impl<Node, Net, F, Fut, Pool> NetworkBuilder<Node, Pool> for F
 where
     Node: FullNodeTypes,
-    Net: FullNetwork<
-        Primitives: NetworkPrimitives<
-            BlockHeader = alloy_consensus::Header,
-            BlockBody = base_common_consensus::BaseBlockBody,
-            Block = BaseBlock,
-            Receipt = BaseReceipt,
-        >,
-    >,
+    Net: FullNetwork,
     Pool: TransactionPool,
     F: Fn(&BuilderContext<Node>, Pool) -> Fut + Send,
     Fut: Future<Output = eyre::Result<Net>> + Send,

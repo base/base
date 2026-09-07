@@ -32,6 +32,7 @@ pub use payload::PayloadTestContext;
 
 /// Helper for network operations
 mod network;
+pub use network::NetworkTestContext;
 
 /// Helper for rpc operations
 mod rpc;

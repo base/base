@@ -31,6 +31,7 @@ derive_more = { workspace = true, features = ["full"] }
 enr = { workspace = true, features = ["rust-secp256k1"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }

@@ -52,6 +52,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash", "arbitrary", 
 [features]
 default = ["std"]
 std = [
+    "base-common-consensus/std",
     "alloy-chains/std",
     "alloy-consensus/std",
     "alloy-eip7928?/std",
@@ -69,6 +70,7 @@ std = [
     "alloy-trie/std",
 ]
 arbitrary = [
+    "base-common-consensus/arbitrary",
     "reth-ethereum-primitives/arbitrary",
     "alloy-chains/arbitrary",
     "dep:alloy-eip7928",
@@ -84,6 +86,7 @@ arbitrary = [
     "alloy-trie/arbitrary",
 ]
 serde = [
+    "base-common-consensus/serde",
     "dep:serde",
     "alloy-chains/serde",
     "alloy-consensus/serde",

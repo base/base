@@ -47,7 +47,7 @@
 //! ```
 //! # async fn launch() {
 //! use reth_network::{
-//!     config::rng_secret_key, EthNetworkPrimitives, NetworkConfig, NetworkManager,
+//!     config::rng_secret_key, NetworkConfig, NetworkManager,
 //! };
 //! use reth_network_peers::mainnet_nodes;
 //! use reth_storage_api::noop::NoopProvider;
@@ -59,7 +59,7 @@
 //! // The key that's used for encrypting sessions and to identify our node.
 //! let local_key = rng_secret_key();
 //!
-//! let config = NetworkConfig::<_, EthNetworkPrimitives>::builder(local_key, Runtime::test())
+//! let config = NetworkConfig::<_>::builder(local_key, Runtime::test())
 //!     .boot_nodes(mainnet_nodes())
 //!     .build(client);
 //!
@@ -77,7 +77,7 @@
 //!
 //! ```
 //! use reth_network::{
-//!     config::rng_secret_key, EthNetworkPrimitives, NetworkConfig, NetworkManager,
+//!     config::rng_secret_key, NetworkConfig, NetworkManager,
 //! };
 //! use reth_network_peers::mainnet_nodes;
 //! use reth_storage_api::noop::NoopProvider;
@@ -90,7 +90,7 @@
 //!     // The key that's used for encrypting sessions and to identify our node.
 //!     let local_key = rng_secret_key();
 //!
-//!     let config = NetworkConfig::<_, EthNetworkPrimitives>::builder(local_key, Runtime::test())
+//!     let config = NetworkConfig::<_>::builder(local_key, Runtime::test())
 //!         .boot_nodes(mainnet_nodes())
 //!         .build(client.clone());
 //!     let transactions_manager_config = config.transactions_manager_config.clone();
@@ -157,7 +157,6 @@ pub use manager::NetworkManager;
 pub use metrics::TxTypesCounter;
 pub use network::{NetworkHandle, NetworkProtocols};
 pub use reth_eth_wire::{DisconnectReason, HelloMessageWithProtocols};
-pub use reth_eth_wire_types::{EthNetworkPrimitives, NetworkPrimitives, primitives};
 pub use reth_network_api::{
     BlockDownloaderProvider, DiscoveredEvent, DiscoveryEvent, NetworkEvent,
     NetworkEventListenerProvider, NetworkInfo, PeerRequest, PeerRequestSender, Peers, PeersInfo,

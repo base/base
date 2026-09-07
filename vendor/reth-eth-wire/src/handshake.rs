@@ -3,8 +3,7 @@ use std::{fmt::Debug, future::Future, pin::Pin, time::Duration};
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream};
 use reth_eth_wire_types::{
-    DisconnectReason, EthMessage, EthNetworkPrimitives, ProtocolMessage, StatusMessage,
-    UnifiedStatus,
+    DisconnectReason, EthMessage, ProtocolMessage, StatusMessage, UnifiedStatus,
 };
 use reth_ethereum_forks::ForkFilter;
 use reth_primitives_traits::GotExpected;
@@ -92,10 +91,8 @@ where
         let status = unified_status.into_message();
 
         // Send our status message
-        let status_msg = alloy_rlp::encode(ProtocolMessage::<EthNetworkPrimitives>::from(
-            EthMessage::Status(status),
-        ))
-        .into();
+        let status_msg =
+            alloy_rlp::encode(ProtocolMessage::from(EthMessage::Status(status))).into();
         unauth.send(status_msg).await.map_err(EthStreamError::from)?;
 
         // Receive peer's response
@@ -121,20 +118,18 @@ where
         }
 
         let version = status.version();
-        let their_status_message = match ProtocolMessage::<EthNetworkPrimitives>::decode_status(
-            version,
-            &mut their_msg.as_ref(),
-        ) {
-            Ok(status) => status,
-            Err(err) => {
-                debug!("decode error in eth handshake: msg={their_msg:x}");
-                unauth
-                    .disconnect(DisconnectReason::ProtocolBreach)
-                    .await
-                    .map_err(EthStreamError::from)?;
-                return Err(EthStreamError::InvalidMessage(err));
-            }
-        };
+        let their_status_message =
+            match ProtocolMessage::decode_status(version, &mut their_msg.as_ref()) {
+                Ok(status) => status,
+                Err(err) => {
+                    debug!("decode error in eth handshake: msg={their_msg:x}");
+                    unauth
+                        .disconnect(DisconnectReason::ProtocolBreach)
+                        .await
+                        .map_err(EthStreamError::from)?;
+                    return Err(EthStreamError::InvalidMessage(err));
+                }
+            };
 
         trace!("Validating incoming ETH status from peer");
 

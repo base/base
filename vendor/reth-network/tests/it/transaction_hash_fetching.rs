@@ -40,7 +40,8 @@ async fn transaction_hash_fetching() {
 
         for _ in 0..num_tx_per_peer {
             let mut tx_gen = TransactionGenerator::new(rand::rng());
-            let tx = tx_gen.gen_eip1559_pooled();
+            let tx =
+                reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
             let sender = tx.sender();
             provider.add_account(sender, ExtendedAccount::new(0, U256::from(100_000_000)));
             peer_pool.add_external_transaction(tx).await.unwrap();

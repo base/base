@@ -13,11 +13,10 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_eip7928::bal::RawBal;
 use alloy_primitives::{B256, Bytes, Sealable};
+use base_common_consensus::BaseBlock;
 use futures::FutureExt;
 use reth_consensus::Consensus;
-use reth_eth_wire_types::{
-    BlockAccessLists, EthNetworkPrimitives, HeadersDirection, NetworkPrimitives,
-};
+use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
 use reth_network_peers::{PeerId, WithPeerId};
 use reth_primitives_traits::{Block, SealedBlock, SealedBlockWith, SealedHeader};
 use tracing::{debug, trace};
@@ -1016,13 +1015,10 @@ enum RangeResponseResult<H, B> {
 /// A headers+bodies client implementation that does nothing.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct NoopFullBlockClient<Net = EthNetworkPrimitives>(PhantomData<Net>);
+pub struct NoopFullBlockClient(PhantomData<()>);
 
 /// Implements the `DownloadClient` trait for the `NoopFullBlockClient` struct.
-impl<Net> DownloadClient for NoopFullBlockClient<Net>
-where
-    Net: Debug + Send + Sync,
-{
+impl DownloadClient for NoopFullBlockClient {
     /// Reports a bad message received from a peer.
     ///
     /// # Arguments
@@ -1042,11 +1038,8 @@ where
 }
 
 /// Implements the `BodiesClient` trait for the `NoopFullBlockClient` struct.
-impl<Net> BodiesClient for NoopFullBlockClient<Net>
-where
-    Net: NetworkPrimitives,
-{
-    type Body = Net::BlockBody;
+impl BodiesClient for NoopFullBlockClient {
+    type Body = base_common_consensus::BaseBlockBody;
     /// Defines the output type of the function.
     type Output = futures::future::Ready<PeerRequestResult<Vec<Self::Body>>>;
 
@@ -1072,11 +1065,8 @@ where
     }
 }
 
-impl<Net> HeadersClient for NoopFullBlockClient<Net>
-where
-    Net: NetworkPrimitives,
-{
-    type Header = Net::BlockHeader;
+impl HeadersClient for NoopFullBlockClient {
+    type Header = alloy_consensus::Header;
     /// The output type representing a future containing a peer request result with a vector of
     /// headers.
     type Output = futures::future::Ready<PeerRequestResult<Vec<Self::Header>>>;
@@ -1103,17 +1093,11 @@ where
     }
 }
 
-impl<Net> BlockClient for NoopFullBlockClient<Net>
-where
-    Net: NetworkPrimitives,
-{
-    type Block = Net::Block;
+impl BlockClient for NoopFullBlockClient {
+    type Block = BaseBlock;
 }
 
-impl<Net> BlockAccessListsClient for NoopFullBlockClient<Net>
-where
-    Net: NetworkPrimitives,
-{
+impl BlockAccessListsClient for NoopFullBlockClient {
     type Output = futures::future::Ready<PeerRequestResult<BlockAccessLists>>;
 
     fn get_block_access_lists_with_priority_and_requirement(
@@ -1126,9 +1110,9 @@ where
     }
 }
 
-impl<Net> Default for NoopFullBlockClient<Net> {
+impl Default for NoopFullBlockClient {
     fn default() -> Self {
-        Self(PhantomData::<Net>)
+        Self(PhantomData::<()>)
     }
 }
 

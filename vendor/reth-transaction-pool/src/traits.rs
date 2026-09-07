@@ -23,7 +23,7 @@
 //! ### Type Relationships
 //!
 //! ```text
-//! BaseTxEnvelope  ←──   NetworkPrimitives::BroadcastedTransaction
+//! BaseTxEnvelope  ←──   BaseTxEnvelope (broadcast)
 //!        │                              │
 //!        │ (consensus format)           │ (announced to peers)
 //!        │                              │
@@ -34,7 +34,7 @@
 //!                   │ │ from pooled (always succeeds)
 //!                   │ │
 //!                   ▼ │ try_from consensus (may fail)
-//!            PoolTransaction::Pooled  ←──→  NetworkPrimitives::PooledTransaction
+//!            PoolTransaction::Pooled  ←──→  BasePooledTransaction (wire)
 //!                                             (sent on request)
 //! ```
 //!
