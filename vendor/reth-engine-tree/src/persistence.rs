@@ -663,7 +663,7 @@ mod tests {
         let secondary = ProviderFactoryBuilder::default()
             .open_read_only(
                 provider_factory.chain_spec(),
-                ReadOnlyConfig::from_datadir(provider_factory.db_ref().path()),
+                ReadOnlyConfig::from_db_dir(provider_factory.db_ref().path()),
                 reth_tasks::Runtime::test(),
             )
             .expect("failed to open read-only provider factory");
