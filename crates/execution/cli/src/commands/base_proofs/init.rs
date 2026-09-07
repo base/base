@@ -6,7 +6,7 @@ use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,
-    MdbxProofsStorage, RethTrieStorageLayout, RocksdbProofsStorage,
+    MdbxProofsStorage, RocksdbProofsStorage,
 };
 use base_node_core::args::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
@@ -14,7 +14,7 @@ use reth_chainspec::ChainInfo;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
 use reth_node_core::version::version_metadata;
-use reth_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory, StorageSettingsCache};
+use reth_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
 use tracing::info;
 
 /// Initializes the proofs storage with the current state of the chain.
@@ -103,7 +103,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
     ) -> eyre::Result<()>
     where
         S: BaseProofsInitialStateStore + BaseProofsStore + 'static,
-        F: BlockNumReader + DatabaseProviderFactory + StorageSettingsCache,
+        F: BlockNumReader + DatabaseProviderFactory,
     {
         // Check if already initialized
         if let Some((block_number, block_hash)) = storage.get_earliest_block_number()? {
@@ -128,16 +128,11 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
 
         // Run the backfill job
         {
-            let trie_layout = if provider_factory.cached_storage_settings().is_v2() {
-                RethTrieStorageLayout::Packed
-            } else {
-                RethTrieStorageLayout::Legacy
-            };
             let db_provider =
                 provider_factory.database_provider_ro()?.disable_long_read_transaction_safety();
             let db_tx = db_provider.into_tx();
 
-            InitializationJob::new(storage, db_tx, trie_layout).run(best_number, best_hash)?;
+            InitializationJob::new(storage, db_tx).run(best_number, best_hash)?;
         }
 
         info!(

@@ -11,11 +11,8 @@ use reth_codecs::Compact;
 use reth_config::config::EtlConfig;
 use reth_db_api::{
     DatabaseError,
-    cursor::{DbCursorRW, DbDupCursorRW},
-    models::{
-        AccountBeforeTx, BlockNumberAddress, IntegerList, ShardedKey,
-        storage_sharded_key::StorageShardedKey,
-    },
+    cursor::DbCursorRW,
+    models::{AccountBeforeTx, IntegerList, ShardedKey, storage_sharded_key::StorageShardedKey},
     tables,
     transaction::DbTxMut,
 };
@@ -218,7 +215,7 @@ where
                     return Err(InitStorageError::UninitializedDatabase);
                 }
 
-                let stored = factory.storage_settings()?.unwrap_or_else(StorageSettings::v1);
+                let stored = factory.storage_settings()?.unwrap_or_default();
                 if stored != genesis_storage_settings {
                     warn!(
                         target: "reth::storage",
@@ -271,18 +268,15 @@ where
     // not the genesis block number. This would cause increment_block(N) to fail.
     let static_file_provider = provider_rw.static_file_provider();
     if genesis_block_number > 0 {
-        if genesis_storage_settings.storage_v2 {
-            static_file_provider
-                .get_writer(genesis_block_number, StaticFileSegment::AccountChangeSets)?
-                .user_header_mut()
-                .set_expected_block_start(genesis_block_number);
-        }
-        if genesis_storage_settings.storage_v2 {
-            static_file_provider
-                .get_writer(genesis_block_number, StaticFileSegment::StorageChangeSets)?
-                .user_header_mut()
-                .set_expected_block_start(genesis_block_number);
-        }
+        static_file_provider
+            .get_writer(genesis_block_number, StaticFileSegment::AccountChangeSets)?
+            .user_header_mut()
+            .set_expected_block_start(genesis_block_number);
+
+        static_file_provider
+            .get_writer(genesis_block_number, StaticFileSegment::StorageChangeSets)?
+            .user_header_mut()
+            .set_expected_block_start(genesis_block_number);
     }
 
     insert_genesis_hashes(&provider_rw, alloc.iter())?;
@@ -316,12 +310,10 @@ where
         .user_header_mut()
         .set_block_range(genesis_block_number, genesis_block_number);
 
-    if genesis_storage_settings.storage_v2 {
-        static_file_provider
-            .get_writer(genesis_block_number, StaticFileSegment::TransactionSenders)?
-            .user_header_mut()
-            .set_block_range(genesis_block_number, genesis_block_number);
-    }
+    static_file_provider
+        .get_writer(genesis_block_number, StaticFileSegment::TransactionSenders)?
+        .user_header_mut()
+        .set_block_range(genesis_block_number, genesis_block_number);
 
     // `commit_unwind`` will first commit the DB and then the static file provider, which is
     // necessary on `init_genesis`.
@@ -669,97 +661,7 @@ fn parse_accounts(
     Ok(collector)
 }
 
-/// Takes a [`Collector`] and writes all accounts directly to database tables.
-///
-/// This bypasses the higher-level `insert_state`/`insert_genesis_hashes`/`insert_history`
-/// functions which build intermediate structures (`BundleStateInit`, `RevertsInit`,
-/// `ExecutionOutcome`) that duplicate all storage data 2-3x in memory. For accounts with
-/// millions of storage entries this causes OOM.
-///
-/// Instead, each account is written directly to all required tables using cursor operations,
-/// using `append`/`append_dup` for sorted tables where possible (MDBX fast path that skips
-/// B-tree traversal). Commits happen every [`STORAGE_COMMIT_THRESHOLD`] storage units to
-/// bound MDBX dirty page accumulation.
-///
-/// NOTE: This function is not idempotent. If the process crashes mid-import, the database
-/// must be wiped before retrying.
 fn dump_state<PF>(
-    mut collector: Collector<Address, GenesisAccount>,
-    provider_factory: &PF,
-    block: u64,
-) -> Result<(), eyre::Error>
-where
-    PF: DatabaseProviderFactory<ProviderRW: DBProvider<Tx: DbTxMut>>,
-    PF::ProviderRW: StaticFileProviderFactory
-        + StorageSettingsCache
-        + RocksDBProviderFactory
-        + NodePrimitivesProvider,
-{
-    let storage_settings = provider_factory.database_provider_rw()?.cached_storage_settings();
-    if storage_settings.storage_v2 {
-        return dump_state_v2(collector, provider_factory, block);
-    }
-
-    let accounts_len = collector.len();
-    let mut total_accounts: usize = 0;
-    let mut storage_units: usize = 0;
-
-    // pre-allocate the history list once — every entry uses the same single-block bitmap
-    let history_list = IntegerList::new([block])?;
-
-    // track seen bytecode hashes to avoid re-hashing and re-writing duplicates
-    let mut seen_bytecodes: B256Set = B256Set::default();
-
-    let mut provider_rw = provider_factory.database_provider_rw()?;
-
-    for entry in collector.iter()? {
-        let (address_raw, account_raw) = entry?;
-        let (address, _) = Address::from_compact(address_raw.as_slice(), address_raw.len());
-        let (account, _) = GenesisAccount::from_compact(account_raw.as_slice(), account_raw.len());
-
-        let account_storage_len = account.storage.as_ref().map_or(0, |s| s.len());
-        let account_units = 1 + account_storage_len;
-
-        // commit before this account would push us over the threshold
-        if storage_units > 0 && storage_units + account_units > STORAGE_COMMIT_THRESHOLD {
-            provider_rw.commit()?;
-            provider_rw = provider_factory.database_provider_rw()?;
-            info!(target: "reth::cli",
-                total_accounts,
-                accounts_len,
-                storage_units,
-                "Committed chunk"
-            );
-            storage_units = 0;
-            seen_bytecodes = B256Set::default();
-        }
-
-        write_account_to_db(
-            provider_rw.tx_ref(),
-            &address,
-            &account,
-            block,
-            &history_list,
-            &mut seen_bytecodes,
-        )?;
-
-        total_accounts += 1;
-        storage_units += account_units;
-
-        if total_accounts.is_multiple_of(100_000) {
-            info!(target: "reth::cli", total_accounts, accounts_len, "Writing accounts...");
-        }
-    }
-
-    // commit final batch
-    provider_rw.commit()?;
-
-    info!(target: "reth::cli", total_accounts, "All accounts written to database");
-
-    Ok(())
-}
-
-fn dump_state_v2<PF>(
     mut collector: Collector<Address, GenesisAccount>,
     provider_factory: &PF,
     block: u64,
@@ -963,89 +865,6 @@ where
     Provider: DBProvider<Tx: DbTxMut>,
 {
     reth_db_api::transaction::DbTx::commit(provider.into_tx()).map_err(ProviderError::from)
-}
-
-/// Writes a single account and all its storage to every required DB table directly,
-/// without building intermediary structures.
-///
-/// Uses `append_dup` for `DupSort` tables where insertion order matches key order (the ETL
-/// collector sorts by address, so `AccountChangeSets`, `PlainStorageState`, and
-/// `StorageChangeSets` receive data in sorted order within each account). For `HashedAccounts`
-/// and `HashedStorages`, insertion order is unsorted (keccak scrambles address order), so we
-/// use `put`/`upsert` which do a full B-tree lookup.
-fn write_account_to_db<TX: DbTxMut>(
-    tx: &TX,
-    address: &Address,
-    genesis_account: &GenesisAccount,
-    block: u64,
-    history_list: &IntegerList,
-    seen_bytecodes: &mut B256Set,
-) -> Result<(), eyre::Error> {
-    let bytecode_hash = if let Some(code) = &genesis_account.code {
-        let bytecode = Bytecode::new_raw_checked(code.clone())
-            .map_err(|e| eyre::eyre!("Invalid bytecode for {address}: {e}"))?;
-        let hash = bytecode.hash_slow();
-        if seen_bytecodes.insert(hash) {
-            tx.put::<tables::Bytecodes>(hash, bytecode)?;
-        }
-        Some(hash)
-    } else {
-        None
-    };
-
-    let account = Account {
-        nonce: genesis_account.nonce.unwrap_or_default(),
-        balance: genesis_account.balance,
-        bytecode_hash,
-    };
-
-    let hashed_address = keccak256(address);
-
-    // plain state — sorted by address (ETL order), use append
-    tx.put::<tables::PlainAccountState>(*address, account)?;
-
-    // hashed state — unsorted (keccak scrambles order), must use put
-    tx.put::<tables::HashedAccounts>(hashed_address, account)?;
-
-    // account changeset — DupSort keyed by block, subkey sorted by address (ETL order)
-    let mut acct_cs_cursor = tx.cursor_dup_write::<tables::AccountChangeSets>()?;
-    acct_cs_cursor.append_dup(block, AccountBeforeTx { address: *address, info: None })?;
-
-    // account history
-    tx.put::<tables::AccountsHistory>(ShardedKey::new(*address, u64::MAX), history_list.clone())?;
-
-    // storage entries
-    if let Some(storage) = &genesis_account.storage {
-        let mut hashed_storage_cursor = tx.cursor_dup_write::<tables::HashedStorages>()?;
-        let mut plain_storage_cursor = tx.cursor_dup_write::<tables::PlainStorageState>()?;
-        let mut storage_cs_cursor = tx.cursor_dup_write::<tables::StorageChangeSets>()?;
-
-        for (&key, &value) in storage {
-            let value_u256 = U256::from_be_bytes(value.0);
-
-            // plain storage — sorted by (address, key), use append_dup
-            plain_storage_cursor.append_dup(*address, StorageEntry { key, value: value_u256 })?;
-
-            // hashed storage — unsorted keccak order, use upsert
-            let hashed_key = keccak256(key);
-            hashed_storage_cursor
-                .upsert(hashed_address, &StorageEntry { key: hashed_key, value: value_u256 })?;
-
-            // storage changeset — sorted by (block, address), then by key via append_dup
-            storage_cs_cursor.append_dup(
-                BlockNumberAddress((block, *address)),
-                StorageEntry { key, value: U256::ZERO },
-            )?;
-
-            // storage history
-            tx.put::<tables::StoragesHistory>(
-                StorageShardedKey::new(*address, key, u64::MAX),
-                history_list.clone(),
-            )?;
-        }
-    }
-
-    Ok(())
 }
 
 /// Writes a single account to the v2 storage destinations.
@@ -1300,7 +1119,9 @@ mod tests {
     use reth_db_api::{
         Database,
         cursor::DbCursorRO,
-        models::{IntegerList, ShardedKey, storage_sharded_key::StorageShardedKey},
+        models::{
+            BlockNumberAddress, IntegerList, ShardedKey, storage_sharded_key::StorageShardedKey,
+        },
         table::{Table, TableRow},
         transaction::DbTx,
     };
@@ -1426,7 +1247,7 @@ mod tests {
     }
 
     #[test]
-    fn dump_state_v2_resets_presnapshot_changeset_static_files() {
+    fn dump_state_resets_presnapshot_changeset_static_files() {
         let storage_key = B256::with_last_byte(3);
         let input = br#"{"address":"0x0000000000000000000000000000000000000002","balance":"0x0","storage":{"0x0000000000000000000000000000000000000000000000000000000000000003":"0x0000000000000000000000000000000000000000000000000000000000000004"}}
 "#;
@@ -1633,7 +1454,7 @@ mod tests {
             IntegerList::new([0]).unwrap(),
         )];
 
-        let collect_from_mdbx = |factory: &ProviderFactory<MockNodeTypesWithDB>| {
+        let _collect_from_mdbx = |factory: &ProviderFactory<MockNodeTypesWithDB>| {
             let provider = factory.provider().unwrap();
             let tx = provider.tx_ref();
             (
@@ -1643,7 +1464,7 @@ mod tests {
         };
 
         {
-            let settings = factory.cached_storage_settings();
+            let _settings = factory.cached_storage_settings();
             let rocksdb = factory.rocksdb_provider();
 
             let collect_rocksdb = |rocksdb: &reth_provider::providers::RocksDBProvider| {
@@ -1661,26 +1482,10 @@ mod tests {
                 )
             };
 
-            let (accounts, storages) = if settings.storage_v2 {
-                collect_rocksdb(&rocksdb)
-            } else {
-                collect_from_mdbx(&factory)
-            };
+            let (accounts, storages) = { collect_rocksdb(&rocksdb) };
             assert_eq!(accounts, expected_accounts);
             assert_eq!(storages, expected_storages);
         }
-    }
-
-    #[test]
-    fn warn_storage_settings_mismatch() {
-        let factory = create_test_provider_factory_with_chain_spec(MAINNET.clone());
-        init_genesis_with_settings(&factory, StorageSettings::v1()).unwrap();
-
-        // Request different settings - should warn but succeed
-        let result = init_genesis_with_settings(&factory, StorageSettings::v2());
-
-        // Should succeed (warning is logged, not an error)
-        assert!(result.is_ok());
     }
 
     #[test]

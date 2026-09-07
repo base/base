@@ -7,7 +7,7 @@ use clap::Parser;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_config::{Config, config::EtlConfig};
-use reth_consensus::noop::NoopConsensus;
+use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_db::{DatabaseEnv, init_db, open_db_read_only};
 use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
@@ -35,6 +35,8 @@ use reth_stages::{Pipeline, PipelineTarget, sets::DefaultStages};
 use reth_static_file::StaticFileProducer;
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
+
+pub use crate::CliNodeComponents;
 
 /// Struct to hold config and datadir paths
 #[derive(Debug, Parser)]
@@ -68,7 +70,7 @@ pub struct EnvironmentArgs<C: ChainSpecParser> {
     #[command(flatten)]
     pub static_files: StaticFilesArgs,
 
-    /// Storage mode configuration (v2 vs v1/legacy)
+    /// Storage configuration
     #[command(flatten)]
     pub storage: StorageArgs,
 }
@@ -76,11 +78,11 @@ pub struct EnvironmentArgs<C: ChainSpecParser> {
 impl<C: ChainSpecParser> EnvironmentArgs<C> {
     /// Returns the storage settings for new database initialization.
     ///
-    /// Determined by the `--storage.v2` flag (defaults to `true`).
+    /// New databases always use the v2 storage layout.
     /// Existing databases retain whatever settings are persisted in their
     /// metadata (checked during genesis init).
     pub fn storage_settings(&self) -> StorageSettings {
-        if self.storage.v2 { StorageSettings::v2() } else { StorageSettings::v1() }
+        StorageSettings::v2()
     }
 
     /// Initializes environment according to [`AccessRights`] and returns an instance of
@@ -248,8 +250,6 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
                     StaticFileProducer::new(factory.clone(), config.prune.segments.clone()),
                 );
 
-            // Move all applicable data from database to static files.
-            pipeline.move_to_static_files()?;
             pipeline.unwind(unwind_target.unwind_target().expect("should exist"), None)?;
         }
 
@@ -308,8 +308,12 @@ type FullTypesAdapter<T> = FullNodeTypesAdapter<
 
 /// Helper trait with a common set of requirements for the
 /// [`NodeTypes`] in CLI.
-pub trait CliNodeTypes: Node<FullTypesAdapter<Self>> + NodeTypesForProvider {
-    type Evm: ConfigureEvm<Primitives = Self::Primitives>;
+pub trait CliNodeTypes: NodeTypesForProvider {
+    /// EVM used by offline execution commands.
+    type Evm: ConfigureEvm<Primitives = Self::Primitives> + 'static;
+    /// Consensus used by offline validation commands.
+    type Consensus: FullConsensus<Self::Primitives> + Clone + Unpin + 'static;
+    /// Wire types used by peer commands.
     type NetworkPrimitives: NetPrimitivesFor<Self::Primitives>;
 }
 
@@ -318,49 +322,8 @@ where
     N: Node<FullTypesAdapter<Self>> + NodeTypesForProvider,
 {
     type Evm = <<N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter<Self>>>::Components as NodeComponents<FullTypesAdapter<Self>>>::Evm;
+    type Consensus = <<N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter<Self>>>::Components as NodeComponents<FullTypesAdapter<Self>>>::Consensus;
     type NetworkPrimitives = <<<N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter<Self>>>::Components as NodeComponents<FullTypesAdapter<Self>>>::Network as NetworkEventListenerProvider>::Primitives;
-}
-
-type EvmFor<N> = <<<N as Node<FullTypesAdapter<N>>>::ComponentsBuilder as NodeComponentsBuilder<
-    FullTypesAdapter<N>,
->>::Components as NodeComponents<FullTypesAdapter<N>>>::Evm;
-
-type ConsensusFor<N> =
-    <<<N as Node<FullTypesAdapter<N>>>::ComponentsBuilder as NodeComponentsBuilder<
-        FullTypesAdapter<N>,
-    >>::Components as NodeComponents<FullTypesAdapter<N>>>::Consensus;
-
-/// Helper trait aggregating components required for the CLI.
-pub trait CliNodeComponents<N: CliNodeTypes>: Send + Sync + 'static {
-    /// Returns the configured EVM.
-    fn evm_config(&self) -> &EvmFor<N>;
-    /// Returns the consensus implementation.
-    fn consensus(&self) -> &ConsensusFor<N>;
-}
-
-impl<N: CliNodeTypes> CliNodeComponents<N> for (EvmFor<N>, ConsensusFor<N>) {
-    fn evm_config(&self) -> &EvmFor<N> {
-        &self.0
-    }
-
-    fn consensus(&self) -> &ConsensusFor<N> {
-        &self.1
-    }
-}
-
-/// Helper trait alias for an [`FnOnce`] producing [`CliNodeComponents`].
-pub trait CliComponentsBuilder<N: CliNodeTypes>:
-    FnOnce(Arc<N::ChainSpec>) -> Self::Components + Send + Sync + 'static
-{
-    type Components: CliNodeComponents<N>;
-}
-
-impl<N: CliNodeTypes, F, Comp> CliComponentsBuilder<N> for F
-where
-    F: FnOnce(Arc<N::ChainSpec>) -> Comp + Send + Sync + 'static,
-    Comp: CliNodeComponents<N>,
-{
-    type Components = Comp;
 }
 
 #[cfg(test)]

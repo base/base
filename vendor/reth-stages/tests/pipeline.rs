@@ -9,7 +9,6 @@ use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes};
 use reth_chainspec::{ChainSpecBuilder, ChainSpecProvider, MAINNET};
 use reth_config::config::StageConfig;
 use reth_consensus::noop::NoopConsensus;
-use reth_db_api::{cursor::DbCursorRO, models::BlockNumberAddress, transaction::DbTx};
 use reth_db_common::init::init_genesis;
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
@@ -37,9 +36,7 @@ use reth_revm::database::StateProviderDatabase;
 use reth_stages::sets::DefaultStages;
 use reth_stages_api::{Pipeline, StageId};
 use reth_static_file::StaticFileProducer;
-use reth_storage_api::{
-    ChangeSetReader, StateProvider, StorageChangeSetReader, StorageSettings, StorageSettingsCache,
-};
+use reth_storage_api::{ChangeSetReader, StateProvider, StorageChangeSetReader};
 use reth_testing_utils::generators::{self, generate_key, sign_tx_with_key_pair};
 use reth_trie::{HashedPostState, KeccakKeyHasher, StateRoot};
 use reth_trie_db::DatabaseStateRoot;
@@ -69,63 +66,34 @@ fn create_file_client_from_blocks(blocks: Vec<SealedBlock<Block>>) -> Arc<FileCl
 
 /// Verifies that changesets are queryable from the correct source based on storage settings.
 ///
-/// Queries static files when changesets are configured to be stored there, otherwise queries MDBX.
+/// Verifies account and storage changesets can be read from static files.
 fn assert_changesets_queryable(
     provider_factory: &reth_provider::ProviderFactory<
         reth_provider::test_utils::MockNodeTypesWithDB,
     >,
     block_range: std::ops::RangeInclusive<u64>,
 ) -> eyre::Result<()> {
-    let provider = provider_factory.provider()?;
-    let settings = provider.cached_storage_settings();
-
     // Verify storage changesets
-    if settings.storage_v2 {
-        let static_file_provider = provider_factory.static_file_provider();
-        static_file_provider.initialize_index()?;
-        let storage_changesets =
-            static_file_provider.storage_changesets_range(block_range.clone())?;
-        assert!(
-            !storage_changesets.is_empty(),
-            "storage changesets should be queryable from static files for blocks {:?}",
-            block_range
-        );
-    } else {
-        let storage_changesets: Vec<_> = provider
-            .tx_ref()
-            .cursor_dup_read::<reth_db::tables::StorageChangeSets>()?
-            .walk_range(BlockNumberAddress::range(block_range.clone()))?
-            .collect::<Result<Vec<_>, _>>()?;
-        assert!(
-            !storage_changesets.is_empty(),
-            "storage changesets should be queryable from MDBX for blocks {:?}",
-            block_range
-        );
-    }
+
+    let static_file_provider = provider_factory.static_file_provider();
+    static_file_provider.initialize_index()?;
+    let storage_changesets = static_file_provider.storage_changesets_range(block_range.clone())?;
+    assert!(
+        !storage_changesets.is_empty(),
+        "storage changesets should be queryable from static files for blocks {:?}",
+        block_range
+    );
 
     // Verify account changesets
-    if settings.storage_v2 {
-        let static_file_provider = provider_factory.static_file_provider();
-        static_file_provider.initialize_index()?;
-        let account_changesets =
-            static_file_provider.account_changesets_range(block_range.clone())?;
-        assert!(
-            !account_changesets.is_empty(),
-            "account changesets should be queryable from static files for blocks {:?}",
-            block_range
-        );
-    } else {
-        let account_changesets: Vec<_> = provider
-            .tx_ref()
-            .cursor_read::<reth_db::tables::AccountChangeSets>()?
-            .walk_range(block_range.clone())?
-            .collect::<Result<Vec<_>, _>>()?;
-        assert!(
-            !account_changesets.is_empty(),
-            "account changesets should be queryable from MDBX for blocks {:?}",
-            block_range
-        );
-    }
+
+    let static_file_provider = provider_factory.static_file_provider();
+    static_file_provider.initialize_index()?;
+    let account_changesets = static_file_provider.account_changesets_range(block_range.clone())?;
+    assert!(
+        !account_changesets.is_empty(),
+        "account changesets should be queryable from static files for blocks {:?}",
+        block_range
+    );
 
     Ok(())
 }
@@ -216,11 +184,7 @@ where
 ///
 /// When `storage_settings` is `Some`, the pipeline provider factory is configured with the given
 /// settings before genesis initialization (e.g. v2 storage mode).
-async fn run_pipeline_forward_and_unwind(
-    storage_settings: Option<StorageSettings>,
-    num_blocks: u64,
-    unwind_target: u64,
-) -> eyre::Result<()> {
+async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
     // Generate a keypair for signing transactions
@@ -396,9 +360,6 @@ async fn run_pipeline_forward_and_unwind(
     // This is needed because we wrote state during block generation for computing state roots
     let pipeline_provider_factory =
         create_test_provider_factory_with_chain_spec(chain_spec.clone());
-    if let Some(settings) = storage_settings {
-        pipeline_provider_factory.set_storage_settings_cache(settings);
-    }
     init_genesis(&pipeline_provider_factory).expect("init genesis");
     let pipeline_genesis =
         pipeline_provider_factory.sealed_header(0)?.expect("genesis should exist");
@@ -597,18 +558,5 @@ async fn run_pipeline_forward_and_unwind(
 /// This exercises both account and storage hashing/history stages.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_pipeline() -> eyre::Result<()> {
-    run_pipeline_forward_and_unwind(None, 5, 2).await
-}
-
-/// Same as [`test_pipeline`] but runs with v2 storage settings (`use_hashed_state=true`,
-/// `is_v2()=true`, etc.).
-///
-/// In v2 mode:
-/// - The execution stage writes directly to `HashedAccounts`/`HashedStorages`
-/// - `AccountHashingStage` and `StorageHashingStage` are no-ops during forward execution
-/// - Changesets are stored in static files with pre-hashed storage keys
-/// - Unwind must still revert hashed state via the hashing stages before `MerkleUnwind` validates
-#[tokio::test(flavor = "multi_thread")]
-async fn test_pipeline_v2() -> eyre::Result<()> {
-    run_pipeline_forward_and_unwind(Some(StorageSettings::v2()), 5, 2).await
+    run_pipeline_forward_and_unwind(5, 2).await
 }

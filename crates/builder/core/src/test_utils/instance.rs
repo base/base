@@ -17,12 +17,11 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::BasePooledTransaction;
 use base_node_core::args::RollupArgs;
 use base_node_runner::{
-    BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks,
-    PayloadServiceBuilder as BasePayloadServiceBuilder, test_utils::init_silenced_tracing,
+    BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks, test_utils::init_silenced_tracing,
 };
 use futures::FutureExt;
 use nanoid::nanoid;
-use reth_node_builder::{Node, NodeBuilder, NodeConfig};
+use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_node_core::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     exit::NodeExitFuture,
@@ -209,8 +208,8 @@ impl LocalInstance {
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config);
 
-        let service_builder = BlockServiceBuilder::new(builder_config.clone());
-        let components = service_builder.build_components(&base_node);
+        let service_builder = BlockServiceBuilder::build(builder_config.clone());
+        let components = base_node.components().payload(service_builder);
 
         let (txpool_ready_tx, txpool_ready_rx) =
             oneshot::channel::<AllTransactionsEvents<BasePooledTransaction>>();
@@ -226,7 +225,7 @@ impl LocalInstance {
             .with_launch_context(runtime.clone())
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(components)
-            .with_add_ons(base_node.add_ons())
+            .with_add_ons(base_node.add_ons_builder().build())
             .on_component_initialized(move |_ctx| Ok(()));
 
         // Apply caller-supplied extensions through the production hook pipeline, then append an

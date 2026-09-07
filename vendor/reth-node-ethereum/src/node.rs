@@ -17,11 +17,10 @@ use reth_evm::{
 use reth_evm_ethereum::factory::RethEvmFactory;
 use reth_network::{NetworkHandle, PeersInfo, primitives::BasicNetworkPrimitives};
 use reth_node_api::{
-    AddOnsContext, FullNodeComponents, HeaderTy, NodeAddOns, NodePrimitives,
-    PayloadAttributesBuilder, PrimitivesTy, TxTy,
+    AddOnsContext, FullNodeComponents, HeaderTy, NodeAddOns, NodePrimitives, PrimitivesTy, TxTy,
 };
 use reth_node_builder::{
-    BuilderContext, DebugNode, Node, NodeAdapter, PayloadBuilderConfig,
+    BuilderContext, DebugNodeConfig, Node, NodeAdapter, PayloadBuilderConfig,
     components::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
         NetworkBuilder, PoolBuilder, TxPoolBuilder,
@@ -457,17 +456,15 @@ where
     }
 }
 
-impl<N: FullNodeComponents<Types = Self>> DebugNode<N> for EthereumNode {
-    type RpcBlock = alloy_rpc_types_eth::Block;
-
-    fn rpc_to_primitive_block(rpc_block: Self::RpcBlock) -> reth_ethereum_primitives::Block {
-        rpc_block.into_consensus().convert_transactions()
-    }
-
-    fn local_payload_attributes_builder(
-        chain_spec: &Self::ChainSpec,
-    ) -> impl PayloadAttributesBuilder<<Self::Payload as PayloadTypes>::PayloadAttributes> {
-        LocalPayloadAttributesBuilder::new(Arc::new(chain_spec.clone()))
+impl EthereumNode {
+    /// Returns the concrete RPC conversion and local-mining configuration.
+    pub fn debug_config() -> DebugNodeConfig<Self, alloy_rpc_types_eth::Block> {
+        DebugNodeConfig {
+            rpc_to_primitive_block: |block| block.into_consensus().convert_transactions(),
+            local_payload_attributes_builder: |chain_spec| {
+                Box::new(LocalPayloadAttributesBuilder::new(Arc::new(chain_spec.clone())))
+            },
+        }
     }
 }
 

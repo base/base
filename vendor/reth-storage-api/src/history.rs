@@ -1,4 +1,4 @@
-use core::ops::{RangeBounds, RangeInclusive};
+use core::ops::RangeBounds;
 
 use alloy_primitives::{Address, B256, BlockNumber};
 use auto_impl::auto_impl;
@@ -53,7 +53,4 @@ pub trait HistoryWriter: Send {
         &self,
         storage_transitions: impl IntoIterator<Item = ((Address, B256), impl IntoIterator<Item = u64>)>,
     ) -> ProviderResult<()>;
-
-    /// Read account/storage changesets and update account/storage history indices.
-    fn update_history_indices(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<()>;
 }

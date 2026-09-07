@@ -17,7 +17,7 @@
 //! };
 //! use base_execution_chainspec::BaseChainSpec;
 //! use base_execution_evm::BaseEvmConfig;
-//! use base_node_core::{BaseNetworkPrimitives, BaseExecutorBuilder, BaseNode};
+//! use base_node_core::{BaseNetworkPrimitives, BaseNode};
 //! use base_execution_rpc::BaseEthApiBuilder;
 //! use base_execution_txpool::BasePooledTransaction;
 //! use reth_provider::providers::BlockchainProvider;
@@ -31,6 +31,7 @@
 //! async fn main() {
 //!     // build core node with all components disabled except EVM and state
 //!     let sepolia = NodeConfig::new(Arc::new(BaseChainSpec::sepolia()));
+//!     let evm_config = BaseEvmConfig::base(sepolia.chain.clone());
 //!     let db = create_test_rw_db_with_path(sepolia.datadir());
 //!     let runtime = Runtime::with_existing_handle(tokio::runtime::Handle::current()).unwrap();
 //!     let launch_ctx = LaunchContext::new(runtime, sepolia.datadir());
@@ -52,7 +53,7 @@
 //!             ComponentsBuilder::default()
 //!                 .node_types::<RethFullAdapter<_, BaseNode>>()
 //!                 .noop_pool::<BasePooledTransaction>()
-//!                 .executor(BaseExecutorBuilder::default())
+//!                 .executor(move |_: &_| std::future::ready(Ok(evm_config)))
 //!                 .noop_consensus()
 //!                 .noop_network::<BaseNetworkPrimitives>()
 //!                 .noop_payload(),

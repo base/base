@@ -54,9 +54,9 @@ use super::{
     metrics::StaticFileProviderMetrics, writer::StaticFileWriters,
 };
 use crate::{
-    BlockHashReader, BlockNumReader, BlockReader, BlockSource, EitherWriter,
-    EitherWriterDestination, HeaderProvider, ReceiptProvider, StageCheckpointReader, StatsReader,
-    TransactionVariant, TransactionsProvider, TransactionsProviderExt,
+    BlockHashReader, BlockNumReader, BlockReader, BlockSource, EitherWriter, HeaderProvider,
+    ReceiptProvider, StageCheckpointReader, StatsReader, TransactionVariant, TransactionsProvider,
+    TransactionsProviderExt,
     changeset_walker::{StaticFileAccountChangesetWalker, StaticFileStorageChangesetWalker},
     to_range,
 };
@@ -1460,11 +1460,6 @@ impl<N: NodePrimitives> StaticFileProvider<N> {
                 true
             }
             StaticFileSegment::TransactionSenders => {
-                if EitherWriterDestination::senders(provider).is_database() {
-                    debug!(target: "reth::providers::static_file", ?segment, "Skipping senders segment: senders stored in database");
-                    return false;
-                }
-
                 if Self::is_segment_fully_pruned(provider, PruneSegment::SenderRecovery) {
                     debug!(target: "reth::providers::static_file", ?segment, "Skipping senders segment: fully pruned");
                     return false;
@@ -1472,20 +1467,7 @@ impl<N: NodePrimitives> StaticFileProvider<N> {
 
                 true
             }
-            StaticFileSegment::AccountChangeSets => {
-                if EitherWriter::account_changesets_destination(provider).is_database() {
-                    debug!(target: "reth::providers::static_file", ?segment, "Skipping account changesets segment: changesets stored in database");
-                    return false;
-                }
-                true
-            }
-            StaticFileSegment::StorageChangeSets => {
-                if EitherWriter::storage_changesets_destination(provider).is_database() {
-                    debug!(target: "reth::providers::static_file", ?segment, "Skipping storage changesets segment: changesets stored in database");
-                    return false;
-                }
-                true
-            }
+            StaticFileSegment::AccountChangeSets | StaticFileSegment::StorageChangeSets => true,
         }
     }
 

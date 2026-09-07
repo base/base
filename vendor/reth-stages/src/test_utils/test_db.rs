@@ -396,12 +396,23 @@ impl TestStageDB {
     where
         I: IntoIterator<Item = (TxNumber, Address)>,
     {
-        self.commit(|tx| {
-            transaction_senders.into_iter().try_for_each(|(tx_num, sender)| {
-                // Insert into receipts table.
-                Ok(tx.put::<tables::TransactionSenders>(tx_num, sender)?)
-            })
-        })
+        let senders: BTreeMap<_, _> = transaction_senders.into_iter().collect();
+        let blocks = self.table::<tables::BlockBodyIndices>()?;
+        let static_files = self.factory.static_file_provider();
+        let mut writer = static_files.latest_writer(StaticFileSegment::TransactionSenders)?;
+        if let Some((first, _)) = blocks.first() {
+            writer.user_header_mut().set_expected_block_start(*first);
+        }
+        for (block, indices) in blocks {
+            writer.increment_block(block)?;
+            writer.append_transaction_senders(
+                indices
+                    .tx_num_range()
+                    .filter_map(|number| senders.get(&number).map(|sender| (number, *sender))),
+            )?;
+        }
+        writer.commit()?;
+        Ok(())
     }
 
     /// Insert collection of ([Address], [Account]) into corresponding tables.
@@ -446,39 +457,8 @@ impl TestStageDB {
         })
     }
 
-    /// Insert collection of [`ChangeSet`] into corresponding tables.
-    pub fn insert_changesets<I>(
-        &self,
-        changesets: I,
-        block_offset: Option<u64>,
-    ) -> ProviderResult<()>
-    where
-        I: IntoIterator<Item = ChangeSet>,
-    {
-        let offset = block_offset.unwrap_or_default();
-        self.commit(|tx| {
-            changesets.into_iter().enumerate().try_for_each(|(block, changeset)| {
-                changeset.into_iter().try_for_each(|(address, old_account, old_storage)| {
-                    let block = offset + block as u64;
-                    // Insert into account changeset.
-                    tx.put::<tables::AccountChangeSets>(
-                        block,
-                        AccountBeforeTx { address, info: Some(old_account) },
-                    )?;
-
-                    let block_address = (block, address).into();
-
-                    // Insert into storage changeset.
-                    old_storage.into_iter().try_for_each(|entry| {
-                        Ok(tx.put::<tables::StorageChangeSets>(block_address, entry)?)
-                    })
-                })
-            })
-        })
-    }
-
     /// Insert collection of [`ChangeSet`] into static files (account and storage changesets).
-    pub fn insert_changesets_to_static_files<I>(
+    pub fn insert_changesets<I>(
         &self,
         changesets: I,
         block_offset: Option<u64>,
@@ -493,6 +473,13 @@ impl TestStageDB {
             static_file_provider.latest_writer(StaticFileSegment::AccountChangeSets)?;
         let mut storage_changeset_writer =
             static_file_provider.latest_writer(StaticFileSegment::StorageChangeSets)?;
+
+        if account_changeset_writer.user_header().block_range().is_none() {
+            account_changeset_writer.user_header_mut().set_expected_block_start(offset);
+        }
+        if storage_changeset_writer.user_header().block_range().is_none() {
+            storage_changeset_writer.user_header_mut().set_expected_block_start(offset);
+        }
 
         for (block, changeset) in changesets.into_iter().enumerate() {
             let block_number = offset + block as u64;

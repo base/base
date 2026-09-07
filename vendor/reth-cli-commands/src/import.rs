@@ -45,14 +45,13 @@ pub struct ImportCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> ImportCommand<C> {
     /// Execute `import` command
-    pub async fn execute<N, Comp>(
+    pub async fn execute<N>(
         self,
-        components: impl FnOnce(Arc<N::ChainSpec>) -> Comp,
+        components: impl FnOnce(Arc<N::ChainSpec>) -> CliNodeComponents<N>,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()>
     where
         N: CliNodeTypes<ChainSpec = C::ChainSpec>,
-        Comp: CliNodeComponents<N>,
     {
         info!(target: "reth::cli", "reth {} starting", version_metadata().short_version);
 
@@ -69,8 +68,8 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> ImportComm
             fail_on_invalid_block: self.fail_on_invalid_block,
         };
 
-        let executor = components.evm_config().clone();
-        let consensus = Arc::new(components.consensus().clone());
+        let executor = components.evm_config.clone();
+        let consensus = Arc::new(components.consensus.clone());
 
         let mut total_imported_blocks = 0;
         let mut total_imported_txns = 0;

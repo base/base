@@ -45,14 +45,13 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C> {
     /// Execute `db stage unwind` command
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>, F, Comp>(
+    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>, F>(
         self,
         components: F,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()>
     where
-        Comp: CliNodeComponents<N>,
-        F: FnOnce(Arc<C::ChainSpec>) -> Comp,
+        F: FnOnce(Arc<C::ChainSpec>) -> CliNodeComponents<N>,
     {
         let Environment { provider_factory, config, data_dir: _ } =
             self.env.init::<N>(AccessRights::RW, runtime)?;
@@ -70,10 +69,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C>
 
         // This will build an offline-only pipeline if the `offline` flag is enabled
         let mut pipeline =
-            self.build_pipeline(config, provider_factory, components.evm_config().clone())?;
-
-        // Move all applicable data from database to static files.
-        pipeline.move_to_static_files()?;
+            self.build_pipeline(config, provider_factory, components.evm_config.clone())?;
 
         pipeline.unwind(target, None)?;
 

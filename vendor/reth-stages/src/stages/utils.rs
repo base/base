@@ -1,5 +1,5 @@
 //! Utils for `stages`.
-use std::{collections::HashMap, hash::Hash, mem, ops::RangeBounds};
+use std::{collections::HashMap, mem, ops::RangeBounds};
 
 use alloy_primitives::{Address, B256, BlockNumber, TxNumber, map::AddressMap};
 use reth_config::config::EtlConfig;
@@ -10,17 +10,15 @@ use reth_db_api::{
         AccountBeforeTx, AddressStorageKey, BlockNumberAddress, ShardedKey,
         sharded_key::NUM_OF_INDICES_IN_SHARD, storage_sharded_key::StorageShardedKey,
     },
-    table::{Decode, Decompress, Table},
+    table::{Decode, Decompress},
     tables,
-    transaction::DbTx,
 };
 use reth_etl::Collector;
 use reth_primitives_traits::NodePrimitives;
 use reth_provider::{
     BlockReader, DBProvider, EitherWriter, PreparedHistoryShardWrites, ProviderError,
     ProviderResult, RocksDBProviderFactory, ShardedHistoryTable, StaticFileProviderFactory,
-    prepare_history_shard_writes_parallel_vec, prepare_history_shard_writes_serial_vec,
-    providers::StaticFileProvider, to_range,
+    prepare_history_shard_writes_parallel_vec, providers::StaticFileProvider, to_range,
 };
 use reth_stages_api::StageError;
 use reth_static_file_types::StaticFileSegment;
@@ -53,85 +51,6 @@ const fn history_cache_limit_reached(keys: usize, indices: usize, blocks: u64) -
     keys >= HISTORY_CACHE_KEY_LIMIT
         || indices >= HISTORY_CACHE_INDEX_LIMIT
         || blocks >= DEFAULT_CACHE_THRESHOLD
-}
-
-/// Collects all history (`H`) indices for a range of changesets (`CS`) and stores them in a
-/// [`Collector`].
-///
-/// ## Process
-/// The function utilizes a `HashMap` cache with a structure of `PartialKey` (`P`) (Address or
-/// Address.StorageKey) to `BlockNumberList`. When the cache exceeds its capacity, its contents are
-/// moved to a [`Collector`]. Here, each entry's key is a concatenation of `PartialKey` and the
-/// highest block number in its list.
-///
-/// ## Example
-/// 1. Initial Cache State: `{ Address1: [1,2,3], ... }`
-/// 2. Cache is flushed to the `Collector`.
-/// 3. Updated Cache State: `{ Address1: [100,300], ... }`
-/// 4. Cache is flushed again.
-///
-/// As a result, the `Collector` will contain entries such as `(Address1.3, [1,2,3])` and
-/// `(Address1.300, [100,300])`. The entries may be stored across one or more files.
-pub(crate) fn collect_history_indices<Provider, CS, H, P>(
-    provider: &Provider,
-    range: impl RangeBounds<CS::Key>,
-    sharded_key_factory: impl Fn(P, BlockNumber) -> H::Key,
-    partial_key_factory: impl Fn((CS::Key, CS::Value)) -> (u64, P),
-    etl_config: &EtlConfig,
-) -> Result<Collector<H::Key, H::Value>, StageError>
-where
-    Provider: DBProvider,
-    CS: Table,
-    H: Table<Value = BlockNumberList>,
-    P: Copy + Eq + Hash,
-{
-    let mut changeset_cursor = provider.tx_ref().cursor_read::<CS>()?;
-
-    let mut collector = Collector::new(etl_config.file_size, etl_config.dir.clone());
-    let mut cache: HashMap<P, Vec<u64>> = HashMap::default();
-
-    let mut collect = |cache: &mut HashMap<P, Vec<u64>>| {
-        for (key, indices) in cache.drain() {
-            let last = *indices.last().expect("qed");
-            collector
-                .insert(sharded_key_factory(key, last), BlockNumberList::new_pre_sorted(indices))?;
-        }
-        Ok::<(), StageError>(())
-    };
-
-    // observability
-    let total_changesets = provider.tx_ref().entries::<CS>()?;
-    let interval = (total_changesets / 1000).max(1);
-
-    let mut cached_blocks = 0;
-    let mut cached_indices = 0;
-    let mut current_block_number = None;
-    for (idx, entry) in changeset_cursor.walk_range(range)?.enumerate() {
-        let (block_number, key) = partial_key_factory(entry?);
-
-        if idx > 0 && idx.is_multiple_of(interval) && total_changesets > 1000 {
-            info!(target: "sync::stages::index_history", progress = %format!("{:.4}%", (idx as f64 / total_changesets as f64) * 100.0), "Collecting indices");
-        }
-
-        // Check limits before the first row of a new block so a flush never splits one block.
-        if current_block_number != Some(block_number) {
-            if current_block_number.is_some()
-                && history_cache_limit_reached(cache.len(), cached_indices, cached_blocks)
-            {
-                collect(&mut cache)?;
-                cached_blocks = 0;
-                cached_indices = 0;
-            }
-            current_block_number = Some(block_number);
-            cached_blocks += 1;
-        }
-
-        cache.entry(key).or_default().push(block_number);
-        cached_indices += 1;
-    }
-    collect(&mut cache)?;
-
-    Ok(collector)
 }
 
 /// Allows collecting indices from a cache with a custom insert fn
@@ -395,26 +314,18 @@ where
 fn prepare_grouped_history_writes<T, Provider>(
     grouped: Vec<(T::PartialKey, Vec<BlockNumber>)>,
     provider: &Provider,
-    use_rocksdb: bool,
 ) -> Result<PreparedHistoryShardWrites<T>, StageError>
 where
     T: ShardedHistoryTable,
     Provider: DBProvider + RocksDBProviderFactory,
 {
-    if use_rocksdb {
-        let rocksdb = provider.rocksdb_provider();
-        Ok(prepare_history_shard_writes_parallel_vec::<T, _>(grouped, |key| rocksdb.get::<T>(key))?)
-    } else {
-        Ok(prepare_history_shard_writes_serial_vec::<T, _>(grouped, |key| {
-            provider.tx_ref().get::<T>(key).map_err(Into::into)
-        })?)
-    }
+    let rocksdb = provider.rocksdb_provider();
+    Ok(prepare_history_shard_writes_parallel_vec::<T, _>(grouped, |key| rocksdb.get::<T>(key))?)
 }
 
 fn prepare_history_writes<T, Provider>(
     collector: Collector<T::Key, BlockNumberList>,
     provider: &Provider,
-    use_rocksdb: bool,
     etl_config: &EtlConfig,
 ) -> Result<Collector<T::Key, BlockNumberList>, StageError>
 where
@@ -423,7 +334,7 @@ where
 {
     let mut prepared = Collector::new(etl_config.file_size, etl_config.dir.clone());
     for_each_grouped_history_chunk::<T, _>(collector, HISTORY_PREPARATION_LIMITS, |grouped| {
-        let writes = prepare_grouped_history_writes::<T, _>(grouped, provider, use_rocksdb)?;
+        let writes = prepare_grouped_history_writes::<T, _>(grouped, provider)?;
         for (key, value) in writes.into_writes() {
             prepared.insert(key, value)?;
         }
@@ -439,18 +350,12 @@ where
 pub(crate) fn prepare_account_history_writes<Provider>(
     collector: Collector<ShardedKey<Address>, BlockNumberList>,
     provider: &Provider,
-    use_rocksdb: bool,
     etl_config: &EtlConfig,
 ) -> Result<Collector<ShardedKey<Address>, BlockNumberList>, StageError>
 where
     Provider: DBProvider + RocksDBProviderFactory,
 {
-    prepare_history_writes::<tables::AccountsHistory, _>(
-        collector,
-        provider,
-        use_rocksdb,
-        etl_config,
-    )
+    prepare_history_writes::<tables::AccountsHistory, _>(collector, provider, etl_config)
 }
 
 /// Spools prepared storage-history shards after merging each key's committed last shard.
@@ -460,18 +365,12 @@ where
 pub(crate) fn prepare_storage_history_writes<Provider>(
     collector: Collector<StorageShardedKey, BlockNumberList>,
     provider: &Provider,
-    use_rocksdb: bool,
     etl_config: &EtlConfig,
 ) -> Result<Collector<StorageShardedKey, BlockNumberList>, StageError>
 where
     Provider: DBProvider + RocksDBProviderFactory,
 {
-    prepare_history_writes::<tables::StoragesHistory, _>(
-        collector,
-        provider,
-        use_rocksdb,
-        etl_config,
-    )
+    prepare_history_writes::<tables::StoragesHistory, _>(collector, provider, etl_config)
 }
 
 /// Streams prepared history shards into serial puts, logging progress every 10%.

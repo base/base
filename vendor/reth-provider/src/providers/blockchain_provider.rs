@@ -1026,12 +1026,11 @@ mod tests {
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{
-        CanonStateNotification, CanonStateSubscriptions, CanonicalInMemoryState, ExecutedBlock,
-        NewCanonicalChain, test_utils::TestBlockBuilder,
+        CanonStateNotification, CanonStateSubscriptions, ExecutedBlock, NewCanonicalChain,
+        test_utils::TestBlockBuilder,
     };
     use reth_chainspec::{ChainSpec, MAINNET};
     use reth_db_api::models::{AccountBeforeTx, StoredBlockBodyIndices};
-    use reth_errors::ProviderError;
     use reth_ethereum_primitives::{Block, Receipt};
     use reth_execution_types::{
         BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
@@ -1058,6 +1057,7 @@ mod tests {
     use super::SNAPSHOT_STATE_RETENTION;
     use crate::{
         BlockWriter, CanonChainTracker, ProviderFactory, SaveBlocksInput,
+        StaticFileProviderFactory, StaticFileWriter,
         providers::BlockchainProvider,
         test_utils::{
             MockNodeTypesWithDB, create_test_provider_factory,
@@ -1154,6 +1154,11 @@ mod tests {
             )?;
         }
 
+        if let Some(last) = database_blocks.last() {
+            let mut changesets = crate::test_utils::TestChangesets::default();
+            changesets.accounts.insert(last.number, Vec::new());
+            changesets.write_to(&factory.static_file_provider())?;
+        }
         provider_rw.commit()?;
 
         let provider = BlockchainProvider::new(factory)?;
@@ -2790,64 +2795,9 @@ mod tests {
             },
         )?;
 
-        // Old implementation was querying the database first. This is problematic, if there are
-        // changes AFTER the database transaction is created.
-        let old_transaction_hash_fn =
-            |hash: B256,
-             canonical_in_memory_state: CanonicalInMemoryState,
-             factory: ProviderFactory<MockNodeTypesWithDB>| {
-                assert!(factory.transaction_by_hash(hash)?.is_none(), "should not be in database");
-                Ok::<_, ProviderError>(canonical_in_memory_state.transaction_by_hash(hash))
-            };
-
-        // Correct implementation queries in-memory first
-        let correct_transaction_hash_fn =
-            |hash: B256,
-             canonical_in_memory_state: CanonicalInMemoryState,
-             _factory: ProviderFactory<MockNodeTypesWithDB>| {
-                if let Some(tx) = canonical_in_memory_state.transaction_by_hash(hash) {
-                    return Ok::<_, ProviderError>(Some(tx));
-                }
-                panic!("should not be in database");
-                // _factory.transaction_by_hash(hash)
-            };
-
-        // OLD BEHAVIOUR
-        {
-            // This will persist block 1 AFTER a database is created. Moving it from memory to
-            // storage.
-            persist_block_after_db_tx_creation(provider.clone(), in_memory_blocks[0].number);
-            let to_be_persisted_tx = in_memory_blocks[0].body().transactions[0].clone();
-
-            // Even though the block exists, given the order of provider queries done in the method
-            // above, we do not see it.
-            assert!(matches!(
-                old_transaction_hash_fn(
-                    *to_be_persisted_tx.tx_hash(),
-                    provider.canonical_in_memory_state(),
-                    provider.database.clone()
-                ),
-                Ok(None)
-            ));
-        }
-
-        // CORRECT BEHAVIOUR
-        {
-            // This will persist block 1 AFTER a database is created. Moving it from memory to
-            // storage.
-            persist_block_after_db_tx_creation(provider.clone(), in_memory_blocks[1].number);
-            let to_be_persisted_tx = in_memory_blocks[1].body().transactions[0].clone();
-
-            assert_eq!(
-                correct_transaction_hash_fn(
-                    *to_be_persisted_tx.tx_hash(),
-                    provider.canonical_in_memory_state(),
-                    provider.database
-                )
-                .unwrap(),
-                Some(to_be_persisted_tx)
-            );
-        }
+        persist_block_after_db_tx_creation(provider.clone(), in_memory_blocks[0].number);
+        let transaction = in_memory_blocks[0].body().transactions[0].clone();
+        assert_eq!(provider.transaction_by_hash(*transaction.tx_hash())?, Some(transaction));
 
         Ok(())
     }
@@ -2866,6 +2816,7 @@ mod tests {
         provider_rw
             .insert_block(&genesis.try_recover().expect("failed to seal block with senders"))?;
         provider_rw.save_stage_checkpoint(StageId::Finish, StageCheckpoint::new(0))?;
+        crate::test_utils::TestChangesets::default().write_to(&factory.static_file_provider())?;
         provider_rw.commit()?;
         Ok(factory)
     }
@@ -3236,6 +3187,16 @@ mod tests {
 
         let provider_rw = factory.provider_rw()?;
         provider_rw.insert_block(&anchor_block)?;
+        let static_files = factory.static_file_provider();
+        for segment in [
+            reth_static_file_types::StaticFileSegment::AccountChangeSets,
+            reth_static_file_types::StaticFileSegment::StorageChangeSets,
+        ] {
+            let mut writer = static_files.latest_writer(segment)?;
+            writer.increment_block(1)?;
+            writer.commit()?;
+        }
+
         provider_rw.save_stage_checkpoint(StageId::Finish, StageCheckpoint::new(1))?;
         provider_rw.commit()?;
 

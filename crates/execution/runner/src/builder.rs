@@ -9,15 +9,15 @@ use eyre::Result;
 use futures::future::BoxFuture;
 use reth_exex::ExExContext;
 use reth_node_builder::{
-    NodeAdapter, NodeBuilderWithComponents, NodeComponentsBuilder, WithLaunchContext,
+    NodeAdapter, NodeBuilderWithComponents, WithLaunchContext,
     node::FullNode,
     rpc::{RethRpcAddOns, RpcContext},
 };
 
-use crate::types::{BaseComponentsBuilder, BaseNodeTypes, ConcreteBaseAddOns};
+use crate::types::{BaseComponentsBuilder, BaseNodeAddOns, BaseNodeTypes};
 
 /// Alias for the default Base components type.
-type BaseComponents = <BaseComponentsBuilder as NodeComponentsBuilder<BaseNodeTypes>>::Components;
+pub type BaseComponents = base_node_core::BaseNodeComponents<BaseNodeTypes>;
 
 /// Convenience alias for the Base node adapter type used by the reth builder.
 ///
@@ -26,10 +26,10 @@ type BaseComponents = <BaseComponentsBuilder as NodeComponentsBuilder<BaseNodeTy
 pub type BaseNodeAdapter = NodeAdapter<BaseNodeTypes, BaseComponents>;
 
 /// Convenience alias for the Base Eth API type exposed by the reth RPC add-ons.
-type BaseEthApi = <ConcreteBaseAddOns as RethRpcAddOns<BaseNodeAdapter>>::EthApi;
+type BaseEthApi = <BaseNodeAddOns as RethRpcAddOns<BaseNodeAdapter>>::EthApi;
 
 /// Convenience alias for the full Base node handle produced after launch.
-type BaseFullNode = FullNode<BaseNodeAdapter, ConcreteBaseAddOns>;
+type BaseFullNode = FullNode<BaseNodeAdapter, BaseNodeAddOns>;
 
 /// Alias for the RPC context used by Base extensions.
 pub type BaseRpcContext<'a> = RpcContext<'a, BaseNodeAdapter, BaseEthApi>;
@@ -38,7 +38,7 @@ pub type BaseRpcContext<'a> = RpcContext<'a, BaseNodeAdapter, BaseEthApi>;
 type RpcModuleHook = Box<dyn FnOnce(&mut BaseRpcContext<'_>) -> Result<()> + Send + 'static>;
 
 /// Hook type for extending add-ons.
-type AddOnsHook = Box<dyn FnOnce(ConcreteBaseAddOns) -> ConcreteBaseAddOns>;
+type AddOnsHook = Box<dyn FnOnce(BaseNodeAddOns) -> BaseNodeAddOns>;
 
 /// Hook type for node-started callbacks.
 type NodeStartedHook = Box<dyn FnOnce(BaseFullNode) -> Result<()> + Send + 'static>;
@@ -52,12 +52,10 @@ type BoxExExFactory = Box<
         + 'static,
 >;
 
-/// A type alias for any configured builder whose components match the canonical Base types.
-///
-/// This is generic over the `NodeComponentsBuilder` (`CB`) so that both the default payload and
-/// the full-block payload service can be used interchangeably.
-pub type RethNodeBuilder<CB> =
-    WithLaunchContext<NodeBuilderWithComponents<BaseNodeTypes, CB, ConcreteBaseAddOns>>;
+/// The configured Base builder shared by standard and full-block payload services.
+pub type RethNodeBuilder = WithLaunchContext<
+    NodeBuilderWithComponents<BaseNodeTypes, BaseComponentsBuilder, BaseNodeAddOns>,
+>;
 
 /// Pure hook accumulator for the Base node builder.
 ///
@@ -85,14 +83,8 @@ impl NodeHooks {
         }
     }
 
-    /// Applies all accumulated hooks to the given configured builder.
-    ///
-    /// This is generic over `CB` so that it works with any payload service whose component
-    /// builder produces the same concrete `Components` type as the default payload builder.
-    pub fn apply_to<CB>(self, mut builder: RethNodeBuilder<CB>) -> RethNodeBuilder<CB>
-    where
-        CB: NodeComponentsBuilder<BaseNodeTypes, Components = BaseComponents>,
-    {
+    /// Applies all accumulated hooks to the configured Base builder.
+    pub fn apply_to(self, mut builder: RethNodeBuilder) -> RethNodeBuilder {
         let Self { rpc_hooks, node_started_hooks, exex_hooks, add_ons_hooks } = self;
 
         // Install ExEx hooks
@@ -140,7 +132,7 @@ impl NodeHooks {
     /// Adds an add-ons hook that will run when the add-ons are configured.
     pub fn add_add_ons_hook<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(ConcreteBaseAddOns) -> ConcreteBaseAddOns + Send + 'static,
+        F: FnOnce(BaseNodeAddOns) -> BaseNodeAddOns + Send + 'static,
     {
         self.add_ons_hooks.push(Box::new(hook));
         self

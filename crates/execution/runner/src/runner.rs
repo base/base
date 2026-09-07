@@ -3,16 +3,15 @@
 use std::fmt;
 
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
-use base_node_core::args::RollupArgs;
+use base_node_core::{BasePayloadServiceBuilder, args::RollupArgs};
 use eyre::Result;
-use reth_node_builder::{Node, NodeHandle, NodeHandleFor};
+use reth_node_builder::NodeHandle;
 use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
 use crate::{
-    BaseNodeBuilder, BaseNodeExtension, FromExtensionConfig, NodeHooks,
+    BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig, NodeHooks,
     node::BaseNode,
-    service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder},
 };
 
 type StartedCallback = Box<dyn FnOnce() -> Result<()> + Send + 'static>;
@@ -21,17 +20,17 @@ type StartedCallback = Box<dyn FnOnce() -> Result<()> + Send + 'static>;
 #[derive(Debug)]
 pub struct LaunchedBaseNode {
     /// The underlying reth node handle.
-    pub handle: NodeHandleFor<BaseNode>,
+    pub handle: BaseNodeHandle,
 }
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
-pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuilder> {
+pub struct BaseNodeRunner {
     /// Rollup-specific arguments forwarded to the Base node implementation.
     rollup_args: RollupArgs,
     /// Registered builder extensions.
     extensions: Vec<Box<dyn BaseNodeExtension>>,
     /// Payload service builder.
-    service_builder: SB,
+    service_builder: Option<BasePayloadServiceBuilder>,
     /// Shared DA configuration for the node and payload builder.
     da_config: Option<BaseDAConfig>,
     /// Shared gas-limit configuration for the node and payload builder.
@@ -43,13 +42,13 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     started_callbacks: Vec<StartedCallback>,
 }
 
-impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
+impl BaseNodeRunner {
     /// Creates a new launcher using the provided rollup arguments.
     pub fn new(rollup_args: RollupArgs) -> Self {
         Self {
             rollup_args,
             extensions: Vec::new(),
-            service_builder: DefaultPayloadServiceBuilder,
+            service_builder: None,
             da_config: None,
             gas_limit_config: None,
             manifest_precheck_enabled: true,
@@ -58,7 +57,7 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
     }
 }
 
-impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
+impl fmt::Debug for BaseNodeRunner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BaseNodeRunner")
             .field("rollup_args", &self.rollup_args)
@@ -71,7 +70,7 @@ impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
     }
 }
 
-impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
+impl BaseNodeRunner {
     /// Sets the shared DA configuration.
     pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = Some(da_config);
@@ -90,17 +89,10 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         self
     }
 
-    /// Swap the payload service builder.
-    pub fn with_service_builder<SB2: PayloadServiceBuilder>(self, sb: SB2) -> BaseNodeRunner<SB2> {
-        BaseNodeRunner {
-            rollup_args: self.rollup_args,
-            extensions: self.extensions,
-            service_builder: sb,
-            da_config: self.da_config,
-            gas_limit_config: self.gas_limit_config,
-            manifest_precheck_enabled: self.manifest_precheck_enabled,
-            started_callbacks: self.started_callbacks,
-        }
+    /// Selects a concrete payload service configuration.
+    pub fn with_service_builder(mut self, service_builder: BasePayloadServiceBuilder) -> Self {
+        self.service_builder = Some(service_builder);
+        self
     }
 
     /// Registers a new builder extension.
@@ -132,7 +124,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         Ok(LaunchedBaseNode { handle })
     }
 
-    async fn launch_node(self, builder: BaseNodeBuilder) -> Result<NodeHandleFor<BaseNode>> {
+    async fn launch_node(self, builder: BaseNodeBuilder) -> Result<BaseNodeHandle> {
         info!(target: "base-runner", "starting custom Base node");
 
         let Self {
@@ -152,12 +144,16 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             base_node = base_node.with_gas_limit_config(gas_limit_config);
         }
         base_node = base_node.with_manifest_precheck_enabled(manifest_precheck_enabled);
-        let components = service_builder.build_components(&base_node);
+        let components = base_node.components();
+        let components = match service_builder {
+            Some(service_builder) => components.payload(service_builder),
+            None => components,
+        };
 
         let builder = builder
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(components)
-            .with_add_ons(base_node.add_ons())
+            .with_add_ons(base_node.add_ons_builder().build())
             .on_component_initialized(move |_ctx| Ok(()));
 
         let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
@@ -173,17 +169,6 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
 mod tests {
     use super::*;
 
-    #[derive(Debug)]
-    struct TestPayloadServiceBuilder;
-
-    impl crate::service::PayloadServiceBuilder for TestPayloadServiceBuilder {
-        type ComponentsBuilder = crate::types::BaseComponentsBuilder;
-
-        fn build_components(self, base_node: &BaseNode) -> Self::ComponentsBuilder {
-            base_node.components()
-        }
-    }
-
     #[test]
     fn service_builder_swap_preserves_shared_runtime_configs() {
         let da_config = BaseDAConfig::new(100, 200);
@@ -193,7 +178,7 @@ mod tests {
             .with_da_config(da_config.clone())
             .with_gas_limit_config(gas_limit_config.clone())
             .with_manifest_precheck_enabled(false)
-            .with_service_builder(TestPayloadServiceBuilder);
+            .with_service_builder(BasePayloadServiceBuilder::default());
 
         assert!(!runner.manifest_precheck_enabled);
         let configured_da = runner.da_config.expect("DA config should be preserved");

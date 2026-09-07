@@ -2,7 +2,8 @@
 
 pub mod common;
 mod exex;
-pub mod invalid_block_hook;
+mod invalid_block_hook;
+pub use invalid_block_hook::InvalidBlockHookBuilder;
 
 pub(crate) mod debug;
 pub(crate) mod engine;

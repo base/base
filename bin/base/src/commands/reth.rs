@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
+    BaseCliComponents, BaseCliTypes,
     chainspec::BaseChainSpecParser,
     commands::{GenesisOutputRootCommand, init_state, p2p},
 };
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseExecutorProvider;
-use base_node_core::BaseNode;
 use clap::{Parser, Subcommand};
 use reth_cli_commands::{config_cmd, db, dump_genesis, init_cmd, prune, re_execute, stage};
 use reth_cli_runner::CliRunner;
@@ -69,17 +69,17 @@ impl RethSubcommand {
         match self {
             Self::Db(command) => {
                 let runner = CliRunner::try_default_runtime()?;
-                runner.run_blocking_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
+                runner.run_blocking_command_until_exit(|ctx| command.execute::<BaseCliTypes>(ctx))
             }
             Self::Init(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>(runtime))
             }
             Self::InitState(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>(runtime))
             }
             Self::DumpGenesis(command) => {
                 let runner = CliRunner::try_default_runtime()?;
@@ -92,12 +92,12 @@ impl RethSubcommand {
             Self::Stage(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 runner.run_command_until_exit(|ctx| {
-                    command.execute::<BaseNode, _>(ctx, Self::base_components)
+                    command.execute::<BaseCliTypes>(ctx, Self::base_components)
                 })
             }
             Self::P2P(command) => {
                 let runner = CliRunner::try_default_runtime()?;
-                runner.run_until_ctrl_c(command.execute::<BaseNode>())
+                runner.run_until_ctrl_c(command.execute::<BaseCliTypes>())
             }
             Self::Config(command) => {
                 let runner = CliRunner::try_default_runtime()?;
@@ -105,19 +105,22 @@ impl RethSubcommand {
             }
             Self::Prune(command) => {
                 let runner = CliRunner::try_default_runtime()?;
-                runner.run_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
+                runner.run_command_until_exit(|ctx| command.execute::<BaseCliTypes>(ctx))
             }
             Self::ReExecute(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 let runtime = runner.runtime();
-                runner.run_until_ctrl_c(command.execute::<BaseNode>(Self::base_components, runtime))
+                runner.run_until_ctrl_c(
+                    command.execute::<BaseCliTypes>(Self::base_components, runtime),
+                )
             }
         }
     }
 
-    pub(crate) fn base_components(
-        spec: Arc<BaseChainSpec>,
-    ) -> (BaseExecutorProvider, Arc<BaseBeaconConsensus>) {
-        (BaseExecutorProvider::base(Arc::clone(&spec)), Arc::new(BaseBeaconConsensus::new(spec)))
+    pub(crate) fn base_components(spec: Arc<BaseChainSpec>) -> BaseCliComponents {
+        BaseCliComponents {
+            evm_config: BaseExecutorProvider::base(Arc::clone(&spec)),
+            consensus: Arc::new(BaseBeaconConsensus::new(spec)),
+        }
     }
 }

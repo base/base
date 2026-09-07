@@ -95,23 +95,22 @@ macro_rules! handle_stage {
 
 impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C> {
     /// Execute `dump-stage` command
-    pub async fn execute<N, Comp, F>(
+    pub async fn execute<N, F>(
         self,
         components: F,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()>
     where
         N: CliNodeTypes<ChainSpec = C::ChainSpec>,
-        Comp: CliNodeComponents<N>,
-        F: FnOnce(Arc<C::ChainSpec>) -> Comp,
+        F: FnOnce(Arc<C::ChainSpec>) -> CliNodeComponents<N>,
     {
         // `unwind_and_copy` opens a RW provider on the source datadir, so open RW here.
         let Environment { provider_factory, .. } =
             self.env.init::<N>(AccessRights::RW, runtime.clone())?;
         let tool = DbTool::new(provider_factory)?;
         let components = components(tool.chain());
-        let evm_config = components.evm_config().clone();
-        let consensus = components.consensus().clone();
+        let evm_config = components.evm_config.clone();
+        let consensus = components.consensus.clone();
 
         match &self.command {
             Stages::Execution(cmd) => {

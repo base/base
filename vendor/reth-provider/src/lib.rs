@@ -29,7 +29,6 @@ pub use providers::{
 };
 
 pub mod changeset_walker;
-pub mod changesets_utils;
 
 #[cfg(any(test, feature = "test-utils"))]
 /// Common test helpers for mocking the Provider.

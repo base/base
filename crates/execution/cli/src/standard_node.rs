@@ -5,7 +5,7 @@ use std::{env, path::PathBuf, sync::Arc, time::Duration};
 use base_execution_eip8130_rpc_node::Eip8130RpcExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
 use base_node_core::{HasRollupArgs, RollupArgs};
-use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
+use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
@@ -463,8 +463,8 @@ impl StandardBaseRethNode {
     }
 
     /// Installs the upgrade signal runtime extension when execution-side live reads are configured.
-    pub fn install_upgrade_signal_runtime_extension<SB: PayloadServiceBuilder>(
-        runner: &mut BaseNodeRunner<SB>,
+    pub fn install_upgrade_signal_runtime_extension(
+        runner: &mut BaseNodeRunner,
         rollup_args: &RollupArgs,
     ) -> eyre::Result<()> {
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {

@@ -30,7 +30,7 @@ async fn can_run_dev_node() -> eyre::Result<()> {
         .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
         .with_components(EthereumNode::components())
         .with_add_ons(EthereumAddOns::default())
-        .launch_with_debug_capabilities()
+        .launch_with_debug_capabilities(EthereumNode::debug_config())
         .await?;
 
     assert_chain_advances(&node).await;
@@ -56,7 +56,7 @@ async fn can_run_dev_node_custom_attributes() -> eyre::Result<()> {
         .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
         .with_components(EthereumNode::components())
         .with_add_ons(EthereumAddOns::default())
-        .launch_with_debug_capabilities()
+        .launch_with_debug_capabilities(EthereumNode::debug_config())
         .map_debug_payload_attributes(move |mut attributes| {
             attributes.suggested_fee_recipient = fee_recipient;
             attributes

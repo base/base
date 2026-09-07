@@ -42,8 +42,6 @@ pub(crate) enum Action {
     InsertHeaderNumbers,
     InsertBlockBodyIndices,
     InsertTransactionBlocks,
-    InsertTransactionSenders,
-    InsertTransactionHashNumbers,
 }
 
 /// Database provider metrics
@@ -66,10 +64,6 @@ pub struct DatabaseProviderMetrics {
     insert_block_body_indices: Histogram,
     /// Duration of insert transaction blocks
     insert_tx_blocks: Histogram,
-    /// Duration of insert transaction senders
-    insert_transaction_senders: Histogram,
-    /// Duration of insert transaction hash numbers
-    insert_transaction_hash_numbers: Histogram,
     /// Duration of `save_blocks`
     save_blocks_total: Histogram,
     /// Duration of MDBX work in `save_blocks`
@@ -86,8 +80,6 @@ pub struct DatabaseProviderMetrics {
     save_blocks_write_hashed_state: Histogram,
     /// Duration of `write_trie_updates` in `save_blocks`
     save_blocks_write_trie_updates: Histogram,
-    /// Duration of `update_history_indices` in `save_blocks`
-    save_blocks_update_history_indices: Histogram,
     /// Duration of `update_pipeline_stages` in `save_blocks`
     save_blocks_update_pipeline_stages: Histogram,
     /// Number of blocks per `save_blocks` call
@@ -114,8 +106,6 @@ pub struct DatabaseProviderMetrics {
     save_blocks_write_hashed_state_last: Gauge,
     /// Last duration of `write_trie_updates` in `save_blocks`
     save_blocks_write_trie_updates_last: Gauge,
-    /// Last duration of `update_history_indices` in `save_blocks`
-    save_blocks_update_history_indices_last: Gauge,
     /// Last duration of `update_pipeline_stages` in `save_blocks`
     save_blocks_update_pipeline_stages_last: Gauge,
     /// Last number of blocks per `save_blocks` call
@@ -139,7 +129,6 @@ pub(crate) struct SaveBlocksTimings {
     pub write_state: Duration,
     pub write_hashed_state: Duration,
     pub write_trie_updates: Duration,
-    pub update_history_indices: Duration,
     pub update_pipeline_stages: Duration,
     pub batch_size: u64,
 }
@@ -164,10 +153,6 @@ impl DatabaseProviderMetrics {
             Action::InsertHeaderNumbers => self.insert_header_numbers.record(duration),
             Action::InsertBlockBodyIndices => self.insert_block_body_indices.record(duration),
             Action::InsertTransactionBlocks => self.insert_tx_blocks.record(duration),
-            Action::InsertTransactionSenders => self.insert_transaction_senders.record(duration),
-            Action::InsertTransactionHashNumbers => {
-                self.insert_transaction_hash_numbers.record(duration)
-            }
         }
     }
 
@@ -181,7 +166,6 @@ impl DatabaseProviderMetrics {
         self.save_blocks_write_state.record(timings.write_state);
         self.save_blocks_write_hashed_state.record(timings.write_hashed_state);
         self.save_blocks_write_trie_updates.record(timings.write_trie_updates);
-        self.save_blocks_update_history_indices.record(timings.update_history_indices);
         self.save_blocks_update_pipeline_stages.record(timings.update_pipeline_stages);
         self.save_blocks_batch_size.record(timings.batch_size as f64);
 
@@ -193,8 +177,6 @@ impl DatabaseProviderMetrics {
         self.save_blocks_write_state_last.set(timings.write_state.as_secs_f64());
         self.save_blocks_write_hashed_state_last.set(timings.write_hashed_state.as_secs_f64());
         self.save_blocks_write_trie_updates_last.set(timings.write_trie_updates.as_secs_f64());
-        self.save_blocks_update_history_indices_last
-            .set(timings.update_history_indices.as_secs_f64());
         self.save_blocks_update_pipeline_stages_last
             .set(timings.update_pipeline_stages.as_secs_f64());
         self.save_blocks_batch_size_last.set(timings.batch_size as f64);

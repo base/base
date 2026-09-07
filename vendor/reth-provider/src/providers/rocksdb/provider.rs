@@ -1381,18 +1381,11 @@ impl RocksDBProvider {
         ctx: RocksDBWriteCtx,
         runtime: &reth_tasks::Runtime,
     ) -> ProviderResult<()> {
-        if !ctx.storage_settings.storage_v2 {
-            return Ok(());
-        }
-
         let mut r_tx_hash = None;
         let mut r_account_history = None;
         let mut r_storage_history = None;
 
-        let write_tx_hash =
-            ctx.storage_settings.storage_v2 && ctx.prune_tx_lookup.is_none_or(|m| !m.is_full());
-        let write_account_history = ctx.storage_settings.storage_v2;
-        let write_storage_history = ctx.storage_settings.storage_v2;
+        let write_tx_hash = ctx.prune_tx_lookup.is_none_or(|m| !m.is_full());
 
         // Propagate tracing context into rayon-spawned threads so that RocksDB
         // write spans appear as children of write_blocks_data in traces.
@@ -1405,19 +1398,15 @@ impl RocksDBProvider {
                 });
             }
 
-            if write_account_history {
-                s.spawn(|_| {
-                    let _guard = span.enter();
-                    r_account_history = Some(self.write_account_history(blocks, &ctx));
-                });
-            }
+            s.spawn(|_| {
+                let _guard = span.enter();
+                r_account_history = Some(self.write_account_history(blocks, &ctx));
+            });
 
-            if write_storage_history {
-                s.spawn(|_| {
-                    let _guard = span.enter();
-                    r_storage_history = Some(self.write_storage_history(blocks, &ctx));
-                });
-            }
+            s.spawn(|_| {
+                let _guard = span.enter();
+                r_storage_history = Some(self.write_storage_history(blocks, &ctx));
+            });
         });
 
         if write_tx_hash {
@@ -1427,20 +1416,18 @@ impl RocksDBProvider {
                 ))
             })??;
         }
-        if write_account_history {
-            r_account_history.ok_or_else(|| {
-                ProviderError::Database(DatabaseError::Other(
-                    "rocksdb account-history write thread panicked".into(),
-                ))
-            })??;
-        }
-        if write_storage_history {
-            r_storage_history.ok_or_else(|| {
-                ProviderError::Database(DatabaseError::Other(
-                    "rocksdb storage-history write thread panicked".into(),
-                ))
-            })??;
-        }
+
+        r_account_history.ok_or_else(|| {
+            ProviderError::Database(DatabaseError::Other(
+                "rocksdb account-history write thread panicked".into(),
+            ))
+        })??;
+
+        r_storage_history.ok_or_else(|| {
+            ProviderError::Database(DatabaseError::Other(
+                "rocksdb storage-history write thread panicked".into(),
+            ))
+        })??;
 
         Ok(())
     }

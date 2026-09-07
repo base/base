@@ -106,8 +106,6 @@ impl<'a, TX: DbTx, A: TrieTableAdapter> DatabaseStorageRoot<'a, TX>
 mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::U256;
-    use reth_db_api::{models::BlockNumberAddress, tables, transaction::DbTxMut};
-    use reth_primitives_traits::StorageEntry;
     use reth_provider::{
         StaticFileProviderFactory, StaticFileSegment, StaticFileWriter, StorageSettingsCache,
         test_utils::create_test_provider_factory,
@@ -146,51 +144,6 @@ mod tests {
     }
 
     #[test]
-    fn test_hashed_storage_from_reverts_legacy() {
-        let factory = create_test_provider_factory();
-        let provider = factory.provider_rw().unwrap();
-
-        assert!(!provider.cached_storage_settings().use_hashed_state());
-
-        let address = Address::with_last_byte(42);
-        let slot1 = B256::from(U256::from(100));
-        let slot2 = B256::from(U256::from(200));
-
-        append_headers_to_static_files(&factory, 5);
-
-        provider
-            .tx_ref()
-            .put::<tables::StorageChangeSets>(
-                BlockNumberAddress((1, address)),
-                StorageEntry { key: slot1, value: U256::from(10) },
-            )
-            .unwrap();
-        provider
-            .tx_ref()
-            .put::<tables::StorageChangeSets>(
-                BlockNumberAddress((2, address)),
-                StorageEntry { key: slot2, value: U256::from(20) },
-            )
-            .unwrap();
-        provider
-            .tx_ref()
-            .put::<tables::StorageChangeSets>(
-                BlockNumberAddress((3, address)),
-                StorageEntry { key: slot1, value: U256::from(999) },
-            )
-            .unwrap();
-
-        let result = hashed_storage_from_reverts_with_provider(&*provider, address, 1).unwrap();
-
-        let hashed_slot1 = keccak256(slot1);
-        let hashed_slot2 = keccak256(slot2);
-
-        assert_eq!(result.storage.len(), 2);
-        assert_eq!(result.storage.get(&hashed_slot1), Some(&U256::from(10)));
-        assert_eq!(result.storage.get(&hashed_slot2), Some(&U256::from(20)));
-    }
-
-    #[test]
     fn test_hashed_storage_from_reverts_hashed_state() {
         use reth_db_api::models::{StorageBeforeTx, StorageSettings};
 
@@ -199,8 +152,6 @@ mod tests {
         factory.set_storage_settings_cache(StorageSettings::v2());
 
         let provider = factory.provider_rw().unwrap();
-        assert!(provider.cached_storage_settings().use_hashed_state());
-        assert!(provider.cached_storage_settings().is_v2());
 
         let address = Address::with_last_byte(42);
         let plain_slot1 = B256::from(U256::from(100));

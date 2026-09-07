@@ -37,7 +37,7 @@ use secp256k1::SecretKey;
 use tracing::{info, trace, warn};
 
 use crate::{
-    BlockReaderFor, DebugNode, DebugNodeLauncher, EngineNodeLauncher, LaunchNode, Node,
+    BlockReaderFor, DebugNodeConfig, DebugNodeLauncher, EngineNodeLauncher, LaunchNode, Node,
     common::WithConfigs,
     components::NodeComponentsBuilder,
     node::FullNode,
@@ -692,22 +692,24 @@ where
     ///
     /// This is equivalent to [`WithLaunchContext::launch`], but will enable the debugging features,
     /// if they are configured.
-    pub fn launch_with_debug_capabilities(
+    pub fn launch_with_debug_capabilities<R>(
         self,
-    ) -> <DebugNodeLauncher as LaunchNode<NodeBuilderWithComponents<T, CB, AO>>>::Future
+        config: DebugNodeConfig<T::Types, R>,
+    ) -> <DebugNodeLauncher<EngineNodeLauncher, T::Types, R> as LaunchNode<
+        NodeBuilderWithComponents<T, CB, AO>,
+    >>::Future
     where
-        T::Types: DebugNode<NodeAdapter<T, CB::Components>>,
-        DebugNodeLauncher: LaunchNode<NodeBuilderWithComponents<T, CB, AO>>,
+        DebugNodeLauncher<EngineNodeLauncher, T::Types, R>:
+            LaunchNode<NodeBuilderWithComponents<T, CB, AO>>,
     {
         let Self { builder, task_executor } = self;
 
         let engine_tree_config = builder.config.tree_config();
 
-        let launcher = DebugNodeLauncher::new(EngineNodeLauncher::new(
-            task_executor,
-            builder.config.datadir(),
-            engine_tree_config,
-        ));
+        let launcher = DebugNodeLauncher::new(
+            EngineNodeLauncher::new(task_executor, builder.config.datadir(), engine_tree_config),
+            config,
+        );
         builder.launch_with(launcher)
     }
 

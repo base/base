@@ -20,71 +20,27 @@ use reth_primitives_traits::SealedBlock;
 use tracing::info;
 
 use super::LaunchNode;
-use crate::{EngineNodeLauncher, Node, NodeHandle, rpc::RethRpcAddOns};
+use crate::{NodeHandle, rpc::RethRpcAddOns};
 
 /// Helper adapter type for accessing [`PayloadTypes::ExecutionData`] on [`NodeTypes`].
 pub(crate) type PayloadDataTy<N> = <<N as NodeTypes>::Payload as PayloadTypes>::ExecutionData;
 
-/// [`Node`] extension with support for debugging utilities.
-///
-/// This trait provides additional necessary conversion from RPC block type to the node's
-/// execution payload data type, e.g. `alloy_rpc_types_eth::Block` to the node's Engine API
-/// payload representation.
-///
-/// This is used in conjunction with the [`DebugNodeLauncher`] to enable debugging features such as:
-///
-/// - **Etherscan Integration**: Use Etherscan as a consensus client to follow the chain and submit
-///   blocks to the local engine.
-/// - **RPC Consensus Client**: Connect to an external RPC endpoint to fetch blocks and submit them
-///   to the local engine to follow the chain.
-///
-/// See [`DebugNodeLauncher`] for the launcher that enables these features.
-///
-/// # Implementation
-///
-/// To implement this trait, you need to:
-/// 1. Define the RPC block type (typically `alloy_rpc_types_eth::Block`)
-/// 2. Implement the conversion from RPC format to your execution payload data type
-///
-/// # Example
-///
-/// ```ignore
-/// impl<N: FullNodeComponents<Types = Self>> DebugNode<N> for MyNode {
-///     type RpcBlock = alloy_rpc_types_eth::Block;
-///
-///     fn rpc_to_execution_data(
-///         rpc_block: Self::RpcBlock,
-///         extras: PayloadExtras,
-///     ) -> PayloadDataTy<Self> {
-///         // Convert from RPC format to the Engine API payload data expected by the node.
-///     }
-/// }
-/// ```
-pub trait DebugNode<N: FullNodeComponents>: Node<N> {
-    /// RPC block type. This is intended to match the block format returned by the external RPC
-    /// endpoint.
-    type RpcBlock: Serialize + DeserializeOwned + 'static;
+/// Concrete conversions used by the debug launcher.
+#[derive(Debug)]
+pub struct DebugNodeConfig<T: NodeTypes, R> {
+    /// Converts an RPC response to the node's primitive block.
+    pub rpc_to_primitive_block: fn(R) -> BlockTy<T>,
+    /// Creates the default local-mining payload attributes builder.
+    pub local_payload_attributes_builder:
+        fn(&T::ChainSpec) -> Box<dyn PayloadAttributesBuilder<PayloadAttrTy<T>, HeaderTy<T>>>,
+}
 
-    /// Converts an RPC block to a primitive block.
-    ///
-    /// This method handles the conversion between the RPC block format and the internal primitive
-    /// block format used by the node's consensus engine.
-    ///
-    /// # Example
-    ///
-    /// For Ethereum nodes, this typically converts from `alloy_rpc_types_eth::Block`
-    /// to the node's internal block representation.
-    fn rpc_to_primitive_block(rpc_block: Self::RpcBlock) -> BlockTy<Self>;
+impl<T: NodeTypes, R> Copy for DebugNodeConfig<T, R> {}
 
-    /// Creates a payload attributes builder for local mining in dev mode.
-    ///
-    ///  It will be used by the `LocalMiner` when dev mode is enabled.
-    ///
-    /// The builder is responsible for creating the payload attributes that define how blocks should
-    /// be constructed during local mining.
-    fn local_payload_attributes_builder(
-        chain_spec: &Self::ChainSpec,
-    ) -> impl PayloadAttributesBuilder<<Self::Payload as PayloadTypes>::PayloadAttributes, HeaderTy<Self>>;
+impl<T: NodeTypes, R> Clone for DebugNodeConfig<T, R> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 /// Node launcher with support for launching various debugging utilities.
@@ -109,32 +65,32 @@ pub trait DebugNode<N: FullNodeComponents>: Node<N> {
 /// - Requires `ETHERSCAN_API_KEY` environment variable
 /// - Falls back to default Etherscan URL for the chain if URL not provided
 #[derive(Debug, Clone)]
-pub struct DebugNodeLauncher<L = EngineNodeLauncher> {
+pub struct DebugNodeLauncher<L, T: NodeTypes, R> {
     inner: L,
+    config: DebugNodeConfig<T, R>,
 }
 
-impl<L> DebugNodeLauncher<L> {
+impl<L, T: NodeTypes, R> DebugNodeLauncher<L, T, R> {
     /// Creates a new instance of the [`DebugNodeLauncher`].
-    pub const fn new(inner: L) -> Self {
-        Self { inner }
+    pub const fn new(inner: L, config: DebugNodeConfig<T, R>) -> Self {
+        Self { inner, config }
     }
 }
 
 /// Type alias for the default debug block provider. We use etherscan provider to satisfy the
 /// bounds.
-pub type DefaultDebugBlockProvider<N> = EtherscanBlockProvider<
-    <<N as FullNodeTypes>::Types as DebugNode<N>>::RpcBlock,
-    PayloadDataTy<<N as FullNodeTypes>::Types>,
->;
+pub type DefaultDebugBlockProvider<N, R> =
+    EtherscanBlockProvider<R, PayloadDataTy<<N as FullNodeTypes>::Types>>;
 
 /// Future for the [`DebugNodeLauncher`].
 #[expect(missing_debug_implementations, clippy::type_complexity)]
-pub struct DebugNodeLauncherFuture<L, Target, N, B = DefaultDebugBlockProvider<N>>
+pub struct DebugNodeLauncherFuture<L, Target, N, R, B = DefaultDebugBlockProvider<N, R>>
 where
-    N: FullNodeComponents<Types: DebugNode<N>>,
+    N: FullNodeComponents,
 {
     inner: L,
     target: Target,
+    config: DebugNodeConfig<N::Types, R>,
     local_payload_attributes_builder:
         Option<Box<dyn PayloadAttributesBuilder<PayloadAttrTy<N::Types>, HeaderTy<N::Types>>>>,
     map_attributes:
@@ -143,9 +99,10 @@ where
     mining_mode: Option<MiningMode<N::Pool>>,
 }
 
-impl<L, Target, N, AddOns, B> DebugNodeLauncherFuture<L, Target, N, B>
+impl<L, Target, N, AddOns, R, B> DebugNodeLauncherFuture<L, Target, N, R, B>
 where
-    N: FullNodeComponents<Types: DebugNode<N>>,
+    N: FullNodeComponents,
+    R: Serialize + DeserializeOwned + 'static,
     AddOns: RethRpcAddOns<N>,
     L: LaunchNode<Target, Node = NodeHandle<N, AddOns>>,
     B: PayloadProvider<ExecutionData = PayloadDataTy<N::Types>> + Clone,
@@ -158,6 +115,7 @@ where
         Self {
             inner: self.inner,
             target: self.target,
+            config: self.config,
             local_payload_attributes_builder: Some(Box::new(builder)),
             map_attributes: None,
             debug_block_provider: self.debug_block_provider,
@@ -173,6 +131,7 @@ where
         Self {
             inner: self.inner,
             target: self.target,
+            config: self.config,
             local_payload_attributes_builder: None,
             map_attributes: Some(Box::new(f)),
             debug_block_provider: self.debug_block_provider,
@@ -196,13 +155,14 @@ where
     pub fn with_debug_block_provider<B2>(
         self,
         provider: B2,
-    ) -> DebugNodeLauncherFuture<L, Target, N, B2>
+    ) -> DebugNodeLauncherFuture<L, Target, N, R, B2>
     where
         B2: PayloadProvider<ExecutionData = PayloadDataTy<N::Types>> + Clone,
     {
         DebugNodeLauncherFuture {
             inner: self.inner,
             target: self.target,
+            config: self.config,
             local_payload_attributes_builder: self.local_payload_attributes_builder,
             map_attributes: self.map_attributes,
             debug_block_provider: Some(provider),
@@ -214,12 +174,14 @@ where
         let Self {
             inner,
             target,
+            config: debug_config,
             local_payload_attributes_builder,
             map_attributes,
             debug_block_provider,
             mining_mode,
         } = self;
 
+        let rpc_to_primitive_block = debug_config.rpc_to_primitive_block;
         let handle = inner.launch_node(target).await?;
 
         let config = &handle.node.config;
@@ -241,19 +203,21 @@ where
         } else if let Some(url) = config.debug.rpc_consensus_url.clone() {
             info!(target: "reth::cli", "Using RPC consensus client: {}", url);
 
-            let block_provider =
-                RpcBlockProvider::<AnyNetwork, _>::new(url.as_str(), |block_response, extras| {
+            let block_provider = RpcBlockProvider::<AnyNetwork, _>::new(
+                url.as_str(),
+                move |block_response, extras| {
                     let json = serde_json::to_value(block_response)
                         .expect("Block serialization cannot fail");
                     let rpc_block =
                         serde_json::from_value(json).expect("Block deserialization cannot fail");
-                    let primitive_block = N::Types::rpc_to_primitive_block(rpc_block);
+                    let primitive_block = rpc_to_primitive_block(rpc_block);
                     <N::Types as NodeTypes>::Payload::block_to_payload(
                         SealedBlock::new_unhashed(primitive_block),
                         extras.bal,
                     )
-                })
-                .await?;
+                },
+            )
+            .await?;
 
             let rpc_consensus_client = DebugConsensusClient::new(
                 handle.node.add_ons_handle.beacon_engine_handle.clone(),
@@ -282,8 +246,8 @@ where
                     )
                 })?,
                 chain.id(),
-                |rpc_block| {
-                    let primitive_block = N::Types::rpc_to_primitive_block(rpc_block);
+                move |rpc_block| {
+                    let primitive_block = rpc_to_primitive_block(rpc_block);
                     <N::Types as NodeTypes>::Payload::block_to_payload(
                         SealedBlock::new_unhashed(primitive_block),
                         None,
@@ -314,7 +278,7 @@ where
             let builder = if let Some(builder) = local_payload_attributes_builder {
                 Either::Left(builder)
             } else {
-                let local = N::Types::local_payload_attributes_builder(&chain_spec);
+                let local = (debug_config.local_payload_attributes_builder)(&chain_spec);
                 let builder = if let Some(f) = map_attributes {
                     Either::Left(move |parent| f(local.build(&parent)))
                 } else {
@@ -353,10 +317,11 @@ where
     }
 }
 
-impl<L, Target, N, AddOns, B> IntoFuture for DebugNodeLauncherFuture<L, Target, N, B>
+impl<L, Target, N, AddOns, R, B> IntoFuture for DebugNodeLauncherFuture<L, Target, N, R, B>
 where
     Target: Send + 'static,
-    N: FullNodeComponents<Types: DebugNode<N>>,
+    N: FullNodeComponents,
+    R: Serialize + DeserializeOwned + 'static,
     AddOns: RethRpcAddOns<N> + 'static,
     L: LaunchNode<Target, Node = NodeHandle<N, AddOns>> + 'static,
     B: PayloadProvider<ExecutionData = PayloadDataTy<N::Types>> + Clone + 'static,
@@ -369,21 +334,24 @@ where
     }
 }
 
-impl<L, Target, N, AddOns> LaunchNode<Target> for DebugNodeLauncher<L>
+impl<L, Target, N, AddOns, R> LaunchNode<Target> for DebugNodeLauncher<L, N::Types, R>
 where
     Target: Send + 'static,
-    N: FullNodeComponents<Types: DebugNode<N>>,
+    N: FullNodeComponents,
+    R: Serialize + DeserializeOwned + 'static,
     AddOns: RethRpcAddOns<N> + 'static,
     L: LaunchNode<Target, Node = NodeHandle<N, AddOns>> + 'static,
-    DefaultDebugBlockProvider<N>: PayloadProvider<ExecutionData = PayloadDataTy<N::Types>> + Clone,
+    DefaultDebugBlockProvider<N, R>:
+        PayloadProvider<ExecutionData = PayloadDataTy<N::Types>> + Clone,
 {
     type Node = NodeHandle<N, AddOns>;
-    type Future = DebugNodeLauncherFuture<L, Target, N>;
+    type Future = DebugNodeLauncherFuture<L, Target, N, R>;
 
     fn launch_node(self, target: Target) -> Self::Future {
         DebugNodeLauncherFuture {
             inner: self.inner,
             target,
+            config: self.config,
             local_payload_attributes_builder: None,
             map_attributes: None,
             debug_block_provider: None,

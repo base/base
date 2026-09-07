@@ -44,6 +44,9 @@ pub trait MetadataWriter: Send {
     /// Be sure to update provider factory cache with
     /// [`StorageSettingsCache::set_storage_settings_cache`].
     fn write_storage_settings(&self, settings: StorageSettings) -> ProviderResult<()> {
+        if !settings.storage_v2 {
+            return Err(ProviderError::UnsupportedProvider);
+        }
         self.write_metadata(
             keys::STORAGE_SETTINGS,
             serde_json::to_vec(&settings).map_err(ProviderError::other)?,

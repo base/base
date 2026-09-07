@@ -1,3 +1,5 @@
+//! Database provider factory.
+
 use core::fmt;
 use std::{
     ops::{RangeBounds, RangeInclusive},
@@ -15,7 +17,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use reth_chainspec::ChainInfo;
 use reth_db::{DatabaseEnv, init_db, mdbx::DatabaseArguments};
-use reth_db_api::{database::Database, models::StoredBlockBodyIndices};
+use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables, transaction::DbTx};
 use reth_errors::{RethError, RethResult};
 use reth_node_types::{
     BlockTy, HeaderTy, NodeTypesWithDB, NodeTypesWithDBAdapter, ReceiptTy, TxTy,
@@ -34,10 +36,10 @@ use tracing::{info, instrument, trace, warn};
 
 use crate::{
     BalProvider, BalStoreHandle, BlockHashReader, BlockNumReader, BlockReader, ChainSpecProvider,
-    DatabaseProviderFactory, EitherWriterDestination, HeaderProvider, HeaderSyncGapProvider,
-    InMemoryBalStore, MetadataProvider, ProviderError, PruneCheckpointReader,
-    RocksDBProviderFactory, StageCheckpointReader, StateProviderBox, StaticFileProviderFactory,
-    StaticFileWriter, TransactionVariant, TransactionsProvider,
+    DatabaseProviderFactory, HeaderProvider, HeaderSyncGapProvider, InMemoryBalStore,
+    MetadataProvider, ProviderError, PruneCheckpointReader, RocksDBProviderFactory,
+    StageCheckpointReader, StateProviderBox, StaticFileProviderFactory, StaticFileWriter,
+    TransactionVariant, TransactionsProvider,
     providers::{
         NodeTypesForProvider, RocksDBProvider, StaticFileProvider, StaticFileProviderRWRefMut,
         state::latest::LatestStateProvider,
@@ -128,10 +130,10 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
         runtime: reth_tasks::Runtime,
     ) -> ProviderResult<Self> {
         // Load storage settings from database at init time. Creates a temporary provider
-        // to read persisted settings, falling back to legacy defaults if none exist.
+        // to read persisted settings, using v2 defaults for empty databases.
         //
         // Both factory and all providers it creates should share these cached settings.
-        let legacy_settings = StorageSettings::v1();
+        let default_settings = StorageSettings::v2();
         let database_provider_metrics = Arc::new(DatabaseProviderMetrics::default());
         let overlay_manager = OverlayManager::default();
         let storage_settings = DatabaseProvider::<_, N>::new(
@@ -140,15 +142,22 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
             static_file_provider.clone(),
             Default::default(),
             Default::default(),
-            Arc::new(RwLock::new(legacy_settings)),
+            Arc::new(RwLock::new(default_settings)),
             rocksdb_provider.clone(),
             overlay_manager.clone(),
             runtime.clone(),
             db.path(),
             database_provider_metrics.clone(),
         )
-        .storage_settings()?
-        .unwrap_or(legacy_settings);
+        .storage_settings()?;
+        if storage_settings.is_some_and(|settings| !settings.storage_v2)
+            || (storage_settings.is_none() && db.tx()?.entries::<tables::StageCheckpoints>()? != 0)
+        {
+            return Err(ProviderError::other(std::io::Error::other(
+                "storage v1 is no longer supported; resync with a new database",
+            )));
+        }
+        let storage_settings = storage_settings.unwrap_or(default_settings);
 
         Ok(Self {
             db,
@@ -852,19 +861,11 @@ impl<N: ProviderNodeTypes> TransactionsProvider for ProviderFactory<N> {
         &self,
         range: impl RangeBounds<TxNumber>,
     ) -> ProviderResult<Vec<Address>> {
-        if EitherWriterDestination::senders(self).is_static_file() {
-            self.caught_up_static_file_provider()?.senders_by_tx_range(range)
-        } else {
-            self.provider()?.senders_by_tx_range(range)
-        }
+        self.caught_up_static_file_provider()?.senders_by_tx_range(range)
     }
 
     fn transaction_sender(&self, id: TxNumber) -> ProviderResult<Option<Address>> {
-        if EitherWriterDestination::senders(self).is_static_file() {
-            self.caught_up_static_file_provider()?.transaction_sender(id)
-        } else {
-            self.provider()?.transaction_sender(id)
-        }
+        self.caught_up_static_file_provider()?.transaction_sender(id)
     }
 }
 
@@ -1039,7 +1040,7 @@ mod tests {
         mdbx::DatabaseArguments,
         test_utils::{ERROR_TEMPDIR, create_test_rocksdb_dir, create_test_static_files_dir},
     };
-    use reth_db_api::tables;
+    use reth_db_api::{tables, transaction::DbTxMut};
     use reth_primitives_traits::SignerRecoverable;
     use reth_prune_types::{PruneMode, PruneModes};
     use reth_storage_errors::provider::ProviderError;
@@ -1048,10 +1049,47 @@ mod tests {
     use super::*;
     use crate::{
         BlockHashReader, BlockNumReader, BlockWriter, DBProvider, HeaderSyncGapProvider,
-        TransactionsProvider,
+        MetadataWriter, TransactionsProvider,
         providers::{StaticFileProvider, StaticFileWriter},
         test_utils::{MockNodeTypesWithDB, blocks::TEST_BLOCK, create_test_provider_factory},
     };
+
+    #[test]
+    fn rejects_legacy_storage_metadata() {
+        let factory = create_test_provider_factory();
+        let provider = factory.provider_rw().unwrap();
+        provider.write_metadata("storage_settings", br#"{"storage_v2":false}"#.to_vec()).unwrap();
+        provider.commit().unwrap();
+
+        let result = ProviderFactory::<MockNodeTypesWithDB>::new(
+            factory.db.clone(),
+            factory.chain_spec.clone(),
+            factory.static_file_provider.clone(),
+            factory.rocksdb_provider.clone(),
+            factory.runtime.clone(),
+        );
+        assert!(result.unwrap_err().to_string().contains("storage v1 is no longer supported"));
+    }
+
+    #[test]
+    fn rejects_initialized_database_without_storage_metadata() {
+        let factory = create_test_provider_factory();
+        let provider = factory.provider_rw().unwrap();
+        provider
+            .tx_ref()
+            .put::<tables::StageCheckpoints>(StageId::Finish.to_string(), StageCheckpoint::new(1))
+            .unwrap();
+        provider.commit().unwrap();
+
+        let result = ProviderFactory::<MockNodeTypesWithDB>::new(
+            factory.db.clone(),
+            factory.chain_spec.clone(),
+            factory.static_file_provider.clone(),
+            factory.rocksdb_provider.clone(),
+            factory.runtime.clone(),
+        );
+        assert!(result.unwrap_err().to_string().contains("storage v1 is no longer supported"));
+    }
 
     #[test]
     fn common_history_provider() {
@@ -1109,6 +1147,8 @@ mod tests {
             let factory = create_test_provider_factory();
             let provider = factory.provider_rw().unwrap();
             assert_matches!(provider.insert_block(&block.clone().try_recover().unwrap()), Ok(_));
+            provider.commit().unwrap();
+            let provider = factory.provider_rw().unwrap();
             assert_matches!(
                 provider.transaction_sender(0), Ok(Some(sender))
                 if sender == block.body().transactions[0].recover_signer().unwrap()
@@ -1129,6 +1169,8 @@ mod tests {
             let factory = create_test_provider_factory().with_prune_modes(prune_modes);
             let provider = factory.provider_rw().unwrap();
             assert_matches!(provider.insert_block(&block.clone().try_recover().unwrap()), Ok(_));
+            provider.commit().unwrap();
+            let provider = factory.provider_rw().unwrap();
             assert_matches!(provider.transaction_sender(0), Ok(None));
             assert_matches!(
                 provider.transaction_id(*block.body().transactions[0].tx_hash()),
@@ -1145,22 +1187,16 @@ mod tests {
 
         let tx_ranges: Vec<RangeInclusive<TxNumber>> = vec![0..=0, 1..=1, 2..=2, 0..=1, 1..=2];
         for range in tx_ranges {
-            let factory = create_test_provider_factory();
+            let factory = create_test_provider_factory().with_prune_modes(PruneModes {
+                sender_recovery: Some(PruneMode::Full),
+                ..Default::default()
+            });
             let provider = factory.provider_rw().unwrap();
 
             assert_matches!(provider.insert_block(&block.clone().try_recover().unwrap()), Ok(_));
 
-            let senders = provider.take::<tables::TransactionSenders>(range.clone()).unwrap();
-            assert_eq!(
-                senders,
-                range
-                    .clone()
-                    .map(|tx_number| (
-                        tx_number,
-                        block.body().transactions[tx_number as usize].recover_signer().unwrap()
-                    ))
-                    .collect::<Vec<_>>()
-            );
+            provider.commit().unwrap();
+            let provider = factory.provider_rw().unwrap();
 
             let db_senders = provider.senders_by_tx_range(range);
             assert!(matches!(db_senders, Ok(ref v) if v.is_empty()));

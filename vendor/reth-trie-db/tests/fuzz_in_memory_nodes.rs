@@ -11,7 +11,6 @@ use reth_db::{
 };
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_provider::test_utils::create_test_provider_factory;
-use reth_storage_api::StorageSettingsCache;
 use reth_trie::{
     HashedPostState, HashedStorage, StateRoot, StorageRoot,
     test_utils::{state_root_prehashed, storage_root_prehashed},

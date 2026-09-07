@@ -3,25 +3,18 @@
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
-use base_execution_rpc::eth::BaseEthApiBuilder;
 use base_execution_txpool::GuardLimits;
 use base_node_core::{
-    BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes, BaseExecutorBuilder,
-    BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
-    BaseStorage,
+    BaseComponentsBuilder, BaseEngineTypes, BaseNetworkBuilder, BaseNodeComponentBuilder,
+    BaseNodeTypes, BasePayloadServiceBuilder, BaseStorage,
     args::RollupArgs,
-    node::{BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder},
+    node::{BasePayloadBuilder, BasePoolBuilder},
 };
-use reth_node_builder::{
-    Node, NodeAdapter, NodeComponentsBuilder,
-    components::ComponentsBuilder,
-    node::{FullNodeTypes, NodeTypes},
-    rpc::BasicEngineValidatorBuilder,
-};
+use reth_node_builder::node::{FullNodeTypes, NodeTypes};
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
 
-use crate::{BaseAddOns, BaseAddOnsBuilder};
+use crate::BaseAddOnsBuilder;
 
 /// Type configuration for a regular Base node.
 #[derive(Debug, Clone)]
@@ -92,28 +85,24 @@ impl BaseNode {
             mempool_payer_limit,
             ..
         } = self.args;
-        ComponentsBuilder::default()
-            .node_types::<Node>()
-            .pool(
-                BasePoolBuilder::default()
-                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
-                    .with_guard_limits(GuardLimits {
-                        signature_limit: mempool_sender_limit,
-                        payment_limit: mempool_payer_limit,
-                    })
-                    .with_additional_trusted_delegation_targets(
-                        self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    ),
-            )
-            .executor(BaseExecutorBuilder::default())
-            .payload(BasePayloadServiceBuilder::new(
+        BaseComponentsBuilder::new(
+            BasePoolBuilder::default()
+                .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
+                .with_guard_limits(GuardLimits {
+                    signature_limit: mempool_sender_limit,
+                    payment_limit: mempool_payer_limit,
+                })
+                .with_additional_trusted_delegation_targets(
+                    self.args.mempool_trusted_delegation_targets.iter().copied(),
+                ),
+            BasePayloadServiceBuilder::new(
                 BasePayloadBuilder::new()
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone())
                     .with_manifest_precheck_enabled(self.manifest_precheck_enabled),
-            ))
-            .network(BaseNetworkBuilder::new(!discovery_v4))
-            .consensus(BaseConsensusBuilder::default())
+            ),
+            BaseNetworkBuilder::new(!discovery_v4),
+        )
     }
 
     /// Returns [`BaseAddOnsBuilder`] with configured arguments.
@@ -174,36 +163,6 @@ impl BaseNode {
     /// ```
     pub fn provider_factory_builder() -> ProviderFactoryBuilder<Self> {
         ProviderFactoryBuilder::default()
-    }
-}
-
-impl<N> Node<N> for BaseNode
-where
-    N: FullNodeTypes<Types: BaseNodeTypes>,
-{
-    type ComponentsBuilder = ComponentsBuilder<
-        N,
-        BasePoolBuilder,
-        BasePayloadServiceBuilder,
-        BaseNetworkBuilder,
-        BaseExecutorBuilder,
-        BaseConsensusBuilder,
-    >;
-
-    type AddOns = BaseAddOns<
-        NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
-        BaseEthApiBuilder,
-        BasePayloadValidatorBuilder,
-        BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
-        BasicEngineValidatorBuilder<BasePayloadValidatorBuilder>,
-    >;
-
-    fn components_builder(&self) -> Self::ComponentsBuilder {
-        Self::components(self)
-    }
-
-    fn add_ons(&self) -> Self::AddOns {
-        self.add_ons_builder().build()
     }
 }
 

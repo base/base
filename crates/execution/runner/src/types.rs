@@ -1,20 +1,26 @@
 //! Type aliases for the Base node builder.
 
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_rpc::eth::BaseEthApiBuilder;
+use base_node_core::BasePayloadValidatorBuilder;
 use reth_db::DatabaseEnv;
 use reth_node_builder::{
-    FullNodeTypesAdapter, Node, NodeBuilder, NodeTypesWithDBAdapter, WithLaunchContext,
+    FullNodeTypesAdapter, NodeBuilder, NodeHandle, NodeTypesWithDBAdapter, WithLaunchContext,
 };
 use reth_provider::providers::BlockchainProvider;
 
-use crate::node::BaseNode;
+use crate::{BaseAddOns, BaseNodeAdapter, node::BaseNode};
 
 /// Alias for the Base node type adapter used by the runner.
 pub type BaseNodeTypes = FullNodeTypesAdapter<BaseNode, DatabaseEnv, BaseProvider>;
 /// Internal alias for the Base node components builder (default payload service).
-pub type BaseComponentsBuilder = <BaseNode as Node<BaseNodeTypes>>::ComponentsBuilder;
-/// Internal alias for the Base node add-ons (all generics resolved).
-pub(crate) type ConcreteBaseAddOns = <BaseNode as Node<BaseNodeTypes>>::AddOns;
+pub type BaseComponentsBuilder = base_node_core::BaseComponentsBuilder<BaseNodeTypes>;
+/// Concrete RPC and engine add-ons for the Base runner.
+pub type BaseNodeAddOns =
+    BaseAddOns<BaseNodeAdapter, BaseEthApiBuilder, BasePayloadValidatorBuilder>;
+
+/// Handle returned by the Base node launcher.
+pub type BaseNodeHandle = NodeHandle<BaseNodeAdapter, BaseNodeAddOns>;
 
 /// A [`BlockchainProvider`] instance.
 pub type BaseProvider = BlockchainProvider<NodeTypesWithDBAdapter<BaseNode, DatabaseEnv>>;

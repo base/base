@@ -5,21 +5,19 @@ use reth_db_api::{
     DatabaseError,
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
     table::{DupSort, Key, Table, Value},
-    tables::{self, PackedAccountsTrie, PackedStoragesTrie},
+    tables::{PackedAccountsTrie, PackedStoragesTrie},
     transaction::DbTx,
 };
 use reth_trie::{
     BranchNodeCompact, Nibbles, PackedStorageTrieEntry, PackedStoredNibbles,
-    PackedStoredNibblesSubKey, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
+    PackedStoredNibblesSubKey,
     trie_cursor::{TrieCursor, TrieCursorFactory, TrieStorageCursor},
     updates::StorageTrieUpdatesSorted,
 };
 
 /// Trait abstracting nibble encoding for trie keys.
 ///
-/// Allows the same cursor implementation to work with both legacy (65-byte) and
-/// packed (33-byte) nibble encodings. The underlying cursor types are monomorphized per
-/// adapter, while [`DatabaseTrieCursorFactory`] selects the encoding at runtime.
+/// Describes the packed key encoding used by database trie cursors.
 pub trait TrieKeyAdapter: Clone + Send + Sync + 'static {
     /// The key type for account trie lookups (e.g., `StoredNibbles` or `PackedStoredNibbles`).
     type AccountKey: Key + From<Nibbles> + Clone;
@@ -58,44 +56,6 @@ pub trait StorageTrieEntryLike: Sized {
 
     /// Construct a new entry from a subkey and node.
     fn new(nibbles: Self::SubKey, node: BranchNodeCompact) -> Self;
-}
-
-impl StorageTrieEntryLike for StorageTrieEntry {
-    type SubKey = StoredNibblesSubKey;
-
-    fn nibbles(&self) -> &Self::SubKey {
-        &self.nibbles
-    }
-
-    fn node(&self) -> &BranchNodeCompact {
-        &self.node
-    }
-
-    fn into_parts(self) -> (Self::SubKey, BranchNodeCompact) {
-        (self.nibbles, self.node)
-    }
-
-    fn new(nibbles: Self::SubKey, node: BranchNodeCompact) -> Self {
-        Self { nibbles, node }
-    }
-}
-
-/// Legacy (v1) nibble encoding: 1 nibble per byte, 65-byte subkeys.
-#[derive(Debug, Clone)]
-pub struct LegacyKeyAdapter;
-
-impl TrieKeyAdapter for LegacyKeyAdapter {
-    type AccountKey = StoredNibbles;
-    type StorageSubKey = StoredNibblesSubKey;
-    type StorageValue = StorageTrieEntry;
-
-    fn account_key_to_nibbles(key: &Self::AccountKey) -> Nibbles {
-        key.0
-    }
-
-    fn subkey_to_nibbles(subkey: &Self::StorageSubKey) -> Nibbles {
-        subkey.0
-    }
 }
 
 impl StorageTrieEntryLike for PackedStorageTrieEntry {
@@ -147,11 +107,6 @@ pub trait TrieTableAdapter: TrieKeyAdapter {
     /// The storage trie table type.
     type StorageTrieTable: Table<Key = B256, Value = Self::StorageValue>
         + DupSort<SubKey = Self::StorageSubKey>;
-}
-
-impl TrieTableAdapter for LegacyKeyAdapter {
-    type AccountTrieTable = tables::AccountsTrie;
-    type StorageTrieTable = tables::StoragesTrie;
 }
 
 impl TrieTableAdapter for PackedKeyAdapter {
@@ -383,7 +338,7 @@ mod tests {
     fn test_account_trie_order() {
         let factory = create_test_provider_factory();
         let provider = factory.provider_rw().unwrap();
-        let mut cursor = provider.tx_ref().cursor_write::<tables::AccountsTrie>().unwrap();
+        let mut cursor = provider.tx_ref().cursor_write::<PackedAccountsTrie>().unwrap();
 
         let data = vec![
             hex!("0303040e").to_vec(),
@@ -422,19 +377,21 @@ mod tests {
     // tests that upsert and seek match on the storage trie cursor
     #[test]
     fn test_storage_cursor_abstraction() {
-        use reth_storage_api::StorageSettingsCache;
         use reth_trie::trie_cursor::{TrieCursor, TrieCursorFactory};
 
         let factory = create_test_provider_factory();
         let provider = factory.provider_rw().unwrap();
-        let mut cursor = provider.tx_ref().cursor_dup_write::<tables::StoragesTrie>().unwrap();
+        let mut cursor = provider.tx_ref().cursor_dup_write::<PackedStoragesTrie>().unwrap();
 
         let hashed_address = B256::random();
-        let key = StoredNibblesSubKey::from(vec![0x2, 0x3]);
+        let key = PackedStoredNibblesSubKey::from(vec![0x2, 0x3]);
         let value = BranchNodeCompact::new(1, 1, 1, vec![B256::random()], None);
 
         cursor
-            .upsert(hashed_address, &StorageTrieEntry { nibbles: key.clone(), node: value.clone() })
+            .upsert(
+                hashed_address,
+                &PackedStorageTrieEntry { nibbles: key.clone(), node: value.clone() },
+            )
             .unwrap();
 
         crate::with_adapter!(provider, |A| {

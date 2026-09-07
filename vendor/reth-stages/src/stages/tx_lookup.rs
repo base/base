@@ -1,6 +1,5 @@
 use alloy_consensus::transaction::TxHashRef;
 use alloy_primitives::{TxHash, TxNumber};
-use num_traits::Zero;
 use reth_config::config::{EtlConfig, TransactionLookupConfig};
 use reth_db_api::{
     Tables,
@@ -156,8 +155,10 @@ where
                 let interval = (total_hashes / 10).max(1);
 
                 // Use append mode when table is empty (first sync) - significantly faster
-                let append_only =
-                    provider.count_entries::<tables::TransactionHashNumbers>()?.is_zero();
+                let append_only = provider
+                    .rocksdb_provider()
+                    .first::<tables::TransactionHashNumbers>()?
+                    .is_none();
 
                 // Auto-commits on threshold; consistency check heals any crash.
                 provider.with_rocksdb_batch_auto_commit(|rocksdb_batch| {
@@ -198,10 +199,8 @@ where
             }
         }
 
-        if provider.cached_storage_settings().storage_v2 {
-            provider.commit_pending_rocksdb_batches()?;
-            provider.rocksdb_provider().flush(&[Tables::TransactionHashNumbers.name()])?;
-        }
+        provider.commit_pending_rocksdb_batches()?;
+        provider.rocksdb_provider().flush(&[Tables::TransactionHashNumbers.name()])?;
 
         Ok(ExecOutput {
             checkpoint: StageCheckpoint::new(input.target())
@@ -253,7 +252,8 @@ where
 
 fn stage_checkpoint<Provider>(provider: &Provider) -> Result<EntitiesCheckpoint, StageError>
 where
-    Provider: PruneCheckpointReader + StaticFileProviderFactory + StatsReader,
+    Provider:
+        RocksDBProviderFactory + PruneCheckpointReader + StaticFileProviderFactory + StatsReader,
 {
     let pruned_entries = provider
         .get_prune_checkpoint(PruneSegment::TransactionLookup)?
@@ -265,7 +265,12 @@ where
         // If `TransactionHashNumbers` table was pruned, we will have a number of entries in it not
         // matching the actual number of processed transactions. To fix that, we add the
         // number of pruned `TransactionHashNumbers` entries.
-        processed: provider.count_entries::<tables::TransactionHashNumbers>()? as u64
+        processed: provider
+            .rocksdb_provider()
+            .table_stats()
+            .into_iter()
+            .find(|stats| stats.name == Tables::TransactionHashNumbers.name())
+            .map_or(0, |stats| stats.estimated_num_keys)
             + pruned_entries,
         // Count only static files entries. If we count the database entries too, we may have
         // duplicates. We're sure that the static files have all entries that database has,

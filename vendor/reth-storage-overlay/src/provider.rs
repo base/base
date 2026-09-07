@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_primitives::{B256, BlockHash};
 use metrics::{Counter, Histogram};
-use reth_db_api::{DatabaseError, tables, transaction::DbTx};
+use reth_db_api::{DatabaseError, transaction::DbTx};
 use reth_errors::ProviderResult;
 use reth_ethereum_primitives::EthPrimitives;
 use reth_metrics::Metrics;
@@ -22,7 +22,7 @@ use reth_trie::{
 };
 use reth_trie_db::{
     DatabaseAccountTrieCursor, DatabaseHashedCursorFactory, DatabaseStorageTrieCursor,
-    LegacyKeyAdapter, PackedAccountsTrie, PackedKeyAdapter, PackedStoragesTrie,
+    PackedAccountsTrie, PackedKeyAdapter, PackedStoragesTrie,
 };
 use tracing::instrument;
 
@@ -141,9 +141,8 @@ where
 
         let overlay = self.get_overlay(&provider)?;
 
-        let is_v2 = provider.cached_storage_settings().is_v2();
         self.metrics.database_provider_ro_duration.record(overall_start.elapsed());
-        Ok(OverlayStateProvider::new(provider, overlay, is_v2))
+        Ok(OverlayStateProvider::new(provider, overlay))
     }
 }
 
@@ -156,13 +155,12 @@ where
 pub struct OverlayStateProvider<Provider> {
     provider: Provider,
     overlay: Overlay,
-    is_v2: bool,
 }
 
 impl<Provider> OverlayStateProvider<Provider> {
     /// Creates a new overlay state provider.
-    pub const fn new(provider: Provider, overlay: Overlay, is_v2: bool) -> Self {
-        Self { provider, overlay, is_v2 }
+    pub const fn new(provider: Provider, overlay: Overlay) -> Self {
+        Self { provider, overlay }
     }
 }
 
@@ -181,13 +179,9 @@ where
         Self: 'a;
 
     fn account_trie_cursor(&self) -> Result<Self::AccountTrieCursor<'_>, DatabaseError> {
-        let cursor: Box<dyn TrieCursor + Send> = if self.is_v2 {
+        let cursor: Box<dyn TrieCursor + Send> = {
             Box::new(DatabaseAccountTrieCursor::<_, PackedKeyAdapter>::new(
                 self.provider.tx().cursor_read::<PackedAccountsTrie>()?,
-            ))
-        } else {
-            Box::new(DatabaseAccountTrieCursor::<_, LegacyKeyAdapter>::new(
-                self.provider.tx().cursor_read::<tables::AccountsTrie>()?,
             ))
         };
         Ok(InMemoryTrieCursor::new_account(cursor, &self.overlay.trie_updates))
@@ -197,14 +191,9 @@ where
         &self,
         hashed_address: B256,
     ) -> Result<Self::StorageTrieCursor<'_>, DatabaseError> {
-        let cursor: Box<dyn TrieStorageCursor + Send> = if self.is_v2 {
+        let cursor: Box<dyn TrieStorageCursor + Send> = {
             Box::new(DatabaseStorageTrieCursor::<_, PackedKeyAdapter>::new(
                 self.provider.tx().cursor_dup_read::<PackedStoragesTrie>()?,
-                hashed_address,
-            ))
-        } else {
-            Box::new(DatabaseStorageTrieCursor::<_, LegacyKeyAdapter>::new(
-                self.provider.tx().cursor_dup_read::<tables::StoragesTrie>()?,
                 hashed_address,
             ))
         };

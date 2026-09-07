@@ -1,23 +1,15 @@
 use std::{
     collections::BTreeSet,
-    thread,
     time::{Duration, Instant},
 };
 
 use alloy_primitives::{Address, B256, BlockNumber, U256, keccak256};
 use clap::Parser;
-use parking_lot::Mutex;
-use reth_db_api::{
-    cursor::{DbCursorRO, DbDupCursorRO},
-    database::Database,
-    tables,
-    transaction::DbTx,
-};
+use reth_db_api::{cursor::DbDupCursorRO, database::Database, tables, transaction::DbTx};
 use reth_db_common::DbTool;
 use reth_node_builder::NodeTypesWithDB;
 use reth_provider::{StaticFileProviderFactory, providers::ProviderNodeTypes};
-use reth_storage_api::{BlockNumReader, StateProvider, StorageSettingsCache};
-use reth_tasks::spawn_scoped_os_thread;
+use reth_storage_api::{BlockNumReader, StateProvider};
 use tracing::info;
 
 /// Log progress every 30 seconds
@@ -64,41 +56,12 @@ impl Command {
         address: Address,
         limit: usize,
     ) -> eyre::Result<()> {
-        let use_hashed_state = tool.provider_factory.cached_storage_settings().use_hashed_state();
-
         let entries = tool.provider_factory.db_ref().view(|tx| {
-            let (account, walker_entries) = if use_hashed_state {
+            let (account, walker_entries) = {
                 let hashed_address = keccak256(address);
                 let account = tx.get::<tables::HashedAccounts>(hashed_address)?;
                 let mut cursor = tx.cursor_dup_read::<tables::HashedStorages>()?;
                 let walker = cursor.walk_dup(Some(hashed_address), None)?;
-                let mut entries = Vec::new();
-                let mut last_log = Instant::now();
-                for (idx, entry) in walker.enumerate() {
-                    let (_, storage_entry) = entry?;
-                    if storage_entry.value != U256::ZERO {
-                        entries.push((storage_entry.key, storage_entry.value));
-                    }
-                    if entries.len() >= limit {
-                        break;
-                    }
-                    if last_log.elapsed() >= LOG_INTERVAL {
-                        info!(
-                            target: "reth::cli",
-                            address = %address,
-                            slots_scanned = idx,
-                            "Scanning storage slots"
-                        );
-                        last_log = Instant::now();
-                    }
-                }
-                (account, entries)
-            } else {
-                // Get account info
-                let account = tx.get::<tables::PlainAccountState>(address)?;
-                // Get storage entries
-                let mut cursor = tx.cursor_dup_read::<tables::PlainStorageState>()?;
-                let walker = cursor.walk_dup(Some(address), None)?;
                 let mut entries = Vec::new();
                 let mut last_log = Instant::now();
                 for (idx, entry) in walker.enumerate() {
@@ -145,18 +108,12 @@ impl Command {
         let account = provider.basic_account(&address)?;
 
         // Check storage settings to determine where history is stored
-        let storage_settings = tool.provider_factory.cached_storage_settings();
-        let history_in_rocksdb = storage_settings.storage_v2;
 
         // For historical queries, enumerate keys from history indices only
         // (not PlainStorageState, which reflects current state)
         let mut storage_keys = BTreeSet::new();
 
-        if history_in_rocksdb {
-            self.collect_staticfile_storage_keys(tool, address, &mut storage_keys)?;
-        } else {
-            self.collect_mdbx_storage_keys_parallel(tool, address, &mut storage_keys)?;
-        }
+        self.collect_staticfile_storage_keys(tool, address, &mut storage_keys)?;
 
         info!(
             target: "reth::cli",
@@ -256,137 +213,6 @@ impl Command {
             "Finished static file storage changeset scan"
         );
 
-        Ok(())
-    }
-
-    /// Collects storage keys from MDBX StorageChangeSets using parallel block range scanning.
-    fn collect_mdbx_storage_keys_parallel<N: NodeTypesWithDB + ProviderNodeTypes>(
-        &self,
-        tool: &DbTool<N>,
-        address: Address,
-        keys: &mut BTreeSet<B256>,
-    ) -> eyre::Result<()> {
-        const CHUNK_SIZE: u64 = 500_000; // 500k blocks per thread
-        let num_threads = std::thread::available_parallelism()
-            .map(|p| p.get().saturating_sub(1).max(1))
-            .unwrap_or(4);
-
-        // Get the current tip block
-        let tip = tool.provider_factory.provider()?.best_block_number()?;
-
-        if tip == 0 {
-            return Ok(());
-        }
-
-        info!(
-            target: "reth::cli",
-            address = %address,
-            tip,
-            chunk_size = CHUNK_SIZE,
-            num_threads,
-            "Starting parallel MDBX changeset scan"
-        );
-
-        // Shared state for collecting keys
-        let collected_keys: Mutex<BTreeSet<B256>> = Mutex::new(BTreeSet::new());
-        let total_entries_scanned = Mutex::new(0usize);
-
-        // Create chunk ranges
-        let mut chunks: Vec<(u64, u64)> = Vec::new();
-        let mut start = 0u64;
-        while start <= tip {
-            let end = (start + CHUNK_SIZE - 1).min(tip);
-            chunks.push((start, end));
-            start = end + 1;
-        }
-
-        let chunks_ref = &chunks;
-        let next_chunk = Mutex::new(0usize);
-        let next_chunk_ref = &next_chunk;
-        let collected_keys_ref = &collected_keys;
-        let total_entries_ref = &total_entries_scanned;
-
-        thread::scope(|s| {
-            let handles: Vec<_> = (0..num_threads)
-                .map(|thread_id| {
-                    spawn_scoped_os_thread(s, "db-state-worker", move || {
-                        loop {
-                            // Get next chunk to process
-                            let chunk_idx = {
-                                let mut idx = next_chunk_ref.lock();
-                                if *idx >= chunks_ref.len() {
-                                    return Ok::<_, eyre::Report>(());
-                                }
-                                let current = *idx;
-                                *idx += 1;
-                                current
-                            };
-
-                            let (chunk_start, chunk_end) = chunks_ref[chunk_idx];
-
-                            // Open a new read transaction for this chunk
-                            tool.provider_factory.db_ref().view(|tx| {
-                                tx.disable_long_read_transaction_safety();
-
-                                let mut changeset_cursor =
-                                    tx.cursor_read::<tables::StorageChangeSets>()?;
-                                let start_key =
-                                    reth_db_api::models::BlockNumberAddress((chunk_start, address));
-                                let end_key =
-                                    reth_db_api::models::BlockNumberAddress((chunk_end, address));
-
-                                let mut local_keys = BTreeSet::new();
-                                let mut entries_in_chunk = 0usize;
-
-                                if let Ok(walker) = changeset_cursor.walk_range(start_key..=end_key)
-                                {
-                                    for (block_addr, storage_entry) in walker.flatten() {
-                                        if block_addr.address() == address {
-                                            local_keys.insert(storage_entry.key);
-                                        }
-                                        entries_in_chunk += 1;
-                                    }
-                                }
-
-                                // Merge into global state
-                                collected_keys_ref.lock().extend(local_keys);
-                                *total_entries_ref.lock() += entries_in_chunk;
-
-                                info!(
-                                    target: "reth::cli",
-                                    thread_id,
-                                    chunk_start,
-                                    chunk_end,
-                                    entries_in_chunk,
-                                    "Thread completed chunk"
-                                );
-
-                                Ok::<_, eyre::Report>(())
-                            })??;
-                        }
-                    })
-                })
-                .collect();
-
-            for handle in handles {
-                handle.join().map_err(|_| eyre::eyre!("Thread panicked"))??;
-            }
-
-            Ok::<_, eyre::Report>(())
-        })?;
-
-        let final_keys = collected_keys.into_inner();
-        let total = *total_entries_scanned.lock();
-
-        info!(
-            target: "reth::cli",
-            address = %address,
-            total_entries = total,
-            unique_keys = final_keys.len(),
-            "Finished parallel MDBX changeset scan"
-        );
-
-        keys.extend(final_keys);
         Ok(())
     }
 

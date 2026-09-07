@@ -58,7 +58,6 @@ metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 reth-ipc = { workspace = true, optional = true }
-reth-basic-payload-builder = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 hex = { workspace = true, features = ["default"] }

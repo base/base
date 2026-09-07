@@ -26,9 +26,7 @@ use reth_errors::ProviderError;
 use reth_node_types::NodePrimitives;
 use reth_primitives_traits::{ReceiptTy, StorageEntry};
 use reth_static_file_types::StaticFileSegment;
-use reth_storage_api::{
-    ChangeSetReader, DBProvider, DbTxProvider, NodePrimitivesProvider, StorageSettingsCache,
-};
+use reth_storage_api::{ChangeSetReader, DBProvider, DbTxProvider, NodePrimitivesProvider};
 use reth_storage_errors::provider::ProviderResult;
 use strum::{Display, EnumIs};
 
@@ -77,7 +75,7 @@ pub type RawRocksDBBatch = rocksdb::WriteBatchWithTransaction<true>;
 /// Helper type for `RocksDB` snapshot argument in reader constructors.
 ///
 /// The `Option` allows callers to skip `RocksDB` access when it isn't needed
-/// (e.g., on legacy MDBX-only nodes).
+/// (e.g., when reading receipts from static files).
 pub type RocksDBRefArg<'a> = Option<crate::providers::rocksdb::RocksReadSnapshot<'a>>;
 
 /// Represents a destination for writing data, either to database, static files, or `RocksDB`.
@@ -92,13 +90,13 @@ pub enum EitherWriter<'a, CURSOR, N> {
 }
 
 impl<'a> EitherWriter<'a, (), ()> {
-    /// Creates a new [`EitherWriter`] for receipts based on storage settings and prune modes.
+    /// Creates a new [`EitherWriter`] for receipts based on receipt pruning.
     pub fn new_receipts<P>(
         provider: &'a P,
         block_number: BlockNumber,
     ) -> ProviderResult<EitherWriterTy<'a, P, tables::Receipts<ReceiptTy<P::Primitives>>>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache + StaticFileProviderFactory,
+        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
         P::Tx: DbTxMut,
         ReceiptTy<P::Primitives>: Value,
     {
@@ -113,168 +111,95 @@ impl<'a> EitherWriter<'a, (), ()> {
         }
     }
 
-    /// Creates a new [`EitherWriter`] for senders based on storage settings.
+    /// Creates a new [`EitherWriter`] for senders stored in static files.
     pub fn new_senders<P>(
         provider: &'a P,
         block_number: BlockNumber,
     ) -> ProviderResult<EitherWriterTy<'a, P, tables::TransactionSenders>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache + StaticFileProviderFactory,
+        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
         P::Tx: DbTxMut,
     {
-        if EitherWriterDestination::senders(provider).is_static_file() {
-            Ok(EitherWriter::StaticFile(
-                provider
-                    .get_static_file_writer(block_number, StaticFileSegment::TransactionSenders)?,
-            ))
-        } else {
-            Ok(EitherWriter::Database(
-                provider.tx_ref().cursor_write::<tables::TransactionSenders>()?,
-            ))
-        }
+        Ok(EitherWriter::StaticFile(
+            provider.get_static_file_writer(block_number, StaticFileSegment::TransactionSenders)?,
+        ))
     }
 
-    /// Creates a new [`EitherWriter`] for account changesets based on storage settings and prune
-    /// modes.
+    /// Creates a new [`EitherWriter`] for account changesets stored in static files.
     pub fn new_account_changesets<P>(
         provider: &'a P,
         block_number: BlockNumber,
     ) -> ProviderResult<DupEitherWriterTy<'a, P, tables::AccountChangeSets>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache + StaticFileProviderFactory,
+        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
         P::Tx: DbTxMut,
     {
-        if provider.cached_storage_settings().storage_v2 {
-            Ok(EitherWriter::StaticFile(
-                provider
-                    .get_static_file_writer(block_number, StaticFileSegment::AccountChangeSets)?,
-            ))
-        } else {
-            Ok(EitherWriter::Database(
-                provider.tx_ref().cursor_dup_write::<tables::AccountChangeSets>()?,
-            ))
-        }
+        Ok(EitherWriter::StaticFile(
+            provider.get_static_file_writer(block_number, StaticFileSegment::AccountChangeSets)?,
+        ))
     }
 
-    /// Creates a new [`EitherWriter`] for storage changesets based on storage settings.
+    /// Creates a new [`EitherWriter`] for storage changesets stored in static files.
     pub fn new_storage_changesets<P>(
         provider: &'a P,
         block_number: BlockNumber,
     ) -> ProviderResult<DupEitherWriterTy<'a, P, tables::StorageChangeSets>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache + StaticFileProviderFactory,
+        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
         P::Tx: DbTxMut,
     {
-        if provider.cached_storage_settings().storage_v2 {
-            Ok(EitherWriter::StaticFile(
-                provider
-                    .get_static_file_writer(block_number, StaticFileSegment::StorageChangeSets)?,
-            ))
-        } else {
-            Ok(EitherWriter::Database(
-                provider.tx_ref().cursor_dup_write::<tables::StorageChangeSets>()?,
-            ))
-        }
+        Ok(EitherWriter::StaticFile(
+            provider.get_static_file_writer(block_number, StaticFileSegment::StorageChangeSets)?,
+        ))
     }
 
     /// Returns the destination for writing receipts.
     ///
-    /// The rules are as follows:
-    /// - If the node should not always write receipts to static files, and any receipt pruning is
-    ///   enabled, write to the database.
-    /// - If the node should always write receipts to static files, but receipt log filter pruning
-    ///   is enabled, write to the database.
-    /// - Otherwise, write to static files.
-    pub fn receipts_destination<P: DBProvider + StorageSettingsCache>(
-        provider: &P,
-    ) -> EitherWriterDestination {
-        let receipts_in_static_files = provider.cached_storage_settings().storage_v2;
+    /// Receipt log filtering requires MDBX; otherwise receipts are stored in static files.
+    pub fn receipts_destination<P: DBProvider>(provider: &P) -> EitherWriterDestination {
         let prune_modes = provider.prune_modes_ref();
 
-        if !receipts_in_static_files && prune_modes.has_receipts_pruning() ||
-            // TODO: support writing receipts to static files with log filter pruning enabled
-            receipts_in_static_files && !prune_modes.receipts_log_filter.is_empty()
-        {
+        if !prune_modes.receipts_log_filter.is_empty() {
             EitherWriterDestination::Database
         } else {
             EitherWriterDestination::StaticFile
-        }
-    }
-
-    /// Returns the destination for writing account changesets.
-    ///
-    /// This determines the destination based solely on storage settings.
-    pub fn account_changesets_destination<P: DBProvider + StorageSettingsCache>(
-        provider: &P,
-    ) -> EitherWriterDestination {
-        if provider.cached_storage_settings().storage_v2 {
-            EitherWriterDestination::StaticFile
-        } else {
-            EitherWriterDestination::Database
-        }
-    }
-
-    /// Returns the destination for writing storage changesets.
-    ///
-    /// This determines the destination based solely on storage settings.
-    pub fn storage_changesets_destination<P: DBProvider + StorageSettingsCache>(
-        provider: &P,
-    ) -> EitherWriterDestination {
-        if provider.cached_storage_settings().storage_v2 {
-            EitherWriterDestination::StaticFile
-        } else {
-            EitherWriterDestination::Database
         }
     }
 
     /// Creates a new [`EitherWriter`] for storages history based on storage settings.
     pub fn new_storages_history<P>(
-        provider: &P,
+        _provider: &P,
         _rocksdb_batch: RocksBatchArg<'a>,
     ) -> ProviderResult<EitherWriterTy<'a, P, tables::StoragesHistory>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache,
+        P: DBProvider + NodePrimitivesProvider,
         P::Tx: DbTxMut,
     {
-        if provider.cached_storage_settings().storage_v2 {
-            return Ok(EitherWriter::RocksDB(_rocksdb_batch));
-        }
-
-        Ok(EitherWriter::Database(provider.tx_ref().cursor_write::<tables::StoragesHistory>()?))
+        return Ok(EitherWriter::RocksDB(_rocksdb_batch));
     }
 
     /// Creates a new [`EitherWriter`] for transaction hash numbers based on storage settings.
     pub fn new_transaction_hash_numbers<P>(
-        provider: &P,
+        _provider: &P,
         _rocksdb_batch: RocksBatchArg<'a>,
     ) -> ProviderResult<EitherWriterTy<'a, P, tables::TransactionHashNumbers>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache,
+        P: DBProvider + NodePrimitivesProvider,
         P::Tx: DbTxMut,
     {
-        if provider.cached_storage_settings().storage_v2 {
-            return Ok(EitherWriter::RocksDB(_rocksdb_batch));
-        }
-
-        Ok(EitherWriter::Database(
-            provider.tx_ref().cursor_write::<tables::TransactionHashNumbers>()?,
-        ))
+        return Ok(EitherWriter::RocksDB(_rocksdb_batch));
     }
 
     /// Creates a new [`EitherWriter`] for account history based on storage settings.
     pub fn new_accounts_history<P>(
-        provider: &P,
+        _provider: &P,
         _rocksdb_batch: RocksBatchArg<'a>,
     ) -> ProviderResult<EitherWriterTy<'a, P, tables::AccountsHistory>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache,
+        P: DBProvider + NodePrimitivesProvider,
         P::Tx: DbTxMut,
     {
-        if provider.cached_storage_settings().storage_v2 {
-            return Ok(EitherWriter::RocksDB(_rocksdb_batch));
-        }
-
-        Ok(EitherWriter::Database(provider.tx_ref().cursor_write::<tables::AccountsHistory>()?))
+        return Ok(EitherWriter::RocksDB(_rocksdb_batch));
     }
 }
 
@@ -655,85 +580,57 @@ pub enum EitherReader<'a, CURSOR, N> {
 }
 
 impl<'a> EitherReader<'a, (), ()> {
-    /// Creates a new [`EitherReader`] for senders based on storage settings.
+    /// Creates a new [`EitherReader`] for senders stored in static files.
     pub fn new_senders<P>(
         provider: &P,
     ) -> ProviderResult<EitherReaderTy<'a, P, tables::TransactionSenders>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache + StaticFileProviderFactory,
+        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
         P::Tx: DbTx,
     {
-        if EitherWriterDestination::senders(provider).is_static_file() {
-            Ok(EitherReader::StaticFile(provider.static_file_provider(), PhantomData))
-        } else {
-            Ok(EitherReader::Database(
-                provider.tx_ref().cursor_read::<tables::TransactionSenders>()?,
-                PhantomData,
-            ))
-        }
+        Ok(EitherReader::StaticFile(provider.static_file_provider(), PhantomData))
     }
 
     /// Creates a new [`EitherReader`] for storages history based on storage settings.
     pub fn new_storages_history<P>(
-        provider: &P,
+        _provider: &P,
         rocksdb: RocksDBRefArg<'a>,
     ) -> ProviderResult<EitherReaderTy<'a, P, tables::StoragesHistory>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache,
+        P: DBProvider + NodePrimitivesProvider,
         P::Tx: DbTx,
     {
-        if provider.cached_storage_settings().storage_v2 {
-            return Ok(EitherReader::RocksDB(
-                rocksdb.expect("storages_history_in_rocksdb requires rocksdb snapshot"),
-            ));
-        }
-
-        Ok(EitherReader::Database(
-            provider.tx_ref().cursor_read::<tables::StoragesHistory>()?,
-            PhantomData,
-        ))
+        return Ok(EitherReader::RocksDB(
+            rocksdb.expect("storages_history_in_rocksdb requires rocksdb snapshot"),
+        ));
     }
 
     /// Creates a new [`EitherReader`] for transaction hash numbers based on storage settings.
     pub fn new_transaction_hash_numbers<P>(
-        provider: &P,
+        _provider: &P,
         rocksdb: RocksDBRefArg<'a>,
     ) -> ProviderResult<EitherReaderTy<'a, P, tables::TransactionHashNumbers>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache,
+        P: DBProvider + NodePrimitivesProvider,
         P::Tx: DbTx,
     {
-        if provider.cached_storage_settings().storage_v2 {
-            return Ok(EitherReader::RocksDB(
-                rocksdb.expect("transaction_hash_numbers_in_rocksdb requires rocksdb snapshot"),
-            ));
-        }
-
-        Ok(EitherReader::Database(
-            provider.tx_ref().cursor_read::<tables::TransactionHashNumbers>()?,
-            PhantomData,
-        ))
+        return Ok(EitherReader::RocksDB(
+            rocksdb.expect("transaction_hash_numbers_in_rocksdb requires rocksdb snapshot"),
+        ));
     }
 
     /// Creates a new [`EitherReader`] for account history based on storage settings.
     pub fn new_accounts_history<P>(
-        provider: &P,
+        _provider: &P,
         rocksdb: RocksDBRefArg<'a>,
     ) -> ProviderResult<EitherReaderTy<'a, P, tables::AccountsHistory>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache,
+        P: DBProvider + NodePrimitivesProvider,
         P::Tx: DbTx,
     {
-        if provider.cached_storage_settings().storage_v2 {
-            return Ok(EitherReader::RocksDB(
-                rocksdb.expect("account_history_in_rocksdb requires rocksdb snapshot"),
-            ));
-        }
-
-        Ok(EitherReader::Database(
-            provider.tx_ref().cursor_read::<tables::AccountsHistory>()?,
-            PhantomData,
-        ))
+        return Ok(EitherReader::RocksDB(
+            rocksdb.expect("account_history_in_rocksdb requires rocksdb snapshot"),
+        ));
     }
 
     /// Creates a new [`EitherReader`] for account changesets based on storage settings.
@@ -741,17 +638,10 @@ impl<'a> EitherReader<'a, (), ()> {
         provider: &P,
     ) -> ProviderResult<DupEitherReaderTy<'a, P, tables::AccountChangeSets>>
     where
-        P: DBProvider + NodePrimitivesProvider + StorageSettingsCache + StaticFileProviderFactory,
+        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
         P::Tx: DbTx,
     {
-        if EitherWriterDestination::account_changesets(provider).is_static_file() {
-            Ok(EitherReader::StaticFile(provider.static_file_provider(), PhantomData))
-        } else {
-            Ok(EitherReader::Database(
-                provider.tx_ref().cursor_dup_read::<tables::AccountChangeSets>()?,
-                PhantomData,
-            ))
-        }
+        Ok(EitherReader::StaticFile(provider.static_file_provider(), PhantomData))
     }
 }
 
@@ -954,53 +844,14 @@ pub enum EitherWriterDestination {
     RocksDB,
 }
 
-impl EitherWriterDestination {
-    /// Returns the destination for writing senders based on storage settings.
-    pub fn senders<P>(provider: &P) -> Self
-    where
-        P: StorageSettingsCache,
-    {
-        // Write senders to static files only if they're explicitly enabled
-        if provider.cached_storage_settings().storage_v2 {
-            Self::StaticFile
-        } else {
-            Self::Database
-        }
-    }
-
-    /// Returns the destination for writing account changesets based on storage settings.
-    pub fn account_changesets<P>(provider: &P) -> Self
-    where
-        P: StorageSettingsCache,
-    {
-        // Write account changesets to static files only if they're explicitly enabled
-        if provider.cached_storage_settings().storage_v2 {
-            Self::StaticFile
-        } else {
-            Self::Database
-        }
-    }
-
-    /// Returns the destination for writing storage changesets based on storage settings.
-    pub fn storage_changesets<P>(provider: &P) -> Self
-    where
-        P: StorageSettingsCache,
-    {
-        // Write storage changesets to static files only if they're explicitly enabled
-        if provider.cached_storage_settings().storage_v2 {
-            Self::StaticFile
-        } else {
-            Self::Database
-        }
-    }
-}
+impl EitherWriterDestination {}
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
     use reth_db::models::AccountBeforeTx;
     use reth_static_file_types::StaticFileSegment;
-    use reth_storage_api::{DatabaseProviderFactory, StorageSettings};
+    use reth_storage_api::{DatabaseProviderFactory, StorageSettings, StorageSettingsCache};
 
     use super::*;
     use crate::{StaticFileWriter, test_utils::create_test_provider_factory};
@@ -1073,40 +924,26 @@ mod tests {
             (4, Address::random()),
         ];
 
-        for transaction_senders_in_static_files in [false, true] {
-            factory.set_storage_settings_cache(if transaction_senders_in_static_files {
-                StorageSettings::v2()
-            } else {
-                StorageSettings::v1()
-            });
+        let provider = factory.database_provider_rw().unwrap();
+        let mut writer = EitherWriter::new_senders(&provider, 0).unwrap();
 
-            let provider = factory.database_provider_rw().unwrap();
-            let mut writer = EitherWriter::new_senders(&provider, 0).unwrap();
-            if transaction_senders_in_static_files {
-                assert!(matches!(writer, EitherWriter::StaticFile(_)));
-            } else {
-                assert!(matches!(writer, EitherWriter::Database(_)));
-            }
+        assert!(matches!(writer, EitherWriter::StaticFile(_)));
 
-            writer.increment_block(0).unwrap();
-            writer.append_senders(senders.iter().copied()).unwrap();
-            drop(writer);
-            provider.commit().unwrap();
+        writer.increment_block(0).unwrap();
+        writer.append_senders(senders.iter().copied()).unwrap();
+        drop(writer);
+        provider.commit().unwrap();
 
-            let provider = factory.database_provider_ro().unwrap();
-            let mut reader = EitherReader::new_senders(&provider).unwrap();
-            if transaction_senders_in_static_files {
-                assert!(matches!(reader, EitherReader::StaticFile(_, _)));
-            } else {
-                assert!(matches!(reader, EitherReader::Database(_, _)));
-            }
+        let provider = factory.database_provider_ro().unwrap();
+        let mut reader = EitherReader::new_senders(&provider).unwrap();
 
-            assert_eq!(
-                reader.senders_by_tx_range(0..6).unwrap(),
-                senders.iter().copied().collect::<HashMap<_, _>>(),
-                "{reader}"
-            );
-        }
+        assert!(matches!(reader, EitherReader::StaticFile(_, _)));
+
+        assert_eq!(
+            reader.senders_by_tx_range(0..6).unwrap(),
+            senders.iter().copied().collect::<HashMap<_, _>>(),
+            "{reader}"
+        );
     }
 }
 
@@ -1121,7 +958,7 @@ mod rocksdb_tests {
         transaction::DbTxMut,
     };
     use reth_ethereum_primitives::EthPrimitives;
-    use reth_storage_api::{DatabaseProviderFactory, StorageSettings};
+    use reth_storage_api::{DatabaseProviderFactory, StorageSettings, StorageSettingsCache};
     use tempfile::TempDir;
 
     use super::*;

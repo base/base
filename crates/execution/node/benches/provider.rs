@@ -195,7 +195,6 @@ impl HistoricalReadFixture {
 
 fn historical_read_benches(c: &mut Criterion) {
     let fixtures = [
-        ("v1", HistoricalReadFixture::new(StorageSettings::v1())),
         ("v2", HistoricalReadFixture::new(StorageSettings::v2())),
     ];
 

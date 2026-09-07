@@ -19,7 +19,6 @@ use reth_provider::{
     DatabaseProviderRW, StorageTrieWriter, TrieWriter, providers::ProviderNodeTypes,
     test_utils::create_test_provider_factory,
 };
-use reth_storage_api::StorageSettingsCache;
 use reth_trie::{
     BranchNodeCompact, HashBuilder, IntermediateStateRootState, Nibbles, StateRoot,
     StateRootProgress, StorageRoot, TrieMask,
@@ -732,7 +731,7 @@ fn account_trie_around_extension_node_with_dbtrie() {
     tx.write_trie_updates(updates).unwrap();
 
     // read the account updates from the db
-    let mut accounts_trie = tx.tx_ref().cursor_read::<tables::AccountsTrie>().unwrap();
+    let mut accounts_trie = tx.tx_ref().cursor_read::<tables::PackedAccountsTrie>().unwrap();
     let walker = accounts_trie.walk(None).unwrap();
     let account_updates = walker
         .into_iter()

@@ -739,7 +739,7 @@ where
             // On existing databases, stored settings are authoritative and already cached by the
             // provider factory. Fresh databases do not have storage metadata until genesis is
             // initialized, so report the configured setting during this pre-genesis startup window.
-            let storage_settings =
+            let _storage_settings =
                 if self.provider_factory().get_stage_checkpoint(StageId::Headers)?.is_some() {
                     self.provider_factory().cached_storage_settings()
                 } else {
@@ -761,7 +761,7 @@ where
                 self.data_dir().pprof_dumps(),
             )
             .with_storage_settings_info(StorageSettingsInfo {
-                storage_v2: storage_settings.storage_v2,
+                storage_v2: true,
                 pruning_mode,
                 prune_config: serde_json::to_string(&prune_config)
                     .expect("serializing PruneConfig should not fail"),

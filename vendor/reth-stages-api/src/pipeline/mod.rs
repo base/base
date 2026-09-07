@@ -1,3 +1,5 @@
+//! Pipeline execution and unwind orchestration.
+
 mod ctrl;
 mod event;
 use std::{
@@ -12,9 +14,8 @@ use reth_primitives_traits::constants::BEACON_CONSENSUS_REORG_UNWIND_DEPTH;
 use reth_provider::{
     BlockHashReader, BlockNumReader, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, PruneCheckpointReader, StageCheckpointReader,
-    StageCheckpointWriter, StorageSettingsCache, providers::ProviderNodeTypes,
+    StageCheckpointWriter, providers::ProviderNodeTypes,
 };
-use reth_prune::PrunerBuilder;
 use reth_static_file::StaticFileProducer;
 use reth_tokio_util::{EventSender, EventStream};
 use tokio::sync::watch;
@@ -29,7 +30,6 @@ mod set;
 
 pub use builder::*;
 use progress::*;
-use reth_errors::RethResult;
 pub use set::*;
 
 use crate::{
@@ -161,9 +161,6 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
                 match target {
                     PipelineTarget::Sync(tip) => self.set_tip(tip),
                     PipelineTarget::Unwind(target) => {
-                        if let Err(err) = self.move_to_static_files() {
-                            return (self, Err(err.into()));
-                        }
                         if let Err(err) = self.unwind(target, None) {
                             return (self, Err(err));
                         }
@@ -225,8 +222,6 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
     /// the pipeline (for example the `Finish` stage). Or [`ControlFlow::Unwind`] of the stage
     /// that caused the unwind.
     pub async fn run_loop(&mut self) -> Result<ControlFlow, PipelineError> {
-        self.move_to_static_files()?;
-
         let mut previous_stage = None;
         for stage_index in 0..self.stages.len() {
             let stage = &self.stages[stage_index];
@@ -260,45 +255,6 @@ impl<N: ProviderNodeTypes> Pipeline<N> {
         }
 
         Ok(self.progress.next_ctrl())
-    }
-
-    /// Run [static file producer](StaticFileProducer) and [pruner](reth_prune::Pruner) to **move**
-    /// all data from the database to static files for corresponding
-    /// [segments](reth_static_file_types::StaticFileSegment), according to their [stage
-    /// checkpoints](StageCheckpoint):
-    /// - [`StaticFileSegment::Headers`](reth_static_file_types::StaticFileSegment::Headers) ->
-    ///   [`StageId::Headers`]
-    /// - [`StaticFileSegment::Receipts`](reth_static_file_types::StaticFileSegment::Receipts) ->
-    ///   [`StageId::Execution`]
-    /// - [`StaticFileSegment::Transactions`](reth_static_file_types::StaticFileSegment::Transactions)
-    ///   -> [`StageId::Bodies`]
-    ///
-    /// This is a legacy storage.v1 backfill step. Storage.v2 writes directly to static files and
-    /// `RocksDB`, so there is no MDBX -> static-file migration to perform.
-    ///
-    /// CAUTION: This method locks the static file producer Mutex, hence can block the thread if the
-    /// lock is occupied.
-    pub fn move_to_static_files(&self) -> RethResult<()> {
-        if self.provider_factory.cached_storage_settings().is_v2() {
-            return Ok(());
-        }
-
-        // Copies data from database to static files
-        let lowest_static_file_height =
-            self.static_file_producer.lock().copy_to_static_files()?.min_block_num();
-
-        // Deletes data which has been copied to static files.
-        if let Some(prune_tip) = lowest_static_file_height {
-            // Run the pruner so we don't potentially end up with higher height in the database vs
-            // static files during a pipeline unwind
-            let mut pruner = PrunerBuilder::new(Default::default())
-                .delete_limit(usize::MAX)
-                .build_with_provider_factory(self.provider_factory.clone());
-
-            pruner.run(prune_tip)?;
-        }
-
-        Ok(())
     }
 
     /// Unwind the stages to the target block (exclusive).

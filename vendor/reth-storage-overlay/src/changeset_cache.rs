@@ -406,11 +406,7 @@ impl ChangesetCache {
             .overlay_builder(finish.hash)
             .with_no_reverts()
             .build_overlay_at_frontiers(provider, partial_state_trie, finish)?;
-        let state_trie_provider = OverlayStateProvider::new(
-            provider,
-            overlay,
-            provider.cached_storage_settings().is_v2(),
-        );
+        let state_trie_provider = OverlayStateProvider::new(provider, overlay);
 
         let accumulated_reverts = Arc::new(reth_trie_db::compute_range_trie_changesets(
             provider,
@@ -868,51 +864,70 @@ mod tests {
             )
             .unwrap();
 
-        provider
-            .tx_ref()
-            .put::<tables::AccountChangeSets>(1, AccountBeforeTx { address, info: None })
-            .unwrap();
-        provider
-            .tx_ref()
-            .put::<tables::AccountChangeSets>(2, AccountBeforeTx { address, info: Some(account1) })
-            .unwrap();
-        provider
-            .tx_ref()
-            .put::<tables::AccountChangeSets>(3, AccountBeforeTx { address, info: Some(account2) })
-            .unwrap();
+        let mut changesets = reth_provider::test_utils::TestChangesets::default();
+        changesets.accounts.entry(1).or_default().push(AccountBeforeTx { address, info: None });
+        changesets
+            .accounts
+            .entry(2)
+            .or_default()
+            .push(AccountBeforeTx { address, info: Some(account1) });
+        changesets
+            .accounts
+            .entry(3)
+            .or_default()
+            .push(AccountBeforeTx { address, info: Some(account2) });
 
-        provider
-            .tx_ref()
-            .put::<tables::StorageChangeSets>(BlockNumberAddress((1, address)), test_storage(1, 0))
-            .unwrap();
-        provider
-            .tx_ref()
-            .put::<tables::StorageChangeSets>(BlockNumberAddress((1, address)), test_storage(2, 0))
-            .unwrap();
-        provider
-            .tx_ref()
-            .put::<tables::StorageChangeSets>(
-                BlockNumberAddress((2, address)),
-                StorageEntry { key: slot1, value: U256::from(10) },
-            )
-            .unwrap();
-        provider
-            .tx_ref()
-            .put::<tables::StorageChangeSets>(
-                BlockNumberAddress((3, address)),
-                StorageEntry { key: slot1, value: U256::from(15) },
-            )
-            .unwrap();
+        {
+            let index = BlockNumberAddress((1, address));
+            let entry = test_storage(1, 0);
+            changesets.storage.entry(index.block_number()).or_default().push(
+                reth_db_api::models::StorageBeforeTx {
+                    address: index.address(),
+                    key: entry.key,
+                    value: entry.value,
+                },
+            );
+        }
+        {
+            let index = BlockNumberAddress((1, address));
+            let entry = test_storage(2, 0);
+            changesets.storage.entry(index.block_number()).or_default().push(
+                reth_db_api::models::StorageBeforeTx {
+                    address: index.address(),
+                    key: entry.key,
+                    value: entry.value,
+                },
+            );
+        }
+        {
+            let index = BlockNumberAddress((2, address));
+            let entry = StorageEntry { key: slot1, value: U256::from(10) };
+            changesets.storage.entry(index.block_number()).or_default().push(
+                reth_db_api::models::StorageBeforeTx {
+                    address: index.address(),
+                    key: entry.key,
+                    value: entry.value,
+                },
+            );
+        }
+        {
+            let index = BlockNumberAddress((3, address));
+            let entry = StorageEntry { key: slot1, value: U256::from(15) };
+            changesets.storage.entry(index.block_number()).or_default().push(
+                reth_db_api::models::StorageBeforeTx {
+                    address: index.address(),
+                    key: entry.key,
+                    value: entry.value,
+                },
+            );
+        }
+        changesets.write_to(&factory.static_file_provider()).unwrap();
 
         provider.save_stage_checkpoint(StageId::Finish, StageCheckpoint::new(3)).unwrap();
         reth_trie_db::with_adapter!(provider, |A| seed_tip_trie_tables::<_, A>(&*provider));
 
         let overlay = empty_overlay();
-        let state_trie_provider = OverlayStateProvider::new(
-            &*provider,
-            overlay,
-            provider.cached_storage_settings().is_v2(),
-        );
+        let state_trie_provider = OverlayStateProvider::new(&*provider, overlay);
         let actual =
             reth_trie_db::compute_range_trie_changesets(&*provider, &state_trie_provider, 1..=3, 3)
                 .unwrap();
@@ -999,11 +1014,7 @@ mod tests {
 
         let expected = legacy_compute_range_trie_changesets(&*provider, 2..=3);
         let overlay = empty_overlay();
-        let state_trie_provider = OverlayStateProvider::new(
-            &*provider,
-            overlay,
-            provider.cached_storage_settings().is_v2(),
-        );
+        let state_trie_provider = OverlayStateProvider::new(&*provider, overlay);
         let actual =
             reth_trie_db::compute_range_trie_changesets(&*provider, &state_trie_provider, 2..=3, 3)
                 .unwrap();

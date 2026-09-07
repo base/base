@@ -104,11 +104,10 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>> Command<C> {
     /// Execute `stage` command
-    pub async fn execute<N, Comp, F>(self, ctx: CliContext, components: F) -> eyre::Result<()>
+    pub async fn execute<N, F>(self, ctx: CliContext, components: F) -> eyre::Result<()>
     where
         N: CliNodeTypes<ChainSpec = C::ChainSpec>,
-        Comp: CliNodeComponents<N>,
-        F: FnOnce(Arc<C::ChainSpec>) -> Comp,
+        F: FnOnce(Arc<C::ChainSpec>) -> CliNodeComponents<N>,
     {
         // Quit early if the stage requires a commit and `--commit` is not provided.
         if self.requires_commit() && !self.commit {
@@ -157,7 +156,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
         let (mut exec_stage, mut unwind_stage): (Box<dyn Stage<_>>, Option<Box<dyn Stage<_>>>) =
             match self.stage {
                 StageEnum::Headers => {
-                    let consensus = Arc::new(components.consensus().clone());
+                    let consensus = Arc::new(components.consensus.clone());
 
                     let network_secret_path = self
                         .network
@@ -209,7 +208,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                     )
                 }
                 StageEnum::Bodies => {
-                    let consensus = Arc::new(components.consensus().clone());
+                    let consensus = Arc::new(components.consensus.clone());
 
                     let mut config = config;
                     config.peers.trusted_nodes_only |= self.network.trusted_only;
@@ -262,8 +261,8 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                 ),
                 StageEnum::Execution => (
                     Box::new(ExecutionStage::new(
-                        components.evm_config().clone(),
-                        Arc::new(components.consensus().clone()),
+                        components.evm_config.clone(),
+                        Arc::new(components.consensus.clone()),
                         ExecutionStageThresholds {
                             max_blocks: Some(batch_size),
                             max_changes: None,

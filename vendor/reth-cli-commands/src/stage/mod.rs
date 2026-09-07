@@ -41,21 +41,20 @@ pub enum Subcommands<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>> Command<C> {
     /// Execute `stage` command
-    pub async fn execute<N, Comp>(
+    pub async fn execute<N>(
         self,
         ctx: CliContext,
-        components: impl FnOnce(Arc<C::ChainSpec>) -> Comp,
+        components: impl FnOnce(Arc<C::ChainSpec>) -> CliNodeComponents<N>,
     ) -> eyre::Result<()>
     where
         N: CliNodeTypes<ChainSpec = C::ChainSpec>,
-        Comp: CliNodeComponents<N>,
     {
         let executor = ctx.task_executor.clone();
         match self.command {
-            Subcommands::Run(command) => command.execute::<N, _, _>(ctx, components).await,
+            Subcommands::Run(command) => command.execute::<N, _>(ctx, components).await,
             Subcommands::Drop(command) => command.execute::<N>(executor).await,
-            Subcommands::Dump(command) => command.execute::<N, _, _>(components, executor).await,
-            Subcommands::Unwind(command) => command.execute::<N, _, _>(components, executor).await,
+            Subcommands::Dump(command) => command.execute::<N, _>(components, executor).await,
+            Subcommands::Unwind(command) => command.execute::<N, _>(components, executor).await,
         }
     }
 }

@@ -21,14 +21,14 @@ pub use state::{DatabaseHashedPostState, DatabaseStateRoot};
 pub use storage::{DatabaseStorageRoot, hashed_storage_from_reverts_with_provider};
 pub use trie_cursor::{
     DatabaseAccountTrieCursor, DatabaseStorageTrieCursor, DatabaseTrieCursorFactory,
-    LegacyKeyAdapter, PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter,
+    PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter,
 };
 
 /// Dispatches a trie operation using the correct [`TrieKeyAdapter`] based on storage settings.
 ///
 /// The first argument must implement
 /// [`StorageSettingsCache`](reth_storage_api::StorageSettingsCache). Inside the closure body, `$A`
-/// is a type alias for either [`PackedKeyAdapter`] or [`LegacyKeyAdapter`].
+/// is a type alias for [`PackedKeyAdapter`].
 ///
 /// # Example
 ///
@@ -40,17 +40,8 @@ pub use trie_cursor::{
 /// ```
 #[macro_export]
 macro_rules! with_adapter {
-    ($settings_provider:expr, |$A:ident| $body:expr) => {
-        if $settings_provider.cached_storage_settings().is_v2() {
-            {
-                type $A = $crate::PackedKeyAdapter;
-                $body
-            }
-        } else {
-            {
-                type $A = $crate::LegacyKeyAdapter;
-                $body
-            }
-        }
-    };
+    ($settings_provider:expr, |$A:ident| $body:expr) => {{
+        type $A = $crate::PackedKeyAdapter;
+        $body
+    }};
 }

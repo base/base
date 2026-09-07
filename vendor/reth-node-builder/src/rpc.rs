@@ -51,8 +51,8 @@ use reth_tracing::tracing::{debug, info};
 use tokio::sync::oneshot;
 
 use crate::{
-    ConfigureEngineEvm, ConsensusEngineEvent, ConsensusEngineHandle,
-    invalid_block_hook::InvalidBlockHookExt, txpool_prewarm,
+    ConfigureEngineEvm, ConsensusEngineEvent, ConsensusEngineHandle, InvalidBlockHookBuilder,
+    txpool_prewarm,
 };
 
 /// Contains the handles to the spawned RPC servers.
@@ -1465,7 +1465,14 @@ where
     ) -> eyre::Result<Self::EngineValidator> {
         let validator = self.payload_validator_builder.build(ctx).await?;
         let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());
-        let invalid_block_hook = ctx.create_invalid_block_hook(&data_dir).await?;
+        let invalid_block_hook = InvalidBlockHookBuilder::build(
+            ctx.config,
+            &data_dir,
+            ctx.node.provider().clone(),
+            ctx.node.evm_config().clone(),
+            ctx.node.provider().chain_spec().chain().id(),
+        )
+        .await?;
 
         let txpool_prewarming = tree_config.txpool_prewarming();
         let mut validator = BasicEngineValidator::new(

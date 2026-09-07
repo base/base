@@ -190,9 +190,10 @@ where
         // Advance the static file header to the end of this range to account for empty blocks.
         writer.ensure_at_block(end_block)?;
 
+        let mut checkpoint = stage_checkpoint(provider)?;
+        checkpoint.processed = range_output.tx_range.end;
         Ok(ExecOutput {
-            checkpoint: StageCheckpoint::new(end_block)
-                .with_entities_stage_checkpoint(stage_checkpoint(provider)?),
+            checkpoint: StageCheckpoint::new(end_block).with_entities_stage_checkpoint(checkpoint),
             done: range_output.is_final_range,
         })
     }
@@ -429,7 +430,8 @@ where
         // If `TransactionSenders` table was pruned, we will have a number of entries in it not
         // matching the actual number of processed transactions. To fix that, we add the
         // number of pruned `TransactionSenders` entries.
-        processed: provider.count_entries::<tables::TransactionSenders>()? as u64 + pruned_entries,
+        processed: (provider.count_entries::<tables::TransactionSenders>()? as u64)
+            .max(pruned_entries),
         // Count only static files entries. If we count the database entries too, we may have
         // duplicates. We're sure that the static files have all entries that database has,
         // because we run the `StaticFileProducer` before starting the pipeline.

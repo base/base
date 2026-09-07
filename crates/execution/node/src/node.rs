@@ -14,12 +14,10 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
+use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
-    Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadPrimitives,
-    builder::BasePayloadTransactions,
-    config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig},
+    Attributes, BasePayloadBuilderAttributes, PayloadPrimitives,
+    config::{BaseDAConfig, GasLimitConfig},
 };
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
@@ -33,7 +31,7 @@ use base_execution_txpool::{
     maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
-use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
+use reth_chainspec::{BaseFeeParams, EthChainSpec, Hardforks};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_evm::ConfigureEvm;
 use reth_network::{
@@ -43,15 +41,11 @@ use reth_network::{
 use reth_network_peers::NodeRecord;
 use reth_node_api::{
     AddOnsContext, BuildNextEnv, EngineTypes, FullNodeComponents, HeaderTy, NodeAddOns,
-    NodePrimitives, PayloadAttributesBuilder, PayloadTypes, PrimitivesTy, TxTy,
+    NodePrimitives, PayloadAttributesBuilder, PayloadTypes, TxTy,
 };
 use reth_node_builder::{
-    BuilderContext, DebugNode, Node, NodeAdapter, NodeComponentsBuilder,
-    components::{
-        BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
-        NetworkBuilder, PayloadBuilderBuilder, PoolBuilder, PoolBuilderConfigOverrides,
-        spawn_maintenance_tasks,
-    },
+    BuilderContext, DebugNodeConfig, NodeAdapter,
+    components::{PoolBuilderConfigOverrides, spawn_maintenance_tasks},
     node::{FullNodeTypes, NodeTypes},
     rpc::{
         BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn,
@@ -66,15 +60,16 @@ use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
-    EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
-    TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
+    EthPoolTransaction, TransactionPool, TransactionValidationTaskExecutor,
+    blobstore::DiskFileBlobStore,
 };
 use reth_trie_common::KeccakKeyHasher;
 use serde::de::DeserializeOwned;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
-    BaseEngineApiBuilder, BaseEngineTypes, BaseStorage,
+    BaseComponentsBuilder, BaseEngineApiBuilder, BaseEngineTypes, BasePayloadServiceBuilder,
+    BaseStorage,
     args::{RollupArgs, TxpoolOrdering},
     engine::BaseEngineValidator,
 };
@@ -209,19 +204,9 @@ pub struct BaseNode {
     pub gas_limit_config: GasLimitConfig,
 }
 
-/// A [`ComponentsBuilder`] with its generic arguments set to a stack of Base-specific builders.
-pub type BaseNodeComponentBuilder<Node, Payload = BasePayloadBuilder> = ComponentsBuilder<
-    Node,
-    BasePoolBuilder,
-    BasePayloadServiceBuilder<Payload>,
-    BaseNetworkBuilder,
-    BaseExecutorBuilder,
-    BaseConsensusBuilder,
->;
-
-/// Base's composition point for reth's payload service.
-pub type BasePayloadServiceBuilder<Payload = BasePayloadBuilder> =
-    BasicPayloadServiceBuilder<Payload>;
+/// Base component construction with a configurable payload builder.
+pub type BaseNodeComponentBuilder<Node, Payload = BasePayloadBuilder> =
+    BaseComponentsBuilder<Node, Payload>;
 
 impl BaseNode {
     /// Creates a new instance of the Base node type.
@@ -262,28 +247,24 @@ impl BaseNode {
             TxpoolOrdering::CoinbaseTip => BaseOrdering::coinbase_tip(),
             TxpoolOrdering::Timestamp => BaseOrdering::timestamp(),
         };
-        ComponentsBuilder::default()
-            .node_types::<Node>()
-            .executor(BaseExecutorBuilder::default())
-            .pool(
-                BasePoolBuilder::default()
-                    .with_ordering(ordering)
-                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
-                    .with_guard_limits(GuardLimits {
-                        signature_limit: mempool_sender_limit,
-                        payment_limit: mempool_payer_limit,
-                    })
-                    .with_additional_trusted_delegation_targets(
-                        self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    ),
-            )
-            .payload(BasePayloadServiceBuilder::new(
+        BaseComponentsBuilder::new(
+            BasePoolBuilder::default()
+                .with_ordering(ordering)
+                .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
+                .with_guard_limits(GuardLimits {
+                    signature_limit: mempool_sender_limit,
+                    payment_limit: mempool_payer_limit,
+                })
+                .with_additional_trusted_delegation_targets(
+                    self.args.mempool_trusted_delegation_targets.iter().copied(),
+                ),
+            BasePayloadServiceBuilder::new(
                 BasePayloadBuilder::new()
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
-            ))
-            .network(BaseNetworkBuilder::new(!discovery_v4))
-            .consensus(BaseConsensusBuilder::default())
+            ),
+            BaseNetworkBuilder::new(!discovery_v4),
+        )
     }
 
     /// Returns [`BaseAddOnsBuilder`] with configured arguments.
@@ -337,26 +318,21 @@ impl BaseNode {
     }
 }
 
-impl<N> Node<N> for BaseNode
+/// Concrete add-ons for the core Base node and its provider adapter.
+pub type BaseNodeAddOns<N> = BaseAddOns<
+    NodeAdapter<N, crate::BaseNodeComponents<N>>,
+    BaseEthApiBuilder,
+    BasePayloadValidatorBuilder,
+>;
+
+// Compatibility with Reth's generic node test harness.
+#[cfg(feature = "test-utils")]
+impl<N> reth_node_builder::Node<N> for BaseNode
 where
     N: FullNodeTypes<Types: BaseFullNodeTypes + BaseNodeTypes>,
 {
-    type ComponentsBuilder = ComponentsBuilder<
-        N,
-        BasePoolBuilder,
-        BasePayloadServiceBuilder,
-        BaseNetworkBuilder,
-        BaseExecutorBuilder,
-        BaseConsensusBuilder,
-    >;
-
-    type AddOns = BaseAddOns<
-        NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
-        BaseEthApiBuilder,
-        BasePayloadValidatorBuilder,
-        BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
-        BasicEngineValidatorBuilder<BasePayloadValidatorBuilder>,
-    >;
+    type ComponentsBuilder = BaseComponentsBuilder<N>;
+    type AddOns = BaseNodeAddOns<N>;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
         Self::components(self)
@@ -367,20 +343,15 @@ where
     }
 }
 
-impl<N> DebugNode<N> for BaseNode
-where
-    N: FullNodeComponents<Types = Self>,
-{
-    type RpcBlock = alloy_rpc_types_eth::Block<BaseTxEnvelope>;
-
-    fn rpc_to_primitive_block(rpc_block: Self::RpcBlock) -> reth_node_api::BlockTy<Self> {
-        rpc_block.into_consensus()
-    }
-
-    fn local_payload_attributes_builder(
-        chain_spec: &Self::ChainSpec,
-    ) -> impl PayloadAttributesBuilder<<Self::Payload as PayloadTypes>::PayloadAttributes> {
-        BaseLocalPayloadAttributesBuilder::new(Arc::new(chain_spec.clone()))
+impl BaseNode {
+    /// Returns the concrete RPC conversion and local-mining configuration.
+    pub fn debug_config() -> DebugNodeConfig<Self, alloy_rpc_types_eth::Block<BaseTxEnvelope>> {
+        DebugNodeConfig {
+            rpc_to_primitive_block: |block| block.into_consensus(),
+            local_payload_attributes_builder: |chain_spec| {
+                Box::new(BaseLocalPayloadAttributesBuilder::new(Arc::new(chain_spec.clone())))
+            },
+        }
     }
 }
 
@@ -844,27 +815,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
     }
 }
 
-/// A regular Base EVM and executor builder.
-#[derive(Debug, Copy, Clone, Default)]
-#[non_exhaustive]
-pub struct BaseExecutorBuilder;
-
-impl<Node> ExecutorBuilder<Node> for BaseExecutorBuilder
-where
-    Node: FullNodeTypes<Types: BaseNodeTypes>,
-{
-    type EVM = BaseEvmConfig<
-        <Node::Types as NodeTypes>::ChainSpec,
-        <Node::Types as NodeTypes>::Primitives,
-    >;
-
-    async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        let evm_config = BaseEvmConfig::new(ctx.chain_spec(), BaseRethReceiptBuilder::default());
-
-        Ok(evm_config)
-    }
-}
-
 /// A basic Base transaction pool.
 ///
 /// This contains various settings that can be configured and take precedence over the node's
@@ -951,19 +901,21 @@ impl<T> BasePoolBuilder<T> {
     }
 }
 
-impl<Node, T, Evm> PoolBuilder<Node, Evm> for BasePoolBuilder<T>
+impl<T> BasePoolBuilder<T>
 where
-    Node: FullNodeTypes<Types: BaseNodeTypes>,
-    T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + BasePooledTx + TimestampedTransaction,
-    Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
+    T: EthPoolTransaction<Consensus = BaseTxEnvelope> + BasePooledTx + TimestampedTransaction,
 {
-    type Pool = BaseTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T, BaseOrdering<T>>;
-
-    async fn build_pool(
+    /// Builds the Base pool and starts its maintenance and invalidation tasks.
+    pub async fn build_pool<Node>(
         self,
         ctx: &BuilderContext<Node>,
-        evm_config: Evm,
-    ) -> eyre::Result<Self::Pool> {
+        evm_config: BaseEvmConfig,
+    ) -> eyre::Result<
+        BaseTransactionPool<Node::Provider, DiskFileBlobStore, BaseEvmConfig, T, BaseOrdering<T>>,
+    >
+    where
+        Node: FullNodeTypes<Types: BaseNodeTypes>,
+    {
         let Self {
             pool_config_overrides,
             ordering,
@@ -1108,58 +1060,6 @@ impl<Txs> BasePayloadBuilder<Txs> {
             manifest_precheck_enabled: self.manifest_precheck_enabled,
             predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
         }
-    }
-}
-
-impl<Node, Pool, Txs, Evm, Attrs> PayloadBuilderBuilder<Node, Pool, Evm> for BasePayloadBuilder<Txs>
-where
-    Node: FullNodeTypes<
-            Provider: ChainSpecProvider<ChainSpec: Upgrades>,
-            Types: NodeTypes<
-                Primitives: PayloadPrimitives,
-                Payload: PayloadTypes<
-                    BuiltPayload = BaseBuiltPayload<PrimitivesTy<Node::Types>>,
-                    PayloadAttributes = Attrs,
-                >,
-            >,
-        >,
-    Evm: ConfigureEvm<
-            Primitives = PrimitivesTy<Node::Types>,
-            NextBlockEnvCtx: BuildNextEnv<
-                Attrs,
-                HeaderTy<Node::Types>,
-                <Node::Types as NodeTypes>::ChainSpec,
-            >,
-        > + 'static,
-    Pool:
-        TransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool>,
-    Attrs: Attributes<Transaction = TxTy<Node::Types>> + Unpin,
-{
-    type PayloadBuilder =
-        base_execution_payload_builder::BasePayloadBuilder<Pool, Node::Provider, Evm, Txs, Attrs>;
-
-    async fn build_payload_builder(
-        self,
-        ctx: &BuilderContext<Node>,
-        pool: Pool,
-        evm_config: Evm,
-    ) -> eyre::Result<Self::PayloadBuilder> {
-        let payload_builder =
-            base_execution_payload_builder::BasePayloadBuilder::with_builder_config(
-                pool,
-                ctx.provider().clone(),
-                evm_config,
-                BaseBuilderConfig {
-                    da_config: self.da_config,
-                    gas_limit_config: self.gas_limit_config,
-                    manifest_precheck_enabled: self.manifest_precheck_enabled,
-                    predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
-                    ..Default::default()
-                },
-            )
-            .with_transactions(self.best_transactions);
-        Ok(payload_builder)
     }
 }
 
@@ -1364,43 +1264,22 @@ impl BaseNetworkBuilder {
     }
 }
 
-impl<Node, Pool> NetworkBuilder<Node, Pool> for BaseNetworkBuilder
-where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec: Hardforks>>,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
-        + Unpin
-        + 'static,
-{
-    type Network =
-        NetworkHandle<BasicNetworkPrimitives<PrimitivesTy<Node::Types>, PoolPooledTx<Pool>>>;
-
-    async fn build_network(
+impl BaseNetworkBuilder {
+    /// Starts the Base network and its transaction-pool services.
+    pub async fn build_network<Node>(
         self,
         ctx: &BuilderContext<Node>,
-        pool: Pool,
-    ) -> eyre::Result<Self::Network> {
+        pool: crate::BaseNodePool<Node>,
+    ) -> eyre::Result<NetworkHandle<BaseNetworkPrimitives>>
+    where
+        Node: FullNodeTypes<Types: BaseNodeTypes>,
+    {
         let network_config = self.network_config(ctx)?;
         let network = NetworkManager::builder(network_config).await?;
         let handle = ctx.start_network(network, pool);
         info!(target: "reth::cli", enode=%handle.local_node_record(), "P2P networking initialized");
 
         Ok(handle)
-    }
-}
-
-/// A basic Base consensus builder.
-#[derive(Debug, Default, Clone)]
-#[non_exhaustive]
-pub struct BaseConsensusBuilder;
-
-impl<Node> ConsensusBuilder<Node> for BaseConsensusBuilder
-where
-    Node: FullNodeTypes<Types: BaseNodeTypes>,
-{
-    type Consensus = Arc<BaseBeaconConsensus>;
-
-    async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
-        Ok(Arc::new(BaseBeaconConsensus::new(ctx.chain_spec())))
     }
 }
 
@@ -1430,7 +1309,8 @@ where
 }
 
 /// Network primitive types used by Base networks.
-pub type BaseNetworkPrimitives = BasicNetworkPrimitives<BasePrimitives, BasePooledTransaction>;
+pub type BaseNetworkPrimitives =
+    BasicNetworkPrimitives<BasePrimitives, base_common_consensus::BasePooledTransaction>;
 
 #[cfg(test)]
 mod tests {

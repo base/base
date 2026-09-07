@@ -38,9 +38,8 @@ use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
-    AddOns, AddOnsContext, FullNode, LaunchContext, LaunchNode, Node, NodeAdapter,
+    AddOns, AddOnsContext, FullNode, LaunchContext, LaunchNode, NodeAdapter,
     NodeBuilderWithComponents, NodeComponents, NodeComponentsBuilder, NodeHandle, NodeTypesAdapter,
-    RethFullAdapter,
     common::{Attached, LaunchContextWith, WithConfigs},
     hooks::NodeHooks,
     rpc::{EngineShutdown, EngineValidatorAddOn, EngineValidatorBuilder, RethRpcAddOns, RpcHandle},
@@ -73,7 +72,7 @@ impl EngineNodeLauncher {
         target: NodeBuilderWithComponents<T, CB, AO>,
     ) -> eyre::Result<NodeHandle<NodeAdapter<T, CB::Components>, AO>>
     where
-        N: Node<RethFullAdapter<DB, N>> + NodeTypesForProvider,
+        N: NodeTypesForProvider,
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
         T: FullNodeTypes<
                 Types = N,
@@ -98,7 +97,7 @@ impl EngineNodeLauncher {
         let overlay_manager = OverlayManager::<N::Primitives>::new(
             ctx.task_executor.state_trie_overlay_worker_pool(),
         );
-        let disabled_stages = N::disabled_stages();
+        let disabled_stages = &[];
 
         // setup the launch context
         let ctx = ctx
@@ -177,9 +176,6 @@ impl EngineNodeLauncher {
             ctx.era_import_source(),
             disabled_stages,
         )?;
-
-        // The new engine writes directly to static files. This ensures that they're up to the tip.
-        pipeline.move_to_static_files()?;
 
         let pipeline_events = pipeline.events();
 
@@ -452,7 +448,7 @@ where
             DB = DB,
             Provider = BlockchainProvider<NodeTypesWithDBAdapter<N, DB>>,
         >,
-    N: Node<RethFullAdapter<DB, N>> + NodeTypesForProvider,
+    N: NodeTypesForProvider,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     CB: NodeComponentsBuilder<T> + 'static,
     AO: RethRpcAddOns<NodeAdapter<T, CB::Components>>

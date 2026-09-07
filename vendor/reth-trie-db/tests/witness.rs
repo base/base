@@ -10,7 +10,6 @@ use reth_db::{cursor::DbCursorRW, tables};
 use reth_db_api::transaction::DbTxMut;
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_provider::{HashingWriter, test_utils::create_test_provider_factory};
-use reth_storage_api::StorageSettingsCache;
 use reth_trie::{
     ExecutionWitnessMode, HashedPostState, HashedStorage, LeafNode, MultiProofTargets, Nibbles,
     StateRoot, StorageRoot, TrieNodeV2, proof::Proof, witness::TrieWitness,

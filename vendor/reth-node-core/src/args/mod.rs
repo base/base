@@ -74,7 +74,7 @@ pub use static_files::{MINIMAL_BLOCKS_PER_FILE, StaticFilesArgs};
 
 /// `StorageArgs` for configuring storage settings.
 mod storage;
-pub use storage::{DefaultStorageValues, StorageArgs};
+pub use storage::StorageArgs;
 
 /// `JitArgs` for configuring JIT compilation of EVM bytecode.
 mod jit;

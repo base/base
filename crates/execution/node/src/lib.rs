@@ -28,6 +28,12 @@ pub use node::*;
 pub mod rpc;
 pub use rpc::BaseEngineApiBuilder;
 
+mod payload_service;
+pub use payload_service::{BasePayloadServiceBuilder, BasePayloadServiceMode};
+
+mod components;
+pub use components::{BaseComponentsBuilder, BaseNodeComponents, BaseNodePool};
+
 mod storage;
 pub use storage::BaseStorage;
 

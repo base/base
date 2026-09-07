@@ -12,11 +12,11 @@ use base_execution_payload_builder::{
 };
 use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{
-    BaseNode,
+    BaseComponentsBuilder, BaseNode, BasePayloadServiceBuilder,
     args::RollupArgs,
     node::{
-        BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder,
-        BaseNodeTypes, BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder,
+        BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadBuilder,
+        BasePoolBuilder,
     },
     utils::payload_attributes,
 };
@@ -26,9 +26,7 @@ use reth_e2e_test_utils::{
     node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
 use reth_node_api::FullNodeTypes;
-use reth_node_builder::{
-    EngineNodeLauncher, Node, NodeBuilder, NodeConfig, components::ComponentsBuilder,
-};
+use reth_node_builder::{EngineNodeLauncher, Node, NodeBuilder, NodeConfig};
 use reth_node_core::args::DatadirArgs;
 use reth_payload_util::{
     BestPayloadTransactions, PayloadTransactionsChain, PayloadTransactionsFixed,
@@ -94,15 +92,13 @@ where
     Node: FullNodeTypes<Types: BaseNodeTypes>,
 {
     let RollupArgs { discovery_v4, .. } = RollupArgs::default();
-    ComponentsBuilder::default()
-        .node_types::<Node>()
-        .pool(BasePoolBuilder::default())
-        .executor(BaseExecutorBuilder::default())
-        .payload(BasePayloadServiceBuilder::new(
+    BaseComponentsBuilder::new(
+        BasePoolBuilder::default(),
+        BasePayloadServiceBuilder::new(
             BasePayloadBuilder::new().with_transactions(CustomTxPriority { chain_id }),
-        ))
-        .network(BaseNetworkBuilder::new(!discovery_v4))
-        .consensus(BaseConsensusBuilder::default())
+        ),
+        BaseNetworkBuilder::new(!discovery_v4),
+    )
 }
 
 #[tokio::test(flavor = "multi_thread")]

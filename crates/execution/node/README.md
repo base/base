@@ -9,6 +9,10 @@ Provides the core node type definitions and builder components for the Base exec
 constructing the Engine API handler, and payload and proof-history types. This crate wires
 together the execution layer's engine, RPC, and payload subsystems.
 
+`BaseComponentsBuilder` constructs the Base EVM, transaction pool, network, and consensus directly.
+`BasePayloadServiceBuilder` configures either the standard service on a dedicated thread or the
+full-block service as a critical task. Both modes use the same component types and extension hooks.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

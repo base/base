@@ -476,11 +476,13 @@ fn validate_state_root<H: BlockHeader + Sealable + Debug>(
 mod tests {
     use std::collections::BTreeMap;
 
-    use alloy_primitives::{U256, keccak256};
     use assert_matches::assert_matches;
-    use reth_db_api::cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO};
-    use reth_primitives_traits::{SealedBlock, StorageEntry};
-    use reth_provider::{StaticFileProviderFactory, providers::StaticFileWriter};
+    use reth_db_api::cursor::{DbCursorRO, DbDupCursorRO};
+    use reth_primitives_traits::SealedBlock;
+    use reth_provider::{
+        DatabaseProviderFactory, HashingWriter, StaticFileProviderFactory,
+        providers::StaticFileWriter,
+    };
     use reth_stages_api::StageUnitCheckpoint;
     use reth_static_file_types::StaticFileSegment;
     use reth_testing_utils::generators::{
@@ -734,7 +736,7 @@ mod tests {
 
             let (transitions, final_state) = random_changeset_range(
                 &mut rng,
-                blocks.iter(),
+                blocks.iter().skip(1),
                 accounts.into_iter().map(|(addr, acc)| (addr, (acc, Vec::new()))),
                 0..3,
                 0..256,
@@ -799,74 +801,14 @@ mod tests {
         }
 
         fn before_unwind(&self, input: UnwindInput) -> Result<(), TestRunnerError> {
-            let target_block = input.unwind_to + 1;
-
-            self.db
-                .commit(|tx| {
-                    let mut storage_changesets_cursor =
-                        tx.cursor_dup_read::<tables::StorageChangeSets>().unwrap();
-                    let mut storage_cursor =
-                        tx.cursor_dup_write::<tables::HashedStorages>().unwrap();
-
-                    let mut tree: BTreeMap<B256, BTreeMap<B256, U256>> = BTreeMap::new();
-
-                    let mut rev_changeset_walker =
-                        storage_changesets_cursor.walk_back(None).unwrap();
-                    while let Some((bn_address, entry)) =
-                        rev_changeset_walker.next().transpose().unwrap()
-                    {
-                        if bn_address.block_number() < target_block {
-                            break;
-                        }
-
-                        tree.entry(keccak256(bn_address.address()))
-                            .or_default()
-                            .insert(keccak256(entry.key), entry.value);
-                    }
-                    for (hashed_address, storage) in tree {
-                        for (hashed_slot, value) in storage {
-                            let storage_entry = storage_cursor
-                                .seek_by_key_subkey(hashed_address, hashed_slot)
-                                .unwrap();
-                            if storage_entry.is_some_and(|v| v.key == hashed_slot) {
-                                storage_cursor.delete_current().unwrap();
-                            }
-
-                            if !value.is_zero() {
-                                let storage_entry = StorageEntry { key: hashed_slot, value };
-                                storage_cursor.upsert(hashed_address, &storage_entry).unwrap();
-                            }
-                        }
-                    }
-
-                    let mut changeset_cursor =
-                        tx.cursor_dup_write::<tables::AccountChangeSets>().unwrap();
-                    let mut rev_changeset_walker = changeset_cursor.walk_back(None).unwrap();
-
-                    while let Some((block_number, account_before_tx)) =
-                        rev_changeset_walker.next().transpose().unwrap()
-                    {
-                        if block_number < target_block {
-                            break;
-                        }
-
-                        if let Some(acc) = account_before_tx.info {
-                            tx.put::<tables::HashedAccounts>(
-                                keccak256(account_before_tx.address),
-                                acc,
-                            )
-                            .unwrap();
-                        } else {
-                            tx.delete::<tables::HashedAccounts>(
-                                keccak256(account_before_tx.address),
-                                None,
-                            )
-                            .unwrap();
-                        }
-                    }
-                    Ok(())
-                })
-                .unwrap();
+            let provider = self.db.factory.database_provider_rw()?;
+            provider.unwind_account_hashing_range(
+                input.unwind_to + 1..=input.checkpoint.block_number,
+            )?;
+            provider.unwind_storage_hashing_range(
+                input.unwind_to + 1..=input.checkpoint.block_number,
+            )?;
+            provider.commit()?;
             Ok(())
         }
     }

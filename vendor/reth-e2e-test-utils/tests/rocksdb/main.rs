@@ -105,7 +105,6 @@ async fn test_rocksdb_node_startup() -> Result<()> {
 
     let (nodes, _wallet) =
         E2ETestSetupBuilder::<EthereumNode, _>::new(1, chain_spec, test_attributes_generator)
-            .with_storage_v2()
             .build()
             .await?;
 
@@ -133,7 +132,6 @@ async fn test_rocksdb_block_mining() -> Result<()> {
 
     let (mut nodes, _wallet) =
         E2ETestSetupBuilder::<EthereumNode, _>::new(1, chain_spec, test_attributes_generator)
-            .with_storage_v2()
             .build()
             .await?;
 
@@ -190,7 +188,6 @@ async fn test_rocksdb_transaction_queries() -> Result<()> {
         chain_spec.clone(),
         test_attributes_generator,
     )
-    .with_storage_v2()
     .with_tree_config_modifier(|config| {
         config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
     })
@@ -259,7 +256,6 @@ async fn test_rocksdb_multi_tx_same_block() -> Result<()> {
         chain_spec.clone(),
         test_attributes_generator,
     )
-    .with_storage_v2()
     .with_tree_config_modifier(|config| {
         config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
     })
@@ -329,7 +325,6 @@ async fn test_rocksdb_txs_across_blocks() -> Result<()> {
         chain_spec.clone(),
         test_attributes_generator,
     )
-    .with_storage_v2()
     .with_tree_config_modifier(|config| {
         config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
     })
@@ -416,7 +411,6 @@ async fn test_rocksdb_pending_tx_not_in_storage() -> Result<()> {
         chain_spec.clone(),
         test_attributes_generator,
     )
-    .with_storage_v2()
     .with_tree_config_modifier(|config| {
         config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
     })
@@ -464,12 +458,7 @@ async fn test_rocksdb_pending_tx_not_in_storage() -> Result<()> {
     Ok(())
 }
 
-/// Reorg with `RocksDB`: verifies that unwind correctly reads changesets from
-/// storage-aware locations (static files vs MDBX) rather than directly from MDBX.
-///
-/// This test exercises `unwind_trie_state_from` which previously failed with
-/// `UnsortedInput` errors because it read changesets directly from MDBX tables
-/// instead of using storage-aware methods that check `is_v2()`.
+/// Verifies that reorg unwind reads changesets from static files.
 #[tokio::test]
 async fn test_rocksdb_reorg_unwind() -> Result<()> {
     reth_tracing::init_test_tracing();
@@ -482,7 +471,6 @@ async fn test_rocksdb_reorg_unwind() -> Result<()> {
         chain_spec.clone(),
         test_attributes_generator,
     )
-    .with_storage_v2()
     .with_tree_config_modifier(|config| {
         config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
     })
@@ -607,7 +595,6 @@ async fn test_rocksdb_historical_account_queries() -> Result<()> {
         chain_spec.clone(),
         test_attributes_generator,
     )
-    .with_storage_v2()
     .with_tree_config_modifier(|config| {
         config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
     })
@@ -756,7 +743,6 @@ async fn test_rocksdb_account_history_pruning() -> Result<()> {
         chain_spec.clone(),
         test_attributes_generator,
     )
-    .with_storage_v2()
     .with_tree_config_modifier(|config| {
         config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
     })
@@ -855,7 +841,6 @@ async fn test_rocksdb_storage_history_pruning() -> Result<()> {
         chain_spec.clone(),
         test_attributes_generator,
     )
-    .with_storage_v2()
     .with_tree_config_modifier(|config| {
         config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
     })

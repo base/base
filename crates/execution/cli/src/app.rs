@@ -3,7 +3,6 @@ use std::{fmt, sync::Arc};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseExecutorProvider;
-use base_node_core::BaseNode;
 use eyre::{Result, eyre};
 use reth_cli_commands::launcher::Launcher;
 use reth_cli_runner::CliRunner;
@@ -13,7 +12,7 @@ use reth_rpc_server_types::RpcModuleValidator;
 use reth_tracing::{Layers, TracingGuards};
 use tracing::{info, warn};
 
-use crate::{Cli, Commands};
+use crate::{BaseCliComponents, BaseCliTypes, Cli, Commands};
 
 /// A wrapper around a parsed CLI that handles command execution.
 #[derive(Debug)]
@@ -73,11 +72,9 @@ where
         // Install the prometheus recorder to be sure to record all metrics
         install_prometheus_recorder();
 
-        let components = |spec: Arc<BaseChainSpec>| {
-            (
-                BaseExecutorProvider::base(Arc::clone(&spec)),
-                Arc::new(BaseBeaconConsensus::new(spec)),
-            )
+        let components = |spec: Arc<BaseChainSpec>| BaseCliComponents {
+            evm_config: BaseExecutorProvider::base(Arc::clone(&spec)),
+            consensus: Arc::new(BaseBeaconConsensus::new(spec)),
         };
 
         match self.cli.command {
@@ -94,40 +91,39 @@ where
             }
             Commands::Init(command) => {
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>(runtime))
             }
             Commands::InitState(command) => {
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>(runtime))
             }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Db(command) => {
-                runner.run_blocking_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
+                runner.run_blocking_command_until_exit(|ctx| command.execute::<BaseCliTypes>(ctx))
             }
-            Commands::Stage(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<BaseNode, _>(ctx, components))
-            }
-            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<BaseNode>()),
+            Commands::Stage(command) => runner
+                .run_command_until_exit(|ctx| command.execute::<BaseCliTypes>(ctx, components)),
+            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<BaseCliTypes>()),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Prune(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
+                runner.run_command_until_exit(|ctx| command.execute::<BaseCliTypes>(ctx))
             }
             #[cfg(feature = "dev")]
             Commands::TestVectors(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::ReExecute(command) => {
                 let runtime = runner.runtime();
-                runner.run_until_ctrl_c(command.execute::<BaseNode>(components, runtime))
+                runner.run_until_ctrl_c(command.execute::<BaseCliTypes>(components, runtime))
             }
             Commands::BaseProofs(command) => {
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>(runtime))
             }
             Commands::SnapshotManifest(command) => {
                 command.execute()?;
                 Ok(())
             }
             Commands::Download(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>())
             }
         }
     }

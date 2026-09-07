@@ -45,11 +45,6 @@ pub trait Node<N: FullNodeTypes>: NodeTypes + Clone {
 
     /// Returns the node add-ons.
     fn add_ons(&self) -> Self::AddOns;
-
-    /// Returns the stages that should be disabled for this node.
-    fn disabled_stages() -> &'static [reth_stages::StageId] {
-        &[]
-    }
 }
 
 /// A [`Node`] type builder

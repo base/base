@@ -36,10 +36,7 @@ use reth_storage_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::*;
 
-use crate::common::{
-    AccessRights, CliComponentsBuilder, CliNodeComponents, CliNodeTypes, Environment,
-    EnvironmentArgs,
-};
+use crate::common::{AccessRights, CliNodeComponents, CliNodeTypes, Environment, EnvironmentArgs};
 
 /// `reth re-execute` command
 ///
@@ -84,7 +81,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
     /// Execute `re-execute` command
     pub async fn execute<N>(
         mut self,
-        components: impl CliComponentsBuilder<N>,
+        components: impl FnOnce(Arc<N::ChainSpec>) -> CliNodeComponents<N> + Send + Sync + 'static,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()>
     where
@@ -141,8 +138,8 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
         let mut tasks = JoinSet::new();
         for _ in 0..num_tasks {
             let provider_factory = provider_factory.clone();
-            let evm_config = components.evm_config().clone();
-            let consensus = components.consensus().clone();
+            let evm_config = components.evm_config.clone();
+            let consensus = components.consensus.clone();
             let stats_tx = stats_tx.clone();
             let info_tx = info_tx.clone();
             let cancellation = cancellation.clone();

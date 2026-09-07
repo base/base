@@ -3,9 +3,8 @@
 use alloy_primitives::B256;
 use reth_db_api::{cursor::DbCursorRW, tables, transaction::DbTxMut};
 use reth_provider::test_utils::create_test_provider_factory;
-use reth_storage_api::StorageSettingsCache;
 use reth_trie::{
-    BranchNodeCompact, Nibbles, StorageTrieEntry,
+    BranchNodeCompact, Nibbles, PackedStorageTrieEntry,
     prefix_set::PrefixSetMut,
     trie_cursor::{TrieCursor, TrieCursorFactory},
     walker::TrieWalker,
@@ -38,7 +37,7 @@ fn walk_nodes_with_common_prefix() {
     let factory = create_test_provider_factory();
     let tx = factory.provider_rw().unwrap();
 
-    let mut account_cursor = tx.tx_ref().cursor_write::<tables::AccountsTrie>().unwrap();
+    let mut account_cursor = tx.tx_ref().cursor_write::<tables::PackedAccountsTrie>().unwrap();
     for (k, v) in &inputs {
         account_cursor.upsert(k.clone().into(), &v.clone()).unwrap();
     }
@@ -49,12 +48,13 @@ fn walk_nodes_with_common_prefix() {
         test_cursor(account_trie, &expected);
 
         let hashed_address = B256::random();
-        let mut storage_cursor = tx.tx_ref().cursor_dup_write::<tables::StoragesTrie>().unwrap();
+        let mut storage_cursor =
+            tx.tx_ref().cursor_dup_write::<tables::PackedStoragesTrie>().unwrap();
         for (k, v) in &inputs {
             storage_cursor
                 .upsert(
                     hashed_address,
-                    &StorageTrieEntry { nibbles: k.clone().into(), node: v.clone() },
+                    &PackedStorageTrieEntry { nibbles: k.clone().into(), node: v.clone() },
                 )
                 .unwrap();
         }
@@ -88,7 +88,7 @@ where
 fn cursor_rootnode_with_changesets() {
     let factory = create_test_provider_factory();
     let tx = factory.provider_rw().unwrap();
-    let mut cursor = tx.tx_ref().cursor_dup_write::<tables::StoragesTrie>().unwrap();
+    let mut cursor = tx.tx_ref().cursor_dup_write::<tables::PackedStoragesTrie>().unwrap();
 
     let nodes = vec![
         (
@@ -117,7 +117,9 @@ fn cursor_rootnode_with_changesets() {
 
     let hashed_address = B256::random();
     for (k, v) in nodes {
-        cursor.upsert(hashed_address, &StorageTrieEntry { nibbles: k.into(), node: v }).unwrap();
+        cursor
+            .upsert(hashed_address, &PackedStorageTrieEntry { nibbles: k.into(), node: v })
+            .unwrap();
     }
 
     reth_trie_db::with_adapter!(tx, |A| {

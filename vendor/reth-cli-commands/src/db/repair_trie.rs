@@ -28,7 +28,6 @@ use reth_provider::{
     ChainSpecProvider, HeaderProvider, StageCheckpointReader, providers::ProviderNodeTypes,
 };
 use reth_stages::StageId;
-use reth_storage_api::StorageSettingsCache;
 use reth_tasks::TaskExecutor;
 use reth_trie::{
     Nibbles,

@@ -8,6 +8,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod components;
+pub use components::CliNodeComponents;
+
 pub mod common;
 pub mod config_cmd;
 pub mod db;

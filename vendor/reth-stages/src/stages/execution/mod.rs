@@ -478,18 +478,17 @@ where
         //
         // SELFDESTRUCT no longer destroys storage post-Cancun, so this is only needed for
         // pre-Cancun blocks. Post-Cancun we can remove the preimage db entirely.
-        if provider.cached_storage_settings().use_hashed_state() {
-            let start_header = provider
-                .header_by_number(start_block)?
-                .ok_or_else(|| ProviderError::HeaderNotFound(start_block.into()))?;
 
-            let path = provider.storage_path().join("preimage");
-            if !provider.chain_spec().is_cancun_active_at_timestamp(start_header.timestamp()) {
-                slot_preimages::inject_plain_wipe_slots(&path, provider, &mut state)?;
-            } else if path.exists() {
-                // Post-Cancun: no more self-destructs, preimage db is no longer needed.
-                let _ = std::fs::remove_dir_all(&path);
-            }
+        let start_header = provider
+            .header_by_number(start_block)?
+            .ok_or_else(|| ProviderError::HeaderNotFound(start_block.into()))?;
+
+        let path = provider.storage_path().join("preimage");
+        if !provider.chain_spec().is_cancun_active_at_timestamp(start_header.timestamp()) {
+            slot_preimages::inject_plain_wipe_slots(&path, provider, &mut state)?;
+        } else if path.exists() {
+            // Post-Cancun: no more self-destructs, preimage db is no longer needed.
+            let _ = std::fs::remove_dir_all(&path);
         }
 
         // Write output. When `use_hashed_state` is enabled, `write_state` skips writing to
@@ -497,11 +496,9 @@ where
         // state is then written separately below.
         provider.write_state(&state, OriginalValuesKnown::Yes, StateWriteConfig::default())?;
 
-        if provider.cached_storage_settings().use_hashed_state() {
-            let hashed_state =
-                LatestStateProviderRef::new(provider).hashed_post_state(&state.bundle)?;
-            provider.write_hashed_state(&hashed_state.into_sorted())?;
-        }
+        let hashed_state =
+            LatestStateProviderRef::new(provider).hashed_post_state(&state.bundle)?;
+        provider.write_hashed_state(&hashed_state.into_sorted())?;
 
         let db_write_duration = time.elapsed();
         debug!(
@@ -756,7 +753,7 @@ mod tests {
     use assert_matches::assert_matches;
     use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
     use reth_db_api::{
-        models::{AccountBeforeTx, metadata::StorageSettings},
+        models::metadata::StorageSettings,
         transaction::{DbTx, DbTxMut},
     };
     use reth_ethereum_consensus::EthBeaconConsensus;
@@ -764,7 +761,7 @@ mod tests {
     use reth_evm_ethereum::EthEvmConfig;
     use reth_primitives_traits::{Account, Block as _, Bytecode, SealedBlock, StorageEntry};
     use reth_provider::{
-        AccountReader, BlockWriter, DatabaseProviderFactory, ReceiptProvider,
+        AccountReader, BlockWriter, DatabaseProviderFactory, HashingWriter, ReceiptProvider,
         StaticFileProviderFactory,
         test_utils::{create_test_provider_factory, create_test_provider_factory_with_chain_spec},
     };
@@ -775,7 +772,7 @@ mod tests {
     use reth_testing_utils::generators;
 
     use super::*;
-    use crate::{stages::MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD, test_utils::TestStageDB};
+    use crate::stages::MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD;
 
     fn stage() -> ExecutionStage<EthEvmConfig> {
         let evm_config =
@@ -1005,6 +1002,9 @@ mod tests {
             receipts_writer.increment_block(0).unwrap();
             receipts_writer.commit().unwrap();
         }
+        reth_provider::test_utils::TestChangesets::default()
+            .write_to(&factory.static_file_provider())
+            .unwrap();
         provider.commit().unwrap();
 
         // insert pre state
@@ -1017,14 +1017,14 @@ mod tests {
         let balance = U256::from(0x3635c9adc5dea00000u128);
         let code_hash = keccak256(code);
         db_tx
-            .put::<tables::PlainAccountState>(
-                acc1,
+            .put::<tables::HashedAccounts>(
+                keccak256(acc1),
                 Account { nonce: 0, balance: U256::ZERO, bytecode_hash: Some(code_hash) },
             )
             .unwrap();
         db_tx
-            .put::<tables::PlainAccountState>(
-                acc2,
+            .put::<tables::HashedAccounts>(
+                keccak256(acc2),
                 Account { nonce: 0, balance, bytecode_hash: None },
             )
             .unwrap();
@@ -1109,8 +1109,8 @@ mod tests {
                 // assert storage
                 // Get on dupsort would return only first value. This is good enough for this test.
                 assert!(matches!(
-                    provider.tx_ref().get::<tables::PlainStorageState>(account1),
-                    Ok(Some(entry)) if entry.key == B256::with_last_byte(1) && entry.value == U256::from(2)
+                    provider.tx_ref().get::<tables::HashedStorages>(keccak256(account1)),
+                    Ok(Some(entry)) if entry.key == keccak256(B256::with_last_byte(1)) && entry.value == U256::from(2)
                 ));
             }
 
@@ -1118,6 +1118,8 @@ mod tests {
             let mut stage = stage();
             provider.set_prune_modes(mode.unwrap_or_default());
 
+            provider.unwind_account_hashing_range(1..=1).unwrap();
+            provider.unwind_storage_hashing_range(1..=1).unwrap();
             let _result = stage
                 .unwind(
                     &provider,
@@ -1152,6 +1154,9 @@ mod tests {
             receipts_writer.increment_block(0).unwrap();
             receipts_writer.commit().unwrap();
         }
+        reth_provider::test_utils::TestChangesets::default()
+            .write_to(&factory.static_file_provider())
+            .unwrap();
         provider.commit().unwrap();
 
         // variables
@@ -1167,8 +1172,8 @@ mod tests {
         let acc2 = address!("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b");
         let acc2_info = Account { nonce: 0, balance, bytecode_hash: None };
 
-        db_tx.put::<tables::PlainAccountState>(acc1, acc1_info).unwrap();
-        db_tx.put::<tables::PlainAccountState>(acc2, acc2_info).unwrap();
+        db_tx.put::<tables::HashedAccounts>(keccak256(acc1), acc1_info).unwrap();
+        db_tx.put::<tables::HashedAccounts>(keccak256(acc2), acc2_info).unwrap();
         db_tx.put::<tables::Bytecodes>(code_hash, Bytecode::new_raw(code.to_vec().into())).unwrap();
         provider.commit().unwrap();
 
@@ -1202,6 +1207,8 @@ mod tests {
             let mut stage = stage();
             provider.set_prune_modes(mode.clone().unwrap_or_default());
 
+            provider.unwind_account_hashing_range(1..=1).unwrap();
+            provider.unwind_storage_hashing_range(1..=1).unwrap();
             let result = stage
                 .unwind(
                     &provider,
@@ -1305,150 +1312,6 @@ mod tests {
 
         assert_matches!(err, StageError::Fatal(_));
         assert!(err.to_string().contains("across Cancun activation boundary"));
-    }
-
-    #[tokio::test]
-    async fn test_selfdestruct() {
-        let test_db = TestStageDB::default();
-        let provider = test_db.factory.database_provider_rw().unwrap();
-        let input = ExecInput { target: Some(1), checkpoint: None };
-        let mut genesis_rlp = hex!("f901f8f901f3a00000000000000000000000000000000000000000000000000000000000000000a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347942adc25665018aa1fe0e6bc666dac8fc2697ff9baa0c9ceb8372c88cb461724d8d3d87e8b933f6fc5f679d4841800e662f4428ffd0da056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421b90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008302000080830f4240808000a00000000000000000000000000000000000000000000000000000000000000000880000000000000000c0c0").as_slice();
-        let genesis = SealedBlock::<Block>::decode(&mut genesis_rlp).unwrap();
-        let mut block_rlp = hex!("f9025ff901f7a0c86e8cc0310ae7c531c758678ddbfd16fc51c8cef8cec650b032de9869e8b94fa01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347942adc25665018aa1fe0e6bc666dac8fc2697ff9baa050554882fbbda2c2fd93fdc466db9946ea262a67f7a76cc169e714f105ab583da00967f09ef1dfed20c0eacfaa94d5cd4002eda3242ac47eae68972d07b106d192a0e3c8b47fbfc94667ef4cceb17e5cc21e3b1eebd442cebb27f07562b33836290db90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008302000001830f42408238108203e800a00000000000000000000000000000000000000000000000000000000000000000880000000000000000f862f860800a83061a8094095e7baea6a6c7c4c2dfeb977efac326af552d8780801ba072ed817487b84ba367d15d2f039b5fc5f087d0a8882fbdf73e8cb49357e1ce30a0403d800545b8fc544f92ce8124e2255f8c3c6af93f28243a120585d4c4c6a2a3c0").as_slice();
-        let block = SealedBlock::<Block>::decode(&mut block_rlp).unwrap();
-        provider.insert_block(&genesis.try_recover().unwrap()).unwrap();
-        provider.insert_block(&block.clone().try_recover().unwrap()).unwrap();
-        provider
-            .static_file_provider()
-            .latest_writer(StaticFileSegment::Headers)
-            .unwrap()
-            .commit()
-            .unwrap();
-        {
-            let static_file_provider = provider.static_file_provider();
-            let mut receipts_writer =
-                static_file_provider.latest_writer(StaticFileSegment::Receipts).unwrap();
-            receipts_writer.increment_block(0).unwrap();
-            receipts_writer.commit().unwrap();
-        }
-        provider.commit().unwrap();
-
-        // variables
-        let caller_address = address!("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b");
-        let destroyed_address = address!("0x095e7baea6a6c7c4c2dfeb977efac326af552d87");
-        let beneficiary_address = address!("0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba");
-
-        let code = hex!("73095e7baea6a6c7c4c2dfeb977efac326af552d8731ff00");
-        let balance = U256::from(0x0de0b6b3a7640000u64);
-        let code_hash = keccak256(code);
-
-        // pre state
-        let caller_info = Account { nonce: 0, balance, bytecode_hash: None };
-        let destroyed_info =
-            Account { nonce: 0, balance: U256::ZERO, bytecode_hash: Some(code_hash) };
-
-        // set account
-        let provider = test_db.factory.provider_rw().unwrap();
-        provider.tx_ref().put::<tables::PlainAccountState>(caller_address, caller_info).unwrap();
-        provider
-            .tx_ref()
-            .put::<tables::PlainAccountState>(destroyed_address, destroyed_info)
-            .unwrap();
-        provider
-            .tx_ref()
-            .put::<tables::Bytecodes>(code_hash, Bytecode::new_raw(code.to_vec().into()))
-            .unwrap();
-        // set storage to check when account gets destroyed.
-        provider
-            .tx_ref()
-            .put::<tables::PlainStorageState>(
-                destroyed_address,
-                StorageEntry { key: B256::ZERO, value: U256::ZERO },
-            )
-            .unwrap();
-        provider
-            .tx_ref()
-            .put::<tables::PlainStorageState>(
-                destroyed_address,
-                StorageEntry { key: B256::with_last_byte(1), value: U256::from(1u64) },
-            )
-            .unwrap();
-
-        provider.commit().unwrap();
-
-        // execute
-        let provider = test_db.factory.database_provider_rw().unwrap();
-        let mut execution_stage = stage();
-        let _ = execution_stage.execute(&provider, input).unwrap();
-        provider.commit().unwrap();
-
-        // assert unwind stage
-        let provider = test_db.factory.database_provider_rw().unwrap();
-        assert!(matches!(provider.basic_account(&destroyed_address), Ok(None)));
-
-        assert!(matches!(
-            provider.tx_ref().get::<tables::PlainStorageState>(destroyed_address),
-            Ok(None)
-        ));
-        // drops tx so that it returns write privilege to test_tx
-        drop(provider);
-        let plain_accounts = test_db.table::<tables::PlainAccountState>().unwrap();
-        let plain_storage = test_db.table::<tables::PlainStorageState>().unwrap();
-
-        assert_eq!(
-            plain_accounts,
-            vec![
-                (
-                    beneficiary_address,
-                    Account {
-                        nonce: 0,
-                        balance: U256::from(0x1bc16d674eca30a0u64),
-                        bytecode_hash: None
-                    }
-                ),
-                (
-                    caller_address,
-                    Account {
-                        nonce: 1,
-                        balance: U256::from(0xde0b6b3a761cf60u64),
-                        bytecode_hash: None
-                    }
-                )
-            ]
-        );
-        assert!(plain_storage.is_empty());
-
-        let account_changesets = test_db.table::<tables::AccountChangeSets>().unwrap();
-        let storage_changesets = test_db.table::<tables::StorageChangeSets>().unwrap();
-
-        assert_eq!(
-            account_changesets,
-            vec![
-                (
-                    block.number,
-                    AccountBeforeTx { address: destroyed_address, info: Some(destroyed_info) },
-                ),
-                (block.number, AccountBeforeTx { address: beneficiary_address, info: None }),
-                (
-                    block.number,
-                    AccountBeforeTx { address: caller_address, info: Some(caller_info) }
-                ),
-            ]
-        );
-
-        assert_eq!(
-            storage_changesets,
-            vec![
-                (
-                    (block.number, destroyed_address).into(),
-                    StorageEntry { key: B256::ZERO, value: U256::ZERO }
-                ),
-                (
-                    (block.number, destroyed_address).into(),
-                    StorageEntry { key: B256::with_last_byte(1), value: U256::from(1u64) }
-                )
-            ]
-        );
     }
 
     #[test]

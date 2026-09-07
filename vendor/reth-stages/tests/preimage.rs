@@ -102,7 +102,6 @@ async fn test_pipeline_v2_selfdestruct_changesets_use_plain_slots() -> eyre::Res
     // Phase 1 (pre-Cancun): preimage DB should be created and contain slot preimages.
     let provider = pipeline_provider_factory.provider()?;
     assert_eq!(provider.last_block_number()?, 1, "pipeline should sync block 1");
-    assert!(provider.cached_storage_settings().storage_v2, "test requires storage.v2 mode");
 
     let preimage_path = provider.storage_path().join("preimage");
     let expected_slots = scenario.expected_slots;

@@ -16,15 +16,14 @@ use futures::FutureExt;
 use reth_db::DatabaseEnv;
 use reth_db_api::database_metrics::DatabaseMetrics;
 use reth_node_builder::{
-    FullNodeComponents, Node as RethNode, NodeBuilder, NodeBuilderWithComponents, RethFullAdapter,
-    WithLaunchContext,
+    FullNodeComponents, NodeBuilder, NodeBuilderWithComponents, RethFullAdapter, WithLaunchContext,
 };
 use reth_tasks::TaskExecutor;
 use tokio::time::sleep;
 use tracing::info;
 
 use crate::{
-    BaseNode, BaseNodeComponentBuilder,
+    BaseNode, BaseNodeAddOns, BaseNodeComponentBuilder,
     args::{DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, RollupArgs},
 };
 
@@ -33,7 +32,7 @@ type ProofHistoryNodeBuilder = WithLaunchContext<
     NodeBuilderWithComponents<
         ProofHistoryNodeTypes,
         BaseNodeComponentBuilder<ProofHistoryNodeTypes>,
-        <BaseNode as RethNode<ProofHistoryNodeTypes>>::AddOns,
+        BaseNodeAddOns<ProofHistoryNodeTypes>,
     >,
 >;
 
@@ -66,8 +65,8 @@ pub async fn launch_node_with_proof_history(
         upgrade_signal_l1_rpc,
     } = args;
 
-    // Start from a plain BaseNode builder
-    let mut node_builder = builder.node(BaseNode::new(RollupArgs {
+    // Start from the concrete Base components.
+    let node = BaseNode::new(RollupArgs {
         sequencer,
         discovery_v4,
         sequencer_headers,
@@ -87,7 +86,11 @@ pub async fn launch_node_with_proof_history(
         proofs_history_verification_interval: 0,
         upgrade_signal,
         upgrade_signal_l1_rpc,
-    }));
+    });
+    let mut node_builder = builder
+        .with_types::<BaseNode>()
+        .with_components(node.components())
+        .with_add_ons(node.add_ons_builder().build());
 
     if proofs_history {
         let path = proofs_history_storage_path.ok_or_else(|| {
@@ -133,7 +136,7 @@ pub async fn launch_node_with_proof_history(
     }
 
     // In all cases (with or without proofs), launch the node.
-    let handle = node_builder.launch_with_debug_capabilities().await?;
+    let handle = node_builder.launch_with_debug_capabilities(BaseNode::debug_config()).await?;
     handle.node_exit_future.await
 }
 

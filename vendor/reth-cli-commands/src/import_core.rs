@@ -26,7 +26,6 @@ use reth_provider::{
 use reth_prune::PruneModes;
 use reth_stages::{ControlFlow, Pipeline, StageId, StageSet, prelude::*};
 use reth_static_file::StaticFileProducer;
-use reth_storage_api::StorageSettingsCache;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
@@ -110,11 +109,8 @@ where
 
     let provider = provider_factory.provider()?;
     let init_blocks = provider.tx_ref().entries::<tables::HeaderNumbers>()?;
-    let init_txns = if provider_factory.cached_storage_settings().storage_v2 {
-        provider_factory.rocksdb_provider().iter::<tables::TransactionHashNumbers>()?.count()
-    } else {
-        provider.tx_ref().entries::<tables::TransactionHashNumbers>()?
-    };
+    let init_txns =
+        { provider_factory.rocksdb_provider().iter::<tables::TransactionHashNumbers>()?.count() };
     drop(provider);
 
     let mut total_decoded_blocks = 0;
@@ -232,11 +228,8 @@ where
 
     let provider = provider_factory.provider()?;
     let total_imported_blocks = provider.tx_ref().entries::<tables::HeaderNumbers>()? - init_blocks;
-    let current_txns = if provider_factory.cached_storage_settings().storage_v2 {
-        provider_factory.rocksdb_provider().iter::<tables::TransactionHashNumbers>()?.count()
-    } else {
-        provider.tx_ref().entries::<tables::TransactionHashNumbers>()?
-    };
+    let current_txns =
+        { provider_factory.rocksdb_provider().iter::<tables::TransactionHashNumbers>()?.count() };
     let total_imported_txns = current_txns - init_txns;
 
     let result = ImportResult {

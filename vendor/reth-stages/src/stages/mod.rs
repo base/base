@@ -63,7 +63,7 @@ mod tests {
     use reth_ethereum_primitives::Block;
     use reth_evm_ethereum::EthEvmConfig;
     use reth_exex::ExExManagerHandle;
-    use reth_primitives_traits::{Account, Bytecode, SealedBlock};
+    use reth_primitives_traits::{Account, Bytecode, SealedBlock, SignerRecoverable};
     use reth_provider::{
         AccountExtReader, BlockBodyIndicesProvider, BlockWriter, DatabaseProviderFactory,
         ProviderFactory, ProviderResult, PruneCheckpointWriter, ReceiptProvider,
@@ -262,7 +262,7 @@ mod tests {
 
     /// It will generate `num_blocks`, push them to static files and set all stage checkpoints to
     /// `num_blocks - 1`.
-    fn seed_data(num_blocks: usize) -> ProviderResult<TestStageDB> {
+    fn seed_data(num_blocks: usize, required_segments: bool) -> ProviderResult<TestStageDB> {
         let db = TestStageDB::default();
         let mut rng = generators::rng();
         let genesis_hash = B256::ZERO;
@@ -287,6 +287,19 @@ mod tests {
         }
         db.insert_receipts_by_block(receipts, StorageKind::Static)?;
 
+        if required_segments {
+            db.insert_transaction_senders(
+                blocks
+                    .iter()
+                    .flat_map(|block| block.body().transactions.iter())
+                    .enumerate()
+                    .map(|(number, tx)| (number as u64, tx.recover_signer().unwrap())),
+            )?;
+            let mut changesets = reth_provider::test_utils::TestChangesets::default();
+            changesets.accounts.insert(tip, Vec::new());
+            changesets.write_to(&db.factory.static_file_provider())?;
+        }
+
         // simulate pipeline by setting all checkpoints to inserted height.
         let provider_rw = db.factory.provider_rw()?;
         for stage in StageId::ALL {
@@ -298,7 +311,7 @@ mod tests {
     }
 
     fn seed_v2_data() -> TestStageDB {
-        let db = seed_data(90).unwrap();
+        let db = seed_data(90, false).unwrap();
         db.factory.set_storage_settings_cache(StorageSettings::v2());
         db
     }
@@ -427,7 +440,7 @@ mod tests {
 
     #[test]
     fn test_consistency() {
-        let db = seed_data(90).unwrap();
+        let db = seed_data(90, true).unwrap();
         let db_provider = db.factory.database_provider_ro().unwrap();
 
         assert!(matches!(
@@ -439,9 +452,15 @@ mod tests {
     #[test]
     fn test_consistency_no_commit_prune() {
         // Test full node with receipt pruning
-        let mut db_full = seed_data(90).unwrap();
+        let mut db_full = seed_data(90, true).unwrap();
         db_full.factory = db_full.factory.with_prune_modes(PruneModes {
             receipts: Some(PruneMode::Before(1)),
+            receipts_log_filter: reth_prune_types::ReceiptsLogPruneConfig(
+                std::collections::BTreeMap::from([(
+                    alloy_primitives::Address::ZERO,
+                    PruneMode::Before(1),
+                )]),
+            ),
             ..Default::default()
         });
 
@@ -450,7 +469,7 @@ mod tests {
         simulate_behind_checkpoint_corruption(&db_full, 1, StaticFileSegment::Receipts, None);
 
         // Test archive node without receipt pruning
-        let db_archive = seed_data(90).unwrap();
+        let db_archive = seed_data(90, true).unwrap();
 
         // there are 2 to 3 transactions per block. however, if we lose one tx, we need to unwind to
         // the previous block.
@@ -471,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_consistency_checkpoints() {
-        let db = seed_data(90).unwrap();
+        let db = seed_data(90, true).unwrap();
 
         // When a checkpoint is behind, we delete data from static files.
         let block = 87;
@@ -519,7 +538,7 @@ mod tests {
 
     #[test]
     fn test_consistency_headers_gap() {
-        let db = seed_data(90).unwrap();
+        let db = seed_data(90, true).unwrap();
         let current = db
             .factory
             .static_file_provider()
@@ -535,7 +554,7 @@ mod tests {
 
     #[test]
     fn test_consistency_tx_gap() {
-        let db = seed_data(90).unwrap();
+        let db = seed_data(90, true).unwrap();
         let current = db
             .factory
             .static_file_provider()
@@ -561,7 +580,7 @@ mod tests {
 
     #[test]
     fn test_consistency_receipt_gap() {
-        let db = seed_data(90).unwrap();
+        let db = seed_data(90, true).unwrap();
         let current = db
             .factory
             .static_file_provider()
@@ -616,7 +635,7 @@ mod tests {
 
     #[test]
     fn test_consistency_receipts_distance_prune_checkpoint() {
-        let db = seed_data(90).unwrap();
+        let db = seed_data(90, true).unwrap();
         let static_file_provider = db.factory.static_file_provider();
 
         // Remove all receipts static files, like a node whose receipts have been

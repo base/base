@@ -11,7 +11,7 @@ use eyre::Result;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };
-use reth_node_builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
+use reth_node_builder::{NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
     args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
     dirs::{DataDirPath, MaybePlatformPath},
@@ -106,7 +106,7 @@ impl LocalNode {
             .with_launch_context(exec.clone())
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(base_node.components())
-            .with_add_ons(base_node.add_ons())
+            .with_add_ons(base_node.add_ons_builder().build())
             .on_component_initialized(move |_ctx| Ok(()));
 
         let NodeHandle { node: node_handle, node_exit_future } = extensions

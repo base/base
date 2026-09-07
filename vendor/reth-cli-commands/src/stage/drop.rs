@@ -20,7 +20,6 @@ use reth_node_api::{HeaderTy, ReceiptTy, TxTy};
 use reth_node_core::args::StageEnum;
 use reth_provider::{
     DBProvider, RocksDBProviderFactory, StaticFileProviderFactory, StaticFileWriter,
-    StorageSettingsCache,
 };
 use reth_prune::PruneSegment;
 use reth_stages::StageId;
@@ -135,15 +134,11 @@ impl<C: ChainSpecParser> Command<C> {
                 reset_stage_checkpoint(tx, StageId::SenderRecovery)?;
             }
             StageEnum::Execution => {
-                if provider_rw.cached_storage_settings().use_hashed_state() {
-                    tx.clear::<tables::HashedAccounts>()?;
-                    tx.clear::<tables::HashedStorages>()?;
-                    reset_stage_checkpoint(tx, StageId::AccountHashing)?;
-                    reset_stage_checkpoint(tx, StageId::StorageHashing)?;
-                } else {
-                    tx.clear::<tables::PlainAccountState>()?;
-                    tx.clear::<tables::PlainStorageState>()?;
-                }
+                tx.clear::<tables::HashedAccounts>()?;
+                tx.clear::<tables::HashedStorages>()?;
+                reset_stage_checkpoint(tx, StageId::AccountHashing)?;
+                reset_stage_checkpoint(tx, StageId::StorageHashing)?;
+
                 tx.clear::<tables::AccountChangeSets>()?;
                 tx.clear::<tables::StorageChangeSets>()?;
                 tx.clear::<tables::Bytecodes>()?;
@@ -186,14 +181,9 @@ impl<C: ChainSpecParser> Command<C> {
                 )?;
             }
             StageEnum::AccountHistory => {
-                let settings = provider_rw.cached_storage_settings();
                 let rocksdb = tool.provider_factory.rocksdb_provider();
 
-                if settings.storage_v2 {
-                    rocksdb.clear::<tables::AccountsHistory>()?;
-                } else {
-                    tx.clear::<tables::AccountsHistory>()?;
-                }
+                rocksdb.clear::<tables::AccountsHistory>()?;
 
                 reset_stage_checkpoint(tx, StageId::IndexAccountHistory)?;
 
@@ -203,14 +193,9 @@ impl<C: ChainSpecParser> Command<C> {
                 )?;
             }
             StageEnum::StorageHistory => {
-                let settings = provider_rw.cached_storage_settings();
                 let rocksdb = tool.provider_factory.rocksdb_provider();
 
-                if settings.storage_v2 {
-                    rocksdb.clear::<tables::StoragesHistory>()?;
-                } else {
-                    tx.clear::<tables::StoragesHistory>()?;
-                }
+                rocksdb.clear::<tables::StoragesHistory>()?;
 
                 reset_stage_checkpoint(tx, StageId::IndexStorageHistory)?;
 
@@ -220,13 +205,9 @@ impl<C: ChainSpecParser> Command<C> {
                 )?;
             }
             StageEnum::TxLookup => {
-                if provider_rw.cached_storage_settings().storage_v2 {
-                    tool.provider_factory
-                        .rocksdb_provider()
-                        .clear::<tables::TransactionHashNumbers>()?;
-                } else {
-                    tx.clear::<tables::TransactionHashNumbers>()?;
-                }
+                tool.provider_factory
+                    .rocksdb_provider()
+                    .clear::<tables::TransactionHashNumbers>()?;
 
                 reset_prune_checkpoint(tx, PruneSegment::TransactionLookup)?;
 

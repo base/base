@@ -9,7 +9,7 @@ use std::{
 
 use alloy_consensus::{
     BlockHeader, TxReceipt,
-    transaction::{SignerRecoverable, TransactionMeta, TxHashRef},
+    transaction::{SignerRecoverable, TransactionMeta},
 };
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{
@@ -22,13 +22,11 @@ use rayon::slice::ParallelSliceMut;
 use reth_chain_state::ExecutedBlock;
 use reth_chainspec::{ChainInfo, ChainSpecProvider, EthChainSpec};
 use reth_db_api::{
-    BlockNumberList,
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
     database::{Database, ReaderTxnTracker},
     models::{
-        AccountBeforeTx, BlockNumberAddress, BlockNumberAddressRange, ShardedKey, StorageBeforeTx,
-        StorageSettings, StoredBlockBodyIndices, sharded_key,
-        storage_sharded_key::StorageShardedKey,
+        AccountBeforeTx, BlockNumberAddress, StorageBeforeTx, StorageSettings,
+        StoredBlockBodyIndices,
     },
     table::Table,
     tables,
@@ -57,9 +55,7 @@ use reth_trie::{
     updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
 };
 use reth_trie_db::{DatabaseStorageTrieCursor, TrieTableAdapter};
-use revm::database::states::{
-    PlainStateReverts, PlainStorageChangeset, PlainStorageRevert, StateChangeset,
-};
+use revm::database::states::{PlainStateReverts, PlainStorageRevert, StateChangeset};
 use smallvec::SmallVec;
 use tracing::{debug, instrument, trace};
 
@@ -67,15 +63,13 @@ use super::SaveBlocksInput;
 use crate::{
     AccountReader, BlockBodyWriter, BlockExecutionWriter, BlockHashReader, BlockNumReader,
     BlockReader, BlockWriter, BundleStateInit, ChainStateBlockReader, ChainStateBlockWriter,
-    DBProvider, DbTxProvider, EitherReader, EitherWriter, EitherWriterDestination, HashingWriter,
-    HeaderProvider, HeaderSyncGapProvider, HistoricalStateProvider, HistoricalStateProviderRef,
-    HistoryWriter, LatestStateProvider, LatestStateProviderRef, OriginalValuesKnown,
-    PersistenceFrontiers, ProviderError, PruneCheckpointReader, PruneCheckpointWriter,
-    RawRocksDBBatch, RevertsInit, RocksBatchArg, RocksDBProviderFactory, StageCheckpointReader,
-    StateProviderBox, StateWriter, StaticFileProviderFactory, StatsReader, StorageReader,
-    StorageTrieWriter, TransactionVariant, TransactionsProvider, TransactionsProviderExt,
-    TrieWriter,
-    changesets_utils::StorageRevertsIter,
+    DBProvider, DbTxProvider, EitherReader, EitherWriter, HashingWriter, HeaderProvider,
+    HeaderSyncGapProvider, HistoricalStateProvider, HistoricalStateProviderRef, HistoryWriter,
+    LatestStateProvider, LatestStateProviderRef, OriginalValuesKnown, PersistenceFrontiers,
+    ProviderError, PruneCheckpointReader, PruneCheckpointWriter, RawRocksDBBatch, RevertsInit,
+    RocksBatchArg, RocksDBProviderFactory, StageCheckpointReader, StateProviderBox, StateWriter,
+    StaticFileProviderFactory, StatsReader, StorageReader, StorageTrieWriter, TransactionVariant,
+    TransactionsProvider, TransactionsProviderExt, TrieWriter,
     prepare_history_shard_writes_parallel,
     providers::{
         NodeTypesForProvider, StaticFileProvider,
@@ -273,10 +267,9 @@ impl<TX: DbTx + 'static, N: NodeTypes> DatabaseProvider<TX, N> {
     /// This waits after the MDBX commit so readers holding older MDBX-visible views cannot overlap
     /// later cross-store unwind steps.
     ///
-    /// Historical `storage_v2` reads ignore `RocksDB` history entries above their MDBX-visible tip,
+    /// Historical state reads ignore `RocksDB` history entries above their MDBX-visible tip,
     /// so no additional post-`RocksDB` wait is needed before static-file commit.
     fn commit_unwind(self) -> ProviderResult<()> {
-        let storage_v2 = self.cached_storage_settings().storage_v2;
         let reader_txn_tracker = self.reader_txn_tracker.clone();
         self.tx.commit()?;
 
@@ -284,11 +277,9 @@ impl<TX: DbTx + 'static, N: NodeTypes> DatabaseProvider<TX, N> {
             reader_txn_tracker.wait_for_pre_commit_readers();
         }
 
-        if storage_v2 {
-            let batches = std::mem::take(&mut *self.pending_rocksdb_batches.lock());
-            for batch in batches {
-                self.rocksdb_provider.commit_batch(batch)?;
-            }
+        let batches = std::mem::take(&mut *self.pending_rocksdb_batches.lock());
+        for batch in batches {
+            self.rocksdb_provider.commit_batch(batch)?;
         }
 
         self.static_file_provider.commit()?;
@@ -542,14 +533,11 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
     ) -> ProviderResult<StaticFileWriteCtx> {
         let tip = self.last_block_number()?.max(last_block);
         Ok(StaticFileWriteCtx {
-            write_senders: EitherWriterDestination::senders(self).is_static_file()
-                && self.prune_modes.sender_recovery.is_none_or(|m| !m.is_full()),
+            write_senders: self.prune_modes.sender_recovery.is_none_or(|m| !m.is_full()),
             write_receipts: save_mode.with_state()
                 && EitherWriter::receipts_destination(self).is_static_file(),
-            write_account_changesets: save_mode.with_state()
-                && EitherWriterDestination::account_changesets(self).is_static_file(),
-            write_storage_changesets: save_mode.with_state()
-                && EitherWriterDestination::storage_changesets(self).is_static_file(),
+            write_account_changesets: save_mode.with_state(),
+            write_storage_changesets: save_mode.with_state(),
             tip,
             receipts_prune_mode: self.prune_modes.receipts,
             // Receipts are prunable if no receipts exist in SF yet and within pruning distance
@@ -660,8 +648,7 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
             })
             .transpose()?;
         let rocksdb_ctx = first_number.map(|first_number| self.rocksdb_write_ctx(first_number));
-        let rocksdb_enabled =
-            rocksdb_ctx.as_ref().is_some_and(|ctx| ctx.storage_settings.storage_v2);
+        let rocksdb_enabled = rocksdb_ctx.is_some();
 
         let mut sf_result = None;
         let mut rocksdb_result = None;
@@ -706,39 +693,6 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
             let mdbx_start = Instant::now();
 
             // Collect all transaction hashes across all blocks, sort them, and write in batch
-            if !blocks.is_empty()
-                && !self.cached_storage_settings().storage_v2
-                && self.prune_modes.transaction_lookup.is_none_or(|m| !m.is_full())
-            {
-                let start = Instant::now();
-                let total_tx_count: usize =
-                    blocks.iter().map(|b| b.recovered_block().body().transaction_count()).sum();
-                let mut all_tx_hashes = Vec::with_capacity(total_tx_count);
-                for (i, block) in blocks.iter().enumerate() {
-                    let recovered_block = block.recovered_block();
-                    for (tx_num, transaction) in
-                        (tx_nums[i]..).zip(recovered_block.body().transactions_iter())
-                    {
-                        all_tx_hashes.push((*transaction.tx_hash(), tx_num));
-                    }
-                }
-
-                // Sort by hash for optimal MDBX insertion performance
-                all_tx_hashes.sort_unstable_by_key(|(hash, _)| *hash);
-
-                // Write all transaction hash numbers in a single batch
-                self.with_rocksdb_batch(|batch| {
-                    let mut tx_hash_writer =
-                        EitherWriter::new_transaction_hash_numbers(self, batch)?;
-                    tx_hash_writer.put_transaction_hash_numbers_batch(all_tx_hashes, false)?;
-                    let raw_batch = tx_hash_writer.into_raw_rocksdb_batch();
-                    Ok(((), raw_batch))
-                })?;
-                self.metrics.record_duration(
-                    metrics::Action::InsertTransactionHashNumbers,
-                    start.elapsed(),
-                );
-            }
 
             for (i, block) in blocks.iter().enumerate() {
                 let recovered_block = block.recovered_block();
@@ -825,15 +779,6 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
                 timings.write_trie_updates += start.elapsed();
             }
 
-            // Full mode: update history indices
-            if save_mode.with_state()
-                && let Some(first_number) = first_number
-            {
-                let start = Instant::now();
-                self.update_history_indices(first_number..=last_block_number)?;
-                timings.update_history_indices = start.elapsed();
-            }
-
             // Update pipeline progress
             let start = Instant::now();
             if !blocks.is_empty() {
@@ -879,28 +824,15 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
         Ok(())
     }
 
-    /// Writes MDBX-only data for a block (indices, lookups, and senders if configured for MDBX).
+    /// Writes MDBX-only indices for a block.
     ///
-    /// SF data (headers, transactions, senders if SF, receipts if SF) must be written separately.
+    /// Static file data (headers, transactions, senders, and unfiltered receipts) is written separately.
     #[instrument(level = "debug", target = "providers::db", skip_all)]
     fn insert_block_mdbx_only(
         &self,
         block: &RecoveredBlock<BlockTy<N>>,
         first_tx_num: TxNumber,
     ) -> ProviderResult<StoredBlockBodyIndices> {
-        if self.prune_modes.sender_recovery.is_none_or(|m| !m.is_full())
-            && EitherWriterDestination::senders(self).is_database()
-        {
-            let start = Instant::now();
-            let tx_nums_iter = std::iter::successors(Some(first_tx_num), |n| Some(n + 1));
-            let mut cursor = self.tx.cursor_write::<tables::TransactionSenders>()?;
-            for (tx_num, sender) in tx_nums_iter.zip(block.senders_iter().copied()) {
-                cursor.append(tx_num, &sender)?;
-            }
-            self.metrics
-                .record_duration(metrics::Action::InsertTransactionSenders, start.elapsed());
-        }
-
         let block_number = block.number();
         let tx_count = block.body().transaction_count() as u64;
 
@@ -1072,69 +1004,6 @@ impl<TX: DbTx + 'static, N: NodeTypes> TryIntoHistoricalStateProvider for Databa
 
         Ok(Box::new(state_provider))
     }
-}
-
-/// For a given key, unwind all history shards that contain block numbers at or above the given
-/// block number.
-///
-/// S - Sharded key subtype.
-/// T - Table to walk over.
-/// C - Cursor implementation.
-///
-/// This function walks the entries from the given start key and deletes all shards that belong to
-/// the key and contain block numbers at or above the given block number. Shards entirely below
-/// the block number are preserved.
-///
-/// The boundary shard (the shard that spans across the block number) is removed from the database.
-/// Any indices that are below the block number are filtered out and returned for reinsertion.
-/// The boundary shard is returned for reinsertion (if it's not empty).
-fn unwind_history_shards<S, T, C>(
-    cursor: &mut C,
-    start_key: T::Key,
-    block_number: BlockNumber,
-    mut shard_belongs_to_key: impl FnMut(&T::Key) -> bool,
-) -> ProviderResult<Vec<u64>>
-where
-    T: Table<Value = BlockNumberList>,
-    T::Key: AsRef<ShardedKey<S>>,
-    C: DbCursorRO<T> + DbCursorRW<T>,
-{
-    // Start from the given key and iterate through shards
-    let mut item = cursor.seek_exact(start_key)?;
-    while let Some((sharded_key, list)) = item {
-        // If the shard does not belong to the key, break.
-        if !shard_belongs_to_key(&sharded_key) {
-            break;
-        }
-
-        // Always delete the current shard from the database first
-        // We'll decide later what (if anything) to reinsert
-        cursor.delete_current()?;
-
-        // Get the first (lowest) block number in this shard
-        // All block numbers in a shard are sorted in ascending order
-        let first = list.iter().next().expect("List can't be empty");
-
-        // Case 1: Entire shard is at or above the unwinding point
-        // Keep it deleted (don't return anything for reinsertion)
-        if first >= block_number {
-            item = cursor.prev()?;
-            continue;
-        }
-        // Case 2: This is a boundary shard (spans across the unwinding point)
-        // The shard contains some blocks below and some at/above the unwinding point
-        else if block_number <= sharded_key.as_ref().highest_block_number {
-            // Return only the block numbers that are below the unwinding point
-            // These will be reinserted to preserve the historical data
-            return Ok(list.iter().take_while(|i| *i < block_number).collect::<Vec<_>>());
-        }
-        // Case 3: Entire shard is below the unwinding point
-        // Return all block numbers for reinsertion (preserve entire shard)
-        return Ok(list.iter().collect::<Vec<_>>());
-    }
-
-    // No shards found or all processed
-    Ok(Vec::new())
 }
 
 impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
@@ -1369,9 +1238,7 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
         })
     }
 
-    /// Populate a [`BundleStateInit`] and [`RevertsInit`] using cursors over the
-    /// [`tables::PlainAccountState`] and [`tables::PlainStorageState`] tables, based on the given
-    /// storage and account changesets.
+    /// Populate a [`BundleStateInit`] and [`RevertsInit`] from changesets and current state.
     fn populate_bundle_state(
         &self,
         account_changeset: Vec<(u64, AccountBeforeTx)>,
@@ -1443,28 +1310,6 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
         Ok((state, reverts))
     }
 
-    /// Invokes [`populate_bundle_state`](Self::populate_bundle_state) with the given plain state
-    /// cursors.
-    fn populate_bundle_state_plain(
-        &self,
-        account_changeset: Vec<(u64, AccountBeforeTx)>,
-        storage_changeset: Vec<(BlockNumberAddress, StorageEntry)>,
-        plain_accounts_cursor: &mut impl DbCursorRO<tables::PlainAccountState>,
-        plain_storage_cursor: &mut impl DbDupCursorRO<tables::PlainStorageState>,
-    ) -> ProviderResult<(BundleStateInit, RevertsInit)> {
-        self.populate_bundle_state(
-            account_changeset,
-            storage_changeset,
-            |address| Ok(plain_accounts_cursor.seek_exact(address)?.map(|kv| kv.1)),
-            |address, storage_key| {
-                Ok(plain_storage_cursor
-                    .seek_by_key_subkey(address, storage_key)?
-                    .filter(|s| s.key == storage_key)
-                    .map(|s| s.value))
-            },
-        )
-    }
-
     /// Like [`populate_bundle_state`](Self::populate_bundle_state), but reads current values from
     /// `HashedAccounts`/`HashedStorages`. Addresses and storage keys are hashed via `keccak256`
     /// for DB lookups. The output `BundleStateInit`/`RevertsInit` structures remain keyed by
@@ -1505,73 +1350,12 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
     }
 }
 
-impl<TX: DbTxMut + DbTx + 'static, N: NodeTypes> DatabaseProvider<TX, N> {
-    /// Insert history index to the database.
-    ///
-    /// For each updated partial key, this function retrieves the last shard from the database
-    /// (if any), appends the new indices to it, chunks the resulting list if needed, and upserts
-    /// the shards back into the database.
-    ///
-    /// This function is used by history indexing stages.
-    fn append_history_index<P, T>(
-        &self,
-        index_updates: impl IntoIterator<Item = (P, impl IntoIterator<Item = u64>)>,
-        mut sharded_key_factory: impl FnMut(P, BlockNumber) -> T::Key,
-    ) -> ProviderResult<()>
-    where
-        P: Copy,
-        T: Table<Value = BlockNumberList>,
-    {
-        // This function cannot be used with DUPSORT tables because `upsert` on DUPSORT tables
-        // will append duplicate entries instead of updating existing ones, causing data corruption.
-        assert!(!T::DUPSORT, "append_history_index cannot be used with DUPSORT tables");
-
-        let mut cursor = self.tx.cursor_write::<T>()?;
-
-        for (partial_key, indices) in index_updates {
-            let last_key = sharded_key_factory(partial_key, u64::MAX);
-            let mut last_shard = cursor
-                .seek_exact(last_key.clone())?
-                .map(|(_, list)| list)
-                .unwrap_or_else(BlockNumberList::empty);
-
-            last_shard.append(indices).map_err(ProviderError::other)?;
-
-            // fast path: all indices fit in one shard
-            if last_shard.len() <= sharded_key::NUM_OF_INDICES_IN_SHARD as u64 {
-                cursor.upsert(last_key, &last_shard)?;
-                continue;
-            }
-
-            // slow path: rechunk into multiple shards
-            let chunks = last_shard.iter().chunks(sharded_key::NUM_OF_INDICES_IN_SHARD);
-            let mut chunks_peekable = chunks.into_iter().peekable();
-
-            while let Some(chunk) = chunks_peekable.next() {
-                let shard = BlockNumberList::new_pre_sorted(chunk);
-                let highest_block_number = if chunks_peekable.peek().is_some() {
-                    shard.iter().next_back().expect("`chunks` does not return empty list")
-                } else {
-                    // Insert last list with `u64::MAX`.
-                    u64::MAX
-                };
-
-                cursor.upsert(sharded_key_factory(partial_key, highest_block_number), &shard)?;
-            }
-        }
-
-        Ok(())
-    }
-}
+impl<TX: DbTxMut + DbTx + 'static, N: NodeTypes> DatabaseProvider<TX, N> {}
 
 impl<TX: DbTx, N: NodeTypes> AccountReader for DatabaseProvider<TX, N> {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
-        if self.cached_storage_settings().use_hashed_state() {
-            let hashed_address = keccak256(address);
-            Ok(self.tx.get_by_encoded_key::<tables::HashedAccounts>(&hashed_address)?)
-        } else {
-            Ok(self.tx.get_by_encoded_key::<tables::PlainAccountState>(address)?)
-        }
+        let hashed_address = keccak256(address);
+        Ok(self.tx.get_by_encoded_key::<tables::HashedAccounts>(&hashed_address)?)
     }
 }
 
@@ -1589,24 +1373,14 @@ impl<TX: DbTx + 'static, N: NodeTypes> AccountExtReader for DatabaseProvider<TX,
         &self,
         iter: impl IntoIterator<Item = Address>,
     ) -> ProviderResult<Vec<(Address, Option<Account>)>> {
-        if self.cached_storage_settings().use_hashed_state() {
-            let mut hashed_accounts = self.tx.cursor_read::<tables::HashedAccounts>()?;
-            Ok(iter
-                .into_iter()
-                .map(|address| {
-                    let hashed_address = keccak256(address);
-                    hashed_accounts.seek_exact(hashed_address).map(|a| (address, a.map(|(_, v)| v)))
-                })
-                .collect::<Result<Vec<_>, _>>()?)
-        } else {
-            let mut plain_accounts = self.tx.cursor_read::<tables::PlainAccountState>()?;
-            Ok(iter
-                .into_iter()
-                .map(|address| {
-                    plain_accounts.seek_exact(address).map(|a| (address, a.map(|(_, v)| v)))
-                })
-                .collect::<Result<Vec<_>, _>>()?)
-        }
+        let mut hashed_accounts = self.tx.cursor_read::<tables::HashedAccounts>()?;
+        Ok(iter
+            .into_iter()
+            .map(|address| {
+                let hashed_address = keccak256(address);
+                hashed_accounts.seek_exact(hashed_address).map(|a| (address, a.map(|(_, v)| v)))
+            })
+            .collect::<Result<Vec<_>, _>>()?)
     }
 
     fn changed_accounts_and_blocks_with_range(
@@ -1618,7 +1392,7 @@ impl<TX: DbTx + 'static, N: NodeTypes> AccountExtReader for DatabaseProvider<TX,
             .get_highest_static_file_block(StaticFileSegment::AccountChangeSets);
 
         if let Some(highest) = highest_static_block
-            && self.cached_storage_settings().storage_v2
+            && true
         {
             let start = *range.start();
             let static_end = (*range.end()).min(highest);
@@ -1659,20 +1433,7 @@ impl<TX: DbTx, N: NodeTypes> StorageChangeSetReader for DatabaseProvider<TX, N> 
         &self,
         block_number: BlockNumber,
     ) -> ProviderResult<Vec<(BlockNumberAddress, StorageEntry)>> {
-        if self.cached_storage_settings().storage_v2 {
-            self.static_file_provider.storage_changeset(block_number)
-        } else {
-            let range = block_number..=block_number;
-            let storage_range = BlockNumberAddress::range(range);
-            self.tx
-                .cursor_dup_read::<tables::StorageChangeSets>()?
-                .walk_range(storage_range)?
-                .map(|r| {
-                    let (bna, entry) = r?;
-                    Ok((bna, entry))
-                })
-                .collect()
-        }
+        self.static_file_provider.storage_changeset(block_number)
     }
 
     fn get_storage_before_block(
@@ -1681,33 +1442,14 @@ impl<TX: DbTx, N: NodeTypes> StorageChangeSetReader for DatabaseProvider<TX, N> 
         address: Address,
         storage_key: B256,
     ) -> ProviderResult<Option<StorageEntry>> {
-        if self.cached_storage_settings().storage_v2 {
-            self.static_file_provider.get_storage_before_block(block_number, address, storage_key)
-        } else {
-            Ok(self
-                .tx
-                .cursor_dup_read::<tables::StorageChangeSets>()?
-                .seek_by_key_subkey(BlockNumberAddress((block_number, address)), storage_key)?
-                .filter(|entry| entry.key == storage_key))
-        }
+        self.static_file_provider.get_storage_before_block(block_number, address, storage_key)
     }
 
     fn storage_changesets_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
     ) -> ProviderResult<Vec<(BlockNumberAddress, StorageEntry)>> {
-        if self.cached_storage_settings().storage_v2 {
-            self.static_file_provider.storage_changesets_range(range)
-        } else {
-            self.tx
-                .cursor_dup_read::<tables::StorageChangeSets>()?
-                .walk_range(BlockNumberAddressRange::from(range))?
-                .map(|r| {
-                    let (bna, entry) = r?;
-                    Ok((bna, entry))
-                })
-                .collect()
-        }
+        self.static_file_provider.storage_changesets_range(range)
     }
 }
 
@@ -1716,21 +1458,8 @@ impl<TX: DbTx, N: NodeTypes> ChangeSetReader for DatabaseProvider<TX, N> {
         &self,
         block_number: BlockNumber,
     ) -> ProviderResult<Vec<AccountBeforeTx>> {
-        if self.cached_storage_settings().storage_v2 {
-            let static_changesets =
-                self.static_file_provider.account_block_changeset(block_number)?;
-            Ok(static_changesets)
-        } else {
-            let range = block_number..=block_number;
-            self.tx
-                .cursor_read::<tables::AccountChangeSets>()?
-                .walk_range(range)?
-                .map(|result| -> ProviderResult<_> {
-                    let (_, account_before) = result?;
-                    Ok(account_before)
-                })
-                .collect()
-        }
+        let static_changesets = self.static_file_provider.account_block_changeset(block_number)?;
+        Ok(static_changesets)
     }
 
     fn get_account_before_block(
@@ -1738,31 +1467,14 @@ impl<TX: DbTx, N: NodeTypes> ChangeSetReader for DatabaseProvider<TX, N> {
         block_number: BlockNumber,
         address: Address,
     ) -> ProviderResult<Option<AccountBeforeTx>> {
-        if self.cached_storage_settings().storage_v2 {
-            Ok(self.static_file_provider.get_account_before_block(block_number, address)?)
-        } else {
-            self.tx
-                .cursor_dup_read::<tables::AccountChangeSets>()?
-                .seek_by_key_subkey(block_number, address)?
-                .filter(|acc| acc.address == address)
-                .map(Ok)
-                .transpose()
-        }
+        Ok(self.static_file_provider.get_account_before_block(block_number, address)?)
     }
 
     fn account_changesets_range(
         &self,
         range: impl core::ops::RangeBounds<BlockNumber>,
     ) -> ProviderResult<Vec<(BlockNumber, AccountBeforeTx)>> {
-        if self.cached_storage_settings().storage_v2 {
-            self.static_file_provider.account_changesets_range(range)
-        } else {
-            self.tx
-                .cursor_read::<tables::AccountChangeSets>()?
-                .walk_range(to_range(range))?
-                .map(|r| r.map_err(Into::into))
-                .collect()
-        }
+        self.static_file_provider.account_changesets_range(range)
     }
 }
 
@@ -2204,19 +1916,11 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> TransactionsProvider for Datab
         &self,
         range: impl RangeBounds<TxNumber>,
     ) -> ProviderResult<Vec<Address>> {
-        if EitherWriterDestination::senders(self).is_static_file() {
-            self.static_file_provider.senders_by_tx_range(range)
-        } else {
-            self.cursor_read_collect::<tables::TransactionSenders>(range)
-        }
+        self.static_file_provider.senders_by_tx_range(range)
     }
 
     fn transaction_sender(&self, id: TxNumber) -> ProviderResult<Option<Address>> {
-        if EitherWriterDestination::senders(self).is_static_file() {
-            self.static_file_provider.transaction_sender(id)
-        } else {
-            Ok(self.tx.get::<tables::TransactionSenders>(id)?)
-        }
+        self.static_file_provider.transaction_sender(id)
     }
 }
 
@@ -2446,114 +2150,57 @@ impl<TX: DbTx + 'static, N: NodeTypes> StorageReader for DatabaseProvider<TX, N>
         &self,
         addresses_with_keys: impl IntoIterator<Item = (Address, impl IntoIterator<Item = B256>)>,
     ) -> ProviderResult<Vec<(Address, Vec<StorageEntry>)>> {
-        if self.cached_storage_settings().use_hashed_state() {
-            let mut hashed_storage = self.tx.cursor_dup_read::<tables::HashedStorages>()?;
+        let mut hashed_storage = self.tx.cursor_dup_read::<tables::HashedStorages>()?;
 
-            addresses_with_keys
-                .into_iter()
-                .map(|(address, storage)| {
-                    let hashed_address = keccak256(address);
-                    storage
-                        .into_iter()
-                        .map(|key| -> ProviderResult<_> {
-                            let hashed_key = keccak256(key);
-                            let value = hashed_storage
-                                .seek_by_key_subkey(hashed_address, hashed_key)?
-                                .filter(|v| v.key == hashed_key)
-                                .map(|v| v.value)
-                                .unwrap_or_default();
-                            Ok(StorageEntry { key, value })
-                        })
-                        .collect::<ProviderResult<Vec<_>>>()
-                        .map(|storage| (address, storage))
-                })
-                .collect::<ProviderResult<Vec<(_, _)>>>()
-        } else {
-            let mut plain_storage = self.tx.cursor_dup_read::<tables::PlainStorageState>()?;
-
-            addresses_with_keys
-                .into_iter()
-                .map(|(address, storage)| {
-                    storage
-                        .into_iter()
-                        .map(|key| -> ProviderResult<_> {
-                            Ok(plain_storage
-                                .seek_by_key_subkey(address, key)?
-                                .filter(|v| v.key == key)
-                                .unwrap_or_else(|| StorageEntry { key, value: Default::default() }))
-                        })
-                        .collect::<ProviderResult<Vec<_>>>()
-                        .map(|storage| (address, storage))
-                })
-                .collect::<ProviderResult<Vec<(_, _)>>>()
-        }
+        addresses_with_keys
+            .into_iter()
+            .map(|(address, storage)| {
+                let hashed_address = keccak256(address);
+                storage
+                    .into_iter()
+                    .map(|key| -> ProviderResult<_> {
+                        let hashed_key = keccak256(key);
+                        let value = hashed_storage
+                            .seek_by_key_subkey(hashed_address, hashed_key)?
+                            .filter(|v| v.key == hashed_key)
+                            .map(|v| v.value)
+                            .unwrap_or_default();
+                        Ok(StorageEntry { key, value })
+                    })
+                    .collect::<ProviderResult<Vec<_>>>()
+                    .map(|storage| (address, storage))
+            })
+            .collect::<ProviderResult<Vec<(_, _)>>>()
     }
 
     fn changed_storages_with_range(
         &self,
         range: RangeInclusive<BlockNumber>,
     ) -> ProviderResult<BTreeMap<Address, BTreeSet<B256>>> {
-        if self.cached_storage_settings().storage_v2 {
-            self.storage_changesets_range(range)?.into_iter().try_fold(
-                BTreeMap::new(),
-                |mut accounts: BTreeMap<Address, BTreeSet<B256>>, entry| {
-                    let (BlockNumberAddress((_, address)), storage_entry) = entry;
-                    accounts.entry(address).or_default().insert(storage_entry.key);
-                    Ok(accounts)
-                },
-            )
-        } else {
-            self.tx
-                .cursor_read::<tables::StorageChangeSets>()?
-                .walk_range(BlockNumberAddress::range(range))?
-                // fold all storages and save its old state so we can remove it from HashedStorage
-                // it is needed as it is dup table.
-                .try_fold(
-                    BTreeMap::new(),
-                    |mut accounts: BTreeMap<Address, BTreeSet<B256>>, entry| {
-                        let (BlockNumberAddress((_, address)), storage_entry) = entry?;
-                        accounts.entry(address).or_default().insert(storage_entry.key);
-                        Ok(accounts)
-                    },
-                )
-        }
+        self.storage_changesets_range(range)?.into_iter().try_fold(
+            BTreeMap::new(),
+            |mut accounts: BTreeMap<Address, BTreeSet<B256>>, entry| {
+                let (BlockNumberAddress((_, address)), storage_entry) = entry;
+                accounts.entry(address).or_default().insert(storage_entry.key);
+                Ok(accounts)
+            },
+        )
     }
 
     fn changed_storages_and_blocks_with_range(
         &self,
         range: RangeInclusive<BlockNumber>,
     ) -> ProviderResult<BTreeMap<(Address, B256), Vec<u64>>> {
-        if self.cached_storage_settings().storage_v2 {
-            self.storage_changesets_range(range)?.into_iter().try_fold(
-                BTreeMap::new(),
-                |mut storages: BTreeMap<(Address, B256), Vec<u64>>, (index, storage)| {
-                    storages
-                        .entry((index.address(), storage.key))
-                        .or_default()
-                        .push(index.block_number());
-                    Ok(storages)
-                },
-            )
-        } else {
-            let mut changeset_cursor = self.tx.cursor_read::<tables::StorageChangeSets>()?;
-
-            let storage_changeset_lists =
-                changeset_cursor.walk_range(BlockNumberAddress::range(range))?.try_fold(
-                    BTreeMap::new(),
-                    |mut storages: BTreeMap<(Address, B256), Vec<u64>>,
-                     entry|
-                     -> ProviderResult<_> {
-                        let (index, storage) = entry?;
-                        storages
-                            .entry((index.address(), storage.key))
-                            .or_default()
-                            .push(index.block_number());
-                        Ok(storages)
-                    },
-                )?;
-
-            Ok(storage_changeset_lists)
-        }
+        self.storage_changesets_range(range)?.into_iter().try_fold(
+            BTreeMap::new(),
+            |mut storages: BTreeMap<(Address, B256), Vec<u64>>, (index, storage)| {
+                storages
+                    .entry((index.address(), storage.key))
+                    .or_default()
+                    .push(index.block_number());
+                Ok(storages)
+            },
+        )
     }
 }
 
@@ -2571,8 +2218,7 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> StateWriter
     ) -> ProviderResult<()> {
         let execution_outcome = execution_outcome.into();
 
-        if self.cached_storage_settings().use_hashed_state()
-            && !config.write_receipts
+        if !config.write_receipts
             && !config.write_account_changesets
             && !config.write_storage_changesets
         {
@@ -2692,8 +2338,6 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> StateWriter
         // Write storage changes
         if config.write_storage_changesets {
             tracing::trace!("Writing storage changes");
-            let mut storages_cursor =
-                self.tx_ref().cursor_dup_write::<tables::PlainStorageState>()?;
             for (block_index, mut storage_changes) in reverts.storage.into_iter().enumerate() {
                 let block_number = first_block + block_index as BlockNumber;
 
@@ -2703,7 +2347,7 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> StateWriter
                 let total_changes =
                     storage_changes.iter().map(|change| change.storage_revert.len()).sum();
                 let mut changeset = Vec::with_capacity(total_changes);
-                for PlainStorageRevert { address, wiped, storage_revert } in storage_changes {
+                for PlainStorageRevert { address, storage_revert, .. } in storage_changes {
                     let mut storage = storage_revert
                         .into_iter()
                         .map(|(k, v)| (B256::from(k.to_be_bytes()), v))
@@ -2711,27 +2355,14 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> StateWriter
                     // sort storage slots by key.
                     storage.par_sort_unstable_by_key(|a| a.0);
 
-                    // If we are writing the primary storage wipe transition, the pre-existing
-                    // storage state has to be taken from the database and written to storage
-                    // history. See [StorageWipe::Primary] for more details.
-                    //
-                    // TODO(mediocregopher): This could be rewritten in a way which doesn't
-                    // require collecting wiped entries into a Vec like this, see
-                    // `write_storage_trie_changesets`.
-                    let mut wiped_storage = Vec::new();
-                    if wiped {
-                        tracing::trace!(?address, "Wiping storage");
-                        if let Some((_, entry)) = storages_cursor.seek_exact(address)? {
-                            wiped_storage.push((entry.key, entry.value));
-                            while let Some(entry) = storages_cursor.next_dup_val()? {
-                                wiped_storage.push((entry.key, entry.value))
-                            }
-                        }
-                    }
-
+                    // Wipe reverts already contain the plain slot keys supplied by execution.
                     tracing::trace!(?address, ?storage, "Writing storage reverts");
-                    for (key, value) in StorageRevertsIter::new(storage, wiped_storage) {
-                        changeset.push(StorageBeforeTx { address, key, value });
+                    for (key, value) in storage {
+                        changeset.push(StorageBeforeTx {
+                            address,
+                            key,
+                            value: value.to_previous_value(),
+                        });
                     }
                 }
 
@@ -2765,57 +2396,7 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> StateWriter
     fn write_state_changes(&self, mut changes: StateChangeset) -> ProviderResult<()> {
         // sort all entries so they can be written to database in more performant way.
         // and take smaller memory footprint.
-        changes.accounts.par_sort_by_key(|a| a.0);
-        changes.storage.par_sort_by_key(|a| a.address);
         changes.contracts.par_sort_by_key(|a| a.0);
-
-        if !self.cached_storage_settings().use_hashed_state() {
-            // Write new account state
-            tracing::trace!(len = changes.accounts.len(), "Writing new account state");
-            let mut accounts_cursor = self.tx_ref().cursor_write::<tables::PlainAccountState>()?;
-            // write account to database.
-            for (address, account) in changes.accounts {
-                if let Some(account) = account {
-                    tracing::trace!(?address, "Updating plain state account");
-                    accounts_cursor.upsert(address, &account.into())?;
-                } else if accounts_cursor.seek_exact(address)?.is_some() {
-                    tracing::trace!(?address, "Deleting plain state account");
-                    accounts_cursor.delete_current()?;
-                }
-            }
-
-            // Write new storage state and wipe storage if needed.
-            tracing::trace!(len = changes.storage.len(), "Writing new storage state");
-            let mut storages_cursor =
-                self.tx_ref().cursor_dup_write::<tables::PlainStorageState>()?;
-            for PlainStorageChangeset { address, wipe_storage, storage } in changes.storage {
-                // Wiping of storage.
-                if wipe_storage && storages_cursor.seek_exact(address)?.is_some() {
-                    storages_cursor.delete_current_duplicates()?;
-                }
-                // cast storages to B256.
-                let mut storage = storage
-                    .into_iter()
-                    .map(|(k, value)| StorageEntry { key: k.into(), value })
-                    .collect::<Vec<_>>();
-                // sort storage slots by key.
-                storage.par_sort_unstable_by_key(|a| a.key);
-
-                for entry in storage {
-                    tracing::trace!(?address, ?entry.key, "Updating plain state storage");
-                    if let Some(db_entry) =
-                        storages_cursor.seek_by_key_subkey(address, entry.key)?
-                        && db_entry.key == entry.key
-                    {
-                        storages_cursor.delete_current()?;
-                    }
-
-                    if !entry.value.is_zero() {
-                        storages_cursor.upsert(address, &entry)?;
-                    }
-                }
-            }
-        }
 
         // Write bytecode
         tracing::trace!(len = changes.contracts.len(), "Writing bytecodes");
@@ -2900,104 +2481,57 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> StateWriter
             .map(|b| b.next_tx_num())
             .ok_or(ProviderError::BlockBodyIndicesNotFound(block))?;
 
-        let storage_range = BlockNumberAddress::range(range.clone());
-        let storage_changeset = if self.cached_storage_settings().storage_v2 {
+        let _storage_range = BlockNumberAddress::range(range.clone());
+        let storage_changeset = {
             let changesets = self.storage_changesets_range(range.clone())?;
             let mut changeset_writer =
                 self.static_file_provider.latest_writer(StaticFileSegment::StorageChangeSets)?;
             changeset_writer.prune_storage_changesets(block)?;
             changesets
-        } else {
-            self.take::<tables::StorageChangeSets>(storage_range)?.into_iter().collect()
         };
-        let account_changeset = if self.cached_storage_settings().storage_v2 {
+        let account_changeset = {
             let changesets = self.account_changesets_range(range)?;
             let mut changeset_writer =
                 self.static_file_provider.latest_writer(StaticFileSegment::AccountChangeSets)?;
             changeset_writer.prune_account_changesets(block)?;
             changesets
-        } else {
-            self.take::<tables::AccountChangeSets>(range)?
         };
 
-        if self.cached_storage_settings().use_hashed_state() {
-            let mut hashed_accounts_cursor = self.tx.cursor_write::<tables::HashedAccounts>()?;
-            let mut hashed_storage_cursor = self.tx.cursor_dup_write::<tables::HashedStorages>()?;
+        let mut hashed_accounts_cursor = self.tx.cursor_write::<tables::HashedAccounts>()?;
+        let mut hashed_storage_cursor = self.tx.cursor_dup_write::<tables::HashedStorages>()?;
 
-            let (state, _) = self.populate_bundle_state_hashed(
-                account_changeset,
-                storage_changeset,
-                &mut hashed_accounts_cursor,
-                &mut hashed_storage_cursor,
-            )?;
+        let (state, _) = self.populate_bundle_state_hashed(
+            account_changeset,
+            storage_changeset,
+            &mut hashed_accounts_cursor,
+            &mut hashed_storage_cursor,
+        )?;
 
-            for (address, (old_account, new_account, storage)) in &state {
-                if old_account != new_account {
-                    let hashed_address = keccak256(address);
-                    let existing_entry = hashed_accounts_cursor.seek_exact(hashed_address)?;
-                    if let Some(account) = old_account {
-                        hashed_accounts_cursor.upsert(hashed_address, account)?;
-                    } else if existing_entry.is_some() {
-                        hashed_accounts_cursor.delete_current()?;
-                    }
-                }
-
-                for (storage_key, (old_storage_value, _new_storage_value)) in storage {
-                    let hashed_address = keccak256(address);
-                    let hashed_storage_key = keccak256(storage_key);
-                    let storage_entry =
-                        StorageEntry { key: hashed_storage_key, value: *old_storage_value };
-                    if hashed_storage_cursor
-                        .seek_by_key_subkey(hashed_address, hashed_storage_key)?
-                        .is_some_and(|s| s.key == hashed_storage_key)
-                    {
-                        hashed_storage_cursor.delete_current()?
-                    }
-
-                    if !old_storage_value.is_zero() {
-                        hashed_storage_cursor.upsert(hashed_address, &storage_entry)?;
-                    }
+        for (address, (old_account, new_account, storage)) in &state {
+            if old_account != new_account {
+                let hashed_address = keccak256(address);
+                let existing_entry = hashed_accounts_cursor.seek_exact(hashed_address)?;
+                if let Some(account) = old_account {
+                    hashed_accounts_cursor.upsert(hashed_address, account)?;
+                } else if existing_entry.is_some() {
+                    hashed_accounts_cursor.delete_current()?;
                 }
             }
-        } else {
-            // This is not working for blocks that are not at tip. as plain state is not the last
-            // state of end range. We should rename the functions or add support to access
-            // History state. Accessing history state can be tricky but we are not gaining
-            // anything.
-            let mut plain_accounts_cursor = self.tx.cursor_write::<tables::PlainAccountState>()?;
-            let mut plain_storage_cursor =
-                self.tx.cursor_dup_write::<tables::PlainStorageState>()?;
 
-            let (state, _) = self.populate_bundle_state_plain(
-                account_changeset,
-                storage_changeset,
-                &mut plain_accounts_cursor,
-                &mut plain_storage_cursor,
-            )?;
-
-            for (address, (old_account, new_account, storage)) in &state {
-                if old_account != new_account {
-                    let existing_entry = plain_accounts_cursor.seek_exact(*address)?;
-                    if let Some(account) = old_account {
-                        plain_accounts_cursor.upsert(*address, account)?;
-                    } else if existing_entry.is_some() {
-                        plain_accounts_cursor.delete_current()?;
-                    }
+            for (storage_key, (old_storage_value, _new_storage_value)) in storage {
+                let hashed_address = keccak256(address);
+                let hashed_storage_key = keccak256(storage_key);
+                let storage_entry =
+                    StorageEntry { key: hashed_storage_key, value: *old_storage_value };
+                if hashed_storage_cursor
+                    .seek_by_key_subkey(hashed_address, hashed_storage_key)?
+                    .is_some_and(|s| s.key == hashed_storage_key)
+                {
+                    hashed_storage_cursor.delete_current()?
                 }
 
-                for (storage_key, (old_storage_value, _new_storage_value)) in storage {
-                    let storage_entry =
-                        StorageEntry { key: *storage_key, value: *old_storage_value };
-                    if plain_storage_cursor
-                        .seek_by_key_subkey(*address, *storage_key)?
-                        .is_some_and(|s| s.key == *storage_key)
-                    {
-                        plain_storage_cursor.delete_current()?
-                    }
-
-                    if !old_storage_value.is_zero() {
-                        plain_storage_cursor.upsert(*address, &storage_entry)?;
-                    }
+                if !old_storage_value.is_zero() {
+                    hashed_storage_cursor.upsert(hashed_address, &storage_entry)?;
                 }
             }
         }
@@ -3052,7 +2586,7 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> StateWriter
         let storage_changeset = if let Some(highest_block) = self
             .static_file_provider
             .get_highest_static_file_block(StaticFileSegment::StorageChangeSets)
-            && self.cached_storage_settings().storage_v2
+            && true
         {
             let changesets = self.storage_changesets_range(block + 1..=highest_block)?;
             let mut changeset_writer =
@@ -3068,7 +2602,7 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> StateWriter
             .static_file_provider
             .get_highest_static_file_block(StaticFileSegment::AccountChangeSets);
         let account_changeset = if let Some(highest_block) = highest_changeset_block
-            && self.cached_storage_settings().storage_v2
+            && true
         {
             // TODO: add a `take` method that removes and returns the items instead of doing this
             let changesets = self.account_changesets_range(block + 1..highest_block + 1)?;
@@ -3083,7 +2617,7 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> StateWriter
             self.take::<tables::AccountChangeSets>(range)?
         };
 
-        let (state, reverts) = if self.cached_storage_settings().use_hashed_state() {
+        let (state, reverts) = {
             let mut hashed_accounts_cursor = self.tx.cursor_write::<tables::HashedAccounts>()?;
             let mut hashed_storage_cursor = self.tx.cursor_dup_write::<tables::HashedStorages>()?;
 
@@ -3119,49 +2653,6 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> StateWriter
 
                     if !old_storage_value.is_zero() {
                         hashed_storage_cursor.upsert(hashed_address, &storage_entry)?;
-                    }
-                }
-            }
-
-            (state, reverts)
-        } else {
-            // This is not working for blocks that are not at tip. as plain state is not the last
-            // state of end range. We should rename the functions or add support to access
-            // History state. Accessing history state can be tricky but we are not gaining
-            // anything.
-            let mut plain_accounts_cursor = self.tx.cursor_write::<tables::PlainAccountState>()?;
-            let mut plain_storage_cursor =
-                self.tx.cursor_dup_write::<tables::PlainStorageState>()?;
-
-            let (state, reverts) = self.populate_bundle_state_plain(
-                account_changeset,
-                storage_changeset,
-                &mut plain_accounts_cursor,
-                &mut plain_storage_cursor,
-            )?;
-
-            for (address, (old_account, new_account, storage)) in &state {
-                if old_account != new_account {
-                    let existing_entry = plain_accounts_cursor.seek_exact(*address)?;
-                    if let Some(account) = old_account {
-                        plain_accounts_cursor.upsert(*address, account)?;
-                    } else if existing_entry.is_some() {
-                        plain_accounts_cursor.delete_current()?;
-                    }
-                }
-
-                for (storage_key, (old_storage_value, _new_storage_value)) in storage {
-                    let storage_entry =
-                        StorageEntry { key: *storage_key, value: *old_storage_value };
-                    if plain_storage_cursor
-                        .seek_by_key_subkey(*address, *storage_key)?
-                        .is_some_and(|s| s.key == *storage_key)
-                    {
-                        plain_storage_cursor.delete_current()?
-                    }
-
-                    if !old_storage_value.is_zero() {
-                        plain_storage_cursor.upsert(*address, &storage_entry)?;
                     }
                 }
             }
@@ -3463,30 +2954,8 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypes> HistoryWriter for DatabaseProvi
             .collect::<Vec<_>>();
         last_indices.sort_unstable_by_key(|(a, _)| *a);
 
-        if self.cached_storage_settings().storage_v2 {
-            let batch = self.rocksdb_provider.unwind_account_history_indices(&last_indices)?;
-            self.pending_rocksdb_batches.lock().push(batch);
-        } else {
-            // Unwind the account history index in MDBX.
-            let mut cursor = self.tx.cursor_write::<tables::AccountsHistory>()?;
-            for &(address, rem_index) in &last_indices {
-                let partial_shard = unwind_history_shards::<_, tables::AccountsHistory, _>(
-                    &mut cursor,
-                    ShardedKey::last(address),
-                    rem_index,
-                    |sharded_key| sharded_key.key == address,
-                )?;
-
-                // Check the last returned partial shard.
-                // If it's not empty, the shard needs to be reinserted.
-                if !partial_shard.is_empty() {
-                    cursor.insert(
-                        ShardedKey::last(address),
-                        &BlockNumberList::new_pre_sorted(partial_shard),
-                    )?;
-                }
-            }
-        }
+        let batch = self.rocksdb_provider.unwind_account_history_indices(&last_indices)?;
+        self.pending_rocksdb_batches.lock().push(batch);
 
         let changesets = last_indices.len();
         Ok(changesets)
@@ -3504,10 +2973,21 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypes> HistoryWriter for DatabaseProvi
         &self,
         account_transitions: impl IntoIterator<Item = (Address, impl IntoIterator<Item = u64>)>,
     ) -> ProviderResult<()> {
-        self.append_history_index::<_, tables::AccountsHistory>(
-            account_transitions,
-            ShardedKey::new,
-        )
+        let mut grouped = BTreeMap::<_, Vec<_>>::new();
+        for (key, indices) in account_transitions {
+            grouped.entry(key).or_default().extend(indices);
+        }
+        let rocksdb = self.rocksdb_provider();
+        let prepared =
+            prepare_history_shard_writes_parallel::<tables::AccountsHistory, _>(grouped, |key| {
+                rocksdb.get::<tables::AccountsHistory>(key)
+            })?;
+        self.with_rocksdb_batch(|mut batch| {
+            for (key, shard) in prepared.into_writes() {
+                batch.put::<tables::AccountsHistory>(key, &shard)?;
+            }
+            Ok(((), Some(batch.into_inner())))
+        })
     }
 
     fn unwind_storage_history_indices(
@@ -3520,34 +3000,8 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypes> HistoryWriter for DatabaseProvi
             .collect::<Vec<_>>();
         storage_changesets.sort_unstable_by_key(|(address, key, _)| (*address, *key));
 
-        if self.cached_storage_settings().storage_v2 {
-            let batch =
-                self.rocksdb_provider.unwind_storage_history_indices(&storage_changesets)?;
-            self.pending_rocksdb_batches.lock().push(batch);
-        } else {
-            // Unwind the storage history index in MDBX.
-            let mut cursor = self.tx.cursor_write::<tables::StoragesHistory>()?;
-            for &(address, storage_key, rem_index) in &storage_changesets {
-                let partial_shard = unwind_history_shards::<_, tables::StoragesHistory, _>(
-                    &mut cursor,
-                    StorageShardedKey::last(address, storage_key),
-                    rem_index,
-                    |storage_sharded_key| {
-                        storage_sharded_key.address == address
-                            && storage_sharded_key.sharded_key.key == storage_key
-                    },
-                )?;
-
-                // Check the last returned partial shard.
-                // If it's not empty, the shard needs to be reinserted.
-                if !partial_shard.is_empty() {
-                    cursor.insert(
-                        StorageShardedKey::last(address, storage_key),
-                        &BlockNumberList::new_pre_sorted(partial_shard),
-                    )?;
-                }
-            }
-        }
+        let batch = self.rocksdb_provider.unwind_storage_history_indices(&storage_changesets)?;
+        self.pending_rocksdb_batches.lock().push(batch);
 
         let changesets = storage_changesets.len();
         Ok(changesets)
@@ -3565,28 +3019,21 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypes> HistoryWriter for DatabaseProvi
         &self,
         storage_transitions: impl IntoIterator<Item = ((Address, B256), impl IntoIterator<Item = u64>)>,
     ) -> ProviderResult<()> {
-        self.append_history_index::<_, tables::StoragesHistory>(
-            storage_transitions,
-            |(address, storage_key), highest_block_number| {
-                StorageShardedKey::new(address, storage_key, highest_block_number)
-            },
-        )
-    }
-
-    #[instrument(level = "debug", target = "providers::db", skip_all)]
-    fn update_history_indices(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<()> {
-        let storage_settings = self.cached_storage_settings();
-        if !storage_settings.storage_v2 {
-            let indices = self.changed_accounts_and_blocks_with_range(range.clone())?;
-            self.insert_account_history_index(indices)?;
+        let mut grouped = BTreeMap::<_, Vec<_>>::new();
+        for (key, indices) in storage_transitions {
+            grouped.entry(key).or_default().extend(indices);
         }
-
-        if !storage_settings.storage_v2 {
-            let indices = self.changed_storages_and_blocks_with_range(range)?;
-            self.insert_storage_history_index(indices)?;
-        }
-
-        Ok(())
+        let rocksdb = self.rocksdb_provider();
+        let prepared =
+            prepare_history_shard_writes_parallel::<tables::StoragesHistory, _>(grouped, |key| {
+                rocksdb.get::<tables::StoragesHistory>(key)
+            })?;
+        self.with_rocksdb_batch(|mut batch| {
+            for (key, shard) in prepared.into_writes() {
+                batch.put::<tables::StoragesHistory>(key, &shard)?;
+            }
+            Ok(((), Some(batch.into_inner())))
+        })
     }
 }
 
@@ -3883,37 +3330,31 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> BlockWriter
         // Use pre-computed transitions for history indices since static file
         // writes aren't visible until commit.
         // RocksDB: committed last-shard reads finish before the write batch is created.
-        let storage_settings = self.cached_storage_settings();
-        if storage_settings.storage_v2 {
-            let rocksdb = self.rocksdb_provider();
-            let prepared = prepare_history_shard_writes_parallel::<tables::AccountsHistory, _>(
-                account_transitions,
-                |key| rocksdb.get::<tables::AccountsHistory>(key),
-            )?;
-            self.with_rocksdb_batch(|mut batch| {
-                for (key, shard) in prepared.into_writes() {
-                    batch.put::<tables::AccountsHistory>(key, &shard)?;
-                }
-                Ok(((), Some(batch.into_inner())))
-            })?;
-        } else {
-            self.insert_account_history_index(account_transitions)?;
-        }
-        if storage_settings.storage_v2 {
-            let rocksdb = self.rocksdb_provider();
-            let prepared = prepare_history_shard_writes_parallel::<tables::StoragesHistory, _>(
-                storage_transitions,
-                |key| rocksdb.get::<tables::StoragesHistory>(key),
-            )?;
-            self.with_rocksdb_batch(|mut batch| {
-                for (key, shard) in prepared.into_writes() {
-                    batch.put::<tables::StoragesHistory>(key, &shard)?;
-                }
-                Ok(((), Some(batch.into_inner())))
-            })?;
-        } else {
-            self.insert_storage_history_index(storage_transitions)?;
-        }
+
+        let rocksdb = self.rocksdb_provider();
+        let prepared = prepare_history_shard_writes_parallel::<tables::AccountsHistory, _>(
+            account_transitions,
+            |key| rocksdb.get::<tables::AccountsHistory>(key),
+        )?;
+        self.with_rocksdb_batch(|mut batch| {
+            for (key, shard) in prepared.into_writes() {
+                batch.put::<tables::AccountsHistory>(key, &shard)?;
+            }
+            Ok(((), Some(batch.into_inner())))
+        })?;
+
+        let rocksdb = self.rocksdb_provider();
+        let prepared = prepare_history_shard_writes_parallel::<tables::StoragesHistory, _>(
+            storage_transitions,
+            |key| rocksdb.get::<tables::StoragesHistory>(key),
+        )?;
+        self.with_rocksdb_batch(|mut batch| {
+            for (key, shard) in prepared.into_writes() {
+                batch.put::<tables::StoragesHistory>(key, &shard)?;
+            }
+            Ok(((), Some(batch.into_inner())))
+        })?;
+
         durations_recorder.record_relative(metrics::Action::InsertHistoryIndices);
 
         // Update pipeline progress
@@ -4102,22 +3543,18 @@ mod tests {
     use std::{sync::mpsc, time::Duration};
 
     use alloy_consensus::Header;
-    use alloy_primitives::{
-        U256,
-        map::{AddressMap, B256Map},
-    };
+    use alloy_primitives::{U256, map::B256Map};
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
     use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_db_api::models::StorageSettings;
-    use reth_ethereum_primitives::Receipt;
-    use reth_execution_types::{AccountRevertInit, BlockExecutionOutput, BlockExecutionResult};
+    use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_primitives_traits::SealedBlock;
     use reth_storage_api::{MetadataProvider, MetadataWriter};
     use reth_testing_utils::generators::{self, BlockParams, random_block};
     use reth_trie::{
-        HashedPostState, KeccakKeyHasher, Nibbles, SortedTrieData, StoredNibbles,
-        StoredNibblesSubKey,
+        HashedPostState, KeccakKeyHasher, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey,
+        SortedTrieData,
     };
     use revm::{database::BundleState, state::AccountInfo};
 
@@ -4221,7 +3658,11 @@ mod tests {
             .write_state(
                 &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
                 crate::OriginalValuesKnown::No,
-                StateWriteConfig::default(),
+                StateWriteConfig {
+                    write_receipts: true,
+                    write_account_changesets: false,
+                    write_storage_changesets: false,
+                },
             )
             .unwrap();
         provider_rw.insert_block(&data.blocks[0].0).unwrap();
@@ -4229,7 +3670,11 @@ mod tests {
             .write_state(
                 &data.blocks[0].1,
                 crate::OriginalValuesKnown::No,
-                StateWriteConfig::default(),
+                StateWriteConfig {
+                    write_receipts: true,
+                    write_account_changesets: false,
+                    write_storage_changesets: false,
+                },
             )
             .unwrap();
         provider_rw.commit().unwrap();
@@ -4254,7 +3699,11 @@ mod tests {
             .write_state(
                 &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
                 crate::OriginalValuesKnown::No,
-                StateWriteConfig::default(),
+                StateWriteConfig {
+                    write_receipts: true,
+                    write_account_changesets: false,
+                    write_storage_changesets: false,
+                },
             )
             .unwrap();
         for i in 0..3 {
@@ -4263,7 +3712,11 @@ mod tests {
                 .write_state(
                     &data.blocks[i].1,
                     crate::OriginalValuesKnown::No,
-                    StateWriteConfig::default(),
+                    StateWriteConfig {
+                        write_receipts: true,
+                        write_account_changesets: false,
+                        write_storage_changesets: false,
+                    },
                 )
                 .unwrap();
         }
@@ -4291,7 +3744,11 @@ mod tests {
             .write_state(
                 &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
                 crate::OriginalValuesKnown::No,
-                StateWriteConfig::default(),
+                StateWriteConfig {
+                    write_receipts: true,
+                    write_account_changesets: false,
+                    write_storage_changesets: false,
+                },
             )
             .unwrap();
 
@@ -4302,7 +3759,11 @@ mod tests {
                 .write_state(
                     &data.blocks[i].1,
                     crate::OriginalValuesKnown::No,
-                    StateWriteConfig::default(),
+                    StateWriteConfig {
+                        write_receipts: true,
+                        write_account_changesets: false,
+                        write_storage_changesets: false,
+                    },
                 )
                 .unwrap();
         }
@@ -4329,7 +3790,11 @@ mod tests {
             .write_state(
                 &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
                 crate::OriginalValuesKnown::No,
-                StateWriteConfig::default(),
+                StateWriteConfig {
+                    write_receipts: true,
+                    write_account_changesets: false,
+                    write_storage_changesets: false,
+                },
             )
             .unwrap();
         for i in 0..3 {
@@ -4338,7 +3803,11 @@ mod tests {
                 .write_state(
                     &data.blocks[i].1,
                     crate::OriginalValuesKnown::No,
-                    StateWriteConfig::default(),
+                    StateWriteConfig {
+                        write_receipts: true,
+                        write_account_changesets: false,
+                        write_storage_changesets: false,
+                    },
                 )
                 .unwrap();
         }
@@ -4399,7 +3868,11 @@ mod tests {
             .write_state(
                 &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
                 crate::OriginalValuesKnown::No,
-                StateWriteConfig::default(),
+                StateWriteConfig {
+                    write_receipts: true,
+                    write_account_changesets: false,
+                    write_storage_changesets: false,
+                },
             )
             .unwrap();
         for i in 0..3 {
@@ -4408,7 +3881,11 @@ mod tests {
                 .write_state(
                     &data.blocks[i].1,
                     crate::OriginalValuesKnown::No,
-                    StateWriteConfig::default(),
+                    StateWriteConfig {
+                        write_receipts: true,
+                        write_account_changesets: false,
+                        write_storage_changesets: false,
+                    },
                 )
                 .unwrap();
         }
@@ -4447,7 +3924,7 @@ mod tests {
     #[test]
     fn test_write_trie_updates_sorted() {
         use reth_trie::{
-            BranchNodeCompact, StorageTrieEntry,
+            BranchNodeCompact, PackedStorageTrieEntry,
             updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
         };
 
@@ -4457,10 +3934,10 @@ mod tests {
         // Pre-populate account trie with data that will be deleted
         {
             let tx = provider_rw.tx_ref();
-            let mut cursor = tx.cursor_write::<tables::AccountsTrie>().unwrap();
+            let mut cursor = tx.cursor_write::<tables::PackedAccountsTrie>().unwrap();
 
             // Add account node that will be deleted
-            let to_delete = StoredNibbles(Nibbles::from_nibbles([0x3, 0x4]));
+            let to_delete = PackedStoredNibbles(Nibbles::from_nibbles([0x3, 0x4]));
             cursor
                 .upsert(
                     to_delete,
@@ -4475,7 +3952,7 @@ mod tests {
                 .unwrap();
 
             // Add account node that will be updated
-            let to_update = StoredNibbles(Nibbles::from_nibbles([0x1, 0x2]));
+            let to_update = PackedStoredNibbles(Nibbles::from_nibbles([0x1, 0x2]));
             cursor
                 .upsert(
                     to_update,
@@ -4495,14 +3972,14 @@ mod tests {
         let storage_address2 = B256::from([2u8; 32]);
         {
             let tx = provider_rw.tx_ref();
-            let mut storage_cursor = tx.cursor_dup_write::<tables::StoragesTrie>().unwrap();
+            let mut storage_cursor = tx.cursor_dup_write::<tables::PackedStoragesTrie>().unwrap();
 
             // Add storage nodes for address1 (one will be deleted)
             storage_cursor
                 .upsert(
                     storage_address1,
-                    &StorageTrieEntry {
-                        nibbles: StoredNibblesSubKey(Nibbles::from_nibbles([0x2, 0x0])),
+                    &PackedStorageTrieEntry {
+                        nibbles: PackedStoredNibblesSubKey(Nibbles::from_nibbles([0x2, 0x0])),
                         node: BranchNodeCompact::new(
                             0b0011_0011_0011_0011, // will be deleted
                             0b0000_0000_0000_0000,
@@ -4518,8 +3995,8 @@ mod tests {
             storage_cursor
                 .upsert(
                     storage_address2,
-                    &StorageTrieEntry {
-                        nibbles: StoredNibblesSubKey(Nibbles::from_nibbles([0xa, 0xb])),
+                    &PackedStorageTrieEntry {
+                        nibbles: PackedStoredNibblesSubKey(Nibbles::from_nibbles([0xa, 0xb])),
                         node: BranchNodeCompact::new(
                             0b1100_1100_1100_1100, // will be wiped
                             0b0000_0000_0000_0000,
@@ -4533,8 +4010,8 @@ mod tests {
             storage_cursor
                 .upsert(
                     storage_address2,
-                    &StorageTrieEntry {
-                        nibbles: StoredNibblesSubKey(Nibbles::from_nibbles([0xc, 0xd])),
+                    &PackedStorageTrieEntry {
+                        nibbles: PackedStoredNibblesSubKey(Nibbles::from_nibbles([0xc, 0xd])),
                         node: BranchNodeCompact::new(
                             0b0011_1100_0011_1100, // will be wiped
                             0b0000_0000_0000_0000,
@@ -4610,10 +4087,10 @@ mod tests {
 
         // Verify account trie updates were written correctly
         let tx = provider_rw.tx_ref();
-        let mut cursor = tx.cursor_read::<tables::AccountsTrie>().unwrap();
+        let mut cursor = tx.cursor_read::<tables::PackedAccountsTrie>().unwrap();
 
         // Check first account node was updated
-        let nibbles1 = StoredNibbles(Nibbles::from_nibbles([0x1, 0x2]));
+        let nibbles1 = PackedStoredNibbles(Nibbles::from_nibbles([0x1, 0x2]));
         let entry1 = cursor.seek_exact(nibbles1).unwrap();
         assert!(entry1.is_some(), "Updated account node should exist");
         let expected_mask = reth_trie::TrieMask::new(0b1111_1111_1111_1111);
@@ -4624,17 +4101,17 @@ mod tests {
         );
 
         // Check deleted account node no longer exists
-        let nibbles2 = StoredNibbles(Nibbles::from_nibbles([0x3, 0x4]));
+        let nibbles2 = PackedStoredNibbles(Nibbles::from_nibbles([0x3, 0x4]));
         let entry2 = cursor.seek_exact(nibbles2).unwrap();
         assert!(entry2.is_none(), "Deleted account node should not exist");
 
         // Check new account node exists
-        let nibbles3 = StoredNibbles(Nibbles::from_nibbles([0x5, 0x6]));
+        let nibbles3 = PackedStoredNibbles(Nibbles::from_nibbles([0x5, 0x6]));
         let entry3 = cursor.seek_exact(nibbles3).unwrap();
         assert!(entry3.is_some(), "New account node should exist");
 
         // Verify storage trie updates were written correctly
-        let mut storage_cursor = tx.cursor_dup_read::<tables::StoragesTrie>().unwrap();
+        let mut storage_cursor = tx.cursor_dup_read::<tables::PackedStoragesTrie>().unwrap();
 
         // Check storage for address1
         let storage_entries1: Vec<_> = storage_cursor
@@ -4662,230 +4139,6 @@ mod tests {
         assert_eq!(storage_entries2.len(), 0, "Storage address2 should be empty after wipe");
 
         provider_rw.commit().unwrap();
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn test_save_blocks_only_masks_trie_with_deferred_blocks() {
-        use reth_trie::{
-            BranchNodeCompact, HashedPostStateSorted, HashedStorageSorted,
-            updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
-        };
-
-        fn branch(mask: u16) -> BranchNodeCompact {
-            BranchNodeCompact::new(mask, 0, 0, vec![], None)
-        }
-
-        let factory = create_test_provider_factory();
-        factory.set_storage_settings_cache(StorageSettings::v1());
-
-        let mut test_block_builder = TestBlockBuilder::eth().with_state();
-        let genesis = test_block_builder.get_executed_blocks(0..1).next().unwrap();
-        let blocks: Vec<_> = test_block_builder.get_executed_blocks(1..3).collect();
-
-        let provider_rw = factory.provider_rw().unwrap();
-        save_genesis(&provider_rw, &genesis).unwrap();
-        provider_rw.commit().unwrap();
-
-        let kept_account = B256::with_last_byte(0x11);
-        let masked_account = B256::with_last_byte(0x12);
-        let kept_storage = B256::with_last_byte(0x21);
-        let masked_storage = B256::with_last_byte(0x22);
-        let kept_slot = B256::with_last_byte(0x31);
-        let masked_slot = B256::with_last_byte(0x32);
-        let kept_account_node = Nibbles::from_nibbles([0x1, 0x2]);
-        let masked_account_node = Nibbles::from_nibbles([0x1, 0x3]);
-        let kept_storage_node = Nibbles::from_nibbles([0x2, 0x1]);
-        let masked_storage_node = Nibbles::from_nibbles([0x2, 0x2]);
-        let full_persist_base = &blocks[0];
-        let deferred_trie_base = &blocks[1];
-
-        let full_persist_hashed_state = HashedPostStateSorted::new(
-            vec![
-                (kept_account, Some(Account::default())),
-                (masked_account, Some(Account { nonce: 1, ..Default::default() })),
-            ],
-            B256Map::from_iter([
-                (
-                    kept_storage,
-                    HashedStorageSorted {
-                        wiped: false,
-                        storage_slots: vec![(kept_slot, U256::from(1))],
-                    },
-                ),
-                (
-                    masked_storage,
-                    HashedStorageSorted {
-                        wiped: false,
-                        storage_slots: vec![(masked_slot, U256::from(2))],
-                    },
-                ),
-            ]),
-        );
-        let full_persist_trie_updates = TrieUpdatesSorted::new(
-            vec![
-                (kept_account_node, Some(branch(0b0000_1111_0000_1111))),
-                (masked_account_node, Some(branch(0b1111_0000_1111_0000))),
-            ],
-            B256Map::from_iter([
-                (
-                    kept_storage,
-                    StorageTrieUpdatesSorted {
-                        is_deleted: false,
-                        storage_nodes: vec![(kept_storage_node, Some(branch(0b1010)))],
-                    },
-                ),
-                (
-                    masked_storage,
-                    StorageTrieUpdatesSorted {
-                        is_deleted: false,
-                        storage_nodes: vec![(masked_storage_node, Some(branch(0b0101)))],
-                    },
-                ),
-            ]),
-        );
-
-        let full_persist_block = ExecutedBlock::new(
-            Arc::clone(&full_persist_base.recovered_block),
-            Arc::clone(&full_persist_base.execution_output),
-            ComputedTrieData::new(
-                Arc::new(full_persist_hashed_state),
-                Arc::new(full_persist_trie_updates),
-            ),
-        );
-
-        let deferred_trie_hashed_state = HashedPostStateSorted::new(
-            vec![(masked_account, Some(Account { nonce: 3, ..Default::default() }))],
-            B256Map::from_iter([(
-                masked_storage,
-                HashedStorageSorted {
-                    wiped: false,
-                    storage_slots: vec![(masked_slot, U256::from(4))],
-                },
-            )]),
-        );
-        let deferred_trie_updates = TrieUpdatesSorted::new(
-            vec![(masked_account_node, Some(branch(0b0011_0011)))],
-            B256Map::from_iter([(
-                masked_storage,
-                StorageTrieUpdatesSorted {
-                    is_deleted: false,
-                    storage_nodes: vec![(masked_storage_node, Some(branch(0b1100)))],
-                },
-            )]),
-        );
-        let deferred_trie_block = ExecutedBlock::new(
-            Arc::clone(&deferred_trie_base.recovered_block),
-            Arc::clone(&deferred_trie_base.execution_output),
-            ComputedTrieData::new(
-                Arc::new(deferred_trie_hashed_state),
-                Arc::new(deferred_trie_updates),
-            ),
-        );
-
-        let provider_rw = factory.provider_rw().unwrap();
-        let input = SaveBlocksInput::new(
-            vec![full_persist_block.clone(), deferred_trie_block.clone()],
-            0,
-            0,
-            2,
-            0,
-        );
-        provider_rw.save_blocks(&input).unwrap();
-        provider_rw.commit().unwrap();
-
-        let provider_rw = factory.provider_rw().unwrap();
-        let input =
-            SaveBlocksInput::new(vec![full_persist_block, deferred_trie_block.clone()], 2, 0, 2, 1);
-        assert!(input.persist_rest_blocks().is_empty());
-        provider_rw.save_blocks(&input).unwrap();
-        provider_rw.commit().unwrap();
-
-        let provider = factory.provider().unwrap();
-        let tx = provider.tx_ref();
-        let finish_checkpoint = provider.get_stage_checkpoint(StageId::Finish).unwrap().unwrap();
-        assert_eq!(finish_checkpoint.block_number, 2);
-        assert_eq!(
-            finish_checkpoint.finish_stage_checkpoint().unwrap().partial_state_trie,
-            Some(1)
-        );
-        assert!(provider.block_hash(2).unwrap().is_some());
-
-        let mut hashed_accounts = tx.cursor_read::<tables::HashedAccounts>().unwrap();
-        assert!(hashed_accounts.seek_exact(kept_account).unwrap().is_some());
-        assert!(hashed_accounts.seek_exact(masked_account).unwrap().is_none());
-
-        let mut hashed_storages = tx.cursor_dup_read::<tables::HashedStorages>().unwrap();
-        assert!(hashed_storages.seek_by_key_subkey(kept_storage, kept_slot).unwrap().is_some());
-        assert!(
-            hashed_storages
-                .walk_dup(Some(masked_storage), None)
-                .unwrap()
-                .next()
-                .transpose()
-                .unwrap()
-                .is_none()
-        );
-
-        let mut account_trie = tx.cursor_read::<tables::AccountsTrie>().unwrap();
-        assert!(account_trie.seek_exact(StoredNibbles(kept_account_node)).unwrap().is_some());
-        assert!(account_trie.seek_exact(StoredNibbles(masked_account_node)).unwrap().is_none());
-
-        let mut storage_trie = tx.cursor_dup_read::<tables::StoragesTrie>().unwrap();
-        let kept_entries: Vec<_> = storage_trie
-            .walk_dup(Some(kept_storage), None)
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(kept_entries.len(), 1);
-        assert_eq!(kept_entries[0].1.nibbles.0, kept_storage_node);
-
-        let masked_entries: Vec<_> = storage_trie
-            .walk_dup(Some(masked_storage), None)
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert!(masked_entries.is_empty());
-
-        drop(storage_trie);
-        drop(account_trie);
-        drop(hashed_storages);
-        drop(hashed_accounts);
-        drop(provider);
-
-        let provider_rw = factory.provider_rw().unwrap();
-        let input = SaveBlocksInput::new(vec![deferred_trie_block], 2, 1, 2, 2);
-        assert!(input.persist_rest_blocks().is_empty());
-        provider_rw.save_blocks(&input).unwrap();
-        provider_rw.commit().unwrap();
-
-        let provider = factory.provider().unwrap();
-        let finish_checkpoint = provider.get_stage_checkpoint(StageId::Finish).unwrap().unwrap();
-        assert_eq!(finish_checkpoint.block_number, 2);
-        assert!(finish_checkpoint.finish_stage_checkpoint().is_none());
-
-        let mut hashed_accounts =
-            provider.tx_ref().cursor_read::<tables::HashedAccounts>().unwrap();
-        let (_, account) = hashed_accounts.seek_exact(masked_account).unwrap().unwrap();
-        assert_eq!(account.nonce, 3);
-
-        let mut hashed_storages =
-            provider.tx_ref().cursor_dup_read::<tables::HashedStorages>().unwrap();
-        let storage =
-            hashed_storages.seek_by_key_subkey(masked_storage, masked_slot).unwrap().unwrap();
-        assert_eq!(storage.value, U256::from(4));
-
-        let mut account_trie = provider.tx_ref().cursor_read::<tables::AccountsTrie>().unwrap();
-        assert!(account_trie.seek_exact(StoredNibbles(masked_account_node)).unwrap().is_some());
-
-        let mut storage_trie = provider.tx_ref().cursor_dup_read::<tables::StoragesTrie>().unwrap();
-        let masked_entries: Vec<_> = storage_trie
-            .walk_dup(Some(masked_storage), None)
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(masked_entries.len(), 1);
-        assert_eq!(masked_entries[0].1.nibbles.0, masked_storage_node);
     }
 
     #[cfg(feature = "partial-persistence")]
@@ -4945,7 +4198,7 @@ mod tests {
         assert_eq!(checkpoint.block_number, 3);
         let storage_entries = provider
             .tx_ref()
-            .cursor_dup_read::<tables::StoragesTrie>()
+            .cursor_dup_read::<tables::PackedStoragesTrie>()
             .unwrap()
             .walk_dup(Some(address), None)
             .unwrap()
@@ -5086,155 +4339,6 @@ mod tests {
     }
 
     #[test]
-    fn test_prunable_receipts_logic() {
-        let insert_blocks =
-            |provider_rw: &DatabaseProviderRW<_, _>, tip_block: u64, tx_count: u8| {
-                let mut rng = generators::rng();
-                for block_num in 0..=tip_block {
-                    let block = random_block(
-                        &mut rng,
-                        block_num,
-                        BlockParams { tx_count: Some(tx_count), ..Default::default() },
-                    );
-                    provider_rw.insert_block(&block.try_recover().unwrap()).unwrap();
-                }
-            };
-
-        let write_receipts = |provider_rw: DatabaseProviderRW<_, _>, block: u64| {
-            let outcome = ExecutionOutcome {
-                first_block: block,
-                receipts: vec![vec![Receipt {
-                    tx_type: Default::default(),
-                    success: true,
-                    cumulative_gas_used: block, // identifier to assert against
-                    logs: vec![],
-                }]],
-                ..Default::default()
-            };
-            provider_rw
-                .write_state(&outcome, crate::OriginalValuesKnown::No, StateWriteConfig::default())
-                .unwrap();
-            provider_rw.commit().unwrap();
-        };
-
-        // Legacy mode (receipts in DB) - should be prunable
-        {
-            let factory = create_test_provider_factory();
-            let storage_settings = StorageSettings::v1();
-            factory.set_storage_settings_cache(storage_settings);
-            let factory = factory.with_prune_modes(PruneModes {
-                receipts: Some(PruneMode::Before(100)),
-                ..Default::default()
-            });
-
-            let tip_block = 200u64;
-            let first_block = 1u64;
-
-            // create chain
-            let provider_rw = factory.provider_rw().unwrap();
-            insert_blocks(&provider_rw, tip_block, 1);
-            provider_rw.commit().unwrap();
-
-            write_receipts(
-                factory.provider_rw().unwrap().with_minimum_pruning_distance(100),
-                first_block,
-            );
-            write_receipts(
-                factory.provider_rw().unwrap().with_minimum_pruning_distance(100),
-                tip_block - 1,
-            );
-
-            let provider = factory.provider().unwrap();
-
-            assert!(provider.receipts_by_block(0.into()).unwrap().is_none());
-            assert!(
-                provider
-                    .receipts_by_block((tip_block - 1).into())
-                    .unwrap()
-                    .is_some_and(|r| r.len() == 1)
-            );
-        }
-
-        // Static files mode
-        {
-            let factory = create_test_provider_factory();
-            let storage_settings = StorageSettings::v2();
-            factory.set_storage_settings_cache(storage_settings);
-            let factory = factory.with_prune_modes(PruneModes {
-                receipts: Some(PruneMode::Before(2)),
-                ..Default::default()
-            });
-
-            let tip_block = 200u64;
-
-            // create chain
-            let provider_rw = factory.provider_rw().unwrap();
-            insert_blocks(&provider_rw, tip_block, 1);
-            provider_rw.commit().unwrap();
-
-            // Attempt to write receipts for block 0 and 1 (should be skipped)
-            write_receipts(factory.provider_rw().unwrap().with_minimum_pruning_distance(100), 0);
-            write_receipts(factory.provider_rw().unwrap().with_minimum_pruning_distance(100), 1);
-
-            assert!(
-                factory
-                    .static_file_provider()
-                    .get_highest_static_file_tx(StaticFileSegment::Receipts)
-                    .is_none(),
-            );
-            assert!(
-                factory
-                    .static_file_provider()
-                    .get_highest_static_file_block(StaticFileSegment::Receipts)
-                    .is_some_and(|b| b == 1),
-            );
-
-            // Since we have prune mode Before(2), the next receipt (block 2) should be written to
-            // static files.
-            write_receipts(factory.provider_rw().unwrap().with_minimum_pruning_distance(100), 2);
-            assert!(
-                factory
-                    .static_file_provider()
-                    .get_highest_static_file_tx(StaticFileSegment::Receipts)
-                    .is_some_and(|num| num == 2),
-            );
-
-            // After having a receipt already in static files, attempt to skip the next receipt by
-            // changing the prune mode. It should NOT skip it and should still write the receipt,
-            // since static files do not support gaps.
-            let factory = factory.with_prune_modes(PruneModes {
-                receipts: Some(PruneMode::Before(100)),
-                ..Default::default()
-            });
-            let provider_rw = factory.provider_rw().unwrap().with_minimum_pruning_distance(1);
-            assert!(PruneMode::Distance(1).should_prune(3, tip_block));
-            write_receipts(provider_rw, 3);
-
-            // Ensure we can only fetch the 2 last receipts.
-            //
-            // Test setup only has 1 tx per block and each receipt has its cumulative_gas_used set
-            // to the block number it belongs to easily identify and assert.
-            let provider = factory.provider().unwrap();
-            assert!(EitherWriter::receipts_destination(&provider).is_static_file());
-            for (num, has_receipt) in [(0, false), (1, false), (2, true), (3, true)] {
-                let receipts = provider.receipts_by_block(num.into()).unwrap();
-                if has_receipt {
-                    assert!(receipts.is_some_and(|r| r.len() == 1));
-                } else {
-                    assert!(receipts.is_none());
-                }
-
-                let receipt = provider.receipt(num).unwrap();
-                if has_receipt {
-                    assert!(receipt.is_some_and(|r| r.cumulative_gas_used == num));
-                } else {
-                    assert!(receipt.is_none());
-                }
-            }
-        }
-    }
-
-    #[test]
     fn test_try_into_history_rejects_unexecuted_blocks() {
         use reth_storage_api::TryIntoHistoricalStateProvider;
 
@@ -5276,218 +4380,6 @@ mod tests {
     fn test_unwind_storage_hashing_with_hashed_state() {
         let factory = create_test_provider_factory();
         let storage_settings = StorageSettings::v2();
-        factory.set_storage_settings_cache(storage_settings);
-
-        let address = Address::random();
-        let hashed_address = keccak256(address);
-
-        let plain_slot = B256::random();
-        let hashed_slot = keccak256(plain_slot);
-
-        let current_value = U256::from(100);
-        let old_value = U256::from(42);
-
-        let provider_rw = factory.provider_rw().unwrap();
-        provider_rw
-            .tx
-            .cursor_dup_write::<tables::HashedStorages>()
-            .unwrap()
-            .upsert(hashed_address, &StorageEntry { key: hashed_slot, value: current_value })
-            .unwrap();
-
-        let changesets = vec![(
-            BlockNumberAddress((1, address)),
-            StorageEntry { key: plain_slot, value: old_value },
-        )];
-
-        let result = provider_rw.unwind_storage_hashing(changesets.into_iter()).unwrap();
-
-        assert_eq!(result.len(), 1);
-        assert!(result.contains_key(&hashed_address));
-        assert!(result[&hashed_address].contains(&hashed_slot));
-
-        let mut cursor = provider_rw.tx.cursor_dup_read::<tables::HashedStorages>().unwrap();
-        let entry = cursor
-            .seek_by_key_subkey(hashed_address, hashed_slot)
-            .unwrap()
-            .expect("entry should exist");
-        assert_eq!(entry.key, hashed_slot);
-        assert_eq!(entry.value, old_value);
-    }
-
-    #[test]
-    fn test_write_and_remove_state_roundtrip_legacy() {
-        let factory = create_test_provider_factory();
-        let storage_settings = StorageSettings::v1();
-        assert!(!storage_settings.use_hashed_state());
-        factory.set_storage_settings_cache(storage_settings);
-
-        let address = Address::with_last_byte(1);
-        let hashed_address = keccak256(address);
-        let slot = U256::from(5);
-        let slot_key = B256::from(slot);
-        let hashed_slot = keccak256(slot_key);
-
-        let mut rng = generators::rng();
-        let block0 =
-            random_block(&mut rng, 0, BlockParams { tx_count: Some(0), ..Default::default() });
-        let block1 =
-            random_block(&mut rng, 1, BlockParams { tx_count: Some(0), ..Default::default() });
-
-        {
-            let provider_rw = factory.provider_rw().unwrap();
-            provider_rw.insert_block(&block0.try_recover().unwrap()).unwrap();
-            provider_rw.insert_block(&block1.try_recover().unwrap()).unwrap();
-            provider_rw
-                .tx
-                .cursor_write::<tables::PlainAccountState>()
-                .unwrap()
-                .upsert(address, &Account { nonce: 0, balance: U256::ZERO, bytecode_hash: None })
-                .unwrap();
-            provider_rw.commit().unwrap();
-        }
-
-        let provider_rw = factory.provider_rw().unwrap();
-
-        let mut state_init: BundleStateInit = AddressMap::default();
-        let mut storage_map: B256Map<(U256, U256)> = B256Map::default();
-        storage_map.insert(slot_key, (U256::ZERO, U256::from(10)));
-        state_init.insert(
-            address,
-            (
-                Some(Account { nonce: 0, balance: U256::ZERO, bytecode_hash: None }),
-                Some(Account { nonce: 1, balance: U256::ZERO, bytecode_hash: None }),
-                storage_map,
-            ),
-        );
-
-        let mut reverts_init: RevertsInit = HashMap::default();
-        let mut block_reverts: AddressMap<AccountRevertInit> = AddressMap::default();
-        block_reverts.insert(
-            address,
-            (
-                Some(Some(Account { nonce: 0, balance: U256::ZERO, bytecode_hash: None })),
-                vec![StorageEntry { key: slot_key, value: U256::ZERO }],
-            ),
-        );
-        reverts_init.insert(1, block_reverts);
-
-        let execution_outcome =
-            ExecutionOutcome::new_init(state_init, reverts_init, [], vec![vec![]], 1, vec![]);
-
-        provider_rw
-            .write_state(
-                &execution_outcome,
-                OriginalValuesKnown::Yes,
-                StateWriteConfig {
-                    write_receipts: false,
-                    write_account_changesets: true,
-                    write_storage_changesets: true,
-                },
-            )
-            .unwrap();
-
-        let hashed_state =
-            execution_outcome.hash_state_slow::<reth_trie::KeccakKeyHasher>().into_sorted();
-        provider_rw.write_hashed_state(&hashed_state).unwrap();
-
-        let account = provider_rw
-            .tx
-            .cursor_read::<tables::PlainAccountState>()
-            .unwrap()
-            .seek_exact(address)
-            .unwrap()
-            .unwrap()
-            .1;
-        assert_eq!(account.nonce, 1);
-
-        let storage_entry = provider_rw
-            .tx
-            .cursor_dup_read::<tables::PlainStorageState>()
-            .unwrap()
-            .seek_by_key_subkey(address, slot_key)
-            .unwrap()
-            .unwrap();
-        assert_eq!(storage_entry.key, slot_key);
-        assert_eq!(storage_entry.value, U256::from(10));
-
-        let hashed_entry = provider_rw
-            .tx
-            .cursor_dup_read::<tables::HashedStorages>()
-            .unwrap()
-            .seek_by_key_subkey(hashed_address, hashed_slot)
-            .unwrap()
-            .unwrap();
-        assert_eq!(hashed_entry.key, hashed_slot);
-        assert_eq!(hashed_entry.value, U256::from(10));
-
-        let account_cs_entries = provider_rw
-            .tx
-            .cursor_dup_read::<tables::AccountChangeSets>()
-            .unwrap()
-            .walk(Some(1))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert!(!account_cs_entries.is_empty());
-
-        let storage_cs_entries = provider_rw
-            .tx
-            .cursor_read::<tables::StorageChangeSets>()
-            .unwrap()
-            .walk(Some(BlockNumberAddress((1, address))))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert!(!storage_cs_entries.is_empty());
-        assert_eq!(storage_cs_entries[0].1.key, slot_key);
-
-        provider_rw.remove_state_above(0).unwrap();
-
-        let restored_account = provider_rw
-            .tx
-            .cursor_read::<tables::PlainAccountState>()
-            .unwrap()
-            .seek_exact(address)
-            .unwrap()
-            .unwrap()
-            .1;
-        assert_eq!(restored_account.nonce, 0);
-
-        let storage_gone = provider_rw
-            .tx
-            .cursor_dup_read::<tables::PlainStorageState>()
-            .unwrap()
-            .seek_by_key_subkey(address, slot_key)
-            .unwrap();
-        assert!(storage_gone.is_none() || storage_gone.unwrap().key != slot_key);
-
-        let account_cs_after = provider_rw
-            .tx
-            .cursor_dup_read::<tables::AccountChangeSets>()
-            .unwrap()
-            .walk(Some(1))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert!(account_cs_after.is_empty());
-
-        let storage_cs_after = provider_rw
-            .tx
-            .cursor_read::<tables::StorageChangeSets>()
-            .unwrap()
-            .walk(Some(BlockNumberAddress((1, address))))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert!(storage_cs_after.is_empty());
-    }
-
-    #[test]
-    fn test_unwind_storage_hashing_legacy() {
-        let factory = create_test_provider_factory();
-        let storage_settings = StorageSettings::v1();
-        assert!(!storage_settings.use_hashed_state());
         factory.set_storage_settings_cache(storage_settings);
 
         let address = Address::random();
@@ -5636,21 +4528,10 @@ mod tests {
         assert_eq!(historical_value, None);
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum StorageMode {
-        V1,
-        V2,
-    }
-
-    fn run_save_blocks_and_verify(mode: StorageMode) {
+    fn run_save_blocks_and_verify() {
         use alloy_primitives::map::{FbBuildHasher, HashMap};
 
         let factory = create_test_provider_factory();
-
-        match mode {
-            StorageMode::V1 => factory.set_storage_settings_cache(StorageSettings::v1()),
-            StorageMode::V2 => factory.set_storage_settings_cache(StorageSettings::v2()),
-        }
 
         let num_blocks = 3u64;
         let accounts_per_block = 5usize;
@@ -5807,119 +4688,72 @@ mod tests {
         let plain_accounts = provider.tx_ref().entries::<tables::PlainAccountState>().unwrap();
         let plain_storage = provider.tx_ref().entries::<tables::PlainStorageState>().unwrap();
 
-        if mode == StorageMode::V2 {
-            assert_eq!(plain_accounts, 0, "v2: PlainAccountState should be empty");
-            assert_eq!(plain_storage, 0, "v2: PlainStorageState should be empty");
+        assert_eq!(plain_accounts, 0, "v2: PlainAccountState should be empty");
+        assert_eq!(plain_storage, 0, "v2: PlainStorageState should be empty");
 
-            let mdbx_account_cs = provider.tx_ref().entries::<tables::AccountChangeSets>().unwrap();
-            assert_eq!(mdbx_account_cs, 0, "v2: AccountChangeSets in MDBX should be empty");
+        let mdbx_account_cs = provider.tx_ref().entries::<tables::AccountChangeSets>().unwrap();
+        assert_eq!(mdbx_account_cs, 0, "v2: AccountChangeSets in MDBX should be empty");
 
-            let mdbx_storage_cs = provider.tx_ref().entries::<tables::StorageChangeSets>().unwrap();
-            assert_eq!(mdbx_storage_cs, 0, "v2: StorageChangeSets in MDBX should be empty");
+        let mdbx_storage_cs = provider.tx_ref().entries::<tables::StorageChangeSets>().unwrap();
+        assert_eq!(mdbx_storage_cs, 0, "v2: StorageChangeSets in MDBX should be empty");
 
-            provider.static_file_provider().commit().unwrap();
-            let sf = factory.static_file_provider();
+        provider.static_file_provider().commit().unwrap();
+        let sf = factory.static_file_provider();
 
-            for block_num in 1..=num_blocks {
-                let account_cs = sf.account_block_changeset(block_num).unwrap();
+        for block_num in 1..=num_blocks {
+            let account_cs = sf.account_block_changeset(block_num).unwrap();
+            assert!(
+                !account_cs.is_empty(),
+                "v2: static file AccountChangeSets should exist for block {block_num}"
+            );
+
+            let storage_cs = sf.storage_changeset(block_num).unwrap();
+            assert!(
+                !storage_cs.is_empty(),
+                "v2: static file StorageChangeSets should exist for block {block_num}"
+            );
+
+            for (_, entry) in &storage_cs {
                 assert!(
-                    !account_cs.is_empty(),
-                    "v2: static file AccountChangeSets should exist for block {block_num}"
+                    entry.key != keccak256(entry.key),
+                    "v2: static file storage changeset should have plain slot keys"
                 );
-
-                let storage_cs = sf.storage_changeset(block_num).unwrap();
-                assert!(
-                    !storage_cs.is_empty(),
-                    "v2: static file StorageChangeSets should exist for block {block_num}"
-                );
-
-                for (_, entry) in &storage_cs {
-                    assert!(
-                        entry.key != keccak256(entry.key),
-                        "v2: static file storage changeset should have plain slot keys"
-                    );
-                }
             }
+        }
 
-            let rocksdb = factory.rocksdb_provider();
-            for block_num in 1..=num_blocks {
-                for acct_idx in 0..accounts_per_block {
-                    let address = Address::with_last_byte((block_num * 10 + acct_idx as u64) as u8);
-                    let shards = rocksdb.account_history_shards(address).unwrap();
+        let rocksdb = factory.rocksdb_provider();
+        for block_num in 1..=num_blocks {
+            for acct_idx in 0..accounts_per_block {
+                let address = Address::with_last_byte((block_num * 10 + acct_idx as u64) as u8);
+                let shards = rocksdb.account_history_shards(address).unwrap();
+                assert!(
+                    !shards.is_empty(),
+                    "v2: RocksDB AccountsHistory missing for block {block_num} acct {acct_idx}"
+                );
+
+                for s in 1..=slots_per_account as u64 {
+                    let slot = U256::from(s + acct_idx as u64 * 100);
+                    let slot_key = B256::from(slot);
+                    let shards = rocksdb.storage_history_shards(address, slot_key).unwrap();
                     assert!(
                         !shards.is_empty(),
-                        "v2: RocksDB AccountsHistory missing for block {block_num} acct {acct_idx}"
-                    );
-
-                    for s in 1..=slots_per_account as u64 {
-                        let slot = U256::from(s + acct_idx as u64 * 100);
-                        let slot_key = B256::from(slot);
-                        let shards = rocksdb.storage_history_shards(address, slot_key).unwrap();
-                        assert!(
-                            !shards.is_empty(),
-                            "v2: RocksDB StoragesHistory missing for block {block_num} acct {acct_idx} slot {s}"
-                        );
-                    }
-                }
-            }
-        } else {
-            assert!(plain_accounts > 0, "v1: PlainAccountState should not be empty");
-            assert!(plain_storage > 0, "v1: PlainStorageState should not be empty");
-
-            let mdbx_account_cs = provider.tx_ref().entries::<tables::AccountChangeSets>().unwrap();
-            assert!(mdbx_account_cs > 0, "v1: AccountChangeSets in MDBX should not be empty");
-
-            let mdbx_storage_cs = provider.tx_ref().entries::<tables::StorageChangeSets>().unwrap();
-            assert!(mdbx_storage_cs > 0, "v1: StorageChangeSets in MDBX should not be empty");
-
-            for block_num in 1..=num_blocks {
-                let storage_entries: Vec<_> = provider
-                    .tx_ref()
-                    .cursor_dup_read::<tables::StorageChangeSets>()
-                    .unwrap()
-                    .walk_range(BlockNumberAddress::range(block_num..=block_num))
-                    .unwrap()
-                    .collect::<Result<Vec<_>, _>>()
-                    .unwrap();
-                assert!(
-                    !storage_entries.is_empty(),
-                    "v1: MDBX StorageChangeSets should have entries for block {block_num}"
-                );
-
-                for (_, entry) in &storage_entries {
-                    let slot_key = B256::from(entry.key);
-                    assert!(
-                        slot_key != keccak256(slot_key),
-                        "v1: storage changeset keys should be plain (not hashed)"
+                        "v2: RocksDB StoragesHistory missing for block {block_num} acct {acct_idx} slot {s}"
                     );
                 }
             }
-
-            let mdbx_account_history =
-                provider.tx_ref().entries::<tables::AccountsHistory>().unwrap();
-            assert!(mdbx_account_history > 0, "v1: AccountsHistory in MDBX should not be empty");
-
-            let mdbx_storage_history =
-                provider.tx_ref().entries::<tables::StoragesHistory>().unwrap();
-            assert!(mdbx_storage_history > 0, "v1: StoragesHistory in MDBX should not be empty");
         }
     }
 
     #[test]
-    fn test_save_blocks_v1_table_assertions() {
-        run_save_blocks_and_verify(StorageMode::V1);
-    }
-
-    #[test]
     fn test_save_blocks_v2_table_assertions() {
-        run_save_blocks_and_verify(StorageMode::V2);
+        run_save_blocks_and_verify();
     }
 
     #[test]
     fn test_write_and_remove_state_roundtrip_v2() {
         let factory = create_test_provider_factory();
         let storage_settings = StorageSettings::v2();
-        assert!(storage_settings.use_hashed_state());
+
         factory.set_storage_settings_cache(storage_settings);
 
         let address = Address::with_last_byte(1);

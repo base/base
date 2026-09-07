@@ -13,6 +13,9 @@ pub mod app;
 pub mod chainspec;
 /// Base CLI commands.
 pub mod commands;
+mod types;
+pub use types::{BaseCliComponents, BaseCliTypes};
+
 mod node;
 pub use node::{
     ExecutionNodeArgs, ExecutionNodeConfigArgs, ExecutionNodeLaunchConfig,

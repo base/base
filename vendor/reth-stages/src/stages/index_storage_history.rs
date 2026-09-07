@@ -1,12 +1,7 @@
 use std::fmt::Debug;
 
 use reth_config::config::{EtlConfig, IndexHistoryConfig};
-use reth_db_api::{
-    Tables,
-    models::{AddressStorageKey, BlockNumberAddress, storage_sharded_key::StorageShardedKey},
-    tables,
-    transaction::DbTxMut,
-};
+use reth_db_api::{Tables, tables, transaction::DbTxMut};
 use reth_provider::{
     DBProvider, EitherWriter, HistoryWriter, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, StorageChangeSetReader,
@@ -18,7 +13,7 @@ use reth_stages_api::{
 };
 use tracing::info;
 
-use super::{collect_history_indices, collect_storage_history_indices};
+use super::collect_storage_history_indices;
 use crate::{
     StageCheckpoint, StageId,
     stages::utils::{
@@ -115,13 +110,9 @@ where
             }
         }
 
-        let use_rocksdb = provider.cached_storage_settings().storage_v2;
         if input.target_reached() && prune_target_applied {
-            if use_rocksdb {
-                provider.rocksdb_provider().clear::<tables::StoragesHistory>()?;
-            } else {
-                provider.tx_ref().clear::<tables::StoragesHistory>()?;
-            }
+            provider.rocksdb_provider().clear::<tables::StoragesHistory>()?;
+
             return Ok(ExecOutput::done(input.checkpoint()));
         }
         if input.target_reached() && !initial_sync {
@@ -138,32 +129,18 @@ where
         // A zero checkpoint means no history range is durable. Clear stale rows before using the
         // append-only loader, including when pruning advanced the in-memory checkpoint.
         if rebuild_from_empty {
-            if use_rocksdb {
-                // RocksDB clear executes immediately. A crash before commit leaves the durable
-                // checkpoint at zero, so the next attempt clears and rebuilds again.
-                provider.rocksdb_provider().clear::<tables::StoragesHistory>()?;
-            } else {
-                provider.tx_ref().clear::<tables::StoragesHistory>()?;
-            }
+            // RocksDB clear executes immediately. A crash before commit leaves the durable
+            // checkpoint at zero, so the next attempt clears and rebuilds again.
+            provider.rocksdb_provider().clear::<tables::StoragesHistory>()?;
+
             if input.checkpoint().block_number == 0 && !prune_target_applied {
                 block_range = 0..=*block_range.end();
             }
         }
 
-        info!(target: "sync::stages::index_storage_history::exec", ?rebuild_from_empty, ?use_rocksdb, "Collecting indices");
-        let collector = if use_rocksdb {
-            collect_storage_history_indices(provider, block_range.clone(), &self.etl_config)?
-        } else {
-            collect_history_indices::<_, tables::StorageChangeSets, tables::StoragesHistory, _>(
-                provider,
-                BlockNumberAddress::range(block_range.clone()),
-                |AddressStorageKey((address, storage_key)), highest_block_number| {
-                    StorageShardedKey::new(address, storage_key, highest_block_number)
-                },
-                |(key, value)| (key.block_number(), AddressStorageKey((key.address(), value.key))),
-                &self.etl_config,
-            )?
-        };
+        info!(target: "sync::stages::index_storage_history::exec", ?rebuild_from_empty, "Collecting indices");
+        let collector =
+            { collect_storage_history_indices(provider, block_range.clone(), &self.etl_config)? };
 
         info!(target: "sync::stages::index_storage_history::exec", "Loading indices into database");
 
@@ -175,8 +152,7 @@ where
                 Ok(((), writer.into_raw_rocksdb_batch()))
             })?;
         } else {
-            let prepared =
-                prepare_storage_history_writes(collector, provider, use_rocksdb, &self.etl_config)?;
+            let prepared = prepare_storage_history_writes(collector, provider, &self.etl_config)?;
             provider.with_rocksdb_batch_auto_commit(|rocksdb_batch| {
                 let mut writer = EitherWriter::new_storages_history(provider, rocksdb_batch)?;
                 write_prepared_history_shards::<tables::StoragesHistory>(
@@ -187,10 +163,8 @@ where
             })?;
         }
 
-        if use_rocksdb {
-            provider.commit_pending_rocksdb_batches()?;
-            provider.rocksdb_provider().flush(&[Tables::StoragesHistory.name()])?;
-        }
+        provider.commit_pending_rocksdb_batches()?;
+        provider.rocksdb_provider().flush(&[Tables::StoragesHistory.name()])?;
 
         Ok(ExecOutput {
             checkpoint: StageCheckpoint::new(*block_range.end()),
@@ -215,653 +189,27 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
-    use alloy_primitives::{Address, B256, BlockNumber, U256, address, b256};
-    use itertools::Itertools;
+    use alloy_primitives::{Address, B256, U256, address, b256};
     use reth_db_api::{
         BlockNumberList,
-        cursor::DbCursorRO,
-        models::{
-            ShardedKey, StoredBlockBodyIndices, sharded_key,
-            storage_sharded_key::NUM_OF_INDICES_IN_SHARD,
-        },
-        transaction::DbTx,
+        models::{ShardedKey, StoredBlockBodyIndices, storage_sharded_key::StorageShardedKey},
     };
-    use reth_primitives_traits::StorageEntry;
-    use reth_provider::{DatabaseProviderFactory, providers::StaticFileWriter};
-    use reth_testing_utils::generators::{
-        self, BlockRangeParams, random_block_range, random_changeset_range,
-        random_contract_account_range,
-    };
+    use reth_provider::DatabaseProviderFactory;
 
     use super::*;
-    use crate::test_utils::{
-        ExecuteStageTestRunner, StageTestRunner, TestRunnerError, TestStageDB,
-        UnwindStageTestRunner, stage_test_suite_ext,
-    };
-
+    use crate::test_utils::TestStageDB;
     const ADDRESS: Address = address!("0x0000000000000000000000000000000000000001");
     const STORAGE_KEY: B256 =
         b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
-
-    const LAST_BLOCK_IN_FULL_SHARD: BlockNumber = NUM_OF_INDICES_IN_SHARD as BlockNumber;
-    const MAX_BLOCK: BlockNumber = NUM_OF_INDICES_IN_SHARD as BlockNumber + 2;
-
-    const fn storage(key: B256) -> StorageEntry {
-        // Value is not used in indexing stage.
-        StorageEntry { key, value: U256::ZERO }
-    }
-
-    const fn block_number_address(block_number: u64) -> BlockNumberAddress {
-        BlockNumberAddress((block_number, ADDRESS))
-    }
-
-    /// Shard for account
     const fn shard(shard_index: u64) -> StorageShardedKey {
         StorageShardedKey {
             address: ADDRESS,
             sharded_key: ShardedKey { key: STORAGE_KEY, highest_block_number: shard_index },
         }
     }
-
     fn list(list: &[u64]) -> BlockNumberList {
         BlockNumberList::new(list.iter().copied()).unwrap()
     }
-
-    fn cast(
-        table: Vec<(StorageShardedKey, BlockNumberList)>,
-    ) -> BTreeMap<StorageShardedKey, Vec<u64>> {
-        table
-            .into_iter()
-            .map(|(k, v)| {
-                let v = v.iter().collect();
-                (k, v)
-            })
-            .collect()
-    }
-
-    fn partial_setup(db: &TestStageDB) {
-        // setup
-        db.commit(|tx| {
-            for block in 0..=MAX_BLOCK {
-                tx.put::<tables::BlockBodyIndices>(
-                    block,
-                    StoredBlockBodyIndices { tx_count: 3, ..Default::default() },
-                )?;
-                // setup changeset that is going to be applied to history index
-                tx.put::<tables::StorageChangeSets>(
-                    block_number_address(block),
-                    storage(STORAGE_KEY),
-                )?;
-            }
-            Ok(())
-        })
-        .unwrap()
-    }
-
-    fn run(db: &TestStageDB, run_to: u64, input_checkpoint: Option<BlockNumber>) {
-        let input = ExecInput {
-            target: Some(run_to),
-            checkpoint: input_checkpoint
-                .map(|block_number| StageCheckpoint { block_number, stage_checkpoint: None }),
-        };
-        let mut stage = IndexStorageHistoryStage::default();
-        let provider = db.factory.database_provider_rw().unwrap();
-        let out = stage.execute(&provider, input).unwrap();
-        assert_eq!(out, ExecOutput { checkpoint: StageCheckpoint::new(run_to), done: true });
-        provider.commit().unwrap();
-    }
-
-    fn unwind(db: &TestStageDB, unwind_from: u64, unwind_to: u64) {
-        let input = UnwindInput {
-            checkpoint: StageCheckpoint::new(unwind_from),
-            unwind_to,
-            ..Default::default()
-        };
-        let mut stage = IndexStorageHistoryStage::default();
-        let provider = db.factory.database_provider_rw().unwrap();
-        let out = stage.unwind(&provider, input).unwrap();
-        assert_eq!(out, UnwindOutput { checkpoint: StageCheckpoint::new(unwind_to) });
-        provider.commit().unwrap();
-    }
-
-    #[tokio::test]
-    async fn insert_index_to_genesis() {
-        // init
-        let db = TestStageDB::default();
-
-        // setup
-        partial_setup(&db);
-
-        // run
-        run(&db, 3, None);
-
-        // verify
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), vec![0, 1, 2, 3])]));
-
-        // unwind
-        unwind(&db, 5, 0);
-
-        // verify initial state
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), vec![0])]));
-    }
-
-    #[tokio::test]
-    async fn initial_target_zero_indexes_genesis() {
-        let db = TestStageDB::default();
-        partial_setup(&db);
-
-        run(&db, 0, None);
-
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), vec![0])]));
-    }
-
-    #[tokio::test]
-    async fn zero_commit_threshold_still_makes_progress() {
-        let db = TestStageDB::default();
-        partial_setup(&db);
-        let input = ExecInput { target: Some(1), checkpoint: None };
-        let mut stage = IndexStorageHistoryStage { commit_threshold: 0, ..Default::default() };
-        let provider = db.factory.database_provider_rw().unwrap();
-
-        let output = stage.execute(&provider, input).unwrap();
-
-        assert_eq!(output, ExecOutput { checkpoint: StageCheckpoint::new(1), done: true });
-        provider.commit().unwrap();
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), vec![0, 1])]));
-    }
-
-    #[tokio::test]
-    async fn execute_respects_commit_threshold() {
-        let db = TestStageDB::default();
-        partial_setup(&db);
-        let mut stage = IndexStorageHistoryStage { commit_threshold: 2, ..Default::default() };
-
-        let mut checkpoint = None;
-        for (expected_checkpoint, done) in [(2, false), (4, false), (5, true)] {
-            let input = ExecInput { target: Some(5), checkpoint };
-            let provider = db.factory.database_provider_rw().unwrap();
-            let output = stage.execute(&provider, input).unwrap();
-            assert_eq!(
-                output,
-                ExecOutput { checkpoint: StageCheckpoint::new(expected_checkpoint), done }
-            );
-            provider.commit().unwrap();
-            checkpoint = Some(output.checkpoint);
-        }
-
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), (0..=5).collect())]));
-    }
-
-    #[tokio::test]
-    async fn insert_index_to_not_empty_shard() {
-        // init
-        let db = TestStageDB::default();
-
-        // setup
-        partial_setup(&db);
-        db.commit(|tx| {
-            tx.put::<tables::StoragesHistory>(shard(u64::MAX), list(&[1, 2, 3])).unwrap();
-            Ok(())
-        })
-        .unwrap();
-
-        // run
-        run(&db, 5, Some(3));
-
-        // verify
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), vec![1, 2, 3, 4, 5])]));
-
-        // unwind
-        unwind(&db, 5, 3);
-
-        // verify initial state
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), vec![1, 2, 3])]));
-    }
-
-    #[tokio::test]
-    async fn insert_index_many_distinct_slots_incremental() {
-        let db = TestStageDB::default();
-        const KEYS: u8 = 32;
-
-        db.commit(|tx| {
-            for block in 0..=MAX_BLOCK {
-                tx.put::<tables::BlockBodyIndices>(
-                    block,
-                    StoredBlockBodyIndices { tx_count: 3, ..Default::default() },
-                )?;
-            }
-            for i in 1..=KEYS {
-                let address = Address::repeat_byte(i);
-                let slot = B256::repeat_byte(i);
-                tx.put::<tables::StoragesHistory>(
-                    StorageShardedKey::new(address, slot, u64::MAX),
-                    list(&[1, 2, 3]),
-                )?;
-                for block in 0..=MAX_BLOCK {
-                    tx.put::<tables::StorageChangeSets>(
-                        BlockNumberAddress((block, address)),
-                        storage(slot),
-                    )?;
-                }
-            }
-            Ok(())
-        })
-        .unwrap();
-
-        run(&db, 5, Some(3));
-
-        let table = db.table::<tables::StoragesHistory>().unwrap();
-        assert_eq!(table.len(), KEYS as usize);
-        for i in 1..=KEYS {
-            let address = Address::repeat_byte(i);
-            let slot = B256::repeat_byte(i);
-            let shard = table
-                .iter()
-                .find(|(key, _)| {
-                    key.address == address
-                        && key.sharded_key.key == slot
-                        && key.sharded_key.highest_block_number == u64::MAX
-                })
-                .map(|(_, list)| list.iter().collect::<Vec<_>>());
-            assert_eq!(shard, Some(vec![1, 2, 3, 4, 5]), "slot {address}/{slot}");
-        }
-    }
-
-    #[tokio::test]
-    async fn insert_index_to_full_shard() {
-        // init
-        let db = TestStageDB::default();
-        // change does not matter only that account is present in changeset.
-        let full_list = (1..=LAST_BLOCK_IN_FULL_SHARD).collect::<Vec<_>>();
-
-        // setup
-        partial_setup(&db);
-        db.commit(|tx| {
-            tx.put::<tables::StoragesHistory>(shard(u64::MAX), list(&full_list)).unwrap();
-            Ok(())
-        })
-        .unwrap();
-
-        // run
-        run(&db, LAST_BLOCK_IN_FULL_SHARD + 2, Some(LAST_BLOCK_IN_FULL_SHARD));
-
-        // verify
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(
-            table,
-            BTreeMap::from([
-                (shard(LAST_BLOCK_IN_FULL_SHARD), full_list.clone()),
-                (shard(u64::MAX), vec![LAST_BLOCK_IN_FULL_SHARD + 1, LAST_BLOCK_IN_FULL_SHARD + 2])
-            ])
-        );
-
-        // unwind
-        unwind(&db, LAST_BLOCK_IN_FULL_SHARD + 2, LAST_BLOCK_IN_FULL_SHARD);
-
-        // verify initial state
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), full_list)]));
-    }
-
-    #[tokio::test]
-    async fn insert_index_to_fill_shard() {
-        // init
-        let db = TestStageDB::default();
-        let mut almost_full_list = (1..=LAST_BLOCK_IN_FULL_SHARD - 2).collect::<Vec<_>>();
-
-        // setup
-        partial_setup(&db);
-        db.commit(|tx| {
-            tx.put::<tables::StoragesHistory>(shard(u64::MAX), list(&almost_full_list)).unwrap();
-            Ok(())
-        })
-        .unwrap();
-
-        // run
-        run(&db, LAST_BLOCK_IN_FULL_SHARD, Some(LAST_BLOCK_IN_FULL_SHARD - 2));
-
-        // verify
-        almost_full_list.push(LAST_BLOCK_IN_FULL_SHARD - 1);
-        almost_full_list.push(LAST_BLOCK_IN_FULL_SHARD);
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), almost_full_list.clone())]));
-
-        // unwind
-        unwind(&db, LAST_BLOCK_IN_FULL_SHARD, LAST_BLOCK_IN_FULL_SHARD - 2);
-
-        // verify initial state
-        almost_full_list.pop();
-        almost_full_list.pop();
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), almost_full_list)]));
-
-        // verify initial state
-    }
-
-    #[tokio::test]
-    async fn insert_index_second_half_shard() {
-        // init
-        let db = TestStageDB::default();
-        let mut almost_full_list = (1..=LAST_BLOCK_IN_FULL_SHARD - 1).collect::<Vec<_>>();
-
-        // setup
-        partial_setup(&db);
-        db.commit(|tx| {
-            tx.put::<tables::StoragesHistory>(shard(u64::MAX), list(&almost_full_list)).unwrap();
-            Ok(())
-        })
-        .unwrap();
-
-        // run
-        run(&db, LAST_BLOCK_IN_FULL_SHARD + 1, Some(LAST_BLOCK_IN_FULL_SHARD - 1));
-
-        // verify
-        almost_full_list.push(LAST_BLOCK_IN_FULL_SHARD);
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(
-            table,
-            BTreeMap::from([
-                (shard(LAST_BLOCK_IN_FULL_SHARD), almost_full_list.clone()),
-                (shard(u64::MAX), vec![LAST_BLOCK_IN_FULL_SHARD + 1])
-            ])
-        );
-
-        // unwind
-        unwind(&db, LAST_BLOCK_IN_FULL_SHARD, LAST_BLOCK_IN_FULL_SHARD - 1);
-
-        // verify initial state
-        almost_full_list.pop();
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), almost_full_list)]));
-    }
-
-    #[tokio::test]
-    async fn insert_index_to_third_shard() {
-        // init
-        let db = TestStageDB::default();
-        let full_list = (1..=LAST_BLOCK_IN_FULL_SHARD).collect::<Vec<_>>();
-
-        // setup
-        partial_setup(&db);
-        db.commit(|tx| {
-            tx.put::<tables::StoragesHistory>(shard(1), list(&full_list)).unwrap();
-            tx.put::<tables::StoragesHistory>(shard(2), list(&full_list)).unwrap();
-            tx.put::<tables::StoragesHistory>(
-                shard(u64::MAX),
-                list(&[LAST_BLOCK_IN_FULL_SHARD + 1]),
-            )
-            .unwrap();
-            Ok(())
-        })
-        .unwrap();
-
-        run(&db, LAST_BLOCK_IN_FULL_SHARD + 2, Some(LAST_BLOCK_IN_FULL_SHARD + 1));
-
-        // verify
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(
-            table,
-            BTreeMap::from([
-                (shard(1), full_list.clone()),
-                (shard(2), full_list.clone()),
-                (shard(u64::MAX), vec![LAST_BLOCK_IN_FULL_SHARD + 1, LAST_BLOCK_IN_FULL_SHARD + 2])
-            ])
-        );
-
-        // unwind
-        unwind(&db, LAST_BLOCK_IN_FULL_SHARD + 2, LAST_BLOCK_IN_FULL_SHARD + 1);
-
-        // verify initial state
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(
-            table,
-            BTreeMap::from([
-                (shard(1), full_list.clone()),
-                (shard(2), full_list),
-                (shard(u64::MAX), vec![LAST_BLOCK_IN_FULL_SHARD + 1])
-            ])
-        );
-    }
-
-    #[tokio::test]
-    async fn insert_index_with_prune_mode() {
-        // init
-        let db = TestStageDB::default();
-
-        // setup
-        db.commit(|tx| {
-            // we just need first and last
-            tx.put::<tables::BlockBodyIndices>(
-                0,
-                StoredBlockBodyIndices { tx_count: 3, ..Default::default() },
-            )
-            .unwrap();
-
-            tx.put::<tables::BlockBodyIndices>(
-                100,
-                StoredBlockBodyIndices { tx_count: 5, ..Default::default() },
-            )
-            .unwrap();
-
-            // setup changeset that are going to be applied to history index
-            tx.put::<tables::StorageChangeSets>(block_number_address(20), storage(STORAGE_KEY))
-                .unwrap();
-            tx.put::<tables::StorageChangeSets>(block_number_address(36), storage(STORAGE_KEY))
-                .unwrap();
-            tx.put::<tables::StorageChangeSets>(block_number_address(100), storage(STORAGE_KEY))
-                .unwrap();
-            tx.put::<tables::StoragesHistory>(shard(u64::MAX), list(&[1])).unwrap();
-            Ok(())
-        })
-        .unwrap();
-
-        // run
-        let input = ExecInput { target: Some(20000), ..Default::default() };
-        let mut stage = IndexStorageHistoryStage {
-            prune_mode: Some(PruneMode::Before(36)),
-            ..Default::default()
-        };
-        let provider = db.factory.database_provider_rw().unwrap();
-        let out = stage.execute(&provider, input).unwrap();
-        assert_eq!(out, ExecOutput { checkpoint: StageCheckpoint::new(20000), done: true });
-        provider.commit().unwrap();
-
-        // verify
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), vec![36, 100])]));
-
-        // unwind
-        unwind(&db, 20000, 0);
-
-        // verify initial state
-        let table = db.table::<tables::StoragesHistory>().unwrap();
-        assert!(table.is_empty());
-    }
-
-    #[tokio::test]
-    async fn prune_target_zero_excludes_genesis() {
-        let db = TestStageDB::default();
-        db.commit(|tx| {
-            tx.put::<tables::StorageChangeSets>(block_number_address(0), storage(STORAGE_KEY))?;
-            tx.put::<tables::StorageChangeSets>(block_number_address(1), storage(STORAGE_KEY))?;
-            Ok(())
-        })
-        .unwrap();
-
-        let input = ExecInput { target: Some(20_000), ..Default::default() };
-        let mut stage = IndexStorageHistoryStage {
-            prune_mode: Some(PruneMode::Before(1)),
-            ..Default::default()
-        };
-        let provider = db.factory.database_provider_rw().unwrap();
-        let output = stage.execute(&provider, input).unwrap();
-        assert_eq!(output, ExecOutput { checkpoint: StageCheckpoint::new(20_000), done: true });
-        provider.commit().unwrap();
-
-        let table = cast(db.table::<tables::StoragesHistory>().unwrap());
-        assert_eq!(table, BTreeMap::from([(shard(u64::MAX), vec![1])]));
-        let provider = db.factory.provider().unwrap();
-        let prune_checkpoint =
-            provider.get_prune_checkpoint(PruneSegment::StorageHistory).unwrap().unwrap();
-        assert_eq!(prune_checkpoint.block_number, Some(0));
-    }
-
-    stage_test_suite_ext!(IndexStorageHistoryTestRunner, index_storage_history);
-
-    struct IndexStorageHistoryTestRunner {
-        pub(crate) db: TestStageDB,
-        commit_threshold: u64,
-        prune_mode: Option<PruneMode>,
-    }
-
-    impl Default for IndexStorageHistoryTestRunner {
-        fn default() -> Self {
-            Self { db: TestStageDB::default(), commit_threshold: 1000, prune_mode: None }
-        }
-    }
-
-    impl StageTestRunner for IndexStorageHistoryTestRunner {
-        type S = IndexStorageHistoryStage;
-
-        fn db(&self) -> &TestStageDB {
-            &self.db
-        }
-
-        fn stage(&self) -> Self::S {
-            Self::S {
-                commit_threshold: self.commit_threshold,
-                prune_mode: self.prune_mode,
-                etl_config: EtlConfig::default(),
-            }
-        }
-    }
-
-    impl ExecuteStageTestRunner for IndexStorageHistoryTestRunner {
-        type Seed = ();
-
-        fn seed_execution(&mut self, input: ExecInput) -> Result<Self::Seed, TestRunnerError> {
-            let stage_process = input.checkpoint().block_number;
-            let start = stage_process + 1;
-            let end = input.target();
-            let mut rng = generators::rng();
-
-            let num_of_accounts = 31;
-            let accounts = random_contract_account_range(&mut rng, &mut (0..num_of_accounts))
-                .into_iter()
-                .collect::<BTreeMap<_, _>>();
-
-            let blocks = random_block_range(
-                &mut rng,
-                start..=end,
-                BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..3, ..Default::default() },
-            );
-
-            let (changesets, _) = random_changeset_range(
-                &mut rng,
-                blocks.iter(),
-                accounts.into_iter().map(|(addr, acc)| (addr, (acc, Vec::new()))),
-                0..3,
-                0..u64::MAX,
-            );
-
-            // add block changeset from block 1.
-            self.db.insert_changesets(changesets, Some(start))?;
-
-            Ok(())
-        }
-
-        fn validate_execution(
-            &self,
-            input: ExecInput,
-            output: Option<ExecOutput>,
-        ) -> Result<(), TestRunnerError> {
-            if let Some(output) = output {
-                let start_block = input.next_block();
-                let end_block = output.checkpoint.block_number;
-                if start_block > end_block {
-                    return Ok(());
-                }
-
-                assert_eq!(
-                    output,
-                    ExecOutput { checkpoint: StageCheckpoint::new(input.target()), done: true }
-                );
-
-                let provider = self.db.factory.provider()?;
-                let mut changeset_cursor =
-                    provider.tx_ref().cursor_read::<tables::StorageChangeSets>()?;
-
-                let storage_transitions = changeset_cursor
-                    .walk_range(BlockNumberAddress::range(start_block..=end_block))?
-                    .try_fold(
-                        BTreeMap::new(),
-                        |mut storages: BTreeMap<(Address, B256), Vec<u64>>,
-                         entry|
-                         -> Result<_, TestRunnerError> {
-                            let (index, storage) = entry?;
-                            storages
-                                .entry((index.address(), storage.key))
-                                .or_default()
-                                .push(index.block_number());
-                            Ok(storages)
-                        },
-                    )?;
-
-                let mut result = BTreeMap::new();
-                for (partial_key, indices) in storage_transitions {
-                    // chunk indices and insert them in shards of N size.
-                    let mut chunks = indices
-                        .iter()
-                        .chunks(sharded_key::NUM_OF_INDICES_IN_SHARD)
-                        .into_iter()
-                        .map(|chunks| chunks.copied().collect::<Vec<u64>>())
-                        .collect::<Vec<Vec<_>>>();
-                    let last_chunk = chunks.pop();
-
-                    for list in chunks {
-                        result.insert(
-                            StorageShardedKey::new(
-                                partial_key.0,
-                                partial_key.1,
-                                *list.last().expect("Chuck does not return empty list")
-                                    as BlockNumber,
-                            ),
-                            list,
-                        );
-                    }
-
-                    if let Some(last_list) = last_chunk {
-                        result.insert(
-                            StorageShardedKey::new(partial_key.0, partial_key.1, u64::MAX),
-                            last_list,
-                        );
-                    };
-                }
-
-                let table = cast(self.db.table::<tables::StoragesHistory>().unwrap());
-                assert_eq!(table, result);
-            }
-            Ok(())
-        }
-    }
-
-    impl UnwindStageTestRunner for IndexStorageHistoryTestRunner {
-        fn validate_unwind(&self, _input: UnwindInput) -> Result<(), TestRunnerError> {
-            let table = self.db.table::<tables::StoragesHistory>().unwrap();
-            assert!(table.is_empty());
-            Ok(())
-        }
-    }
-
     mod rocksdb_tests {
         use reth_db_api::models::StorageBeforeTx;
         use reth_provider::{RocksDBProviderFactory, providers::StaticFileWriter};

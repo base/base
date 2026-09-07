@@ -247,25 +247,15 @@ where
                 .map(|entry| entry.value)
                 .map(Some),
             HistoryInfo::InPlainState | HistoryInfo::MaybeInPlainState => {
-                if self.provider.cached_storage_settings().use_hashed_state() {
-                    let hashed_address = alloy_primitives::keccak256(address);
-                    let hashed_slot = alloy_primitives::keccak256(lookup_key);
-                    Ok(self
-                        .tx()
-                        .cursor_dup_read::<tables::HashedStorages>()?
-                        .seek_by_key_subkey(hashed_address, hashed_slot)?
-                        .filter(|entry| entry.key == hashed_slot)
-                        .map(|entry| entry.value)
-                        .or(Some(StorageValue::ZERO)))
-                } else {
-                    Ok(self
-                        .tx()
-                        .cursor_dup_read::<tables::PlainStorageState>()?
-                        .seek_by_key_subkey(address, lookup_key)?
-                        .filter(|entry| entry.key == lookup_key)
-                        .map(|entry| entry.value)
-                        .or(Some(StorageValue::ZERO)))
-                }
+                let hashed_address = alloy_primitives::keccak256(address);
+                let hashed_slot = alloy_primitives::keccak256(lookup_key);
+                Ok(self
+                    .tx()
+                    .cursor_dup_read::<tables::HashedStorages>()?
+                    .seek_by_key_subkey(hashed_address, hashed_slot)?
+                    .filter(|entry| entry.key == hashed_slot)
+                    .map(|entry| entry.value)
+                    .or(Some(StorageValue::ZERO)))
             }
         }
     }
@@ -364,12 +354,8 @@ where
                     .map(|account_before| account_before.info)
             }
             HistoryInfo::InPlainState | HistoryInfo::MaybeInPlainState => {
-                if self.provider.cached_storage_settings().use_hashed_state() {
-                    let hashed_address = alloy_primitives::keccak256(address);
-                    Ok(self.tx().get_by_encoded_key::<tables::HashedAccounts>(&hashed_address)?)
-                } else {
-                    Ok(self.tx().get_by_encoded_key::<tables::PlainAccountState>(address)?)
-                }
+                let hashed_address = alloy_primitives::keccak256(address);
+                Ok(self.tx().get_by_encoded_key::<tables::HashedAccounts>(&hashed_address)?)
             }
         }
     }
@@ -889,7 +875,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, U256, address, b256};
+    use alloy_primitives::{Address, B256, U256, address, b256, keccak256};
     use reth_db_api::{
         BlockNumberList,
         models::{AccountBeforeTx, ShardedKey, storage_sharded_key::StorageShardedKey},
@@ -908,7 +894,7 @@ mod tests {
     use super::needs_prev_shard_check;
     use crate::{
         AccountReader, HistoricalStateProvider, HistoricalStateProviderRef, RocksDBProviderFactory,
-        StateProvider,
+        StateProvider, StaticFileProviderFactory,
         providers::state::historical::{HistoryInfo, LowestAvailableBlocks},
         test_utils::create_test_provider_factory,
     };
@@ -940,21 +926,27 @@ mod tests {
         let factory = create_test_provider_factory();
         let tx = factory.provider_rw().unwrap().into_tx();
 
-        tx.put::<tables::AccountsHistory>(
-            ShardedKey { key: ADDRESS, highest_block_number: 7 },
-            BlockNumberList::new([1, 3, 7]).unwrap(),
-        )
-        .unwrap();
-        tx.put::<tables::AccountsHistory>(
-            ShardedKey { key: ADDRESS, highest_block_number: u64::MAX },
-            BlockNumberList::new([10, 15]).unwrap(),
-        )
-        .unwrap();
-        tx.put::<tables::AccountsHistory>(
-            ShardedKey { key: HIGHER_ADDRESS, highest_block_number: u64::MAX },
-            BlockNumberList::new([4]).unwrap(),
-        )
-        .unwrap();
+        factory
+            .rocksdb_provider()
+            .put::<tables::AccountsHistory>(
+                ShardedKey { key: ADDRESS, highest_block_number: 7 },
+                &(BlockNumberList::new([1, 3, 7]).unwrap()),
+            )
+            .unwrap();
+        factory
+            .rocksdb_provider()
+            .put::<tables::AccountsHistory>(
+                ShardedKey { key: ADDRESS, highest_block_number: u64::MAX },
+                &(BlockNumberList::new([10, 15]).unwrap()),
+            )
+            .unwrap();
+        factory
+            .rocksdb_provider()
+            .put::<tables::AccountsHistory>(
+                ShardedKey { key: HIGHER_ADDRESS, highest_block_number: u64::MAX },
+                &(BlockNumberList::new([4]).unwrap()),
+            )
+            .unwrap();
 
         let acc_plain = Account { nonce: 100, balance: U256::ZERO, bytecode_hash: None };
         let acc_at15 = Account { nonce: 15, balance: U256::ZERO, bytecode_hash: None };
@@ -965,37 +957,47 @@ mod tests {
         let higher_acc_plain = Account { nonce: 4, balance: U256::ZERO, bytecode_hash: None };
 
         // setup
-        tx.put::<tables::AccountChangeSets>(1, AccountBeforeTx { address: ADDRESS, info: None })
-            .unwrap();
-        tx.put::<tables::AccountChangeSets>(
-            3,
-            AccountBeforeTx { address: ADDRESS, info: Some(acc_at3) },
-        )
-        .unwrap();
-        tx.put::<tables::AccountChangeSets>(
-            4,
-            AccountBeforeTx { address: HIGHER_ADDRESS, info: None },
-        )
-        .unwrap();
-        tx.put::<tables::AccountChangeSets>(
-            7,
-            AccountBeforeTx { address: ADDRESS, info: Some(acc_at7) },
-        )
-        .unwrap();
-        tx.put::<tables::AccountChangeSets>(
-            10,
-            AccountBeforeTx { address: ADDRESS, info: Some(acc_at10) },
-        )
-        .unwrap();
-        tx.put::<tables::AccountChangeSets>(
-            15,
-            AccountBeforeTx { address: ADDRESS, info: Some(acc_at15) },
-        )
-        .unwrap();
+        let mut changesets = crate::test_utils::TestChangesets::default();
+        changesets
+            .accounts
+            .entry(1)
+            .or_default()
+            .push(AccountBeforeTx { address: ADDRESS, info: None });
+        changesets
+            .accounts
+            .entry(3)
+            .or_default()
+            .push(AccountBeforeTx { address: ADDRESS, info: Some(acc_at3) });
+        changesets
+            .accounts
+            .entry(4)
+            .or_default()
+            .push(AccountBeforeTx { address: HIGHER_ADDRESS, info: None });
+        changesets
+            .accounts
+            .entry(7)
+            .or_default()
+            .push(AccountBeforeTx { address: ADDRESS, info: Some(acc_at7) });
+        changesets
+            .accounts
+            .entry(10)
+            .or_default()
+            .push(AccountBeforeTx { address: ADDRESS, info: Some(acc_at10) });
+        changesets
+            .accounts
+            .entry(15)
+            .or_default()
+            .push(AccountBeforeTx { address: ADDRESS, info: Some(acc_at15) });
+        changesets.write_to(&factory.static_file_provider()).unwrap();
 
         // setup plain state
-        tx.put::<tables::PlainAccountState>(ADDRESS, acc_plain).unwrap();
-        tx.put::<tables::PlainAccountState>(HIGHER_ADDRESS, higher_acc_plain).unwrap();
+        tx.put::<tables::HashedAccounts>(keccak256(ADDRESS), acc_plain).unwrap();
+        tx.put::<tables::HashedAccounts>(keccak256(HIGHER_ADDRESS), higher_acc_plain).unwrap();
+        tx.put::<tables::StageCheckpoints>(
+            "Finish".to_string(),
+            reth_stages_types::StageCheckpoint::new(100),
+        )
+        .unwrap();
         tx.commit().unwrap();
 
         let db = factory.provider().unwrap();
@@ -1055,30 +1057,36 @@ mod tests {
         let factory = create_test_provider_factory();
         let tx = factory.provider_rw().unwrap().into_tx();
 
-        tx.put::<tables::StoragesHistory>(
-            StorageShardedKey {
-                address: ADDRESS,
-                sharded_key: ShardedKey { key: STORAGE, highest_block_number: 7 },
-            },
-            BlockNumberList::new([3, 7]).unwrap(),
-        )
-        .unwrap();
-        tx.put::<tables::StoragesHistory>(
-            StorageShardedKey {
-                address: ADDRESS,
-                sharded_key: ShardedKey { key: STORAGE, highest_block_number: u64::MAX },
-            },
-            BlockNumberList::new([10, 15]).unwrap(),
-        )
-        .unwrap();
-        tx.put::<tables::StoragesHistory>(
-            StorageShardedKey {
-                address: HIGHER_ADDRESS,
-                sharded_key: ShardedKey { key: STORAGE, highest_block_number: u64::MAX },
-            },
-            BlockNumberList::new([4]).unwrap(),
-        )
-        .unwrap();
+        factory
+            .rocksdb_provider()
+            .put::<tables::StoragesHistory>(
+                StorageShardedKey {
+                    address: ADDRESS,
+                    sharded_key: ShardedKey { key: STORAGE, highest_block_number: 7 },
+                },
+                &(BlockNumberList::new([3, 7]).unwrap()),
+            )
+            .unwrap();
+        factory
+            .rocksdb_provider()
+            .put::<tables::StoragesHistory>(
+                StorageShardedKey {
+                    address: ADDRESS,
+                    sharded_key: ShardedKey { key: STORAGE, highest_block_number: u64::MAX },
+                },
+                &(BlockNumberList::new([10, 15]).unwrap()),
+            )
+            .unwrap();
+        factory
+            .rocksdb_provider()
+            .put::<tables::StoragesHistory>(
+                StorageShardedKey {
+                    address: HIGHER_ADDRESS,
+                    sharded_key: ShardedKey { key: STORAGE, highest_block_number: u64::MAX },
+                },
+                &(BlockNumberList::new([4]).unwrap()),
+            )
+            .unwrap();
 
         let higher_entry_plain = StorageEntry { key: STORAGE, value: U256::from(1000) };
         let higher_entry_at4 = StorageEntry { key: STORAGE, value: U256::from(0) };
@@ -1089,15 +1097,83 @@ mod tests {
         let entry_at3 = StorageEntry { key: STORAGE, value: U256::from(0) };
 
         // setup
-        tx.put::<tables::StorageChangeSets>((3, ADDRESS).into(), entry_at3).unwrap();
-        tx.put::<tables::StorageChangeSets>((4, HIGHER_ADDRESS).into(), higher_entry_at4).unwrap();
-        tx.put::<tables::StorageChangeSets>((7, ADDRESS).into(), entry_at7).unwrap();
-        tx.put::<tables::StorageChangeSets>((10, ADDRESS).into(), entry_at10).unwrap();
-        tx.put::<tables::StorageChangeSets>((15, ADDRESS).into(), entry_at15).unwrap();
+        let mut changesets = crate::test_utils::TestChangesets::default();
+        {
+            let index: reth_db_api::models::BlockNumberAddress = (3, ADDRESS).into();
+            let entry = entry_at3;
+            changesets.storage.entry(index.block_number()).or_default().push(
+                reth_db_api::models::StorageBeforeTx {
+                    address: index.address(),
+                    key: entry.key,
+                    value: entry.value,
+                },
+            );
+        }
+        {
+            let index: reth_db_api::models::BlockNumberAddress = (4, HIGHER_ADDRESS).into();
+            let entry = higher_entry_at4;
+            changesets.storage.entry(index.block_number()).or_default().push(
+                reth_db_api::models::StorageBeforeTx {
+                    address: index.address(),
+                    key: entry.key,
+                    value: entry.value,
+                },
+            );
+        }
+        {
+            let index: reth_db_api::models::BlockNumberAddress = (7, ADDRESS).into();
+            let entry = entry_at7;
+            changesets.storage.entry(index.block_number()).or_default().push(
+                reth_db_api::models::StorageBeforeTx {
+                    address: index.address(),
+                    key: entry.key,
+                    value: entry.value,
+                },
+            );
+        }
+        {
+            let index: reth_db_api::models::BlockNumberAddress = (10, ADDRESS).into();
+            let entry = entry_at10;
+            changesets.storage.entry(index.block_number()).or_default().push(
+                reth_db_api::models::StorageBeforeTx {
+                    address: index.address(),
+                    key: entry.key,
+                    value: entry.value,
+                },
+            );
+        }
+        {
+            let index: reth_db_api::models::BlockNumberAddress = (15, ADDRESS).into();
+            let entry = entry_at15;
+            changesets.storage.entry(index.block_number()).or_default().push(
+                reth_db_api::models::StorageBeforeTx {
+                    address: index.address(),
+                    key: entry.key,
+                    value: entry.value,
+                },
+            );
+        }
+        changesets.write_to(&factory.static_file_provider()).unwrap();
 
         // setup plain state
-        tx.put::<tables::PlainStorageState>(ADDRESS, entry_plain).unwrap();
-        tx.put::<tables::PlainStorageState>(HIGHER_ADDRESS, higher_entry_plain).unwrap();
+        tx.put::<tables::HashedStorages>(
+            keccak256(ADDRESS),
+            StorageEntry { key: keccak256((entry_plain).key), value: (entry_plain).value },
+        )
+        .unwrap();
+        tx.put::<tables::HashedStorages>(
+            keccak256(HIGHER_ADDRESS),
+            StorageEntry {
+                key: keccak256((higher_entry_plain).key),
+                value: (higher_entry_plain).value,
+            },
+        )
+        .unwrap();
+        tx.put::<tables::StageCheckpoints>(
+            "Finish".to_string(),
+            reth_stages_types::StageCheckpoint::new(100),
+        )
+        .unwrap();
         tx.commit().unwrap();
 
         let db = factory.provider().unwrap();
@@ -1227,104 +1303,6 @@ mod tests {
         // Not before first write → check changeset or plain state
         assert_eq!(HistoryInfo::from_lookup(Some(10), false, None), HistoryInfo::InChangeset(10));
         assert_eq!(HistoryInfo::from_lookup(None, false, None), HistoryInfo::InPlainState);
-    }
-
-    #[test]
-    fn history_provider_get_storage_legacy() {
-        let factory = create_test_provider_factory();
-
-        assert!(!factory.provider().unwrap().cached_storage_settings().use_hashed_state());
-
-        let tx = factory.provider_rw().unwrap().into_tx();
-
-        tx.put::<tables::StoragesHistory>(
-            StorageShardedKey {
-                address: ADDRESS,
-                sharded_key: ShardedKey { key: STORAGE, highest_block_number: 7 },
-            },
-            BlockNumberList::new([3, 7]).unwrap(),
-        )
-        .unwrap();
-        tx.put::<tables::StoragesHistory>(
-            StorageShardedKey {
-                address: ADDRESS,
-                sharded_key: ShardedKey { key: STORAGE, highest_block_number: u64::MAX },
-            },
-            BlockNumberList::new([10, 15]).unwrap(),
-        )
-        .unwrap();
-        tx.put::<tables::StoragesHistory>(
-            StorageShardedKey {
-                address: HIGHER_ADDRESS,
-                sharded_key: ShardedKey { key: STORAGE, highest_block_number: u64::MAX },
-            },
-            BlockNumberList::new([4]).unwrap(),
-        )
-        .unwrap();
-
-        let higher_entry_plain = StorageEntry { key: STORAGE, value: U256::from(1000) };
-        let higher_entry_at4 = StorageEntry { key: STORAGE, value: U256::from(0) };
-        let entry_plain = StorageEntry { key: STORAGE, value: U256::from(100) };
-        let entry_at15 = StorageEntry { key: STORAGE, value: U256::from(15) };
-        let entry_at10 = StorageEntry { key: STORAGE, value: U256::from(10) };
-        let entry_at7 = StorageEntry { key: STORAGE, value: U256::from(7) };
-        let entry_at3 = StorageEntry { key: STORAGE, value: U256::from(0) };
-
-        tx.put::<tables::StorageChangeSets>((3, ADDRESS).into(), entry_at3).unwrap();
-        tx.put::<tables::StorageChangeSets>((4, HIGHER_ADDRESS).into(), higher_entry_at4).unwrap();
-        tx.put::<tables::StorageChangeSets>((7, ADDRESS).into(), entry_at7).unwrap();
-        tx.put::<tables::StorageChangeSets>((10, ADDRESS).into(), entry_at10).unwrap();
-        tx.put::<tables::StorageChangeSets>((15, ADDRESS).into(), entry_at15).unwrap();
-
-        tx.put::<tables::PlainStorageState>(ADDRESS, entry_plain).unwrap();
-        tx.put::<tables::PlainStorageState>(HIGHER_ADDRESS, higher_entry_plain).unwrap();
-        tx.commit().unwrap();
-
-        let db = factory.provider().unwrap();
-
-        assert!(matches!(
-            HistoricalStateProviderRef::new(&db, 0, OverlayManager::default())
-                .storage(ADDRESS, STORAGE),
-            Ok(None)
-        ));
-        assert!(matches!(
-            HistoricalStateProviderRef::new(&db, 3, OverlayManager::default())
-                .storage(ADDRESS, STORAGE),
-            Ok(Some(U256::ZERO))
-        ));
-        assert!(matches!(
-            HistoricalStateProviderRef::new(&db, 4, OverlayManager::default()).storage(ADDRESS, STORAGE),
-            Ok(Some(expected_value)) if expected_value == entry_at7.value
-        ));
-        assert!(matches!(
-            HistoricalStateProviderRef::new(&db, 7, OverlayManager::default()).storage(ADDRESS, STORAGE),
-            Ok(Some(expected_value)) if expected_value == entry_at7.value
-        ));
-        assert!(matches!(
-            HistoricalStateProviderRef::new(&db, 9, OverlayManager::default()).storage(ADDRESS, STORAGE),
-            Ok(Some(expected_value)) if expected_value == entry_at10.value
-        ));
-        assert!(matches!(
-            HistoricalStateProviderRef::new(&db, 10, OverlayManager::default()).storage(ADDRESS, STORAGE),
-            Ok(Some(expected_value)) if expected_value == entry_at10.value
-        ));
-        assert!(matches!(
-            HistoricalStateProviderRef::new(&db, 11, OverlayManager::default()).storage(ADDRESS, STORAGE),
-            Ok(Some(expected_value)) if expected_value == entry_at15.value
-        ));
-        assert!(matches!(
-            HistoricalStateProviderRef::new(&db, 16, OverlayManager::default()).storage(ADDRESS, STORAGE),
-            Ok(Some(expected_value)) if expected_value == entry_plain.value
-        ));
-        assert!(matches!(
-            HistoricalStateProviderRef::new(&db, 1, OverlayManager::default())
-                .storage(HIGHER_ADDRESS, STORAGE),
-            Ok(None)
-        ));
-        assert!(matches!(
-            HistoricalStateProviderRef::new(&db, 1000, OverlayManager::default()).storage(HIGHER_ADDRESS, STORAGE),
-            Ok(Some(expected_value)) if expected_value == higher_entry_plain.value
-        ));
     }
 
     #[test]

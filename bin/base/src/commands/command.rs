@@ -1,7 +1,6 @@
 //! Top-level command dispatch for the unified Base binary.
 
-use base_execution_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
-use base_node_core::BaseNode;
+use base_execution_cli::{BaseCliTypes, chainspec::BaseChainSpecParser, commands::base_proofs};
 use clap::Subcommand;
 use reth_cli_runner::CliRunner;
 
@@ -61,7 +60,7 @@ impl BaseCommand {
                 chain_resolver.reject_for_reth_command("base proofs")?;
                 let runner = CliRunner::try_default_runtime()?;
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c((*command).execute::<BaseNode>(runtime))
+                runner.run_blocking_until_ctrl_c((*command).execute::<BaseCliTypes>(runtime))
             }
             Self::Snapshot(snapshot) => {
                 chain_resolver.reject_for_reth_command("base snapshot")?;

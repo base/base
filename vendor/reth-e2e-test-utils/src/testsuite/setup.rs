@@ -39,8 +39,6 @@ pub struct Setup<I> {
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Is this setup in dev mode
     pub is_dev: bool,
-    /// Whether to use v2 storage mode (hashed keys, static file changesets, rocksdb history)
-    pub storage_v2: bool,
     /// Tracks instance generic.
     _phantom: PhantomData<I>,
     /// Holds the import result to keep nodes alive when using imported chain
@@ -61,7 +59,6 @@ impl<I> Default for Setup<I> {
             tree_config: TreeConfig::default(),
             shutdown_tx: None,
             is_dev: true,
-            storage_v2: false,
             _phantom: Default::default(),
             import_result_holder: None,
             import_rlp_path: None,
@@ -127,12 +124,6 @@ where
     /// Set the engine tree configuration
     pub const fn with_tree_config(mut self, tree_config: TreeConfig) -> Self {
         self.tree_config = tree_config;
-        self
-    }
-
-    /// Enable v2 storage mode (hashed keys, static file changesets, rocksdb history)
-    pub const fn with_storage_v2(mut self) -> Self {
-        self.storage_v2 = true;
         self
     }
 
@@ -204,13 +195,12 @@ where
         self.shutdown_tx = Some(shutdown_tx);
 
         let is_dev = self.is_dev;
-        let storage_v2 = self.storage_v2;
         let node_count = self.network.node_count;
         let tree_config = self.tree_config.clone();
 
         let attributes_generator = Self::create_static_attributes_generator::<N>();
 
-        let mut builder = E2ETestSetupBuilder::<N, _>::new(
+        let builder = E2ETestSetupBuilder::<N, _>::new(
             node_count,
             Arc::<N::ChainSpec>::new((*chain_spec).clone().into()),
             attributes_generator,
@@ -220,10 +210,6 @@ where
         })
         .with_node_config_modifier(move |config| config.set_dev(is_dev))
         .with_connect_nodes(self.network.connect_nodes);
-
-        if storage_v2 {
-            builder = builder.with_storage_v2();
-        }
 
         let result = builder.build().await;
 

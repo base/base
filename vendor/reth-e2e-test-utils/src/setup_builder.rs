@@ -103,15 +103,6 @@ where
         self.with_node_config_modifier(move |config| config.with_pruning(pruning.clone()))
     }
 
-    /// Enables v2 storage defaults (`--storage.v2`), routing tx hashes, history
-    /// indices, etc. to `RocksDB` and changesets/senders to static files.
-    pub fn with_storage_v2(self) -> Self {
-        self.with_node_config_modifier(|mut config| {
-            config.storage.v2 = true;
-            config
-        })
-    }
-
     /// Builds and launches the test nodes.
     pub async fn build(
         self,
