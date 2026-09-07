@@ -197,6 +197,8 @@ where
     pub block_registry: HashMap<String, (BlockInfo, usize)>,
     /// Currently active node index for backward compatibility with single-node actions
     pub active_node_idx: usize,
+    /// Converts shared payload attributes to the node's configured attributes.
+    pub payload_attributes_converter: Option<fn(PayloadAttributes) -> I::PayloadAttributes>,
 }
 
 impl<I> Default for Environment<I>
@@ -205,6 +207,7 @@ where
 {
     fn default() -> Self {
         Self {
+            payload_attributes_converter: None,
             node_clients: vec![],
             node_states: vec![],
             _phantom: Default::default(),
@@ -314,17 +317,6 @@ where
 
     /// Set the test setup
     pub fn with_setup(mut self, setup: Setup<I>) -> Self {
-        self.setup = Some(setup);
-        self
-    }
-
-    /// Set the test setup with chain import from RLP file
-    pub fn with_setup_and_import(
-        mut self,
-        mut setup: Setup<I>,
-        rlp_path: impl Into<std::path::PathBuf>,
-    ) -> Self {
-        setup.import_rlp_path = Some(rlp_path.into());
         self.setup = Some(setup);
         self
     }

@@ -412,7 +412,6 @@ reth-tracing-otlp = { path = "vendor/reth-tracing-otlp", default-features = fals
 reth-stages-types = { path = "vendor/reth-stages-types", default-features = false }
 reth-engine-local = { path = "vendor/reth-engine-local", default-features = false }
 reth-network-peers = { path = "vendor/reth-network-peers", default-features = false }
-reth-node-ethereum = { path = "vendor/reth-node-ethereum", default-features = false }
 reth-trie-parallel = { path = "vendor/reth-trie-parallel", default-features = false }
 reth-testing-utils = { path = "vendor/reth-testing-utils", default-features = false }
 reth-rpc-eth-types = { path = "vendor/reth-rpc-eth-types", default-features = false }
@@ -440,12 +439,10 @@ reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-featu
 reth-engine-primitives = { path = "vendor/reth-engine-primitives", default-features = false }
 reth-static-file-types = { path = "vendor/reth-static-file-types", default-features = false }
 reth-payload-primitives = { path = "vendor/reth-payload-primitives", default-features = false }
-reth-ethereum-consensus = { path = "vendor/reth-ethereum-consensus", default-features = false }
 reth-ethereum-primitives = { path = "vendor/reth-ethereum-primitives", default-features = false }
 reth-invalid-block-hooks = { path = "vendor/reth-invalid-block-hooks", default-features = false }
 reth-basic-payload-builder = { path = "vendor/reth-basic-payload-builder", default-features = false }
 reth-consensus-debug-client = { path = "vendor/reth-consensus-debug-client", default-features = false }
-reth-ethereum-payload-builder = { path = "vendor/reth-ethereum-payload-builder", default-features = false }
 reth-payload-builder-primitives = { path = "vendor/reth-payload-builder-primitives", default-features = false }
 reth-ethereum-engine-primitives = { path = "vendor/reth-ethereum-engine-primitives", default-features = false }
 

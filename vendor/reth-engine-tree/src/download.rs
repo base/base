@@ -311,7 +311,7 @@ mod tests {
     use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M;
     use assert_matches::assert_matches;
     use reth_chainspec::{ChainSpecBuilder, MAINNET};
-    use reth_ethereum_consensus::EthBeaconConsensus;
+    use reth_consensus_common::test_utils::TestConsensus;
     use reth_network_p2p::test_utils::TestFullBlockClient;
     use reth_primitives_traits::SealedHeader;
 
@@ -343,7 +343,7 @@ mod tests {
             let header = SealedHeader::seal_slow(header);
 
             insert_headers_into_client(&client, header, 0..total_blocks);
-            let consensus = Arc::new(EthBeaconConsensus::new(chain_spec));
+            let consensus = Arc::new(TestConsensus::new(chain_spec));
 
             let block_downloader = BasicBlockDownloader::new(client.clone(), consensus);
             Self { block_downloader, client }

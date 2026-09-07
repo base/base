@@ -752,11 +752,11 @@ mod tests {
     use alloy_rlp::Decodable;
     use assert_matches::assert_matches;
     use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
+    use reth_consensus_common::test_utils::TestConsensus;
     use reth_db_api::{
         models::metadata::StorageSettings,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_ethereum_consensus::EthBeaconConsensus;
     use reth_ethereum_primitives::Block;
     use reth_evm_ethereum::EthEvmConfig;
     use reth_primitives_traits::{Account, Block as _, Bytecode, SealedBlock, StorageEntry};
@@ -777,7 +777,7 @@ mod tests {
     fn stage() -> ExecutionStage<EthEvmConfig> {
         let evm_config =
             EthEvmConfig::new(Arc::new(ChainSpecBuilder::mainnet().berlin_activated().build()));
-        let consensus = Arc::new(EthBeaconConsensus::new(Arc::new(
+        let consensus = Arc::new(TestConsensus::new(Arc::new(
             ChainSpecBuilder::mainnet().berlin_activated().build(),
         )));
         ExecutionStage::new(

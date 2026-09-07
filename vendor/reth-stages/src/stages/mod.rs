@@ -48,6 +48,7 @@ mod tests {
     };
     use alloy_rlp::Decodable;
     use reth_chainspec::ChainSpecBuilder;
+    use reth_consensus_common::test_utils::TestConsensus;
     use reth_db::mdbx::{RW, cursor::Cursor};
     use reth_db_api::{
         AccountsHistory,
@@ -57,7 +58,6 @@ mod tests {
         tables,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_ethereum_consensus::EthBeaconConsensus;
     use reth_ethereum_primitives::Block;
     use reth_evm_ethereum::EthEvmConfig;
     use reth_exex::ExExManagerHandle;
@@ -158,7 +158,7 @@ mod tests {
                 EthEvmConfig::ethereum(Arc::new(
                     ChainSpecBuilder::mainnet().berlin_activated().build(),
                 )),
-                Arc::new(EthBeaconConsensus::new(Arc::new(
+                Arc::new(TestConsensus::new(Arc::new(
                     ChainSpecBuilder::mainnet().berlin_activated().build(),
                 ))),
                 ExecutionStageThresholds {

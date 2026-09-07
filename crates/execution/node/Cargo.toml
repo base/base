@@ -80,7 +80,9 @@ reth-stages-types = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 reth-ethereum-forks = { workspace = true }
+base-common-rpc-types = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
+jsonrpsee = { workspace = true, features = ["client"] }
 reth-revm = { workspace = true, features = ["default", "std"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
@@ -96,6 +98,21 @@ harness = false
 [[test]]
 name = "e2e_testsuite"
 path = "tests/e2e-testsuite/main.rs"
+
+[[test]]
+name = "engine_tree"
+path = "tests/engine-tree/main.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "rocksdb"
+path = "tests/rocksdb/main.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "testsuite_framework"
+path = "tests/testsuite-framework/main.rs"
+required-features = ["test-utils"]
 
 [features]
 default = [ "reth-codec" ]

@@ -48,5 +48,5 @@ reth-ethereum-engine-primitives = { workspace = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 reth-tasks = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-node-ethereum = { workspace = true, features = ["default"] }
 reth-payload-builder = { workspace = true, features = ["test-utils"] }
+reth-engine-primitives = { workspace = true, features = ["test-utils"] }

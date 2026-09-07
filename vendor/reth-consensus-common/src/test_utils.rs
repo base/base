@@ -1,0 +1,127 @@
+//! Consensus fixture for testing storage and engine behavior with shared validation rules.
+//! This checks headers, bodies, and execution results without implementing a network's consensus
+//! or requiring a full execution node.
+
+use std::sync::Arc;
+
+use alloy_consensus::{BlockHeader as _, TxReceipt, proofs::calculate_receipt_root};
+use alloy_primitives::{B256, Bloom};
+use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks};
+use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
+use reth_execution_types::BlockExecutionResult;
+use reth_primitives_traits::{
+    Block, BlockHeader, GotExpected, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
+    receipt::gas_spent_by_transactions,
+};
+
+use crate::validation::{
+    validate_against_parent_hash_number, validate_against_parent_timestamp,
+    validate_block_pre_execution, validate_body_against_header, validate_header_base_fee,
+    validate_header_extra_data, validate_header_gas,
+};
+
+/// Shared validation fixture used by storage and engine tests.
+#[derive(Debug, Clone)]
+pub struct TestConsensus<C = ChainSpec> {
+    /// Fork schedule for the test's execution rules.
+    pub chain_spec: Arc<C>,
+}
+
+impl<C> TestConsensus<C> {
+    /// Creates a validation fixture.
+    pub const fn new(chain_spec: Arc<C>) -> Self {
+        Self { chain_spec }
+    }
+}
+
+impl<H, C> HeaderValidator<H> for TestConsensus<C>
+where
+    H: BlockHeader,
+    C: EthChainSpec<Header = H> + EthereumHardforks + core::fmt::Debug + Send + Sync,
+{
+    fn validate_header(&self, header: &SealedHeader<H>) -> Result<(), ConsensusError> {
+        validate_header_extra_data(header.header(), 32)?;
+        validate_header_gas(header.header())?;
+        validate_header_base_fee(header.header(), &self.chain_spec)
+    }
+
+    fn validate_header_against_parent(
+        &self,
+        header: &SealedHeader<H>,
+        parent: &SealedHeader<H>,
+    ) -> Result<(), ConsensusError> {
+        validate_against_parent_hash_number(header.header(), parent)?;
+        validate_against_parent_timestamp(header.header(), parent.header())
+    }
+}
+
+impl<B, C> Consensus<B> for TestConsensus<C>
+where
+    B: Block,
+    C: EthChainSpec<Header = B::Header> + EthereumHardforks + core::fmt::Debug + Send + Sync,
+{
+    fn validate_body_against_header(
+        &self,
+        body: &B::Body,
+        header: &SealedHeader<B::Header>,
+    ) -> Result<(), ConsensusError> {
+        validate_body_against_header(body, header.header())
+    }
+
+    fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {
+        validate_block_pre_execution(block, &self.chain_spec)
+    }
+}
+
+impl<N, C> FullConsensus<N> for TestConsensus<C>
+where
+    N: NodePrimitives,
+    C: EthChainSpec<Header = N::BlockHeader> + EthereumHardforks + core::fmt::Debug + Send + Sync,
+{
+    fn validate_block_post_execution(
+        &self,
+        block: &RecoveredBlock<N::Block>,
+        result: &BlockExecutionResult<N::Receipt>,
+        receipt_root_bloom: Option<ReceiptRootBloom>,
+        block_access_list_hash: Option<B256>,
+    ) -> Result<(), ConsensusError> {
+        if block.header().gas_used() != result.gas_used {
+            return Err(ConsensusError::BlockGasUsed {
+                gas: GotExpected::new(result.gas_used, block.header().gas_used()),
+                gas_spent_by_tx: gas_spent_by_transactions(&result.receipts),
+            });
+        }
+        if self.chain_spec.is_byzantium_active_at_block(block.header().number()) {
+            let (root, bloom) = receipt_root_bloom.unwrap_or_else(|| {
+                let receipts =
+                    result.receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
+                let root = calculate_receipt_root(&receipts);
+                let bloom = receipts.iter().fold(Bloom::ZERO, |bloom, r| bloom | r.bloom_ref());
+                (root, bloom)
+            });
+            if root != block.header().receipts_root() {
+                return Err(ConsensusError::BodyReceiptRootDiff(
+                    GotExpected::new(root, block.header().receipts_root()).into(),
+                ));
+            }
+            if bloom != block.header().logs_bloom() {
+                return Err(ConsensusError::BodyBloomLogDiff(
+                    GotExpected::new(bloom, block.header().logs_bloom()).into(),
+                ));
+            }
+        }
+        if let Some(actual) = block_access_list_hash
+            && self.chain_spec.is_amsterdam_active_at_timestamp(block.header().timestamp())
+            && actual != block.header().block_access_list_hash().unwrap_or_default()
+        {
+            return Err(ConsensusError::BlockAccessListHashMismatch(
+                GotExpected::new(
+                    actual,
+                    block.header().block_access_list_hash().unwrap_or_default(),
+                )
+                .into(),
+            ));
+        }
+        Ok(())
+    }
+}

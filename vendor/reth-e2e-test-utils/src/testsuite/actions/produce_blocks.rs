@@ -279,7 +279,10 @@ where
             let fcu_result = EngineApiClient::<Engine>::fork_choice_updated_v3(
                 &env.node_clients[producer_idx].engine.http_client(),
                 fork_choice_state,
-                Some(payload_attributes.clone().into()),
+                Some(env.payload_attributes_converter.map_or_else(
+                    || payload_attributes.clone().into(),
+                    |convert| convert(payload_attributes.clone()),
+                )),
             )
             .await?;
 
@@ -310,7 +313,10 @@ where
                 let fresh_fcu_result = EngineApiClient::<Engine>::fork_choice_updated_v3(
                     &env.node_clients[producer_idx].engine.http_client(),
                     fork_choice_state,
-                    Some(fresh_payload_attributes.clone().into()),
+                    Some(env.payload_attributes_converter.map_or_else(
+                        || fresh_payload_attributes.clone().into(),
+                        |convert| convert(fresh_payload_attributes.clone()),
+                    )),
                 )
                 .await?;
 

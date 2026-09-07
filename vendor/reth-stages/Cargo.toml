@@ -66,7 +66,6 @@ reth-static-file = { workspace = true }
 reth-evm-ethereum = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-testing-utils = { workspace = true }
-reth-ethereum-consensus = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, features = ["default"] }
@@ -76,6 +75,7 @@ reth-consensus = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["test-utils", "mdbx"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 reth-stages-api = { workspace = true, features = ["test-utils"] }
+reth-consensus-common = { workspace = true, features = ["test-utils"] }
 reth-ethereum-primitives = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }

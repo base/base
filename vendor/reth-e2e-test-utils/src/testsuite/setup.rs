@@ -1,6 +1,6 @@
 //! Test setup utilities for configuring the initial state.
 
-use std::{marker::PhantomData, path::Path, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
@@ -8,8 +8,7 @@ use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use eyre::{Result, eyre};
 use reth_chainspec::ChainSpec;
 use reth_ethereum_primitives::Block;
-use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState};
-use reth_node_api::{EngineTypes, NodeTypes, PayloadTypes, TreeConfig};
+use reth_node_api::{EngineTypes, PayloadTypes, TreeConfig};
 use reth_node_core::primitives::RecoveredBlock;
 use revm::state::EvmState;
 use tokio::{
@@ -22,7 +21,7 @@ use crate::{E2ETestSetupBuilder, NodeBuilderHelper, testsuite::Environment};
 
 /// Configuration for setting up test environment
 #[derive(Debug)]
-pub struct Setup<I> {
+pub struct Setup<I: EngineTypes> {
     /// Chain specification to use
     pub chain_spec: Option<Arc<ChainSpec>>,
     /// Genesis block to use
@@ -39,16 +38,13 @@ pub struct Setup<I> {
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Is this setup in dev mode
     pub is_dev: bool,
+    /// Conversion for chain-specific payload attributes.
+    pub payload_attributes_converter: Option<fn(PayloadAttributes) -> I::PayloadAttributes>,
     /// Tracks instance generic.
     _phantom: PhantomData<I>,
-    /// Holds the import result to keep nodes alive when using imported chain
-    /// This is stored as an option to avoid lifetime issues with `tokio::spawn`
-    import_result_holder: Option<crate::setup_import::ChainImportResult>,
-    /// Path to RLP file to import during setup
-    pub import_rlp_path: Option<std::path::PathBuf>,
 }
 
-impl<I> Default for Setup<I> {
+impl<I: EngineTypes> Default for Setup<I> {
     fn default() -> Self {
         Self {
             chain_spec: None,
@@ -60,13 +56,12 @@ impl<I> Default for Setup<I> {
             shutdown_tx: None,
             is_dev: true,
             _phantom: Default::default(),
-            import_result_holder: None,
-            import_rlp_path: None,
+            payload_attributes_converter: None,
         }
     }
 }
 
-impl<I> Drop for Setup<I> {
+impl<I: EngineTypes> Drop for Setup<I> {
     fn drop(&mut self) {
         // Send shutdown signal if the channel exists
         if let Some(tx) = self.shutdown_tx.take() {
@@ -79,6 +74,15 @@ impl<I> Setup<I>
 where
     I: EngineTypes,
 {
+    /// Supplies chain-specific fields when the framework creates payload attributes.
+    pub fn with_payload_attributes_converter(
+        mut self,
+        converter: fn(PayloadAttributes) -> I::PayloadAttributes,
+    ) -> Self {
+        self.payload_attributes_converter = Some(converter);
+        self
+    }
+
     /// Set the chain specification
     pub fn with_chain_spec(mut self, chain_spec: Arc<ChainSpec>) -> Self {
         self.chain_spec = Some(chain_spec);
@@ -127,49 +131,6 @@ where
         self
     }
 
-    /// Apply setup using pre-imported chain data from RLP file
-    pub async fn apply_with_import<N>(
-        &mut self,
-        env: &mut Environment<I>,
-        rlp_path: &Path,
-    ) -> Result<()>
-    where
-        N: NodeBuilderHelper<Payload = I>,
-    {
-        // Note: this future is quite large so we box it
-        Box::pin(self.apply_with_import_(env, rlp_path)).await
-    }
-
-    /// Apply setup using pre-imported chain data from RLP file
-    async fn apply_with_import_(
-        &mut self,
-        env: &mut Environment<I>,
-        rlp_path: &Path,
-    ) -> Result<()> {
-        // Create nodes with imported chain data
-        let import_result = self.create_nodes_with_import(rlp_path).await?;
-
-        // Extract node clients
-        let mut node_clients = Vec::new();
-        let nodes = &import_result.nodes;
-        for node in nodes {
-            let rpc = node
-                .rpc_client()
-                .ok_or_else(|| eyre!("Failed to create HTTP RPC client for node"))?;
-            let auth = node.auth_server_handle();
-            let url = node.rpc_url();
-            // TODO: Pass beacon_engine_handle once import system supports generic types
-            node_clients.push(crate::testsuite::NodeClient::new(rpc, auth, url));
-        }
-
-        // Store the import result to keep nodes alive
-        // They will be dropped when the Setup is dropped
-        self.import_result_holder = Some(import_result);
-
-        // Finalize setup - this will wait for nodes and initialize states
-        self.finalize_setup(env, node_clients, true).await
-    }
-
     /// Apply the setup to the environment
     pub async fn apply<N>(&mut self, env: &mut Environment<I>) -> Result<()>
     where
@@ -184,10 +145,6 @@ where
     where
         N: NodeBuilderHelper<Payload = I>,
     {
-        // If import_rlp_path is set, use apply_with_import instead
-        if let Some(rlp_path) = self.import_rlp_path.take() {
-            return self.apply_with_import::<N>(env, &rlp_path).await;
-        }
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;
 
@@ -198,7 +155,13 @@ where
         let node_count = self.network.node_count;
         let tree_config = self.tree_config.clone();
 
-        let attributes_generator = Self::create_static_attributes_generator::<N>();
+        let converter = self.payload_attributes_converter;
+        env.payload_attributes_converter = converter;
+        let attributes_generator = move |timestamp| {
+            let attributes = Self::static_attributes(timestamp);
+            converter
+                .map_or_else(|| attributes.clone().into(), |convert| convert(attributes.clone()))
+        };
 
         let builder = E2ETestSetupBuilder::<N, _>::new(
             node_count,
@@ -239,19 +202,9 @@ where
         self.finalize_setup(env, node_clients, false).await
     }
 
-    /// Create nodes with imported chain data
-    ///
-    /// Note: Currently this only supports `EthereumNode` due to the import process
-    /// being Ethereum-specific. The generic parameter N is kept for consistency
-    /// with other methods but is not used.
-    async fn create_nodes_with_import(
-        &self,
-        rlp_path: &Path,
-    ) -> Result<crate::setup_import::ChainImportResult> {
-        let chain_spec =
-            self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;
-
-        let attributes_generator = move |timestamp| PayloadAttributes {
+    /// Creates the shared portion of payload attributes.
+    pub fn static_attributes(timestamp: u64) -> PayloadAttributes {
+        PayloadAttributes {
             timestamp,
             prev_randao: B256::ZERO,
             suggested_fee_recipient: alloy_primitives::Address::ZERO,
@@ -259,36 +212,6 @@ where
             parent_beacon_block_root: Some(B256::ZERO),
             slot_number: None,
             target_gas_limit: None,
-        };
-
-        crate::setup_import::setup_engine_with_chain_import(
-            self.network.node_count,
-            chain_spec,
-            self.is_dev,
-            self.tree_config.clone(),
-            rlp_path,
-            attributes_generator,
-        )
-        .await
-    }
-
-    /// Create a static attributes generator that doesn't capture any instance data
-    fn create_static_attributes_generator<N>()
-    -> impl Fn(u64) -> <<N as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes + Copy + use<N, I>
-    where
-        N: NodeBuilderHelper<Payload = I>,
-    {
-        move |timestamp| {
-            PayloadAttributes {
-                timestamp,
-                prev_randao: B256::ZERO,
-                suggested_fee_recipient: alloy_primitives::Address::ZERO,
-                withdrawals: Some(vec![]),
-                parent_beacon_block_root: Some(B256::ZERO),
-                slot_number: None,
-                target_gas_limit: None,
-            }
-            .into()
         }
     }
 
@@ -344,15 +267,6 @@ where
             "Environment initialized with {} nodes, starting from block {} (hash: {})",
             self.network.node_count, initial_block_info.number, initial_block_info.hash
         );
-
-        // In test environments, explicitly set sync state to Idle after initialization
-        // This ensures that eth_syncing returns false as expected by tests
-        if let Some(import_result) = &self.import_result_holder {
-            for (idx, node_ctx) in import_result.nodes.iter().enumerate() {
-                debug!("Setting sync state to Idle for node {}", idx);
-                node_ctx.inner.network.update_sync_state(SyncState::Idle);
-            }
-        }
 
         Ok(())
     }

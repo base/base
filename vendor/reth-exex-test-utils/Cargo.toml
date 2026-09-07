@@ -32,11 +32,11 @@ reth-payload-builder = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+reth-ethereum-engine-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-consensus = { workspace = true, features = ["test-utils"] }
-reth-node-ethereum = { workspace = true, features = ["default"] }
 reth-evm-ethereum = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 reth-node-builder = { workspace = true, features = ["default", "test-utils"] }

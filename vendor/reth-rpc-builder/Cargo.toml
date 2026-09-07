@@ -68,7 +68,7 @@ reth-tasks = { workspace = true, features = ["test-utils"] }
 clap = { workspace = true, features = ["default", "derive"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-node-ethereum = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-payload-builder = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+reth-engine-primitives = { workspace = true, features = ["test-utils"] }

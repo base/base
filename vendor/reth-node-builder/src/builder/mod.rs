@@ -82,7 +82,7 @@ pub type RethFullAdapter<DB, Types> =
 /// configured components and can interact with the node.
 ///
 /// There are convenience functions for networks that come with a preset of types and components via
-/// the [`Node`] trait, see `reth_node_ethereum::EthereumNode`.
+/// the [`Node`] trait, implemented by Base’s node configuration.
 ///
 /// The [`NodeBuilder::node`] function configures the node's types and components in one step.
 ///
@@ -550,9 +550,9 @@ where
     /// use tower::layer::util::Identity;
     ///
     /// let builder = NodeBuilder::new(config)
-    ///     .with_types::<EthereumNode>()
-    ///     .with_components(EthereumNode::components())
-    ///     .with_add_ons(EthereumAddOns::default())
+    ///     .with_types::<BaseNode>()
+    ///     .with_components(BaseNode::components())
+    ///     .with_add_ons(BaseAddOns::default())
     ///     .map_add_ons(|addons| addons.with_rpc_middleware(Identity::default()));
     /// ```
     ///
@@ -602,7 +602,7 @@ where
     /// }
     ///
     /// let node = NodeBuilder::new(config)
-    ///     .node(EthereumNode::default())
+    ///     .node(BaseNode::default())
     ///     .extend_rpc_modules(|ctx| {
     ///         // Access node components, so they can used by the CustomApi
     ///         let pool = ctx.pool().clone();

@@ -6,13 +6,20 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_rpc_types_engine::PayloadAttributes;
+use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+use base_execution_payload_builder::BasePayloadBuilderAttributes;
+use base_protocol::L1BlockInfoEcotone;
+use reth_primitives_traits::WithEncoded;
+#[path = "../fixtures/mod.rs"]
+pub mod fixtures;
 use alloy_rpc_types_eth::{Transaction, TransactionInput, TransactionReceipt, TransactionRequest};
+use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+use base_node_core::BaseNode;
 use eyre::Result;
+use fixtures::BaseTestPayload;
 use jsonrpsee::core::client::ClientT;
-use reth_chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
 use reth_db::tables;
 use reth_e2e_test_utils::{E2ETestSetupBuilder, transaction::TransactionTestContext, wallet};
-use reth_node_ethereum::EthereumNode;
 use reth_provider::RocksDBProviderFactory;
 
 const ROCKSDB_POLL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -70,22 +77,22 @@ async fn poll_tx_in_rocksdb<P: RocksDBProviderFactory>(provider: &P, tx_hash: B2
 }
 
 /// Returns the test chain spec for `RocksDB` tests.
-fn test_chain_spec() -> Arc<ChainSpec> {
+fn test_chain_spec() -> Arc<BaseChainSpec> {
     Arc::new(
-        ChainSpecBuilder::default()
-            .chain(MAINNET.chain)
+        BaseChainSpecBuilder::default()
+            .chain(BaseChainSpec::mainnet().chain)
             .genesis(
-                serde_json::from_str(include_str!("../../src/testsuite/assets/genesis.json"))
+                serde_json::from_str(include_str!("../assets/genesis.json"))
                     .expect("failed to parse genesis.json"),
             )
-            .cancun_activated()
+            .ecotone_activated()
             .build(),
     )
 }
 
 /// Returns test payload attributes for the given timestamp.
-const fn test_attributes_generator(timestamp: u64) -> PayloadAttributes {
-    PayloadAttributes {
+fn test_attributes_generator(timestamp: u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+    let mut attributes = BaseTestPayload::attributes(PayloadAttributes {
         timestamp,
         prev_randao: B256::ZERO,
         suggested_fee_recipient: alloy_primitives::Address::ZERO,
@@ -93,7 +100,17 @@ const fn test_attributes_generator(timestamp: u64) -> PayloadAttributes {
         parent_beacon_block_root: Some(B256::ZERO),
         slot_number: None,
         target_gas_limit: None,
-    }
+    });
+    let deposit = BaseTxEnvelope::from(TxDeposit {
+        source_hash: B256::from(U256::from(timestamp)),
+        from: alloy_primitives::address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001"),
+        to: TxKind::Call(alloy_primitives::address!("4200000000000000000000000000000000000015")),
+        gas_limit: 1_000_000,
+        input: L1BlockInfoEcotone::default().encode_calldata(),
+        ..Default::default()
+    });
+    attributes.transactions.push(WithEncoded::new(deposit.encoded_2718().into(), deposit));
+    attributes
 }
 
 /// Smoke test: node boots with `RocksDB` routing enabled.
@@ -104,7 +121,7 @@ async fn test_rocksdb_node_startup() -> Result<()> {
     let chain_spec = test_chain_spec();
 
     let (nodes, _wallet) =
-        E2ETestSetupBuilder::<EthereumNode, _>::new(1, chain_spec, test_attributes_generator)
+        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec, test_attributes_generator)
             .build()
             .await?;
 
@@ -131,7 +148,7 @@ async fn test_rocksdb_block_mining() -> Result<()> {
     let chain_id = chain_spec.chain().id();
 
     let (mut nodes, _wallet) =
-        E2ETestSetupBuilder::<EthereumNode, _>::new(1, chain_spec, test_attributes_generator)
+        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec, test_attributes_generator)
             .build()
             .await?;
 
@@ -183,16 +200,13 @@ async fn test_rocksdb_transaction_queries() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) = E2ETestSetupBuilder::<EthereumNode, _>::new(
-        1,
-        chain_spec.clone(),
-        test_attributes_generator,
-    )
-    .with_tree_config_modifier(|config| {
-        config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-    })
-    .build()
-    .await?;
+    let (mut nodes, _) =
+        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
+            .with_tree_config_modifier(|config| {
+                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+            })
+            .build()
+            .await?;
 
     assert_eq!(nodes.len(), 1);
 
@@ -223,7 +237,7 @@ async fn test_rocksdb_transaction_queries() -> Result<()> {
 
     // Direct RocksDB assertion - poll with timeout since persistence is async
     let tx_number = poll_tx_in_rocksdb(&nodes[0].inner.provider, tx_hash).await;
-    assert_eq!(tx_number, 0, "First tx should have TxNumber 0");
+    assert_eq!(tx_number, 1, "User transaction follows the L1-info deposit");
 
     // Verify missing hash returns None
     let missing_hash = B256::from([0xde; 32]);
@@ -251,16 +265,13 @@ async fn test_rocksdb_multi_tx_same_block() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) = E2ETestSetupBuilder::<EthereumNode, _>::new(
-        1,
-        chain_spec.clone(),
-        test_attributes_generator,
-    )
-    .with_tree_config_modifier(|config| {
-        config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-    })
-    .build()
-    .await?;
+    let (mut nodes, _) =
+        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
+            .with_tree_config_modifier(|config| {
+                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+            })
+            .build()
+            .await?;
 
     // Create 3 txs from the same wallet with sequential nonces
     let wallets = wallet::Wallet::new(1).with_chain_id(chain_id).wallet_gen();
@@ -286,10 +297,10 @@ async fn test_rocksdb_multi_tx_same_block() -> Result<()> {
     assert_eq!(payload.block().number(), 1);
 
     // Verify block contains all 3 txs
-    let block: Option<alloy_rpc_types_eth::Block> =
+    let block: Option<base_common_rpc_types::BaseBlockResponse> =
         client.request("eth_getBlockByNumber", ("0x1", true)).await?;
     let block = block.expect("Block 1 should exist");
-    assert_eq!(block.transactions.len(), 3, "Block should contain 3 txs");
+    assert_eq!(block.transactions.len(), 4, "Block should contain the deposit and 3 user txs");
 
     // Verify each tx via RPC
     for tx_hash in &tx_hashes {
@@ -305,9 +316,9 @@ async fn test_rocksdb_multi_tx_same_block() -> Result<()> {
         tx_numbers.push(n);
     }
 
-    // Verify tx_numbers form the set {0, 1, 2}
+    // User transactions follow the L1-info deposit at index 0
     tx_numbers.sort();
-    assert_eq!(tx_numbers, vec![0, 1, 2], "TxNumbers should be 0, 1, 2");
+    assert_eq!(tx_numbers, vec![1, 2, 3], "User transaction numbers should follow the deposit");
 
     Ok(())
 }
@@ -320,16 +331,13 @@ async fn test_rocksdb_txs_across_blocks() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) = E2ETestSetupBuilder::<EthereumNode, _>::new(
-        1,
-        chain_spec.clone(),
-        test_attributes_generator,
-    )
-    .with_tree_config_modifier(|config| {
-        config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-    })
-    .build()
-    .await?;
+    let (mut nodes, _) =
+        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
+            .with_tree_config_modifier(|config| {
+                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+            })
+            .build()
+            .await?;
 
     let wallets = wallet::Wallet::new(1).with_chain_id(chain_id).wallet_gen();
     let signer = wallets[0].clone();
@@ -386,9 +394,9 @@ async fn test_rocksdb_txs_across_blocks() -> Result<()> {
         tx_numbers.push(n);
     }
 
-    // Verify they form a continuous sequence {0, 1, 2}
+    // L1-info deposits occupy indices 0 and 3 across the two blocks
     tx_numbers.sort();
-    assert_eq!(tx_numbers, vec![0, 1, 2], "TxNumbers should be globally continuous: 0, 1, 2");
+    assert_eq!(tx_numbers, vec![1, 2, 4], "Global numbering includes each block's L1-info deposit");
 
     // Re-query block 1 txs after block 2 is mined (regression guard)
     let tx0_again: Option<Transaction> =
@@ -406,16 +414,13 @@ async fn test_rocksdb_pending_tx_not_in_storage() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) = E2ETestSetupBuilder::<EthereumNode, _>::new(
-        1,
-        chain_spec.clone(),
-        test_attributes_generator,
-    )
-    .with_tree_config_modifier(|config| {
-        config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-    })
-    .build()
-    .await?;
+    let (mut nodes, _) =
+        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
+            .with_tree_config_modifier(|config| {
+                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+            })
+            .build()
+            .await?;
 
     let wallets = wallet::Wallet::new(1).with_chain_id(chain_id).wallet_gen();
     let signer = wallets[0].clone();
@@ -448,7 +453,7 @@ async fn test_rocksdb_pending_tx_not_in_storage() -> Result<()> {
 
     // Poll until tx appears in RocksDB
     let tx_number = poll_tx_in_rocksdb(&nodes[0].inner.provider, tx_hash).await;
-    assert_eq!(tx_number, 0, "First tx should have tx_number 0");
+    assert_eq!(tx_number, 1, "User transaction follows the L1-info deposit");
 
     // Verify tx is now mined via RPC
     let mined_tx: Option<Transaction> =
@@ -466,16 +471,13 @@ async fn test_rocksdb_reorg_unwind() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) = E2ETestSetupBuilder::<EthereumNode, _>::new(
-        1,
-        chain_spec.clone(),
-        test_attributes_generator,
-    )
-    .with_tree_config_modifier(|config| {
-        config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-    })
-    .build()
-    .await?;
+    let (mut nodes, _) =
+        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
+            .with_tree_config_modifier(|config| {
+                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+            })
+            .build()
+            .await?;
 
     assert_eq!(nodes.len(), 1);
 
@@ -497,7 +499,7 @@ async fn test_rocksdb_reorg_unwind() -> Result<()> {
 
     // Poll until tx1 appears in RocksDB (ensures persistence happened)
     let tx_number1 = poll_tx_in_rocksdb(&nodes[0].inner.provider, tx_hash1).await;
-    assert_eq!(tx_number1, 0, "First tx should have tx_number 0");
+    assert_eq!(tx_number1, 1, "Global numbering includes L1-info deposits");
 
     // Mine block 2 with transaction from signer1 (nonce 1)
     let raw_tx2 =
@@ -510,7 +512,7 @@ async fn test_rocksdb_reorg_unwind() -> Result<()> {
 
     // Poll until tx2 appears in RocksDB
     let tx_number2 = poll_tx_in_rocksdb(&nodes[0].inner.provider, tx_hash2).await;
-    assert_eq!(tx_number2, 1, "Second tx should have tx_number 1");
+    assert_eq!(tx_number2, 3, "Global numbering includes L1-info deposits");
 
     // Mine block 3 with transaction from signer1 (nonce 2)
     let raw_tx3 =
@@ -523,7 +525,7 @@ async fn test_rocksdb_reorg_unwind() -> Result<()> {
 
     // Poll until tx3 appears in RocksDB
     let tx_number3 = poll_tx_in_rocksdb(&nodes[0].inner.provider, tx_hash3).await;
-    assert_eq!(tx_number3, 2, "Third tx should have tx_number 2");
+    assert_eq!(tx_number3, 5, "Global numbering includes L1-info deposits");
 
     // Now create an alternate block 2 using signer2 (different wallet, avoids nonce conflict)
     // Inject a tx from signer2 (nonce 0) before building the alternate block
@@ -547,7 +549,7 @@ async fn test_rocksdb_reorg_unwind() -> Result<()> {
 
     // Verify we can still query transactions and the chain is consistent
     // If unwind_trie_state_from failed, this would have errored during reorg
-    let latest: Option<alloy_rpc_types_eth::Block> =
+    let latest: Option<base_common_rpc_types::BaseBlockResponse> =
         client.request("eth_getBlockByNumber", ("latest", false)).await?;
     let latest = latest.expect("Latest block should exist");
     // The alt block is at height 4 (on top of block 3)
@@ -590,16 +592,13 @@ async fn test_rocksdb_historical_account_queries() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) = E2ETestSetupBuilder::<EthereumNode, _>::new(
-        1,
-        chain_spec.clone(),
-        test_attributes_generator,
-    )
-    .with_tree_config_modifier(|config| {
-        config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-    })
-    .build()
-    .await?;
+    let (mut nodes, _) =
+        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
+            .with_tree_config_modifier(|config| {
+                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+            })
+            .build()
+            .await?;
 
     assert_eq!(nodes.len(), 1);
 
@@ -738,22 +737,19 @@ async fn test_rocksdb_account_history_pruning() -> Result<()> {
     const PRUNE_DISTANCE: u64 = 5;
     const TOTAL_BLOCKS: u64 = 20;
 
-    let (mut nodes, _) = E2ETestSetupBuilder::<EthereumNode, _>::new(
-        1,
-        chain_spec.clone(),
-        test_attributes_generator,
-    )
-    .with_tree_config_modifier(|config| {
-        config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-    })
-    .with_node_config_modifier(|mut config| {
-        config.pruning.account_history_distance = Some(PRUNE_DISTANCE);
-        config.pruning.minimum_distance = Some(PRUNE_DISTANCE);
-        config.pruning.block_interval = Some(1);
-        config
-    })
-    .build()
-    .await?;
+    let (mut nodes, _) =
+        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
+            .with_tree_config_modifier(|config| {
+                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+            })
+            .with_node_config_modifier(|mut config| {
+                config.pruning.account_history_distance = Some(PRUNE_DISTANCE);
+                config.pruning.minimum_distance = Some(PRUNE_DISTANCE);
+                config.pruning.block_interval = Some(1);
+                config
+            })
+            .build()
+            .await?;
 
     assert_eq!(nodes.len(), 1);
 
@@ -836,22 +832,19 @@ async fn test_rocksdb_storage_history_pruning() -> Result<()> {
     const PRUNE_DISTANCE: u64 = 5;
     const TOTAL_BLOCKS: u64 = 20;
 
-    let (mut nodes, _) = E2ETestSetupBuilder::<EthereumNode, _>::new(
-        1,
-        chain_spec.clone(),
-        test_attributes_generator,
-    )
-    .with_tree_config_modifier(|config| {
-        config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-    })
-    .with_node_config_modifier(|mut config| {
-        config.pruning.storage_history_distance = Some(PRUNE_DISTANCE);
-        config.pruning.minimum_distance = Some(PRUNE_DISTANCE);
-        config.pruning.block_interval = Some(1);
-        config
-    })
-    .build()
-    .await?;
+    let (mut nodes, _) =
+        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
+            .with_tree_config_modifier(|config| {
+                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+            })
+            .with_node_config_modifier(|mut config| {
+                config.pruning.storage_history_distance = Some(PRUNE_DISTANCE);
+                config.pruning.minimum_distance = Some(PRUNE_DISTANCE);
+                config.pruning.block_interval = Some(1);
+                config
+            })
+            .build()
+            .await?;
 
     assert_eq!(nodes.len(), 1);
 

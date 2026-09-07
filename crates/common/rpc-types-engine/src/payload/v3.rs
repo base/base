@@ -1,7 +1,7 @@
 //! Execution payload envelope V3.
 
 use alloy_primitives::{B256, U256};
-use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3};
+use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadEnvelopeV3, ExecutionPayloadV3};
 
 /// This structure maps to the return value of `engine_getPayload` in the beacon chain spec, for
 /// V3.
@@ -23,6 +23,19 @@ pub struct BaseExecutionPayloadEnvelopeV3 {
     pub should_override_builder: bool,
     /// Ecotone parent beacon block root
     pub parent_beacon_block_root: B256,
+}
+
+impl From<BaseExecutionPayloadEnvelopeV3> for ExecutionPayloadEnvelopeV3 {
+    /// Extracts the shared envelope fields; the Base parent beacon root is carried separately
+    /// when submitting the payload through the Engine API.
+    fn from(value: BaseExecutionPayloadEnvelopeV3) -> Self {
+        Self {
+            execution_payload: value.execution_payload,
+            block_value: value.block_value,
+            blobs_bundle: value.blobs_bundle,
+            should_override_builder: value.should_override_builder,
+        }
+    }
 }
 
 #[cfg(test)]

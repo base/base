@@ -4,11 +4,11 @@ use alloy_rpc_types_engine::{ClientCode, ClientVersionV1};
 use reth_chainspec::MAINNET;
 use reth_consensus::noop::NoopConsensus;
 use reth_engine_primitives::ConsensusEngineHandle;
+use reth_engine_primitives::test_utils::TestEngineValidator;
 use reth_ethereum_engine_primitives::EthEngineTypes;
 use reth_ethereum_primitives::EthPrimitives;
 use reth_evm_ethereum::EthEvmConfig;
 use reth_network_api::noop::NoopNetwork;
-use reth_node_ethereum::EthereumEngineValidator;
 use reth_payload_builder::test_utils::spawn_test_payload_service;
 use reth_provider::test_utils::NoopProvider;
 use reth_rpc_builder::{
@@ -64,7 +64,7 @@ where
         Runtime::test(),
         client,
         EngineCapabilities::default(),
-        EthereumEngineValidator::new(MAINNET.clone()),
+        TestEngineValidator::new(MAINNET.clone()),
         false,
         NoopNetwork::default(),
     );

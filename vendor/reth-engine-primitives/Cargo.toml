@@ -30,6 +30,7 @@ reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 reth-evm = { workspace = true, optional = true }
+reth-chainspec = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-payload-primitives = { workspace = true, features = ["default"] }
@@ -38,6 +39,7 @@ reth-payload-builder-primitives = { workspace = true, optional = true }
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 [features]
+test-utils = ["std", "dep:reth-chainspec"]
 default = ["std"]
 trie-debug = []
 std = [

@@ -11,3 +11,9 @@
 
 /// Collection of consensus validation methods.
 pub mod validation;
+
+/// Fixtures for tests of the shared execution infrastructure.
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
+#[cfg(feature = "test-utils")]
+pub use test_utils::TestConsensus;

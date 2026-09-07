@@ -26,29 +26,15 @@ use reth_db::{
     },
 };
 use reth_db_common::init::init_genesis;
-use reth_ethereum_primitives::{EthPrimitives, TransactionSigned};
+use reth_ethereum_engine_primitives::EthEngineTypes;
+use reth_ethereum_primitives::EthPrimitives;
 use reth_evm_ethereum::MockEvmConfig;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
-use reth_network::{NetworkConfigBuilder, NetworkManager, config::rng_secret_key};
-use reth_node_api::{
-    FullNodeTypes, FullNodeTypesAdapter, NodePrimitives, NodeTypes, NodeTypesWithDBAdapter,
-};
-use reth_node_builder::{
-    BuilderContext, Node, NodeAdapter, RethFullAdapter,
-    components::{
-        BasicPayloadServiceBuilder, Components, ComponentsBuilder, ConsensusBuilder,
-        ExecutorBuilder, PoolBuilder,
-    },
-};
+use reth_network::{NetworkConfigBuilder, NetworkHandle, NetworkManager, config::rng_secret_key};
+use reth_node_api::{FullNodeTypesAdapter, NodeTypes, NodeTypesWithDBAdapter};
+use reth_node_builder::{NodeAdapter, components::Components};
 use reth_node_core::node_config::NodeConfig;
-use reth_node_ethereum::{
-    EthEngineTypes,
-    node::{
-        EthereumAddOns, EthereumEngineValidatorBuilder, EthereumEthApiBuilder,
-        EthereumNetworkBuilder, EthereumPayloadBuilder,
-    },
-};
 use reth_payload_builder::noop::NoopPayloadBuilderService;
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{
@@ -61,62 +47,8 @@ use tempfile::TempDir;
 use thiserror::Error;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 
-/// A test [`PoolBuilder`] that builds a [`TestPool`].
+/// Node types for storage-backed execution-extension tests.
 #[derive(Debug, Default, Clone, Copy)]
-#[non_exhaustive]
-pub struct TestPoolBuilder;
-
-impl<Node, Evm: Send> PoolBuilder<Node, Evm> for TestPoolBuilder
-where
-    Node: FullNodeTypes<Types: NodeTypes<Primitives: NodePrimitives<SignedTx = TransactionSigned>>>,
-{
-    type Pool = TestPool;
-
-    async fn build_pool(
-        self,
-        _ctx: &BuilderContext<Node>,
-        _evm_config: Evm,
-    ) -> eyre::Result<Self::Pool> {
-        Ok(testing_pool())
-    }
-}
-
-/// A test [`ExecutorBuilder`] that builds a [`MockEvmConfig`] for testing.
-#[derive(Debug, Default, Clone, Copy)]
-#[non_exhaustive]
-pub struct TestExecutorBuilder;
-
-impl<Node> ExecutorBuilder<Node> for TestExecutorBuilder
-where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives>>,
-{
-    type EVM = MockEvmConfig;
-
-    async fn build_evm(self, _ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        let evm_config = MockEvmConfig::default();
-        Ok(evm_config)
-    }
-}
-
-/// A test [`ConsensusBuilder`] that builds a [`TestConsensus`].
-#[derive(Debug, Default, Clone, Copy)]
-#[non_exhaustive]
-pub struct TestConsensusBuilder;
-
-impl<Node> ConsensusBuilder<Node> for TestConsensusBuilder
-where
-    Node: FullNodeTypes,
-{
-    type Consensus = Arc<TestConsensus>;
-
-    async fn build_consensus(self, _ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
-        Ok(Arc::new(TestConsensus::default()))
-    }
-}
-
-/// A test [`Node`].
-#[derive(Debug, Default, Clone, Copy)]
-#[non_exhaustive]
 pub struct TestNode;
 
 impl NodeTypes for TestNode {
@@ -126,41 +58,20 @@ impl NodeTypes for TestNode {
     type Payload = EthEngineTypes;
 }
 
-impl<N> Node<N> for TestNode
-where
-    N: FullNodeTypes<Types = Self>,
-{
-    type ComponentsBuilder = ComponentsBuilder<
-        N,
-        TestPoolBuilder,
-        BasicPayloadServiceBuilder<EthereumPayloadBuilder>,
-        EthereumNetworkBuilder,
-        TestExecutorBuilder,
-        TestConsensusBuilder,
-    >;
-    type AddOns =
-        EthereumAddOns<NodeAdapter<N>, EthereumEthApiBuilder, EthereumEngineValidatorBuilder>;
-
-    fn components_builder(&self) -> Self::ComponentsBuilder {
-        ComponentsBuilder::default()
-            .node_types::<N>()
-            .pool(TestPoolBuilder::default())
-            .executor(TestExecutorBuilder::default())
-            .payload(BasicPayloadServiceBuilder::default())
-            .network(EthereumNetworkBuilder::default())
-            .consensus(TestConsensusBuilder::default())
-    }
-
-    fn add_ons(&self) -> Self::AddOns {
-        EthereumAddOns::default()
-    }
-}
-
 /// A shared [`TempDatabase`] used for testing
 pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
 /// The [`NodeAdapter`] for the [`TestExExContext`]. Contains type necessary to
 /// boot the testing environment
-pub type Adapter = NodeAdapter<RethFullAdapter<TmpDB, TestNode>>;
+pub type TestFullNodeTypes = FullNodeTypesAdapter<
+    TestNode,
+    TmpDB,
+    BlockchainProvider<NodeTypesWithDBAdapter<TestNode, TmpDB>>,
+>;
+/// Components needed by an execution extension, without a node launcher or RPC addons.
+pub type Adapter = NodeAdapter<
+    TestFullNodeTypes,
+    Components<TestFullNodeTypes, NetworkHandle, TestPool, MockEvmConfig, Arc<TestConsensus>>,
+>;
 /// An [`ExExContext`] using the [`Adapter`] type.
 pub type TestExExContext = ExExContext<Adapter>;
 

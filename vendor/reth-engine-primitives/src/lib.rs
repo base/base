@@ -260,3 +260,9 @@ pub trait PayloadValidator<Types: PayloadTypes>: Send + Sync + Unpin + 'static {
         Ok(())
     }
 }
+
+/// Fixtures for tests of the shared execution infrastructure.
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
+#[cfg(feature = "test-utils")]
+pub use test_utils::TestEngineValidator;

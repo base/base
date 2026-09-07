@@ -14,19 +14,17 @@ Before this change, `cargo tree --offline -p base -e normal,build` reached **106
 
 - **Deleted `reth-era`, `reth-era-downloader`, and `reth-era-utils`.** Removed ERA import/export command implementations, the ERA stage, stage selection, pipeline arguments, node flags, ERA configuration, workspace dependencies, and associated fixtures. Base's exposed maintenance command enums did not offer import/export-era, but ERA was still compiled and available through node configuration and pipeline setup.
 - **Removed `reth-node-ethereum` from `base-builder-core`.** No Rust source reference to that dependency was found in the builder crate. Removed its test-utils feature forwarding as well. This also removes `reth-ethereum-consensus` and `reth-ethereum-payload-builder` from the Base production graph.
-- **Kept the three Ethereum implementation crates in the workspace for existing tests.** `reth-e2e-test-utils/src/setup_import.rs`, `reth-exex-test-utils/src/lib.rs`, and engine/builder/RPC tests still use the Ethereum node. Stages and engine-tree tests also use Ethereum consensus. These are concrete blockers to deleting those directories, separate from removing them from the binary build.
+- **Deleted the three Ethereum implementation crates after migrating their consumers.** Engine-tree, RocksDB, and test-harness end-to-end scenarios now run under `base-node-core` against `BaseNode`. Shared engine, stage, RPC, and ExEx tests use component fixtures. Removed the Ethereum RLP-import test launcher and its format-specific scenario; Base initialization and maintenance commands remain available.
 - Removed dependencies left unused by ERA deletion. `url` moved to a dev-dependency of `reth-config` because its bootnode tests still use it.
 - Made the existing `revm/p256-aws-lc-rs` production feature explicit in `base-node-core`; previously the unused Ethereum node dependency enabled it. Removing a dependency should not silently change the cryptographic backend used by Base.
 
 Older configuration files containing `[stages.era]` can still load via the existing unknown-field handling. Saving configuration drops that obsolete section. `--era.enable`, `--era.path`, and `--era.url` are rejected. Stage checkpoints use string keys, so removing the ERA identifier does not renumber the remaining checkpoint keys.
 
-## Next removal candidates
+## Follow-up removal work
 
-### Ethereum node test fixtures
+### Ethereum node test fixtures (completed)
 
-Migrate the Ethereum-specific fixtures in `reth-e2e-test-utils` and `reth-exex-test-utils`, plus the node-builder, engine-tree, RPC engine, RPC builder, and stages tests. Then delete `reth-node-ethereum`, `reth-ethereum-consensus`, and `reth-ethereum-payload-builder` from the workspace and lockfile. Keep shared storage, execution, and pipeline behavior coverage; merely disabling all those tests would lose useful Base coverage.
-
-A direct dependency from a vendored low-level crate back into `base-node-core` can create a cycle: Base already depends on those crates. Put Base integration fixtures/tests above the execution libraries, or use generic test helpers and small component implementations at the appropriate layer.
+The three implementation crates are deleted. Base integration tests sit above the shared execution libraries to avoid introducing dependency cycles. RocksDB fixtures include an Ecotone L1-info deposit and use Base RPC block types. Generic tests retain shared validation and storage coverage.
 
 ### `reth-evm-ethereum`
 
@@ -123,10 +121,10 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-errors](../../vendor/reth-errors/Cargo.toml) | Consolidate; retain required code |
 | [reth-eth-wire](../../vendor/reth-eth-wire/Cargo.toml) | Retain shared infrastructure |
 | [reth-eth-wire-types](../../vendor/reth-eth-wire-types/Cargo.toml) | Retain shared infrastructure |
-| [reth-ethereum-consensus](../../vendor/reth-ethereum-consensus/Cargo.toml) | Removed from Base build; test migration remains |
+| `reth-ethereum-consensus` | Deleted after fixture migration |
 | [reth-ethereum-engine-primitives](../../vendor/reth-ethereum-engine-primitives/Cargo.toml) | Remove after Ethereum implementation cleanup |
 | [reth-ethereum-forks](../../vendor/reth-ethereum-forks/Cargo.toml) | Consolidate; retain required code |
-| [reth-ethereum-payload-builder](../../vendor/reth-ethereum-payload-builder/Cargo.toml) | Removed from Base build; test migration remains |
+| `reth-ethereum-payload-builder` | Deleted after fixture migration |
 | [reth-ethereum-primitives](../../vendor/reth-ethereum-primitives/Cargo.toml) | Consolidate; retain required code |
 | [reth-etl](../../vendor/reth-etl/Cargo.toml) | Retain shared infrastructure |
 | [reth-evm](../../vendor/reth-evm/Cargo.toml) | Retain shared infrastructure |
@@ -154,7 +152,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-node-api](../../vendor/reth-node-api/Cargo.toml) | Consolidate; retain required code |
 | [reth-node-builder](../../vendor/reth-node-builder/Cargo.toml) | Retain shared infrastructure |
 | [reth-node-core](../../vendor/reth-node-core/Cargo.toml) | Retain shared infrastructure |
-| [reth-node-ethereum](../../vendor/reth-node-ethereum/Cargo.toml) | Removed from Base build; test migration remains |
+| `reth-node-ethereum` | Deleted after fixture migration |
 | [reth-node-ethstats](../../vendor/reth-node-ethstats/Cargo.toml) | Optional capability; separate removal decision |
 | [reth-node-events](../../vendor/reth-node-events/Cargo.toml) | Retain shared infrastructure |
 | [reth-node-metrics](../../vendor/reth-node-metrics/Cargo.toml) | Retain shared infrastructure |

@@ -255,9 +255,9 @@ where
     /// use tower::layer::util::Identity;
     ///
     /// let builder = NodeBuilder::new(config)
-    ///     .with_types::<EthereumNode>()
-    ///     .with_components(EthereumNode::components())
-    ///     .with_add_ons(EthereumAddOns::default())
+    ///     .with_types::<BaseNode>()
+    ///     .with_components(BaseNode::components())
+    ///     .with_add_ons(BaseAddOns::default())
     ///     .map_add_ons(|addons| addons.with_rpc_middleware(Identity::default()));
     /// ```
     ///
@@ -320,16 +320,19 @@ where
 
 #[cfg(test)]
 mod test {
+    use reth_chainspec::ChainSpec;
     use reth_consensus::noop::NoopConsensus;
     use reth_db_api::mock::DatabaseMock;
     use reth_ethereum_engine_primitives::EthEngineTypes;
+    use reth_ethereum_primitives::EthPrimitives;
     use reth_evm::noop::NoopEvmConfig;
     use reth_evm_ethereum::MockEvmConfig;
     use reth_network::EthNetworkPrimitives;
     use reth_network_api::noop::NoopNetwork;
+    use reth_node_api::AnyNodeTypes;
     use reth_node_api::FullNodeTypesAdapter;
-    use reth_node_ethereum::EthereumNode;
     use reth_payload_builder::PayloadBuilderHandle;
+    use reth_provider::EthStorage;
     use reth_provider::noop::NoopProvider;
     use reth_tasks::Runtime;
     use reth_transaction_pool::noop::NoopTransactionPool;
@@ -340,7 +343,11 @@ mod test {
     #[test]
     fn test_noop_components() {
         let components = Components::<
-            FullNodeTypesAdapter<EthereumNode, DatabaseMock, NoopProvider>,
+            FullNodeTypesAdapter<
+                AnyNodeTypes<EthPrimitives, ChainSpec, EthStorage, EthEngineTypes>,
+                DatabaseMock,
+                NoopProvider,
+            >,
             NoopNetwork<EthNetworkPrimitives>,
             _,
             NoopEvmConfig<MockEvmConfig>,

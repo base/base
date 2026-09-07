@@ -21,8 +21,8 @@ use alloy_rpc_types_engine::{
 use assert_matches::assert_matches;
 use reth_chain_state::{BlockState, test_utils::TestBlockBuilder};
 use reth_chainspec::{ChainSpec, HOLESKY, MAINNET};
+use reth_consensus_common::test_utils::TestConsensus;
 use reth_engine_primitives::{EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook};
-use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_ethereum_engine_primitives::{EthEngineTypes, EthPayloadAttributes};
 use reth_ethereum_primitives::{Block, EthPrimitives};
 use reth_evm_ethereum::MockEvmConfig;
@@ -200,7 +200,7 @@ impl TestHarness {
     ) -> Self {
         let persistence_handle = PersistenceHandle::new(action_tx);
 
-        let consensus = Arc::new(EthBeaconConsensus::new(chain_spec.clone()));
+        let consensus = Arc::new(TestConsensus::new(chain_spec.clone()));
 
         let provider = MockEthProvider::default();
 
@@ -430,7 +430,7 @@ impl ValidatorTestHarness {
         let harness = TestHarness::new(chain_spec.clone());
 
         // Create validator identical to the one in TestHarness
-        let consensus = Arc::new(EthBeaconConsensus::new(chain_spec));
+        let consensus = Arc::new(TestConsensus::new(chain_spec));
         let provider = harness.provider.clone();
         let payload_validator = MockEngineValidator;
         let evm_config = MockEvmConfig::default();

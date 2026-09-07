@@ -73,7 +73,6 @@ reth-prune-types = { workspace = true }
 reth-static-file = { workspace = true }
 reth-testing-utils = { workspace = true }
 reth-e2e-test-utils = { workspace = true }
-reth-ethereum-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 reth-ethereum-engine-primitives = { workspace = true }
@@ -86,13 +85,10 @@ reth-tracing = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 reth-stages = { workspace = true, features = ["test-utils"] }
 reth-exex-types = { workspace = true, features = ["default"] }
-reth-node-ethereum = { workspace = true, features = ["default"] }
 reth-chain-state = { workspace = true, features = ["test-utils"] }
 reth-evm-ethereum = { workspace = true, features = ["test-utils"] }
+reth-consensus-common = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
-[[test]]
-name = "e2e_testsuite"
-path = "tests/e2e-testsuite/main.rs"
 
 [features]
 test-utils = [
@@ -118,7 +114,6 @@ test-utils = [
     "reth-prune-types?/test-utils",
     "reth-trie-parallel/test-utils",
     "reth-ethereum-primitives/test-utils",
-    "reth-node-ethereum/test-utils",
     "reth-tasks/test-utils",
     "reth-execution-cache/test-utils",
     "reth-evm-ethereum/test-utils",

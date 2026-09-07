@@ -1624,13 +1624,13 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use reth_chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
+    use reth_engine_primitives::test_utils::TestEngineValidator;
     use reth_engine_primitives::{BeaconEngineMessage, OnForkChoiceUpdated};
     use reth_ethereum_engine_primitives::EthEngineTypes;
     use reth_ethereum_primitives::Block;
     use reth_network_api::{
         EthProtocolInfo, NetworkError, NetworkInfo, NetworkStatus, noop::NoopNetwork,
     };
-    use reth_node_ethereum::EthereumEngineValidator;
     use reth_payload_builder::test_utils::spawn_test_payload_service;
     use reth_provider::{BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider};
     use reth_tasks::Runtime;
@@ -1645,7 +1645,7 @@ mod tests {
             Arc<MockEthProvider>,
             EthEngineTypes,
             NoopTransactionPool,
-            EthereumEngineValidator,
+            TestEngineValidator,
             ChainSpec,
         >,
     ) {
@@ -1670,7 +1670,7 @@ mod tests {
             task_executor,
             client,
             EngineCapabilities::default(),
-            EthereumEngineValidator::new(chain_spec.clone()),
+            TestEngineValidator::new(chain_spec.clone()),
             false,
             NoopNetwork::default(),
         );
@@ -1735,7 +1735,7 @@ mod tests {
             Runtime::test(),
             client,
             EngineCapabilities::default(),
-            EthereumEngineValidator::new(chain_spec),
+            TestEngineValidator::new(chain_spec),
             false,
             NoopNetwork::default(),
         );
@@ -1790,7 +1790,7 @@ mod tests {
             Runtime::test(),
             client,
             EngineCapabilities::default(),
-            EthereumEngineValidator::new(chain_spec),
+            TestEngineValidator::new(chain_spec),
             false,
             NoopNetwork::default(),
         );
@@ -1860,7 +1860,7 @@ mod tests {
                 commit: "test".to_string(),
             },
             EngineCapabilities::default(),
-            EthereumEngineValidator::new(chain_spec),
+            TestEngineValidator::new(chain_spec),
             false,
             NoopNetwork::default(),
         );
@@ -1962,7 +1962,7 @@ mod tests {
                 commit: "test".to_string(),
             },
             EngineCapabilities::default(),
-            EthereumEngineValidator::new(chain_spec),
+            TestEngineValidator::new(chain_spec),
             false,
             TestNetworkInfo { syncing: true },
         );
@@ -1993,7 +1993,7 @@ mod tests {
                 commit: "test".to_string(),
             },
             EngineCapabilities::default(),
-            EthereumEngineValidator::new(chain_spec),
+            TestEngineValidator::new(chain_spec),
             false,
             TestNetworkInfo { syncing: true },
         );
@@ -2026,7 +2026,7 @@ mod tests {
                 commit: "test".to_string(),
             },
             EngineCapabilities::default(),
-            EthereumEngineValidator::new(chain_spec),
+            TestEngineValidator::new(chain_spec),
             false,
             network,
         );
@@ -2092,7 +2092,7 @@ mod tests {
                 commit: "test".to_string(),
             },
             EngineCapabilities::default(),
-            EthereumEngineValidator::new(chain_spec),
+            TestEngineValidator::new(chain_spec),
             false,
             network,
         );
