@@ -51,7 +51,6 @@ parking_lot = { workspace = true, features = ["default"] }
 notify = { workspace = true, features = ["macos_fsevent"] }
 reth-trie-db = { workspace = true, features = ["metrics"] }
 reth-nippy-jar = { workspace = true, features = ["default"] }
-reth-node-types = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-static-file-types = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync"], optional = true }

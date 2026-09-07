@@ -22,6 +22,4 @@ pub use reth_payload_primitives::*;
 
 pub mod node;
 pub use node::*;
-// re-export for convenience
-pub use reth_node_types::*;
 pub use reth_provider::FullProvider;

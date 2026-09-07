@@ -10,9 +10,10 @@ use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
 use reth_network_api::test_utils::PeersHandleProvider;
-use reth_node_api::{Block, FullNodeComponents};
+use reth_node_api::FullNodeComponents;
 use reth_node_builder::{FullNode, rpc::RethRpcAddOns};
 use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use reth_primitives_traits::Block;
 use reth_provider::{
     BlockReader, BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions,
     HeaderProvider, StageCheckpointReader,

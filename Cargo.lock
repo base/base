@@ -15581,7 +15581,6 @@ dependencies = [
  "reth-etl",
  "reth-execution-errors",
  "reth-fs-util",
- "reth-node-types",
  "reth-primitives-traits",
  "reth-provider",
  "reth-stages-types",
@@ -15908,7 +15907,6 @@ dependencies = [
  "reth-exex-types",
  "reth-metrics",
  "reth-network-p2p",
- "reth-node-types",
  "reth-payload-builder",
  "reth-payload-primitives",
  "reth-primitives-traits",
@@ -16572,7 +16570,6 @@ dependencies = [
  "reth-evm",
  "reth-network-api",
  "reth-node-core",
- "reth-node-types",
  "reth-payload-builder",
  "reth-payload-builder-primitives",
  "reth-payload-primitives",
@@ -16790,14 +16787,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-node-types"
-version = "0.0.0"
-dependencies = [
- "reth-db-api",
- "reth-primitives-traits",
-]
-
-[[package]]
 name = "reth-payload-builder"
 version = "0.0.0"
 dependencies = [
@@ -16943,7 +16932,6 @@ dependencies = [
  "reth-fs-util",
  "reth-metrics",
  "reth-nippy-jar",
- "reth-node-types",
  "reth-primitives-traits",
  "reth-prune-types",
  "reth-stages-types",
@@ -17502,7 +17490,6 @@ dependencies = [
  "reth-errors",
  "reth-metrics",
  "reth-network-p2p",
- "reth-node-types",
  "reth-primitives-traits",
  "reth-provider",
  "reth-prune",

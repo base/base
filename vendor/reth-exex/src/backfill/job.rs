@@ -11,8 +11,7 @@ use reth_evm::{
     BaseEvmConfig,
     execute::{BlockExecutionError, BlockExecutionOutput, Executor},
 };
-use reth_node_api::{Block as _, BlockBody as _};
-use reth_primitives_traits::{RecoveredBlock, format_gas_throughput};
+use reth_primitives_traits::{Block as _, BlockBody as _, RecoveredBlock, format_gas_throughput};
 use reth_provider::{
     BlockReader, Chain, ExecutionOutcome, HeaderProvider, ProviderError, StateProviderFactory,
     TransactionVariant,
