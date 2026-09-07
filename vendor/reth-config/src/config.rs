@@ -9,7 +9,6 @@ use reth_network_types::{PeersConfig, SessionsConfig};
 use reth_prune_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneModes};
 use reth_stages_types::ExecutionStageThresholds;
 use reth_static_file_types::{StaticFileMap, StaticFileSegment};
-use url::Url;
 
 #[cfg(feature = "serde")]
 const EXTENSION: &str = "toml";
@@ -109,8 +108,6 @@ impl Config {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default))]
 pub struct StageConfig {
-    /// ERA stage configuration.
-    pub era: EraConfig,
     /// Header stage configuration.
     pub headers: HeadersConfig,
     /// Body stage configuration.
@@ -147,33 +144,6 @@ impl StageConfig {
             .incremental_threshold
             .max(self.account_hashing.clean_threshold)
             .max(self.storage_hashing.clean_threshold)
-    }
-}
-
-/// ERA stage configuration.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(default))]
-pub struct EraConfig {
-    /// Path to a local directory where ERA1 files are located.
-    ///
-    /// Conflicts with `url`.
-    pub path: Option<PathBuf>,
-    /// The base URL of an ERA1 file host to download from.
-    ///
-    /// Conflicts with `path`.
-    pub url: Option<Url>,
-    /// Path to a directory where files downloaded from `url` will be stored until processed.
-    ///
-    /// Required for `url`.
-    pub folder: Option<PathBuf>,
-}
-
-impl EraConfig {
-    /// Sets `folder` for temporary downloads as a directory called "era" inside `dir`.
-    pub fn with_datadir(mut self, dir: impl AsRef<Path>) -> Self {
-        self.folder = Some(dir.as_ref().join("era"));
-        self
     }
 }
 
@@ -701,6 +671,27 @@ mod tests {
             let loaded = Config::from_path(path).expect("load_path failed");
             assert_eq!(config, loaded);
         })
+    }
+
+    #[test]
+    pub fn test_load_config_with_removed_era_stage() {
+        with_tempdir("reth", |path| {
+            std::fs::write(
+                path,
+                "[stages.era]\nfolder = '/tmp/era'\n\n[stages.headers]\ncommit_threshold = 42\n",
+            )
+            .unwrap();
+
+            let config =
+                Config::from_path(path).expect("legacy ERA settings must not prevent startup");
+            assert_eq!(config.stages.headers.commit_threshold, 42);
+
+            config.save(path).unwrap();
+            let saved: toml_0_9_12_spec_1_1_0::Value =
+                toml_0_9_12_spec_1_1_0::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            assert!(saved["stages"].get("era").is_none());
+            assert_eq!(Config::from_path(path).unwrap(), config);
+        });
     }
 
     #[test]

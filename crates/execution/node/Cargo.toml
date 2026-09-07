@@ -66,7 +66,7 @@ base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default", "std"] }
 base-execution-evm = { workspace = true, features = ["default", "std", "rpc"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
-revm = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_limit"] }
+revm = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_limit", "p256-aws-lc-rs"] }
 [dev-dependencies]
 reth-rpc = { workspace = true }
 reth-trie = { workspace = true }

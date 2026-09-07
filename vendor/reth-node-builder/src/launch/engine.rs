@@ -173,7 +173,6 @@ impl EngineNodeLauncher {
             static_file_producer,
             ctx.components().evm_config().clone(),
             maybe_exex_manager_handle.clone().unwrap_or_else(ExExManagerHandle::empty),
-            ctx.era_import_source(),
             disabled_stages,
         )?;
 

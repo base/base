@@ -104,7 +104,6 @@ alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-network-peers = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
-reth-node-ethereum = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["json", "std"] }
 reth-execution-types = { workspace = true, features = ["default"] }
@@ -188,7 +187,6 @@ test-utils = [
 	"reth-execution-cache/test-utils",
 	"reth-ipc",
 	"reth-node-builder/test-utils",
-	"reth-node-ethereum/test-utils",
 	"reth-payload-builder/test-utils",
 	"reth-primitives-traits/test-utils",
 	"reth-provider/test-utils",

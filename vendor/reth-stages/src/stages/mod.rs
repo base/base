@@ -1,6 +1,5 @@
 /// The bodies stage.
 mod bodies;
-mod era;
 /// The execution stage that generates state diff.
 mod execution;
 /// The finish stage
@@ -24,7 +23,6 @@ mod sender_recovery;
 mod tx_lookup;
 
 pub use bodies::*;
-pub use era::*;
 pub use execution::*;
 pub use finish::*;
 pub use hashing_account::*;

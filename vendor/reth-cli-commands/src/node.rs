@@ -10,7 +10,7 @@ use reth_db::init_db;
 use reth_node_builder::NodeBuilder;
 use reth_node_core::{
     args::{
-        DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, EraArgs, JitArgs, MetricArgs,
+        DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, JitArgs, MetricArgs,
         NetworkArgs, PayloadBuilderArgs, PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs,
         TxPoolArgs,
     },
@@ -109,10 +109,6 @@ pub struct NodeCommand<C: ChainSpecParser, Ext: clap::Args + fmt::Debug = NoArgs
     #[command(flatten, next_help_heading = "Engine")]
     pub engine: EngineArgs,
 
-    /// All ERA related arguments with --era prefix
-    #[command(flatten, next_help_heading = "ERA")]
-    pub era: EraArgs,
-
     /// All static files related arguments
     #[command(flatten, next_help_heading = "Static Files")]
     pub static_files: StaticFilesArgs,
@@ -178,7 +174,6 @@ where
             dev,
             pruning,
             engine,
-            era,
             static_files,
             storage,
             jit,
@@ -203,7 +198,6 @@ where
             dev,
             pruning,
             engine,
-            era,
             static_files,
             storage,
             jit,

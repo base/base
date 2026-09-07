@@ -1304,7 +1304,6 @@ where
         header_downloader,
         body_downloader,
         stages_config.clone(),
-        None,
     )
     .builder()
     .add_set(ExecutionStages::new(

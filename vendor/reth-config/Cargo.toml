@@ -15,7 +15,6 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-url = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-network-peers = { workspace = true }
@@ -26,7 +25,8 @@ eyre = { workspace = true, features = ["default"] }
 humantime-serde = { workspace = true, optional = true }
 toml_0_9_12_spec_1_1_0 = { workspace = true, optional = true, features = ["default"] }
 [dev-dependencies]
+url = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 [features]
-serde = ["dep:serde", "dep:toml_0_9_12_spec_1_1_0", "dep:humantime-serde", "reth-network-peers/secp256k1", "reth-network-types/serde", "reth-prune-types/serde", "reth-stages-types/serde", "alloy-primitives/serde", "url/serde"]
+serde = ["dep:serde", "dep:toml_0_9_12_spec_1_1_0", "dep:humantime-serde", "reth-network-peers/secp256k1", "reth-network-types/serde", "reth-prune-types/serde", "reth-stages-types/serde", "alloy-primitives/serde"]

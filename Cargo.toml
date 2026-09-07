@@ -348,7 +348,6 @@ reth-ipc = { path = "vendor/reth-ipc", default-features = false }
 reth-evm = { path = "vendor/reth-evm", default-features = false }
 reth-rpc = { path = "vendor/reth-rpc", default-features = false }
 reth-etl = { path = "vendor/reth-etl", default-features = false }
-reth-era = { path = "vendor/reth-era", default-features = false }
 reth-revm = { path = "vendor/reth-revm", default-features = false }
 reth-trie = { path = "vendor/reth-trie", default-features = false }
 reth-exex = { path = "vendor/reth-exex", default-features = false }
@@ -382,7 +381,6 @@ reth-db-common = { path = "vendor/reth-db-common", default-features = false }
 reth-consensus = { path = "vendor/reth-consensus", default-features = false }
 reth-nippy-jar = { path = "vendor/reth-nippy-jar", default-features = false }
 reth-db-models = { path = "vendor/reth-db-models", default-features = false }
-reth-era-utils = { path = "vendor/reth-era-utils", default-features = false }
 reth-cli-runner = { path = "vendor/reth-cli-runner", default-features = false }
 reth-tokio-util = { path = "vendor/reth-tokio-util", default-features = false }
 reth-node-types = { path = "vendor/reth-node-types", default-features = false }
@@ -427,7 +425,6 @@ reth-rpc-engine-api = { path = "vendor/reth-rpc-engine-api", default-features = 
 reth-eth-wire-types = { path = "vendor/reth-eth-wire-types", default-features = false }
 reth-storage-errors = { path = "vendor/reth-storage-errors", default-features = false }
 reth-ethereum-forks = { path = "vendor/reth-ethereum-forks", default-features = false }
-reth-era-downloader = { path = "vendor/reth-era-downloader", default-features = false }
 reth-payload-builder = { path = "vendor/reth-payload-builder", default-features = false }
 reth-exex-test-utils = { path = "vendor/reth-exex-test-utils", default-features = false }
 reth-execution-types = { path = "vendor/reth-execution-types", default-features = false }

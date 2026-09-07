@@ -32,7 +32,7 @@ use tracing::*;
 
 use crate::{
     args::{
-        DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, EraArgs, JitArgs, MetricArgs,
+        DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, JitArgs, MetricArgs,
         NetworkArgs, PayloadBuilderArgs, PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs,
         TxPoolArgs,
     },
@@ -148,9 +148,6 @@ pub struct NodeConfig<ChainSpec> {
     /// All engine related arguments
     pub engine: EngineArgs,
 
-    /// All ERA import related arguments with --era prefix
-    pub era: EraArgs,
-
     /// All static files related arguments
     pub static_files: StaticFilesArgs,
 
@@ -188,7 +185,6 @@ impl<ChainSpec> NodeConfig<ChainSpec> {
             pruning: PruningArgs::default(),
             datadir: DatadirArgs::default(),
             engine: EngineArgs::default(),
-            era: EraArgs::default(),
             static_files: StaticFilesArgs::default(),
             storage: StorageArgs::default(),
             jit: JitArgs::default(),
@@ -265,7 +261,6 @@ impl<ChainSpec> NodeConfig<ChainSpec> {
             dev,
             pruning,
             engine,
-            era,
             static_files,
             storage,
             jit,
@@ -286,7 +281,6 @@ impl<ChainSpec> NodeConfig<ChainSpec> {
             dev,
             pruning,
             engine,
-            era,
             static_files,
             storage,
             jit,
@@ -580,7 +574,6 @@ impl<ChainSpec> NodeConfig<ChainSpec> {
             dev: self.dev,
             pruning: self.pruning,
             engine: self.engine,
-            era: self.era,
             static_files: self.static_files,
             storage: self.storage,
             jit: self.jit,
@@ -623,7 +616,6 @@ impl<ChainSpec> Clone for NodeConfig<ChainSpec> {
             pruning: self.pruning.clone(),
             datadir: self.datadir.clone(),
             engine: self.engine.clone(),
-            era: self.era.clone(),
             static_files: self.static_files,
             storage: self.storage,
             jit: self.jit.clone(),

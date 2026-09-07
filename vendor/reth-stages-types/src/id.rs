@@ -16,7 +16,6 @@ pub enum StageId {
         note = "MerkleChangeSets stage has been removed; kept for DB checkpoint compatibility"
     )]
     MerkleChangeSets,
-    Era,
     Headers,
     Bodies,
     SenderRecovery,
@@ -43,8 +42,7 @@ static ENCODED_STAGE_IDS: OnceLock<HashMap<StageId, Vec<u8>>> = OnceLock::new();
 
 impl StageId {
     /// All supported Stages
-    pub const ALL: [Self; 15] = [
-        Self::Era,
+    pub const ALL: [Self; 14] = [
         Self::Headers,
         Self::Bodies,
         Self::SenderRecovery,
@@ -81,7 +79,6 @@ impl StageId {
             Self::StaticFile => "StaticFile",
             #[expect(deprecated)]
             Self::MerkleChangeSets => "MerkleChangeSets",
-            Self::Era => "Era",
             Self::Headers => "Headers",
             Self::Bodies => "Bodies",
             Self::SenderRecovery => "SenderRecovery",
@@ -102,7 +99,7 @@ impl StageId {
 
     /// Returns true if it's a downloading stage [`StageId::Headers`] or [`StageId::Bodies`]
     pub const fn is_downloading_stage(&self) -> bool {
-        matches!(self, Self::Era | Self::Headers | Self::Bodies)
+        matches!(self, Self::Headers | Self::Bodies)
     }
 
     /// Returns `true` if it's [`TransactionLookup`](StageId::TransactionLookup) stage.
@@ -147,7 +144,6 @@ mod tests {
 
     #[test]
     fn stage_id_as_string() {
-        assert_eq!(StageId::Era.to_string(), "Era");
         assert_eq!(StageId::Headers.to_string(), "Headers");
         assert_eq!(StageId::Bodies.to_string(), "Bodies");
         assert_eq!(StageId::SenderRecovery.to_string(), "SenderRecovery");
@@ -168,7 +164,6 @@ mod tests {
     fn is_downloading_stage() {
         assert!(StageId::Headers.is_downloading_stage());
         assert!(StageId::Bodies.is_downloading_stage());
-        assert!(StageId::Era.is_downloading_stage());
 
         assert!(!StageId::Execution.is_downloading_stage());
     }

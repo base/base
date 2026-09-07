@@ -109,7 +109,6 @@ pub struct SetArgs {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 #[clap(rename_all = "kebab-case")]
 pub enum StageArg {
-    Era,
     Headers,
     Bodies,
     SenderRecovery,
@@ -129,7 +128,6 @@ pub enum StageArg {
 impl From<StageArg> for StageId {
     fn from(arg: StageArg) -> Self {
         match arg {
-            StageArg::Era => Self::Era,
             StageArg::Headers => Self::Headers,
             StageArg::Bodies => Self::Bodies,
             StageArg::SenderRecovery => Self::SenderRecovery,

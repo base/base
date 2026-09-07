@@ -11,8 +11,8 @@ use reth_db::init_db;
 use reth_node_builder::NodeBuilder;
 use reth_node_core::{
     args::{
-        DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, EraArgs, MetricArgs,
-        NetworkArgs, PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs, TxPoolArgs,
+        DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, MetricArgs, NetworkArgs,
+        PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs, TxPoolArgs,
     },
     node_config::NodeConfig,
     version,
@@ -88,10 +88,6 @@ pub struct ExecutionNodeConfigArgs {
     #[command(flatten, next_help_heading = "Engine")]
     pub engine: EngineArgs,
 
-    /// All ERA related arguments with --era prefix.
-    #[command(flatten, next_help_heading = "ERA")]
-    pub era: EraArgs,
-
     /// All static files related arguments with --static-files prefix.
     #[command(flatten, next_help_heading = "Static Files")]
     pub static_files: StaticFilesArgs,
@@ -118,7 +114,6 @@ impl ExecutionNodeConfigArgs {
             dev,
             pruning,
             engine,
-            era,
             static_files,
             storage,
         } = self;
@@ -138,7 +133,6 @@ impl ExecutionNodeConfigArgs {
             dev,
             pruning,
             engine,
-            era,
             static_files,
             storage,
             jit: Default::default(),
@@ -376,6 +370,15 @@ mod tests {
     struct CommandParser<T: Args> {
         #[command(flatten)]
         args: T,
+    }
+
+    #[test]
+    pub fn execution_args_reject_era_import() {
+        for arg in ["--era.enable", "--era.path=/tmp/era", "--era.url=https://example.com"] {
+            let error = CommandParser::<ExecutionNodeConfigArgs>::try_parse_from(["base", arg])
+                .expect_err("ERA import is no longer supported");
+            assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
     }
 
     #[test]
