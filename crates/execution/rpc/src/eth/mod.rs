@@ -26,8 +26,7 @@ mod context;
 pub use context::EthApiCtx;
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
-    BaseRpcConverter, EthApiTypes, FromEvmError, FullEthApiServer, RpcConvert, RpcNodeCore,
-    RpcNodeCoreExt,
+    BaseRpcConverter, EthApiTypes, FromEvmError, FullEthApiServer, RpcNodeCore, RpcNodeCoreExt,
     helpers::{
         EthApiSpec, EthFees, EthState, GetBlockAccessList, LoadFee, LoadPendingBlock, LoadState,
         SpawnBlocking, Trace,
@@ -292,9 +291,6 @@ impl<N: RpcNodeCore> BaseEthApiInner<N> {
     }
 }
 
-/// Converter for Base RPC types.
-pub type BaseRpcConvert<N> = reth_rpc_eth_api::BaseRpcConverter<<N as FullNodeTypes>::Provider>;
-
 /// The Base eth API for a node provider, transaction pool, and network.
 pub type BaseNodeEthApi<N> = BaseEthApi<N>;
 
@@ -354,7 +350,6 @@ impl BaseEthApiBuilder {
     pub async fn build_eth_api<N>(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<BaseNodeEthApi<N>>
     where
         N: FullNodeComponents,
-        BaseRpcConvert<N>: RpcConvert,
         BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
     {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;

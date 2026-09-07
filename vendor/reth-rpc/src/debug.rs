@@ -29,7 +29,7 @@ use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, R
 use reth_revm::{db::State, witness::ExecutionWitnessRecord};
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_eth_api::{
-    FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore,
+    FromEthApiError, FromEvmError, RpcNodeCore,
     helpers::{EthTransactions, TraceExt},
 };
 use reth_rpc_eth_types::{EthApiError, StateCacheDb};

@@ -4,7 +4,7 @@ use alloy_eips::BlockId;
 use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse};
 use reth_primitives_traits::AlloyBlockHeader;
 use reth_rpc_eth_api::{
-    EthApiTypes, FromEvmError, FullEthApiTypes, RpcConvert,
+    EthApiTypes, FromEvmError, FullEthApiTypes,
     helpers::{EthBlocks, LoadBlock},
 };
 

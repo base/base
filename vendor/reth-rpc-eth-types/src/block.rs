@@ -7,7 +7,7 @@ use alloy_primitives::TxHash;
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_common_rpc_types::BaseTransactionReceipt;
 use reth_primitives_traits::{Block, BlockBody, IndexedTx, Recovered, RecoveredBlock, SealedBlock};
-use reth_rpc_convert::{RpcConvert, transaction::ConvertReceiptInput};
+use reth_rpc_convert::transaction::ConvertReceiptInput;
 
 use crate::{TransactionSource, utils::calculate_gas_used_and_next_log_index};
 
@@ -121,10 +121,19 @@ impl BlockAndReceipts {
     pub fn find_and_convert_transaction_receipt<C>(
         &self,
         tx_hash: TxHash,
-        converter: &C,
-    ) -> Option<Result<BaseTransactionReceipt, C::Error>>
+        converter: &crate::BaseRpcConverter<C>,
+    ) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
     where
-        C: RpcConvert,
+        C: reth_storage_api::BlockReader<
+                Block = base_common_consensus::BaseBlock,
+                Transaction = base_common_consensus::BaseTxEnvelope,
+                Receipt = base_common_consensus::BaseReceipt,
+            > + base_execution_chainspec::ChainSpecProvider
+            + Clone
+            + Send
+            + Sync
+            + Unpin
+            + 'static,
     {
         let (tx, receipt) = self.find_transaction_and_receipt_by_hash(tx_hash)?;
         convert_transaction_receipt(
@@ -143,10 +152,19 @@ pub fn convert_transaction_receipt<C>(
     all_receipts: &[BaseReceipt],
     tx: IndexedTx<'_, BaseBlock>,
     receipt: &BaseReceipt,
-    converter: &C,
-) -> Option<Result<BaseTransactionReceipt, C::Error>>
+    converter: &crate::BaseRpcConverter<C>,
+) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
 where
-    C: RpcConvert,
+    C: reth_storage_api::BlockReader<
+            Block = base_common_consensus::BaseBlock,
+            Transaction = base_common_consensus::BaseTxEnvelope,
+            Receipt = base_common_consensus::BaseReceipt,
+        > + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Send
+        + Sync
+        + Unpin
+        + 'static,
 {
     let meta = tx.meta();
     let (gas_used, next_log_index) =
@@ -171,9 +189,21 @@ impl CachedTransaction<BaseBlock, BaseReceipt> {
     /// Converts this cached transaction into an RPC receipt using the given converter.
     ///
     /// Returns `None` if receipts are not available or the transaction index is out of bounds.
-    pub fn into_receipt<C>(self, converter: &C) -> Option<Result<BaseTransactionReceipt, C::Error>>
+    pub fn into_receipt<C>(
+        self,
+        converter: &crate::BaseRpcConverter<C>,
+    ) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
     where
-        C: RpcConvert,
+        C: reth_storage_api::BlockReader<
+                Block = base_common_consensus::BaseBlock,
+                Transaction = base_common_consensus::BaseTxEnvelope,
+                Receipt = base_common_consensus::BaseReceipt,
+            > + base_execution_chainspec::ChainSpecProvider
+            + Clone
+            + Send
+            + Sync
+            + Unpin
+            + 'static,
     {
         let receipts = self.receipts?;
         let receipt = receipts.get(self.tx_index)?;

@@ -13,7 +13,6 @@ use jsonrpsee_types::ErrorObject;
 use reth_chainspec::ChainInfo;
 use reth_errors::ProviderError;
 use reth_primitives_traits::{BlockBody, RecoveredBlock, SignedTransaction};
-use reth_rpc_convert::RpcConvert;
 use reth_storage_api::{BlockReader, ProviderBlock};
 use thiserror::Error;
 
@@ -22,15 +21,24 @@ use crate::EthApiError;
 /// Returns all matching and converted logs of a block's receipts when the transaction hashes are
 /// known.
 pub fn matching_block_logs_with_tx_hashes<'a, I, C>(
-    converter: &C,
+    converter: &crate::BaseRpcConverter<C>,
     filter: &Filter,
     header: &reth_primitives_traits::SealedHeader,
     tx_hashes_and_receipts: I,
     removed: bool,
-) -> Result<Vec<BaseLogResponse>, C::Error>
+) -> Result<Vec<BaseLogResponse>, crate::BaseEthApiError>
 where
     I: IntoIterator<Item = (TxHash, &'a BaseReceipt)>,
-    C: RpcConvert,
+    C: reth_storage_api::BlockReader<
+            Block = base_common_consensus::BaseBlock,
+            Transaction = base_common_consensus::BaseTxEnvelope,
+            Receipt = base_common_consensus::BaseReceipt,
+        > + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Send
+        + Sync
+        + Unpin
+        + 'static,
 {
     let block_num_hash = header.num_hash();
     if !filter.matches_block(&block_num_hash) {
@@ -77,7 +85,7 @@ pub enum ProviderOrBlock<'a, P: BlockReader> {
 /// If the log matches, look up the corresponding transaction hash.
 pub fn append_matching_block_logs<P, C>(
     all_logs: &mut Vec<BaseLogResponse>,
-    converter: &C,
+    converter: &crate::BaseRpcConverter<C>,
     provider_or_block: ProviderOrBlock<'_, P>,
     filter: &Filter,
     header: &reth_primitives_traits::SealedHeader,
@@ -86,7 +94,16 @@ pub fn append_matching_block_logs<P, C>(
 ) -> Result<(), EthApiError>
 where
     P: BlockReader<Transaction: SignedTransaction, Receipt = BaseReceipt>,
-    C: RpcConvert,
+    C: reth_storage_api::BlockReader<
+            Block = base_common_consensus::BaseBlock,
+            Transaction = base_common_consensus::BaseTxEnvelope,
+            Receipt = base_common_consensus::BaseReceipt,
+        > + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Send
+        + Sync
+        + Unpin
+        + 'static,
 {
     let block_num_hash = header.num_hash();
     if !filter.matches_block(&block_num_hash) {

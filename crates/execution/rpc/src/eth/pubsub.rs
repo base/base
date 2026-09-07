@@ -3,7 +3,7 @@
 use base_common_rpc_types::BaseHeaderResponse;
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_rpc_eth_api::{RpcConvert, RpcNodeCore, helpers::EthSubscriptions};
+use reth_rpc_eth_api::{RpcNodeCore, helpers::EthSubscriptions};
 use tracing::error;
 
 use super::BaseEthApi;

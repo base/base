@@ -14,7 +14,6 @@ use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_ethereum_primitives::Receipt;
 use reth_evm::EvmEnvFor;
 use reth_primitives_traits::{Block, IndexedTx, RecoveredBlock, SealedHeader};
-use reth_rpc_convert::RpcConvert;
 
 use crate::block::BlockAndReceipts;
 
@@ -149,10 +148,19 @@ impl PendingBlock {
     pub fn find_and_convert_transaction_receipt<C>(
         &self,
         tx_hash: TxHash,
-        converter: &C,
-    ) -> Option<Result<BaseTransactionReceipt, C::Error>>
+        converter: &crate::BaseRpcConverter<C>,
+    ) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
     where
-        C: RpcConvert,
+        C: reth_storage_api::BlockReader<
+                Block = base_common_consensus::BaseBlock,
+                Transaction = base_common_consensus::BaseTxEnvelope,
+                Receipt = base_common_consensus::BaseReceipt,
+            > + base_execution_chainspec::ChainSpecProvider
+            + Clone
+            + Send
+            + Sync
+            + Unpin
+            + 'static,
     {
         self.to_block_and_receipts().find_and_convert_transaction_receipt(tx_hash, converter)
     }

@@ -40,18 +40,10 @@ pub use helpers::config::EthConfigApiServer;
 pub use node::{RpcNodeCore, RpcNodeCoreExt};
 pub use pubsub::EthPubSubApiServer;
 pub use reth_rpc_convert::*;
-pub use reth_rpc_eth_types::error::{
-    AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError,
+pub use reth_rpc_eth_types::{
+    BaseReceiptBuilder, BaseReceiptConverter, BaseRpcConverter, BaseTimeCache, BaseTxInfoMapper,
+    ReceiptFieldsBuilder,
+    error::{AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError},
 };
 use reth_trie_common as _;
 pub use types::{EthApiTypes, FullEthApiTypes};
-
-mod base_receipt;
-pub use base_receipt::{BaseReceiptBuilder, BaseReceiptConverter, ReceiptFieldsBuilder};
-mod base_time;
-pub use base_time::BaseTimeCache;
-mod base_tx_info;
-pub use base_tx_info::BaseTxInfoMapper;
-
-mod base_rpc_converter;
-pub use base_rpc_converter::BaseRpcConverter;

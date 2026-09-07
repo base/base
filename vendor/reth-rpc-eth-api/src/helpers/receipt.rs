@@ -7,7 +7,7 @@ use alloy_consensus::{TxReceipt, transaction::TransactionMeta};
 use base_common_rpc_types::BaseTransactionReceipt;
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock};
-use reth_rpc_convert::{RpcConvert, transaction::ConvertReceiptInput};
+use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::{
     EthApiError, error::FromEthApiError, utils::calculate_gas_used_and_next_log_index,
 };

@@ -26,7 +26,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod admin;
-mod aliases;
 mod debug;
 mod engine;
 pub mod eth;
@@ -41,7 +40,6 @@ mod validation;
 mod web3;
 
 pub use admin::AdminApi;
-pub use aliases::*;
 pub use debug::DebugApi;
 pub use engine::{EngineApi, EngineEthApi};
 pub use eth::{EthApi, EthApiBuilder, EthBundle, EthFilter, EthPubSub, helpers::SyncListener};

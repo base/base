@@ -17,7 +17,7 @@ use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use futures::{Future, StreamExt};
 use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
-use reth_rpc_convert::{TransactionConversionError, transaction::RpcConvert};
+use reth_rpc_convert::TransactionConversionError;
 use reth_rpc_eth_types::{
     EthApiError::{self, TransactionConfirmationTimeout},
     FillTransaction, SignError, TransactionSource,

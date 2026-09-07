@@ -10,7 +10,7 @@ use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse, BaseTransacti
 use futures::Future;
 use reth_node_api::BlockBody;
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock, SealedHeader, TransactionMeta};
-use reth_rpc_convert::{RpcConvert, transaction::ConvertReceiptInput};
+use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader, ProviderReceipt, ProviderTx};
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 

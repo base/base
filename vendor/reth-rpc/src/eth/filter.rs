@@ -29,8 +29,7 @@ use jsonrpsee::{core::RpcResult, server::IdProvider};
 use reth_errors::ProviderError;
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_eth_api::{
-    EngineEthFilter, EthApiTypes, EthFilterApiServer, FullEthApiTypes, QueryLimits, RpcConvert,
-    RpcNodeCoreExt,
+    EngineEthFilter, EthApiTypes, EthFilterApiServer, FullEthApiTypes, QueryLimits, RpcNodeCoreExt,
     helpers::{EthBlocks, LoadReceipt},
 };
 use reth_rpc_eth_types::{
@@ -839,16 +838,28 @@ impl PendingTransactionsReceiver {
 #[derive(Debug, Clone)]
 struct FullTransactionsReceiver<T: PoolTransaction, TxCompat> {
     txs_stream: Arc<Mutex<NewSubpoolTransactionStream<T>>>,
-    converter: TxCompat,
+    converter: reth_rpc_eth_types::BaseRpcConverter<TxCompat>,
 }
 
 impl<T, TxCompat> FullTransactionsReceiver<T, TxCompat>
 where
     T: PoolTransaction<Consensus = BaseTxEnvelope> + 'static,
-    TxCompat: RpcConvert,
+    TxCompat: reth_storage_api::BlockReader<
+            Block = base_common_consensus::BaseBlock,
+            Transaction = base_common_consensus::BaseTxEnvelope,
+            Receipt = base_common_consensus::BaseReceipt,
+        > + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Send
+        + Sync
+        + Unpin
+        + 'static,
 {
     /// Creates a new `FullTransactionsReceiver` encapsulating the provided transaction stream.
-    fn new(stream: NewSubpoolTransactionStream<T>, converter: TxCompat) -> Self {
+    fn new(
+        stream: NewSubpoolTransactionStream<T>,
+        converter: reth_rpc_eth_types::BaseRpcConverter<TxCompat>,
+    ) -> Self {
         Self { txs_stream: Arc::new(Mutex::new(stream)), converter }
     }
 
@@ -883,7 +894,16 @@ impl<T, TxCompat> FullTransactionsFilter<base_common_rpc_types::Transaction>
     for FullTransactionsReceiver<T, TxCompat>
 where
     T: PoolTransaction<Consensus = BaseTxEnvelope> + 'static,
-    TxCompat: RpcConvert + 'static,
+    TxCompat: reth_storage_api::BlockReader<
+            Block = base_common_consensus::BaseBlock,
+            Transaction = base_common_consensus::BaseTxEnvelope,
+            Receipt = base_common_consensus::BaseReceipt,
+        > + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Send
+        + Sync
+        + Unpin
+        + 'static + 'static,
 {
     async fn drain(&self) -> FilterChanges<base_common_rpc_types::Transaction> {
         Self::drain(self).await

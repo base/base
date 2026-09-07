@@ -16,6 +16,7 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+lru = { workspace = true }
 revm = { workspace = true }
 tokio = { workspace = true }
 metrics = { workspace = true }
@@ -30,9 +31,11 @@ alloy-serde = { workspace = true }
 reth-errors = { workspace = true }
 alloy-chains = { workspace = true }
 reth-metrics = { workspace = true }
+base-protocol = { workspace = true }
 alloy-network = { workspace = true }
 alloy-json-rpc = { workspace = true }
 reth-chainspec = { workspace = true }
+base-common-flz = { workspace = true }
 base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-sol-types = { workspace = true }
@@ -40,6 +43,7 @@ alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-chain-state = { workspace = true }
+base-common-chains = { workspace = true }
 base-execution-evm = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 reth-execution-types = { workspace = true }
@@ -70,5 +74,7 @@ reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
 reth-db-models = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 reth-storage-api = { workspace = true, features = ["std"] }
+base-protocol = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
 [features]
 js-tracer = ["revm-inspectors/js-tracer"]

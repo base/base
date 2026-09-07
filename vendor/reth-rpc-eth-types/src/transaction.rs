@@ -8,7 +8,6 @@ use alloy_rpc_types_eth::TransactionInfo;
 use base_common_consensus::BaseTxEnvelope;
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::{Recovered, SignedTransaction};
-use reth_rpc_convert::RpcConvert;
 
 /// Represents from where a transaction was fetched.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -87,10 +86,19 @@ impl TransactionSource<BaseTxEnvelope> {
     /// Conversion into network specific transaction type.
     pub fn into_transaction<Builder>(
         self,
-        resp_builder: &Builder,
-    ) -> Result<base_common_rpc_types::Transaction, Builder::Error>
+        resp_builder: &crate::BaseRpcConverter<Builder>,
+    ) -> Result<base_common_rpc_types::Transaction, crate::BaseEthApiError>
     where
-        Builder: RpcConvert,
+        Builder: reth_storage_api::BlockReader<
+                Block = base_common_consensus::BaseBlock,
+                Transaction = base_common_consensus::BaseTxEnvelope,
+                Receipt = base_common_consensus::BaseReceipt,
+            > + base_execution_chainspec::ChainSpecProvider
+            + Clone
+            + Send
+            + Sync
+            + Unpin
+            + 'static,
     {
         match self {
             Self::Pool(tx) => resp_builder.fill_pending(tx),

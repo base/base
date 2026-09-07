@@ -18,4 +18,4 @@ pub use reth_rpc_traits::{
     FromConsensusHeader, FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx,
     TxInfoMapper,
 };
-pub use transaction::{RpcConvert, RpcConverter, TransactionConversionError};
+pub use transaction::TransactionConversionError;

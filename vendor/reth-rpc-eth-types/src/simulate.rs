@@ -18,7 +18,6 @@ use reth_evm::{
     execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutor},
 };
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
-use reth_rpc_convert::RpcConvert;
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
 use reth_storage_api::{StateProvider, noop::NoopProvider};
 use revm::{
@@ -307,7 +306,7 @@ pub fn execute_transactions<S, T>(
     remaining_call_gas_limit: &mut Option<u64>,
     chain_id: u64,
     compute_state_root: bool,
-    converter: &T,
+    converter: &crate::BaseRpcConverter<T>,
 ) -> Result<
     (
         BlockBuilderOutcome,
@@ -317,7 +316,16 @@ pub fn execute_transactions<S, T>(
 >
 where
     S: BlockBuilder<Executor: BlockExecutor<Evm: Evm<DB: Database<Error: Into<EthApiError>>>>>,
-    T: RpcConvert,
+    T: reth_storage_api::BlockReader<
+            Block = base_common_consensus::BaseBlock,
+            Transaction = base_common_consensus::BaseTxEnvelope,
+            Receipt = base_common_consensus::BaseReceipt,
+        > + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Send
+        + Sync
+        + Unpin
+        + 'static,
 {
     builder.apply_pre_execution_changes()?;
 
@@ -420,11 +428,20 @@ pub fn resolve_transaction<DB: Database, T>(
     chain_id: u64,
     disable_nonce_check: bool,
     db: &mut DB,
-    converter: &T,
+    converter: &crate::BaseRpcConverter<T>,
 ) -> Result<Recovered<BaseTxEnvelope>, EthApiError>
 where
     DB::Error: Into<EthApiError>,
-    T: RpcConvert,
+    T: reth_storage_api::BlockReader<
+            Block = base_common_consensus::BaseBlock,
+            Transaction = base_common_consensus::BaseTxEnvelope,
+            Receipt = base_common_consensus::BaseReceipt,
+        > + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Send
+        + Sync
+        + Unpin
+        + 'static,
 {
     // If we're missing any fields we try to fill nonce, gas and
     // gas price.
@@ -481,8 +498,9 @@ where
         }
     }
 
-    let tx =
-        converter.build_simulate_v1_transaction(tx).map_err(|e| EthApiError::other(e.into()))?;
+    let tx = converter
+        .build_simulate_v1_transaction(tx)
+        .map_err(|e| EthApiError::other(jsonrpsee_types::ErrorObject::from(e)))?;
 
     Ok(Recovered::new_unchecked(tx, from))
 }
@@ -492,15 +510,24 @@ pub fn build_simulated_block<Err, T>(
     block: RecoveredBlock<BaseBlock>,
     results: Vec<ExecutionResult<HaltReasonFor>>,
     txs_kind: BlockTransactionsKind,
-    converter: &T,
+    converter: &crate::BaseRpcConverter<T>,
 ) -> Result<SimulatedBlock<BaseBlockResponse>, Err>
 where
     Err: std::error::Error
         + FromEthApiError
         + FromEvmError
-        + From<T::Error>
+        + From<crate::BaseEthApiError>
         + Into<jsonrpsee_types::ErrorObject<'static>>,
-    T: RpcConvert,
+    T: reth_storage_api::BlockReader<
+            Block = base_common_consensus::BaseBlock,
+            Transaction = base_common_consensus::BaseTxEnvelope,
+            Receipt = base_common_consensus::BaseReceipt,
+        > + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Send
+        + Sync
+        + Unpin
+        + 'static,
 {
     let mut calls: Vec<SimCallResult> = Vec::with_capacity(results.len());
 

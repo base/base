@@ -29,7 +29,6 @@ use reth_revm::{
     database::StateProviderDatabase,
     db::{State, bal::EvmDatabaseError},
 };
-use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_types::{
     EthApiError, StateCacheDb,
     cache::db::StateProviderTraitObjWrapper,

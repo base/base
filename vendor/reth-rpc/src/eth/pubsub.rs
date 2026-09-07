@@ -16,9 +16,7 @@ use jsonrpsee::{
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_network_api::NetworkInfo;
-use reth_rpc_eth_api::{
-    RpcConvert, RpcNodeCore, helpers::EthSubscriptions, pubsub::EthPubSubApiServer,
-};
+use reth_rpc_eth_api::{RpcNodeCore, helpers::EthSubscriptions, pubsub::EthPubSubApiServer};
 use reth_rpc_server_types::result::{internal_rpc_err, invalid_params_rpc_err};
 use reth_storage_api::BlockNumReader;
 use reth_tasks::Runtime;

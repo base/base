@@ -16,7 +16,7 @@ use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::RethL1BlockInfo;
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_convert::transaction::{ConvertReceiptInput, ReceiptConverter};
-use reth_rpc_eth_types::{BaseEthApiError, EthApiError, receipt::build_receipt};
+use crate::{BaseEthApiError, EthApiError, receipt::build_receipt};
 use reth_storage_api::BlockReader;
 
 use crate::BaseTimeCache;

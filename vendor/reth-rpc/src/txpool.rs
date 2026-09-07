@@ -10,7 +10,6 @@ use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
 use jsonrpsee::core::RpcResult;
 use reth_rpc_api::TxPoolApiServer;
-use reth_rpc_convert::RpcConvert;
 use reth_transaction_pool::{AllPoolTransactions, PoolTransaction, TransactionPool};
 use tracing::trace;
 
@@ -21,12 +20,12 @@ use tracing::trace;
 pub struct TxPoolApi<Pool, Eth> {
     /// An interface to interact with the pool
     pool: Pool,
-    converter: Eth,
+    converter: reth_rpc_eth_types::BaseRpcConverter<Eth>,
 }
 
 impl<Pool, Eth> TxPoolApi<Pool, Eth> {
     /// Creates a new instance of `TxpoolApi`.
-    pub const fn new(pool: Pool, converter: Eth) -> Self {
+    pub const fn new(pool: Pool, converter: reth_rpc_eth_types::BaseRpcConverter<Eth>) -> Self {
         Self { pool, converter }
     }
 }
@@ -34,18 +33,41 @@ impl<Pool, Eth> TxPoolApi<Pool, Eth> {
 impl<Pool, Eth> TxPoolApi<Pool, Eth>
 where
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + 'static,
-    Eth: RpcConvert,
+    Eth: reth_storage_api::BlockReader<
+            Block = base_common_consensus::BaseBlock,
+            Transaction = base_common_consensus::BaseTxEnvelope,
+            Receipt = base_common_consensus::BaseReceipt,
+        > + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Send
+        + Sync
+        + Unpin
+        + 'static,
 {
-    fn content(&self) -> Result<TxpoolContent<base_common_rpc_types::Transaction>, Eth::Error> {
+    fn content(
+        &self,
+    ) -> Result<
+        TxpoolContent<base_common_rpc_types::Transaction>,
+        reth_rpc_eth_types::BaseEthApiError,
+    > {
         #[inline]
         fn insert<Tx, RpcTxB>(
             tx: &Tx,
             content: &mut BTreeMap<Address, BTreeMap<String, base_common_rpc_types::Transaction>>,
-            resp_builder: &RpcTxB,
-        ) -> Result<(), RpcTxB::Error>
+            resp_builder: &reth_rpc_eth_types::BaseRpcConverter<RpcTxB>,
+        ) -> Result<(), reth_rpc_eth_types::BaseEthApiError>
         where
             Tx: PoolTransaction<Consensus = BaseTxEnvelope>,
-            RpcTxB: RpcConvert,
+            RpcTxB: reth_storage_api::BlockReader<
+                    Block = base_common_consensus::BaseBlock,
+                    Transaction = base_common_consensus::BaseTxEnvelope,
+                    Receipt = base_common_consensus::BaseReceipt,
+                > + base_execution_chainspec::ChainSpecProvider
+                + Clone
+                + Send
+                + Sync
+                + Unpin
+                + 'static,
         {
             content.entry(tx.sender()).or_default().insert(
                 tx.nonce().to_string(),
@@ -73,7 +95,16 @@ where
 impl<Pool, Eth> TxPoolApiServer<base_common_rpc_types::Transaction> for TxPoolApi<Pool, Eth>
 where
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + 'static,
-    Eth: RpcConvert + 'static,
+    Eth: reth_storage_api::BlockReader<
+            Block = base_common_consensus::BaseBlock,
+            Transaction = base_common_consensus::BaseTxEnvelope,
+            Receipt = base_common_consensus::BaseReceipt,
+        > + base_execution_chainspec::ChainSpecProvider
+        + Clone
+        + Send
+        + Sync
+        + Unpin
+        + 'static + 'static,
 {
     /// Returns the number of transactions currently pending for inclusion in the next block(s), as
     /// well as the ones that are being scheduled for future execution only.
@@ -129,7 +160,7 @@ where
         from: Address,
     ) -> RpcResult<TxpoolContentFrom<base_common_rpc_types::Transaction>> {
         trace!(target: "rpc::eth", ?from, "Serving txpool_contentFrom");
-        Ok(self.content().map_err(Into::into)?.remove_from(&from))
+        Ok(self.content()?.remove_from(&from))
     }
 
     /// Returns the details of all transactions currently pending for inclusion in the next
@@ -139,7 +170,7 @@ where
     /// Handler for `txpool_content`
     async fn txpool_content(&self) -> RpcResult<TxpoolContent<base_common_rpc_types::Transaction>> {
         trace!(target: "rpc::eth", "Serving txpool_content");
-        Ok(self.content().map_err(Into::into)?)
+        Ok(self.content()?)
     }
 }
 

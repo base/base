@@ -47,3 +47,12 @@ pub use tx_forward::ForwardConfig;
 
 mod base_error;
 pub use base_error::{BaseEthApiError, BaseInvalidTransactionError, SequencerClientError};
+
+mod base_receipt;
+pub use base_receipt::{BaseReceiptBuilder, BaseReceiptConverter, ReceiptFieldsBuilder};
+mod base_time;
+pub use base_time::BaseTimeCache;
+mod base_tx_info;
+pub use base_tx_info::BaseTxInfoMapper;
+mod base_rpc_converter;
+pub use base_rpc_converter::BaseRpcConverter;
