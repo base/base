@@ -97,7 +97,7 @@ use tokio::sync::{
 };
 
 use crate::{
-    BuilderContext, ExExLauncher, NodeAdapter, PrimitivesTy,
+    BuilderContext, ExExLauncher, NodeAdapter,
     components::{NodeComponents, NodeComponentsBuilder},
     hooks::OnComponentInitializedHook,
 };
@@ -479,13 +479,13 @@ where
     /// check.**
     pub async fn create_provider_factory<N, Evm>(
         &self,
-        overlay_manager: OverlayManager<N::Primitives>,
+        overlay_manager: OverlayManager,
         rocksdb_provider: Option<RocksDBProvider>,
         disabled_stages: &[StageId],
     ) -> eyre::Result<ProviderFactory<N>>
     where
         N: ProviderNodeTypes<DB = DB, ChainSpec = ChainSpec>,
-        Evm: ConfigureEvm<Primitives = N::Primitives> + 'static,
+        Evm: ConfigureEvm + 'static,
     {
         // Validate static files configuration
         let static_files_config = &self.toml_config().static_files;
@@ -671,13 +671,13 @@ where
     /// Creates a new [`ProviderFactory`] and attaches it to the launch context.
     pub async fn with_provider_factory<N, Evm>(
         self,
-        overlay_manager: OverlayManager<N::Primitives>,
+        overlay_manager: OverlayManager,
         rocksdb_provider: Option<RocksDBProvider>,
         disabled_stages: &[StageId],
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs<ChainSpec>, ProviderFactory<N>>>>
     where
         N: ProviderNodeTypes<DB = DB, ChainSpec = ChainSpec>,
-        Evm: ConfigureEvm<Primitives = N::Primitives> + 'static,
+        Evm: ConfigureEvm + 'static,
     {
         let factory = self
             .create_provider_factory::<N, Evm>(overlay_manager, rocksdb_provider, disabled_stages)
@@ -706,7 +706,7 @@ where
     }
 
     /// Returns the static file provider to interact with the static files.
-    pub fn static_file_provider(&self) -> StaticFileProvider<T::Primitives> {
+    pub fn static_file_provider(&self) -> StaticFileProvider {
         self.right().static_file_provider()
     }
 
@@ -982,7 +982,7 @@ where
     }
 
     /// Returns the static file provider to interact with the static files.
-    pub fn static_file_provider(&self) -> StaticFileProvider<<T::Types as NodeTypes>::Primitives> {
+    pub fn static_file_provider(&self) -> StaticFileProvider {
         self.provider_factory().static_file_provider()
     }
 
@@ -1144,7 +1144,7 @@ where
             String,
             Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T, CB::Components>>>,
         )>,
-    ) -> eyre::Result<Option<ExExManagerHandle<PrimitivesTy<T::Types>>>> {
+    ) -> eyre::Result<Option<ExExManagerHandle>> {
         self.exex_launcher(installed_exex).launch().await
     }
 
@@ -1182,9 +1182,7 @@ where
     /// - Not running in dev mode
     ///
     /// Otherwise returns an empty stream.
-    pub fn consensus_layer_events(
-        &self,
-    ) -> impl Stream<Item = NodeEvent<PrimitivesTy<T::Types>>> + 'static
+    pub fn consensus_layer_events(&self) -> impl Stream<Item = NodeEvent> + 'static
     where
         T::Provider: reth_provider::CanonChainTracker,
     {
@@ -1201,10 +1199,7 @@ where
     /// Spawns the [`EthStatsService`] service if configured.
     pub async fn spawn_ethstats<St>(&self, mut engine_events: St) -> eyre::Result<()>
     where
-        St: Stream<Item = reth_engine_primitives::ConsensusEngineEvent<PrimitivesTy<T::Types>>>
-            + Send
-            + Unpin
-            + 'static,
+        St: Stream<Item = reth_engine_primitives::ConsensusEngineEvent> + Send + Unpin + 'static,
     {
         let Some(url) = self.node_config().debug.ethstats.as_ref() else { return Ok(()) };
 

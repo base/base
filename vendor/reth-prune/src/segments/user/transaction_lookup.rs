@@ -1,6 +1,6 @@
 use alloy_primitives::TxNumber;
-use reth_db_api::{table::Value, tables, transaction::DbTxMut};
-use reth_primitives_traits::{NodePrimitives, SignedTransaction};
+use reth_db_api::{tables, transaction::DbTxMut};
+use reth_primitives_traits::SignedTransaction;
 use reth_provider::{
     BlockReader, DBProvider, PruneCheckpointReader, RocksDBProviderFactory,
     StaticFileProviderFactory, TransactionsProviderExt,
@@ -35,9 +35,7 @@ where
         + PruneCheckpointReader
         + StorageSettingsCache
         + RocksDBProviderFactory
-        + StaticFileProviderFactory<
-            Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-        >,
+        + StaticFileProviderFactory,
 {
     fn segment(&self) -> PruneSegment {
         PruneSegment::TransactionLookup
@@ -118,9 +116,7 @@ impl TransactionLookup {
         Provider: DBProvider
             + BlockReader<Transaction: SignedTransaction>
             + RocksDBProviderFactory
-            + StaticFileProviderFactory<
-                Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-            >,
+            + StaticFileProviderFactory,
     {
         // For PruneMode::Full, clear the entire RocksDB table in one operation
         if self.mode.is_full() {
@@ -213,7 +209,7 @@ mod tests {
     use reth_provider::{DBProvider, DatabaseProviderFactory};
     use reth_prune_types::{PruneCheckpoint, PruneMode, PruneProgress};
     use reth_stages::test_utils::{StorageKind, TestStageDB};
-    use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
+    use reth_testing_utils::generators::{self, BlockRangeParams};
 
     use crate::segments::{PruneInput, PruneLimiter, Segment, SegmentOutput, TransactionLookup};
 
@@ -226,7 +222,7 @@ mod tests {
         let db = TestStageDB::default();
         let mut rng = generators::rng();
 
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             1..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -238,7 +234,7 @@ mod tests {
         for block in &blocks {
             tx_hash_numbers.reserve_exact(block.transaction_count());
             for transaction in &block.body().transactions {
-                tx_hash_numbers.push((*transaction.tx_hash(), tx_hash_numbers.len() as u64));
+                tx_hash_numbers.push((transaction.tx_hash(), tx_hash_numbers.len() as u64));
             }
         }
         let tx_hash_numbers_len = tx_hash_numbers.len();
@@ -326,7 +322,7 @@ mod tests {
         let db = TestStageDB::default();
         let mut rng = generators::rng();
 
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             1..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -338,7 +334,7 @@ mod tests {
         for block in &blocks {
             tx_hash_numbers.reserve_exact(block.transaction_count());
             for transaction in &block.body().transactions {
-                tx_hash_numbers.push((*transaction.tx_hash(), tx_hash_numbers.len() as u64));
+                tx_hash_numbers.push((transaction.tx_hash(), tx_hash_numbers.len() as u64));
             }
         }
 

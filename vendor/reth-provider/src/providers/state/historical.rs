@@ -9,11 +9,10 @@ use reth_db_api::{
     tables,
     transaction::DbTx,
 };
-use reth_primitives_traits::{Account, Bytecode, NodePrimitives};
+use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{
-    BlockNumReader, BytecodeReader, DBProvider, NodePrimitivesProvider, PruneCheckpointReader,
-    StageCheckpointReader, StateProofProvider, StorageChangeSetReader, StorageRootProvider,
-    StorageSettingsCache,
+    BlockNumReader, BytecodeReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
+    StateProofProvider, StorageChangeSetReader, StorageRootProvider, StorageSettingsCache,
 };
 use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{Overlay, OverlayManager};
@@ -120,37 +119,26 @@ impl HistoryInfo {
 /// - [`tables::AccountChangeSets`]
 /// - [`tables::StorageChangeSets`]
 #[derive(Debug)]
-pub struct HistoricalStateProviderRef<
-    'b,
-    Provider,
-    N: NodePrimitives = <Provider as NodePrimitivesProvider>::Primitives,
-> where
-    Provider: NodePrimitivesProvider<Primitives = N>,
-{
+pub struct HistoricalStateProviderRef<'b, Provider> {
     /// Database provider
     provider: &'b Provider,
     /// Manager for state trie overlays and cached changesets.
-    overlay_manager: OverlayManager<N>,
+    overlay_manager: OverlayManager,
     /// Block number is main index for the history state of accounts and storages.
     block_number: BlockNumber,
     /// Lowest blocks at which different parts of the state are available.
     lowest_available_blocks: LowestAvailableBlocks,
 }
 
-impl<'b, Provider, N> HistoricalStateProviderRef<'b, Provider, N>
+impl<'b, Provider> HistoricalStateProviderRef<'b, Provider>
 where
-    Provider: DBProvider
-        + ChangeSetReader
-        + StorageChangeSetReader
-        + BlockNumReader
-        + NodePrimitivesProvider<Primitives = N>,
-    N: NodePrimitives,
+    Provider: DBProvider + ChangeSetReader + StorageChangeSetReader + BlockNumReader,
 {
     /// Create new `StateProvider` for historical block number
     pub fn new(
         provider: &'b Provider,
         block_number: BlockNumber,
-        overlay_manager: OverlayManager<N>,
+        overlay_manager: OverlayManager,
     ) -> Self {
         Self {
             provider,
@@ -166,7 +154,7 @@ where
         provider: &'b Provider,
         block_number: BlockNumber,
         lowest_available_blocks: LowestAvailableBlocks,
-        overlay_manager: OverlayManager<N>,
+        overlay_manager: OverlayManager,
     ) -> Self {
         Self { provider, overlay_manager, block_number, lowest_available_blocks }
     }
@@ -174,7 +162,7 @@ where
     /// Lookup an account in the `AccountsHistory` table using `EitherReader`.
     pub fn account_history_lookup(&self, address: Address) -> ProviderResult<HistoryInfo>
     where
-        Provider: StorageSettingsCache + RocksDBProviderFactory + NodePrimitivesProvider,
+        Provider: StorageSettingsCache + RocksDBProviderFactory,
     {
         if !self.lowest_available_blocks.is_account_history_available(self.block_number) {
             return Err(ProviderError::StateAtBlockPruned(self.block_number));
@@ -202,7 +190,7 @@ where
         lookup_key: B256,
     ) -> ProviderResult<HistoryInfo>
     where
-        Provider: StorageSettingsCache + RocksDBProviderFactory + NodePrimitivesProvider,
+        Provider: StorageSettingsCache + RocksDBProviderFactory,
     {
         if !self.lowest_available_blocks.is_storage_history_available(self.block_number) {
             return Err(ProviderError::StateAtBlockPruned(self.block_number));
@@ -232,7 +220,7 @@ where
         lookup_key: B256,
     ) -> ProviderResult<Option<StorageValue>>
     where
-        Provider: StorageSettingsCache + RocksDBProviderFactory + NodePrimitivesProvider,
+        Provider: StorageSettingsCache + RocksDBProviderFactory,
     {
         match self.storage_history_lookup(address, lookup_key)? {
             HistoryInfo::NotYetWritten => Ok(None),
@@ -318,26 +306,23 @@ where
     }
 }
 
-impl<Provider, N> HistoricalStateProviderRef<'_, Provider, N>
+impl<Provider> HistoricalStateProviderRef<'_, Provider>
 where
-    Provider: DBProvider + BlockNumReader + NodePrimitivesProvider<Primitives = N>,
-    N: NodePrimitives,
+    Provider: DBProvider + BlockNumReader,
 {
     fn tx(&self) -> &Provider::Tx {
         self.provider.tx_ref()
     }
 }
 
-impl<Provider, N> AccountReader for HistoricalStateProviderRef<'_, Provider, N>
+impl<Provider> AccountReader for HistoricalStateProviderRef<'_, Provider>
 where
     Provider: DBProvider
         + BlockNumReader
         + ChangeSetReader
         + StorageChangeSetReader
         + StorageSettingsCache
-        + RocksDBProviderFactory
-        + NodePrimitivesProvider<Primitives = N>,
-    N: NodePrimitives,
+        + RocksDBProviderFactory,
 {
     /// Get basic account information.
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
@@ -361,11 +346,9 @@ where
     }
 }
 
-impl<Provider, N> BlockHashReader for HistoricalStateProviderRef<'_, Provider, N>
+impl<Provider> BlockHashReader for HistoricalStateProviderRef<'_, Provider>
 where
-    Provider:
-        DBProvider + BlockNumReader + BlockHashReader + NodePrimitivesProvider<Primitives = N>,
-    N: NodePrimitives,
+    Provider: DBProvider + BlockNumReader + BlockHashReader,
 {
     /// Get block hash by number.
     fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
@@ -381,7 +364,7 @@ where
     }
 }
 
-impl<Provider, N> StateRootProvider for HistoricalStateProviderRef<'_, Provider, N>
+impl<Provider> StateRootProvider for HistoricalStateProviderRef<'_, Provider>
 where
     Provider: DBProvider
         + ChangeSetReader
@@ -390,9 +373,7 @@ where
         + BlockHashReader
         + PruneCheckpointReader
         + StageCheckpointReader
-        + StorageSettingsCache
-        + NodePrimitivesProvider<Primitives = N>,
-    N: NodePrimitives,
+        + StorageSettingsCache,
 {
     fn state_root(&self, hashed_state: HashedPostState) -> ProviderResult<B256> {
         reth_trie_db::with_adapter!(self.provider, |A| {
@@ -433,7 +414,7 @@ where
     }
 }
 
-impl<Provider, N> StorageRootProvider for HistoricalStateProviderRef<'_, Provider, N>
+impl<Provider> StorageRootProvider for HistoricalStateProviderRef<'_, Provider>
 where
     Provider: DBProvider
         + ChangeSetReader
@@ -442,9 +423,7 @@ where
         + BlockHashReader
         + PruneCheckpointReader
         + StageCheckpointReader
-        + StorageSettingsCache
-        + NodePrimitivesProvider<Primitives = N>,
-    N: NodePrimitives,
+        + StorageSettingsCache,
 {
     fn storage_root(
         &self,
@@ -531,7 +510,7 @@ where
     }
 }
 
-impl<Provider, N> StateProofProvider for HistoricalStateProviderRef<'_, Provider, N>
+impl<Provider> StateProofProvider for HistoricalStateProviderRef<'_, Provider>
 where
     Provider: DBProvider
         + ChangeSetReader
@@ -540,9 +519,7 @@ where
         + BlockHashReader
         + PruneCheckpointReader
         + StageCheckpointReader
-        + StorageSettingsCache
-        + NodePrimitivesProvider<Primitives = N>,
-    N: NodePrimitives,
+        + StorageSettingsCache,
 {
     /// Get account and storage proofs.
     fn proof(
@@ -616,7 +593,7 @@ where
     }
 }
 
-impl<Provider, N> HashedPostStateProvider for HistoricalStateProviderRef<'_, Provider, N>
+impl<Provider> HashedPostStateProvider for HistoricalStateProviderRef<'_, Provider>
 where
     Provider: DBProvider
         + ChangeSetReader
@@ -625,9 +602,7 @@ where
         + BlockHashReader
         + PruneCheckpointReader
         + StageCheckpointReader
-        + StorageSettingsCache
-        + NodePrimitivesProvider<Primitives = N>,
-    N: NodePrimitives,
+        + StorageSettingsCache,
 {
     fn hashed_post_state(
         &self,
@@ -656,7 +631,7 @@ where
     }
 }
 
-impl<Provider, N> StateProvider for HistoricalStateProviderRef<'_, Provider, N>
+impl<Provider> StateProvider for HistoricalStateProviderRef<'_, Provider>
 where
     Provider: DBProvider
         + BlockNumReader
@@ -666,9 +641,7 @@ where
         + PruneCheckpointReader
         + StageCheckpointReader
         + StorageSettingsCache
-        + RocksDBProviderFactory
-        + NodePrimitivesProvider<Primitives = N>,
-    N: NodePrimitives,
+        + RocksDBProviderFactory,
 {
     /// Expects a plain (unhashed) storage key slot.
     fn storage(
@@ -680,10 +653,9 @@ where
     }
 }
 
-impl<Provider, N> BytecodeReader for HistoricalStateProviderRef<'_, Provider, N>
+impl<Provider> BytecodeReader for HistoricalStateProviderRef<'_, Provider>
 where
-    Provider: DBProvider + BlockNumReader + NodePrimitivesProvider<Primitives = N>,
-    N: NodePrimitives,
+    Provider: DBProvider + BlockNumReader,
 {
     /// Get account code by its hash
     fn bytecode_by_hash(&self, code_hash: &B256) -> ProviderResult<Option<Bytecode>> {
@@ -694,26 +666,25 @@ where
 /// State provider for a given block number.
 /// For more detailed description, see [`HistoricalStateProviderRef`].
 #[derive(Debug)]
-pub struct HistoricalStateProvider<Provider: NodePrimitivesProvider> {
+pub struct HistoricalStateProvider<Provider> {
     /// Database provider.
     provider: Provider,
     /// Manager for state trie overlays and cached changesets.
-    overlay_manager: OverlayManager<Provider::Primitives>,
+    overlay_manager: OverlayManager,
     /// State at the block number is the main indexer of the state.
     block_number: BlockNumber,
     /// Lowest blocks at which different parts of the state are available.
     lowest_available_blocks: LowestAvailableBlocks,
 }
 
-impl<
-    Provider: DBProvider + ChangeSetReader + StorageChangeSetReader + BlockNumReader + NodePrimitivesProvider,
-> HistoricalStateProvider<Provider>
+impl<Provider: DBProvider + ChangeSetReader + StorageChangeSetReader + BlockNumReader>
+    HistoricalStateProvider<Provider>
 {
     /// Create new `StateProvider` for historical block number
     pub fn new(
         provider: Provider,
         block_number: BlockNumber,
-        overlay_manager: OverlayManager<Provider::Primitives>,
+        overlay_manager: OverlayManager,
     ) -> Self {
         Self {
             provider,
@@ -742,9 +713,8 @@ impl<
     }
 }
 
-impl<
-    Provider: DBProvider + ChangeSetReader + StorageChangeSetReader + BlockNumReader + NodePrimitivesProvider,
-> HistoricalStateProvider<Provider>
+impl<Provider: DBProvider + ChangeSetReader + StorageChangeSetReader + BlockNumReader>
+    HistoricalStateProvider<Provider>
 {
     /// Returns a new provider that takes the `TX` as reference
     #[inline(always)]
@@ -759,7 +729,7 @@ impl<
 }
 
 // Delegates all provider impls to [HistoricalStateProviderRef]
-reth_storage_api::macros::delegate_provider_impls!(HistoricalStateProvider<Provider> where [Provider: DBProvider + BlockNumReader + BlockHashReader + ChangeSetReader + StorageChangeSetReader + PruneCheckpointReader + StageCheckpointReader + StorageSettingsCache + RocksDBProviderFactory + NodePrimitivesProvider]);
+reth_storage_api::macros::delegate_provider_impls!(HistoricalStateProvider<Provider> where [Provider: DBProvider + BlockNumReader + BlockHashReader + ChangeSetReader + StorageChangeSetReader + PruneCheckpointReader + StageCheckpointReader + StorageSettingsCache + RocksDBProviderFactory]);
 
 /// Lowest blocks at which different parts of the state are available.
 /// They may be [Some] if pruning is enabled.
@@ -876,6 +846,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, b256, keccak256};
+    use base_common_consensus::BaseReceipt;
     use reth_db_api::{
         BlockNumberList,
         models::{AccountBeforeTx, ShardedKey, storage_sharded_key::StorageShardedKey},
@@ -885,8 +856,7 @@ mod tests {
     use reth_primitives_traits::{Account, StorageEntry};
     use reth_storage_api::{
         BlockHashReader, BlockNumReader, ChangeSetReader, DBProvider, DatabaseProviderFactory,
-        NodePrimitivesProvider, PruneCheckpointReader, StageCheckpointReader,
-        StorageChangeSetReader, StorageSettingsCache,
+        PruneCheckpointReader, StageCheckpointReader, StorageChangeSetReader, StorageSettingsCache,
     };
     use reth_storage_errors::provider::ProviderError;
     use reth_storage_overlay::OverlayManager;
@@ -915,8 +885,7 @@ mod tests {
             + PruneCheckpointReader
             + StageCheckpointReader
             + StorageSettingsCache
-            + RocksDBProviderFactory
-            + NodePrimitivesProvider,
+            + RocksDBProviderFactory,
     >() {
         assert_state_provider::<HistoricalStateProvider<T>>();
     }
@@ -1312,7 +1281,7 @@ mod tests {
         use alloy_primitives::keccak256;
         use reth_db_api::models::StorageSettings;
         use reth_execution_types::ExecutionOutcome;
-        use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
+        use reth_testing_utils::generators::{self, BlockRangeParams};
         use revm::database::BundleState;
 
         use crate::BlockWriter;
@@ -1327,7 +1296,7 @@ mod tests {
             Account { nonce: 1, balance: U256::from(2000), bytecode_hash: None }.into();
 
         let mut rng = generators::rng();
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=15,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
@@ -1364,7 +1333,7 @@ mod tests {
                     .into_iter()
                     .map(|b| b.try_recover().expect("failed to seal block with senders"))
                     .collect(),
-                &ExecutionOutcome { bundle, first_block: 0, ..Default::default() },
+                &ExecutionOutcome::<BaseReceipt> { bundle, first_block: 0, ..Default::default() },
                 Default::default(),
             )
             .unwrap();
@@ -1456,7 +1425,7 @@ mod tests {
         use reth_execution_types::ExecutionOutcome;
         use reth_stages_types::{StageCheckpoint, StageId};
         use reth_storage_api::{HashedPostStateProvider, StageCheckpointWriter};
-        use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
+        use reth_testing_utils::generators::{self, BlockRangeParams};
         use revm::{
             database::{AccountStatus, BundleAccount, BundleState},
             state::AccountInfo,
@@ -1468,7 +1437,7 @@ mod tests {
         let slot = U256::from(1);
         let old_value = U256::from(2);
         let account = AccountInfo::default();
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut generators::rng(),
             0..=1,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
@@ -1493,7 +1462,7 @@ mod tests {
                     .into_iter()
                     .map(|block| block.try_recover().expect("failed to seal block with senders"))
                     .collect(),
-                &ExecutionOutcome { bundle, first_block: 0, ..Default::default() },
+                &ExecutionOutcome::<BaseReceipt> { bundle, first_block: 0, ..Default::default() },
                 Default::default(),
             )
             .unwrap();

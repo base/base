@@ -26,11 +26,10 @@ use alloy_evm::{
     precompiles::PrecompilesMap,
 };
 use alloy_primitives::{Address, B256, Bytes};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use execute::{BasicBlockExecutor, BlockAssembler, BlockBuilder};
 use reth_execution_errors::BlockExecutionError;
-use reth_primitives_traits::{
-    BlockTy, HeaderTy, NodePrimitives, ReceiptTy, SealedBlock, SealedHeader, TxTy,
-};
+use reth_primitives_traits::{SealedBlock, SealedHeader};
 use revm::{database::State, primitives::hardfork::SpecId};
 
 use crate::execute::{BasicBlockBuilder, Executor};
@@ -183,9 +182,6 @@ pub use alloy_evm::{
 /// [`BlockExecutor`]: alloy_evm::block::BlockExecutor
 #[auto_impl::auto_impl(&, Arc)]
 pub trait ConfigureEvm: Clone + Debug + Send + Sync + Unpin {
-    /// The primitives type used by the EVM.
-    type Primitives: NodePrimitives;
-
     /// The error type that is returned by [`Self::next_evm_env`].
     type Error: Error + Send + Sync + 'static;
 
@@ -196,20 +192,20 @@ pub trait ConfigureEvm: Clone + Debug + Send + Sync + Unpin {
 
     /// Configured [`BlockExecutorFactory`], contains [`EvmFactory`] internally.
     type BlockExecutorFactory: for<'a> BlockExecutorFactory<
-            Transaction = TxTy<Self::Primitives>,
-            Receipt = ReceiptTy<Self::Primitives>,
+            Transaction = BaseTxEnvelope,
+            Receipt = BaseReceipt,
             ExecutionCtx<'a>: Debug + Send,
             EvmFactory: EvmFactory<
                 Tx: TransactionEnvMut
-                        + FromRecoveredTx<TxTy<Self::Primitives>>
-                        + FromTxWithEncoded<TxTy<Self::Primitives>>,
+                        + FromRecoveredTx<BaseTxEnvelope>
+                        + FromTxWithEncoded<BaseTxEnvelope>,
                 Precompiles = PrecompilesMap,
                 Spec: Into<SpecId>,
             >,
         >;
 
     /// A type that knows how to build a block.
-    type BlockAssembler: BlockAssembler<Self::BlockExecutorFactory, Block = BlockTy<Self::Primitives>>;
+    type BlockAssembler: BlockAssembler<Self::BlockExecutorFactory, Block = BaseBlock>;
 
     /// Returns reference to the configured [`BlockExecutorFactory`].
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory;
@@ -218,7 +214,7 @@ pub trait ConfigureEvm: Clone + Debug + Send + Sync + Unpin {
     fn block_assembler(&self) -> &Self::BlockAssembler;
 
     /// Creates a new [`EvmEnv`] for the given header.
-    fn evm_env(&self, header: &HeaderTy<Self::Primitives>) -> Result<EvmEnvFor<Self>, Self::Error>;
+    fn evm_env(&self, header: &alloy_consensus::Header) -> Result<EvmEnvFor<Self>, Self::Error>;
 
     /// Returns the configured [`EvmEnv`] for `parent + 1` block.
     ///
@@ -237,21 +233,21 @@ pub trait ConfigureEvm: Clone + Debug + Send + Sync + Unpin {
     /// ```
     fn next_evm_env(
         &self,
-        parent: &HeaderTy<Self::Primitives>,
+        parent: &alloy_consensus::Header,
         attributes: &Self::NextBlockEnvCtx,
     ) -> Result<EvmEnvFor<Self>, Self::Error>;
 
     /// Returns the configured [`BlockExecutorFactory::ExecutionCtx`] for a given block.
     fn context_for_block<'a>(
         &self,
-        block: &'a SealedBlock<BlockTy<Self::Primitives>>,
+        block: &'a SealedBlock<BaseBlock>,
     ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error>;
 
     /// Returns the configured [`BlockExecutorFactory::ExecutionCtx`] for `parent + 1`
     /// block.
     fn context_for_next_block(
         &self,
-        parent: &SealedHeader<HeaderTy<Self::Primitives>>,
+        parent: &SealedHeader<alloy_consensus::Header>,
         attributes: Self::NextBlockEnvCtx,
     ) -> Result<ExecutionCtxFor<'_, Self>, Self::Error>;
 
@@ -311,7 +307,7 @@ pub trait ConfigureEvm: Clone + Debug + Send + Sync + Unpin {
     fn evm_for_block<DB: Database>(
         &self,
         db: DB,
-        header: &HeaderTy<Self::Primitives>,
+        header: &alloy_consensus::Header,
     ) -> Result<EvmFor<Self, DB>, Self::Error> {
         let evm_env = self.evm_env(header)?;
         Ok(self.evm_with_env(db, evm_env))
@@ -366,7 +362,7 @@ pub trait ConfigureEvm: Clone + Debug + Send + Sync + Unpin {
     fn executor_for_block<'a, DB: Database>(
         &'a self,
         db: &'a mut State<DB>,
-        block: &'a SealedBlock<<Self::Primitives as NodePrimitives>::Block>,
+        block: &'a SealedBlock<BaseBlock>,
     ) -> Result<BlockExecutorForEvm<'a, Self, DB>, Self::Error> {
         let evm = self.evm_for_block(db, block.header())?;
         let ctx = self.context_for_block(block)?;
@@ -391,9 +387,9 @@ pub trait ConfigureEvm: Clone + Debug + Send + Sync + Unpin {
     fn create_block_builder<'a, DB, I>(
         &'a self,
         evm: EvmFor<Self, &'a mut State<DB>, I>,
-        parent: &'a SealedHeader<HeaderTy<Self::Primitives>>,
+        parent: &'a SealedHeader<alloy_consensus::Header>,
         ctx: <Self::BlockExecutorFactory as BlockExecutorFactory>::ExecutionCtx<'a>,
-    ) -> impl BlockBuilder<Primitives = Self::Primitives, Executor = BlockExecutorForEvm<'a, Self, DB, I>>
+    ) -> impl BlockBuilder<Executor = BlockExecutorForEvm<'a, Self, DB, I>>
     where
         DB: Database,
         I: InspectorFor<Self, &'a mut State<DB>> + 'a,
@@ -439,12 +435,9 @@ pub trait ConfigureEvm: Clone + Debug + Send + Sync + Unpin {
     fn builder_for_next_block<'a, DB: Database + 'a>(
         &'a self,
         db: &'a mut State<DB>,
-        parent: &'a SealedHeader<<Self::Primitives as NodePrimitives>::BlockHeader>,
+        parent: &'a SealedHeader<alloy_consensus::Header>,
         attributes: Self::NextBlockEnvCtx,
-    ) -> Result<
-        impl BlockBuilder<Primitives = Self::Primitives, Executor = BlockExecutorForEvm<'a, Self, DB>>,
-        Self::Error,
-    > {
+    ) -> Result<impl BlockBuilder<Executor = BlockExecutorForEvm<'a, Self, DB>>, Self::Error> {
         let evm_env = self.next_evm_env(parent, &attributes)?;
         let evm = self.evm_with_env(db, evm_env);
         let ctx = self.context_for_next_block(parent, attributes)?;
@@ -472,10 +465,7 @@ pub trait ConfigureEvm: Clone + Debug + Send + Sync + Unpin {
     /// let batch_output = executor.execute_batch(&blocks)?;
     /// ```
     #[auto_impl(keep_default_for(&, Arc))]
-    fn executor<DB: Database>(
-        &self,
-        db: DB,
-    ) -> impl Executor<DB, Primitives = Self::Primitives, Error = BlockExecutionError> {
+    fn executor<DB: Database>(&self, db: DB) -> impl Executor<DB, Error = BlockExecutionError> {
         BasicBlockExecutor::new(self, db)
     }
 
@@ -484,7 +474,7 @@ pub trait ConfigureEvm: Clone + Debug + Send + Sync + Unpin {
     fn batch_executor<DB: Database>(
         &self,
         db: DB,
-    ) -> impl Executor<DB, Primitives = Self::Primitives, Error = BlockExecutionError> {
+    ) -> impl Executor<DB, Error = BlockExecutionError> {
         BasicBlockExecutor::new(self, db)
     }
 }

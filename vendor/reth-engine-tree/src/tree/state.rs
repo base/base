@@ -10,8 +10,8 @@ use alloy_primitives::{
     B256, BlockNumber,
     map::{B256Map, B256Set},
 };
-use reth_chain_state::{EthPrimitives, ExecutedBlock};
-use reth_primitives_traits::{AlloyBlockHeader, NodePrimitives, SealedHeader};
+use reth_chain_state::ExecutedBlock;
+use reth_primitives_traits::{AlloyBlockHeader, SealedHeader};
 use reth_storage_overlay::OverlayManager;
 use tracing::debug;
 
@@ -24,17 +24,17 @@ use crate::engine::EngineApiKind;
 /// - This only stores blocks that are connected to the canonical chain.
 /// - All executed blocks are valid and have been executed.
 #[derive(Debug, Default)]
-pub struct TreeState<N: NodePrimitives = EthPrimitives> {
+pub struct TreeState {
     /// __All__ unique executed blocks by block hash that are connected to the canonical chain.
     ///
     /// This includes blocks of all forks.
-    pub(crate) blocks_by_hash: B256Map<ExecutedBlock<N>>,
+    pub(crate) blocks_by_hash: B256Map<ExecutedBlock>,
     /// Executed blocks grouped by their respective block number.
     ///
     /// This maps unique block number to all known blocks for that height.
     ///
     /// Note: there can be multiple blocks at the same height due to forks.
-    pub(crate) blocks_by_number: BTreeMap<BlockNumber, Vec<ExecutedBlock<N>>>,
+    pub(crate) blocks_by_number: BTreeMap<BlockNumber, Vec<ExecutedBlock>>,
     /// Map of any parent block hash to its children.
     pub(crate) parent_to_child: B256Map<B256Set>,
     /// Currently tracked canonical head of the chain.
@@ -42,15 +42,15 @@ pub struct TreeState<N: NodePrimitives = EthPrimitives> {
     /// The engine API variant of this handler
     pub(crate) engine_kind: EngineApiKind,
     /// Manages state trie overlays for in-memory blocks.
-    pub(crate) overlay_manager: OverlayManager<N>,
+    pub(crate) overlay_manager: OverlayManager,
 }
 
-impl<N: NodePrimitives> TreeState<N> {
+impl TreeState {
     /// Returns a new, empty tree state that points to the given canonical head.
     pub fn new(
         current_canonical_head: BlockNumHash,
         engine_kind: EngineApiKind,
-        overlay_manager: OverlayManager<N>,
+        overlay_manager: OverlayManager,
     ) -> Self {
         Self {
             blocks_by_hash: B256Map::default(),
@@ -82,7 +82,7 @@ impl<N: NodePrimitives> TreeState<N> {
     }
 
     /// Returns the [`ExecutedBlock`] by hash.
-    pub fn executed_block_by_hash(&self, hash: B256) -> Option<&ExecutedBlock<N>> {
+    pub fn executed_block_by_hash(&self, hash: B256) -> Option<&ExecutedBlock> {
         self.blocks_by_hash.get(&hash)
     }
 
@@ -92,7 +92,10 @@ impl<N: NodePrimitives> TreeState<N> {
     }
 
     /// Returns the sealed block header by hash.
-    pub fn sealed_header_by_hash(&self, hash: &B256) -> Option<SealedHeader<N::BlockHeader>> {
+    pub fn sealed_header_by_hash(
+        &self,
+        hash: &B256,
+    ) -> Option<SealedHeader<alloy_consensus::Header>> {
         self.blocks_by_hash.get(hash).map(|b| b.sealed_block().sealed_header().clone())
     }
 
@@ -101,7 +104,7 @@ impl<N: NodePrimitives> TreeState<N> {
     /// highest persisted block connected to this chain.
     ///
     /// Returns `None` if the block for the given hash is not found.
-    pub fn blocks_by_hash(&self, hash: B256) -> Option<(B256, Vec<ExecutedBlock<N>>)> {
+    pub fn blocks_by_hash(&self, hash: B256) -> Option<(B256, Vec<ExecutedBlock>)> {
         let block = self.blocks_by_hash.get(&hash).cloned()?;
         let mut parent_hash = block.recovered_block().parent_hash();
         let mut blocks = vec![block];
@@ -114,7 +117,7 @@ impl<N: NodePrimitives> TreeState<N> {
     }
 
     /// Insert executed block into the state.
-    pub fn insert_executed(&mut self, executed: ExecutedBlock<N>) {
+    pub fn insert_executed(&mut self, executed: ExecutedBlock) {
         let hash = executed.recovered_block().hash();
         let parent_hash = executed.recovered_block().parent_hash();
         let block_number = executed.recovered_block().number();
@@ -137,7 +140,7 @@ impl<N: NodePrimitives> TreeState<N> {
     /// ## Returns
     ///
     /// The removed block and the block hashes of its children.
-    fn remove_by_hash(&mut self, hash: B256) -> Option<(ExecutedBlock<N>, B256Set)> {
+    fn remove_by_hash(&mut self, hash: B256) -> Option<(ExecutedBlock, B256Set)> {
         let executed = self.blocks_by_hash.remove(&hash)?;
 
         // Remove this block from collection of children of its parent block.
@@ -350,7 +353,7 @@ impl<N: NodePrimitives> TreeState<N> {
 }
 
 #[cfg(test)]
-impl<N: NodePrimitives> TreeState<N> {
+impl TreeState {
     /// Determines if the second block is a descendant of the first block.
     ///
     /// If the two blocks are the same, this returns `false`.

@@ -23,7 +23,7 @@
 //! ### Type Relationships
 //!
 //! ```text
-//! NodePrimitives::SignedTx  ←──   NetworkPrimitives::BroadcastedTransaction
+//! BaseTxEnvelope  ←──   NetworkPrimitives::BroadcastedTransaction
 //!        │                              │
 //!        │ (consensus format)           │ (announced to peers)
 //!        │                              │

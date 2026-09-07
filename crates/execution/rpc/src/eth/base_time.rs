@@ -84,7 +84,7 @@ impl BaseTimeCache {
 mod tests {
     use alloy_consensus::{BlockBody, Header, Sealable};
     use alloy_primitives::B256;
-    use base_common_consensus::{BaseBlock, BasePrimitives, BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
     use base_protocol::BaseTimeUpdateTx;
     use reth_provider::test_utils::MockEthProvider;
 
@@ -102,7 +102,7 @@ mod tests {
             header: Header { number: block_number, timestamp: 42, ..Default::default() },
             body: BlockBody { transactions, ..Default::default() },
         };
-        let provider = MockEthProvider::<BasePrimitives>::new();
+        let provider = MockEthProvider::new();
         provider.add_block(block_hash, block.clone());
         let cache = BaseTimeCache::default();
 

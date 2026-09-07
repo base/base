@@ -11,8 +11,8 @@ use alloy_rpc_types_trace::{
     parity::{Action, CreateAction, CreateOutput, TraceOutput},
 };
 use async_trait::async_trait;
+use base_common_consensus::BaseTxEnvelope;
 use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
-use reth_primitives_traits::TxTy;
 use reth_rpc_api::{EthApiServer, OtterscanServer};
 use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_api::{
@@ -74,7 +74,7 @@ where
             RpcBlock<Eth::NetworkTypes>,
             RpcReceipt<Eth::NetworkTypes>,
             RpcHeader<Eth::NetworkTypes>,
-            TxTy<Eth::Primitives>,
+            BaseTxEnvelope,
         > + EthTransactions
         + TraceExt
         + 'static,

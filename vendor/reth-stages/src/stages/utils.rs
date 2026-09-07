@@ -14,7 +14,6 @@ use reth_db_api::{
     tables,
 };
 use reth_etl::Collector;
-use reth_primitives_traits::NodePrimitives;
 use reth_provider::{
     BlockReader, DBProvider, EitherWriter, PreparedHistoryShardWrites, ProviderError,
     ProviderResult, RocksDBProviderFactory, ShardedHistoryTable, StaticFileProviderFactory,
@@ -400,12 +399,11 @@ where
 /// Append-only empty-table loader for account history.
 ///
 /// Streams the collector into `append_*` and never reads last shards.
-pub(crate) fn load_account_history_append<N, CURSOR>(
+pub(crate) fn load_account_history_append<CURSOR>(
     mut collector: Collector<ShardedKey<Address>, BlockNumberList>,
-    writer: &mut EitherWriter<'_, CURSOR, N>,
+    writer: &mut EitherWriter<'_, CURSOR>,
 ) -> Result<(), StageError>
 where
-    N: NodePrimitives,
     CURSOR: DbCursorRW<tables::AccountsHistory> + DbCursorRO<tables::AccountsHistory>,
 {
     let mut current_address: Option<Address> = None;
@@ -457,13 +455,12 @@ where
 /// Only flushes when we have more than one shard's worth of data, keeping the last
 /// (possibly partial) shard for continued accumulation. This avoids writing a shard
 /// that may need to be updated when more indices arrive.
-fn flush_account_history_shards_partial<N, CURSOR>(
+fn flush_account_history_shards_partial<CURSOR>(
     address: Address,
     list: &mut Vec<u64>,
-    writer: &mut EitherWriter<'_, CURSOR, N>,
+    writer: &mut EitherWriter<'_, CURSOR>,
 ) -> Result<(), StageError>
 where
-    N: NodePrimitives,
     CURSOR: DbCursorRW<tables::AccountsHistory> + DbCursorRO<tables::AccountsHistory>,
 {
     // Nothing to flush if we haven't filled a complete shard yet.
@@ -506,13 +503,12 @@ where
 ///
 /// The `u64::MAX` key for the final shard is an invariant that allows `seek_exact(address,
 /// u64::MAX)` to find the last shard during incremental sync for merging with new indices.
-fn flush_account_history_shards<N, CURSOR>(
+fn flush_account_history_shards<CURSOR>(
     address: Address,
     list: &mut Vec<u64>,
-    writer: &mut EitherWriter<'_, CURSOR, N>,
+    writer: &mut EitherWriter<'_, CURSOR>,
 ) -> Result<(), StageError>
 where
-    N: NodePrimitives,
     CURSOR: DbCursorRW<tables::AccountsHistory> + DbCursorRO<tables::AccountsHistory>,
 {
     if list.is_empty() {
@@ -541,7 +537,7 @@ where
 /// transactions for.
 pub(crate) fn missing_static_data_error<Provider>(
     last_tx_num: TxNumber,
-    static_file_provider: &StaticFileProvider<Provider::Primitives>,
+    static_file_provider: &StaticFileProvider,
     provider: &Provider,
     segment: StaticFileSegment,
 ) -> Result<StageError, ProviderError>
@@ -576,12 +572,11 @@ where
 /// Append-only empty-table loader for storage history.
 ///
 /// Streams the collector into `append_*` and never reads last shards.
-pub(crate) fn load_storage_history_append<N, CURSOR>(
+pub(crate) fn load_storage_history_append<CURSOR>(
     mut collector: Collector<StorageShardedKey, BlockNumberList>,
-    writer: &mut EitherWriter<'_, CURSOR, N>,
+    writer: &mut EitherWriter<'_, CURSOR>,
 ) -> Result<(), StageError>
 where
-    N: NodePrimitives,
     CURSOR: DbCursorRW<tables::StoragesHistory> + DbCursorRO<tables::StoragesHistory>,
 {
     let mut current_key: Option<(Address, B256)> = None;
@@ -643,14 +638,13 @@ where
 /// Only flushes when we have more than one shard's worth of data, keeping the last
 /// (possibly partial) shard for continued accumulation. This avoids writing a shard
 /// that may need to be updated when more indices arrive.
-fn flush_storage_history_shards_partial<N, CURSOR>(
+fn flush_storage_history_shards_partial<CURSOR>(
     address: Address,
     storage_key: B256,
     list: &mut Vec<u64>,
-    writer: &mut EitherWriter<'_, CURSOR, N>,
+    writer: &mut EitherWriter<'_, CURSOR>,
 ) -> Result<(), StageError>
 where
-    N: NodePrimitives,
     CURSOR: DbCursorRW<tables::StoragesHistory> + DbCursorRO<tables::StoragesHistory>,
 {
     // Nothing to flush if we haven't filled a complete shard yet.
@@ -694,14 +688,13 @@ where
 /// The `u64::MAX` key for the final shard is an invariant that allows
 /// `seek_exact(address, storage_key, u64::MAX)` to find the last shard during incremental
 /// sync for merging with new indices.
-fn flush_storage_history_shards<N, CURSOR>(
+fn flush_storage_history_shards<CURSOR>(
     address: Address,
     storage_key: B256,
     list: &mut Vec<u64>,
-    writer: &mut EitherWriter<'_, CURSOR, N>,
+    writer: &mut EitherWriter<'_, CURSOR>,
 ) -> Result<(), StageError>
 where
-    N: NodePrimitives,
     CURSOR: DbCursorRW<tables::StoragesHistory> + DbCursorRO<tables::StoragesHistory>,
 {
     if list.is_empty() {

@@ -36,6 +36,7 @@ parking_lot = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync"] }
 reth-db = { workspace = true, features = ["default", "mdbx"] }
 bincode = { workspace = true, features = ["default", "serde"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-revm = { workspace = true, features = ["default", "witness"] }
 reth-execution-errors = { workspace = true, features = ["default"] }
 eyre = { workspace = true, optional = true, features = ["default"] }

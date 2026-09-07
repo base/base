@@ -9,6 +9,7 @@ use std::{
 
 use alloy_rpc_types::engine::ClientVersionV1;
 use alloy_rpc_types_engine::ExecutionData;
+use base_common_consensus::BaseBlock;
 use jsonrpsee::RpcModule;
 pub use jsonrpsee::{
     core::middleware::layer::Either,
@@ -20,8 +21,8 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardfor
 use reth_engine_tree::tree::WaitForCaches;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_api::{
-    AddOnsContext, BlockTy, EngineApiValidator, EngineTypes, FullNodeComponents, FullNodeTypes,
-    NodeAddOns, NodeTypes, PayloadTypes, PayloadValidator, PrimitivesTy, TreeConfig,
+    AddOnsContext, EngineApiValidator, EngineTypes, FullNodeComponents, FullNodeTypes, NodeAddOns,
+    NodeTypes, PayloadTypes, PayloadValidator, TreeConfig,
 };
 use reth_node_core::{
     cli::config::RethTransactionPoolConfig,
@@ -341,7 +342,7 @@ pub struct RpcHandle<Node: FullNodeComponents, EthApi: EthApiTypes> {
     ///
     /// Caution: This is a multi-producer, multi-consumer broadcast and allows grants access to
     /// dispatch events
-    pub engine_events: EventSender<ConsensusEngineEvent<<Node::Types as NodeTypes>::Primitives>>,
+    pub engine_events: EventSender<ConsensusEngineEvent>,
     /// Handle to the beacon consensus engine.
     pub beacon_engine_handle: ConsensusEngineHandle<<Node::Types as NodeTypes>::Payload>,
     /// Handle to trigger engine shutdown.
@@ -397,9 +398,7 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcHandle<Node, EthApi> {
     }
 
     /// Returns the consensus engine events sender.
-    pub const fn consensus_engine_events(
-        &self,
-    ) -> &EventSender<ConsensusEngineEvent<<Node::Types as NodeTypes>::Primitives>> {
+    pub const fn consensus_engine_events(&self) -> &EventSender<ConsensusEngineEvent> {
         &self.engine_events
     }
 
@@ -431,7 +430,7 @@ pub struct RpcServerOnlyHandle<Node: FullNodeComponents, EthApi: EthApiTypes> {
     /// Configured RPC modules.
     pub rpc_registry: RpcRegistry<Node, EthApi>,
     /// Notification channel for engine API events
-    pub engine_events: EventSender<ConsensusEngineEvent<<Node::Types as NodeTypes>::Primitives>>,
+    pub engine_events: EventSender<ConsensusEngineEvent>,
     /// Handle to the consensus engine.
     pub engine_handle: ConsensusEngineHandle<<Node::Types as NodeTypes>::Payload>,
 }
@@ -452,9 +451,7 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcServerOnlyHandle<Node, Et
     }
 
     /// Returns the consensus engine events sender.
-    pub const fn consensus_engine_events(
-        &self,
-    ) -> &EventSender<ConsensusEngineEvent<<Node::Types as NodeTypes>::Primitives>> {
+    pub const fn consensus_engine_events(&self) -> &EventSender<ConsensusEngineEvent> {
         &self.engine_events
     }
 }
@@ -471,7 +468,7 @@ pub struct AuthServerOnlyHandle<Node: FullNodeComponents, EthApi: EthApiTypes> {
     /// Configured RPC modules.
     pub rpc_registry: RpcRegistry<Node, EthApi>,
     /// Notification channel for engine API events
-    pub engine_events: EventSender<ConsensusEngineEvent<<Node::Types as NodeTypes>::Primitives>>,
+    pub engine_events: EventSender<ConsensusEngineEvent>,
     /// Handle to the consensus engine.
     pub engine_handle: ConsensusEngineHandle<<Node::Types as NodeTypes>::Payload>,
 }
@@ -487,9 +484,7 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> AuthServerOnlyHandle<Node, E
     }
 
     /// Returns the consensus engine events sender.
-    pub const fn consensus_engine_events(
-        &self,
-    ) -> &EventSender<ConsensusEngineEvent<<Node::Types as NodeTypes>::Primitives>> {
+    pub const fn consensus_engine_events(&self) -> &EventSender<ConsensusEngineEvent> {
         &self.engine_events
     }
 }
@@ -503,7 +498,7 @@ struct RpcSetupContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
     auth_config: reth_rpc_builder::auth::AuthServerConfig,
     registry: RpcRegistry<Node, EthApi>,
     on_rpc_started: Box<dyn OnRpcStarted<Node, EthApi>>,
-    engine_events: EventSender<ConsensusEngineEvent<<Node::Types as NodeTypes>::Primitives>>,
+    engine_events: EventSender<ConsensusEngineEvent>,
     engine_handle: ConsensusEngineHandle<<Node::Types as NodeTypes>::Payload>,
 }
 
@@ -1291,7 +1286,7 @@ pub struct EthApiCtx<'a, N: FullNodeTypes> {
     /// Eth API configuration
     pub config: EthConfig,
     /// Cache for eth state
-    pub cache: EthStateCache<PrimitivesTy<N::Types>>,
+    pub cache: EthStateCache,
     /// Handle to the beacon consensus engine
     pub engine_handle: ConsensusEngineHandle<<N::Types as NodeTypes>::Payload>,
 }
@@ -1403,8 +1398,7 @@ pub trait PayloadValidatorBuilder<Node: FullNodeComponents>: Send + Sync + Clone
 /// for block execution, state validation, and fork handling.
 pub trait EngineValidatorBuilder<Node: FullNodeComponents>: Send + Sync + Clone {
     /// The tree validator type that will be used by the consensus engine.
-    type EngineValidator: EngineValidator<<Node::Types as NodeTypes>::Payload, <Node::Types as NodeTypes>::Primitives>
-        + WaitForCaches;
+    type EngineValidator: EngineValidator<<Node::Types as NodeTypes>::Payload> + WaitForCaches;
 
     /// Builds the tree validator for the consensus engine.
     ///
@@ -1413,7 +1407,7 @@ pub trait EngineValidatorBuilder<Node: FullNodeComponents>: Send + Sync + Clone 
         self,
         ctx: &AddOnsContext<'_, Node>,
         tree_config: TreeConfig,
-        overlay_manager: OverlayManager<PrimitivesTy<Node::Types>>,
+        overlay_manager: OverlayManager,
     ) -> impl Future<Output = eyre::Result<Self::EngineValidator>> + Send;
 }
 
@@ -1452,7 +1446,7 @@ where
     EV: PayloadValidatorBuilder<Node>,
     EV::Validator: reth_engine_primitives::PayloadValidator<
             <Node::Types as NodeTypes>::Payload,
-            Block = BlockTy<Node::Types>,
+            Block = BaseBlock,
         > + Clone,
 {
     type EngineValidator = BasicEngineValidator<Node::Provider, Node::Evm, EV::Validator>;
@@ -1461,7 +1455,7 @@ where
         self,
         ctx: &AddOnsContext<'_, Node>,
         tree_config: TreeConfig,
-        overlay_manager: OverlayManager<PrimitivesTy<Node::Types>>,
+        overlay_manager: OverlayManager,
     ) -> eyre::Result<Self::EngineValidator> {
         let validator = self.payload_validator_builder.build(ctx).await?;
         let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());

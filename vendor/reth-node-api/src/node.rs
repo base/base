@@ -3,6 +3,7 @@
 use std::{fmt::Debug, future::Future, marker::PhantomData};
 
 use alloy_rpc_types_engine::JwtSecret;
+use base_common_consensus::BaseTxEnvelope;
 use reth_basic_payload_builder::PayloadBuilder;
 use reth_consensus::FullConsensus;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
@@ -10,7 +11,7 @@ use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
 use reth_evm::ConfigureEvm;
 use reth_network_api::FullNetwork;
 use reth_node_core::node_config::NodeConfig;
-use reth_node_types::{NodeTypes, NodeTypesWithDBAdapter, TxTy};
+use reth_node_types::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_provider::FullProvider;
 use reth_tasks::TaskExecutor;
@@ -67,13 +68,13 @@ impl<T, N: NodeTypes> PayloadBuilderFor<N> for T where
 /// Encapsulates all types and components of the node.
 pub trait FullNodeComponents: FullNodeTypes + Clone + 'static {
     /// The transaction pool of the node.
-    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Self::Types>>> + Unpin;
+    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin;
 
     /// The node's EVM configuration, defining settings for the Ethereum Virtual Machine.
-    type Evm: ConfigureEvm<Primitives = <Self::Types as NodeTypes>::Primitives>;
+    type Evm: ConfigureEvm;
 
     /// The consensus type of the node.
-    type Consensus: FullConsensus<<Self::Types as NodeTypes>::Primitives> + Clone + Unpin + 'static;
+    type Consensus: FullConsensus + Clone + Unpin + 'static;
 
     /// Network API.
     type Network: FullNetwork;
@@ -114,7 +115,7 @@ pub struct AddOnsContext<'a, N: FullNodeComponents> {
     /// Handle to the beacon consensus engine.
     pub beacon_engine_handle: ConsensusEngineHandle<<N::Types as NodeTypes>::Payload>,
     /// Notification channel for engine API events
-    pub engine_events: EventSender<ConsensusEngineEvent<<N::Types as NodeTypes>::Primitives>>,
+    pub engine_events: EventSender<ConsensusEngineEvent>,
     /// JWT secret for the node.
     pub jwt_secret: JwtSecret,
 }

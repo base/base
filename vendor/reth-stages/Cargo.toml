@@ -51,7 +51,7 @@ reth-testing-utils = { workspace = true, optional = true }
 reth-libmdbx = { workspace = true, features = ["default"] }
 reth-trie-db = { workspace = true, features = ["metrics"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-reth-ethereum-primitives = { workspace = true, optional = true }
+base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 tempfile = { workspace = true, optional = true, features = ["default"] }
 [dev-dependencies]
@@ -76,7 +76,6 @@ reth-db = { workspace = true, features = ["test-utils", "mdbx"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 reth-stages-api = { workspace = true, features = ["test-utils"] }
 reth-consensus-common = { workspace = true, features = ["test-utils"] }
-reth-ethereum-primitives = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom", "rand"] }
@@ -99,7 +98,5 @@ test-utils = [
     "reth-trie-db/test-utils",
     "reth-trie/test-utils",
     "reth-prune-types/test-utils",
-    "dep:reth-ethereum-primitives",
-    "reth-ethereum-primitives?/test-utils",
     "reth-tasks/test-utils",
 ]

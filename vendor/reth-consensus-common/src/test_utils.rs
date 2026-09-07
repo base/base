@@ -6,11 +6,12 @@ use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader as _, TxReceipt, proofs::calculate_receipt_root};
 use alloy_primitives::{B256, Bloom};
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks};
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
-    Block, BlockHeader, GotExpected, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
+    Block, BlockHeader, GotExpected, RecoveredBlock, SealedBlock, SealedHeader,
     receipt::gas_spent_by_transactions,
 };
 
@@ -73,15 +74,18 @@ where
     }
 }
 
-impl<N, C> FullConsensus<N> for TestConsensus<C>
+impl<C> FullConsensus for TestConsensus<C>
 where
-    N: NodePrimitives,
-    C: EthChainSpec<Header = N::BlockHeader> + EthereumHardforks + core::fmt::Debug + Send + Sync,
+    C: EthChainSpec<Header = alloy_consensus::Header>
+        + EthereumHardforks
+        + core::fmt::Debug
+        + Send
+        + Sync,
 {
     fn validate_block_post_execution(
         &self,
-        block: &RecoveredBlock<N::Block>,
-        result: &BlockExecutionResult<N::Receipt>,
+        block: &RecoveredBlock<BaseBlock>,
+        result: &BlockExecutionResult<BaseReceipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
         block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {

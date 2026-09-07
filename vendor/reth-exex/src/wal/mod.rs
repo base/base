@@ -3,8 +3,7 @@
 mod cache;
 pub use cache::BlockCache;
 mod storage;
-use reth_ethereum_primitives::EthPrimitives;
-use reth_node_api::NodePrimitives;
+
 pub use storage::Storage;
 mod metrics;
 use metrics::Metrics;
@@ -35,26 +34,23 @@ use reth_tracing::tracing::{debug, instrument};
 /// 2. When the chain is finalized, call [`Wal::finalize`] to prevent the infinite growth of the
 ///    WAL.
 #[derive(Debug, Clone)]
-pub struct Wal<N: NodePrimitives = EthPrimitives> {
-    inner: Arc<WalInner<N>>,
+pub struct Wal {
+    inner: Arc<WalInner>,
 }
 
-impl<N> Wal<N>
-where
-    N: NodePrimitives,
-{
+impl Wal {
     /// Creates a new instance of [`Wal`].
     pub fn new(directory: impl AsRef<Path>) -> WalResult<Self> {
         Ok(Self { inner: Arc::new(WalInner::new(directory)?) })
     }
 
     /// Returns a read-only handle to the WAL.
-    pub fn handle(&self) -> WalHandle<N> {
+    pub fn handle(&self) -> WalHandle {
         WalHandle { wal: self.inner.clone() }
     }
 
     /// Commits the notification to WAL.
-    pub fn commit(&self, notification: &ExExNotification<N>) -> WalResult<()> {
+    pub fn commit(&self, notification: &ExExNotification) -> WalResult<()> {
         self.inner.commit(notification)
     }
 
@@ -69,7 +65,7 @@ where
     /// Returns an iterator over all notifications in the WAL.
     pub fn iter_notifications(
         &self,
-    ) -> WalResult<Box<dyn Iterator<Item = WalResult<ExExNotification<N>>> + '_>> {
+    ) -> WalResult<Box<dyn Iterator<Item = WalResult<ExExNotification>> + '_>> {
         self.inner.iter_notifications()
     }
 
@@ -81,19 +77,16 @@ where
 
 /// Inner type for the WAL.
 #[derive(Debug)]
-struct WalInner<N: NodePrimitives> {
+struct WalInner {
     next_file_id: AtomicU32,
     /// The underlying WAL storage backed by a file.
-    storage: Storage<N>,
+    storage: Storage,
     /// WAL block cache. See [`cache::BlockCache`] docs for more details.
     block_cache: RwLock<BlockCache>,
     metrics: Metrics,
 }
 
-impl<N> WalInner<N>
-where
-    N: NodePrimitives,
-{
+impl WalInner {
     fn new(directory: impl AsRef<Path>) -> WalResult<Self> {
         let wal = Self {
             next_file_id: AtomicU32::new(0),
@@ -147,7 +140,7 @@ where
         reverted_block_range = ?notification.reverted_chain().as_ref().map(|chain| chain.range()),
         committed_block_range = ?notification.committed_chain().as_ref().map(|chain| chain.range())
     ))]
-    fn commit(&self, notification: &ExExNotification<N>) -> WalResult<()> {
+    fn commit(&self, notification: &ExExNotification) -> WalResult<()> {
         let mut block_cache = self.block_cache.write();
 
         let file_id = self.next_file_id.fetch_add(1, Ordering::Relaxed);
@@ -197,7 +190,7 @@ where
     /// Returns an iterator over all notifications in the WAL.
     fn iter_notifications(
         &self,
-    ) -> WalResult<Box<dyn Iterator<Item = WalResult<ExExNotification<N>>> + '_>> {
+    ) -> WalResult<Box<dyn Iterator<Item = WalResult<ExExNotification>> + '_>> {
         Ok(Box::new(
             self.storage.iter_notifications(self.storage.file_ids()?).map(|entry| Ok(entry?.2)),
         ))
@@ -206,19 +199,16 @@ where
 
 /// A read-only handle to the WAL that can be shared.
 #[derive(Debug)]
-pub struct WalHandle<N: NodePrimitives> {
-    wal: Arc<WalInner<N>>,
+pub struct WalHandle {
+    wal: Arc<WalInner>,
 }
 
-impl<N> WalHandle<N>
-where
-    N: NodePrimitives,
-{
+impl WalHandle {
     /// Returns the notification for the given committed block hash if it exists.
     pub fn get_committed_notification_by_block_hash(
         &self,
         block_hash: &B256,
-    ) -> WalResult<Option<ExExNotification<N>>> {
+    ) -> WalResult<Option<ExExNotification>> {
         let Some(file_id) = self.wal.block_cache().get_file_id_by_committed_block_hash(block_hash)
         else {
             return Ok(None);
@@ -237,12 +227,9 @@ mod tests {
 
     use alloy_primitives::B256;
     use itertools::Itertools;
-    use reth_ethereum_primitives::EthPrimitives;
     use reth_exex_types::ExExNotification;
     use reth_provider::Chain;
-    use reth_testing_utils::generators::{
-        self, BlockParams, BlockRangeParams, random_block, random_block_range,
-    };
+    use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
 
     use crate::wal::{Wal, cache::CachedBlock, error::WalResult};
 
@@ -275,17 +262,21 @@ mod tests {
         assert!(wal.inner.block_cache().is_empty());
 
         // Create 4 canonical blocks and one reorged block with number 2
-        let blocks = random_block_range(&mut rng, 0..=3, BlockRangeParams::default())
-            .into_iter()
-            .map(|block| block.try_recover())
-            .collect::<Result<Vec<_>, _>>()?;
-        let block_1_reorged = random_block(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+            &mut rng,
+            0..=3,
+            BlockRangeParams::default(),
+        )
+        .into_iter()
+        .map(|block| block.try_recover())
+        .collect::<Result<Vec<_>, _>>()?;
+        let block_1_reorged = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             1,
             BlockParams { parent: Some(blocks[0].hash()), ..Default::default() },
         )
         .try_recover()?;
-        let block_2_reorged = random_block(
+        let block_2_reorged = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             2,
             BlockParams { parent: Some(blocks[1].hash()), ..Default::default() },
@@ -527,12 +518,16 @@ mod tests {
         let mut rng = generators::rng();
 
         let temp_dir = tempfile::tempdir()?;
-        let wal = Wal::<EthPrimitives>::new(&temp_dir)?;
+        let wal = Wal::new(&temp_dir)?;
 
-        let blocks = random_block_range(&mut rng, 0..=5, BlockRangeParams::default())
-            .into_iter()
-            .map(|block| block.try_recover())
-            .collect::<Result<Vec<_>, _>>()?;
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+            &mut rng,
+            0..=5,
+            BlockRangeParams::default(),
+        )
+        .into_iter()
+        .map(|block| block.try_recover())
+        .collect::<Result<Vec<_>, _>>()?;
         let chain = |range: std::ops::RangeInclusive<usize>| {
             Arc::new(Chain::new(blocks[range].to_vec(), Default::default(), BTreeMap::new()))
         };
@@ -553,7 +548,7 @@ mod tests {
         wal.finalize((blocks[2].number, blocks[2].hash()).into())?;
         assert_eq!(wal.inner.storage.file_ids()?, vec![0, 1, 3]);
 
-        let wal = Wal::<EthPrimitives>::new(&temp_dir)?;
+        let wal = Wal::new(&temp_dir)?;
         assert_eq!(read_notifications(&wal)?, vec![commit_to_four, revert_to_two, commit_to_five]);
 
         wal.commit(&commit_two)?;

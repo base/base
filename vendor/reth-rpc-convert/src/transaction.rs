@@ -5,12 +5,10 @@ use std::{convert::Infallible, error::Error, fmt, fmt::Debug, marker::PhantomDat
 use alloy_consensus::{error::ValueError, transaction::Recovered};
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Log, TransactionInfo};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use dyn_clone::DynClone;
 use reth_evm::{BlockEnvFor, ConfigureEvm, EvmEnvFor, SpecFor, TxEnvFor};
-use reth_primitives_traits::{
-    BlockTy, HeaderTy, NodePrimitives, SealedBlock, SealedHeader, SealedHeaderFor, TransactionMeta,
-    TxTy,
-};
+use reth_primitives_traits::{SealedBlock, SealedHeader, TransactionMeta};
 use reth_rpc_traits::{FromConsensusHeader, FromConsensusTx, TryIntoSimTx, TxInfoMapper};
 
 use crate::{
@@ -20,11 +18,11 @@ use crate::{
 
 /// Input for [`RpcConvert::convert_receipts`].
 #[derive(Debug, Clone)]
-pub struct ConvertReceiptInput<'a, N: NodePrimitives> {
+pub struct ConvertReceiptInput<'a> {
     /// Primitive receipt.
-    pub receipt: N::Receipt,
+    pub receipt: BaseReceipt,
     /// Transaction the receipt corresponds to.
-    pub tx: Recovered<&'a N::SignedTx>,
+    pub tx: Recovered<&'a BaseTxEnvelope>,
     /// Gas used by the transaction.
     pub gas_used: u64,
     /// Number of logs emitted before this transaction.
@@ -34,7 +32,7 @@ pub struct ConvertReceiptInput<'a, N: NodePrimitives> {
 }
 
 /// A type that knows how to convert primitive receipts to RPC representations.
-pub trait ReceiptConverter<N: NodePrimitives>: Debug + 'static {
+pub trait ReceiptConverter: Debug + 'static {
     /// RPC receipt representation.
     type RpcReceipt;
 
@@ -48,22 +46,22 @@ pub trait ReceiptConverter<N: NodePrimitives>: Debug + 'static {
     fn convert_log(
         &self,
         log: Log,
-        receipt: &N::Receipt,
-        header: &SealedHeaderFor<N>,
+        receipt: &BaseReceipt,
+        header: &reth_primitives_traits::SealedHeader,
     ) -> Result<Self::RpcLog, Self::Error>;
 
     /// Converts a set of primitive receipts to RPC representations. It is guaranteed that all
     /// receipts are from the same block.
     fn convert_receipts(
         &self,
-        receipts: Vec<ConvertReceiptInput<'_, N>>,
+        receipts: Vec<ConvertReceiptInput<'_>>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error>;
 
     /// Converts primitive receipts from `block` to RPC representations.
     fn convert_receipts_with_block(
         &self,
-        receipts: Vec<ConvertReceiptInput<'_, N>>,
-        _block: &SealedBlock<N::Block>,
+        receipts: Vec<ConvertReceiptInput<'_>>,
+        _block: &SealedBlock<BaseBlock>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
         self.convert_receipts(receipts)
     }
@@ -117,22 +115,19 @@ where
 /// Responsible for the conversions from and into RPC requests and responses.
 ///
 /// The JSON-RPC schema and the Node primitives are configurable using the [`RpcConvert::Network`]
-/// and [`RpcConvert::Primitives`] associated types respectively.
+/// and the concrete Base consensus types, respectively.
 ///
 /// A generic implementation [`RpcConverter`] should be preferred over a manual implementation. As
 /// long as its trait bound requirements are met, the implementation is created automatically and
 /// can be used in RPC method handlers for all the conversions.
 #[auto_impl::auto_impl(&, Box, Arc)]
 pub trait RpcConvert: Send + Sync + Unpin + Debug + DynClone + 'static {
-    /// Associated lower layer consensus types to convert from and into types of [`Self::Network`].
-    type Primitives: NodePrimitives;
-
     /// The EVM configuration.
-    type Evm: ConfigureEvm<Primitives = Self::Primitives>;
+    type Evm: ConfigureEvm;
 
     /// Associated upper layer JSON-RPC API network requests and responses to convert from and into
-    /// types of [`Self::Primitives`].
-    type Network: RpcTypes<TransactionRequest: SignableTxRequest<TxTy<Self::Primitives>>>;
+    /// Base consensus types.
+    type Network: RpcTypes<TransactionRequest: SignableTxRequest<BaseTxEnvelope>>;
 
     /// An associated RPC conversion error.
     type Error: error::Error + Into<jsonrpsee_types::ErrorObject<'static>>;
@@ -142,7 +137,7 @@ pub trait RpcConvert: Send + Sync + Unpin + Debug + DynClone + 'static {
     /// environment related fields to `None`.
     fn fill_pending(
         &self,
-        tx: Recovered<TxTy<Self::Primitives>>,
+        tx: Recovered<BaseTxEnvelope>,
     ) -> Result<RpcTransaction<Self::Network>, Self::Error> {
         self.fill(tx, TransactionInfo::default())
     }
@@ -154,7 +149,7 @@ pub trait RpcConvert: Send + Sync + Unpin + Debug + DynClone + 'static {
     /// transaction was mined.
     fn fill(
         &self,
-        tx: Recovered<TxTy<Self::Primitives>>,
+        tx: Recovered<BaseTxEnvelope>,
         tx_info: TransactionInfo,
     ) -> Result<RpcTransaction<Self::Network>, Self::Error>;
 
@@ -163,7 +158,7 @@ pub trait RpcConvert: Send + Sync + Unpin + Debug + DynClone + 'static {
     fn build_simulate_v1_transaction(
         &self,
         request: RpcTxReq<Self::Network>,
-    ) -> Result<TxTy<Self::Primitives>, Self::Error>;
+    ) -> Result<BaseTxEnvelope, Self::Error>;
 
     /// Creates a transaction environment for execution based on `request` with corresponding
     /// `cfg_env` and `block_env`.
@@ -177,35 +172,35 @@ pub trait RpcConvert: Send + Sync + Unpin + Debug + DynClone + 'static {
     fn convert_log(
         &self,
         log: Log,
-        receipt: &<Self::Primitives as NodePrimitives>::Receipt,
-        header: &SealedHeaderFor<Self::Primitives>,
+        receipt: &BaseReceipt,
+        header: &reth_primitives_traits::SealedHeader,
     ) -> Result<RpcLog<Self::Network>, Self::Error>;
 
     /// Converts a set of primitive receipts to RPC representations. It is guaranteed that all
     /// receipts are from the same block.
     fn convert_receipts(
         &self,
-        receipts: Vec<ConvertReceiptInput<'_, Self::Primitives>>,
+        receipts: Vec<ConvertReceiptInput<'_>>,
     ) -> Result<Vec<RpcReceipt<Self::Network>>, Self::Error>;
 
     /// Converts primitive receipts from `block` to RPC representations.
     fn convert_receipts_with_block(
         &self,
-        receipts: Vec<ConvertReceiptInput<'_, Self::Primitives>>,
-        block: &SealedBlock<BlockTy<Self::Primitives>>,
+        receipts: Vec<ConvertReceiptInput<'_>>,
+        block: &SealedBlock<BaseBlock>,
     ) -> Result<Vec<RpcReceipt<Self::Network>>, Self::Error>;
 
     /// Converts a primitive header to an RPC header.
     fn convert_header(
         &self,
-        header: SealedHeaderFor<Self::Primitives>,
+        header: reth_primitives_traits::SealedHeader,
         block_size: usize,
     ) -> Result<RpcHeader<Self::Network>, Self::Error>;
 }
 
 dyn_clone::clone_trait_object!(
-    <Primitives, Network, Error, Evm>
-    RpcConvert<Primitives = Primitives, Network = Network, Error = Error, Evm = Evm>
+    <Network, Error, Evm>
+    RpcConvert<Network = Network, Error = Error, Evm = Evm>
 );
 
 /// Converts `Tx` into `RpcTx`
@@ -624,7 +619,6 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
         self,
     ) -> Box<
         dyn RpcConvert<
-                Primitives = <Self as RpcConvert>::Primitives,
                 Network = <Self as RpcConvert>::Network,
                 Error = <Self as RpcConvert>::Error,
                 Evm = <Self as RpcConvert>::Evm,
@@ -686,19 +680,17 @@ impl<
     }
 }
 
-impl<N, Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv> RpcConvert
+impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv> RpcConvert
     for RpcConverter<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
 where
-    N: NodePrimitives,
-    Network: RpcTypes<TransactionRequest: SignableTxRequest<N::SignedTx>>,
-    Evm: ConfigureEvm<Primitives = N> + 'static,
+    Network: RpcTypes<TransactionRequest: SignableTxRequest<BaseTxEnvelope>>,
+    Evm: ConfigureEvm + 'static,
     Receipt: ReceiptConverter<
-            N,
             RpcReceipt = RpcReceipt<Network>,
             RpcLog = RpcLog<Network>,
             Error: From<TransactionConversionError>
                        + From<TxEnv::Error>
-                       + From<<Map as TxInfoMapper<TxTy<N>>>::Err>
+                       + From<<Map as TxInfoMapper<BaseTxEnvelope>>::Err>
                        + From<RpcTx::Err>
                        + From<Header::Err>
                        + Error
@@ -711,21 +703,23 @@ where
         + Unpin
         + Clone
         + Debug,
-    Header: HeaderConverter<HeaderTy<N>, RpcHeader<Network>>,
-    Map: TxInfoMapper<TxTy<N>> + Clone + Debug + Unpin + Send + Sync + 'static,
-    SimTx: SimTxConverter<RpcTxReq<Network>, TxTy<N>>,
-    RpcTx:
-        RpcTxConverter<TxTy<N>, Network::TransactionResponse, <Map as TxInfoMapper<TxTy<N>>>::Out>,
+    Header: HeaderConverter<alloy_consensus::Header, RpcHeader<Network>>,
+    Map: TxInfoMapper<BaseTxEnvelope> + Clone + Debug + Unpin + Send + Sync + 'static,
+    SimTx: SimTxConverter<RpcTxReq<Network>, BaseTxEnvelope>,
+    RpcTx: RpcTxConverter<
+            BaseTxEnvelope,
+            Network::TransactionResponse,
+            <Map as TxInfoMapper<BaseTxEnvelope>>::Out,
+        >,
     TxEnv: TxEnvConverter<RpcTxReq<Network>, Evm>,
 {
-    type Primitives = N;
     type Evm = Evm;
     type Network = Network;
     type Error = Receipt::Error;
 
     fn fill(
         &self,
-        tx: Recovered<TxTy<N>>,
+        tx: Recovered<BaseTxEnvelope>,
         tx_info: TransactionInfo,
     ) -> Result<Network::TransactionResponse, Self::Error> {
         let (tx, signer) = tx.into_parts();
@@ -737,7 +731,7 @@ where
     fn build_simulate_v1_transaction(
         &self,
         request: RpcTxReq<Network>,
-    ) -> Result<TxTy<N>, Self::Error> {
+    ) -> Result<BaseTxEnvelope, Self::Error> {
         Ok(self
             .sim_tx_converter
             .convert_sim_tx(request)
@@ -755,30 +749,30 @@ where
     fn convert_log(
         &self,
         log: Log,
-        receipt: &<Self::Primitives as NodePrimitives>::Receipt,
-        header: &SealedHeaderFor<Self::Primitives>,
+        receipt: &BaseReceipt,
+        header: &reth_primitives_traits::SealedHeader,
     ) -> Result<RpcLog<Self::Network>, Self::Error> {
         self.receipt_converter.convert_log(log, receipt, header)
     }
 
     fn convert_receipts(
         &self,
-        receipts: Vec<ConvertReceiptInput<'_, Self::Primitives>>,
+        receipts: Vec<ConvertReceiptInput<'_>>,
     ) -> Result<Vec<RpcReceipt<Self::Network>>, Self::Error> {
         self.receipt_converter.convert_receipts(receipts)
     }
 
     fn convert_receipts_with_block(
         &self,
-        receipts: Vec<ConvertReceiptInput<'_, Self::Primitives>>,
-        block: &SealedBlock<BlockTy<Self::Primitives>>,
+        receipts: Vec<ConvertReceiptInput<'_>>,
+        block: &SealedBlock<BaseBlock>,
     ) -> Result<Vec<RpcReceipt<Self::Network>>, Self::Error> {
         self.receipt_converter.convert_receipts_with_block(receipts, block)
     }
 
     fn convert_header(
         &self,
-        header: SealedHeaderFor<Self::Primitives>,
+        header: reth_primitives_traits::SealedHeader,
         block_size: usize,
     ) -> Result<RpcHeader<Self::Network>, Self::Error> {
         Ok(self.header_converter.convert_header(header, block_size)?)

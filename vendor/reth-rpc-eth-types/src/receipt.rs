@@ -6,22 +6,20 @@ use alloy_consensus::{ReceiptEnvelope, Transaction};
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, TxKind};
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
+use base_common_consensus::BaseReceipt;
 use reth_chainspec::EthChainSpec;
 use reth_ethereum_primitives::Receipt;
-use reth_primitives_traits::{NodePrimitives, SealedHeaderFor, TransactionMeta};
+use reth_primitives_traits::TransactionMeta;
 use reth_rpc_convert::transaction::{ConvertReceiptInput, ReceiptConverter};
 
 use crate::EthApiError;
 
 /// Builds an [`TransactionReceipt`] obtaining the inner receipt envelope from the given closure.
-pub fn build_receipt<N, E>(
-    input: ConvertReceiptInput<'_, N>,
+pub fn build_receipt<E>(
+    input: ConvertReceiptInput<'_>,
     blob_params: Option<BlobParams>,
-    build_rpc_receipt: impl FnOnce(N::Receipt, usize, TransactionMeta) -> E,
-) -> TransactionReceipt<E>
-where
-    N: NodePrimitives,
-{
+    build_rpc_receipt: impl FnOnce(BaseReceipt, usize, TransactionMeta) -> E,
+) -> TransactionReceipt<E> {
     let ConvertReceiptInput { tx, meta, receipt, gas_used, next_log_index } = input;
     let from = tx.signer();
 
@@ -111,11 +109,10 @@ impl<ChainSpec> EthReceiptConverter<ChainSpec> {
     }
 }
 
-impl<N, ChainSpec, Builder, Rpc> ReceiptConverter<N> for EthReceiptConverter<ChainSpec, Builder>
+impl<ChainSpec, Builder, Rpc> ReceiptConverter for EthReceiptConverter<ChainSpec, Builder>
 where
-    N: NodePrimitives,
     ChainSpec: EthChainSpec + 'static,
-    Builder: Fn(N::Receipt, usize, TransactionMeta) -> Rpc + 'static,
+    Builder: Fn(BaseReceipt, usize, TransactionMeta) -> Rpc + 'static,
 {
     type RpcReceipt = TransactionReceipt<Rpc>;
     type RpcLog = Log;
@@ -124,15 +121,15 @@ where
     fn convert_log(
         &self,
         log: Log,
-        _receipt: &N::Receipt,
-        _header: &SealedHeaderFor<N>,
+        _receipt: &BaseReceipt,
+        _header: &reth_primitives_traits::SealedHeader,
     ) -> Result<Self::RpcLog, Self::Error> {
         Ok(log)
     }
 
     fn convert_receipts(
         &self,
-        inputs: Vec<ConvertReceiptInput<'_, N>>,
+        inputs: Vec<ConvertReceiptInput<'_>>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
         let mut receipts = Vec::with_capacity(inputs.len());
         let blob_params = inputs

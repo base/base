@@ -52,12 +52,11 @@ pub trait StateDiffInvalidation: Clone + Send + Sync + 'static {
 }
 
 /// Feeds each canonical block's account and storage diff into the pool.
-pub async fn maintain_state_diff_invalidation<P, N>(
+pub async fn maintain_state_diff_invalidation<P>(
     pool: P,
-    mut events: BroadcastStream<CanonStateNotification<N>>,
+    mut events: BroadcastStream<CanonStateNotification>,
 ) where
     P: StateDiffInvalidation,
-    N: reth_node_api::NodePrimitives,
 {
     loop {
         let notification = match events.next().await {

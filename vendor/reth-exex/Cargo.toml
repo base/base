@@ -44,6 +44,7 @@ itertools = { workspace = true, features = ["use_std"] }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-exex-types = { workspace = true, features = ["default", "serde", "serde-bincode-compat"] }

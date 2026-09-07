@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, fmt::Debug, path::Path};
 
 use alloy_primitives::{Address, B256, BlockNumber, TxHash, TxNumber, keccak256};
+use base_common_consensus::{BaseBlock as Block, BaseReceipt as Receipt, BaseTxEnvelope};
 use reth_chainspec::MAINNET;
 use reth_db::{
     DatabaseEnv,
@@ -19,7 +20,6 @@ use reth_db_api::{
     tables,
     transaction::{DbTx, DbTxMut},
 };
-use reth_ethereum_primitives::{Block, EthPrimitives, Receipt};
 use reth_primitives_traits::{Account, SealedBlock, SealedHeader, StorageEntry};
 use reth_provider::{
     DatabaseProviderFactory, EitherWriter, HistoryWriter, ProviderError, ProviderFactory,
@@ -189,7 +189,7 @@ impl TestStageDB {
 
     /// Insert header to static file if `writer` exists, otherwise to DB.
     pub fn insert_header<TX: DbTx + DbTxMut>(
-        writer: Option<&mut StaticFileProviderRWRefMut<'_, EthPrimitives>>,
+        writer: Option<&mut StaticFileProviderRWRefMut<'_>>,
         tx: &TX,
         header: &SealedHeader,
     ) -> ProviderResult<()> {
@@ -298,7 +298,10 @@ impl TestStageDB {
                     if let Some(txs_writer) = &mut txs_writer {
                         txs_writer.append_transaction(next_tx_num, body_tx)?;
                     } else {
-                        tx.put::<tables::Transactions>(next_tx_num, body_tx.clone())?
+                        tx.put::<tables::Transactions<BaseTxEnvelope>>(
+                            next_tx_num,
+                            body_tx.clone(),
+                        )?
                     }
                     next_tx_num += 1;
                     Ok::<(), ProviderError>(())
@@ -353,7 +356,7 @@ impl TestStageDB {
         self.commit(|tx| {
             receipts.into_iter().try_for_each(|(tx_num, receipt)| {
                 // Insert into receipts table.
-                Ok(tx.put::<tables::Receipts>(tx_num, receipt)?)
+                Ok(tx.put::<tables::Receipts<Receipt>>(tx_num, receipt)?)
             })
         })
     }
@@ -373,7 +376,7 @@ impl TestStageDB {
             StorageKind::Database(_) => self.commit(|tx| {
                 receipts.into_iter().try_for_each(|(_, receipts)| {
                     for (tx_num, receipt) in receipts {
-                        tx.put::<tables::Receipts>(tx_num, receipt)?;
+                        tx.put::<tables::Receipts<Receipt>>(tx_num, receipt)?;
                     }
                     Ok(())
                 })

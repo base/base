@@ -11,11 +11,12 @@ use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use futures::{Stream, StreamExt, stream::FuturesOrdered};
 use reth_chain_state::CanonStateNotification;
 use reth_errors::{ProviderError, ProviderResult};
 use reth_execution_types::Chain;
-use reth_primitives_traits::{Block, BlockBody, InMemorySize, NodePrimitives, RecoveredBlock};
+use reth_primitives_traits::{Block, BlockBody, InMemorySize, RecoveredBlock};
 use reth_revm::{
     bytecode::Bytecode,
     primitives::{StorageKey, StorageValue},
@@ -81,17 +82,17 @@ type BalLruCache<L> = MultiConsumerLruCache<B256, CachedRevmBal, L, BalResponseS
 /// This is the frontend for the async caching service which manages cached data on a different
 /// task.
 #[derive(Debug)]
-pub struct EthStateCache<N: NodePrimitives> {
-    to_service: UnboundedSender<CacheAction<N::Block, N::Receipt>>,
+pub struct EthStateCache {
+    to_service: UnboundedSender<CacheAction<BaseBlock, BaseReceipt>>,
 }
 
-impl<N: NodePrimitives> Clone for EthStateCache<N> {
+impl Clone for EthStateCache {
     fn clone(&self) -> Self {
         Self { to_service: self.to_service.clone() }
     }
 }
 
-impl<N: NodePrimitives> EthStateCache<N> {
+impl EthStateCache {
     /// Creates and returns both [`EthStateCache`] frontend and the memory bound service.
     fn create<Provider>(
         provider: Provider,
@@ -99,7 +100,7 @@ impl<N: NodePrimitives> EthStateCache<N> {
         config: EthStateCacheConfig,
     ) -> (Self, EthStateCacheService<Provider, Runtime>)
     where
-        Provider: BlockReader<Block = N::Block, Receipt = N::Receipt> + BalProvider,
+        Provider: BlockReader<Block = BaseBlock, Receipt = BaseReceipt> + BalProvider,
     {
         let EthStateCacheConfig {
             max_blocks,
@@ -137,7 +138,7 @@ impl<N: NodePrimitives> EthStateCache<N> {
         executor: Runtime,
     ) -> Self
     where
-        Provider: BlockReader<Block = N::Block, Receipt = N::Receipt>
+        Provider: BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
             + BalProvider
             + Clone
             + Unpin
@@ -154,7 +155,7 @@ impl<N: NodePrimitives> EthStateCache<N> {
     pub async fn get_recovered_block(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<Option<Arc<RecoveredBlock<N::Block>>>> {
+    ) -> ProviderResult<Option<Arc<RecoveredBlock<BaseBlock>>>> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetBlockWithSenders { block_hash, response_tx });
         rx.await.map_err(|_| CacheServiceUnavailable)?
@@ -164,7 +165,7 @@ impl<N: NodePrimitives> EthStateCache<N> {
     pub async fn get_maybe_block(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<Option<Arc<RecoveredBlock<N::Block>>>> {
+    ) -> ProviderResult<Option<Arc<RecoveredBlock<BaseBlock>>>> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetCachedBlock { block_hash, response_tx });
         rx.await.map_err(|_| CacheServiceUnavailable.into())
@@ -176,7 +177,7 @@ impl<N: NodePrimitives> EthStateCache<N> {
     pub async fn get_receipts(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<Option<Arc<Vec<N::Receipt>>>> {
+    ) -> ProviderResult<Option<Arc<Vec<BaseReceipt>>>> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetReceipts { block_hash, response_tx });
         rx.await.map_err(|_| CacheServiceUnavailable)?
@@ -186,7 +187,7 @@ impl<N: NodePrimitives> EthStateCache<N> {
     pub async fn get_block_and_receipts(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<Option<(Arc<RecoveredBlock<N::Block>>, Arc<Vec<N::Receipt>>)>> {
+    ) -> ProviderResult<Option<(Arc<RecoveredBlock<BaseBlock>>, Arc<Vec<BaseReceipt>>)>> {
         let block = self.get_recovered_block(block_hash);
         let receipts = self.get_receipts(block_hash);
 
@@ -199,7 +200,8 @@ impl<N: NodePrimitives> EthStateCache<N> {
     pub async fn get_receipts_and_maybe_block(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<Option<(Arc<Vec<N::Receipt>>, Option<Arc<RecoveredBlock<N::Block>>>)>> {
+    ) -> ProviderResult<Option<(Arc<Vec<BaseReceipt>>, Option<Arc<RecoveredBlock<BaseBlock>>>)>>
+    {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetCachedBlock { block_hash, response_tx });
 
@@ -215,7 +217,8 @@ impl<N: NodePrimitives> EthStateCache<N> {
     pub async fn maybe_cached_block_and_receipts(
         &self,
         block_hash: B256,
-    ) -> ProviderResult<(Option<Arc<RecoveredBlock<N::Block>>>, Option<Arc<Vec<N::Receipt>>>)> {
+    ) -> ProviderResult<(Option<Arc<RecoveredBlock<BaseBlock>>>, Option<Arc<Vec<BaseReceipt>>>)>
+    {
         let (response_tx, rx) = oneshot::channel();
         let _ = self
             .to_service
@@ -230,7 +233,7 @@ impl<N: NodePrimitives> EthStateCache<N> {
         hashes: Vec<B256>,
     ) -> impl Stream<
         Item = ProviderResult<
-            Option<(Arc<Vec<N::Receipt>>, Option<Arc<RecoveredBlock<N::Block>>>)>,
+            Option<(Arc<Vec<BaseReceipt>>, Option<Arc<RecoveredBlock<BaseBlock>>>)>,
         >,
     > + 'a {
         let futures = hashes.into_iter().map(move |hash| self.get_receipts_and_maybe_block(hash));
@@ -241,7 +244,7 @@ impl<N: NodePrimitives> EthStateCache<N> {
     /// Requests the header for the given hash.
     ///
     /// Returns an error if the header is not found.
-    pub async fn get_header(&self, block_hash: B256) -> ProviderResult<N::BlockHeader> {
+    pub async fn get_header(&self, block_hash: B256) -> ProviderResult<alloy_consensus::Header> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetHeader { block_hash, response_tx });
         rx.await.map_err(|_| CacheServiceUnavailable)?
@@ -258,7 +261,7 @@ impl<N: NodePrimitives> EthStateCache<N> {
         &self,
         block_hash: B256,
         max_blocks: usize,
-    ) -> Option<Vec<Arc<RecoveredBlock<N::Block>>>> {
+    ) -> Option<Vec<Arc<RecoveredBlock<BaseBlock>>>> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetCachedParentBlocks {
             block_hash,
@@ -277,7 +280,7 @@ impl<N: NodePrimitives> EthStateCache<N> {
     pub async fn get_transaction_by_hash(
         &self,
         tx_hash: TxHash,
-    ) -> Option<CachedTransaction<N::Block, N::Receipt>> {
+    ) -> Option<CachedTransaction<BaseBlock, BaseReceipt>> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetTransactionByHash { tx_hash, response_tx });
         rx.await.ok()?
@@ -808,11 +811,8 @@ struct ChainChange<B: Block, R> {
     receipts: Vec<BlockReceipts<R>>,
 }
 
-impl<B: Block, R: Clone> ChainChange<B, R> {
-    fn new<N>(chain: Arc<Chain<N>>) -> Self
-    where
-        N: NodePrimitives<Block = B, Receipt = R>,
-    {
+impl ChainChange<BaseBlock, BaseReceipt> {
+    fn new(chain: Arc<Chain>) -> Self {
         let (blocks, receipts): (Vec<_>, Vec<_>) = chain
             .blocks_and_receipts()
             .map(|(block, receipts)| {
@@ -913,11 +913,9 @@ impl<R: Send + Sync, B: Block> Drop for ActionSender<B, R> {
 /// immediately before they need to be fetched from disk.
 ///
 /// Reorged blocks are removed from the cache.
-pub async fn cache_new_blocks_task<St, N: NodePrimitives>(
-    eth_state_cache: EthStateCache<N>,
-    mut events: St,
-) where
-    St: Stream<Item = CanonStateNotification<N>> + Unpin + 'static,
+pub async fn cache_new_blocks_task<St>(eth_state_cache: EthStateCache, mut events: St)
+where
+    St: Stream<Item = CanonStateNotification> + Unpin + 'static,
 {
     while let Some(event) = events.next().await {
         if let Some(reverted) = event.reverted() {
@@ -1018,10 +1016,11 @@ mod tests {
     use alloy_eip7928::BlockAccessIndex;
     use alloy_eips::{BlockHashOrNumber, NumHash};
     use alloy_primitives::{Address, BlockHash, BlockNumber, Bytes, Signature, TxHash, TxNumber};
-    use reth_db_models::StoredBlockBodyIndices;
-    use reth_ethereum_primitives::{
-        Block, BlockBody, EthPrimitives, Receipt, Transaction, TransactionSigned,
+    use base_common_consensus::{
+        BaseBlock as Block, BaseBlockBody as BlockBody, BaseReceipt as Receipt,
+        BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction,
     };
+    use reth_db_models::StoredBlockBodyIndices;
     use reth_primitives_traits::{RecoveredBlock, SealedHeader};
     use reth_storage_api::{
         BalProvider, BalStore, BalStoreHandle, BlockBodyIndicesProvider, BlockHashReader,
@@ -1032,7 +1031,7 @@ mod tests {
     use super::*;
 
     fn test_service() -> EthStateCacheService<NoopProvider, Runtime> {
-        let (_cache, service) = EthStateCache::<EthPrimitives>::create(
+        let (_cache, service) = EthStateCache::create(
             NoopProvider::default(),
             Runtime::test(),
             EthStateCacheConfig {
@@ -1103,7 +1102,7 @@ mod tests {
     fn reorg_removes_tx_hash_index_entries_unconditionally() {
         let mut service = test_service();
         let block = test_block();
-        let tx_hash = *block.body().transactions().next().expect("test transaction").tx_hash();
+        let tx_hash = block.body().transactions().next().expect("test transaction").tx_hash();
 
         service.tx_hash_index.insert(tx_hash, (B256::repeat_byte(0x33), 0));
 
@@ -1174,7 +1173,7 @@ mod tests {
     async fn get_bal_uses_cached_revm_bal() {
         let fetches = Arc::new(AtomicUsize::default());
         let provider = TestBalProvider::new(fetches.clone());
-        let cache = EthStateCache::<EthPrimitives>::spawn_with(
+        let cache = EthStateCache::spawn_with(
             provider,
             EthStateCacheConfig {
                 max_blocks: 0,
@@ -1198,7 +1197,7 @@ mod tests {
     async fn concurrent_get_bal_requests_share_fetch() {
         let fetches = Arc::new(AtomicUsize::default());
         let provider = TestBalProvider::new(fetches.clone());
-        let cache = EthStateCache::<EthPrimitives>::spawn_with(
+        let cache = EthStateCache::spawn_with(
             provider,
             EthStateCacheConfig {
                 max_blocks: 0,

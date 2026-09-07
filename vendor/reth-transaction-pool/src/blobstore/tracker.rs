@@ -2,10 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use alloy_consensus::{Typed2718, transaction::TxHashRef};
+use alloy_consensus::{BlockHeader, Typed2718, transaction::TxHashRef};
 use alloy_primitives::{B256, BlockNumber};
-use reth_execution_types::ChainBlocks;
-use reth_primitives_traits::{Block, BlockBody, SignedTransaction};
+use reth_primitives_traits::{Block, BlockBody, RecoveredBlock, SignedTransaction};
 
 /// The type that is used to track canonical blob transactions.
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -40,18 +39,20 @@ impl BlobStoreCanonTracker {
     ///
     /// Note: In case this is a chain that's part of a reorg, this replaces previously tracked
     /// blocks.
-    pub fn add_new_chain_blocks<B>(&mut self, blocks: &ChainBlocks<'_, B>)
-    where
-        B: Block<Body: BlockBody<Transaction: SignedTransaction>>,
+    pub fn add_new_chain_blocks<'a, B>(
+        &mut self,
+        blocks: impl IntoIterator<Item = &'a RecoveredBlock<B>>,
+    ) where
+        B: Block<Body: BlockBody<Transaction: SignedTransaction>> + 'a,
     {
-        let blob_txs = blocks.iter().map(|(num, block)| {
+        let blob_txs = blocks.into_iter().map(|block| {
             let iter = block
                 .body()
                 .transactions()
                 .iter()
                 .filter(|tx| tx.is_eip4844())
                 .map(|tx| *tx.tx_hash());
-            (*num, iter)
+            (block.header().number(), iter)
         });
         self.add_blocks(blob_txs);
     }
@@ -91,7 +92,6 @@ mod tests {
     use alloy_consensus::{Header, Signed};
     use alloy_primitives::Signature;
     use reth_ethereum_primitives::Transaction;
-    use reth_execution_types::Chain;
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 
     use super::*;
@@ -131,7 +131,7 @@ mod tests {
         let tx1_hash = *tx1_signed.hash();
         let tx2_hash = *tx2_signed.hash();
         // Creating a first block with EIP-4844 transactions
-        let block1 = RecoveredBlock::new_sealed(
+        let block1: RecoveredBlock<reth_ethereum_primitives::Block> = RecoveredBlock::new_sealed(
             SealedBlock::from_sealed_parts(
                 SealedHeader::new(Header { number: 10, ..Default::default() }, B256::random()),
                 alloy_consensus::BlockBody {
@@ -153,7 +153,7 @@ mod tests {
 
         // Creating a second block with EIP-1559 and EIP-2930 transactions
         // Note: This block does not contain any EIP-4844 transactions
-        let block2 = RecoveredBlock::new_sealed(
+        let block2: RecoveredBlock<reth_ethereum_primitives::Block> = RecoveredBlock::new_sealed(
             SealedBlock::from_sealed_parts(
                 SealedHeader::new(Header { number: 11, ..Default::default() }, B256::random()),
                 alloy_consensus::BlockBody {
@@ -175,9 +175,7 @@ mod tests {
             Default::default(),
         );
 
-        // Extract blocks from the chain
-        let chain: Chain = Chain::new(vec![block1, block2], Default::default(), BTreeMap::new());
-        let blocks = chain.into_inner().0;
+        let blocks = [block1, block2];
 
         // Add new chain blocks to the tracker
         tracker.add_new_chain_blocks(&blocks);

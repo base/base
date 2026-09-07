@@ -29,6 +29,7 @@ reth-chainspec = { workspace = true }
 reth-consensus = { workspace = true }
 reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
+alloy-consensus = { workspace = true }
 reth-tokio-util = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-network-api = { workspace = true }
@@ -47,6 +48,7 @@ reth-tasks = { workspace = true, features = ["rayon"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-metrics = { workspace = true, features = ["common"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 tower-http = { workspace = true, features = ["default", "full"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
@@ -60,6 +62,7 @@ alloy-rpc-types-trace = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
+reth-rpc = { workspace = true, features = ["test-utils"] }
 reth-evm = { workspace = true, features = ["test-utils"] }
 reth-rpc-api = { workspace = true, features = ["client"] }
 reth-tracing = { workspace = true, features = ["default"] }

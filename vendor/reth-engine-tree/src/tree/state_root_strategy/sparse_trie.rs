@@ -1234,8 +1234,7 @@ mod tests {
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(
             provider_factory,
-            OverlayManager::<reth_chain_state::EthPrimitives>::default()
-                .overlay_builder(anchor_hash),
+            OverlayManager::default().overlay_builder(anchor_hash),
         );
         let (proof_result_tx, proof_result_rx) = crossbeam_channel::unbounded();
         let proof_worker_handle = ProofWorkerHandle::new(
@@ -1289,8 +1288,7 @@ mod tests {
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(
             provider_factory,
-            OverlayManager::<reth_chain_state::EthPrimitives>::default()
-                .overlay_builder(anchor_hash),
+            OverlayManager::default().overlay_builder(anchor_hash),
         );
         let (proof_result_tx, proof_result_rx) = crossbeam_channel::unbounded();
         let proof_worker_handle = ProofWorkerHandle::new(
@@ -1377,8 +1375,7 @@ mod tests {
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(
             provider_factory,
-            OverlayManager::<reth_chain_state::EthPrimitives>::default()
-                .overlay_builder(anchor_hash),
+            OverlayManager::default().overlay_builder(anchor_hash),
         );
         let (proof_result_tx, proof_result_rx) = crossbeam_channel::unbounded();
         let proof_worker_handle = ProofWorkerHandle::new(
@@ -1430,8 +1427,7 @@ mod tests {
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(
             provider_factory,
-            OverlayManager::<reth_chain_state::EthPrimitives>::default()
-                .overlay_builder(anchor_hash),
+            OverlayManager::default().overlay_builder(anchor_hash),
         );
         let (proof_result_tx, proof_result_rx) = crossbeam_channel::unbounded();
         let proof_worker_handle = ProofWorkerHandle::new(

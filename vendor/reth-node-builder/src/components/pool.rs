@@ -3,9 +3,10 @@
 use std::future::Future;
 
 use alloy_primitives::map::AddressSet;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::EthereumHardforks;
-use reth_node_api::{BlockTy, NodeTypes, TxTy};
+use reth_node_api::NodeTypes;
 use reth_transaction_pool::{
     BlobStore, CoinbaseTipOrdering, PoolConfig, PoolTransaction, SubPoolLimit, TransactionOrdering,
     TransactionPool, TransactionValidationTaskExecutor, TransactionValidator,
@@ -17,7 +18,7 @@ use crate::{BuilderContext, FullNodeTypes};
 /// A type that knows how to build the transaction pool.
 pub trait PoolBuilder<Node: FullNodeTypes, Evm>: Send {
     /// The transaction pool to build.
-    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
+    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>
         + Unpin
         + 'static;
 
@@ -32,9 +33,8 @@ pub trait PoolBuilder<Node: FullNodeTypes, Evm>: Send {
 impl<Node, F, Fut, Pool, Evm> PoolBuilder<Node, Evm> for F
 where
     Node: FullNodeTypes,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
-        + Unpin
-        + 'static,
+    Pool:
+        TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
     F: FnOnce(&BuilderContext<Node>, Evm) -> Fut + Send,
     Fut: Future<Output = eyre::Result<Pool>> + Send,
 {
@@ -134,9 +134,9 @@ impl<'a, Node: FullNodeTypes, V> TxPoolBuilder<'a, Node, V> {
 impl<'a, Node, V> TxPoolBuilder<'a, Node, TransactionValidationTaskExecutor<V>>
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec: EthereumHardforks>>,
-    V: TransactionValidator<Block = BlockTy<Node::Types>> + 'static,
+    V: TransactionValidator<Block = BaseBlock> + 'static,
     V::Transaction:
-        PoolTransaction<Consensus = TxTy<Node::Types>> + reth_transaction_pool::EthPoolTransaction,
+        PoolTransaction<Consensus = BaseTxEnvelope> + reth_transaction_pool::EthPoolTransaction,
 {
     /// Consume the type and build the [`reth_transaction_pool::Pool`] with the given config and
     /// blob store.
@@ -274,8 +274,8 @@ fn spawn_pool_maintenance_task<Node, Pool>(
 ) -> eyre::Result<()>
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec: EthereumHardforks>>,
-    Pool: reth_transaction_pool::TransactionPoolExt<Block = BlockTy<Node::Types>> + Clone + 'static,
-    Pool::Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>,
+    Pool: reth_transaction_pool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
+    Pool::Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
 {
     let chain_events = ctx.provider().canonical_state_stream();
     let client = ctx.provider().clone();
@@ -306,8 +306,8 @@ pub fn spawn_maintenance_tasks<Node, Pool>(
 ) -> eyre::Result<()>
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec: EthereumHardforks>>,
-    Pool: reth_transaction_pool::TransactionPoolExt<Block = BlockTy<Node::Types>> + Clone + 'static,
-    Pool::Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>,
+    Pool: reth_transaction_pool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
+    Pool::Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
 {
     spawn_local_backup_task(ctx, pool.clone())?;
     spawn_pool_maintenance_task(ctx, pool, pool_config)?;

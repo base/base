@@ -80,6 +80,7 @@ reth-trie-db = { workspace = true, features = ["metrics"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 reth-ethereum-primitives = { workspace = true, optional = true }
 reth-node-builder = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-static-file-types = { workspace = true, features = ["clap"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }

@@ -4,12 +4,8 @@ use alloy_primitives::{B256, BlockHash};
 use metrics::{Counter, Histogram};
 use reth_db_api::{DatabaseError, transaction::DbTx};
 use reth_errors::ProviderResult;
-use reth_ethereum_primitives::EthPrimitives;
 use reth_metrics::Metrics;
-use reth_primitives_traits::{
-    NodePrimitives,
-    dashmap::{self, DashMap},
-};
+use reth_primitives_traits::dashmap::{self, DashMap};
 use reth_storage_api::{
     BlockNumReader, ChangeSetReader, DBProvider, DatabaseProviderFactory,
     DatabaseProviderROFactory, DbTxProvider, PruneCheckpointReader, StageCheckpointReader,
@@ -45,11 +41,11 @@ pub(crate) struct OverlayStateProviderFactoryMetrics {
 /// This factory allows building an `OverlayStateProvider` whose DB state has been reverted to a
 /// particular block, and/or with additional overlay information added on top.
 #[derive(Debug, Clone)]
-pub struct OverlayStateProviderFactory<F, N: NodePrimitives = EthPrimitives> {
+pub struct OverlayStateProviderFactory<F> {
     /// The underlying database provider factory
     factory: F,
     /// Overlay builder containing the configuration and overlay calculation logic.
-    overlay_builder: OverlayBuilder<N>,
+    overlay_builder: OverlayBuilder,
     /// A cache which maps `(state_trie_tip, finish_tip) -> Overlay`.
     ///
     /// Under partial persistence the overlay depends on both durable frontiers, so both hashes are
@@ -59,9 +55,9 @@ pub struct OverlayStateProviderFactory<F, N: NodePrimitives = EthPrimitives> {
     metrics: OverlayStateProviderFactoryMetrics,
 }
 
-impl<F, N: NodePrimitives> OverlayStateProviderFactory<F, N> {
+impl<F> OverlayStateProviderFactory<F> {
     /// Create a new overlay state provider factory
-    pub fn new(factory: F, overlay_builder: OverlayBuilder<N>) -> Self {
+    pub fn new(factory: F, overlay_builder: OverlayBuilder) -> Self {
         Self {
             factory,
             overlay_builder,
@@ -113,9 +109,8 @@ impl<F, N: NodePrimitives> OverlayStateProviderFactory<F, N> {
     }
 }
 
-impl<F, N> DatabaseProviderROFactory for OverlayStateProviderFactory<F, N>
+impl<F> DatabaseProviderROFactory for OverlayStateProviderFactory<F>
 where
-    N: NodePrimitives,
     F: DatabaseProviderFactory,
     F::Provider: StageCheckpointReader
         + PruneCheckpointReader
@@ -260,10 +255,7 @@ mod tests {
     use super::*;
     use crate::OverlayManager;
 
-    fn with_unique_trie_data(
-        block: &ExecutedBlock<EthPrimitives>,
-        id: u8,
-    ) -> ExecutedBlock<EthPrimitives> {
+    fn with_unique_trie_data(block: &ExecutedBlock, id: u8) -> ExecutedBlock {
         let hashed_address = B256::with_last_byte(id);
         let hashed_slot = B256::with_last_byte(id.saturating_add(32));
         let hashed_state = HashedPostState::default()
@@ -288,7 +280,7 @@ mod tests {
         )
     }
 
-    fn test_blocks() -> Vec<ExecutedBlock<EthPrimitives>> {
+    fn test_blocks() -> Vec<ExecutedBlock> {
         TestBlockBuilder::eth()
             .get_executed_blocks(0..5)
             .enumerate()
@@ -299,7 +291,7 @@ mod tests {
     fn setup_frontiers(
         state_trie_tip_index: usize,
         finish_tip_index: usize,
-    ) -> (ProviderFactory<MockNodeTypesWithDB>, Vec<ExecutedBlock<EthPrimitives>>) {
+    ) -> (ProviderFactory<MockNodeTypesWithDB>, Vec<ExecutedBlock>) {
         let factory = create_test_provider_factory();
         let blocks = test_blocks();
         let provider_rw = factory.provider_rw().unwrap();

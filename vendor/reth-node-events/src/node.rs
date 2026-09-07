@@ -17,7 +17,7 @@ use alloy_rpc_types_engine::ForkchoiceState;
 use futures::Stream;
 use reth_engine_primitives::{ConsensusEngineEvent, ForkchoiceStatus, SlowBlockInfo};
 use reth_network_api::PeersInfo;
-use reth_primitives_traits::{BlockBody, NodePrimitives, format_gas, format_gas_throughput};
+use reth_primitives_traits::{format_gas, format_gas_throughput};
 use reth_prune_types::PrunerEvent;
 use reth_stages::{EntitiesCheckpoint, ExecOutput, PipelineEvent, StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileProducerEvent;
@@ -219,7 +219,7 @@ impl NodeState {
         }
     }
 
-    fn handle_consensus_engine_event<N: NodePrimitives>(&mut self, event: ConsensusEngineEvent<N>) {
+    fn handle_consensus_engine_event(&mut self, event: ConsensusEngineEvent) {
         match event {
             ConsensusEngineEvent::ForkchoiceUpdated(state, status) => {
                 let ForkchoiceState { head_block_hash, safe_block_hash, finalized_block_hash } =
@@ -250,7 +250,7 @@ impl NodeState {
                     number=block.number(),
                     hash=?block.hash(),
                     peers=self.num_connected_peers(),
-                    txs=block.body().transactions().len(),
+                    txs=block.body().transactions.len(),
                     gas_used=%format_gas(block.gas_used()),
                     gas_throughput=%format_gas_throughput(block.gas_used(), elapsed),
                     gas_limit=%format_gas(block.gas_limit()),
@@ -427,11 +427,11 @@ struct CurrentStage {
 
 /// A node event.
 #[derive(Debug, derive_more::From)]
-pub enum NodeEvent<N: NodePrimitives> {
+pub enum NodeEvent {
     /// A sync pipeline event.
     Pipeline(PipelineEvent),
     /// A consensus engine event.
-    ConsensusEngine(ConsensusEngineEvent<N>),
+    ConsensusEngine(ConsensusEngineEvent),
     /// A Consensus Layer health event.
     ConsensusLayerHealth(ConsensusLayerHealthEvent),
     /// A pruner event
@@ -445,12 +445,12 @@ pub enum NodeEvent<N: NodePrimitives> {
 
 /// Displays relevant information to the user from components of the node, and periodically
 /// displays the high-level status of the node.
-pub async fn handle_events<E, N: NodePrimitives>(
+pub async fn handle_events<E>(
     peers_info: Option<Box<dyn PeersInfo>>,
     latest_block_number: Option<BlockNumber>,
     events: E,
 ) where
-    E: Stream<Item = NodeEvent<N>> + Unpin,
+    E: Stream<Item = NodeEvent> + Unpin,
 {
     let state = NodeState::new(peers_info, latest_block_number);
 
@@ -472,9 +472,9 @@ struct EventHandler<E> {
     info_interval: Interval,
 }
 
-impl<E, N: NodePrimitives> Future for EventHandler<E>
+impl<E> Future for EventHandler<E>
 where
-    E: Stream<Item = NodeEvent<N>> + Unpin,
+    E: Stream<Item = NodeEvent> + Unpin,
 {
     type Output = ();
 

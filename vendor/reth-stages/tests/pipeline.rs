@@ -6,6 +6,9 @@ use alloy_consensus::{Header, TxEip1559, TxReceipt, constants::ETH_TO_WEI};
 use alloy_eips::eip1559::INITIAL_BASE_FEE;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes};
+use base_common_consensus::{
+    BaseBlock as Block, BaseBlockBody as BlockBody, BaseTypedTransaction as Transaction,
+};
 use reth_chainspec::{ChainSpecBuilder, ChainSpecProvider, MAINNET};
 use reth_config::config::StageConfig;
 use reth_consensus::noop::NoopConsensus;
@@ -14,9 +17,7 @@ use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
-use reth_ethereum_primitives::{Block, BlockBody, Transaction};
-use reth_evm::TestEvmConfig;
-use reth_evm::{ConfigureEvm, execute::Executor};
+use reth_evm::{ConfigureEvm, TestEvmConfig, execute::Executor};
 use reth_network_p2p::{
     bodies::downloader::BodyDownloader,
     headers::downloader::{HeaderDownloader, SyncTarget},
@@ -37,7 +38,7 @@ use reth_stages::sets::DefaultStages;
 use reth_stages_api::{Pipeline, StageId};
 use reth_static_file::StaticFileProducer;
 use reth_storage_api::{ChangeSetReader, StateProvider, StorageChangeSetReader};
-use reth_testing_utils::generators::{self, generate_key, sign_tx_with_key_pair};
+use reth_testing_utils::generators::{self, generate_key};
 use reth_trie::{HashedPostState, KeccakKeyHasher, StateRoot};
 use reth_trie_db::DatabaseStateRoot;
 use tokio::sync::watch;
@@ -240,7 +241,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
         let base_nonce = (block_num - 1) * 2;
 
         // Transaction 1: ETH transfer
-        let eth_transfer_tx = sign_tx_with_key_pair(
+        let eth_transfer_tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
             key_pair,
             Transaction::Eip1559(TxEip1559 {
                 chain_id: chain_spec.chain.id(),
@@ -256,7 +257,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
         );
 
         // Transaction 2: Counter increment
-        let counter_tx = sign_tx_with_key_pair(
+        let counter_tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
             key_pair,
             Transaction::Eip1559(TxEip1559 {
                 chain_id: chain_spec.chain.id(),

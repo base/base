@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use base_common_consensus::BaseTxEnvelope;
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_db::DatabaseEnv;
 use reth_db_api::{
@@ -7,7 +8,6 @@ use reth_db_api::{
 };
 use reth_db_common::DbTool;
 use reth_evm::ConfigureEvm;
-use reth_node_api::{HeaderTy, TxTy};
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{
     DatabaseProviderFactory, ProviderFactory,
@@ -31,8 +31,8 @@ pub(crate) async fn dump_execution_stage<N, E, C>(
 ) -> eyre::Result<()>
 where
     N: ProviderNodeTypes<DB = DatabaseEnv>,
-    E: ConfigureEvm<Primitives = N::Primitives> + 'static,
-    C: FullConsensus<E::Primitives> + 'static,
+    E: ConfigureEvm + 'static,
+    C: FullConsensus + 'static,
 {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
 
@@ -76,7 +76,7 @@ fn import_tables_with_range<N: ProviderNodeTypes>(
         )
     })??;
     output_db.update(|tx| {
-        tx.import_table_with_range::<tables::Headers<HeaderTy<N>>, _>(
+        tx.import_table_with_range::<tables::Headers<alloy_consensus::Header>, _>(
             &db_tool.provider_factory.db_ref().tx()?,
             Some(from),
             to,
@@ -90,7 +90,7 @@ fn import_tables_with_range<N: ProviderNodeTypes>(
         )
     })??;
     output_db.update(|tx| {
-        tx.import_table_with_range::<tables::BlockOmmers<HeaderTy<N>>, _>(
+        tx.import_table_with_range::<tables::BlockOmmers<alloy_consensus::Header>, _>(
             &db_tool.provider_factory.db_ref().tx()?,
             Some(from),
             to,
@@ -112,7 +112,7 @@ fn import_tables_with_range<N: ProviderNodeTypes>(
     })??;
 
     output_db.update(|tx| {
-        tx.import_table_with_range::<tables::Transactions<TxTy<N>>, _>(
+        tx.import_table_with_range::<tables::Transactions<BaseTxEnvelope>, _>(
             &db_tool.provider_factory.db_ref().tx()?,
             Some(from_tx),
             to_tx,
@@ -138,7 +138,7 @@ fn unwind_and_copy<N: ProviderNodeTypes>(
     from: u64,
     tip_block_number: u64,
     output_db: &DatabaseEnv,
-    evm_config: impl ConfigureEvm<Primitives = N::Primitives>,
+    evm_config: impl ConfigureEvm,
 ) -> eyre::Result<()> {
     let provider = db_tool.provider_factory.database_provider_rw()?;
 
@@ -173,8 +173,8 @@ fn dry_run<N, E, C>(
 ) -> eyre::Result<()>
 where
     N: ProviderNodeTypes,
-    E: ConfigureEvm<Primitives = N::Primitives> + 'static,
-    C: FullConsensus<E::Primitives> + 'static,
+    E: ConfigureEvm + 'static,
+    C: FullConsensus + 'static,
 {
     info!(target: "reth::cli", "Executing stage. [dry-run]");
 

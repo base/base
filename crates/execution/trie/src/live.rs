@@ -3,9 +3,10 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
+use base_common_consensus::BaseBlock;
 use derive_more::Constructor;
 use reth_evm::{ConfigureEvm, execute::Executor};
-use reth_primitives_traits::{AlloyBlockHeader, BlockTy, NodePrimitives, RecoveredBlock};
+use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use reth_provider::{
     DatabaseProviderFactory, HashedPostStateProvider, StateProviderFactory, StateReader,
     StateRootProvider,
@@ -53,7 +54,7 @@ where
     /// Execute a block and store the updates in the storage.
     pub fn execute_and_store_block_updates(
         &self,
-        block: &RecoveredBlock<BlockTy<Evm::Primitives>>,
+        block: &RecoveredBlock<BaseBlock>,
     ) -> Result<(), BaseProofsStorageError> {
         let mut operation_durations = OperationDurations::default();
 
@@ -253,7 +254,7 @@ where
 /// path) or a fully recovered block that needs full execution against the session's
 /// transaction-local state (cold catch-up path).
 #[derive(Debug)]
-pub enum BatchBlock<P: NodePrimitives> {
+pub enum BatchBlock {
     /// Pre-computed cached trie data; only writes happen.
     Cached {
         /// Block reference being written.
@@ -264,7 +265,7 @@ pub enum BatchBlock<P: NodePrimitives> {
         sorted_post_state: Arc<HashedPostStateSorted>,
     },
     /// Full block requiring execution against session-local state.
-    Execute(Box<RecoveredBlock<BlockTy<P>>>),
+    Execute(Box<RecoveredBlock<BaseBlock>>),
 }
 
 impl<'tx, Evm, Provider, Store> LiveTrieCollector<'tx, Evm, Provider, Store>
@@ -279,7 +280,7 @@ where
     /// entire batch commits atomically on success and aborts on the first error.
     pub fn execute_and_store_batch(
         &self,
-        blocks: Vec<BatchBlock<Evm::Primitives>>,
+        blocks: Vec<BatchBlock>,
     ) -> Result<(), BaseProofsStorageError> {
         if blocks.is_empty() {
             return Ok(());
@@ -349,7 +350,7 @@ where
     fn execute_one_in_session<S>(
         &self,
         session: &mut S,
-        block: &RecoveredBlock<BlockTy<Evm::Primitives>>,
+        block: &RecoveredBlock<BaseBlock>,
         earliest: u64,
     ) -> Result<WriteCounts, BaseProofsStorageError>
     where

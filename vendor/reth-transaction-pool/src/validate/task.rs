@@ -5,7 +5,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 use futures_util::{StreamExt, lock::Mutex};
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
 use reth_evm::ConfigureEvm;
-use reth_primitives_traits::{HeaderTy, SealedBlock};
+use reth_primitives_traits::SealedBlock;
 use reth_storage_api::BlockReaderIdExt;
 use reth_tasks::Runtime;
 use tokio::{
@@ -127,7 +127,7 @@ impl TransactionValidationTaskExecutor<()> {
     ) -> EthTransactionValidatorBuilder<Client, Evm>
     where
         Client: ChainSpecProvider<ChainSpec: EthereumHardforks>
-            + BlockReaderIdExt<Header = HeaderTy<Evm::Primitives>>,
+            + BlockReaderIdExt<Header = alloy_consensus::Header>,
         Evm: ConfigureEvm,
     {
         EthTransactionValidatorBuilder::new(client, evm_config)
@@ -160,7 +160,7 @@ impl<Client, Tx, Evm> TransactionValidationTaskExecutor<EthTransactionValidator<
     pub fn eth<S: BlobStore>(client: Client, evm_config: Evm, blob_store: S, tasks: Runtime) -> Self
     where
         Client: ChainSpecProvider<ChainSpec: EthereumHardforks>
-            + BlockReaderIdExt<Header = HeaderTy<Evm::Primitives>>,
+            + BlockReaderIdExt<Header = alloy_consensus::Header>,
         Evm: ConfigureEvm,
     {
         Self::eth_with_additional_tasks(client, evm_config, blob_store, tasks, 0)
@@ -184,7 +184,7 @@ impl<Client, Tx, Evm> TransactionValidationTaskExecutor<EthTransactionValidator<
     ) -> Self
     where
         Client: ChainSpecProvider<ChainSpec: EthereumHardforks>
-            + BlockReaderIdExt<Header = HeaderTy<Evm::Primitives>>,
+            + BlockReaderIdExt<Header = alloy_consensus::Header>,
         Evm: ConfigureEvm,
     {
         EthTransactionValidatorBuilder::new(client, evm_config)

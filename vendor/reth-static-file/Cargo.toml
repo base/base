@@ -27,6 +27,7 @@ reth-storage-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 parking_lot = { workspace = true, features = ["default", "send_guard", "arc_lock"] }
 [dev-dependencies]

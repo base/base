@@ -10,8 +10,7 @@ use std::{
 use alloy_eips::BlockNumHash;
 use crossbeam_channel::Sender as CrossbeamSender;
 use reth_errors::ProviderError;
-use reth_ethereum_primitives::EthPrimitives;
-use reth_primitives_traits::{FastInstant as Instant, NodePrimitives};
+use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
     BalProvider, BlockExecutionWriter, BlockHashReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, SaveBlocksInput, providers::ProviderNodeTypes,
@@ -50,7 +49,7 @@ where
     /// The provider factory to use
     provider: ProviderFactory<N>,
     /// Incoming requests
-    incoming: Receiver<PersistenceAction<N::Primitives>>,
+    incoming: Receiver<PersistenceAction>,
     /// The pruner
     pruner: PrunerWithFactory<ProviderFactory<N>>,
     /// metrics
@@ -72,7 +71,7 @@ where
     /// Create a new persistence service
     pub fn new(
         provider: ProviderFactory<N>,
-        incoming: Receiver<PersistenceAction<N::Primitives>>,
+        incoming: Receiver<PersistenceAction>,
         pruner: PrunerWithFactory<ProviderFactory<N>>,
         sync_metrics_tx: MetricEventsSender,
     ) -> Self {
@@ -164,7 +163,7 @@ where
     #[instrument(level = "debug", target = "engine::persistence", skip_all, fields(block_count = input.persist_rest_blocks().len()))]
     fn on_save_blocks(
         &mut self,
-        input: SaveBlocksInput<N::Primitives>,
+        input: SaveBlocksInput,
     ) -> Result<PersistenceResult, PersistenceError> {
         let first_block =
             input.first_persist_rest_block().map(|block| block.recovered_block().num_hash());
@@ -265,9 +264,9 @@ pub enum PersistenceError {
 
 /// A signal to the persistence service that part of the tree state can be persisted.
 #[derive(Debug)]
-pub enum PersistenceAction<N: NodePrimitives = EthPrimitives> {
+pub enum PersistenceAction {
     /// Advances the block-data and state/trie persistence frontiers described by the input.
-    SaveBlocks(SaveBlocksInput<N>, CrossbeamSender<PersistenceResult>),
+    SaveBlocks(SaveBlocksInput, CrossbeamSender<PersistenceResult>),
 
     /// Removes block data above the given block number from the database.
     ///
@@ -284,20 +283,20 @@ pub enum PersistenceAction<N: NodePrimitives = EthPrimitives> {
 
 /// A handle to the persistence service
 #[derive(Debug, Clone)]
-pub struct PersistenceHandle<N: NodePrimitives = EthPrimitives> {
+pub struct PersistenceHandle {
     /// The channel used to communicate with the persistence service
-    sender: Sender<PersistenceAction<N>>,
+    sender: Sender<PersistenceAction>,
     /// Guard that joins the service thread when all handles are dropped.
     /// Uses `Arc` so the handle remains `Clone`.
     _service_guard: Arc<ServiceGuard>,
 }
 
-impl<T: NodePrimitives> PersistenceHandle<T> {
+impl PersistenceHandle {
     /// Create a new [`PersistenceHandle`] from a [`Sender<PersistenceAction>`].
     ///
     /// This is intended for testing purposes where you want to mock the persistence service.
     /// For production use, prefer [`spawn_service`](Self::spawn_service).
-    pub fn new(sender: Sender<PersistenceAction<T>>) -> Self {
+    pub fn new(sender: Sender<PersistenceAction>) -> Self {
         Self { sender, _service_guard: Arc::new(ServiceGuard(None)) }
     }
 
@@ -310,7 +309,7 @@ impl<T: NodePrimitives> PersistenceHandle<T> {
         provider_factory: ProviderFactory<N>,
         pruner: PrunerWithFactory<ProviderFactory<N>>,
         sync_metrics_tx: MetricEventsSender,
-    ) -> PersistenceHandle<N::Primitives>
+    ) -> PersistenceHandle
     where
         N: ProviderNodeTypes,
     {
@@ -336,8 +335,8 @@ impl<T: NodePrimitives> PersistenceHandle<T> {
     /// for creating any channels for the given action.
     pub fn send_action(
         &self,
-        action: PersistenceAction<T>,
-    ) -> Result<(), SendError<PersistenceAction<T>>> {
+        action: PersistenceAction,
+    ) -> Result<(), SendError<PersistenceAction>> {
         self.sender.send(action)
     }
 
@@ -348,9 +347,9 @@ impl<T: NodePrimitives> PersistenceHandle<T> {
     /// of the sender argument.
     pub fn save_blocks(
         &self,
-        input: SaveBlocksInput<T>,
+        input: SaveBlocksInput,
         tx: CrossbeamSender<PersistenceResult>,
-    ) -> Result<(), SendError<PersistenceAction<T>>> {
+    ) -> Result<(), SendError<PersistenceAction>> {
         self.send_action(PersistenceAction::SaveBlocks(input, tx))
     }
 
@@ -361,7 +360,7 @@ impl<T: NodePrimitives> PersistenceHandle<T> {
     pub fn save_finalized_block_number(
         &self,
         finalized_block: u64,
-    ) -> Result<(), SendError<PersistenceAction<T>>> {
+    ) -> Result<(), SendError<PersistenceAction>> {
         self.send_action(PersistenceAction::SaveFinalizedBlock(finalized_block))
     }
 
@@ -372,7 +371,7 @@ impl<T: NodePrimitives> PersistenceHandle<T> {
     pub fn save_safe_block_number(
         &self,
         safe_block: u64,
-    ) -> Result<(), SendError<PersistenceAction<T>>> {
+    ) -> Result<(), SendError<PersistenceAction>> {
         self.send_action(PersistenceAction::SaveSafeBlock(safe_block))
     }
 
@@ -385,7 +384,7 @@ impl<T: NodePrimitives> PersistenceHandle<T> {
         &self,
         block_num: u64,
         tx: CrossbeamSender<PersistenceResult>,
-    ) -> Result<(), SendError<PersistenceAction<T>>> {
+    ) -> Result<(), SendError<PersistenceAction>> {
         self.send_action(PersistenceAction::RemoveBlocksAbove(block_num, tx))
     }
 }
@@ -431,7 +430,7 @@ mod tests {
 
     use super::*;
 
-    fn default_persistence_handle() -> PersistenceHandle<EthPrimitives> {
+    fn default_persistence_handle() -> PersistenceHandle {
         let provider = create_test_provider_factory();
         init_genesis(&provider).unwrap();
 
@@ -442,12 +441,10 @@ mod tests {
             Pruner::new_with_factory(provider.clone(), vec![], 5, 0, None, finished_exex_height_rx);
 
         let (sync_metrics_tx, _sync_metrics_rx) = unbounded_channel();
-        PersistenceHandle::<EthPrimitives>::spawn_service(provider, pruner, sync_metrics_tx)
+        PersistenceHandle::spawn_service(provider, pruner, sync_metrics_tx)
     }
 
-    fn full_save_input(
-        blocks: Vec<ExecutedBlock<EthPrimitives>>,
-    ) -> SaveBlocksInput<EthPrimitives> {
+    fn full_save_input(blocks: Vec<ExecutedBlock>) -> SaveBlocksInput {
         let prev_tip = blocks
             .first()
             .map(|block| block.recovered_block().number.saturating_sub(1))
@@ -682,7 +679,7 @@ mod tests {
         let hash_a2 = block_a2.recovered_block().hash();
 
         // Compute expected signer state after block 1 from its transaction count.
-        let single_cost = TestBlockBuilder::<EthPrimitives>::single_tx_cost();
+        let single_cost = TestBlockBuilder::single_tx_cost();
         let txs_in_block1 = block_a1.recovered_block().body().transactions.len() as u64;
 
         let balance_after_block1 = initial_balance - single_cost * U256::from(txs_in_block1);

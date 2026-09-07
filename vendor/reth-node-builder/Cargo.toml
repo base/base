@@ -70,6 +70,7 @@ parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-downloaders = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }
 reth-tracing = { workspace = true, features = ["default", "std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
@@ -78,6 +79,7 @@ alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thread"] }
 [dev-dependencies]
+base-execution-txpool = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-evm = { workspace = true, features = ["test-utils"] }

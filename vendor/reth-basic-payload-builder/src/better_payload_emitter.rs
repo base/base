@@ -56,7 +56,7 @@ where
 
     fn build_empty_payload(
         &self,
-        config: PayloadConfig<Self::Attributes, HeaderForPayload<Self::BuiltPayload>>,
+        config: PayloadConfig<Self::Attributes, HeaderForPayload>,
     ) -> Result<Self::BuiltPayload, PayloadBuilderError> {
         self.inner.build_empty_payload(config)
     }

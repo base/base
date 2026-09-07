@@ -14,18 +14,18 @@ use alloy_primitives::{
     map::{B256Map, B256Set},
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
 use alloy_rpc_types_engine::{
     ExecutionData, ExecutionPayloadSidecar, ExecutionPayloadV1, ForkchoiceState,
-    ForkchoiceUpdateError,
+    ForkchoiceUpdateError, PayloadAttributes as EthPayloadAttributes,
 };
 use assert_matches::assert_matches;
+use base_common_consensus::BaseBlock;
 use reth_chain_state::{BlockState, test_utils::TestBlockBuilder};
 use reth_chainspec::{ChainSpec, HOLESKY, MAINNET};
 use reth_consensus_common::test_utils::TestConsensus;
-use reth_engine_primitives::TestEngineTypes;
-use reth_engine_primitives::{EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook};
-use reth_ethereum_primitives::{Block, EthPrimitives};
+use reth_engine_primitives::{
+    EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook, TestEngineTypes,
+};
 use reth_evm::MockEvmConfig;
 use reth_payload_builder::PayloadServiceCommand;
 use reth_primitives_traits::Block as _;
@@ -50,7 +50,7 @@ use crate::{
 struct MockEngineValidator;
 
 impl reth_engine_primitives::PayloadValidator<TestEngineTypes> for MockEngineValidator {
-    type Block = Block;
+    type Block = BaseBlock;
 
     fn convert_payload_to_block(
         &self,
@@ -59,7 +59,7 @@ impl reth_engine_primitives::PayloadValidator<TestEngineTypes> for MockEngineVal
         reth_primitives_traits::SealedBlock<Self::Block>,
         reth_payload_primitives::NewPayloadError,
     > {
-        let block = reth_ethereum_primitives::Block::try_from(payload.payload).map_err(|e| {
+        let block = BaseBlock::try_from(payload.payload).map_err(|e| {
             reth_payload_primitives::NewPayloadError::Other(format!("{e:?}").into())
         })?;
         Ok(block.seal_slow())
@@ -146,15 +146,12 @@ impl TestChannelHandle {
 
 struct TestHarness {
     tree: EngineApiTreeHandler<
-        EthPrimitives,
         MockEthProvider,
         TestEngineTypes,
         BasicEngineValidator<MockEthProvider, MockEvmConfig, MockEngineValidator>,
         MockEvmConfig,
     >,
-    to_tree_tx: crossbeam_channel::Sender<
-        FromEngine<EngineApiRequest<TestEngineTypes, EthPrimitives>, Block>,
-    >,
+    to_tree_tx: crossbeam_channel::Sender<FromEngine<EngineApiRequest<TestEngineTypes>, BaseBlock>>,
     from_tree_rx: UnboundedReceiver<EngineApiEvent>,
     payload_command_rx: UnboundedReceiver<PayloadServiceCommand<TestEngineTypes>>,
     blocks: Vec<ExecutedBlock>,
@@ -382,8 +379,8 @@ impl TestHarness {
         }
     }
 
-    fn persist_blocks(&self, blocks: Vec<RecoveredBlock<reth_ethereum_primitives::Block>>) {
-        let mut block_data: Vec<(B256, Block)> = Vec::with_capacity(blocks.len());
+    fn persist_blocks(&self, blocks: Vec<RecoveredBlock<BaseBlock>>) {
+        let mut block_data: Vec<(B256, BaseBlock)> = Vec::with_capacity(blocks.len());
 
         for block in &blocks {
             block_data.push((block.hash(), block.clone_block()));
@@ -471,10 +468,7 @@ impl ValidatorTestHarness {
     }
 
     /// Call `validate_block_with_state` directly with block
-    fn validate_block_direct(
-        &mut self,
-        block: SealedBlock<Block>,
-    ) -> ValidationOutcome<EthPrimitives> {
+    fn validate_block_direct(&mut self, block: SealedBlock<BaseBlock>) -> ValidationOutcome {
         let ctx = TreeCtx::new(
             &mut self.harness.tree.state,
             &self.harness.tree.canonical_in_memory_state,
@@ -501,7 +495,7 @@ impl TestBlockFactory {
     }
 
     /// Create block that triggers consensus violation by corrupting state root
-    fn create_invalid_consensus_block(&mut self, parent_hash: B256) -> SealedBlock<Block> {
+    fn create_invalid_consensus_block(&mut self, parent_hash: B256) -> SealedBlock<BaseBlock> {
         let mut block = self.builder.generate_random_block(1, parent_hash).into_block();
 
         // Corrupt state root to trigger consensus violation
@@ -511,7 +505,7 @@ impl TestBlockFactory {
     }
 
     /// Create block that triggers execution failure
-    fn create_invalid_execution_block(&mut self, parent_hash: B256) -> SealedBlock<Block> {
+    fn create_invalid_execution_block(&mut self, parent_hash: B256) -> SealedBlock<BaseBlock> {
         let mut block = self.builder.generate_random_block(1, parent_hash).into_block();
 
         // Create transaction that will fail execution
@@ -522,7 +516,7 @@ impl TestBlockFactory {
     }
 
     /// Create valid block
-    fn create_valid_block(&mut self, parent_hash: B256) -> SealedBlock<Block> {
+    fn create_valid_block(&mut self, parent_hash: B256) -> SealedBlock<BaseBlock> {
         let block = self.builder.generate_random_block(1, parent_hash).into_block();
         block.seal_slow()
     }
@@ -969,7 +963,7 @@ async fn test_engine_request_during_backfill() {
 fn test_disconnected_payload() {
     let s = include_str!("../../test-data/holesky/2.rlp");
     let data = Bytes::from_str(s).unwrap();
-    let block = Block::decode(&mut data.as_ref()).unwrap();
+    let block = BaseBlock::decode(&mut data.as_ref()).unwrap();
     let sealed = block.seal_slow();
     let hash = sealed.hash();
     let sealed_clone = sealed.clone();
@@ -996,7 +990,7 @@ fn test_disconnected_payload() {
 fn test_disconnected_block() {
     let s = include_str!("../../test-data/holesky/2.rlp");
     let data = Bytes::from_str(s).unwrap();
-    let block = Block::decode(&mut data.as_ref()).unwrap();
+    let block = BaseBlock::decode(&mut data.as_ref()).unwrap();
     let sealed = block.seal_slow();
 
     let mut test_harness = TestHarness::new(HOLESKY.clone());
@@ -1030,7 +1024,7 @@ fn test_validated_payload_bal_is_inserted_into_store() {
             child_block.block_with_parent(),
             child,
             |_, executed, _| {
-                Ok::<_, InsertPayloadError<Block>>(
+                Ok::<_, InsertPayloadError<BaseBlock>>(
                     ValidationOutput::new(executed, None)
                         .with_raw_bal(Some(RawBal::from(raw_bal.clone()))),
                 )
@@ -1047,7 +1041,7 @@ fn test_validated_payload_bal_is_inserted_into_store() {
 async fn test_holesky_payload() {
     let s = include_str!("../../test-data/holesky/1.rlp");
     let data = Bytes::from_str(s).unwrap();
-    let block: Block = Block::decode(&mut data.as_ref()).unwrap();
+    let block: BaseBlock = BaseBlock::decode(&mut data.as_ref()).unwrap();
     let sealed = block.seal_slow();
     let hash = sealed.hash();
     let block = sealed.into_block();
@@ -1589,7 +1583,7 @@ async fn test_fcu_with_canonical_ancestor_updates_latest_block() {
     test_harness = test_harness.with_blocks(blocks.clone());
 
     // Set block 4 as the current canonical head
-    let current_head = blocks[3].recovered_block().clone(); // Block 4 (0-indexed as blocks[3])
+    let current_head = blocks[3].recovered_block().clone(); // BaseBlock 4 (0-indexed as blocks[3])
     let current_head_sealed = current_head.clone_sealed_header();
     test_harness.tree.state.tree_state.set_canonical_head(current_head.num_hash());
     test_harness.tree.canonical_in_memory_state.set_canonical_head(current_head_sealed);
@@ -1599,7 +1593,7 @@ async fn test_fcu_with_canonical_ancestor_updates_latest_block() {
     assert_eq!(test_harness.tree.state.tree_state.canonical_block_hash(), current_head.hash());
 
     // Now perform FCU to a canonical ancestor (block 2)
-    let ancestor_block = blocks[1].recovered_block().clone(); // Block 2 (0-indexed as blocks[1])
+    let ancestor_block = blocks[1].recovered_block().clone(); // BaseBlock 2 (0-indexed as blocks[1])
 
     // Send FCU to the canonical ancestor
     let (tx, rx) = oneshot::channel();
@@ -1788,7 +1782,7 @@ fn test_on_new_payload_canonical_insertion() {
     // Use test data similar to test_disconnected_payload
     let s = include_str!("../../test-data/holesky/1.rlp");
     let data = Bytes::from_str(s).unwrap();
-    let block1 = Block::decode(&mut data.as_ref()).unwrap();
+    let block1 = BaseBlock::decode(&mut data.as_ref()).unwrap();
     let sealed1 = block1.seal_slow();
     let hash1 = sealed1.hash();
     let sealed1_clone = sealed1.clone();
@@ -1814,7 +1808,7 @@ fn test_on_new_payload_canonical_insertion() {
 
     // Ensure block is buffered (like test_disconnected_payload)
     let buffered = test_harness.tree.state.buffer.block(&hash1).unwrap();
-    assert_eq!(buffered.clone(), sealed1_clone, "Block should be buffered");
+    assert_eq!(buffered.clone(), sealed1_clone, "BaseBlock should be buffered");
 }
 
 /// Test that ensures payloads are rejected when linking to a known-invalid ancestor
@@ -1828,7 +1822,7 @@ fn test_on_new_payload_invalid_ancestor() {
     // Read block 1 from test data
     let s1 = include_str!("../../test-data/holesky/1.rlp");
     let data1 = Bytes::from_str(s1).unwrap();
-    let block1 = Block::decode(&mut data1.as_ref()).unwrap();
+    let block1 = BaseBlock::decode(&mut data1.as_ref()).unwrap();
     let sealed1 = block1.seal_slow();
     let hash1 = sealed1.hash();
     let parent1 = sealed1.parent_hash();
@@ -1843,12 +1837,12 @@ fn test_on_new_payload_invalid_ancestor() {
     // Read block 2 which has block 1 as parent
     let s2 = include_str!("../../test-data/holesky/2.rlp");
     let data2 = Bytes::from_str(s2).unwrap();
-    let block2 = Block::decode(&mut data2.as_ref()).unwrap();
+    let block2 = BaseBlock::decode(&mut data2.as_ref()).unwrap();
     let sealed2 = block2.seal_slow();
     let hash2 = sealed2.hash();
 
     // Verify block2's parent is block1
-    assert_eq!(sealed2.parent_hash(), hash1, "Block 2 should have block 1 as parent");
+    assert_eq!(sealed2.parent_hash(), hash1, "BaseBlock 2 should have block 1 as parent");
 
     let payload2 = ExecutionPayloadV1::from_block_unchecked(hash2, &sealed2.into_block());
 
@@ -1877,7 +1871,7 @@ fn test_on_new_payload_invalid_ancestor() {
     // Verify block 2 is now also marked as invalid
     assert!(
         test_harness.tree.state.invalid_headers.get(&hash2).is_some(),
-        "Block should be added to invalid headers when parent is invalid"
+        "BaseBlock should be added to invalid headers when parent is invalid"
     );
 }
 
@@ -1889,7 +1883,7 @@ fn test_on_new_payload_backfill_buffering() {
     // Use a test data file similar to test_holesky_payload
     let s = include_str!("../../test-data/holesky/1.rlp");
     let data = Bytes::from_str(s).unwrap();
-    let block = Block::decode(&mut data.as_ref()).unwrap();
+    let block = BaseBlock::decode(&mut data.as_ref()).unwrap();
     let sealed = block.seal_slow();
     let hash = sealed.hash();
     let block = sealed.clone().into_block();
@@ -1918,7 +1912,7 @@ fn test_on_new_payload_backfill_buffering() {
         .state
         .buffer
         .block(&hash)
-        .expect("Block should be buffered during backfill sync");
+        .expect("BaseBlock should be buffered during backfill sync");
 
     // Verify the buffered block matches what we submitted
     assert_eq!(*buffered_block, sealed, "Buffered block should match submitted payload");
@@ -1934,7 +1928,7 @@ fn test_on_new_payload_malformed_payload() {
     // Use test data
     let s = include_str!("../../test-data/holesky/1.rlp");
     let data = Bytes::from_str(s).unwrap();
-    let block = Block::decode(&mut data.as_ref()).unwrap();
+    let block = BaseBlock::decode(&mut data.as_ref()).unwrap();
     let sealed = block.seal_slow();
 
     // Create a payload with incorrect block hash to trigger malformed validation
@@ -1984,7 +1978,7 @@ fn test_state_root_strategy_paths() {
 
     let s1 = include_str!("../../test-data/holesky/1.rlp");
     let data1 = Bytes::from_str(s1).unwrap();
-    let block1 = Block::decode(&mut data1.as_ref()).unwrap();
+    let block1 = BaseBlock::decode(&mut data1.as_ref()).unwrap();
     let sealed1 = block1.seal_slow();
     let hash1 = sealed1.hash();
     let block1 = sealed1.into_block();
@@ -2006,7 +2000,7 @@ fn test_state_root_strategy_paths() {
 
     let s2 = include_str!("../../test-data/holesky/2.rlp");
     let data2 = Bytes::from_str(s2).unwrap();
-    let block2 = Block::decode(&mut data2.as_ref()).unwrap();
+    let block2 = BaseBlock::decode(&mut data2.as_ref()).unwrap();
     let sealed2 = block2.seal_slow();
     let hash2 = sealed2.hash();
     let block2 = sealed2.into_block();
@@ -2114,7 +2108,7 @@ mod check_invalid_ancestors_tests {
         // Create a valid block payload
         let s = include_str!("../../test-data/holesky/1.rlp");
         let data = Bytes::from_str(s).unwrap();
-        let block = Block::decode(&mut data.as_ref()).unwrap();
+        let block = BaseBlock::decode(&mut data.as_ref()).unwrap();
         let sealed = block.seal_slow();
         let payload = ExecutionData {
             payload: ExecutionPayloadV1::from_block_unchecked(sealed.hash(), &sealed.into_block())
@@ -2137,7 +2131,7 @@ mod check_invalid_ancestors_tests {
         // Read block 1
         let s1 = include_str!("../../test-data/holesky/1.rlp");
         let data1 = Bytes::from_str(s1).unwrap();
-        let block1 = Block::decode(&mut data1.as_ref()).unwrap();
+        let block1 = BaseBlock::decode(&mut data1.as_ref()).unwrap();
         let sealed1 = block1.seal_slow();
         let parent1 = sealed1.parent_hash();
 
@@ -2151,7 +2145,7 @@ mod check_invalid_ancestors_tests {
         // Read block 2 which has block 1 as parent
         let s2 = include_str!("../../test-data/holesky/2.rlp");
         let data2 = Bytes::from_str(s2).unwrap();
-        let block2 = Block::decode(&mut data2.as_ref()).unwrap();
+        let block2 = BaseBlock::decode(&mut data2.as_ref()).unwrap();
         let sealed2 = block2.seal_slow();
 
         // Create payload for block 2
@@ -2209,7 +2203,7 @@ mod check_invalid_ancestors_tests {
         let mut test_harness = TestHarness::new(HOLESKY.clone());
 
         // Mark an ancestor as invalid
-        let invalid_block = Block::default().seal_slow();
+        let invalid_block = BaseBlock::default().seal_slow();
         test_harness.tree.state.invalid_headers.insert(BlockWithParent {
             block: invalid_block.num_hash(),
             parent: invalid_block.parent_hash(),
@@ -2242,7 +2236,7 @@ mod check_invalid_ancestors_tests {
         // Read block 1
         let s1 = include_str!("../../test-data/holesky/1.rlp");
         let data1 = Bytes::from_str(s1).unwrap();
-        let block1 = Block::decode(&mut data1.as_ref()).unwrap();
+        let block1 = BaseBlock::decode(&mut data1.as_ref()).unwrap();
         let sealed1 = block1.seal_slow();
         let hash1 = sealed1.hash();
         let parent1 = sealed1.parent_hash();

@@ -13,7 +13,7 @@ impl<N, Rpc> EthCall for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError, Evm = N::Evm>,
+    Rpc: RpcConvert<Error = EthApiError, Evm = N::Evm>,
 {
 }
 
@@ -21,7 +21,7 @@ impl<N, Rpc> Call for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError, Evm = N::Evm>,
+    Rpc: RpcConvert<Error = EthApiError, Evm = N::Evm>,
 {
     #[inline]
     fn call_gas_limit(&self) -> u64 {
@@ -48,6 +48,6 @@ impl<N, Rpc> EstimateCall for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError, Evm = N::Evm>,
+    Rpc: RpcConvert<Error = EthApiError, Evm = N::Evm>,
 {
 }

@@ -11,8 +11,6 @@ use base_common_chains::Upgrades;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
-use reth_node_api::NodePrimitives;
-use reth_primitives_traits::header::HeaderMut;
 use reth_rpc_eth_api::helpers::config::{EthConfigApiServer, EthConfigHandler};
 use reth_storage_api::BlockReaderIdExt;
 
@@ -81,10 +79,10 @@ pub struct BaseEthConfigHandler<Provider: ChainSpecProvider, Evm> {
 impl<Provider, Evm> BaseEthConfigHandler<Provider, Evm>
 where
     Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + Upgrades>
-        + BlockReaderIdExt<Header: HeaderMut>
+        + BlockReaderIdExt<Header = alloy_consensus::Header>
         + Clone
         + 'static,
-    Evm: ConfigureEvm<Primitives: NodePrimitives<BlockHeader = Provider::Header>> + Clone + 'static,
+    Evm: ConfigureEvm + Clone + 'static,
 {
     /// Creates a new [`BaseEthConfigHandler`].
     pub fn new(provider: Provider, evm_config: Evm) -> Self {
@@ -109,10 +107,10 @@ where
 impl<Provider, Evm> BaseEthConfigApiServer for BaseEthConfigHandler<Provider, Evm>
 where
     Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + Upgrades>
-        + BlockReaderIdExt<Header: HeaderMut>
+        + BlockReaderIdExt<Header = alloy_consensus::Header>
         + Clone
         + 'static,
-    Evm: ConfigureEvm<Primitives: NodePrimitives<BlockHeader = Provider::Header>> + Clone + 'static,
+    Evm: ConfigureEvm + Clone + 'static,
 {
     fn config(&self) -> RpcResult<EthConfig> {
         let mut config = EthConfigApiServer::config(&self.eth_config)?;

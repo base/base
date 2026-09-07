@@ -21,6 +21,7 @@ reth-consensus = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-execution-types = { workspace = true, optional = true }
+base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 reth-ethereum-primitives = { workspace = true }

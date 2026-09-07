@@ -7,7 +7,6 @@ use alloy_evm::Evm;
 use alloy_primitives::B256;
 use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
 use reth_evm::ConfigureEvm;
-use reth_primitives_traits::NodePrimitives;
 use reth_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
@@ -37,21 +36,20 @@ const HEAD_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// The worker is driven by [`Command`]s: `Start` points it at a new parent state, and
 /// `Pause`/`Resume` bracket cache-sensitive work elsewhere. Commands are only applied between
 /// batches, never while an EVM or state provider is alive.
-pub(super) struct Worker<N, P, Evm>
+pub(super) struct Worker<P, Evm>
 where
-    N: NodePrimitives,
-    Evm: ConfigureEvm<Primitives = N>,
+    Evm: ConfigureEvm,
 {
     /// Control commands from the [`Handle`](super::Handle).
-    commands: Receiver<Command<Job<N, P, Evm>>>,
+    commands: Receiver<Command<Job<P, Evm>>>,
     /// Shared slot the latest snapshot is published into.
     publication: Publication,
     /// The txpool view transactions are drawn from.
-    source: Arc<dyn Source<N>>,
+    source: Arc<dyn Source>,
     /// Configures the EVM used for speculative execution.
     evm_config: Evm,
     /// The parent state to warm, from the most recent `Start` command.
-    job: Option<(B256, Job<N, P, Evm>)>,
+    job: Option<(B256, Job<P, Evm>)>,
     /// Outstanding pauses; the worker only warms while this is zero.
     pauses: u64,
     /// Read-through cache filled by execution; replaced whenever the warmed parent changes.
@@ -62,12 +60,11 @@ where
     /// means it holds unpublished reads.
     published_entries: (usize, usize, usize),
     /// Live best-transactions iterator, tagged with the parent it was opened for.
-    transactions: Option<(B256, Transactions<N>)>,
+    transactions: Option<(B256, Transactions)>,
 }
 
-impl<N, P, Evm> Worker<N, P, Evm>
+impl<P, Evm> Worker<P, Evm>
 where
-    N: NodePrimitives,
     P: DatabaseProviderFactory,
     P::Provider: BlockNumReader
         + PruneCheckpointReader
@@ -75,12 +72,12 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    Evm: ConfigureEvm<Primitives = N>,
+    Evm: ConfigureEvm,
 {
     pub(super) fn new(
-        commands: Receiver<Command<Job<N, P, Evm>>>,
+        commands: Receiver<Command<Job<P, Evm>>>,
         publication: Publication,
-        source: Arc<dyn Source<N>>,
+        source: Arc<dyn Source>,
         evm_config: Evm,
     ) -> Self {
         Self {
@@ -274,7 +271,7 @@ where
     ///
     /// Only called while no EVM or state provider is alive, so a paused worker holds no
     /// execution resources.
-    fn apply(&mut self, command: Command<Job<N, P, Evm>>) {
+    fn apply(&mut self, command: Command<Job<P, Evm>>) {
         match command {
             Command::Start { parent_hash, job } => self.job = Some((parent_hash, job)),
             Command::Pause => {
@@ -325,9 +322,9 @@ mod tests {
 
     use alloy_consensus::{Signed, TxLegacy, transaction::Recovered};
     use alloy_primitives::{Address, Signature, TxKind, U256};
+    use base_common_consensus::BaseTxEnvelope;
     use crossbeam_channel::{Sender, unbounded};
     use parking_lot::{Mutex, RwLock};
-    use reth_ethereum_primitives::{EthPrimitives, TransactionSigned};
     use reth_evm::TestEvmConfig;
     use reth_provider::test_utils::MockEthProvider;
     use reth_stages_api::{StageCheckpoint, StageId};
@@ -339,7 +336,7 @@ mod tests {
     const WAIT_LIMIT: Duration = Duration::from_secs(5);
     const POLL_INTERVAL: Duration = Duration::from_millis(2);
 
-    type TestJob = Job<EthPrimitives, MockEthProvider, TestEvmConfig>;
+    type TestJob = Job<MockEthProvider, TestEvmConfig>;
 
     /// Drives a live worker thread through its public seams only: commands in, the publication
     /// slot and the scripted pool out.
@@ -357,7 +354,7 @@ mod tests {
             let pool = Arc::new(ScriptedPool::default());
             let worker = thread::spawn({
                 let publication = Arc::clone(&publication);
-                let source: Arc<dyn Source<EthPrimitives>> = pool.clone();
+                let source: Arc<dyn Source> = pool.clone();
                 move || Worker::new(receiver, publication, source, TestEvmConfig::default()).run()
             });
             Self { commands, publication, pool, worker: Some(worker) }
@@ -440,7 +437,7 @@ mod tests {
     /// opened for that parent, and unknown parents read as "not tracking this head yet".
     #[derive(Debug, Default)]
     struct ScriptedPool {
-        queues: Arc<Mutex<HashMap<B256, VecDeque<PoolTransaction<EthPrimitives>>>>>,
+        queues: Arc<Mutex<HashMap<B256, VecDeque<PoolTransaction>>>>,
         /// Iterators handed out; the worker is expected to open exactly one per parent.
         opened: AtomicUsize,
         /// Polls answered with "not tracking this head yet".
@@ -448,13 +445,13 @@ mod tests {
     }
 
     impl ScriptedPool {
-        fn push(&self, parent_hash: B256, transaction: PoolTransaction<EthPrimitives>) {
+        fn push(&self, parent_hash: B256, transaction: PoolTransaction) {
             self.queues.lock().entry(parent_hash).or_default().push_back(transaction);
         }
     }
 
-    impl Source<EthPrimitives> for ScriptedPool {
-        fn best_transactions(&self, parent_hash: B256) -> Option<Transactions<EthPrimitives>> {
+    impl Source for ScriptedPool {
+        fn best_transactions(&self, parent_hash: B256) -> Option<Transactions> {
             if !self.queues.lock().contains_key(&parent_hash) {
                 self.not_ready.fetch_add(1, Ordering::Relaxed);
                 return None;
@@ -469,7 +466,7 @@ mod tests {
 
     /// A signed transfer to `recipient`. The signature is a dummy: the worker executes with the
     /// attached sender and disabled nonce/balance checks, so it is never recovered or validated.
-    fn transfer(recipient: u8) -> PoolTransaction<EthPrimitives> {
+    fn transfer(recipient: u8) -> PoolTransaction {
         let transaction = TxLegacy {
             gas_limit: 21_000,
             to: TxKind::Call(Address::repeat_byte(recipient)),
@@ -477,7 +474,7 @@ mod tests {
             ..Default::default()
         };
         let hash = B256::repeat_byte(recipient);
-        let signed = TransactionSigned::Legacy(Signed::new_unchecked(
+        let signed = BaseTxEnvelope::Legacy(Signed::new_unchecked(
             transaction,
             Signature::test_signature(),
             hash,

@@ -8,10 +8,7 @@ use alloy_rlp::{Decodable, Encodable};
 use bytes::BufMut;
 use derive_more::{AsRef, Deref};
 
-use crate::{InMemorySize, NodePrimitives, sync::OnceLock};
-
-/// Type alias for [`SealedHeader`] generic over the `BlockHeader` type of [`NodePrimitives`].
-pub type SealedHeaderFor<N> = SealedHeader<<N as NodePrimitives>::BlockHeader>;
+use crate::{InMemorySize, sync::OnceLock};
 
 /// Seals the header with the block hash.
 ///

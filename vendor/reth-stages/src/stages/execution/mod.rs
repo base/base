@@ -9,6 +9,7 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use num_traits::Zero;
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
 use reth_config::config::ExecutionConfig;
@@ -17,7 +18,7 @@ use reth_db::{static_file::HeaderMask, tables};
 use reth_evm::{ConfigureEvm, execute::Executor, metrics::ExecutorMetrics};
 use reth_execution_types::Chain;
 use reth_exex::{ExExManagerHandle, ExExNotification, ExExNotificationSource};
-use reth_primitives_traits::{BlockBody, NodePrimitives, format_gas_throughput};
+use reth_primitives_traits::format_gas_throughput;
 use reth_provider::{
     BlockHashReader, BlockReader, DBProvider, EitherWriter, ExecutionOutcome,
     HashedPostStateProvider, HeaderProvider, LatestStateProviderRef, OriginalValuesKnown,
@@ -77,7 +78,7 @@ where
     /// The stage's internal block executor
     evm_config: E,
     /// The consensus instance for validating blocks.
-    consensus: Arc<dyn FullConsensus<E::Primitives>>,
+    consensus: Arc<dyn FullConsensus>,
     /// The commit thresholds of the execution stage.
     thresholds: ExecutionStageThresholds,
     /// The highest threshold (in number of blocks) for switching between incremental
@@ -88,13 +89,13 @@ where
     /// Input for the post execute commit hook.
     /// Set after every [`ExecutionStage::execute`] and cleared after
     /// [`ExecutionStage::post_execute_commit`].
-    post_execute_commit_input: Option<Chain<E::Primitives>>,
+    post_execute_commit_input: Option<Chain>,
     /// Input for the post unwind commit hook.
     /// Set after every [`ExecutionStage::unwind`] and cleared after
     /// [`ExecutionStage::post_unwind_commit`].
-    post_unwind_commit_input: Option<Chain<E::Primitives>>,
+    post_unwind_commit_input: Option<Chain>,
     /// Handle to communicate with `ExEx` manager.
-    exex_manager_handle: ExExManagerHandle<E::Primitives>,
+    exex_manager_handle: ExExManagerHandle,
     /// Executor metrics.
     metrics: ExecutorMetrics,
 }
@@ -106,10 +107,10 @@ where
     /// Create new execution stage with specified config.
     pub fn new(
         evm_config: E,
-        consensus: Arc<dyn FullConsensus<E::Primitives>>,
+        consensus: Arc<dyn FullConsensus>,
         thresholds: ExecutionStageThresholds,
         external_clean_threshold: u64,
-        exex_manager_handle: ExExManagerHandle<E::Primitives>,
+        exex_manager_handle: ExExManagerHandle,
     ) -> Self {
         Self {
             external_clean_threshold,
@@ -126,10 +127,7 @@ where
     /// Create an execution stage with the provided executor.
     ///
     /// The commit threshold will be set to [`MERKLE_STAGE_DEFAULT_INCREMENTAL_THRESHOLD`].
-    pub fn new_with_executor(
-        evm_config: E,
-        consensus: Arc<dyn FullConsensus<E::Primitives>>,
-    ) -> Self {
+    pub fn new_with_executor(evm_config: E, consensus: Arc<dyn FullConsensus>) -> Self {
         Self::new(
             evm_config,
             consensus,
@@ -142,7 +140,7 @@ where
     /// Create new instance of [`ExecutionStage`] from configuration.
     pub fn from_config(
         evm_config: E,
-        consensus: Arc<dyn FullConsensus<E::Primitives>>,
+        consensus: Arc<dyn FullConsensus>,
         config: ExecutionConfig,
         external_clean_threshold: u64,
     ) -> Self {
@@ -266,14 +264,11 @@ impl<E, Provider> Stage<Provider> for ExecutionStage<E>
 where
     E: ConfigureEvm,
     Provider: DBProvider
-        + BlockReader<
-            Block = <E::Primitives as NodePrimitives>::Block,
-            Header = <E::Primitives as NodePrimitives>::BlockHeader,
-        > + StaticFileProviderFactory<
-            Primitives: NodePrimitives<BlockHeader: reth_db_api::table::Value>,
-        > + StatsReader
+        + BlockReader<Block = BaseBlock, Header = alloy_consensus::Header>
+        + StaticFileProviderFactory
+        + StatsReader
         + BlockHashReader
-        + StateWriter<Receipt = <E::Primitives as NodePrimitives>::Receipt>
+        + StateWriter<Receipt = BaseReceipt>
         + StorageSettingsCache
         + StoragePath
         + ChainSpecProvider<ChainSpec: EthereumHardforks>,
@@ -348,7 +343,7 @@ where
             cumulative_gas += block.header().gas_used();
 
             // Configure the executor to use the current state.
-            trace!(target: "sync::stages::execution", number = block_number, txs = block.body().transactions().len(), "Executing block");
+            trace!(target: "sync::stages::execution", number = block_number, txs = block.body().transactions.len(), "Executing block");
 
             // Execute the block
             let execute_start = Instant::now();
@@ -640,15 +635,12 @@ where
     Ok(())
 }
 
-fn execution_checkpoint<N>(
-    provider: &StaticFileProvider<N>,
+fn execution_checkpoint(
+    provider: &StaticFileProvider,
     start_block: BlockNumber,
     max_block: BlockNumber,
     checkpoint: StageCheckpoint,
-) -> Result<ExecutionCheckpoint, ProviderError>
-where
-    N: NodePrimitives<BlockHeader: reth_db_api::table::Value>,
-{
+) -> Result<ExecutionCheckpoint, ProviderError> {
     Ok(match checkpoint.execution_stage_checkpoint() {
         // If checkpoint block range fully matches our range,
         // we take the previously used stage checkpoint as-is.
@@ -715,13 +707,10 @@ where
 }
 
 /// Calculates the total amount of gas used from the headers in the given range.
-pub fn calculate_gas_used_from_headers<N>(
-    provider: &StaticFileProvider<N>,
+pub fn calculate_gas_used_from_headers(
+    provider: &StaticFileProvider,
     range: RangeInclusive<BlockNumber>,
-) -> Result<u64, ProviderError>
-where
-    N: NodePrimitives<BlockHeader: reth_db_api::table::Value>,
-{
+) -> Result<u64, ProviderError> {
     debug!(target: "sync::stages::execution", ?range, "Calculating gas used from headers");
 
     let mut gas_total = 0;
@@ -731,7 +720,7 @@ where
     for entry in provider.fetch_range_iter(
         StaticFileSegment::Headers,
         *range.start()..*range.end() + 1,
-        |cursor, number| cursor.get_one::<HeaderMask<N::BlockHeader>>(number.into()),
+        |cursor, number| cursor.get_one::<HeaderMask<alloy_consensus::Header>>(number.into()),
     )? {
         if let Some(entry) = entry? {
             gas_total += entry.gas_used();
@@ -751,13 +740,13 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address, hex_literal::hex, keccak256};
     use alloy_rlp::Decodable;
     use assert_matches::assert_matches;
+    use base_common_consensus::BaseBlock as Block;
     use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
     use reth_consensus_common::test_utils::TestConsensus;
     use reth_db_api::{
         models::metadata::StorageSettings,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_ethereum_primitives::Block;
     use reth_evm::TestEvmConfig;
     use reth_primitives_traits::{Account, Block as _, Bytecode, SealedBlock, StorageEntry};
     use reth_provider::{
@@ -1257,7 +1246,7 @@ mod tests {
         let provider = factory.database_provider_rw().unwrap();
 
         let mut rng = generators::rng();
-        let mut genesis = generators::random_block(
+        let mut genesis = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             0,
             generators::BlockParams { tx_count: Some(0), ..Default::default() },
@@ -1266,7 +1255,7 @@ mod tests {
         genesis.header.timestamp = 0;
         let genesis = genesis.seal_slow();
 
-        let mut block_1 = generators::random_block(
+        let mut block_1 = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             1,
             generators::BlockParams {
@@ -1279,7 +1268,7 @@ mod tests {
         block_1.header.timestamp = 10;
         let block_1 = block_1.seal_slow();
 
-        let mut block_2 = generators::random_block(
+        let mut block_2 = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             2,
             generators::BlockParams {
@@ -1326,11 +1315,12 @@ mod tests {
         // Setup with block 1
         let provider_rw = factory.database_provider_rw().unwrap();
         let mut rng = generators::rng();
-        let genesis = generators::random_block(&mut rng, 0, Default::default());
+        let genesis =
+            reth_testing_utils::BaseTestData::random_block(&mut rng, 0, Default::default());
         provider_rw
             .insert_block(&genesis.try_recover().unwrap())
             .expect("failed to insert genesis");
-        let block = generators::random_block(
+        let block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             1,
             generators::BlockParams { tx_count: Some(2), ..Default::default() },

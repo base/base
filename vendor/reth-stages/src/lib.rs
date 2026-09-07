@@ -34,7 +34,7 @@
 //! # use reth_consensus::FullConsensus;
 //! #
 //! # let chain_spec = MAINNET.clone();
-//! # let consensus: Arc<dyn FullConsensus<reth_ethereum_primitives::EthPrimitives>> = Arc::new(TestConsensus::default());
+//! # let consensus: Arc<dyn FullConsensus> = Arc::new(TestConsensus::default());
 //! # let headers_downloader = ReverseHeadersDownloaderBuilder::default().build(
 //! #    Arc::new(TestHeadersClient::default()),
 //! #    consensus.clone()

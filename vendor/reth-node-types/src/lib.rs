@@ -14,10 +14,8 @@ use core::{fmt::Debug, marker::PhantomData};
 use reth_chainspec::EthChainSpec;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::EngineTypes;
-use reth_payload_primitives::{BuiltPayload, PayloadTypes};
-pub use reth_primitives_traits::{
-    Block, BlockBody, FullBlock, FullReceipt, FullSignedTx, NodePrimitives,
-};
+use reth_payload_primitives::PayloadTypes;
+pub use reth_primitives_traits::{Block, BlockBody, FullBlock, FullReceipt, FullSignedTx};
 
 /// The type that configures the essential types of an Ethereum-like node.
 ///
@@ -25,14 +23,12 @@ pub use reth_primitives_traits::{
 ///
 /// This trait is intended to be stateless and only define the types of the node.
 pub trait NodeTypes: Clone + Debug + Send + Sync + Unpin + 'static {
-    /// The node's primitive types, defining basic operations and structures.
-    type Primitives: NodePrimitives;
     /// The type used for configuration of the EVM.
-    type ChainSpec: EthChainSpec<Header = <Self::Primitives as NodePrimitives>::BlockHeader>;
+    type ChainSpec: EthChainSpec<Header = alloy_consensus::Header>;
     /// The type responsible for writing chain primitives to storage.
     type Storage: Default + Send + Sync + Unpin + Debug + 'static;
     /// The node's engine types, defining the interaction with the consensus engine.
-    type Payload: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = Self::Primitives>>;
+    type Payload: PayloadTypes;
 }
 
 /// A helper trait that is downstream of the [`NodeTypes`] trait and adds database to the
@@ -63,7 +59,6 @@ where
     Types: NodeTypes,
     DB: Clone + Debug + Send + Sync + Unpin + 'static,
 {
-    type Primitives = Types::Primitives;
     type ChainSpec = Types::ChainSpec;
     type Storage = Types::Storage;
     type Payload = Types::Payload;
@@ -79,48 +74,36 @@ where
 
 /// A [`NodeTypes`] type builder.
 #[derive(Clone, Debug, Default)]
-pub struct AnyNodeTypes<P = (), C = (), S = (), PL = ()>(
-    PhantomData<P>,
-    PhantomData<C>,
-    PhantomData<S>,
-    PhantomData<PL>,
-);
+pub struct AnyNodeTypes<C = (), S = (), PL = ()>(PhantomData<C>, PhantomData<S>, PhantomData<PL>);
 
-impl<P, C, S, PL> AnyNodeTypes<P, C, S, PL> {
+impl<C, S, PL> AnyNodeTypes<C, S, PL> {
     /// Creates a new instance of [`AnyNodeTypes`].
     pub const fn new() -> Self {
-        Self(PhantomData, PhantomData, PhantomData, PhantomData)
-    }
-
-    /// Sets the `Primitives` associated type.
-    pub const fn primitives<T>(self) -> AnyNodeTypes<T, C, S, PL> {
-        AnyNodeTypes::new()
+        Self(PhantomData, PhantomData, PhantomData)
     }
 
     /// Sets the `ChainSpec` associated type.
-    pub const fn chain_spec<T>(self) -> AnyNodeTypes<P, T, S, PL> {
+    pub const fn chain_spec<T>(self) -> AnyNodeTypes<T, S, PL> {
         AnyNodeTypes::new()
     }
 
     /// Sets the `Storage` associated type.
-    pub const fn storage<T>(self) -> AnyNodeTypes<P, C, T, PL> {
+    pub const fn storage<T>(self) -> AnyNodeTypes<C, T, PL> {
         AnyNodeTypes::new()
     }
 
     /// Sets the `Payload` associated type.
-    pub const fn payload<T>(self) -> AnyNodeTypes<P, C, S, T> {
+    pub const fn payload<T>(self) -> AnyNodeTypes<C, S, T> {
         AnyNodeTypes::new()
     }
 }
 
-impl<P, C, S, PL> NodeTypes for AnyNodeTypes<P, C, S, PL>
+impl<C, S, PL> NodeTypes for AnyNodeTypes<C, S, PL>
 where
-    P: NodePrimitives + Send + Sync + Unpin + 'static,
-    C: EthChainSpec<Header = P::BlockHeader> + Clone + 'static,
+    C: EthChainSpec<Header = alloy_consensus::Header> + Clone + 'static,
     S: Default + Clone + Send + Sync + Unpin + Debug + 'static,
-    PL: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = P>> + Send + Sync + Unpin + 'static,
+    PL: PayloadTypes + Send + Sync + Unpin + 'static,
 {
-    type Primitives = P;
     type ChainSpec = C;
     type Storage = S;
     type Payload = PL;
@@ -128,76 +111,51 @@ where
 
 /// A [`NodeTypes`] type builder.
 #[derive(Clone, Debug, Default)]
-pub struct AnyNodeTypesWithEngine<P = (), E = (), C = (), S = (), PL = ()> {
+pub struct AnyNodeTypesWithEngine<E = (), C = (), S = (), PL = ()> {
     /// Embedding the basic node types.
-    _base: AnyNodeTypes<P, C, S, PL>,
+    _base: AnyNodeTypes<C, S, PL>,
     /// Phantom data for the engine.
     _engine: PhantomData<E>,
 }
 
-impl<P, E, C, S, PL> AnyNodeTypesWithEngine<P, E, C, S, PL> {
+impl<E, C, S, PL> AnyNodeTypesWithEngine<E, C, S, PL> {
     /// Creates a new instance of [`AnyNodeTypesWithEngine`].
     pub const fn new() -> Self {
         Self { _base: AnyNodeTypes::new(), _engine: PhantomData }
     }
 
-    /// Sets the `Primitives` associated type.
-    pub const fn primitives<T>(self) -> AnyNodeTypesWithEngine<T, E, C, S, PL> {
-        AnyNodeTypesWithEngine::new()
-    }
-
     /// Sets the `Engine` associated type.
-    pub const fn engine<T>(self) -> AnyNodeTypesWithEngine<P, T, C, S, PL> {
+    pub const fn engine<T>(self) -> AnyNodeTypesWithEngine<T, C, S, PL> {
         AnyNodeTypesWithEngine::new()
     }
 
     /// Sets the `ChainSpec` associated type.
-    pub const fn chain_spec<T>(self) -> AnyNodeTypesWithEngine<P, E, T, S, PL> {
+    pub const fn chain_spec<T>(self) -> AnyNodeTypesWithEngine<E, T, S, PL> {
         AnyNodeTypesWithEngine::new()
     }
 
     /// Sets the `Storage` associated type.
-    pub const fn storage<T>(self) -> AnyNodeTypesWithEngine<P, E, C, T, PL> {
+    pub const fn storage<T>(self) -> AnyNodeTypesWithEngine<E, C, T, PL> {
         AnyNodeTypesWithEngine::new()
     }
 
     /// Sets the `Payload` associated type.
-    pub const fn payload<T>(self) -> AnyNodeTypesWithEngine<P, E, C, S, T> {
+    pub const fn payload<T>(self) -> AnyNodeTypesWithEngine<E, C, S, T> {
         AnyNodeTypesWithEngine::new()
     }
 }
 
-impl<P, E, C, S, PL> NodeTypes for AnyNodeTypesWithEngine<P, E, C, S, PL>
+impl<E, C, S, PL> NodeTypes for AnyNodeTypesWithEngine<E, C, S, PL>
 where
-    P: NodePrimitives + Send + Sync + Unpin + 'static,
     E: EngineTypes + Send + Sync + Unpin,
-    C: EthChainSpec<Header = P::BlockHeader> + Clone + 'static,
+    C: EthChainSpec<Header = alloy_consensus::Header> + Clone + 'static,
     S: Default + Clone + Send + Sync + Unpin + Debug + 'static,
-    PL: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = P>> + Send + Sync + Unpin + 'static,
+    PL: PayloadTypes + Send + Sync + Unpin + 'static,
 {
-    type Primitives = P;
     type ChainSpec = C;
     type Storage = S;
     type Payload = PL;
 }
-
-/// Helper adapter type for accessing [`NodePrimitives::Block`] on [`NodeTypes`].
-pub type BlockTy<N> = <PrimitivesTy<N> as NodePrimitives>::Block;
-
-/// Helper adapter type for accessing [`NodePrimitives::BlockHeader`] on [`NodeTypes`].
-pub type HeaderTy<N> = <PrimitivesTy<N> as NodePrimitives>::BlockHeader;
-
-/// Helper adapter type for accessing [`NodePrimitives::BlockBody`] on [`NodeTypes`].
-pub type BodyTy<N> = <PrimitivesTy<N> as NodePrimitives>::BlockBody;
-
-/// Helper adapter type for accessing [`NodePrimitives::SignedTx`] on [`NodeTypes`].
-pub type TxTy<N> = <PrimitivesTy<N> as NodePrimitives>::SignedTx;
-
-/// Helper adapter type for accessing [`NodePrimitives::Receipt`] on [`NodeTypes`].
-pub type ReceiptTy<N> = <PrimitivesTy<N> as NodePrimitives>::Receipt;
-
-/// Helper type for getting the `Primitives` associated type from a [`NodeTypes`].
-pub type PrimitivesTy<N> = <N as NodeTypes>::Primitives;
 
 /// Helper adapter type for accessing [`PayloadTypes::PayloadAttributes`] on [`NodeTypes`].
 pub type PayloadAttrTy<N> = <<N as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes;

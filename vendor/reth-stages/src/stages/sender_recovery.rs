@@ -1,19 +1,17 @@
 use std::{fmt::Debug, ops::Range, sync::mpsc};
 
 use alloy_primitives::{Address, BlockNumber, TxNumber};
+use base_common_consensus::BaseTxEnvelope;
 use reth_config::config::SenderRecoveryConfig;
 use reth_consensus::ConsensusError;
 use reth_db::static_file::TransactionMask;
 use reth_db_api::{
     RawValue,
     cursor::DbCursorRW,
-    table::Value,
     tables,
     transaction::{DbTx, DbTxMut},
 };
-use reth_primitives_traits::{
-    FastInstant as Instant, GotExpected, NodePrimitives, SignedTransaction,
-};
+use reth_primitives_traits::{FastInstant as Instant, GotExpected, SignedTransaction};
 use reth_provider::{
     BlockReader, DBProvider, EitherWriter, HeaderProvider, ProviderError, PruneCheckpointReader,
     PruneCheckpointWriter, StaticFileProviderFactory, StatsReader, StorageSettingsCache,
@@ -70,7 +68,7 @@ impl<Provider> Stage<Provider> for SenderRecoveryStage
 where
     Provider: DBProvider<Tx: DbTxMut>
         + BlockReader
-        + StaticFileProviderFactory<Primitives: NodePrimitives<SignedTx: Value + SignedTransaction>>
+        + StaticFileProviderFactory
         + StatsReader
         + PruneCheckpointReader
         + PruneCheckpointWriter
@@ -229,7 +227,7 @@ fn recover_range<Provider, CURSOR>(
     block_numbers: Vec<BlockNumber>,
     provider: &Provider,
     tx_batch_sender: mpsc::Sender<Vec<(Range<u64>, RecoveryResultSender)>>,
-    writer: &mut EitherWriter<'_, CURSOR, Provider::Primitives>,
+    writer: &mut EitherWriter<'_, CURSOR>,
 ) -> Result<(), StageError>
 where
     Provider: DBProvider + HeaderProvider + TransactionsProvider + StaticFileProviderFactory,
@@ -332,9 +330,7 @@ fn setup_range_recovery<Provider>(
     provider: &Provider,
 ) -> mpsc::Sender<Vec<(Range<u64>, RecoveryResultSender)>>
 where
-    Provider: DBProvider
-        + HeaderProvider
-        + StaticFileProviderFactory<Primitives: NodePrimitives<SignedTx: Value + SignedTransaction>>,
+    Provider: DBProvider + HeaderProvider + StaticFileProviderFactory,
 {
     let (tx_sender, tx_receiver) = mpsc::channel::<Vec<(Range<u64>, RecoveryResultSender)>>();
     let static_file_provider = provider.static_file_provider();
@@ -355,9 +351,7 @@ where
                     chunk_range.clone(),
                     |cursor, number| {
                         Ok(cursor
-                            .get_one::<TransactionMask<
-                                RawValue<<Provider::Primitives as NodePrimitives>::SignedTx>,
-                            >>(number.into())?
+                            .get_one::<TransactionMask<RawValue<BaseTxEnvelope>>>(number.into())?
                             .map(|tx| (number, tx)))
                     },
                     |_| true,
@@ -466,8 +460,8 @@ struct FailedSenderRecoveryError {
 mod tests {
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
+    use base_common_consensus::{BaseBlock as Block, BaseTxEnvelope as TransactionSigned};
     use reth_db_api::{cursor::DbCursorRO, models::StorageSettings};
-    use reth_ethereum_primitives::{Block, TransactionSigned};
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use reth_provider::{
         BlockBodyIndicesProvider, DatabaseProviderFactory, PruneCheckpointWriter,
@@ -476,9 +470,7 @@ mod tests {
     use reth_prune_types::{PruneCheckpoint, PruneMode};
     use reth_stages_api::StageUnitCheckpoint;
     use reth_static_file_types::StaticFileSegment;
-    use reth_testing_utils::generators::{
-        self, BlockParams, BlockRangeParams, random_block, random_block_range,
-    };
+    use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
 
     use super::*;
     use crate::test_utils::{
@@ -505,7 +497,7 @@ mod tests {
         let non_empty_block_number = stage_progress + 10;
         let blocks = (stage_progress..=input.target())
             .map(|number| {
-                random_block(
+                reth_testing_utils::BaseTestData::random_block(
                     &mut rng,
                     number,
                     BlockParams {
@@ -555,7 +547,7 @@ mod tests {
         let non_empty_block_number = stage_progress + 1;
         let blocks = (stage_progress..=input.target())
             .map(|number| {
-                random_block(
+                reth_testing_utils::BaseTestData::random_block(
                     &mut rng,
                     number,
                     BlockParams {
@@ -592,7 +584,7 @@ mod tests {
         let (stage_progress, previous_stage) = (1000, 1100); // input exceeds threshold
 
         // Manually seed once with full input range
-        let seed = random_block_range(
+        let seed = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             stage_progress + 1..=previous_stage,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..4, ..Default::default() },
@@ -666,7 +658,7 @@ mod tests {
         let db = TestStageDB::default();
         let mut rng = generators::rng();
 
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=100,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..10, ..Default::default() },
@@ -783,7 +775,7 @@ mod tests {
             let stage_progress = input.checkpoint().block_number;
             let end = input.target();
 
-            let blocks = random_block_range(
+            let blocks = reth_testing_utils::BaseTestData::random_block_range(
                 &mut rng,
                 stage_progress..=end,
                 BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..2, ..Default::default() },

@@ -61,8 +61,7 @@ where
         + StorageSettingsCache
         + RocksDBProviderFactory
         + StorageChangeSetReader
-        + StaticFileProviderFactory
-        + reth_provider::NodePrimitivesProvider,
+        + StaticFileProviderFactory,
 {
     /// Return the id of the stage
     fn id(&self) -> StageId {

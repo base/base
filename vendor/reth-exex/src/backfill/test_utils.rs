@@ -3,29 +3,26 @@ use std::sync::Arc;
 use alloy_consensus::{BlockHeader, Header, TxEip2930, constants::ETH_TO_WEI};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, TxKind, U256, b256};
+use base_common_consensus::{BaseBlock, BaseBlockBody, BaseReceipt, BaseTypedTransaction};
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN_TRANSACTION_GAS};
-use reth_ethereum_primitives::{Block, BlockBody, Receipt, Transaction};
-use reth_evm::TestEvmConfig;
 use reth_evm::{
-    ConfigureEvm,
+    ConfigureEvm, TestEvmConfig,
     execute::{BlockExecutionOutput, Executor},
 };
-use reth_node_api::NodePrimitives;
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{
     BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory,
     providers::ProviderNodeTypes,
 };
 use reth_revm::database::StateProviderDatabase;
-use reth_testing_utils::generators::sign_tx_with_key_pair;
 use reth_trie_common::KeccakKeyHasher;
 use secp256k1::Keypair;
 
 pub(crate) fn to_execution_outcome(
     block_number: u64,
-    block_execution_output: &BlockExecutionOutput<Receipt>,
-) -> ExecutionOutcome {
-    ExecutionOutcome {
+    block_execution_output: &BlockExecutionOutput<BaseReceipt>,
+) -> ExecutionOutcome<BaseReceipt> {
+    ExecutionOutcome::<BaseReceipt> {
         bundle: block_execution_output.state.clone(),
         receipts: vec![block_execution_output.receipts.clone()],
         first_block: block_number,
@@ -55,16 +52,10 @@ pub(crate) fn chain_spec(address: Address) -> Arc<ChainSpec> {
 pub(crate) fn execute_block_and_commit_to_database<N>(
     provider_factory: &ProviderFactory<N>,
     chain_spec: Arc<ChainSpec>,
-    block: &RecoveredBlock<reth_ethereum_primitives::Block>,
-) -> eyre::Result<BlockExecutionOutput<Receipt>>
+    block: &RecoveredBlock<BaseBlock>,
+) -> eyre::Result<BlockExecutionOutput<BaseReceipt>>
 where
-    N: ProviderNodeTypes<
-        Primitives: NodePrimitives<
-            Block = reth_ethereum_primitives::Block,
-            BlockBody = reth_ethereum_primitives::BlockBody,
-            Receipt = reth_ethereum_primitives::Receipt,
-        >,
-    >,
+    N: ProviderNodeTypes,
 {
     let provider = provider_factory.provider()?;
 
@@ -89,12 +80,9 @@ where
 fn blocks(
     chain_spec: Arc<ChainSpec>,
     key_pair: Keypair,
-) -> eyre::Result<(
-    RecoveredBlock<reth_ethereum_primitives::Block>,
-    RecoveredBlock<reth_ethereum_primitives::Block>,
-)> {
+) -> eyre::Result<(RecoveredBlock<BaseBlock>, RecoveredBlock<BaseBlock>)> {
     // First block has a transaction that transfers some ETH to zero address
-    let block1 = Block {
+    let block1 = BaseBlock {
         header: Header {
             parent_hash: chain_spec.genesis_hash(),
             receipts_root: b256!(
@@ -106,10 +94,10 @@ fn blocks(
             gas_used: MIN_TRANSACTION_GAS,
             ..Default::default()
         },
-        body: BlockBody {
-            transactions: vec![sign_tx_with_key_pair(
+        body: BaseBlockBody {
+            transactions: vec![reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
-                Transaction::Eip2930(TxEip2930 {
+                BaseTypedTransaction::Eip2930(TxEip2930 {
                     chain_id: chain_spec.chain.id(),
                     nonce: 0,
                     gas_limit: MIN_TRANSACTION_GAS,
@@ -125,7 +113,7 @@ fn blocks(
     .try_into_recovered()?;
 
     // Second block resends the same transaction with increased nonce
-    let block2 = Block {
+    let block2 = BaseBlock {
         header: Header {
             parent_hash: block1.hash(),
             receipts_root: b256!(
@@ -137,10 +125,10 @@ fn blocks(
             gas_used: MIN_TRANSACTION_GAS,
             ..Default::default()
         },
-        body: BlockBody {
-            transactions: vec![sign_tx_with_key_pair(
+        body: BaseBlockBody {
+            transactions: vec![reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
-                Transaction::Eip2930(TxEip2930 {
+                BaseTypedTransaction::Eip2930(TxEip2930 {
                     chain_id: chain_spec.chain.id(),
                     nonce: 1,
                     gas_limit: MIN_TRANSACTION_GAS,
@@ -162,17 +150,9 @@ pub(crate) fn blocks_and_execution_outputs<N>(
     provider_factory: ProviderFactory<N>,
     chain_spec: Arc<ChainSpec>,
     key_pair: Keypair,
-) -> eyre::Result<
-    Vec<(RecoveredBlock<reth_ethereum_primitives::Block>, BlockExecutionOutput<Receipt>)>,
->
+) -> eyre::Result<Vec<(RecoveredBlock<BaseBlock>, BlockExecutionOutput<BaseReceipt>)>>
 where
-    N: ProviderNodeTypes<
-        Primitives: NodePrimitives<
-            Block = reth_ethereum_primitives::Block,
-            BlockBody = reth_ethereum_primitives::BlockBody,
-            Receipt = reth_ethereum_primitives::Receipt,
-        >,
-    >,
+    N: ProviderNodeTypes,
 {
     let (block1, block2) = blocks(chain_spec.clone(), key_pair)?;
 
@@ -188,13 +168,9 @@ pub(crate) fn blocks_and_execution_outcome<N>(
     provider_factory: ProviderFactory<N>,
     chain_spec: Arc<ChainSpec>,
     key_pair: Keypair,
-) -> eyre::Result<(Vec<RecoveredBlock<reth_ethereum_primitives::Block>>, ExecutionOutcome)>
+) -> eyre::Result<(Vec<RecoveredBlock<BaseBlock>>, ExecutionOutcome<BaseReceipt>)>
 where
     N: ProviderNodeTypes,
-    N::Primitives: NodePrimitives<
-            Block = reth_ethereum_primitives::Block,
-            Receipt = reth_ethereum_primitives::Receipt,
-        >,
 {
     let (block1, block2) = blocks(chain_spec.clone(), key_pair)?;
 

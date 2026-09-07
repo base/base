@@ -7,13 +7,12 @@ use std::{sync::Arc, time::Instant};
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, BlockHash, TxHash};
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use derive_more::Constructor;
 use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_ethereum_primitives::Receipt;
 use reth_evm::{ConfigureEvm, EvmEnvFor};
-use reth_primitives_traits::{
-    Block, BlockTy, IndexedTx, NodePrimitives, ReceiptTy, RecoveredBlock, SealedHeader,
-};
+use reth_primitives_traits::{Block, IndexedTx, RecoveredBlock, SealedHeader};
 use reth_rpc_convert::{RpcConvert, RpcTypes};
 
 use crate::block::BlockAndReceipts;
@@ -24,7 +23,7 @@ pub struct PendingBlockEnv<Evm: ConfigureEvm> {
     /// Configured [`reth_evm::EvmEnv`] for the pending block.
     pub evm_env: EvmEnvFor<Evm>,
     /// Origin block for the config
-    pub origin: PendingBlockEnvOrigin<BlockTy<Evm::Primitives>, ReceiptTy<Evm::Primitives>>,
+    pub origin: PendingBlockEnvOrigin<BaseBlock, BaseReceipt>,
 }
 
 /// The origin for a configured [`PendingBlockEnv`]
@@ -80,24 +79,24 @@ impl<B: Block, R> PendingBlockEnvOrigin<B, R> {
 }
 
 /// A type alias for a pair of an [`Arc`] wrapped [`RecoveredBlock`] and a vector of
-/// [`NodePrimitives::Receipt`].
-pub type PendingBlockAndReceipts<N> = BlockAndReceipts<N>;
+/// [`base_common_consensus::BaseReceipt`].
+pub type PendingBlockAndReceipts = BlockAndReceipts;
 
 /// Locally built pending block for `pending` tag.
 #[derive(Debug, Clone, Constructor)]
-pub struct PendingBlock<N: NodePrimitives> {
+pub struct PendingBlock {
     /// Timestamp when the pending block is considered outdated.
     pub expires_at: Instant,
     /// The receipts for the pending block
-    pub receipts: Arc<Vec<ReceiptTy<N>>>,
+    pub receipts: Arc<Vec<BaseReceipt>>,
     /// The locally built pending block with execution output.
-    pub executed_block: ExecutedBlock<N>,
+    pub executed_block: ExecutedBlock,
 }
 
-impl<N: NodePrimitives> PendingBlock<N> {
+impl PendingBlock {
     /// Creates a new instance of [`PendingBlock`] with `executed_block` as its output that should
     /// not be used past `expires_at`.
-    pub fn with_executed_block(expires_at: Instant, executed_block: ExecutedBlock<N>) -> Self {
+    pub fn with_executed_block(expires_at: Instant, executed_block: ExecutedBlock) -> Self {
         Self {
             expires_at,
             receipts: Arc::new(executed_block.execution_output.receipts.clone()),
@@ -106,19 +105,19 @@ impl<N: NodePrimitives> PendingBlock<N> {
     }
 
     /// Returns the locally built pending [`RecoveredBlock`].
-    pub const fn block(&self) -> &Arc<RecoveredBlock<BlockTy<N>>> {
+    pub const fn block(&self) -> &Arc<RecoveredBlock<BaseBlock>> {
         &self.executed_block.recovered_block
     }
 
     /// Converts this [`PendingBlock`] into a pair of [`RecoveredBlock`] and a vector of
-    /// [`NodePrimitives::Receipt`]s, taking self.
-    pub fn into_block_and_receipts(self) -> PendingBlockAndReceipts<N> {
+    /// [`base_common_consensus::BaseReceipt`]s, taking self.
+    pub fn into_block_and_receipts(self) -> PendingBlockAndReceipts {
         BlockAndReceipts { block: self.executed_block.recovered_block, receipts: self.receipts }
     }
 
-    /// Returns a pair of [`RecoveredBlock`] and a vector of  [`NodePrimitives::Receipt`]s by
+    /// Returns a pair of [`RecoveredBlock`] and a vector of  [`base_common_consensus::BaseReceipt`]s by
     /// cloning from borrowed self.
-    pub fn to_block_and_receipts(&self) -> PendingBlockAndReceipts<N> {
+    pub fn to_block_and_receipts(&self) -> PendingBlockAndReceipts {
         BlockAndReceipts {
             block: self.executed_block.recovered_block.clone(),
             receipts: self.receipts.clone(),
@@ -136,7 +135,7 @@ impl<N: NodePrimitives> PendingBlock<N> {
     pub fn find_transaction_and_receipt_by_hash(
         &self,
         tx_hash: TxHash,
-    ) -> Option<(IndexedTx<'_, N::Block>, &N::Receipt)> {
+    ) -> Option<(IndexedTx<'_, BaseBlock>, &BaseReceipt)> {
         let indexed_tx = self.executed_block.recovered_block().find_indexed(tx_hash)?;
         let receipt = self.receipts.get(indexed_tx.index())?;
         Some((indexed_tx, receipt))
@@ -152,14 +151,14 @@ impl<N: NodePrimitives> PendingBlock<N> {
         converter: &C,
     ) -> Option<Result<<C::Network as RpcTypes>::Receipt, C::Error>>
     where
-        C: RpcConvert<Primitives = N>,
+        C: RpcConvert,
     {
         self.to_block_and_receipts().find_and_convert_transaction_receipt(tx_hash, converter)
     }
 }
 
-impl<N: NodePrimitives> From<PendingBlock<N>> for BlockState<N> {
-    fn from(pending_block: PendingBlock<N>) -> Self {
+impl From<PendingBlock> for BlockState {
+    fn from(pending_block: PendingBlock) -> Self {
         Self::new(pending_block.executed_block)
     }
 }

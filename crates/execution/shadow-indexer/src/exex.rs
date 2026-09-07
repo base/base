@@ -1,5 +1,5 @@
 use alloy_eips::BlockNumHash;
-use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use chrono::Utc;
 use eyre::Result;
@@ -30,7 +30,7 @@ impl ShadowIndexerExEx {
     pub async fn run<Node>(self, mut ctx: ExExContext<Node>) -> Result<()>
     where
         Node: FullNodeComponents,
-        Node::Types: NodeTypes<Primitives = BasePrimitives>,
+        Node::Types: NodeTypes,
     {
         let mut last_finished_height = None;
 
@@ -102,7 +102,7 @@ impl ShadowIndexerExEx {
 
     fn emit_finished_height(
         events: &mpsc::UnboundedSender<ExExEvent>,
-        notification: &ExExNotification<BasePrimitives>,
+        notification: &ExExNotification,
         is_syncing: bool,
         last_finished_height: &mut Option<BlockNumHash>,
     ) -> Result<()> {
@@ -127,7 +127,7 @@ impl ShadowIndexerExEx {
     }
 
     const fn should_emit_finished_height(
-        notification: &ExExNotification<BasePrimitives>,
+        notification: &ExExNotification,
         is_syncing: bool,
     ) -> bool {
         match notification {
@@ -137,7 +137,7 @@ impl ShadowIndexerExEx {
         }
     }
 
-    const fn notification_kind(notification: &ExExNotification<BasePrimitives>) -> &'static str {
+    const fn notification_kind(notification: &ExExNotification) -> &'static str {
         match notification {
             ExExNotification::ChainCommitted { .. } => "committed",
             ExExNotification::ChainReorged { .. } => "reorged",
@@ -176,11 +176,7 @@ impl ShadowIndexerExEx {
         })
     }
 
-    async fn handle_chain_reorged(
-        &self,
-        old: &Chain<BasePrimitives>,
-        new: &Chain<BasePrimitives>,
-    ) -> Result<bool> {
+    async fn handle_chain_reorged(&self, old: &Chain, new: &Chain) -> Result<bool> {
         let mut unresolved = 0usize;
 
         for (block, receipts) in old.blocks_and_receipts() {
@@ -212,7 +208,7 @@ impl ShadowIndexerExEx {
         Ok(true)
     }
 
-    async fn handle_chain_reverted(&self, old: &Chain<BasePrimitives>) -> Result<bool> {
+    async fn handle_chain_reverted(&self, old: &Chain) -> Result<bool> {
         for (block, receipts) in old.blocks_and_receipts() {
             let row = self.build_row(block, receipts, None)?;
 
@@ -224,7 +220,7 @@ impl ShadowIndexerExEx {
         Ok(true)
     }
 
-    async fn resolve_canonical_heights(&self, new: &Chain<BasePrimitives>) -> Result<bool> {
+    async fn resolve_canonical_heights(&self, new: &Chain) -> Result<bool> {
         for block in new.blocks().values() {
             let number = i64::try_from(block.header().number()).map_err(|error| {
                 eyre::eyre!("block number overflow for shadow indexer canonical ref: {error}")
@@ -265,7 +261,6 @@ mod tests {
     use futures::TryStreamExt;
     use reth_chain_state::ForkChoiceStream;
     use reth_db_common::init::init_genesis;
-    use reth_ethereum_primitives::EthPrimitives;
     use reth_evm::TestEvmConfig;
     use reth_execution_types::{Chain, ExecutionOutcome};
     use reth_exex::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
@@ -294,7 +289,7 @@ mod tests {
         block
     }
 
-    fn mk_chain(from: u64, to: u64, variant: u8) -> Chain<BasePrimitives> {
+    fn mk_chain(from: u64, to: u64, variant: u8) -> Chain {
         let mut blocks = Vec::new();
         let mut receipts: Vec<Vec<BaseReceipt>> = Vec::new();
         for number in from..=to {
@@ -556,7 +551,7 @@ mod tests {
         );
         let manager_handle = manager.handle();
 
-        let chain = Arc::new(Chain::<EthPrimitives>::new(
+        let chain = Arc::new(Chain::new(
             vec![RecoveredBlock::default()],
             Default::default(),
             Default::default(),

@@ -8,7 +8,7 @@ use crate::EthApi;
 impl<N, Rpc> EthApiSpec for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+    Rpc: RpcConvert<Error = EthApiError>,
 {
     fn starting_block(&self) -> U256 {
         self.inner.starting_block()

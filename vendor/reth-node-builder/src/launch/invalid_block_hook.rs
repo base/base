@@ -11,7 +11,6 @@ use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     node_config::NodeConfig,
 };
-use reth_primitives_traits::NodePrimitives;
 use reth_rpc_api::EthApiClient;
 
 /// Constructs the configured invalid block diagnostics during node startup.
@@ -32,22 +31,21 @@ impl InvalidBlockHookBuilder {
     /// * `provider` - The blockchain database provider
     /// * `evm_config` - The EVM configuration
     /// * `chain_id` - The chain ID for verification
-    pub async fn build<N, P, E>(
+    pub async fn build<P, E>(
         config: &NodeConfig<P::ChainSpec>,
         data_dir: &ChainPath<DataDirPath>,
         provider: P,
         evm_config: E,
         chain_id: u64,
-    ) -> eyre::Result<Box<dyn InvalidBlockHook<N>>>
+    ) -> eyre::Result<Box<dyn InvalidBlockHook>>
     where
-        N: NodePrimitives,
         P: reth_provider::StateProviderFactory
             + reth_provider::ChainSpecProvider
             + Clone
             + Send
             + Sync
             + 'static,
-        E: reth_evm::ConfigureEvm<Primitives = N> + Clone + 'static,
+        E: reth_evm::ConfigureEvm + Clone + 'static,
     {
         let Some(ref hook) = config.debug.invalid_block_hook else {
             return Ok(Box::new(NoopInvalidBlockHook::default()));
@@ -73,7 +71,7 @@ impl InvalidBlockHookBuilder {
                     InvalidBlockHookType::PreState | InvalidBlockHookType::Opcode => {
                         eyre::bail!("invalid block hook {hook:?} is not implemented yet");
                     }
-                } as Box<dyn InvalidBlockHook<_>>)
+                } as Box<dyn InvalidBlockHook>)
             })
             .collect::<Result<_, _>>()?;
 

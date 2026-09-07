@@ -26,9 +26,9 @@ use alloy_evm::{
     block::{BlockExecutionError, BlockExecutor, BlockValidationError, TxResult},
 };
 use alloy_primitives::Address;
+use base_common_consensus::BaseReceipt;
 use crossbeam_channel::{Receiver, Sender};
 use reth_evm::{ConfigureEvm, Database, EvmEnvFor, ExecutionCtxFor, execute::ExecutableTxFor};
-use reth_primitives_traits::ReceiptTy;
 use reth_provider::BlockExecutionOutput;
 use reth_tasks::Runtime;
 use revm::{
@@ -51,18 +51,15 @@ pub fn execute_block<'a, Evm, Tx, Err, DB, MakeDb>(
     ctx: ExecutionCtxFor<'a, Evm>,
     transaction_count: usize,
     txs: Receiver<(usize, Result<Tx, Err>)>,
-    receipt_tx: Sender<IndexedReceipt<ReceiptTy<Evm::Primitives>>>,
-) -> Result<
-    (BlockExecutionOutput<ReceiptTy<Evm::Primitives>>, Vec<Address>, BlockAccessList),
-    BalExecutionError,
->
+    receipt_tx: Sender<IndexedReceipt<BaseReceipt>>,
+) -> Result<(BlockExecutionOutput<BaseReceipt>, Vec<Address>, BlockAccessList), BalExecutionError>
 where
     Evm: ConfigureEvm + 'static,
     Tx: ExecutableTxFor<Evm> + Send + 'a,
     Err: core::error::Error + Send + Sync + 'static,
     DB: Database + Send + 'a,
     MakeDb: Fn(bool) -> Result<DB, BalExecutionError> + Sync + 'a,
-    ReceiptTy<Evm::Primitives>: Clone,
+    BaseReceipt: Clone,
 {
     let worker_pool = runtime.bal_streaming_pool();
     let worker_count = worker_pool.current_num_threads().max(1).min(transaction_count);
@@ -93,19 +90,16 @@ fn execute_block_inner<'scope, Evm, Tx, Err, DB, MakeDb>(
     ctx: ExecutionCtxFor<'scope, Evm>,
     transaction_count: usize,
     txs: Receiver<(usize, Result<Tx, Err>)>,
-    receipt_tx: Sender<IndexedReceipt<ReceiptTy<Evm::Primitives>>>,
+    receipt_tx: Sender<IndexedReceipt<BaseReceipt>>,
     worker_count: usize,
-) -> Result<
-    (BlockExecutionOutput<ReceiptTy<Evm::Primitives>>, Vec<Address>, BlockAccessList),
-    BalExecutionError,
->
+) -> Result<(BlockExecutionOutput<BaseReceipt>, Vec<Address>, BlockAccessList), BalExecutionError>
 where
     Evm: ConfigureEvm + 'scope,
     Tx: ExecutableTxFor<Evm> + Send + 'scope,
     Err: core::error::Error + Send + Sync + 'static,
     DB: Database + Send + 'scope,
     MakeDb: Fn(bool) -> Result<DB, BalExecutionError> + Sync + 'scope,
-    ReceiptTy<Evm::Primitives>: Clone,
+    BaseReceipt: Clone,
 {
     let bal = input_bal.as_bal();
     let input_bal_revm = convert_alloy_to_revm_bal(bal)?;
@@ -176,7 +170,10 @@ where
 
     canonical_state.merge_transitions(BundleRetention::Reverts);
     Ok((
-        BlockExecutionOutput { state: canonical_state.take_bundle(), result: block_result },
+        BlockExecutionOutput::<BaseReceipt> {
+            state: canonical_state.take_bundle(),
+            result: block_result,
+        },
         senders,
         built_bal,
     ))
@@ -307,7 +304,7 @@ mod tests {
         eip7002::{WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_CODE},
     };
     use alloy_primitives::{B256, U256, keccak256};
-    use reth_ethereum_primitives::{Block, BlockBody, Receipt, TransactionSigned};
+    use base_common_consensus::{BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope};
     use reth_evm::TestEvmConfig;
     use reth_primitives_traits::{Block as _, Recovered, SealedBlock};
     use reth_revm::db::BundleState;
@@ -365,14 +362,14 @@ mod tests {
     }
 
     /// Builds a minimal sealed block (empty body, Amsterdam-ready header) for tests.
-    fn empty_amsterdam_block(header_bal_hash: B256) -> SealedBlock<Block> {
+    fn empty_amsterdam_block(header_bal_hash: B256) -> SealedBlock<BaseBlock> {
         empty_amsterdam_block_with_gas_limit(header_bal_hash, 30_000_000)
     }
 
     fn empty_amsterdam_block_with_gas_limit(
         header_bal_hash: B256,
         gas_limit: u64,
-    ) -> SealedBlock<Block> {
+    ) -> SealedBlock<BaseBlock> {
         let header = Header {
             timestamp: 1,
             number: 1,
@@ -385,9 +382,9 @@ mod tests {
             block_access_list_hash: Some(header_bal_hash),
             ..Header::default()
         };
-        let block = Block {
+        let block = BaseBlock {
             header,
-            body: BlockBody {
+            body: BaseBlockBody {
                 transactions: vec![],
                 ommers: vec![],
                 withdrawals: Some(vec![].into()),
@@ -443,7 +440,7 @@ mod tests {
             db_factory(system_contracts_db()),
             to_arc_decoded(input_bal),
             &block,
-            Vec::<Recovered<TransactionSigned>>::new(),
+            Vec::<Recovered<BaseTxEnvelope>>::new(),
         );
 
         match result {
@@ -473,9 +470,9 @@ mod tests {
         evm_config: TestEvmConfig,
         make_db: MakeDb,
         input_bal: Arc<DecodedBal>,
-        block: &SealedBlock<Block>,
+        block: &SealedBlock<BaseBlock>,
         txs: Vec<Tx>,
-    ) -> Result<BlockExecutionOutput<Receipt>, BalExecutionError>
+    ) -> Result<BlockExecutionOutput<BaseReceipt>, BalExecutionError>
     where
         Tx: ExecutableTxFor<TestEvmConfig> + Send,
         DB: Database + Send,
@@ -490,9 +487,9 @@ mod tests {
         evm_config: TestEvmConfig,
         make_db: MakeDb,
         input_bal: Arc<DecodedBal>,
-        block: &SealedBlock<Block>,
+        block: &SealedBlock<BaseBlock>,
         txs: Vec<Tx>,
-    ) -> Result<(BlockExecutionOutput<Receipt>, BlockAccessList), BalExecutionError>
+    ) -> Result<(BlockExecutionOutput<BaseReceipt>, BlockAccessList), BalExecutionError>
     where
         Tx: ExecutableTxFor<TestEvmConfig> + Send,
         DB: Database + Send,
@@ -530,7 +527,7 @@ mod tests {
     fn reference_bal_for_block<Tx>(
         evm_config: &TestEvmConfig,
         mut db: CacheDB<EmptyDB>,
-        block: &SealedBlock<Block>,
+        block: &SealedBlock<BaseBlock>,
         txs: Vec<Tx>,
     ) -> BlockAccessList
     where
@@ -571,10 +568,10 @@ mod tests {
         // 4. Feed that BAL into `execute_block` and assert 2 receipts + no rejections.
         use alloy_consensus::TxLegacy;
         use alloy_primitives::TxKind;
+        use base_common_consensus::BaseTypedTransaction as Transaction;
         use reth_chainspec::MAINNET;
-        use reth_ethereum_primitives::Transaction;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-        use reth_testing_utils::generators::{generate_key, rng, sign_tx_with_key_pair};
+        use reth_testing_utils::generators::{generate_key, rng};
 
         let evm_config = TestEvmConfig::default();
         let carol: alloy_primitives::Address = alloy_primitives::Address::from([0xCA; 20]);
@@ -594,7 +591,7 @@ mod tests {
         // Sign txs.
         let chain_id = MAINNET.chain.id();
         let gas_price = 1u128; // flat low price; block has no base fee in our test header.
-        let tx1 = sign_tx_with_key_pair(
+        let tx1 = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
             alice_kp,
             Transaction::Legacy(TxLegacy {
                 chain_id: Some(chain_id),
@@ -606,7 +603,7 @@ mod tests {
                 input: Default::default(),
             }),
         );
-        let tx2 = sign_tx_with_key_pair(
+        let tx2 = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
             bob_kp,
             Transaction::Legacy(TxLegacy {
                 chain_id: Some(chain_id),
@@ -623,7 +620,7 @@ mod tests {
 
         // Reference BAL: run the block canonically through a separate executor.
         let block_for_ref = empty_amsterdam_block(B256::ZERO);
-        let reference_bal = reference_bal_for_block::<Recovered<TransactionSigned>>(
+        let reference_bal = reference_bal_for_block::<Recovered<BaseTxEnvelope>>(
             &evm_config,
             {
                 // Separate fresh DB for the reference run so we don't pollute canonical_db.
@@ -686,7 +683,7 @@ mod tests {
     #[derive(Debug)]
     struct ShadowOutput {
         bundle_state: BundleState,
-        receipts: Vec<reth_ethereum_primitives::Receipt>,
+        receipts: Vec<BaseReceipt>,
         gas_used: u64,
         requests: alloy_eips::eip7685::Requests,
     }
@@ -698,8 +695,8 @@ mod tests {
     fn run_serial_path(
         evm_config: &TestEvmConfig,
         canonical_db: CacheDB<EmptyDB>,
-        block: &SealedBlock<Block>,
-        txs: &[Recovered<TransactionSigned>],
+        block: &SealedBlock<BaseBlock>,
+        txs: &[Recovered<BaseTxEnvelope>],
     ) -> (ShadowOutput, BlockAccessList) {
         use revm::database::State as RevmState;
 
@@ -742,8 +739,8 @@ mod tests {
     fn assert_shadow_equal(
         evm_config: TestEvmConfig,
         canonical_db_template: CacheDB<EmptyDB>,
-        block_header_only: SealedBlock<Block>,
-        txs: Vec<Recovered<TransactionSigned>>,
+        block_header_only: SealedBlock<BaseBlock>,
+        txs: Vec<Recovered<BaseTxEnvelope>>,
     ) {
         // Serial run: also produces the reference BAL we'll feed to the BAL path.
         let (serial, reference_bal) =
@@ -802,10 +799,10 @@ mod tests {
         // diffs commit identically to a directly-executed serial path.
         use alloy_consensus::TxLegacy;
         use alloy_primitives::TxKind;
+        use base_common_consensus::BaseTypedTransaction as Transaction;
         use reth_chainspec::MAINNET;
-        use reth_ethereum_primitives::Transaction;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-        use reth_testing_utils::generators::{generate_key, rng, sign_tx_with_key_pair};
+        use reth_testing_utils::generators::{generate_key, rng};
 
         let evm_config = TestEvmConfig::default();
         let carol: alloy_primitives::Address = alloy_primitives::Address::from([0xCA; 20]);
@@ -822,7 +819,7 @@ mod tests {
 
         let chain_id = MAINNET.chain.id();
         let make_tx = |kp, to, value, nonce: u64| {
-            sign_tx_with_key_pair(
+            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 kp,
                 Transaction::Legacy(TxLegacy {
                     chain_id: Some(chain_id),
@@ -849,10 +846,10 @@ mod tests {
         use alloy_consensus::TxLegacy;
         use alloy_evm::block::BlockValidationError;
         use alloy_primitives::TxKind;
+        use base_common_consensus::BaseTypedTransaction as Transaction;
         use reth_chainspec::MAINNET;
-        use reth_ethereum_primitives::Transaction;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-        use reth_testing_utils::generators::{generate_key, rng, sign_tx_with_key_pair};
+        use reth_testing_utils::generators::{generate_key, rng};
 
         let evm_config = TestEvmConfig::default();
         let carol: alloy_primitives::Address = alloy_primitives::Address::from([0xCA; 20]);
@@ -871,7 +868,7 @@ mod tests {
 
         let chain_id = MAINNET.chain.id();
         let make_tx = |kp, value| {
-            sign_tx_with_key_pair(
+            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 kp,
                 Transaction::Legacy(TxLegacy {
                     chain_id: Some(chain_id),
@@ -928,10 +925,10 @@ mod tests {
         // it; the call reverts; fees + nonce still apply.
         use alloy_consensus::TxLegacy;
         use alloy_primitives::{Bytes, TxKind, keccak256};
+        use base_common_consensus::BaseTypedTransaction as Transaction;
         use reth_chainspec::MAINNET;
-        use reth_ethereum_primitives::Transaction;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-        use reth_testing_utils::generators::{generate_key, rng, sign_tx_with_key_pair};
+        use reth_testing_utils::generators::{generate_key, rng};
 
         let evm_config = TestEvmConfig::default();
         let revert_contract: alloy_primitives::Address =
@@ -958,7 +955,7 @@ mod tests {
         );
 
         let tx = Recovered::new_unchecked(
-            sign_tx_with_key_pair(
+            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 alice_kp,
                 Transaction::Legacy(TxLegacy {
                     chain_id: Some(MAINNET.chain.id()),
@@ -985,10 +982,10 @@ mod tests {
         // Bytecode: PUSH1 0x42, PUSH1 0x00, SSTORE, STOP → `0x60 0x42 0x60 0x00 0x55 0x00`.
         use alloy_consensus::TxLegacy;
         use alloy_primitives::{Bytes, TxKind, keccak256};
+        use base_common_consensus::BaseTypedTransaction as Transaction;
         use reth_chainspec::MAINNET;
-        use reth_ethereum_primitives::Transaction;
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-        use reth_testing_utils::generators::{generate_key, rng, sign_tx_with_key_pair};
+        use reth_testing_utils::generators::{generate_key, rng};
 
         let evm_config = TestEvmConfig::default();
         let sstore_contract: alloy_primitives::Address =
@@ -1015,7 +1012,7 @@ mod tests {
         );
 
         let tx = Recovered::new_unchecked(
-            sign_tx_with_key_pair(
+            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 alice_kp,
                 Transaction::Legacy(TxLegacy {
                     chain_id: Some(MAINNET.chain.id()),
@@ -1069,7 +1066,7 @@ mod tests {
             db_factory(system_contracts_db()),
             received,
             &block,
-            Vec::<Recovered<TransactionSigned>>::new(),
+            Vec::<Recovered<BaseTxEnvelope>>::new(),
         );
 
         match result {
@@ -1098,7 +1095,7 @@ mod tests {
             failing_make_db,
             to_arc_decoded(BlockAccessList::default()),
             &block,
-            Vec::<Recovered<TransactionSigned>>::new(),
+            Vec::<Recovered<BaseTxEnvelope>>::new(),
         );
 
         assert!(
@@ -1117,7 +1114,7 @@ mod tests {
 
         let (tx_tx, tx_rx) = crossbeam_channel::unbounded::<(
             usize,
-            Result<Recovered<TransactionSigned>, std::io::Error>,
+            Result<Recovered<BaseTxEnvelope>, std::io::Error>,
         )>();
         tx_tx.send((0, Err(std::io::Error::other("sig fail")))).unwrap();
         drop(tx_tx);

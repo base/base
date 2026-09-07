@@ -16,13 +16,12 @@ use alloy_primitives::{B256, BlockNumber};
 use parking_lot::Mutex;
 use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
 use reth_errors::ProviderResult;
-use reth_ethereum_primitives::EthPrimitives;
 use reth_metrics::{
     Metrics,
     metrics::{Counter, Histogram},
 };
 use reth_primitives_traits::{
-    AlloyBlockHeader, FastInstant, NodePrimitives,
+    AlloyBlockHeader, FastInstant,
     dashmap::{DashMap, mapref::entry::Entry},
 };
 use reth_storage_api::{
@@ -44,8 +43,8 @@ use crate::{
 /// The manager owns the in-memory block graph, changeset cache, and a cache of flattened state trie
 /// overlays keyed by `(anchor_hash, tip_hash)`.
 #[derive(Clone)]
-pub struct OverlayManager<N: NodePrimitives = EthPrimitives> {
-    blocks: Arc<DashMap<B256, ExecutedBlock<N>>>,
+pub struct OverlayManager {
+    blocks: Arc<DashMap<B256, ExecutedBlock>>,
     overlays: Arc<DashMap<OverlayCacheKey, OverlayCacheEntry>>,
     changeset_cache: ChangesetCache,
     preserved_sparse_trie: Arc<Mutex<Option<PreservedSparseTrie>>>,
@@ -66,7 +65,7 @@ struct StateTrieOverlayMetrics {
     overlay_cache_fills: Counter,
 }
 
-impl<N: NodePrimitives> Default for OverlayManager<N> {
+impl Default for OverlayManager {
     fn default() -> Self {
         Self {
             blocks: Default::default(),
@@ -80,7 +79,7 @@ impl<N: NodePrimitives> Default for OverlayManager<N> {
     }
 }
 
-impl<N: NodePrimitives> std::fmt::Debug for OverlayManager<N> {
+impl std::fmt::Debug for OverlayManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OverlayManager")
             .field("blocks", &self.blocks.len())
@@ -89,7 +88,7 @@ impl<N: NodePrimitives> std::fmt::Debug for OverlayManager<N> {
     }
 }
 
-impl<N: NodePrimitives> OverlayManager<N> {
+impl OverlayManager {
     /// Create a new [`OverlayManager`] backed by the given worker pool.
     #[cfg(feature = "rayon")]
     pub fn new(worker_pool: Arc<WorkerPool>) -> Self {
@@ -104,7 +103,7 @@ impl<N: NodePrimitives> OverlayManager<N> {
     }
 
     /// Creates an overlay builder for `parent_hash`.
-    pub fn overlay_builder(&self, parent_hash: B256) -> OverlayBuilder<N> {
+    pub fn overlay_builder(&self, parent_hash: B256) -> OverlayBuilder {
         OverlayBuilder::new(parent_hash, self.clone())
     }
 
@@ -221,7 +220,7 @@ impl<N: NodePrimitives> OverlayManager<N> {
             duplicate = false,
         )
     )]
-    pub fn insert_block(&self, block: ExecutedBlock<N>) {
+    pub fn insert_block(&self, block: ExecutedBlock) {
         let hash = block.recovered_block().hash();
         let parent_hash = block.recovered_block().parent_hash();
         let span = tracing::Span::current();
@@ -434,7 +433,7 @@ impl<N: NodePrimitives> OverlayManager<N> {
     pub(crate) fn parent_chain(
         &self,
         parent_hash: B256,
-    ) -> impl Iterator<Item = ExecutedBlock<N>> + '_ {
+    ) -> impl Iterator<Item = ExecutedBlock> + '_ {
         let mut hash = parent_hash;
         std::iter::from_fn(move || {
             let block = self.blocks.get(&hash)?;
@@ -463,7 +462,7 @@ impl<N: NodePrimitives> OverlayManager<N> {
 
     fn compute_overlay(
         &self,
-        compute_input: ComputeOverlayInput<N>,
+        compute_input: ComputeOverlayInput,
         anchor_hash: B256,
         _span: tracing::Span,
     ) -> Arc<TrieInputSorted> {
@@ -543,9 +542,9 @@ impl OverlayWaiter {
     }
 }
 
-enum ComputeOverlayInput<N: NodePrimitives> {
-    ExtendCached { block: ExecutedBlock<N>, parent_input: Arc<TrieInputSorted> },
-    MergeBlocks(Vec<ExecutedBlock<N>>),
+enum ComputeOverlayInput {
+    ExtendCached { block: ExecutedBlock, parent_input: Arc<TrieInputSorted> },
+    MergeBlocks(Vec<ExecutedBlock>),
 }
 
 #[tracing::instrument(
@@ -559,8 +558,8 @@ enum ComputeOverlayInput<N: NodePrimitives> {
         elapsed_us = tracing::field::Empty,
     )
 )]
-fn compute_overlay<N: NodePrimitives>(
-    input: ComputeOverlayInput<N>,
+fn compute_overlay(
+    input: ComputeOverlayInput,
     anchor_hash: B256,
     metrics: &StateTrieOverlayMetrics,
 ) -> TrieInputSorted {
@@ -610,7 +609,7 @@ fn compute_overlay<N: NodePrimitives>(
     overlay
 }
 
-fn merge_blocks<N: NodePrimitives>(blocks: Vec<ExecutedBlock<N>>) -> TrieInputSorted {
+fn merge_blocks(blocks: Vec<ExecutedBlock>) -> TrieInputSorted {
     let trie_data = blocks.iter().map(ExecutedBlock::trie_data).collect::<Vec<_>>();
 
     #[cfg(feature = "rayon")]
@@ -682,16 +681,12 @@ mod tests {
 
     use alloy_primitives::U256;
     use reth_chain_state::{ExecutedBlock, SparseTrie, test_utils::TestBlockBuilder};
-    use reth_ethereum_primitives::EthPrimitives;
     use reth_primitives_traits::Account;
     use reth_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdatesSorted};
 
     use super::*;
 
-    fn with_unique_state(
-        block: &ExecutedBlock<EthPrimitives>,
-        id: u8,
-    ) -> ExecutedBlock<EthPrimitives> {
+    fn with_unique_state(block: &ExecutedBlock, id: u8) -> ExecutedBlock {
         let hashed_address = B256::with_last_byte(id);
         let hashed_slot = B256::with_last_byte(id.saturating_add(32));
         let hashed_state = HashedPostState::default()
@@ -709,7 +704,7 @@ mod tests {
         )
     }
 
-    fn test_blocks() -> Vec<ExecutedBlock<EthPrimitives>> {
+    fn test_blocks() -> Vec<ExecutedBlock> {
         TestBlockBuilder::eth()
             .get_executed_blocks(1..4)
             .enumerate()
@@ -719,7 +714,7 @@ mod tests {
 
     #[test]
     fn errors_for_unknown_parent() {
-        let manager = OverlayManager::<EthPrimitives>::default();
+        let manager = OverlayManager::default();
         let parent = B256::random();
         let anchor = B256::random();
 
@@ -807,7 +802,7 @@ mod tests {
 
     #[test]
     fn taking_sparse_trie_removes_it() {
-        let manager = OverlayManager::<EthPrimitives>::default();
+        let manager = OverlayManager::default();
         let state_root = B256::with_last_byte(1);
         let other_state_root = B256::with_last_byte(2);
         let anchor_hash = B256::with_last_byte(3);
@@ -827,7 +822,7 @@ mod tests {
 
     #[test]
     fn required_lookup_waits_for_in_progress_overlay() {
-        let manager = OverlayManager::<EthPrimitives>::default();
+        let manager = OverlayManager::default();
         let key = OverlayCacheKey {
             anchor_hash: B256::with_last_byte(1),
             tip_hash: B256::with_last_byte(2),

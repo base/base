@@ -6,9 +6,9 @@ use std::sync::Arc;
 use alloy_consensus::Header;
 use alloy_eips::NumHash;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
+use base_common_consensus::{BaseBlock as Block, BaseTxEnvelope};
 use rand::Rng;
 use reth_eth_wire::{BlockAccessLists, EthVersion, GetBlockAccessLists, HeadersDirection};
-use reth_ethereum_primitives::Block;
 use reth_network::{
     BlockDownloaderProvider, NetworkEventListenerProvider,
     eth_requests::{MAX_BLOCK_ACCESS_LISTS_SERVE, SOFT_RESPONSE_LIMIT},
@@ -60,7 +60,10 @@ async fn test_get_body() {
         // Set a new random block to the mock storage and request it via the network
         let block_hash = rng.random();
         let mut block: Block = Block::default();
-        block.body.transactions.push(tx_gen.gen_eip4844());
+        block.body.transactions.push(
+            BaseTxEnvelope::try_from(alloy_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
+                .unwrap(),
+        );
 
         mock_provider.add_block(block_hash, block.clone());
 
@@ -104,7 +107,10 @@ async fn test_get_body_range() {
     for _ in 0..100 {
         let block_hash = rng.random();
         let mut block: Block = Block::default();
-        block.body.transactions.push(tx_gen.gen_eip4844());
+        block.body.transactions.push(
+            BaseTxEnvelope::try_from(alloy_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
+                .unwrap(),
+        );
 
         mock_provider.add_block(block_hash, block.clone());
         all_blocks.push(block);
@@ -327,16 +333,16 @@ async fn test_eth68_get_receipts() {
 
         // Create some test receipts
         let receipts = vec![
-            reth_ethereum_primitives::Receipt {
+            base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
                 cumulative_gas_used: 21000,
-                success: true,
+                status: true.into(),
                 ..Default::default()
-            },
-            reth_ethereum_primitives::Receipt {
+            }),
+            base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
                 cumulative_gas_used: 42000,
-                success: false,
+                status: false.into(),
                 ..Default::default()
-            },
+            }),
         ];
 
         mock_provider.add_header(block_hash, header.clone());
@@ -357,8 +363,8 @@ async fn test_eth68_get_receipts() {
         assert_eq!(receipts_response.0.len(), 1);
         assert_eq!(receipts_response.0[0].len(), 2);
         // Eth68 receipts should have bloom filters - verify the structure
-        assert_eq!(receipts_response.0[0][0].receipt.cumulative_gas_used, 21000);
-        assert_eq!(receipts_response.0[0][1].receipt.cumulative_gas_used, 42000);
+        assert_eq!(receipts_response.0[0][0].receipt.as_receipt().cumulative_gas_used, 21000);
+        assert_eq!(receipts_response.0[0][1].receipt.as_receipt().cumulative_gas_used, 42000);
     }
 }
 
@@ -450,7 +456,10 @@ async fn test_eth69_get_bodies() {
     for _ in 0..50 {
         let block_hash = rng.random();
         let mut block: Block = Block::default();
-        block.body.transactions.push(tx_gen.gen_eip4844());
+        block.body.transactions.push(
+            BaseTxEnvelope::try_from(alloy_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
+                .unwrap(),
+        );
 
         mock_provider.add_block(block_hash, block.clone());
 
@@ -501,16 +510,16 @@ async fn test_eth69_get_receipts() {
 
         // Create some test receipts
         let receipts = vec![
-            reth_ethereum_primitives::Receipt {
+            base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
                 cumulative_gas_used: 21000,
-                success: true,
+                status: true.into(),
                 ..Default::default()
-            },
-            reth_ethereum_primitives::Receipt {
+            }),
+            base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
                 cumulative_gas_used: 42000,
-                success: false,
+                status: false.into(),
                 ..Default::default()
-            },
+            }),
         ];
 
         mock_provider.add_header(block_hash, header.clone());
@@ -533,8 +542,8 @@ async fn test_eth69_get_receipts() {
         assert_eq!(receipts_response.0.len(), 1);
         assert_eq!(receipts_response.0[0].len(), 2);
         // ETH69 receipts do not include bloom filters - verify the structure
-        assert_eq!(receipts_response.0[0][0].cumulative_gas_used, 21000);
-        assert_eq!(receipts_response.0[0][1].cumulative_gas_used, 42000);
+        assert_eq!(receipts_response.0[0][0].as_receipt().cumulative_gas_used, 21000);
+        assert_eq!(receipts_response.0[0][1].as_receipt().cumulative_gas_used, 42000);
     }
 }
 

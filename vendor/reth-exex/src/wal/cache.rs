@@ -7,7 +7,6 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, BlockNumber, map::FbHashMap};
 use reth_exex_types::ExExNotification;
-use reth_node_api::NodePrimitives;
 
 /// The block cache of the WAL.
 ///
@@ -93,10 +92,10 @@ impl BlockCache {
     }
 
     /// Inserts the blocks from the notification into the cache with the given file ID.
-    pub(super) fn insert_notification_blocks_with_file_id<N: NodePrimitives>(
+    pub(super) fn insert_notification_blocks_with_file_id(
         &mut self,
         file_id: u32,
-        notification: &ExExNotification<N>,
+        notification: &ExExNotification,
     ) {
         let reverted_chain = notification.reverted_chain();
         let committed_chain = notification.committed_chain();

@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::{BlockHeader, TxReceipt, transaction::TxHashRef};
+use alloy_consensus::{BlockHeader, TxReceipt};
 use alloy_primitives::{Address, B256, U256};
 use clap::Parser;
 use eyre::WrapErr;
@@ -19,7 +19,7 @@ use reth_cli_util::cancellation::CancellationToken;
 use reth_consensus::FullConsensus;
 use reth_evm::{ConfigureEvm, execute::Executor};
 use reth_node_core::args::JitArgs;
-use reth_primitives_traits::{Account, BlockBody, GotExpected, format_gas_throughput};
+use reth_primitives_traits::{Account, GotExpected, format_gas_throughput};
 use reth_provider::{
     BlockNumReader, BlockReader, ChainSpecProvider, DatabaseProviderFactory, ReceiptProvider,
     StaticFileProviderFactory, TransactionVariant,
@@ -217,7 +217,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                             {
                                 if receipt != correct_receipt {
                                     let tx_hash =
-                                        block.body().transactions()[i].tx_hash();
+                                        block.body().transactions[i].tx_hash();
                                     error!(
                                         ?receipt,
                                         ?correct_receipt,

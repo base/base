@@ -11,12 +11,12 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut, map::AddressSet};
 use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
+use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
-    Attributes, BasePayloadBuilderAttributes, PayloadPrimitives,
+    Attributes, BasePayloadBuilderAttributes,
     config::{BaseDAConfig, GasLimitConfig},
 };
 use base_execution_rpc::{
@@ -40,8 +40,8 @@ use reth_network::{
 };
 use reth_network_peers::NodeRecord;
 use reth_node_api::{
-    AddOnsContext, BuildNextEnv, EngineTypes, FullNodeComponents, HeaderTy, NodeAddOns,
-    NodePrimitives, PayloadAttributesBuilder, PayloadTypes, TxTy,
+    AddOnsContext, BuildNextEnv, EngineTypes, FullNodeComponents, NodeAddOns,
+    PayloadAttributesBuilder, PayloadTypes,
 };
 use reth_node_builder::{
     BuilderContext, DebugNodeConfig, NodeAdapter,
@@ -54,7 +54,7 @@ use reth_node_builder::{
     },
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
-use reth_primitives_traits::{SealedHeader, header::HeaderMut};
+use reth_primitives_traits::SealedHeader;
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
@@ -78,22 +78,15 @@ use crate::{
 pub const BASE_V0_PROTOCOL_VERSION: [u8; 6] = *b"basev0";
 
 /// Marker trait for Base node types with standard engine, chain spec, and primitives.
-pub trait BaseNodeTypes:
-    NodeTypes<Payload = BaseEngineTypes, ChainSpec = BaseChainSpec, Primitives = BasePrimitives>
-{
-}
+pub trait BaseNodeTypes: NodeTypes<Payload = BaseEngineTypes, ChainSpec = BaseChainSpec> {}
 /// Blanket impl for all node types that conform to the Base spec.
-impl<N> BaseNodeTypes for N where
-    N: NodeTypes<Payload = BaseEngineTypes, ChainSpec = BaseChainSpec, Primitives = BasePrimitives>
-{
-}
+impl<N> BaseNodeTypes for N where N: NodeTypes<Payload = BaseEngineTypes, ChainSpec = BaseChainSpec> {}
 
 /// Helper trait for Base node types with full configuration including storage and execution
 /// data.
 pub trait BaseFullNodeTypes:
     NodeTypes<
         ChainSpec = BaseChainSpec,
-        Primitives: PayloadPrimitives,
         Storage = BaseStorage,
         Payload: EngineTypes<ExecutionData = ExecutionData>,
     >
@@ -103,7 +96,6 @@ pub trait BaseFullNodeTypes:
 impl<N> BaseFullNodeTypes for N where
     N: NodeTypes<
             ChainSpec = BaseChainSpec,
-            Primitives: PayloadPrimitives,
             Storage = BaseStorage,
             Payload: EngineTypes<ExecutionData = ExecutionData>,
         >
@@ -356,7 +348,6 @@ impl BaseNode {
 }
 
 impl NodeTypes for BaseNode {
-    type Primitives = BasePrimitives;
     type ChainSpec = BaseChainSpec;
     type Storage = BaseStorage;
     type Payload = BaseEngineTypes;
@@ -551,7 +542,7 @@ where
     N: FullNodeComponents<
             Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
             Evm: ConfigureEvm<
-                NextBlockEnvCtx: BuildNextEnv<Attrs, HeaderTy<N::Types>, BaseChainSpec>,
+                NextBlockEnvCtx: BuildNextEnv<Attrs, alloy_consensus::Header, BaseChainSpec>,
             >,
             Pool: TransactionPool<Transaction: BasePooledTx>,
         >,
@@ -561,10 +552,9 @@ where
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
     Attrs: Attributes<
-            Transaction = TxTy<N::Types>,
+            Transaction = BaseTxEnvelope,
             RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
         >,
-    <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type Handle = RpcHandle<N, EthB::EthApi>;
 
@@ -629,7 +619,7 @@ where
     N: FullNodeComponents<
             Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
             Evm: ConfigureEvm<
-                NextBlockEnvCtx: BuildNextEnv<Attrs, HeaderTy<N::Types>, BaseChainSpec>,
+                NextBlockEnvCtx: BuildNextEnv<Attrs, alloy_consensus::Header, BaseChainSpec>,
             >,
         >,
     <<N as FullNodeComponents>::Pool as TransactionPool>::Transaction: BasePooledTx,
@@ -639,10 +629,9 @@ where
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
     Attrs: Attributes<
-            Transaction = TxTy<N::Types>,
+            Transaction = BaseTxEnvelope,
             RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
         >,
-    <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type EthApi = EthB::EthApi;
 
@@ -1293,15 +1282,10 @@ where
     Node: FullNodeComponents<
         Types: NodeTypes<ChainSpec: Upgrades, Payload: PayloadTypes<ExecutionData = ExecutionData>>,
     >,
-    <<Node::Types as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes: Attributes<
-        Transaction = <<Node::Types as NodeTypes>::Primitives as NodePrimitives>::SignedTx,
-    >,
-    <<Node::Types as NodeTypes>::Primitives as NodePrimitives>::SignedTx: BaseTransaction,
+    <<Node::Types as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes:
+        Attributes<Transaction = BaseTxEnvelope>,
 {
-    type Validator = BaseEngineValidator<
-        <<Node::Types as NodeTypes>::Primitives as NodePrimitives>::SignedTx,
-        <Node::Types as NodeTypes>::ChainSpec,
-    >;
+    type Validator = BaseEngineValidator<BaseTxEnvelope, <Node::Types as NodeTypes>::ChainSpec>;
 
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
         Ok(BaseEngineValidator::new::<KeccakKeyHasher>(Arc::clone(&ctx.config.chain)))
@@ -1310,7 +1294,7 @@ where
 
 /// Network primitive types used by Base networks.
 pub type BaseNetworkPrimitives =
-    BasicNetworkPrimitives<BasePrimitives, base_common_consensus::BasePooledTransaction>;
+    BasicNetworkPrimitives<base_common_consensus::BasePooledTransaction>;
 
 #[cfg(test)]
 mod tests {

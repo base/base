@@ -8,12 +8,11 @@ use std::{
     task::{Context, Poll},
 };
 
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use futures::{FutureExt, StreamExt};
 use pin_project::pin_project;
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
-use reth_eth_wire::{
-    DisconnectReason, EthNetworkPrimitives, HelloMessageWithProtocols, protocol::Protocol,
-};
+use reth_eth_wire::{DisconnectReason, HelloMessageWithProtocols, protocol::Protocol};
 use reth_ethereum_primitives::{PooledTransactionVariant, TransactionSigned};
 use reth_evm::TestEvmConfig;
 use reth_metrics::common::mpsc::memory_bounded_channel;
@@ -46,6 +45,7 @@ use crate::{
     error::NetworkError,
     eth_requests::EthRequestHandler,
     protocol::IntoRlpxSubProtocol,
+    test_utils::TestNetworkPrimitives,
     transactions::{
         TransactionsHandle, TransactionsManager, TransactionsManagerConfig,
         config::{StrictEthAnnouncementFilter, TransactionPropagationKind},
@@ -150,7 +150,7 @@ where
     }
 
     /// Returns all handles to the networks
-    pub fn handles(&self) -> impl Iterator<Item = NetworkHandle<EthNetworkPrimitives>> + '_ {
+    pub fn handles(&self) -> impl Iterator<Item = NetworkHandle<TestNetworkPrimitives>> + '_ {
         self.peers.iter().map(|p| p.handle())
     }
 
@@ -244,11 +244,8 @@ where
 
 impl<C, Pool> Testnet<C, Pool>
 where
-    C: BlockReader<
-            Block = reth_ethereum_primitives::Block,
-            Receipt = reth_ethereum_primitives::Receipt,
-            Header = alloy_consensus::Header,
-        > + HeaderProvider
+    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+        + HeaderProvider
         + BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
@@ -319,11 +316,8 @@ impl<C, Pool> fmt::Debug for Testnet<C, Pool> {
 
 impl<C, Pool> Future for Testnet<C, Pool>
 where
-    C: BlockReader<
-            Block = reth_ethereum_primitives::Block,
-            Receipt = reth_ethereum_primitives::Receipt,
-            Header = alloy_consensus::Header,
-        > + HeaderProvider
+    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+        + HeaderProvider
         + BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
@@ -408,11 +402,11 @@ impl<C, Pool> TestnetHandle<C, Pool> {
 #[derive(Debug)]
 pub struct Peer<C, Pool = TestPool> {
     #[pin]
-    network: NetworkManager<EthNetworkPrimitives>,
+    network: NetworkManager<TestNetworkPrimitives>,
     #[pin]
-    request_handler: Option<EthRequestHandler<C, EthNetworkPrimitives>>,
+    request_handler: Option<EthRequestHandler<C, TestNetworkPrimitives>>,
     #[pin]
-    transactions_manager: Option<TransactionsManager<Pool, EthNetworkPrimitives>>,
+    transactions_manager: Option<TransactionsManager<Pool, TestNetworkPrimitives>>,
     pool: Option<Pool>,
     client: C,
     secret_key: SecretKey,
@@ -455,12 +449,12 @@ where
     }
 
     /// Returns mutable access to the network.
-    pub const fn network_mut(&mut self) -> &mut NetworkManager<EthNetworkPrimitives> {
+    pub const fn network_mut(&mut self) -> &mut NetworkManager<TestNetworkPrimitives> {
         &mut self.network
     }
 
     /// Returns the [`NetworkHandle`] of this peer.
-    pub fn handle(&self) -> NetworkHandle<EthNetworkPrimitives> {
+    pub fn handle(&self) -> NetworkHandle<TestNetworkPrimitives> {
         self.network.handle().clone()
     }
 
@@ -588,11 +582,8 @@ where
 
 impl<C, Pool> Future for Peer<C, Pool>
 where
-    C: BlockReader<
-            Block = reth_ethereum_primitives::Block,
-            Receipt = reth_ethereum_primitives::Receipt,
-            Header = alloy_consensus::Header,
-        > + HeaderProvider
+    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+        + HeaderProvider
         + BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
@@ -626,7 +617,7 @@ where
 /// A helper config for setting up the reth networking stack.
 #[derive(Debug)]
 pub struct PeerConfig<C = NoopProvider> {
-    config: NetworkConfig<C>,
+    config: NetworkConfig<C, TestNetworkPrimitives>,
     client: C,
     secret_key: SecretKey,
 }
@@ -634,8 +625,8 @@ pub struct PeerConfig<C = NoopProvider> {
 /// A handle to a peer in the [`Testnet`].
 #[derive(Debug)]
 pub struct PeerHandle<Pool> {
-    network: NetworkHandle<EthNetworkPrimitives>,
-    transactions: Option<TransactionsHandle<EthNetworkPrimitives>>,
+    network: NetworkHandle<TestNetworkPrimitives>,
+    transactions: Option<TransactionsHandle<TestNetworkPrimitives>>,
     pool: Option<Pool>,
 }
 
@@ -658,12 +649,14 @@ impl<Pool> PeerHandle<Pool> {
     }
 
     /// Creates a new [`NetworkEvent`] listener channel.
-    pub fn event_listener(&self) -> EventStream<NetworkEvent> {
+    pub fn event_listener(
+        &self,
+    ) -> EventStream<NetworkEvent<reth_network_api::PeerRequest<TestNetworkPrimitives>>> {
         self.network.event_listener()
     }
 
     /// Returns the [`TransactionsHandle`] of this peer.
-    pub const fn transactions(&self) -> Option<&TransactionsHandle> {
+    pub const fn transactions(&self) -> Option<&TransactionsHandle<TestNetworkPrimitives>> {
         self.transactions.as_ref()
     }
 
@@ -673,7 +666,7 @@ impl<Pool> PeerHandle<Pool> {
     }
 
     /// Returns the [`NetworkHandle`] of this peer.
-    pub const fn network(&self) -> &NetworkHandle<EthNetworkPrimitives> {
+    pub const fn network(&self) -> &NetworkHandle<TestNetworkPrimitives> {
         &self.network
     }
 }
@@ -739,7 +732,9 @@ where
         Self { config, client, secret_key }
     }
 
-    fn network_config_builder(secret_key: SecretKey) -> NetworkConfigBuilder {
+    fn network_config_builder(
+        secret_key: SecretKey,
+    ) -> NetworkConfigBuilder<TestNetworkPrimitives> {
         NetworkConfigBuilder::new(secret_key, Runtime::test())
             .listener_addr(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)))
             .discovery_addr(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)))
@@ -760,14 +755,16 @@ impl Default for PeerConfig {
 /// This makes it easier to await established connections
 #[derive(Debug)]
 pub struct NetworkEventStream {
-    inner: EventStream<NetworkEvent>,
+    inner: EventStream<NetworkEvent<reth_network_api::PeerRequest<TestNetworkPrimitives>>>,
 }
 
 // === impl NetworkEventStream ===
 
 impl NetworkEventStream {
     /// Create a new [`NetworkEventStream`] from the given network event receiver stream.
-    pub const fn new(inner: EventStream<NetworkEvent>) -> Self {
+    pub const fn new(
+        inner: EventStream<NetworkEvent<reth_network_api::PeerRequest<TestNetworkPrimitives>>>,
+    ) -> Self {
         Self { inner }
     }
 

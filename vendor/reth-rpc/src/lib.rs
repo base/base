@@ -55,3 +55,6 @@ pub use trace::TraceApi;
 pub use txpool::TxPoolApi;
 pub use validation::{ValidationApi, ValidationApiConfig};
 pub use web3::Web3Api;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;

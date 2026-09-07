@@ -10,6 +10,6 @@ impl<N, Rpc> LoadReceipt for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+    Rpc: RpcConvert<Error = EthApiError>,
 {
 }

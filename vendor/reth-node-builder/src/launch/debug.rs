@@ -6,6 +6,7 @@ use std::{
 
 use alloy_consensus::transaction::Either;
 use alloy_provider::network::AnyNetwork;
+use base_common_consensus::BaseBlock;
 use jsonrpsee::core::{DeserializeOwned, Serialize};
 use reth_chainspec::EthChainSpec;
 use reth_consensus_debug_client::{
@@ -13,8 +14,8 @@ use reth_consensus_debug_client::{
 };
 use reth_engine_local::{LocalMiner, MiningMode};
 use reth_node_api::{
-    BlockTy, FullNodeComponents, FullNodeTypes, HeaderTy, NodeTypes, PayloadAttrTy,
-    PayloadAttributesBuilder, PayloadTypes,
+    FullNodeComponents, FullNodeTypes, NodeTypes, PayloadAttrTy, PayloadAttributesBuilder,
+    PayloadTypes,
 };
 use reth_primitives_traits::SealedBlock;
 use tracing::info;
@@ -29,10 +30,12 @@ pub(crate) type PayloadDataTy<N> = <<N as NodeTypes>::Payload as PayloadTypes>::
 #[derive(Debug)]
 pub struct DebugNodeConfig<T: NodeTypes, R> {
     /// Converts an RPC response to the node's primitive block.
-    pub rpc_to_primitive_block: fn(R) -> BlockTy<T>,
+    pub rpc_to_primitive_block: fn(R) -> BaseBlock,
     /// Creates the default local-mining payload attributes builder.
     pub local_payload_attributes_builder:
-        fn(&T::ChainSpec) -> Box<dyn PayloadAttributesBuilder<PayloadAttrTy<T>, HeaderTy<T>>>,
+        fn(
+            &T::ChainSpec,
+        ) -> Box<dyn PayloadAttributesBuilder<PayloadAttrTy<T>, alloy_consensus::Header>>,
 }
 
 impl<T: NodeTypes, R> Copy for DebugNodeConfig<T, R> {}
@@ -92,7 +95,7 @@ where
     target: Target,
     config: DebugNodeConfig<N::Types, R>,
     local_payload_attributes_builder:
-        Option<Box<dyn PayloadAttributesBuilder<PayloadAttrTy<N::Types>, HeaderTy<N::Types>>>>,
+        Option<Box<dyn PayloadAttributesBuilder<PayloadAttrTy<N::Types>, alloy_consensus::Header>>>,
     map_attributes:
         Option<Box<dyn Fn(PayloadAttrTy<N::Types>) -> PayloadAttrTy<N::Types> + Send + Sync>>,
     debug_block_provider: Option<B>,
@@ -110,7 +113,7 @@ where
     /// Sets a custom payload attributes builder for local mining in dev mode.
     pub fn with_payload_attributes_builder(
         self,
-        builder: impl PayloadAttributesBuilder<PayloadAttrTy<N::Types>, HeaderTy<N::Types>>,
+        builder: impl PayloadAttributesBuilder<PayloadAttrTy<N::Types>, alloy_consensus::Header>,
     ) -> Self {
         Self {
             inner: self.inner,

@@ -13,8 +13,8 @@ use alloy_rpc_types_eth::{
     state::{EvmOverrides, StateOverride},
 };
 use alloy_serde::JsonStorageKey;
+use base_common_consensus::BaseTxEnvelope;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_primitives_traits::TxTy;
 use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_types::{EthApiError, EthCapabilities, FillTransaction};
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
@@ -35,7 +35,7 @@ pub trait FullEthApiServer:
         RpcBlock<Self::NetworkTypes>,
         RpcReceipt<Self::NetworkTypes>,
         RpcHeader<Self::NetworkTypes>,
-        TxTy<Self::Primitives>,
+        BaseTxEnvelope,
     > + FullEthApi
     + Clone
 {
@@ -48,7 +48,7 @@ impl<T> FullEthApiServer for T where
             RpcBlock<T::NetworkTypes>,
             RpcReceipt<T::NetworkTypes>,
             RpcHeader<T::NetworkTypes>,
-            TxTy<T::Primitives>,
+            BaseTxEnvelope,
         > + FullEthApi
         + Clone
 {
@@ -463,7 +463,7 @@ impl<T>
         RpcBlock<T::NetworkTypes>,
         RpcReceipt<T::NetworkTypes>,
         RpcHeader<T::NetworkTypes>,
-        TxTy<T::Primitives>,
+        BaseTxEnvelope,
     > for T
 where
     T: FullEthApi,
@@ -785,7 +785,7 @@ where
     async fn fill_transaction(
         &self,
         request: RpcTxReq<T::NetworkTypes>,
-    ) -> RpcResult<FillTransaction<TxTy<T::Primitives>>> {
+    ) -> RpcResult<FillTransaction<BaseTxEnvelope>> {
         trace!(target: "rpc::eth", ?request, "Serving eth_fillTransaction");
         Ok(EthTransactions::fill_transaction(self, request).await?)
     }

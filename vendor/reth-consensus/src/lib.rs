@@ -42,6 +42,7 @@ use core::{error::Error, fmt::Display};
 use alloy_consensus::Header;
 use alloy_eip7928::BlockAccessListGasError;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bloom};
+use base_common_consensus::{BaseBlock, BaseReceipt};
 
 /// Pre-computed receipt root and logs bloom.
 ///
@@ -56,8 +57,7 @@ pub type ReceiptRootBloom = (B256, Bloom);
 pub type TransactionRoot = B256;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
-    Block, GotExpected, GotExpectedBoxed, NodePrimitives, RecoveredBlock, SealedBlock,
-    SealedHeader,
+    Block, GotExpected, GotExpectedBoxed, RecoveredBlock, SealedBlock, SealedHeader,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT},
     transaction::error::InvalidTransactionError,
 };
@@ -72,7 +72,7 @@ pub mod test_utils;
 /// [`Consensus`] implementation which knows full node primitives and is able to validation block's
 /// execution outcome.
 #[auto_impl::auto_impl(&, Arc)]
-pub trait FullConsensus<N: NodePrimitives>: Consensus<N::Block> {
+pub trait FullConsensus: Consensus<BaseBlock> {
     /// Validate a block considering world state, i.e. things that can not be checked before
     /// execution.
     ///
@@ -84,8 +84,8 @@ pub trait FullConsensus<N: NodePrimitives>: Consensus<N::Block> {
     /// Note: validating blocks does not include other validations of the Consensus
     fn validate_block_post_execution(
         &self,
-        block: &RecoveredBlock<N::Block>,
-        result: &BlockExecutionResult<N::Receipt>,
+        block: &RecoveredBlock<BaseBlock>,
+        result: &BlockExecutionResult<BaseReceipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
         block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError>;

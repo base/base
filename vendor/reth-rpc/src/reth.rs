@@ -4,6 +4,7 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::BlockId;
 use alloy_primitives::{U64, U256, map::AddressMap};
 use async_trait::async_trait;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use futures::{Stream, StreamExt};
 use jsonrpsee::{PendingSubscriptionSink, SubscriptionMessage, SubscriptionSink, core::RpcResult};
 use reth_chain_state::{
@@ -13,7 +14,7 @@ use reth_chain_state::{
 use reth_errors::{RethError, RethResult};
 use reth_evm::{ConfigureEvm, execute::Executor};
 use reth_execution_types::ExecutionOutcome;
-use reth_primitives_traits::{NodePrimitives, SealedHeader};
+use reth_primitives_traits::SealedHeader;
 use reth_rpc_api::{RethApiServer, RethJitAction};
 use reth_rpc_eth_types::{EthApiError, EthResult};
 use reth_storage_api::{
@@ -105,23 +106,22 @@ where
     }
 }
 
-impl<N, Provider, EvmConfig> RethApi<Provider, EvmConfig>
+impl<Provider, EvmConfig> RethApi<Provider, EvmConfig>
 where
-    N: NodePrimitives,
     Provider: BlockReaderIdExt
         + ChangeSetReader
         + StateProviderFactory
-        + BlockReader<Block = N::Block>
-        + CanonStateSubscriptions<Primitives = N>
+        + BlockReader<Block = BaseBlock>
+        + CanonStateSubscriptions
         + 'static,
-    EvmConfig: ConfigureEvm<Primitives = N> + 'static,
+    EvmConfig: ConfigureEvm + 'static,
 {
     /// Re-executes one or more consecutive blocks and returns the execution outcome.
     pub async fn block_execution_outcome(
         &self,
         block_id: BlockId,
         count: Option<U64>,
-    ) -> EthResult<Option<ExecutionOutcome<N::Receipt>>> {
+    ) -> EthResult<Option<ExecutionOutcome<BaseReceipt>>> {
         const MAX_BLOCK_COUNT: u64 = 128;
 
         let block_count = count.map(|c| c.to::<u64>()).unwrap_or(1);
@@ -149,7 +149,7 @@ where
         &self,
         block_id: BlockId,
         block_count: u64,
-    ) -> EthResult<Option<ExecutionOutcome<N::Receipt>>> {
+    ) -> EthResult<Option<ExecutionOutcome<BaseReceipt>>> {
         let Some(start_block) = self.provider().block_number_for_id(block_id)? else {
             return Ok(None);
         };
@@ -191,12 +191,12 @@ where
     Provider: BlockReaderIdExt
         + ChangeSetReader
         + StateProviderFactory
-        + BlockReader<Block = <Provider::Primitives as NodePrimitives>::Block>
+        + BlockReader<Block = BaseBlock>
         + CanonStateSubscriptions
-        + ForkChoiceSubscriptions<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>
+        + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
         + PersistedBlockSubscriptions
         + 'static,
-    EvmConfig: ConfigureEvm<Primitives = Provider::Primitives> + 'static,
+    EvmConfig: ConfigureEvm + 'static,
 {
     /// Handler for `reth_getBalanceChangesInBlock`
     async fn reth_get_balance_changes_in_block(
@@ -318,14 +318,12 @@ where
 }
 
 /// Buffers committed chain notifications and emits them when a new finalized block is received.
-async fn finalized_chain_notifications<N>(
+async fn finalized_chain_notifications(
     sink: SubscriptionSink,
-    mut canon_stream: reth_chain_state::CanonStateNotificationStream<N>,
-    mut finalized_stream: reth_chain_state::ForkChoiceStream<SealedHeader<N::BlockHeader>>,
-) where
-    N: NodePrimitives,
-{
-    let mut buffered: Vec<CanonStateNotification<N>> = Vec::new();
+    mut canon_stream: reth_chain_state::CanonStateNotificationStream,
+    mut finalized_stream: reth_chain_state::ForkChoiceStream<SealedHeader<alloy_consensus::Header>>,
+) {
+    let mut buffered: Vec<CanonStateNotification> = Vec::new();
 
     loop {
         tokio::select! {

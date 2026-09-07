@@ -13,22 +13,21 @@ use std::{
 use alloy_consensus::transaction::TransactionMeta;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use reth_chainspec::ChainInfo;
 use reth_db::{DatabaseEnv, init_db, mdbx::DatabaseArguments};
 use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables, transaction::DbTx};
 use reth_errors::{RethError, RethResult};
-use reth_node_types::{
-    BlockTy, HeaderTy, NodeTypesWithDB, NodeTypesWithDBAdapter, ReceiptTy, TxTy,
-};
+use reth_node_types::{NodeTypesWithDB, NodeTypesWithDBAdapter};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_prune_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneModes, PruneSegment};
 use reth_stages_types::{PipelineTarget, StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
     BlockBodyIndicesProvider, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
-    NodePrimitivesProvider, StorageSettings, StorageSettingsCache, TryIntoHistoricalStateProvider,
+    StorageSettings, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
 use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::OverlayManager;
@@ -81,7 +80,7 @@ pub struct ProviderFactory<N: NodeTypesWithDB> {
     /// Chain spec
     chain_spec: Arc<N::ChainSpec>,
     /// Static File Provider
-    static_file_provider: StaticFileProvider<N::Primitives>,
+    static_file_provider: StaticFileProvider,
     /// Optional pruning configuration
     prune_modes: PruneModes,
     /// The node storage handler.
@@ -91,7 +90,7 @@ pub struct ProviderFactory<N: NodeTypesWithDB> {
     /// `RocksDB` provider
     rocksdb_provider: RocksDBProvider,
     /// Manager for state trie overlays and cached changesets.
-    overlay_manager: OverlayManager<N::Primitives>,
+    overlay_manager: OverlayManager,
     /// Store for block access lists.
     bal_store: BalStoreHandle,
     /// Task runtime for spawning parallel I/O work.
@@ -125,7 +124,7 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
     pub fn new(
         db: N::DB,
         chain_spec: Arc<N::ChainSpec>,
-        static_file_provider: StaticFileProvider<N::Primitives>,
+        static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
         runtime: reth_tasks::Runtime,
     ) -> ProviderResult<Self> {
@@ -185,7 +184,7 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
     pub fn new_checked(
         db: N::DB,
         chain_spec: Arc<N::ChainSpec>,
-        static_file_provider: StaticFileProvider<N::Primitives>,
+        static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
         runtime: reth_tasks::Runtime,
     ) -> ProviderResult<Self> {
@@ -208,13 +207,13 @@ impl<N: NodeTypesWithDB> ProviderFactory<N> {
     }
 
     /// Sets the overlay manager for an existing [`ProviderFactory`].
-    pub fn with_overlay_manager(mut self, overlay_manager: OverlayManager<N::Primitives>) -> Self {
+    pub fn with_overlay_manager(mut self, overlay_manager: OverlayManager) -> Self {
         self.overlay_manager = overlay_manager;
         self
     }
 
     /// Returns the shared overlay manager.
-    pub(crate) const fn overlay_manager(&self) -> &OverlayManager<N::Primitives> {
+    pub(crate) const fn overlay_manager(&self) -> &OverlayManager {
         &self.overlay_manager
     }
 
@@ -370,7 +369,7 @@ impl<N: ProviderNodeTypes<DB = DatabaseEnv>> ProviderFactory<N> {
         path: P,
         chain_spec: Arc<N::ChainSpec>,
         args: DatabaseArguments,
-        static_file_provider: StaticFileProvider<N::Primitives>,
+        static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
         runtime: reth_tasks::Runtime,
     ) -> RethResult<Self> {
@@ -607,16 +606,10 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
 
     /// Returns a static file provider. For read-only instances, this will also invoke
     /// [`Self::sync_providers_if_needed`] to make sure that the static file provider is up to date.
-    pub fn caught_up_static_file_provider(
-        &self,
-    ) -> ProviderResult<StaticFileProvider<N::Primitives>> {
+    pub fn caught_up_static_file_provider(&self) -> ProviderResult<StaticFileProvider> {
         self.sync_providers_if_needed()?;
         Ok(self.static_file_provider.clone())
     }
-}
-
-impl<N: NodeTypesWithDB> NodePrimitivesProvider for ProviderFactory<N> {
-    type Primitives = N::Primitives;
 }
 
 impl<N: ProviderNodeTypes> BalProvider for ProviderFactory<N> {
@@ -641,7 +634,7 @@ impl<N: ProviderNodeTypes> DatabaseProviderFactory for ProviderFactory<N> {
 
 impl<N: NodeTypesWithDB> StaticFileProviderFactory for ProviderFactory<N> {
     /// Returns static file provider
-    fn static_file_provider(&self) -> StaticFileProvider<Self::Primitives> {
+    fn static_file_provider(&self) -> StaticFileProvider {
         self.static_file_provider.clone()
     }
 
@@ -649,13 +642,13 @@ impl<N: NodeTypesWithDB> StaticFileProviderFactory for ProviderFactory<N> {
         &self,
         block: BlockNumber,
         segment: StaticFileSegment,
-    ) -> ProviderResult<StaticFileProviderRWRefMut<'_, Self::Primitives>> {
+    ) -> ProviderResult<StaticFileProviderRWRefMut<'_>> {
         self.static_file_provider.get_writer(block, segment)
     }
 }
 
 impl<N: ProviderNodeTypes> HeaderSyncGapProvider for ProviderFactory<N> {
-    type Header = HeaderTy<N>;
+    type Header = alloy_consensus::Header;
     fn local_tip_header(
         &self,
         highest_uninterrupted_block: BlockNumber,
@@ -665,7 +658,7 @@ impl<N: ProviderNodeTypes> HeaderSyncGapProvider for ProviderFactory<N> {
 }
 
 impl<N: ProviderNodeTypes> HeaderProvider for ProviderFactory<N> {
-    type Header = HeaderTy<N>;
+    type Header = alloy_consensus::Header;
 
     fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
         self.provider()?.header(block_hash)
@@ -744,7 +737,7 @@ impl<N: ProviderNodeTypes> BlockNumReader for ProviderFactory<N> {
 }
 
 impl<N: ProviderNodeTypes> BlockReader for ProviderFactory<N> {
-    type Block = BlockTy<N>;
+    type Block = BaseBlock;
 
     fn find_block_by_hash(
         &self,
@@ -808,7 +801,7 @@ impl<N: ProviderNodeTypes> BlockReader for ProviderFactory<N> {
 }
 
 impl<N: ProviderNodeTypes> TransactionsProvider for ProviderFactory<N> {
-    type Transaction = TxTy<N>;
+    type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
         self.provider()?.transaction_id(tx_hash)
@@ -870,7 +863,7 @@ impl<N: ProviderNodeTypes> TransactionsProvider for ProviderFactory<N> {
 }
 
 impl<N: ProviderNodeTypes> ReceiptProvider for ProviderFactory<N> {
-    type Receipt = ReceiptTy<N>;
+    type Receipt = BaseReceipt;
 
     fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
         self.caught_up_static_file_provider()?.get_with_static_file_or_database(
@@ -1044,7 +1037,7 @@ mod tests {
     use reth_primitives_traits::SignerRecoverable;
     use reth_prune_types::{PruneMode, PruneModes};
     use reth_storage_errors::provider::ProviderError;
-    use reth_testing_utils::generators::{self, BlockParams, random_block, random_header};
+    use reth_testing_utils::generators::{self, BlockParams, random_header};
 
     use super::*;
     use crate::{
@@ -1154,7 +1147,7 @@ mod tests {
                 if sender == block.body().transactions[0].recover_signer().unwrap()
             );
             assert_matches!(
-                provider.transaction_id(*block.body().transactions[0].tx_hash()),
+                provider.transaction_id(block.body().transactions[0].tx_hash()),
                 Ok(Some(0))
             );
         }
@@ -1173,7 +1166,7 @@ mod tests {
             let provider = factory.provider_rw().unwrap();
             assert_matches!(provider.transaction_sender(0), Ok(None));
             assert_matches!(
-                provider.transaction_id(*block.body().transactions[0].tx_hash()),
+                provider.transaction_id(block.body().transactions[0].tx_hash()),
                 Ok(None)
             );
         }
@@ -1182,8 +1175,11 @@ mod tests {
     #[test]
     fn take_block_transaction_range_recover_senders() {
         let mut rng = generators::rng();
-        let block =
-            random_block(&mut rng, 0, BlockParams { tx_count: Some(3), ..Default::default() });
+        let block = reth_testing_utils::BaseTestData::random_block(
+            &mut rng,
+            0,
+            BlockParams { tx_count: Some(3), ..Default::default() },
+        );
 
         let tx_ranges: Vec<RangeInclusive<TxNumber>> = vec![0..=0, 1..=1, 2..=2, 0..=1, 1..=2];
         for range in tx_ranges {

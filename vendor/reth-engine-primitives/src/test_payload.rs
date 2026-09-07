@@ -11,7 +11,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadEnvelopeV6, ExecutionPayloadFieldV2, ExecutionPayloadV1, ExecutionPayloadV3,
     ExecutionPayloadV4, PayloadAttributes,
 };
-use reth_ethereum_primitives::{Block, EthPrimitives};
+use base_common_consensus::BaseBlock as Block;
 use reth_payload_primitives::{BuiltPayload, PayloadTypes};
 use reth_primitives_traits::{RecoveredBlock, SealedBlock};
 
@@ -71,8 +71,6 @@ impl TestBuiltPayload {
 }
 
 impl BuiltPayload for TestBuiltPayload {
-    type Primitives = EthPrimitives;
-
     fn block(&self) -> &SealedBlock<Block> {
         self.block.sealed_block()
     }

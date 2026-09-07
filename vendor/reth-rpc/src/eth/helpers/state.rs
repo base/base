@@ -12,7 +12,7 @@ use crate::EthApi;
 impl<N, Rpc> EthState for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+    Rpc: RpcConvert<Error = EthApiError>,
     Self: LoadPendingBlock,
 {
     fn max_proof_window(&self) -> u64 {
@@ -23,7 +23,7 @@ where
 impl<N, Rpc> LoadState for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives>,
+    Rpc: RpcConvert,
     Self: LoadPendingBlock,
 {
 }
@@ -34,7 +34,6 @@ mod tests {
         Address, StorageKey, StorageValue, U256,
         map::{AddressMap, B256Map},
     };
-    use reth_chainspec::ChainSpec;
     use reth_evm::TestEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
@@ -42,35 +41,50 @@ mod tests {
         test_utils::{ExtendedAccount, MockEthProvider, NoopProvider},
     };
     use reth_rpc_eth_api::{helpers::EthState, node::RpcNodeCoreAdapter};
-    use reth_transaction_pool::test_utils::{TestPool, testing_pool};
 
     use super::*;
-    use crate::eth::helpers::types::EthRpcConverter;
 
     fn noop_eth_api() -> EthApi<
-        RpcNodeCoreAdapter<NoopProvider, TestPool, NoopNetwork, TestEvmConfig>,
-        EthRpcConverter<ChainSpec, TestEvmConfig>,
+        RpcNodeCoreAdapter<NoopProvider, crate::test_utils::TestPool, NoopNetwork, TestEvmConfig>,
+        crate::test_utils::TestRpcConverter,
     > {
         let provider = NoopProvider::default();
-        let pool = testing_pool();
+        let pool = crate::test_utils::RpcTestUtils::pool();
         let evm_config = TestEvmConfig::default();
 
-        crate::EthApiBuilder::new(provider, pool, NoopNetwork::default(), evm_config).build()
+        crate::test_utils::RpcTestUtils::api_builder(
+            provider,
+            pool,
+            NoopNetwork::default(),
+            evm_config,
+        )
+        .build()
     }
 
     fn mock_eth_api(
         accounts: AddressMap<ExtendedAccount>,
     ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, TestEvmConfig>,
-        EthRpcConverter<ChainSpec, TestEvmConfig>,
+        RpcNodeCoreAdapter<
+            MockEthProvider,
+            crate::test_utils::TestPool,
+            NoopNetwork,
+            TestEvmConfig,
+        >,
+        crate::test_utils::TestRpcConverter,
     > {
-        let pool = testing_pool();
+        let pool = crate::test_utils::RpcTestUtils::pool();
         let mock_provider = MockEthProvider::default();
 
         let evm_config = TestEvmConfig::new(mock_provider.chain_spec());
         mock_provider.extend_accounts(accounts);
 
-        crate::EthApiBuilder::new(mock_provider, pool, NoopNetwork::default(), evm_config).build()
+        crate::test_utils::RpcTestUtils::api_builder(
+            mock_provider,
+            pool,
+            NoopNetwork::default(),
+            evm_config,
+        )
+        .build()
     }
 
     #[tokio::test]

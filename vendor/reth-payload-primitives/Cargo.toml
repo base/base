@@ -29,6 +29,7 @@ reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]

@@ -8,10 +8,11 @@ use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_eth::{Account, AccountInfo, EIP1186AccountProofResponse};
 use alloy_serde::JsonStorageKey;
+use base_common_consensus::BaseBlock;
 use futures::Future;
 use reth_errors::RethError;
 use reth_evm::{ConfigureEvm, EvmEnvFor};
-use reth_primitives_traits::{BlockTy, RecoveredBlock, SealedHeaderFor};
+use reth_primitives_traits::RecoveredBlock;
 use reth_rpc_convert::{RpcConvert, RpcTxReq};
 use reth_rpc_eth_types::{
     EthApiError, PendingBlockEnv, RpcInvalidTransactionError, SignError,
@@ -367,7 +368,7 @@ pub trait LoadState:
     /// Returns the EVM environment for the given sealed header.
     fn evm_env_for_header(
         &self,
-        header: &SealedHeaderFor<Self::Primitives>,
+        header: &reth_primitives_traits::SealedHeader,
     ) -> Result<EvmEnvFor<Self::Evm>, Self::Error> {
         self.evm_config()
             .evm_env(header)
@@ -419,7 +420,7 @@ pub trait LoadState:
         at: BlockId,
     ) -> impl Future<
         Output = Result<
-            (Arc<RecoveredBlock<BlockTy<Self::Primitives>>>, EvmEnvFor<Self::Evm>, BlockId),
+            (Arc<RecoveredBlock<BaseBlock>>, EvmEnvFor<Self::Evm>, BlockId),
             Self::Error,
         >,
     > + Send

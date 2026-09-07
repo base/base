@@ -4,28 +4,17 @@ use core::fmt::Debug;
 
 use alloy_consensus::{RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt};
 use alloy_rlp::{Decodable, Encodable};
-use reth_ethereum_primitives::{EthPrimitives, PooledTransactionVariant};
-use reth_primitives_traits::{
-    Block, BlockBody, BlockHeader, BlockTy, NodePrimitives, SignedTransaction,
-};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use reth_primitives_traits::{Block, BlockBody, BlockHeader, SignedTransaction};
 
 use crate::NewBlockPayload;
 
 /// Abstraction over primitive types which might appear in network messages.
 ///
-/// This trait defines the types used in the Ethereum Wire Protocol (devp2p) for
-/// peer-to-peer communication. While [`NodePrimitives`] defines the core types
-/// used throughout the node (consensus format), `NetworkPrimitives` defines how
-/// these types are represented when transmitted over the network.
-///
-/// The key distinction is in transaction handling:
-/// - [`NodePrimitives`] defines `SignedTx` - the consensus format stored in blocks
-/// - `NetworkPrimitives` defines `BroadcastedTransaction` and `PooledTransaction` - the formats
-///   used for network propagation with additional data like blob sidecars
-///
-/// These traits work together through implementations like [`NetPrimitivesFor`],
-/// which ensures type compatibility between a node's internal representation and
-/// its network representation.
+/// Defines the representations used by the Ethereum Wire Protocol (devp2p).
+/// Broadcast transactions and pooled transactions remain distinct because pooled
+/// transactions can carry sidecars that are absent from the consensus block format.
+/// [`NetPrimitivesFor`] binds network blocks and receipts to the concrete Base types.
 ///
 /// See [`crate::EthMessage`] for more context.
 pub trait NetworkPrimitives: Send + Sync + Unpin + Clone + Debug + 'static {
@@ -70,51 +59,57 @@ pub trait NetworkPrimitives: Send + Sync + Unpin + Clone + Debug + 'static {
     type NewBlockPayload: NewBlockPayload<Block = Self::Block>;
 }
 
-/// This is a helper trait for use in bounds, where some of the [`NetworkPrimitives`] associated
-/// types must be the same as the [`NodePrimitives`] associated types.
-pub trait NetPrimitivesFor<N: NodePrimitives>:
+/// Network representations whose blocks, headers, bodies, and receipts use Base types.
+pub trait NetPrimitivesFor:
     NetworkPrimitives<
-        BlockHeader = N::BlockHeader,
-        BlockBody = N::BlockBody,
-        Block = N::Block,
-        Receipt = N::Receipt,
+        BlockHeader = alloy_consensus::Header,
+        BlockBody = alloy_consensus::BlockBody<BaseTxEnvelope>,
+        Block = BaseBlock,
+        Receipt = BaseReceipt,
     >
 {
 }
 
-impl<N, T> NetPrimitivesFor<N> for T
-where
-    N: NodePrimitives,
+impl<T> NetPrimitivesFor for T where
     T: NetworkPrimitives<
-            BlockHeader = N::BlockHeader,
-            BlockBody = N::BlockBody,
-            Block = N::Block,
-            Receipt = N::Receipt,
-        >,
+            BlockHeader = alloy_consensus::Header,
+            BlockBody = alloy_consensus::BlockBody<BaseTxEnvelope>,
+            Block = BaseBlock,
+            Receipt = BaseReceipt,
+        >
 {
 }
 
-/// Basic implementation of [`NetworkPrimitives`] combining [`NodePrimitives`] and a pooled
-/// transaction.
+/// Base network primitives with configurable pooled transaction and new-block wire formats.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BasicNetworkPrimitives<N: NodePrimitives, Pooled, NewBlock = crate::NewBlock<BlockTy<N>>>(
-    core::marker::PhantomData<(N, Pooled, NewBlock)>,
+pub struct BasicNetworkPrimitives<Pooled, NewBlock = crate::NewBlock<BaseBlock>>(
+    core::marker::PhantomData<(Pooled, NewBlock)>,
 );
 
-impl<N, Pooled, NewBlock> NetworkPrimitives for BasicNetworkPrimitives<N, Pooled, NewBlock>
+impl<Pooled, NewBlock> NetworkPrimitives for BasicNetworkPrimitives<Pooled, NewBlock>
 where
-    N: NodePrimitives,
-    Pooled: SignedTransaction + TryFrom<N::SignedTx> + 'static,
-    NewBlock: NewBlockPayload<Block = N::Block>,
+    Pooled: SignedTransaction + TryFrom<BaseTxEnvelope> + 'static,
+    NewBlock: NewBlockPayload<Block = BaseBlock>,
 {
-    type BlockHeader = N::BlockHeader;
-    type BlockBody = N::BlockBody;
-    type Block = N::Block;
-    type BroadcastedTransaction = N::SignedTx;
+    type BlockHeader = alloy_consensus::Header;
+    type BlockBody = alloy_consensus::BlockBody<BaseTxEnvelope>;
+    type Block = BaseBlock;
+    type BroadcastedTransaction = BaseTxEnvelope;
     type PooledTransaction = Pooled;
-    type Receipt = N::Receipt;
+    type Receipt = BaseReceipt;
     type NewBlockPayload = NewBlock;
 }
 
 /// Network primitive types used by Ethereum networks.
-pub type EthNetworkPrimitives = BasicNetworkPrimitives<EthPrimitives, PooledTransactionVariant>;
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EthNetworkPrimitives;
+
+impl NetworkPrimitives for EthNetworkPrimitives {
+    type BlockHeader = alloy_consensus::Header;
+    type BlockBody = reth_ethereum_primitives::BlockBody;
+    type Block = reth_ethereum_primitives::Block;
+    type BroadcastedTransaction = reth_ethereum_primitives::TransactionSigned;
+    type PooledTransaction = reth_ethereum_primitives::PooledTransactionVariant;
+    type Receipt = reth_ethereum_primitives::Receipt;
+    type NewBlockPayload = crate::NewBlock<Self::Block>;
+}

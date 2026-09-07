@@ -8,6 +8,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, BlockNumber, TxHash, TxNumber, map::HashMap};
+use base_common_consensus::BaseReceipt;
 use rayon::slice::ParallelSliceMut;
 use reth_db::{
     cursor::{DbCursorRO, DbDupCursorRW},
@@ -23,10 +24,9 @@ use reth_db_api::{
     tables::BlockNumberList,
 };
 use reth_errors::ProviderError;
-use reth_node_types::NodePrimitives;
-use reth_primitives_traits::{ReceiptTy, StorageEntry};
+use reth_primitives_traits::StorageEntry;
 use reth_static_file_types::StaticFileSegment;
-use reth_storage_api::{ChangeSetReader, DBProvider, DbTxProvider, NodePrimitivesProvider};
+use reth_storage_api::{ChangeSetReader, DBProvider, DbTxProvider};
 use reth_storage_errors::provider::ProviderResult;
 use strum::{Display, EnumIs};
 
@@ -39,32 +39,16 @@ use crate::{
 };
 
 /// Type alias for [`EitherReader`] constructors.
-type EitherReaderTy<'a, P, T> = EitherReader<
-    'a,
-    CursorTy<<P as DbTxProvider>::Tx, T>,
-    <P as NodePrimitivesProvider>::Primitives,
->;
+type EitherReaderTy<'a, P, T> = EitherReader<'a, CursorTy<<P as DbTxProvider>::Tx, T>>;
 
 /// Type alias for [`EitherReader`] constructors.
-type DupEitherReaderTy<'a, P, T> = EitherReader<
-    'a,
-    DupCursorTy<<P as DbTxProvider>::Tx, T>,
-    <P as NodePrimitivesProvider>::Primitives,
->;
+type DupEitherReaderTy<'a, P, T> = EitherReader<'a, DupCursorTy<<P as DbTxProvider>::Tx, T>>;
 
 /// Type alias for dup [`EitherWriter`] constructors.
-type DupEitherWriterTy<'a, P, T> = EitherWriter<
-    'a,
-    DupCursorMutTy<<P as DbTxProvider>::Tx, T>,
-    <P as NodePrimitivesProvider>::Primitives,
->;
+type DupEitherWriterTy<'a, P, T> = EitherWriter<'a, DupCursorMutTy<<P as DbTxProvider>::Tx, T>>;
 
 /// Type alias for [`EitherWriter`] constructors.
-type EitherWriterTy<'a, P, T> = EitherWriter<
-    'a,
-    CursorMutTy<<P as DbTxProvider>::Tx, T>,
-    <P as NodePrimitivesProvider>::Primitives,
->;
+type EitherWriterTy<'a, P, T> = EitherWriter<'a, CursorMutTy<<P as DbTxProvider>::Tx, T>>;
 
 /// Helper type for `RocksDB` batch argument in writer constructors.
 pub type RocksBatchArg<'a> = crate::providers::rocksdb::RocksDBBatch<'a>;
@@ -80,25 +64,25 @@ pub type RocksDBRefArg<'a> = Option<crate::providers::rocksdb::RocksReadSnapshot
 
 /// Represents a destination for writing data, either to database, static files, or `RocksDB`.
 #[derive(Debug, Display)]
-pub enum EitherWriter<'a, CURSOR, N> {
+pub enum EitherWriter<'a, CURSOR> {
     /// Write to database table via cursor
     Database(CURSOR),
     /// Write to static file
-    StaticFile(StaticFileProviderRWRefMut<'a, N>),
+    StaticFile(StaticFileProviderRWRefMut<'a>),
     /// Write to `RocksDB` using a write-only batch (historical tables).
     RocksDB(RocksDBBatch<'a>),
 }
 
-impl<'a> EitherWriter<'a, (), ()> {
+impl<'a> EitherWriter<'a, ()> {
     /// Creates a new [`EitherWriter`] for receipts based on receipt pruning.
     pub fn new_receipts<P>(
         provider: &'a P,
         block_number: BlockNumber,
-    ) -> ProviderResult<EitherWriterTy<'a, P, tables::Receipts<ReceiptTy<P::Primitives>>>>
+    ) -> ProviderResult<EitherWriterTy<'a, P, tables::Receipts<BaseReceipt>>>
     where
-        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
+        P: DBProvider + StaticFileProviderFactory,
         P::Tx: DbTxMut,
-        ReceiptTy<P::Primitives>: Value,
+        BaseReceipt: Value,
     {
         if Self::receipts_destination(provider).is_static_file() {
             Ok(EitherWriter::StaticFile(
@@ -106,7 +90,7 @@ impl<'a> EitherWriter<'a, (), ()> {
             ))
         } else {
             Ok(EitherWriter::Database(
-                provider.tx_ref().cursor_write::<tables::Receipts<ReceiptTy<P::Primitives>>>()?,
+                provider.tx_ref().cursor_write::<tables::Receipts<BaseReceipt>>()?,
             ))
         }
     }
@@ -117,7 +101,7 @@ impl<'a> EitherWriter<'a, (), ()> {
         block_number: BlockNumber,
     ) -> ProviderResult<EitherWriterTy<'a, P, tables::TransactionSenders>>
     where
-        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
+        P: DBProvider + StaticFileProviderFactory,
         P::Tx: DbTxMut,
     {
         Ok(EitherWriter::StaticFile(
@@ -131,7 +115,7 @@ impl<'a> EitherWriter<'a, (), ()> {
         block_number: BlockNumber,
     ) -> ProviderResult<DupEitherWriterTy<'a, P, tables::AccountChangeSets>>
     where
-        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
+        P: DBProvider + StaticFileProviderFactory,
         P::Tx: DbTxMut,
     {
         Ok(EitherWriter::StaticFile(
@@ -145,7 +129,7 @@ impl<'a> EitherWriter<'a, (), ()> {
         block_number: BlockNumber,
     ) -> ProviderResult<DupEitherWriterTy<'a, P, tables::StorageChangeSets>>
     where
-        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
+        P: DBProvider + StaticFileProviderFactory,
         P::Tx: DbTxMut,
     {
         Ok(EitherWriter::StaticFile(
@@ -172,7 +156,7 @@ impl<'a> EitherWriter<'a, (), ()> {
         _rocksdb_batch: RocksBatchArg<'a>,
     ) -> ProviderResult<EitherWriterTy<'a, P, tables::StoragesHistory>>
     where
-        P: DBProvider + NodePrimitivesProvider,
+        P: DBProvider,
         P::Tx: DbTxMut,
     {
         return Ok(EitherWriter::RocksDB(_rocksdb_batch));
@@ -184,7 +168,7 @@ impl<'a> EitherWriter<'a, (), ()> {
         _rocksdb_batch: RocksBatchArg<'a>,
     ) -> ProviderResult<EitherWriterTy<'a, P, tables::TransactionHashNumbers>>
     where
-        P: DBProvider + NodePrimitivesProvider,
+        P: DBProvider,
         P::Tx: DbTxMut,
     {
         return Ok(EitherWriter::RocksDB(_rocksdb_batch));
@@ -196,14 +180,14 @@ impl<'a> EitherWriter<'a, (), ()> {
         _rocksdb_batch: RocksBatchArg<'a>,
     ) -> ProviderResult<EitherWriterTy<'a, P, tables::AccountsHistory>>
     where
-        P: DBProvider + NodePrimitivesProvider,
+        P: DBProvider,
         P::Tx: DbTxMut,
     {
         return Ok(EitherWriter::RocksDB(_rocksdb_batch));
     }
 }
 
-impl<'a, CURSOR, N: NodePrimitives> EitherWriter<'a, CURSOR, N> {
+impl<'a, CURSOR> EitherWriter<'a, CURSOR> {
     /// Extracts the raw `RocksDB` write batch from this writer, if it contains one.
     ///
     /// Returns `Some(WriteBatchWithTransaction)` for [`Self::RocksDB`] variant,
@@ -244,13 +228,16 @@ impl<'a, CURSOR, N: NodePrimitives> EitherWriter<'a, CURSOR, N> {
     }
 }
 
-impl<'a, CURSOR, N: NodePrimitives> EitherWriter<'a, CURSOR, N>
+impl<'a, CURSOR> EitherWriter<'a, CURSOR>
 where
-    N::Receipt: Value,
-    CURSOR: DbCursorRW<tables::Receipts<N::Receipt>>,
+    CURSOR: DbCursorRW<tables::Receipts<BaseReceipt>>,
 {
     /// Append a transaction receipt.
-    pub fn append_receipt(&mut self, tx_num: TxNumber, receipt: &N::Receipt) -> ProviderResult<()> {
+    pub fn append_receipt(
+        &mut self,
+        tx_num: TxNumber,
+        receipt: &BaseReceipt,
+    ) -> ProviderResult<()> {
         match self {
             Self::Database(cursor) => Ok(cursor.append(tx_num, receipt)?),
             Self::StaticFile(writer) => writer.append_receipt(tx_num, receipt),
@@ -259,7 +246,7 @@ where
     }
 }
 
-impl<'a, CURSOR, N: NodePrimitives> EitherWriter<'a, CURSOR, N>
+impl<'a, CURSOR> EitherWriter<'a, CURSOR>
 where
     CURSOR: DbCursorRW<tables::TransactionSenders>,
 {
@@ -324,7 +311,7 @@ where
     }
 }
 
-impl<'a, CURSOR, N: NodePrimitives> EitherWriter<'a, CURSOR, N>
+impl<'a, CURSOR> EitherWriter<'a, CURSOR>
 where
     CURSOR: DbCursorRW<tables::TransactionHashNumbers> + DbCursorRO<tables::TransactionHashNumbers>,
 {
@@ -401,7 +388,7 @@ where
     }
 }
 
-impl<'a, CURSOR, N: NodePrimitives> EitherWriter<'a, CURSOR, N>
+impl<'a, CURSOR> EitherWriter<'a, CURSOR>
 where
     CURSOR: DbCursorRW<tables::StoragesHistory> + DbCursorRO<tables::StoragesHistory>,
 {
@@ -459,7 +446,7 @@ where
     }
 }
 
-impl<'a, CURSOR, N: NodePrimitives> EitherWriter<'a, CURSOR, N>
+impl<'a, CURSOR> EitherWriter<'a, CURSOR>
 where
     CURSOR: DbCursorRW<tables::AccountsHistory> + DbCursorRO<tables::AccountsHistory>,
 {
@@ -504,7 +491,7 @@ where
     }
 }
 
-impl<'a, CURSOR, N: NodePrimitives> EitherWriter<'a, CURSOR, N>
+impl<'a, CURSOR> EitherWriter<'a, CURSOR>
 where
     CURSOR: DbDupCursorRW<tables::AccountChangeSets>,
 {
@@ -534,7 +521,7 @@ where
     }
 }
 
-impl<'a, CURSOR, N: NodePrimitives> EitherWriter<'a, CURSOR, N>
+impl<'a, CURSOR> EitherWriter<'a, CURSOR>
 where
     CURSOR: DbDupCursorRW<tables::StorageChangeSets>,
 {
@@ -570,22 +557,22 @@ where
 
 /// Represents a source for reading data, either from database, static files, or `RocksDB`.
 #[derive(Debug, Display)]
-pub enum EitherReader<'a, CURSOR, N> {
+pub enum EitherReader<'a, CURSOR> {
     /// Read from database table via cursor
     Database(CURSOR, PhantomData<&'a ()>),
     /// Read from static file
-    StaticFile(StaticFileProvider<N>, PhantomData<&'a ()>),
+    StaticFile(StaticFileProvider, PhantomData<&'a ()>),
     /// Read from `RocksDB` snapshot (works in both read-only and read-write modes)
     RocksDB(crate::providers::rocksdb::RocksReadSnapshot<'a>),
 }
 
-impl<'a> EitherReader<'a, (), ()> {
+impl<'a> EitherReader<'a, ()> {
     /// Creates a new [`EitherReader`] for senders stored in static files.
     pub fn new_senders<P>(
         provider: &P,
     ) -> ProviderResult<EitherReaderTy<'a, P, tables::TransactionSenders>>
     where
-        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
+        P: DBProvider + StaticFileProviderFactory,
         P::Tx: DbTx,
     {
         Ok(EitherReader::StaticFile(provider.static_file_provider(), PhantomData))
@@ -597,7 +584,7 @@ impl<'a> EitherReader<'a, (), ()> {
         rocksdb: RocksDBRefArg<'a>,
     ) -> ProviderResult<EitherReaderTy<'a, P, tables::StoragesHistory>>
     where
-        P: DBProvider + NodePrimitivesProvider,
+        P: DBProvider,
         P::Tx: DbTx,
     {
         return Ok(EitherReader::RocksDB(
@@ -611,7 +598,7 @@ impl<'a> EitherReader<'a, (), ()> {
         rocksdb: RocksDBRefArg<'a>,
     ) -> ProviderResult<EitherReaderTy<'a, P, tables::TransactionHashNumbers>>
     where
-        P: DBProvider + NodePrimitivesProvider,
+        P: DBProvider,
         P::Tx: DbTx,
     {
         return Ok(EitherReader::RocksDB(
@@ -625,7 +612,7 @@ impl<'a> EitherReader<'a, (), ()> {
         rocksdb: RocksDBRefArg<'a>,
     ) -> ProviderResult<EitherReaderTy<'a, P, tables::AccountsHistory>>
     where
-        P: DBProvider + NodePrimitivesProvider,
+        P: DBProvider,
         P::Tx: DbTx,
     {
         return Ok(EitherReader::RocksDB(
@@ -638,14 +625,14 @@ impl<'a> EitherReader<'a, (), ()> {
         provider: &P,
     ) -> ProviderResult<DupEitherReaderTy<'a, P, tables::AccountChangeSets>>
     where
-        P: DBProvider + NodePrimitivesProvider + StaticFileProviderFactory,
+        P: DBProvider + StaticFileProviderFactory,
         P::Tx: DbTx,
     {
         Ok(EitherReader::StaticFile(provider.static_file_provider(), PhantomData))
     }
 }
 
-impl<CURSOR, N: NodePrimitives> EitherReader<'_, CURSOR, N>
+impl<CURSOR> EitherReader<'_, CURSOR>
 where
     CURSOR: DbCursorRO<tables::TransactionSenders>,
 {
@@ -676,7 +663,7 @@ where
     }
 }
 
-impl<CURSOR, N: NodePrimitives> EitherReader<'_, CURSOR, N>
+impl<CURSOR> EitherReader<'_, CURSOR>
 where
     CURSOR: DbCursorRO<tables::TransactionHashNumbers>,
 {
@@ -693,7 +680,7 @@ where
     }
 }
 
-impl<CURSOR, N: NodePrimitives> EitherReader<'_, CURSOR, N>
+impl<CURSOR> EitherReader<'_, CURSOR>
 where
     CURSOR: DbCursorRO<tables::StoragesHistory>,
 {
@@ -741,7 +728,7 @@ where
     }
 }
 
-impl<CURSOR, N: NodePrimitives> EitherReader<'_, CURSOR, N>
+impl<CURSOR> EitherReader<'_, CURSOR>
 where
     CURSOR: DbCursorRO<tables::AccountsHistory>,
 {
@@ -787,7 +774,7 @@ where
     }
 }
 
-impl<CURSOR, N: NodePrimitives> EitherReader<'_, CURSOR, N>
+impl<CURSOR> EitherReader<'_, CURSOR>
 where
     CURSOR: DbCursorRO<tables::AccountChangeSets>,
 {
@@ -957,7 +944,6 @@ mod rocksdb_tests {
         tables,
         transaction::DbTxMut,
     };
-    use reth_ethereum_primitives::EthPrimitives;
     use reth_storage_api::{DatabaseProviderFactory, StorageSettings, StorageSettingsCache};
     use tempfile::TempDir;
 
@@ -1227,11 +1213,10 @@ mod rocksdb_tests {
         let (temp_dir, rocks_provider) = create_rocksdb_provider();
 
         // Create writers for both backends
-        let mut mdbx_writer: EitherWriter<'_, AccountsHistoryWriteCursor, EthPrimitives> =
-            EitherWriter::Database(
-                mdbx_provider.tx_ref().cursor_write::<tables::AccountsHistory>().unwrap(),
-            );
-        let mut rocks_writer: EitherWriter<'_, AccountsHistoryWriteCursor, EthPrimitives> =
+        let mut mdbx_writer: EitherWriter<'_, AccountsHistoryWriteCursor> = EitherWriter::Database(
+            mdbx_provider.tx_ref().cursor_write::<tables::AccountsHistory>().unwrap(),
+        );
+        let mut rocks_writer: EitherWriter<'_, AccountsHistoryWriteCursor> =
             EitherWriter::RocksDB(rocks_provider.batch());
 
         // Write identical data to both backends in a single loop
@@ -1255,7 +1240,7 @@ mod rocksdb_tests {
 
         for (i, query) in queries.iter().enumerate() {
             // MDBX query via EitherReader
-            let mut mdbx_reader: EitherReader<'_, AccountsHistoryReadCursor, EthPrimitives> =
+            let mut mdbx_reader: EitherReader<'_, AccountsHistoryReadCursor> =
                 EitherReader::Database(
                     mdbx_ro.tx_ref().cursor_read::<tables::AccountsHistory>().unwrap(),
                     PhantomData,
@@ -1316,11 +1301,10 @@ mod rocksdb_tests {
         let (temp_dir, rocks_provider) = create_rocksdb_provider();
 
         // Create writers for both backends
-        let mut mdbx_writer: EitherWriter<'_, StoragesHistoryWriteCursor, EthPrimitives> =
-            EitherWriter::Database(
-                mdbx_provider.tx_ref().cursor_write::<tables::StoragesHistory>().unwrap(),
-            );
-        let mut rocks_writer: EitherWriter<'_, StoragesHistoryWriteCursor, EthPrimitives> =
+        let mut mdbx_writer: EitherWriter<'_, StoragesHistoryWriteCursor> = EitherWriter::Database(
+            mdbx_provider.tx_ref().cursor_write::<tables::StoragesHistory>().unwrap(),
+        );
+        let mut rocks_writer: EitherWriter<'_, StoragesHistoryWriteCursor> =
             EitherWriter::RocksDB(rocks_provider.batch());
 
         // Write identical data to both backends in a single loop
@@ -1344,7 +1328,7 @@ mod rocksdb_tests {
 
         for (i, query) in queries.iter().enumerate() {
             // MDBX query via EitherReader
-            let mut mdbx_reader: EitherReader<'_, StoragesHistoryReadCursor, EthPrimitives> =
+            let mut mdbx_reader: EitherReader<'_, StoragesHistoryReadCursor> =
                 EitherReader::Database(
                     mdbx_ro.tx_ref().cursor_read::<tables::StoragesHistory>().unwrap(),
                     PhantomData,
@@ -1638,6 +1622,6 @@ mod rocksdb_tests {
         factory.set_storage_settings_cache(StorageSettings::v2());
 
         let provider = factory.database_provider_ro().unwrap();
-        let _ = EitherReader::<(), ()>::new_accounts_history(&provider, None);
+        let _ = EitherReader::<()>::new_accounts_history(&provider, None);
     }
 }

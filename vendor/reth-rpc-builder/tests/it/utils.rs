@@ -3,10 +3,9 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use alloy_rpc_types_engine::{ClientCode, ClientVersionV1};
 use reth_chainspec::MAINNET;
 use reth_consensus::noop::NoopConsensus;
-use reth_engine_primitives::ConsensusEngineHandle;
-use reth_engine_primitives::TestEngineTypes;
-use reth_engine_primitives::test_utils::TestEngineValidator;
-use reth_ethereum_primitives::EthPrimitives;
+use reth_engine_primitives::{
+    ConsensusEngineHandle, TestEngineTypes, test_utils::TestEngineValidator,
+};
 use reth_evm::TestEvmConfig;
 use reth_network_api::noop::NoopNetwork;
 use reth_payload_builder::test_utils::spawn_test_payload_service;
@@ -21,10 +20,7 @@ use reth_rpc_layer::JwtSecret;
 use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
 use reth_tokio_util::EventSender;
-use reth_transaction_pool::{
-    noop::NoopTransactionPool,
-    test_utils::{TestPool, TestPoolBuilder},
-};
+use reth_transaction_pool::noop::NoopTransactionPool;
 use tokio::sync::mpsc::unbounded_channel;
 
 /// Localhost with port 0 so a free port is used.
@@ -75,7 +71,12 @@ where
 /// Launches a new server with http only with the given modules
 pub async fn launch_http(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
     let builder = test_rpc_builder();
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let server =
         builder.build(TransportRpcModuleConfig::set_http(modules), eth_api, EventSender::new(1));
     RpcServerConfig::http(Default::default())
@@ -88,7 +89,12 @@ pub async fn launch_http(modules: impl Into<RpcModuleSelection>) -> RpcServerHan
 /// Launches a new server with ws only with the given modules
 pub async fn launch_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
     let builder = test_rpc_builder();
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let server =
         builder.build(TransportRpcModuleConfig::set_ws(modules), eth_api, EventSender::new(1));
     RpcServerConfig::ws(Default::default())
@@ -101,7 +107,12 @@ pub async fn launch_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandl
 /// Launches a new server with http and ws and with the given modules
 pub async fn launch_http_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
     let builder = test_rpc_builder();
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let modules = modules.into();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(modules.clone()).with_http(modules),
@@ -122,7 +133,12 @@ pub async fn launch_http_ws(modules: impl Into<RpcModuleSelection>) -> RpcServer
 pub async fn launch_http_ws_same_port(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
     let builder = test_rpc_builder();
     let modules = modules.into();
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(modules.clone()).with_http(modules),
         eth_api,
@@ -140,16 +156,15 @@ pub async fn launch_http_ws_same_port(modules: impl Into<RpcModuleSelection>) ->
 
 /// Returns an [`RpcModuleBuilder`] with testing components.
 pub fn test_rpc_builder() -> RpcModuleBuilder<
-    EthPrimitives,
     NoopProvider,
-    TestPool,
+    reth_rpc::test_utils::TestPool,
     NoopNetwork,
     TestEvmConfig,
     NoopConsensus,
 > {
     RpcModuleBuilder::default()
         .with_provider(NoopProvider::default())
-        .with_pool(TestPoolBuilder::default().into())
+        .with_pool(reth_rpc::test_utils::RpcTestUtils::pool())
         .with_network(NoopNetwork::default())
         .with_executor(Runtime::test())
         .with_evm_config(TestEvmConfig::default())

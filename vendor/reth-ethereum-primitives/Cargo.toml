@@ -17,7 +17,6 @@ workspace = true
 
 [dependencies]
 reth-primitives-traits = { workspace = true }
-serde = { workspace = true, optional = true }
 alloy-eips = { workspace = true, features = ["k256"] }
 alloy-rpc-types-eth = { workspace = true, optional = true }
 alloy-consensus = { workspace = true, features = ["serde"] }
@@ -45,7 +44,6 @@ std = [
     "alloy-primitives/std",
     "reth-primitives-traits/std",
     "reth-primitives-traits/quanta",
-    "serde?/std",
     "alloy-eips/std",
     "alloy-rpc-types-eth?/std",
     "alloy-rlp/std",
@@ -69,7 +67,6 @@ arbitrary = [
     "alloy-rpc-types-eth?/arbitrary",
 ]
 serde = [
-    "dep:serde",
     "alloy-consensus/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",

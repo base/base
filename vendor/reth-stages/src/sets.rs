@@ -20,11 +20,10 @@
 //! # use reth_provider::test_utils::{create_test_provider_factory, MockNodeTypesWithDB};
 //! # use reth_static_file::StaticFileProducer;
 //! # use reth_config::config::StageConfig;
-//! # use reth_ethereum_primitives::EthPrimitives;
 //! # use std::sync::Arc;
 //! # use reth_consensus::FullConsensus;
 //!
-//! # fn create(exec: impl ConfigureEvm<Primitives = EthPrimitives> + 'static, consensus: impl FullConsensus<EthPrimitives> + 'static) {
+//! # fn create(exec: impl ConfigureEvm + 'static, consensus: impl FullConsensus + 'static) {
 //!
 //! let provider_factory = create_test_provider_factory();
 //! let static_file_producer =
@@ -43,7 +42,7 @@ use reth_config::config::StageConfig;
 use reth_consensus::FullConsensus;
 use reth_evm::ConfigureEvm;
 use reth_network_p2p::{bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader};
-use reth_primitives_traits::{Block, NodePrimitives};
+use reth_primitives_traits::Block;
 use reth_provider::HeaderSyncGapProvider;
 use reth_prune_types::{PruneMode, PruneModes};
 use reth_stages_api::Stage;
@@ -93,7 +92,7 @@ where
     /// Executor factory needs for execution stage
     evm_config: E,
     /// Consensus instance
-    consensus: Arc<dyn FullConsensus<E::Primitives>>,
+    consensus: Arc<dyn FullConsensus>,
     /// Configuration for each stage in the pipeline
     stages_config: StageConfig,
     /// Prune configuration for every segment that can be pruned
@@ -104,14 +103,14 @@ impl<Provider, H, B, E> DefaultStages<Provider, H, B, E>
 where
     H: HeaderDownloader,
     B: BodyDownloader,
-    E: ConfigureEvm<Primitives: NodePrimitives<BlockHeader = H::Header, Block = B::Block>>,
+    E: ConfigureEvm,
 {
     /// Create a new set of default stages with default values.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         provider: Provider,
         tip: watch::Receiver<B256>,
-        consensus: Arc<dyn FullConsensus<E::Primitives>>,
+        consensus: Arc<dyn FullConsensus>,
         header_downloader: H,
         body_downloader: B,
         evm_config: E,
@@ -144,7 +143,7 @@ where
     pub fn add_offline_stages<Provider>(
         default_offline: StageSetBuilder<Provider>,
         evm_config: E,
-        consensus: Arc<dyn FullConsensus<E::Primitives>>,
+        consensus: Arc<dyn FullConsensus>,
         stages_config: StageConfig,
         prune_modes: PruneModes,
     ) -> StageSetBuilder<Provider>
@@ -289,7 +288,7 @@ pub struct OfflineStages<E: ConfigureEvm> {
     /// Executor factory needs for execution stage
     evm_config: E,
     /// Consensus instance for validating blocks.
-    consensus: Arc<dyn FullConsensus<E::Primitives>>,
+    consensus: Arc<dyn FullConsensus>,
     /// Configuration for each stage in the pipeline
     stages_config: StageConfig,
     /// Prune configuration for every segment that can be pruned
@@ -300,7 +299,7 @@ impl<E: ConfigureEvm> OfflineStages<E> {
     /// Create a new set of offline stages with default values.
     pub const fn new(
         evm_config: E,
-        consensus: Arc<dyn FullConsensus<E::Primitives>>,
+        consensus: Arc<dyn FullConsensus>,
         stages_config: StageConfig,
         prune_modes: PruneModes,
     ) -> Self {
@@ -350,7 +349,7 @@ pub struct ExecutionStages<E: ConfigureEvm> {
     /// Executor factory that will create executors.
     evm_config: E,
     /// Consensus instance for validating blocks.
-    consensus: Arc<dyn FullConsensus<E::Primitives>>,
+    consensus: Arc<dyn FullConsensus>,
     /// Configuration for each stage in the pipeline
     stages_config: StageConfig,
     /// Prune mode for sender recovery
@@ -361,7 +360,7 @@ impl<E: ConfigureEvm> ExecutionStages<E> {
     /// Create a new set of execution stages with default values.
     pub const fn new(
         executor_provider: E,
-        consensus: Arc<dyn FullConsensus<E::Primitives>>,
+        consensus: Arc<dyn FullConsensus>,
         stages_config: StageConfig,
         sender_recovery_prune_mode: Option<PruneMode>,
     ) -> Self {

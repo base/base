@@ -18,17 +18,14 @@ use reth_db_api::{
 };
 use reth_etl::Collector;
 use reth_execution_errors::StateRootError;
-use reth_primitives_traits::{
-    Account, Bytecode, GotExpected, NodePrimitives, SealedHeader, StorageEntry,
-};
+use reth_primitives_traits::{Account, Bytecode, GotExpected, SealedHeader, StorageEntry};
 use reth_provider::{
     BlockHashReader, BlockNumReader, BundleStateInit, ChainSpecProvider, DBProvider,
     DatabaseProviderFactory, ExecutionOutcome, HashingWriter, HeaderProvider, HistoryWriter,
-    MetadataProvider, MetadataWriter, NodePrimitivesProvider, OriginalValuesKnown, ProviderError,
-    RevertsInit, RocksDBProviderFactory, StageCheckpointReader, StageCheckpointWriter,
-    StateWriteConfig, StateWriter, StaticFileProviderFactory, StorageSettings,
-    StorageSettingsCache, TrieWriter, errors::provider::ProviderResult,
-    providers::StaticFileWriter,
+    MetadataProvider, MetadataWriter, OriginalValuesKnown, ProviderError, RevertsInit,
+    RocksDBProviderFactory, StageCheckpointReader, StageCheckpointWriter, StateWriteConfig,
+    StateWriter, StaticFileProviderFactory, StorageSettings, StorageSettingsCache, TrieWriter,
+    errors::provider::ProviderResult, providers::StaticFileWriter,
 };
 use reth_stages_types::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
@@ -109,13 +106,13 @@ impl From<DatabaseError> for InitStorageError {
 pub fn init_genesis<PF>(factory: &PF) -> Result<B256, InitStorageError>
 where
     PF: DatabaseProviderFactory
-        + StaticFileProviderFactory<Primitives: NodePrimitives<BlockHeader: Compact>>
+        + StaticFileProviderFactory
         + ChainSpecProvider
         + StageCheckpointReader
         + BlockNumReader
         + MetadataProvider
         + StorageSettingsCache,
-    PF::ProviderRW: StaticFileProviderFactory<Primitives = PF::Primitives>
+    PF::ProviderRW: StaticFileProviderFactory
         + StageCheckpointWriter
         + HistoryWriter
         + HeaderProvider
@@ -126,9 +123,8 @@ where
         + ChainSpecProvider
         + StorageSettingsCache
         + RocksDBProviderFactory
-        + NodePrimitivesProvider
         + AsRef<PF::ProviderRW>,
-    PF::ChainSpec: EthChainSpec<Header = <PF::Primitives as NodePrimitives>::BlockHeader>,
+    PF::ChainSpec: EthChainSpec<Header = alloy_consensus::Header>,
 {
     init_genesis_with_settings(factory, StorageSettings::base())
 }
@@ -140,13 +136,13 @@ pub fn init_genesis_with_settings<PF>(
 ) -> Result<B256, InitStorageError>
 where
     PF: DatabaseProviderFactory
-        + StaticFileProviderFactory<Primitives: NodePrimitives<BlockHeader: Compact>>
+        + StaticFileProviderFactory
         + ChainSpecProvider
         + StageCheckpointReader
         + BlockNumReader
         + MetadataProvider
         + StorageSettingsCache,
-    PF::ProviderRW: StaticFileProviderFactory<Primitives = PF::Primitives>
+    PF::ProviderRW: StaticFileProviderFactory
         + StageCheckpointWriter
         + HistoryWriter
         + HeaderProvider
@@ -157,9 +153,8 @@ where
         + ChainSpecProvider
         + StorageSettingsCache
         + RocksDBProviderFactory
-        + NodePrimitivesProvider
         + AsRef<PF::ProviderRW>,
-    PF::ChainSpec: EthChainSpec<Header = <PF::Primitives as NodePrimitives>::BlockHeader>,
+    PF::ChainSpec: EthChainSpec<Header = alloy_consensus::Header>,
 {
     init_genesis_with_settings_and_validate(factory, genesis_storage_settings, true)
 }
@@ -173,13 +168,13 @@ pub fn init_genesis_with_settings_and_validate<PF>(
 ) -> Result<B256, InitStorageError>
 where
     PF: DatabaseProviderFactory
-        + StaticFileProviderFactory<Primitives: NodePrimitives<BlockHeader: Compact>>
+        + StaticFileProviderFactory
         + ChainSpecProvider
         + StageCheckpointReader
         + BlockNumReader
         + MetadataProvider
         + StorageSettingsCache,
-    PF::ProviderRW: StaticFileProviderFactory<Primitives = PF::Primitives>
+    PF::ProviderRW: StaticFileProviderFactory
         + StageCheckpointWriter
         + HistoryWriter
         + HeaderProvider
@@ -190,9 +185,8 @@ where
         + ChainSpecProvider
         + StorageSettingsCache
         + RocksDBProviderFactory
-        + NodePrimitivesProvider
         + AsRef<PF::ProviderRW>,
-    PF::ChainSpec: EthChainSpec<Header = <PF::Primitives as NodePrimitives>::BlockHeader>,
+    PF::ChainSpec: EthChainSpec<Header = alloy_consensus::Header>,
 {
     let chain = factory.chain_spec();
 
@@ -464,9 +458,8 @@ pub fn insert_genesis_header<Provider, Spec>(
     chain: &Spec,
 ) -> ProviderResult<()>
 where
-    Provider: StaticFileProviderFactory<Primitives: NodePrimitives<BlockHeader: Compact>>
-        + DBProvider<Tx: DbTxMut>,
-    Spec: EthChainSpec<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>,
+    Provider: StaticFileProviderFactory + DBProvider<Tx: DbTxMut>,
+    Spec: EthChainSpec<Header = alloy_consensus::Header>,
 {
     let (header, block_hash) = (chain.genesis_header(), chain.genesis_hash());
     let static_file_provider = provider.static_file_provider();
@@ -532,7 +525,6 @@ where
                         + StateWriter
                         + StorageSettingsCache
                         + RocksDBProviderFactory
-                        + NodePrimitivesProvider
                         + AsRef<PF::ProviderRW>,
     >,
 {
@@ -671,8 +663,7 @@ where
         ProviderRW: StaticFileProviderFactory
                         + DBProvider<Tx: DbTxMut>
                         + StorageSettingsCache
-                        + RocksDBProviderFactory
-                        + NodePrimitivesProvider,
+                        + RocksDBProviderFactory,
     >,
 {
     let accounts_len = collector.len();
@@ -763,8 +754,8 @@ where
     Ok(())
 }
 
-fn prepare_account_changeset_writer<N: NodePrimitives>(
-    writer: &mut reth_provider::providers::StaticFileProviderRWRefMut<'_, N>,
+fn prepare_account_changeset_writer(
+    writer: &mut reth_provider::providers::StaticFileProviderRWRefMut<'_>,
     block: u64,
 ) -> ProviderResult<()> {
     let next_block = writer.next_block_number();
@@ -790,8 +781,8 @@ fn prepare_account_changeset_writer<N: NodePrimitives>(
     writer.begin_account_changeset(block)
 }
 
-fn prepare_storage_changeset_writer<N: NodePrimitives>(
-    writer: &mut reth_provider::providers::StaticFileProviderRWRefMut<'_, N>,
+fn prepare_storage_changeset_writer(
+    writer: &mut reth_provider::providers::StaticFileProviderRWRefMut<'_>,
     block: u64,
 ) -> ProviderResult<()> {
     let next_block = writer.next_block_number();
@@ -829,8 +820,8 @@ fn snapshot_state_tables_empty<TX: reth_db_api::transaction::DbTx>(
         && tx.entries::<tables::Bytecodes>()? == 0)
 }
 
-fn reset_pre_snapshot_changeset_segment<N: NodePrimitives>(
-    static_file_provider: &reth_provider::providers::StaticFileProvider<N>,
+fn reset_pre_snapshot_changeset_segment(
+    static_file_provider: &reth_provider::providers::StaticFileProvider,
     segment: StaticFileSegment,
     block: u64,
 ) -> ProviderResult<()> {
@@ -872,11 +863,11 @@ where
 /// Storage v2 uses hashed state as the canonical state, static-file change sets, and `RocksDB`
 /// history indices. The ETL collector yields accounts sorted by address and genesis storage is a
 /// `BTreeMap`, so the streaming static-file writes preserve the required order.
-fn write_account_to_db_v2<TX, N>(
+fn write_account_to_db_v2<TX>(
     tx: &TX,
     changeset_writers: (
-        &mut reth_provider::providers::StaticFileProviderRWRefMut<'_, N>,
-        &mut reth_provider::providers::StaticFileProviderRWRefMut<'_, N>,
+        &mut reth_provider::providers::StaticFileProviderRWRefMut<'_>,
+        &mut reth_provider::providers::StaticFileProviderRWRefMut<'_>,
     ),
     history_batch: &mut reth_provider::providers::RocksDBBatch<'_>,
     address: &Address,
@@ -886,7 +877,6 @@ fn write_account_to_db_v2<TX, N>(
 ) -> Result<(), eyre::Error>
 where
     TX: DbTxMut,
-    N: NodePrimitives,
 {
     let bytecode_hash = if let Some(code) = &genesis_account.code {
         let bytecode = Bytecode::new_raw_checked(code.clone())

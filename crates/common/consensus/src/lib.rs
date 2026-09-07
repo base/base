@@ -16,7 +16,7 @@ use revm as _;
 #[cfg(feature = "reth")]
 mod reth_compat;
 #[cfg(feature = "reth")]
-pub use reth_compat::{BaseBlockBody, BasePrimitives, CompactTxDeposit, DepositReceiptExt};
+pub use reth_compat::{CompactTxDeposit, DepositReceiptExt};
 
 mod receipts;
 pub use receipts::{
@@ -49,7 +49,7 @@ mod predeploys;
 pub use predeploys::{Deployers, Predeploys, SystemAddresses};
 
 mod block;
-pub use block::BaseBlock;
+pub use block::{BaseBlock, BaseBlockBody};
 
 /// Signed transaction type alias for [`BaseTxEnvelope`].
 pub type BaseTransactionSigned = BaseTxEnvelope;

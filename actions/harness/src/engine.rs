@@ -21,7 +21,7 @@ use alloy_rpc_types_eth::{
 };
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
-use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt, Predeploys};
+use base_common_consensus::{BaseBlock, BaseReceipt, Predeploys};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types_engine::{
@@ -87,7 +87,7 @@ const L2_TO_L1_MESSAGE_PASSER_STUB_CODE: [u8; 10] = hex!("60005460010160005500")
 #[derive(Debug, Clone)]
 pub struct PendingPayload {
     /// The built payload from the production `BasePayloadBuilder`.
-    pub built: BaseBuiltPayload<BasePrimitives>,
+    pub built: BaseBuiltPayload,
 }
 
 /// Mutable state owned by [`ActionEngineClient`], protected by a `Mutex` so
@@ -368,7 +368,7 @@ impl ActionEngineClient {
         inner: &ActionEngineClientInner,
         parent_hash: B256,
         attrs: BasePayloadAttributes,
-    ) -> TransportResult<BaseBuiltPayload<BasePrimitives>> {
+    ) -> TransportResult<BaseBuiltPayload> {
         // Look up the parent header from executed headers or fall back to the real genesis.
         // When building the first block the caller may pass B256::ZERO (the default rollup-config
         // genesis hash), but the Reth DB stores the genesis block under its actual computed hash.
@@ -424,7 +424,7 @@ impl ActionEngineClient {
                 "payload builder failed: {e}"
             )))
         })?;
-        let built: BaseBuiltPayload<BasePrimitives> = outcome.into_payload().ok_or_else(|| {
+        let built: BaseBuiltPayload = outcome.into_payload().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
                 "payload builder returned no payload",
             ))
@@ -438,7 +438,7 @@ impl ActionEngineClient {
         inner: &mut ActionEngineClientInner,
         registry: &SharedBlockHashRegistry,
         rollup_config: &RollupConfig,
-        built: BaseBuiltPayload<BasePrimitives>,
+        built: BaseBuiltPayload,
     ) -> TransportResult<(B256, L2BlockInfo)> {
         let block: BaseBlock = built.block().clone_block();
         let hdr = block.header.clone();

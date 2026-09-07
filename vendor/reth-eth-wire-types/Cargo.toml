@@ -29,6 +29,7 @@ serde = { workspace = true, optional = true }
 reth-ethereum-primitives = { workspace = true }
 alloy-chains = { workspace = true, features = ["rlp"] }
 derive_more = { workspace = true, features = ["full"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
 proptest = { workspace = true, optional = true, features = ["default"] }

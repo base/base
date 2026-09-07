@@ -19,6 +19,7 @@ use alloy_primitives::{
     keccak256,
     map::{AddressMap, B256Map, HashMap},
 };
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use parking_lot::Mutex;
 use reth_chain_state::{CanonStateNotifications, CanonStateSubscriptions};
 use reth_chainspec::{ChainInfo, EthChainSpec};
@@ -27,19 +28,17 @@ use reth_db_api::{
     mock::{DatabaseMock, TxMock},
     models::{AccountBeforeTx, StorageSettings, StoredBlockBodyIndices},
 };
-use reth_ethereum_primitives::EthPrimitives;
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{
-    Account, Block, BlockBody, Bytecode, GotExpected, NodePrimitives, RecoveredBlock, SealedHeader,
+    Account, Block, BlockBody, Bytecode, GotExpected, RecoveredBlock, SealedHeader,
     SignerRecoverable, StorageEntry,
 };
 use reth_prune_types::{PruneCheckpoint, PruneModes, PruneSegment};
 use reth_stages_types::{StageCheckpoint, StageId};
 use reth_storage_api::{
     BlockBodyIndicesProvider, BytecodeReader, DBProvider, DatabaseProviderFactory, DbTxProvider,
-    HashedPostStateProvider, NodePrimitivesProvider, StageCheckpointReader, StateProofProvider,
-    StorageChangeSetReader, StorageRootProvider, StorageSettingsCache,
-    TryIntoHistoricalStateProvider,
+    HashedPostStateProvider, StageCheckpointReader, StateProofProvider, StorageChangeSetReader,
+    StorageRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
 use reth_storage_errors::provider::{ConsistentViewError, ProviderError, ProviderResult};
 use reth_trie::{
@@ -60,14 +59,13 @@ use crate::{
 
 /// A mock implementation for Provider interfaces.
 #[derive(Debug)]
-pub struct MockEthProvider<T: NodePrimitives = EthPrimitives, ChainSpec = reth_chainspec::ChainSpec>
-{
+pub struct MockEthProvider<ChainSpec = reth_chainspec::ChainSpec> {
     ///local block store
-    pub blocks: Arc<Mutex<B256Map<T::Block>>>,
+    pub blocks: Arc<Mutex<B256Map<BaseBlock>>>,
     /// Local header store
-    pub headers: Arc<Mutex<B256Map<<T::Block as Block>::Header>>>,
+    pub headers: Arc<Mutex<B256Map<<BaseBlock as Block>::Header>>>,
     /// Local receipt store indexed by block number
-    pub receipts: Arc<Mutex<HashMap<BlockNumber, Vec<T::Receipt>>>>,
+    pub receipts: Arc<Mutex<HashMap<BlockNumber, Vec<BaseReceipt>>>>,
     /// Local account store
     pub accounts: Arc<Mutex<AddressMap<ExtendedAccount>>>,
     /// Local chain spec
@@ -119,10 +117,7 @@ enum MockStorageRangeOutcome {
 /// Hashed address, origin, limit, and byte budget of a mock storage range request.
 type MockStorageRangeRequest = (B256, B256, B256, usize);
 
-impl<T: NodePrimitives, ChainSpec> Clone for MockEthProvider<T, ChainSpec>
-where
-    T::Block: Clone,
-{
+impl<ChainSpec> Clone for MockEthProvider<ChainSpec> {
     fn clone(&self) -> Self {
         Self {
             blocks: self.blocks.clone(),
@@ -150,7 +145,7 @@ where
     }
 }
 
-impl<T: NodePrimitives> MockEthProvider<T, reth_chainspec::ChainSpec> {
+impl MockEthProvider<reth_chainspec::ChainSpec> {
     /// Create a new, empty instance
     pub fn new() -> Self {
         Self {
@@ -179,7 +174,7 @@ impl<T: NodePrimitives> MockEthProvider<T, reth_chainspec::ChainSpec> {
     }
 }
 
-impl<T: NodePrimitives, ChainSpec> MockEthProvider<T, ChainSpec> {
+impl<ChainSpec> MockEthProvider<ChainSpec> {
     /// Allows database provider creation to return this mock.
     pub fn enable_database_provider(&self) {
         self.database_provider_available.store(true, Ordering::Relaxed);
@@ -252,27 +247,27 @@ impl<T: NodePrimitives, ChainSpec> MockEthProvider<T, ChainSpec> {
     }
 
     /// Add block to local block store
-    pub fn add_block(&self, hash: B256, block: T::Block) {
+    pub fn add_block(&self, hash: B256, block: BaseBlock) {
         self.add_header(hash, block.header().clone());
         self.blocks.lock().insert(hash, block);
     }
 
     /// Add multiple blocks to local block store
-    pub fn extend_blocks(&self, iter: impl IntoIterator<Item = (B256, T::Block)>) {
+    pub fn extend_blocks(&self, iter: impl IntoIterator<Item = (B256, BaseBlock)>) {
         for (hash, block) in iter {
             self.add_block(hash, block)
         }
     }
 
     /// Add header to local header store
-    pub fn add_header(&self, hash: B256, header: <T::Block as Block>::Header) {
+    pub fn add_header(&self, hash: B256, header: <BaseBlock as Block>::Header) {
         self.headers.lock().insert(hash, header);
     }
 
     /// Add multiple headers to local header store
     pub fn extend_headers(
         &self,
-        iter: impl IntoIterator<Item = (B256, <T::Block as Block>::Header)>,
+        iter: impl IntoIterator<Item = (B256, <BaseBlock as Block>::Header)>,
     ) {
         for (hash, header) in iter {
             self.add_header(hash, header)
@@ -292,12 +287,12 @@ impl<T: NodePrimitives, ChainSpec> MockEthProvider<T, ChainSpec> {
     }
 
     /// Add receipts to local receipt store
-    pub fn add_receipts(&self, block_number: BlockNumber, receipts: Vec<T::Receipt>) {
+    pub fn add_receipts(&self, block_number: BlockNumber, receipts: Vec<BaseReceipt>) {
         self.receipts.lock().insert(block_number, receipts);
     }
 
     /// Add multiple receipts to local receipt store
-    pub fn extend_receipts(&self, iter: impl IntoIterator<Item = (BlockNumber, Vec<T::Receipt>)>) {
+    pub fn extend_receipts(&self, iter: impl IntoIterator<Item = (BlockNumber, Vec<BaseReceipt>)>) {
         for (block_number, receipts) in iter {
             self.add_receipts(block_number, receipts);
         }
@@ -323,7 +318,7 @@ impl<T: NodePrimitives, ChainSpec> MockEthProvider<T, ChainSpec> {
     }
 
     /// Set chain spec.
-    pub fn with_chain_spec<C>(self, chain_spec: C) -> MockEthProvider<T, C> {
+    pub fn with_chain_spec<C>(self, chain_spec: C) -> MockEthProvider<C> {
         MockEthProvider {
             blocks: self.blocks,
             headers: self.headers,
@@ -354,12 +349,12 @@ impl<T: NodePrimitives, ChainSpec> MockEthProvider<T, ChainSpec> {
     /// This is useful for tests that require a valid latest block (e.g., transaction validation).
     pub fn with_genesis_block(self) -> Self
     where
-        ChainSpec: EthChainSpec<Header = <T::Block as Block>::Header>,
-        <T::Block as Block>::Body: Default,
+        ChainSpec: EthChainSpec<Header = <BaseBlock as Block>::Header>,
+        <BaseBlock as Block>::Body: Default,
     {
         let genesis_hash = self.chain_spec.genesis_hash();
         let genesis_header = self.chain_spec.genesis_header().clone();
-        let genesis_block = T::Block::new(genesis_header, Default::default());
+        let genesis_block = BaseBlock::new(genesis_header, Default::default());
         self.add_block(genesis_hash, genesis_block);
         self
     }
@@ -371,16 +366,14 @@ impl Default for MockEthProvider {
     }
 }
 
-impl<T: NodePrimitives, ChainSpec> BalProvider for MockEthProvider<T, ChainSpec> {
+impl<ChainSpec> BalProvider for MockEthProvider<ChainSpec> {
     fn bal_store(&self) -> &BalStoreHandle {
         &self.bal_store
     }
 }
 
-impl<T, ChainSpec> StateRangeProviderFactory for MockEthProvider<T, ChainSpec>
+impl<ChainSpec> StateRangeProviderFactory for MockEthProvider<ChainSpec>
 where
-    T: NodePrimitives,
-    T::Block: Clone,
     ChainSpec: Send + Sync + 'static,
 {
     fn state_range_provider(&self, _state_root: B256) -> ProviderResult<Option<StateRangeView>> {
@@ -393,7 +386,7 @@ where
     }
 }
 
-impl<T: NodePrimitives, ChainSpec> StateRangeProvider for MockEthProvider<T, ChainSpec> {
+impl<ChainSpec> StateRangeProvider for MockEthProvider<ChainSpec> {
     fn account_range(
         &self,
         _start: B256,
@@ -490,8 +483,8 @@ impl ExtendedAccount {
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: EthChainSpec + Clone + 'static> DatabaseProviderFactory
-    for MockEthProvider<T, ChainSpec>
+impl<ChainSpec: EthChainSpec + Clone + 'static> DatabaseProviderFactory
+    for MockEthProvider<ChainSpec>
 {
     type DB = DatabaseMock;
     type Provider = Self;
@@ -514,9 +507,7 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + Clone + 'static> DatabaseProvi
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: EthChainSpec + 'static> DbTxProvider
-    for MockEthProvider<T, ChainSpec>
-{
+impl<ChainSpec: EthChainSpec + 'static> DbTxProvider for MockEthProvider<ChainSpec> {
     type Tx = TxMock;
 
     fn tx(&self) -> &Self::Tx {
@@ -524,9 +515,7 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + 'static> DbTxProvider
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: EthChainSpec + 'static> DBProvider
-    for MockEthProvider<T, ChainSpec>
-{
+impl<ChainSpec: EthChainSpec + 'static> DBProvider for MockEthProvider<ChainSpec> {
     fn tx_mut(&mut self) -> &mut Self::Tx {
         &mut self.tx
     }
@@ -544,10 +533,10 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + 'static> DBProvider
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: EthChainSpec + Send + Sync + 'static> HeaderProvider
-    for MockEthProvider<T, ChainSpec>
+impl<ChainSpec: EthChainSpec + Send + Sync + 'static> HeaderProvider
+    for MockEthProvider<ChainSpec>
 {
-    type Header = <T::Block as Block>::Header;
+    type Header = <BaseBlock as Block>::Header;
 
     fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
         let lock = self.headers.lock();
@@ -593,9 +582,8 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + Send + Sync + 'static> HeaderP
     }
 }
 
-impl<T, ChainSpec> ChainSpecProvider for MockEthProvider<T, ChainSpec>
+impl<ChainSpec> ChainSpecProvider for MockEthProvider<ChainSpec>
 where
-    T: NodePrimitives,
     ChainSpec: EthChainSpec + 'static + Debug + Send + Sync,
 {
     type ChainSpec = ChainSpec;
@@ -605,10 +593,8 @@ where
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: EthChainSpec + 'static> TransactionsProvider
-    for MockEthProvider<T, ChainSpec>
-{
-    type Transaction = T::SignedTx;
+impl<ChainSpec: EthChainSpec + 'static> TransactionsProvider for MockEthProvider<ChainSpec> {
+    type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
         let lock = self.blocks.lock();
@@ -734,12 +720,11 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + 'static> TransactionsProvider
     }
 }
 
-impl<T, ChainSpec> ReceiptProvider for MockEthProvider<T, ChainSpec>
+impl<ChainSpec> ReceiptProvider for MockEthProvider<ChainSpec>
 where
-    T: NodePrimitives,
     ChainSpec: Send + Sync + 'static,
 {
-    type Receipt = T::Receipt;
+    type Receipt = BaseReceipt;
 
     fn receipt(&self, _id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
         Ok(None)
@@ -800,16 +785,12 @@ where
     }
 }
 
-impl<T, ChainSpec> ReceiptProviderIdExt for MockEthProvider<T, ChainSpec>
-where
-    T: NodePrimitives,
-    Self: ReceiptProvider + BlockIdReader,
+impl<ChainSpec> ReceiptProviderIdExt for MockEthProvider<ChainSpec> where
+    Self: ReceiptProvider + BlockIdReader
 {
 }
 
-impl<T: NodePrimitives, ChainSpec: Send + Sync + 'static> BlockHashReader
-    for MockEthProvider<T, ChainSpec>
-{
+impl<ChainSpec: Send + Sync + 'static> BlockHashReader for MockEthProvider<ChainSpec> {
     fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
         let lock = self.headers.lock();
         let hash =
@@ -832,9 +813,7 @@ impl<T: NodePrimitives, ChainSpec: Send + Sync + 'static> BlockHashReader
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: Send + Sync + 'static> BlockNumReader
-    for MockEthProvider<T, ChainSpec>
-{
+impl<ChainSpec: Send + Sync + 'static> BlockNumReader for MockEthProvider<ChainSpec> {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         let best_block_number = self.best_block_number()?;
         let lock = self.headers.lock();
@@ -864,9 +843,7 @@ impl<T: NodePrimitives, ChainSpec: Send + Sync + 'static> BlockNumReader
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: EthChainSpec + Send + Sync + 'static> BlockIdReader
-    for MockEthProvider<T, ChainSpec>
-{
+impl<ChainSpec: EthChainSpec + Send + Sync + 'static> BlockIdReader for MockEthProvider<ChainSpec> {
     fn pending_block_num_hash(&self) -> ProviderResult<Option<alloy_eips::BlockNumHash>> {
         Ok(None)
     }
@@ -881,10 +858,8 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + Send + Sync + 'static> BlockId
 }
 
 //look
-impl<T: NodePrimitives, ChainSpec: EthChainSpec + Send + Sync + 'static> BlockReader
-    for MockEthProvider<T, ChainSpec>
-{
-    type Block = T::Block;
+impl<ChainSpec: EthChainSpec + Send + Sync + 'static> BlockReader for MockEthProvider<ChainSpec> {
+    type Block = BaseBlock;
 
     fn find_block_by_hash(
         &self,
@@ -910,7 +885,7 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + Send + Sync + 'static> BlockRe
 
     fn pending_block_and_receipts(
         &self,
-    ) -> ProviderResult<Option<(RecoveredBlock<Self::Block>, Vec<T::Receipt>)>> {
+    ) -> ProviderResult<Option<(RecoveredBlock<Self::Block>, Vec<BaseReceipt>)>> {
         Ok(None)
     }
 
@@ -962,12 +937,11 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + Send + Sync + 'static> BlockRe
     }
 }
 
-impl<T, ChainSpec> BlockReaderIdExt for MockEthProvider<T, ChainSpec>
+impl<ChainSpec> BlockReaderIdExt for MockEthProvider<ChainSpec>
 where
     ChainSpec: EthChainSpec + Send + Sync + 'static,
-    T: NodePrimitives,
 {
-    fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<T::Block>> {
+    fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<BaseBlock>> {
         match id {
             BlockId::Number(num) => self.block_by_number_or_tag(num),
             BlockId::Hash(hash) => self.block_by_hash(hash.block_hash),
@@ -977,11 +951,11 @@ where
     fn sealed_header_by_id(
         &self,
         id: BlockId,
-    ) -> ProviderResult<Option<SealedHeader<<T::Block as Block>::Header>>> {
+    ) -> ProviderResult<Option<SealedHeader<<BaseBlock as Block>::Header>>> {
         self.header_by_id(id)?.map_or_else(|| Ok(None), |h| Ok(Some(SealedHeader::seal_slow(h))))
     }
 
-    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<<T::Block as Block>::Header>> {
+    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<<BaseBlock as Block>::Header>> {
         match self.block_by_id(id)? {
             None => Ok(None),
             Some(block) => Ok(Some(block.into_header())),
@@ -989,15 +963,13 @@ where
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: Send + Sync> AccountReader for MockEthProvider<T, ChainSpec> {
+impl<ChainSpec: Send + Sync> AccountReader for MockEthProvider<ChainSpec> {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         Ok(self.accounts.lock().get(address).cloned().map(|a| a.account))
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: Send + Sync> StageCheckpointReader
-    for MockEthProvider<T, ChainSpec>
-{
+impl<ChainSpec: Send + Sync> StageCheckpointReader for MockEthProvider<ChainSpec> {
     fn get_stage_checkpoint(&self, id: StageId) -> ProviderResult<Option<StageCheckpoint>> {
         Ok(self.stage_checkpoints.lock().get(&id).copied())
     }
@@ -1016,9 +988,7 @@ impl<T: NodePrimitives, ChainSpec: Send + Sync> StageCheckpointReader
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: Send + Sync> PruneCheckpointReader
-    for MockEthProvider<T, ChainSpec>
-{
+impl<ChainSpec: Send + Sync> PruneCheckpointReader for MockEthProvider<ChainSpec> {
     fn get_prune_checkpoint(
         &self,
         _segment: PruneSegment,
@@ -1031,9 +1001,8 @@ impl<T: NodePrimitives, ChainSpec: Send + Sync> PruneCheckpointReader
     }
 }
 
-impl<T, ChainSpec> StateRootProvider for MockEthProvider<T, ChainSpec>
+impl<ChainSpec> StateRootProvider for MockEthProvider<ChainSpec>
 where
-    T: NodePrimitives,
     ChainSpec: Send + Sync,
 {
     fn state_root(&self, _state: HashedPostState) -> ProviderResult<B256> {
@@ -1061,9 +1030,8 @@ where
     }
 }
 
-impl<T, ChainSpec> StorageRootProvider for MockEthProvider<T, ChainSpec>
+impl<ChainSpec> StorageRootProvider for MockEthProvider<ChainSpec>
 where
-    T: NodePrimitives,
     ChainSpec: Send + Sync,
 {
     fn storage_root(
@@ -1093,9 +1061,8 @@ where
     }
 }
 
-impl<T, ChainSpec> StateProofProvider for MockEthProvider<T, ChainSpec>
+impl<ChainSpec> StateProofProvider for MockEthProvider<ChainSpec>
 where
-    T: NodePrimitives,
     ChainSpec: Send + Sync,
 {
     fn proof(
@@ -1125,9 +1092,7 @@ where
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: EthChainSpec + 'static> HashedPostStateProvider
-    for MockEthProvider<T, ChainSpec>
-{
+impl<ChainSpec: EthChainSpec + 'static> HashedPostStateProvider for MockEthProvider<ChainSpec> {
     fn hashed_post_state(
         &self,
         _bundle_state: &revm::database::BundleState,
@@ -1136,9 +1101,8 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + 'static> HashedPostStateProvid
     }
 }
 
-impl<T, ChainSpec> StateProvider for MockEthProvider<T, ChainSpec>
+impl<ChainSpec> StateProvider for MockEthProvider<ChainSpec>
 where
-    T: NodePrimitives,
     ChainSpec: EthChainSpec + Send + Sync + 'static,
 {
     fn storage(
@@ -1151,9 +1115,8 @@ where
     }
 }
 
-impl<T, ChainSpec> BytecodeReader for MockEthProvider<T, ChainSpec>
+impl<ChainSpec> BytecodeReader for MockEthProvider<ChainSpec>
 where
-    T: NodePrimitives,
     ChainSpec: Send + Sync,
 {
     fn bytecode_by_hash(&self, code_hash: &B256) -> ProviderResult<Option<Bytecode>> {
@@ -1169,9 +1132,7 @@ where
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: Send + Sync> StorageSettingsCache
-    for MockEthProvider<T, ChainSpec>
-{
+impl<ChainSpec: Send + Sync> StorageSettingsCache for MockEthProvider<ChainSpec> {
     fn cached_storage_settings(&self) -> StorageSettings {
         StorageSettings::default()
     }
@@ -1179,8 +1140,8 @@ impl<T: NodePrimitives, ChainSpec: Send + Sync> StorageSettingsCache
     fn set_storage_settings_cache(&self, _settings: StorageSettings) {}
 }
 
-impl<T: NodePrimitives, ChainSpec: EthChainSpec + Send + Sync + 'static> StateProviderFactory
-    for MockEthProvider<T, ChainSpec>
+impl<ChainSpec: EthChainSpec + Send + Sync + 'static> StateProviderFactory
+    for MockEthProvider<ChainSpec>
 {
     fn latest(&self) -> ProviderResult<StateProviderBox> {
         self.ensure_snap_state_reads_succeed()?;
@@ -1240,8 +1201,8 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + Send + Sync + 'static> StatePr
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: EthChainSpec + Send + Sync + 'static>
-    TryIntoHistoricalStateProvider for MockEthProvider<T, ChainSpec>
+impl<ChainSpec: EthChainSpec + Send + Sync + 'static> TryIntoHistoricalStateProvider
+    for MockEthProvider<ChainSpec>
 {
     fn try_into_history_at_block(
         self,
@@ -1251,9 +1212,7 @@ impl<T: NodePrimitives, ChainSpec: EthChainSpec + Send + Sync + 'static>
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: Send + Sync> BlockBodyIndicesProvider
-    for MockEthProvider<T, ChainSpec>
-{
+impl<ChainSpec: Send + Sync> BlockBodyIndicesProvider for MockEthProvider<ChainSpec> {
     fn block_body_indices(&self, num: u64) -> ProviderResult<Option<StoredBlockBodyIndices>> {
         Ok(self.block_body_indices.lock().get(&num).copied())
     }
@@ -1265,7 +1224,7 @@ impl<T: NodePrimitives, ChainSpec: Send + Sync> BlockBodyIndicesProvider
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: Send + Sync> ChangeSetReader for MockEthProvider<T, ChainSpec> {
+impl<ChainSpec: Send + Sync> ChangeSetReader for MockEthProvider<ChainSpec> {
     fn account_block_changeset(
         &self,
         _block_number: BlockNumber,
@@ -1289,9 +1248,7 @@ impl<T: NodePrimitives, ChainSpec: Send + Sync> ChangeSetReader for MockEthProvi
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: Send + Sync> StorageChangeSetReader
-    for MockEthProvider<T, ChainSpec>
-{
+impl<ChainSpec: Send + Sync> StorageChangeSetReader for MockEthProvider<ChainSpec> {
     fn storage_changeset(
         &self,
         _block_number: BlockNumber,
@@ -1316,8 +1273,8 @@ impl<T: NodePrimitives, ChainSpec: Send + Sync> StorageChangeSetReader
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: Send + Sync> StateReader for MockEthProvider<T, ChainSpec> {
-    type Receipt = T::Receipt;
+impl<ChainSpec: Send + Sync> StateReader for MockEthProvider<ChainSpec> {
+    type Receipt = BaseReceipt;
 
     fn get_state(
         &self,
@@ -1327,38 +1284,38 @@ impl<T: NodePrimitives, ChainSpec: Send + Sync> StateReader for MockEthProvider<
     }
 }
 
-impl<T: NodePrimitives, ChainSpec: Send + Sync> CanonStateSubscriptions
-    for MockEthProvider<T, ChainSpec>
-{
-    fn subscribe_to_canonical_state(&self) -> CanonStateNotifications<T> {
+impl<ChainSpec: Send + Sync> CanonStateSubscriptions for MockEthProvider<ChainSpec> {
+    fn subscribe_to_canonical_state(&self) -> CanonStateNotifications {
         broadcast::channel(1).1
     }
-}
-
-impl<T: NodePrimitives, ChainSpec: Send + Sync> NodePrimitivesProvider
-    for MockEthProvider<T, ChainSpec>
-{
-    type Primitives = T;
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::BlockHash;
-    use reth_ethereum_primitives::Receipt;
+    use base_common_consensus::BaseReceipt;
 
     use super::*;
 
     #[test]
     fn test_mock_provider_receipts() {
-        let provider = MockEthProvider::<EthPrimitives>::new();
+        let provider = MockEthProvider::new();
 
         let block_hash = BlockHash::random();
         let block_number = 1u64;
         let header = Header { number: block_number, ..Default::default() };
 
-        let receipt1 = Receipt { cumulative_gas_used: 21000, success: true, ..Default::default() };
-        let receipt2 = Receipt { cumulative_gas_used: 42000, success: true, ..Default::default() };
+        let receipt1 = BaseReceipt::Legacy(alloy_consensus::Receipt {
+            cumulative_gas_used: 21000,
+            status: (true).into(),
+            ..Default::default()
+        });
+        let receipt2 = BaseReceipt::Legacy(alloy_consensus::Receipt {
+            cumulative_gas_used: 42000,
+            status: (true).into(),
+            ..Default::default()
+        });
         let receipts = vec![receipt1, receipt2];
 
         provider.add_header(block_hash, header);
@@ -1377,12 +1334,12 @@ mod tests {
         assert_eq!(non_existent, None);
 
         let empty_range = provider.receipts_by_block_range(10..=20).unwrap();
-        assert_eq!(empty_range, Vec::<Vec<Receipt>>::new());
+        assert_eq!(empty_range, Vec::<Vec<BaseReceipt>>::new());
     }
 
     #[test]
     fn test_mock_provider_receipts_multiple_blocks() {
-        let provider = MockEthProvider::<EthPrimitives>::new();
+        let provider = MockEthProvider::new();
 
         let block1_hash = BlockHash::random();
         let block2_hash = BlockHash::random();
@@ -1393,9 +1350,17 @@ mod tests {
         let header2 = Header { number: block2_number, ..Default::default() };
 
         let receipts1 =
-            vec![Receipt { cumulative_gas_used: 21000, success: true, ..Default::default() }];
+            vec![base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
+                cumulative_gas_used: 21000,
+                status: (true).into(),
+                ..Default::default()
+            })];
         let receipts2 =
-            vec![Receipt { cumulative_gas_used: 42000, success: true, ..Default::default() }];
+            vec![base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
+                cumulative_gas_used: 42000,
+                status: (true).into(),
+                ..Default::default()
+            })];
 
         provider.add_header(block1_hash, header1);
         provider.add_header(block2_hash, header2);

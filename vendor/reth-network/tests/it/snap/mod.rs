@@ -16,6 +16,7 @@ use alloy_eip7928::{
 use alloy_eips::NumHash;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_trie::{Nibbles, nodes::RlpNode, proof::verify_proof};
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use reth_chainspec::Hardforks;
 use reth_eth_wire::{
     BlockAccessLists, EthVersion,
@@ -43,7 +44,7 @@ use reth_provider::{
     },
 };
 use reth_stages_types::{StageCheckpoint, StageId};
-use reth_testing_utils::generators::{self, BlockParams, random_block};
+use reth_testing_utils::generators::{self, BlockParams};
 use reth_transaction_pool::test_utils::TestPool;
 use reth_trie::{HashedPostState, HashedStorage};
 
@@ -62,11 +63,8 @@ fn snap_protocols() -> Vec<Protocol> {
 /// A provider usable by the snap/2 testnet helpers: real block, header, state, bal, and range
 /// access.
 trait SnapTestProvider:
-    BlockReader<
-        Block = reth_ethereum_primitives::Block,
-        Receipt = reth_ethereum_primitives::Receipt,
-        Header = alloy_consensus::Header,
-    > + HeaderProvider
+    BlockReader<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+    + HeaderProvider
     + BalProvider
     + StateProviderFactory
     + StateRangeProviderFactory
@@ -78,11 +76,8 @@ trait SnapTestProvider:
 }
 
 impl<T> SnapTestProvider for T where
-    T: BlockReader<
-            Block = reth_ethereum_primitives::Block,
-            Receipt = reth_ethereum_primitives::Receipt,
-            Header = alloy_consensus::Header,
-        > + HeaderProvider
+    T: BlockReader<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+        + HeaderProvider
         + BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
@@ -122,8 +117,11 @@ fn genesis_provider_factory() -> ProviderFactory<MockNodeTypesWithDB> {
     let factory = create_test_provider_factory();
     let provider_rw = factory.provider_rw().unwrap();
     let mut rng = generators::rng();
-    let genesis =
-        random_block(&mut rng, 0, BlockParams { tx_count: Some(0), ..Default::default() });
+    let genesis = reth_testing_utils::BaseTestData::random_block(
+        &mut rng,
+        0,
+        BlockParams { tx_count: Some(0), ..Default::default() },
+    );
     provider_rw.insert_block(&genesis.try_recover().unwrap()).unwrap();
     provider_rw.save_stage_checkpoint(StageId::Finish, StageCheckpoint::new(0)).unwrap();
     provider_rw.commit().unwrap();
@@ -138,7 +136,7 @@ fn genesis_provider_factory() -> ProviderFactory<MockNodeTypesWithDB> {
 fn persist_fixture_state_root(factory: &ProviderFactory<MockNodeTypesWithDB>) -> B256 {
     let state_root = factory.latest().unwrap().state_root(HashedPostState::default()).unwrap();
     let genesis_hash = factory.sealed_header(0).unwrap().unwrap().hash();
-    let mut block = random_block(
+    let mut block = reth_testing_utils::BaseTestData::random_block(
         &mut generators::rng(),
         1,
         BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -633,7 +631,7 @@ async fn retained_and_expired_account_range_requests_resolve_without_hanging() {
     let mut parent = B256::ZERO;
     let provider_rw = factory.provider_rw().unwrap();
     for number in 0..=SNAPSHOT_STATE_RETENTION {
-        let mut block = random_block(
+        let mut block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             number,
             BlockParams { parent: Some(parent), tx_count: Some(0), ..Default::default() },

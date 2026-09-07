@@ -186,7 +186,7 @@ mod tests {
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_storage_api::StorageSettingsCache;
     use reth_testing_utils::generators::{
-        self, BlockRangeParams, random_block_range, random_changeset_range, random_eoa_accounts,
+        self, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };
 
     use crate::segments::{AccountHistory, PruneInput, PruneLimiter, Segment, SegmentOutput};
@@ -199,7 +199,7 @@ mod tests {
         let db = TestStageDB::default();
         let mut rng = generators::rng();
 
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=100,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
@@ -303,7 +303,7 @@ mod tests {
         let db = TestStageDB::default();
         let mut rng = generators::rng();
 
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=20,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },

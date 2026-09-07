@@ -1,8 +1,6 @@
 //! EVM component for the node builder.
 use std::future::Future;
 
-use reth_node_api::PrimitivesTy;
-
 use crate::{BuilderContext, ConfigureEvm, FullNodeTypes};
 
 /// A type that knows how to build the executor types.
@@ -10,7 +8,7 @@ pub trait ExecutorBuilder<Node: FullNodeTypes>: Send {
     /// The EVM config to use.
     ///
     /// This provides the node with the necessary configuration to configure an EVM.
-    type EVM: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + 'static;
+    type EVM: ConfigureEvm + 'static;
 
     /// Creates the EVM config.
     fn build_evm(
@@ -22,7 +20,7 @@ pub trait ExecutorBuilder<Node: FullNodeTypes>: Send {
 impl<Node, F, Fut, EVM> ExecutorBuilder<Node> for F
 where
     Node: FullNodeTypes,
-    EVM: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + 'static,
+    EVM: ConfigureEvm + 'static,
     F: FnOnce(&BuilderContext<Node>) -> Fut + Send,
     Fut: Future<Output = eyre::Result<EVM>> + Send,
 {

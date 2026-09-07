@@ -55,7 +55,7 @@ where
             NetworkTypes: RpcTypes<
                 TransactionRequest: SignableTxRequest<ProviderTx<Self::Provider>>,
             >,
-            RpcConvert: RpcConvert<Primitives = Self::Primitives>,
+            RpcConvert: RpcConvert,
         >,
 {
 }
@@ -66,7 +66,7 @@ impl<T> FullEthApiTypes for T where
             NetworkTypes: RpcTypes<
                 TransactionRequest: SignableTxRequest<ProviderTx<Self::Provider>>,
             >,
-            RpcConvert: RpcConvert<Primitives = Self::Primitives>,
+            RpcConvert: RpcConvert,
         >
 {
 }

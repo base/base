@@ -18,7 +18,7 @@ use alloy_consensus::{
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{B64, B256};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseTxEnvelope, DepositReceiptExt};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
@@ -27,7 +27,7 @@ use reth_consensus_common::validation::{
 };
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
-    Block, BlockBody, GotExpected, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
+    Block, BlockBody, GotExpected, RecoveredBlock, SealedBlock, SealedHeader,
 };
 
 mod proof;
@@ -68,14 +68,11 @@ impl BaseBeaconConsensus {
     }
 }
 
-impl<N> FullConsensus<N> for BaseBeaconConsensus
-where
-    N: NodePrimitives<BlockHeader = Header, Receipt: DepositReceiptExt, SignedTx = BaseTxEnvelope>,
-{
+impl FullConsensus for BaseBeaconConsensus {
     fn validate_block_post_execution(
         &self,
-        block: &RecoveredBlock<N::Block>,
-        result: &BlockExecutionResult<N::Receipt>,
+        block: &RecoveredBlock<BaseBlock>,
+        result: &BlockExecutionResult<BaseReceipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
         _block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {
@@ -290,8 +287,8 @@ mod tests {
     };
     use alloy_primitives::{Address, B256, Bytes, Log, Signature, U256};
     use base_common_consensus::{
-        BasePrimitives, BaseReceipt, BaseTransactionSigned, BaseTypedTransaction,
-        HoloceneExtraData, JovianExtraData,
+        BaseReceipt, BaseTransactionSigned, BaseTypedTransaction, HoloceneExtraData,
+        JovianExtraData,
     };
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -509,14 +506,13 @@ mod tests {
 
         let block = RecoveredBlock::new_sealed(block, vec![Address::default()]);
 
-        let post_execution =
-            <BaseBeaconConsensus as FullConsensus<BasePrimitives>>::validate_block_post_execution(
-                &beacon_consensus,
-                &block,
-                &result,
-                None,
-                None,
-            );
+        let post_execution = <BaseBeaconConsensus as FullConsensus>::validate_block_post_execution(
+            &beacon_consensus,
+            &block,
+            &result,
+            None,
+            None,
+        );
 
         // validate blob, it should pass blob gas used validation
         assert!(post_execution.is_ok());
@@ -577,14 +573,13 @@ mod tests {
 
         let block = RecoveredBlock::new_sealed(block, vec![Address::default()]);
 
-        let post_execution =
-            <BaseBeaconConsensus as FullConsensus<BasePrimitives>>::validate_block_post_execution(
-                &beacon_consensus,
-                &block,
-                &result,
-                None,
-                None,
-            );
+        let post_execution = <BaseBeaconConsensus as FullConsensus>::validate_block_post_execution(
+            &beacon_consensus,
+            &block,
+            &result,
+            None,
+            None,
+        );
 
         // validate blob, it should fail blob gas used validation post execution.
         assert!(matches!(

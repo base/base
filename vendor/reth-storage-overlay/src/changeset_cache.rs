@@ -20,7 +20,7 @@ use reth_metrics::{
     Metrics,
     metrics::{Counter, Gauge},
 };
-use reth_primitives_traits::{FastInstant as Instant, NodePrimitives};
+use reth_primitives_traits::FastInstant as Instant;
 use reth_storage_api::{
     BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
@@ -65,13 +65,12 @@ use crate::{OverlayManager, OverlayStateProvider, database_state_frontiers};
 /// - Block number exceeds database tip
 /// - Database access fails
 /// - Cache retrieval fails
-pub(crate) fn compute_block_trie_updates<N, Provider>(
-    overlay_manager: &OverlayManager<N>,
+pub(crate) fn compute_block_trie_updates<Provider>(
+    overlay_manager: &OverlayManager,
     provider: &Provider,
     block_number: BlockNumber,
 ) -> ProviderResult<TrieUpdatesSorted>
 where
-    N: NodePrimitives,
     Provider: DBProvider
         + ChangeSetReader
         + StorageChangeSetReader
@@ -81,17 +80,16 @@ where
         + StorageSettingsCache,
 {
     reth_trie_db::with_adapter!(provider, |A| {
-        compute_block_trie_updates_inner::<_, _, A>(overlay_manager, provider, block_number)
+        compute_block_trie_updates_inner::<_, A>(overlay_manager, provider, block_number)
     })
 }
 
-fn compute_block_trie_updates_inner<N, Provider, A>(
-    overlay_manager: &OverlayManager<N>,
+fn compute_block_trie_updates_inner<Provider, A>(
+    overlay_manager: &OverlayManager,
     provider: &Provider,
     block_number: BlockNumber,
 ) -> ProviderResult<TrieUpdatesSorted>
 where
-    N: NodePrimitives,
     Provider: DBProvider
         + ChangeSetReader
         + StorageChangeSetReader
@@ -215,16 +213,15 @@ impl ChangesetCache {
     /// # Returns
     ///
     /// Changesets for the block, either from cache or computed on-the-fly.
-    pub(crate) fn get_or_compute<N, P>(
+    pub(crate) fn get_or_compute<P>(
         &self,
-        overlay_manager: &OverlayManager<N>,
+        overlay_manager: &OverlayManager,
         provider: &P,
         block_number: BlockNumber,
         partial_state_trie: BlockNumHash,
         finish: BlockNumHash,
     ) -> ProviderResult<Arc<TrieUpdatesSorted>>
     where
-        N: NodePrimitives,
         P: DBProvider
             + ChangeSetReader
             + StorageChangeSetReader
@@ -267,16 +264,15 @@ impl ChangesetCache {
     /// - Database access fails
     /// - Block hash lookup fails
     /// - Changeset computation fails
-    pub(crate) fn get_or_compute_range<N, P>(
+    pub(crate) fn get_or_compute_range<P>(
         &self,
-        overlay_manager: &OverlayManager<N>,
+        overlay_manager: &OverlayManager,
         provider: &P,
         range: RangeInclusive<BlockNumber>,
         partial_state_trie: BlockNumHash,
         finish: BlockNumHash,
     ) -> ProviderResult<Arc<TrieUpdatesSorted>>
     where
-        N: NodePrimitives,
         P: DBProvider
             + ChangeSetReader
             + StorageChangeSetReader
@@ -670,12 +666,7 @@ mod tests {
         StorageEntry { key: B256::from(U256::from(slot)), value: U256::from(value) }
     }
 
-    fn seed_headers(
-        factory: &impl StaticFileProviderFactory<
-            Primitives: reth_primitives_traits::NodePrimitives<BlockHeader = Header>,
-        >,
-        end_block: BlockNumber,
-    ) {
+    fn seed_headers(factory: &impl StaticFileProviderFactory, end_block: BlockNumber) {
         let static_file_provider = factory.static_file_provider();
         let mut header_writer =
             static_file_provider.latest_writer(StaticFileSegment::Headers).unwrap();
@@ -826,7 +817,7 @@ mod tests {
             );
         }
 
-        let overlay_manager = OverlayManager::<reth_ethereum_primitives::EthPrimitives>::default();
+        let overlay_manager = OverlayManager::default();
         let (partial_state_trie, finish) = database_state_frontiers(&*provider).unwrap();
         let accumulated = cache
             .get_or_compute_range(&overlay_manager, &*provider, 1..=2, partial_state_trie, finish)
@@ -939,7 +930,7 @@ mod tests {
         assert!(storage_revert.storage_nodes_ref().is_empty());
 
         let cache = ChangesetCache::new();
-        let overlay_manager = OverlayManager::<reth_ethereum_primitives::EthPrimitives>::default();
+        let overlay_manager = OverlayManager::default();
         let (partial_state_trie, finish) = database_state_frontiers(&*provider).unwrap();
         let from_cache_api = cache
             .get_or_compute_range(&overlay_manager, &*provider, 1..=3, partial_state_trie, finish)

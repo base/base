@@ -3,9 +3,8 @@ use std::path::Path;
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, BlockNumber};
 use alloy_rlp::Decodable;
-use reth_codecs::Compact;
-use reth_node_builder::NodePrimitives;
-use reth_primitives_traits::{SealedBlock, SealedHeader, SealedHeaderFor};
+use base_common_consensus::BaseBlock;
+use reth_primitives_traits::{SealedBlock, SealedHeader};
 use reth_provider::{
     BlockWriter, ProviderResult, StageCheckpointWriter, StaticFileProviderFactory,
     StaticFileWriter, providers::StaticFileProvider,
@@ -36,17 +35,12 @@ where
 /// first valid block.
 pub fn setup_without_evm<Provider, F>(
     provider_rw: &Provider,
-    header: SealedHeader<<Provider::Primitives as NodePrimitives>::BlockHeader>,
+    header: SealedHeader<alloy_consensus::Header>,
     header_factory: F,
 ) -> ProviderResult<()>
 where
-    Provider: StaticFileProviderFactory
-        + StageCheckpointWriter
-        + BlockWriter<Block = <Provider::Primitives as NodePrimitives>::Block>,
-    F: Fn(BlockNumber) -> <Provider::Primitives as NodePrimitives>::BlockHeader
-        + Send
-        + Sync
-        + 'static,
+    Provider: StaticFileProviderFactory + StageCheckpointWriter + BlockWriter<Block = BaseBlock>,
+    F: Fn(BlockNumber) -> alloy_consensus::Header + Send + Sync + 'static,
 {
     info!(target: "reth::cli", new_tip = ?header.num_hash(), "Setting up dummy EVM chain before importing state.");
 
@@ -78,19 +72,15 @@ where
 /// height.
 fn append_first_block<Provider>(
     provider_rw: &Provider,
-    header: &SealedHeaderFor<Provider::Primitives>,
+    header: &reth_primitives_traits::SealedHeader,
 ) -> ProviderResult<()>
 where
-    Provider: BlockWriter<Block = <Provider::Primitives as NodePrimitives>::Block>
-        + StaticFileProviderFactory<Primitives: NodePrimitives<BlockHeader: Compact>>,
+    Provider: BlockWriter<Block = BaseBlock> + StaticFileProviderFactory,
 {
     provider_rw.insert_block(
-        &SealedBlock::<<Provider::Primitives as NodePrimitives>::Block>::from_sealed_parts(
-            header.clone(),
-            Default::default(),
-        )
-        .try_recover()
-        .expect("no senders or txes"),
+        &SealedBlock::<BaseBlock>::from_sealed_parts(header.clone(), Default::default())
+            .try_recover()
+            .expect("no senders or txes"),
     )?;
 
     let sf_provider = provider_rw.static_file_provider();
@@ -106,14 +96,13 @@ where
 /// * Transactions: It will not push any tx, only increments the end block range.
 /// * Receipts: It will not push any receipt, only increments the end block range.
 /// * TransactionSenders: If the segment exists, increments the end block range.
-fn append_dummy_chain<N, F>(
-    sf_provider: &StaticFileProvider<N>,
+fn append_dummy_chain<F>(
+    sf_provider: &StaticFileProvider,
     target_height: BlockNumber,
     header_factory: F,
 ) -> ProviderResult<()>
 where
-    N: NodePrimitives,
-    F: Fn(BlockNumber) -> N::BlockHeader + Send + Sync + 'static,
+    F: Fn(BlockNumber) -> alloy_consensus::Header + Send + Sync + 'static,
 {
     let (tx, rx) = std::sync::mpsc::channel();
 

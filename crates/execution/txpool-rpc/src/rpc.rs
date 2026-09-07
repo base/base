@@ -304,8 +304,7 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, Eip8130Signed,
-        TxEip8130,
+        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_observability_events::{
@@ -324,8 +323,8 @@ mod tests {
     use super::*;
 
     /// Provider whose latest header sits after Cobalt activation, so the fork gate is open.
-    fn cobalt_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
-        MockEthProvider::<BasePrimitives>::new()
+    fn cobalt_provider() -> MockEthProvider<Arc<BaseChainSpec>> {
+        MockEthProvider::new()
             .with_chain_spec(Arc::new(
                 BaseChainSpecBuilder::base_mainnet().cobalt_activated().build(),
             ))
@@ -333,8 +332,8 @@ mod tests {
     }
 
     /// Provider whose latest header predates Cobalt activation, so the fork gate is closed.
-    fn pre_cobalt_provider() -> MockEthProvider<BasePrimitives, Arc<BaseChainSpec>> {
-        MockEthProvider::<BasePrimitives>::new()
+    fn pre_cobalt_provider() -> MockEthProvider<Arc<BaseChainSpec>> {
+        MockEthProvider::new()
             .with_chain_spec(Arc::new(BaseChainSpec::mainnet()))
             .with_genesis_block()
     }

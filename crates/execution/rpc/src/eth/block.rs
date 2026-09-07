@@ -1,10 +1,8 @@
 //! Loads and formats Base block RPC response.
 
 use alloy_eips::BlockId;
-use base_common_consensus::BaseTransaction;
 use base_common_rpc_types::BaseHeaderResponse;
-use reth_node_api::BlockBody;
-use reth_primitives_traits::{AlloyBlockHeader, NodePrimitives};
+use reth_primitives_traits::AlloyBlockHeader;
 use reth_rpc_eth_api::{
     EthApiTypes, FromEvmError, FullEthApiTypes, RpcBlock, RpcConvert, RpcHeader, RpcTypes,
     helpers::{EthBlocks, LoadBlock},
@@ -16,9 +14,8 @@ impl<N, Rpc> EthBlocks for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
     <Self as EthApiTypes>::NetworkTypes: RpcTypes<Header = BaseHeaderResponse>,
-    <Self::Primitives as NodePrimitives>::SignedTx: BaseTransaction,
 {
     async fn rpc_block_header(
         &self,
@@ -32,7 +29,7 @@ where
             block.hash(),
             block.number(),
             block.timestamp(),
-            block.body().transactions(),
+            &block.body().transactions,
         );
         let mut header =
             self.converter().convert_header(block.clone_sealed_header(), block.rlp_length())?;
@@ -53,7 +50,7 @@ where
             block.hash(),
             block.number(),
             block.timestamp(),
-            block.body().transactions(),
+            &block.body().transactions,
         );
         let mut block = block.clone_into_rpc_block(
             full.into(),
@@ -69,6 +66,6 @@ impl<N, Rpc> LoadBlock for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }

@@ -3,6 +3,7 @@
 use std::{path::Path, sync::Arc};
 
 use alloy_primitives::B256;
+use base_common_consensus::BaseBlock;
 use futures::StreamExt;
 use reth_config::Config;
 use reth_consensus::FullConsensus;
@@ -17,7 +18,6 @@ use reth_network_p2p::{
     bodies::downloader::BodyDownloader,
     headers::downloader::{HeaderDownloader, SyncTarget},
 };
-use reth_node_api::BlockTy;
 use reth_node_events::node::NodeEvent;
 use reth_provider::{
     BlockNumReader, HeaderProvider, ProviderError, ProviderFactory, RocksDBProviderFactory,
@@ -86,8 +86,8 @@ pub async fn import_blocks_from_file<N>(
     import_config: ImportConfig,
     provider_factory: ProviderFactory<N>,
     config: &Config,
-    executor: impl ConfigureEvm<Primitives = N::Primitives> + 'static,
-    consensus: Arc<impl FullConsensus<N::Primitives> + 'static>,
+    executor: impl ConfigureEvm + 'static,
+    consensus: Arc<impl FullConsensus + 'static>,
     runtime: reth_tasks::Runtime,
 ) -> eyre::Result<ImportResult>
 where
@@ -130,7 +130,7 @@ where
 
     let skip_invalid_blocks = !import_config.fail_on_invalid_block;
     while let Some(file_client) = reader
-        .next_chunk_with_invalid_block_handling::<BlockTy<N>>(
+        .next_chunk_with_invalid_block_handling::<BaseBlock>(
             consensus.clone(),
             Some(sealed_header.clone()),
             skip_invalid_blocks,
@@ -278,16 +278,16 @@ pub fn build_import_pipeline_impl<N, C, E>(
     config: &Config,
     provider_factory: ProviderFactory<N>,
     consensus: &Arc<C>,
-    file_client: Arc<FileClient<BlockTy<N>>>,
+    file_client: Arc<FileClient<BaseBlock>>,
     static_file_producer: StaticFileProducer<ProviderFactory<N>>,
     disable_exec: bool,
     evm_config: E,
     runtime: reth_tasks::Runtime,
-) -> eyre::Result<(Pipeline<N>, impl futures::Stream<Item = NodeEvent<N::Primitives>> + use<N, C, E>)>
+) -> eyre::Result<(Pipeline<N>, impl futures::Stream<Item = NodeEvent> + use<N, C, E>)>
 where
     N: ProviderNodeTypes,
-    C: FullConsensus<N::Primitives> + 'static,
-    E: ConfigureEvm<Primitives = N::Primitives> + 'static,
+    C: FullConsensus + 'static,
+    E: ConfigureEvm + 'static,
 {
     if !file_client.has_canonical_blocks() {
         eyre::bail!("unable to import non canonical blocks");

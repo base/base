@@ -190,17 +190,18 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::BlockHash;
-    use reth_testing_utils::generators::{self, BlockParams, Rng, random_block};
+    use base_common_consensus::BaseBlock;
+    use reth_testing_utils::generators::{self, BlockParams, Rng};
 
     use super::*;
 
     /// Create random block with specified number and parent hash.
-    fn create_block<R: Rng>(
-        rng: &mut R,
-        number: u64,
-        parent: BlockHash,
-    ) -> SealedBlock<reth_ethereum_primitives::Block> {
-        random_block(rng, number, BlockParams { parent: Some(parent), ..Default::default() })
+    fn create_block<R: Rng>(rng: &mut R, number: u64, parent: BlockHash) -> SealedBlock<BaseBlock> {
+        reth_testing_utils::BaseTestData::random_block(
+            rng,
+            number,
+            BlockParams { parent: Some(parent), ..Default::default() },
+        )
     }
 
     /// Assert that all buffer collections have the same data length.
@@ -218,10 +219,7 @@ mod tests {
     }
 
     /// Assert that the block was removed from all buffer collections.
-    fn assert_block_removal<B: Block>(
-        buffer: &BlockBuffer<B>,
-        block: &SealedBlock<reth_ethereum_primitives::Block>,
-    ) {
+    fn assert_block_removal<B: Block>(buffer: &BlockBuffer<B>, block: &SealedBlock<BaseBlock>) {
         assert!(!buffer.blocks.contains_key(&block.hash()));
         assert!(
             buffer

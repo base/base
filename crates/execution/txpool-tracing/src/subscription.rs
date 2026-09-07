@@ -3,7 +3,6 @@
 use std::time::Instant;
 
 use futures::StreamExt;
-use reth_node_api::NodePrimitives;
 use reth_provider::CanonStateNotification;
 use reth_tracing::tracing::debug;
 use reth_transaction_pool::{FullTransactionEvent, TransactionPool};
@@ -15,13 +14,12 @@ use crate::{NonceSlot, tracker::Tracker};
 ///
 /// Monitors transaction lifecycle events and records timing metrics by listening
 /// to canonical state notifications and mempool events.
-pub async fn tracex_subscription<N, Pool>(
-    canonical_stream: BroadcastStream<CanonStateNotification<N>>,
+pub async fn tracex_subscription<Pool>(
+    canonical_stream: BroadcastStream<CanonStateNotification>,
     pool: Pool,
     enable_logs: bool,
     node_role: Option<String>,
 ) where
-    N: NodePrimitives,
     Pool: TransactionPool + 'static,
 {
     debug!(target: "tracex", "Starting transaction tracking subscription");

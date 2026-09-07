@@ -74,8 +74,6 @@ where
     C: Clone + Debug + Send + Sync + Unpin + 'static,
     AO: Clone + Debug + Send + Sync + Unpin + 'static,
 {
-    type Primitives = <N::Types as NodeTypes>::Primitives;
-
     type ChainSpec = <N::Types as NodeTypes>::ChainSpec;
 
     type Storage = <N::Types as NodeTypes>::Storage;

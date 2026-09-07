@@ -9,6 +9,10 @@ use alloy_consensus::{
 use alloy_eips::eip1559::INITIAL_BASE_FEE;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, keccak256};
+use base_common_consensus::{
+    BaseBlock as Block, BaseBlockBody as BlockBody, BaseTxEnvelope as TransactionSigned,
+    BaseTypedTransaction as Transaction,
+};
 use reth_chainspec::{
     ChainSpecBuilder, ChainSpecProvider, EthereumHardfork, ForkCondition, MAINNET,
 };
@@ -24,9 +28,7 @@ use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
-use reth_ethereum_primitives::{Block, BlockBody, Transaction, TransactionSigned};
-use reth_evm::TestEvmConfig;
-use reth_evm::{ConfigureEvm, execute::Executor};
+use reth_evm::{ConfigureEvm, TestEvmConfig, execute::Executor};
 use reth_libmdbx::{Environment, EnvironmentFlags, Mode};
 use reth_network_p2p::{
     bodies::downloader::BodyDownloader,
@@ -51,7 +53,7 @@ use reth_stages::{
 use reth_stages_api::{Pipeline, StageSet};
 use reth_static_file::StaticFileProducer;
 use reth_storage_api::{StorageChangeSetReader, StorageSettings, StorageSettingsCache};
-use reth_testing_utils::generators::{self, generate_key, sign_tx_with_key_pair};
+use reth_testing_utils::generators::{self, generate_key};
 use reth_trie::{HashedPostState, KeccakKeyHasher, StateRoot};
 use reth_trie_db::DatabaseStateRoot;
 use tokio::sync::watch;
@@ -450,7 +452,7 @@ fn setup_selfdestruct_scenario() -> eyre::Result<SelfdestructScenario> {
             // - block 1 (ts=12): writes two storage slots
             // - block 2 (ts=24): triggers SELFDESTRUCT (pre-Cancun semantics)
             // - block 3 (ts=36): post-Cancun no-op transfer path
-            let tx = sign_tx_with_key_pair(
+            let tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
                     chain_id: chain_spec.chain.id(),
@@ -528,7 +530,7 @@ fn setup_create2_selfdestruct_scenario() -> eyre::Result<Create2SelfdestructScen
     init_genesis(&provider_factory)?;
     let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
     let evm_config = TestEvmConfig::new(chain_spec.clone());
-    let tx = sign_tx_with_key_pair(
+    let tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
         key_pair,
         Transaction::Eip1559(TxEip1559 {
             chain_id: chain_spec.chain.id(),
@@ -660,7 +662,7 @@ fn setup_reverted_slot_selfdestruct_scenario() -> eyre::Result<RevertedSlotSelfd
             (2_u64, 18_u64, 1_u64, U256::from(1_u64)),
             (3_u64, 24_u64, 2_u64, U256::from(2_u64)),
         ] {
-            let tx = sign_tx_with_key_pair(
+            let tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
                     chain_id: chain_spec.chain.id(),
@@ -752,7 +754,7 @@ fn setup_same_address_double_wipe_scenario() -> eyre::Result<SameAddressDoubleWi
             (5_u64, 20_u64, 4_u64, TxKind::Call(child_contract), Bytes::new()),
             (6_u64, 24_u64, 5_u64, TxKind::Call(child_contract), Bytes::from(vec![0x01])),
         ] {
-            let tx = sign_tx_with_key_pair(
+            let tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
                     chain_id: chain_spec.chain.id(),
@@ -840,7 +842,7 @@ fn setup_same_address_recreate_and_write_same_block_then_wipe_scenario()
 
         let mut parent_hash = genesis.hash();
         let mk_tx = |nonce: u64, to: TxKind, value: U256, input: Bytes| {
-            sign_tx_with_key_pair(
+            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
                     chain_id: chain_spec.chain.id(),
@@ -994,7 +996,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
         // 2) selfdestruct same contract in same block
         // 3) write->restore->selfdestruct in one tx (`intra_tx_contract`)
         let txs = vec![
-            sign_tx_with_key_pair(
+            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
                     chain_id: chain_spec.chain.id(),
@@ -1008,7 +1010,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
                     ..Default::default()
                 }),
             ),
-            sign_tx_with_key_pair(
+            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
                     chain_id: chain_spec.chain.id(),
@@ -1022,7 +1024,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
                     ..Default::default()
                 }),
             ),
-            sign_tx_with_key_pair(
+            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
                     chain_id: chain_spec.chain.id(),

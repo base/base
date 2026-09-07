@@ -71,27 +71,34 @@ alloy-rpc-types = { workspace = true, features = ["eth"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 alloy-dyn-abi = { workspace = true, features = ["default"] }
+base-execution-txpool = { workspace = true, optional = true }
 revm-inspectors = { workspace = true, features = ["default"] }
 tracing-futures = { workspace = true, features = ["default"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-execution-types = { workspace = true, features = ["serde"] }
 alloy-rpc-types-beacon = { workspace = true, features = ["ssz"] }
 alloy-rpc-types-engine = { workspace = true, features = ["kzg"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-common-rpc-types = { workspace = true, features = ["reth"], optional = true }
 revm = { workspace = true, features = ["optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit"] }
+
 [dev-dependencies]
 reth-db-api = { workspace = true }
 reth-testing-utils = { workspace = true }
+base-execution-txpool = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 reth-evm = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-common-rpc-types = { workspace = true, features = ["reth"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 [features]
+test-utils = ["dep:base-execution-txpool", "dep:base-common-rpc-types", "reth-evm/test-utils"]
 js-tracer = [
     "revm-inspectors/js-tracer",
     "reth-rpc-eth-types/js-tracer",

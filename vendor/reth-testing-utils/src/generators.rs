@@ -301,7 +301,7 @@ type AccountState = (Account, Vec<StorageEntry>);
 ///
 /// Returns a Vec of account and storage changes for each block,
 /// along with the final state of all accounts and storages.
-pub fn random_changeset_range<'a, R: Rng, IBlk, IAcc>(
+pub fn random_changeset_range<R: Rng, IBlk, IAcc>(
     rng: &mut R,
     blocks: IBlk,
     accounts: IAcc,
@@ -309,7 +309,7 @@ pub fn random_changeset_range<'a, R: Rng, IBlk, IAcc>(
     key_range: Range<u64>,
 ) -> (Vec<ChangeSet>, BTreeMap<Address, AccountState>)
 where
-    IBlk: IntoIterator<Item = &'a SealedBlock<Block>>,
+    IBlk: IntoIterator,
     IAcc: IntoIterator<Item = (Address, (Account, Vec<StorageEntry>))>,
 {
     let mut state: BTreeMap<_, _> = accounts

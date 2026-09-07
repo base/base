@@ -2,15 +2,10 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{
-    BlockHeader, TxReceipt,
-    transaction::{TransactionMeta, TxHashRef},
-};
+use alloy_consensus::{BlockHeader, TxReceipt, transaction::TransactionMeta};
 use alloy_primitives::TxHash;
-use reth_primitives_traits::{
-    Block, BlockBody, BlockTy, IndexedTx, NodePrimitives, ReceiptTy, Recovered, RecoveredBlock,
-    SealedBlock,
-};
+use base_common_consensus::{BaseBlock, BaseReceipt};
+use reth_primitives_traits::{Block, BlockBody, IndexedTx, Recovered, RecoveredBlock, SealedBlock};
 use reth_rpc_convert::{RpcConvert, RpcTypes, transaction::ConvertReceiptInput};
 
 use crate::{TransactionSource, utils::calculate_gas_used_and_next_log_index};
@@ -78,31 +73,6 @@ impl<B: Block, R> CachedTransaction<B, R> {
             timestamp: self.block.timestamp(),
         }
     }
-
-    /// Converts this cached transaction into an RPC receipt using the given converter.
-    ///
-    /// Returns `None` if receipts are not available or the transaction index is out of bounds.
-    pub fn into_receipt<N, C>(
-        self,
-        converter: &C,
-    ) -> Option<Result<<C::Network as RpcTypes>::Receipt, C::Error>>
-    where
-        N: NodePrimitives<Block = B, Receipt = R>,
-        R: TxReceipt + Clone,
-        C: RpcConvert<Primitives = N>,
-    {
-        let receipts = self.receipts?;
-        let receipt = receipts.get(self.tx_index)?;
-        let tx_hash = *self.block.body().transactions().get(self.tx_index)?.tx_hash();
-        let tx = self.block.find_indexed(tx_hash)?;
-        convert_transaction_receipt::<N, C>(
-            self.block.as_ref(),
-            receipts.as_ref(),
-            tx,
-            receipt,
-            converter,
-        )
-    }
 }
 
 /// A pair of an [`Arc`] wrapped [`RecoveredBlock`] and its corresponding receipts.
@@ -110,18 +80,18 @@ impl<B: Block, R> CachedTransaction<B, R> {
 /// This type is used throughout the RPC layer to efficiently pass around
 /// blocks with their execution receipts, avoiding unnecessary cloning.
 #[derive(Debug, Clone)]
-pub struct BlockAndReceipts<N: NodePrimitives> {
+pub struct BlockAndReceipts {
     /// The recovered block.
-    pub block: Arc<RecoveredBlock<BlockTy<N>>>,
+    pub block: Arc<RecoveredBlock<BaseBlock>>,
     /// The receipts for the block.
-    pub receipts: Arc<Vec<ReceiptTy<N>>>,
+    pub receipts: Arc<Vec<BaseReceipt>>,
 }
 
-impl<N: NodePrimitives> BlockAndReceipts<N> {
+impl BlockAndReceipts {
     /// Creates a new [`BlockAndReceipts`] instance.
     pub const fn new(
-        block: Arc<RecoveredBlock<BlockTy<N>>>,
-        receipts: Arc<Vec<ReceiptTy<N>>>,
+        block: Arc<RecoveredBlock<BaseBlock>>,
+        receipts: Arc<Vec<BaseReceipt>>,
     ) -> Self {
         Self { block, receipts }
     }
@@ -132,14 +102,14 @@ impl<N: NodePrimitives> BlockAndReceipts<N> {
     pub fn find_transaction_and_receipt_by_hash(
         &self,
         tx_hash: TxHash,
-    ) -> Option<(IndexedTx<'_, N::Block>, &N::Receipt)> {
+    ) -> Option<(IndexedTx<'_, BaseBlock>, &BaseReceipt)> {
         let indexed_tx = self.block.find_indexed(tx_hash)?;
         let receipt = self.receipts.get(indexed_tx.index())?;
         Some((indexed_tx, receipt))
     }
 
     /// Returns the underlying sealed block.
-    pub fn sealed_block(&self) -> &SealedBlock<BlockTy<N>> {
+    pub fn sealed_block(&self) -> &SealedBlock<BaseBlock> {
         self.block.sealed_block()
     }
 
@@ -153,7 +123,7 @@ impl<N: NodePrimitives> BlockAndReceipts<N> {
         converter: &C,
     ) -> Option<Result<<C::Network as RpcTypes>::Receipt, C::Error>>
     where
-        C: RpcConvert<Primitives = N>,
+        C: RpcConvert,
     {
         let (tx, receipt) = self.find_transaction_and_receipt_by_hash(tx_hash)?;
         convert_transaction_receipt(
@@ -167,16 +137,15 @@ impl<N: NodePrimitives> BlockAndReceipts<N> {
 }
 
 /// Converts a transaction and its receipt into the rpc receipt format using the given converter.
-pub fn convert_transaction_receipt<N, C>(
-    block: &RecoveredBlock<BlockTy<N>>,
-    all_receipts: &[ReceiptTy<N>],
-    tx: IndexedTx<'_, BlockTy<N>>,
-    receipt: &ReceiptTy<N>,
+pub fn convert_transaction_receipt<C>(
+    block: &RecoveredBlock<BaseBlock>,
+    all_receipts: &[BaseReceipt],
+    tx: IndexedTx<'_, BaseBlock>,
+    receipt: &BaseReceipt,
     converter: &C,
 ) -> Option<Result<<C::Network as RpcTypes>::Receipt, C::Error>>
 where
-    N: NodePrimitives,
-    C: RpcConvert<Primitives = N>,
+    C: RpcConvert,
 {
     let meta = tx.meta();
     let (gas_used, next_log_index) =
@@ -195,4 +164,29 @@ where
         )
         .map(|mut receipts| receipts.pop())
         .transpose()
+}
+
+impl CachedTransaction<BaseBlock, BaseReceipt> {
+    /// Converts this cached transaction into an RPC receipt using the given converter.
+    ///
+    /// Returns `None` if receipts are not available or the transaction index is out of bounds.
+    pub fn into_receipt<C>(
+        self,
+        converter: &C,
+    ) -> Option<Result<<C::Network as RpcTypes>::Receipt, C::Error>>
+    where
+        C: RpcConvert,
+    {
+        let receipts = self.receipts?;
+        let receipt = receipts.get(self.tx_index)?;
+        let tx_hash = self.block.body().transactions.get(self.tx_index)?.tx_hash();
+        let tx = self.block.find_indexed(tx_hash)?;
+        convert_transaction_receipt::<C>(
+            self.block.as_ref(),
+            receipts.as_ref(),
+            tx,
+            receipt,
+            converter,
+        )
+    }
 }

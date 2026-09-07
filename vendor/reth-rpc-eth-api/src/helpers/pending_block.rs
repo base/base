@@ -19,7 +19,7 @@ use reth_evm::{
     block::TxResult,
     execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput},
 };
-use reth_primitives_traits::{HeaderTy, SealedHeader, transaction::error::InvalidTransactionError};
+use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_types::{
@@ -54,7 +54,7 @@ pub trait LoadPendingBlock:
     /// Returns a handle to the pending block.
     ///
     /// Data access in default (L1) trait method implementations.
-    fn pending_block(&self) -> &Mutex<Option<PendingBlock<Self::Primitives>>>;
+    fn pending_block(&self) -> &Mutex<Option<PendingBlock>>;
 
     /// Returns a [`PendingEnvBuilder`] for the pending block.
     fn pending_env_builder(&self) -> &dyn PendingEnvBuilder<Self::Evm>;
@@ -135,7 +135,7 @@ pub trait LoadPendingBlock:
     /// Returns a mem-pool built pending block.
     fn pool_pending_block(
         &self,
-    ) -> impl Future<Output = Result<Option<PendingBlock<Self::Primitives>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<PendingBlock>, Self::Error>> + Send
     where
         Self: SpawnBlocking,
     {
@@ -161,7 +161,7 @@ pub trait LoadPendingBlock:
         &self,
         parent: SealedHeader<ProviderHeader<Self::Provider>>,
         evm_env: EvmEnvFor<Self::Evm>,
-    ) -> impl Future<Output = Result<Option<PendingBlock<Self::Primitives>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<PendingBlock>, Self::Error>> + Send
     where
         Self: SpawnBlocking,
     {
@@ -210,7 +210,7 @@ pub trait LoadPendingBlock:
     /// Returns the locally built pending block
     fn local_pending_block(
         &self,
-    ) -> impl Future<Output = Result<Option<BlockAndReceipts<Self::Primitives>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<BlockAndReceipts>, Self::Error>> + Send
     where
         Self: SpawnBlocking,
         Self::Pool:
@@ -245,7 +245,7 @@ pub trait LoadPendingBlock:
     fn build_block(
         &self,
         parent: &SealedHeader<ProviderHeader<Self::Provider>>,
-    ) -> Result<ExecutedBlock<Self::Primitives>, Self::Error>
+    ) -> Result<ExecutedBlock, Self::Error>
     where
         Self::Pool:
             TransactionPool<Transaction: PoolTransaction<Consensus = ProviderTx<Self::Provider>>>,
@@ -455,7 +455,7 @@ pub trait PendingEnvBuilder<Evm: ConfigureEvm>: Send + Sync + Unpin + 'static {
     /// EVM environment after construction.
     fn pending_env_attributes(
         &self,
-        parent: &SealedHeader<HeaderTy<Evm::Primitives>>,
+        parent: &SealedHeader<alloy_consensus::Header>,
         block_overrides: Option<&BlockOverrides>,
     ) -> Result<Evm::NextBlockEnvCtx, EthApiError>;
 }
@@ -479,11 +479,11 @@ pub trait BuildPendingEnv<Header> {
 
 impl<Evm> PendingEnvBuilder<Evm> for ()
 where
-    Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<HeaderTy<Evm::Primitives>>>,
+    Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<alloy_consensus::Header>>,
 {
     fn pending_env_attributes(
         &self,
-        parent: &SealedHeader<HeaderTy<Evm::Primitives>>,
+        parent: &SealedHeader<alloy_consensus::Header>,
         block_overrides: Option<&BlockOverrides>,
     ) -> Result<Evm::NextBlockEnvCtx, EthApiError> {
         Ok(Evm::NextBlockEnvCtx::build_pending_env(parent, block_overrides))

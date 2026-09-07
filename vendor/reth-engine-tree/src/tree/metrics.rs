@@ -634,8 +634,8 @@ pub(crate) struct BlockBufferMetrics {
 #[cfg(test)]
 mod tests {
     use alloy_eips::eip7685::Requests;
+    use base_common_consensus::BaseReceipt;
     use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
-    use reth_ethereum_primitives::Receipt;
     use reth_execution_types::BlockExecutionResult;
     use reth_revm::db::BundleState;
 
@@ -658,7 +658,7 @@ mod tests {
         metrics.executor.gas_per_second.set(0.0);
         metrics.executor.gas_used_histogram.record(0.0);
 
-        let output = BlockExecutionOutput::<Receipt> {
+        let output = BlockExecutionOutput::<BaseReceipt> {
             state: BundleState::default(),
             result: BlockExecutionResult {
                 receipts: vec![],

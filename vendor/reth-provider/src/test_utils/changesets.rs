@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 
 use reth_db_api::models::{AccountBeforeTx, StorageBeforeTx};
-use reth_node_types::NodePrimitives;
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_errors::provider::ProviderResult;
 
@@ -20,10 +19,7 @@ pub struct TestChangesets {
 
 impl TestChangesets {
     /// Writes the fixture, including empty blocks between changesets.
-    pub fn write_to<N: NodePrimitives>(
-        mut self,
-        provider: &StaticFileProvider<N>,
-    ) -> ProviderResult<()> {
+    pub fn write_to(mut self, provider: &StaticFileProvider) -> ProviderResult<()> {
         let last =
             self.accounts.keys().chain(self.storage.keys()).copied().max().unwrap_or_default();
         let mut accounts = provider.latest_writer(StaticFileSegment::AccountChangeSets)?;

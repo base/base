@@ -24,6 +24,7 @@ reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 reth-ethereum-primitives = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde_with = { workspace = true, features = ["macros"], optional = true }
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
@@ -32,6 +33,7 @@ arbitrary = { workspace = true }
 bincode_1_3_3 = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
+base-common-consensus = { workspace = true, features = ["arbitrary"] }
 reth-ethereum-primitives = { workspace = true, features = ["arbitrary"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils", "arbitrary"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand", "arbitrary"] }

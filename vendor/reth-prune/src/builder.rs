@@ -1,13 +1,12 @@
 use std::time::Duration;
 
 use reth_config::PruneConfig;
-use reth_db_api::{table::Value, transaction::DbTxMut};
+use reth_db_api::transaction::DbTxMut;
 use reth_exex_types::FinishedExExHeight;
-use reth_primitives_traits::NodePrimitives;
 use reth_provider::{
-    BlockReader, ChainStateBlockReader, DBProvider, DatabaseProviderFactory,
-    NodePrimitivesProvider, PruneCheckpointReader, PruneCheckpointWriter, RocksDBProviderFactory,
-    StageCheckpointReader, StaticFileProviderFactory, providers::StaticFileProvider,
+    BlockReader, ChainStateBlockReader, DBProvider, DatabaseProviderFactory, PruneCheckpointReader,
+    PruneCheckpointWriter, RocksDBProviderFactory, StageCheckpointReader,
+    StaticFileProviderFactory, providers::StaticFileProvider,
 };
 use reth_prune_types::PruneModes;
 use reth_storage_api::{ChangeSetReader, StorageChangeSetReader, StorageSettingsCache};
@@ -94,12 +93,8 @@ impl PrunerBuilder {
                                 + ChangeSetReader
                                 + StorageChangeSetReader
                                 + RocksDBProviderFactory
-                                + StaticFileProviderFactory<
-                    Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-                >,
-            > + StaticFileProviderFactory<
-                Primitives = <PF::ProviderRW as NodePrimitivesProvider>::Primitives,
-            >,
+                                + StaticFileProviderFactory,
+            > + StaticFileProviderFactory,
     {
         let segments =
             SegmentSet::from_components(provider_factory.static_file_provider(), self.segments);
@@ -119,14 +114,10 @@ impl PrunerBuilder {
     }
 
     /// Builds a [Pruner] from the current configuration with the given static file provider.
-    pub fn build<Provider>(
-        self,
-        static_file_provider: StaticFileProvider<Provider::Primitives>,
-    ) -> Pruner<Provider, ()>
+    pub fn build<Provider>(self, static_file_provider: StaticFileProvider) -> Pruner<Provider, ()>
     where
-        Provider: StaticFileProviderFactory<
-                Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-            > + DBProvider<Tx: DbTxMut>
+        Provider: StaticFileProviderFactory
+            + DBProvider<Tx: DbTxMut>
             + BlockReader
             + ChainStateBlockReader
             + PruneCheckpointWriter

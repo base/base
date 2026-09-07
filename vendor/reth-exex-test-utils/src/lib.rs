@@ -16,6 +16,8 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_execution_txpool::BasePooledTransaction;
 use futures_util::FutureExt;
 use reth_chainspec::{ChainSpec, MAINNET};
 use reth_consensus::test_utils::TestConsensus;
@@ -27,11 +29,13 @@ use reth_db::{
 };
 use reth_db_common::init::init_genesis;
 use reth_engine_primitives::TestEngineTypes;
-use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::MockEvmConfig;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
-use reth_network::{NetworkConfigBuilder, NetworkHandle, NetworkManager, config::rng_secret_key};
+use reth_network::{
+    NetworkConfigBuilder, NetworkHandle, NetworkManager, config::rng_secret_key,
+    types::BasicNetworkPrimitives,
+};
 use reth_node_api::{FullNodeTypesAdapter, NodeTypes, NodeTypesWithDBAdapter};
 use reth_node_builder::{NodeAdapter, components::Components};
 use reth_node_core::node_config::NodeConfig;
@@ -42,7 +46,9 @@ use reth_provider::{
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
 use reth_tasks::Runtime;
-use reth_transaction_pool::test_utils::{TestPool, testing_pool};
+use reth_transaction_pool::{
+    CoinbaseTipOrdering, Pool, blobstore::InMemoryBlobStore, noop::MockTransactionValidator,
+};
 use tempfile::TempDir;
 use thiserror::Error;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
@@ -52,9 +58,8 @@ use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 pub struct TestNode;
 
 impl NodeTypes for TestNode {
-    type Primitives = EthPrimitives;
     type ChainSpec = ChainSpec;
-    type Storage = EthStorage;
+    type Storage = EthStorage<BaseTxEnvelope>;
     type Payload = TestEngineTypes;
 }
 
@@ -70,7 +75,17 @@ pub type TestFullNodeTypes = FullNodeTypesAdapter<
 /// Components needed by an execution extension, without a node launcher or RPC addons.
 pub type Adapter = NodeAdapter<
     TestFullNodeTypes,
-    Components<TestFullNodeTypes, NetworkHandle, TestPool, MockEvmConfig, Arc<TestConsensus>>,
+    Components<
+        TestFullNodeTypes,
+        NetworkHandle<BasicNetworkPrimitives<base_common_consensus::BasePooledTransaction>>,
+        Pool<
+            MockTransactionValidator<BasePooledTransaction>,
+            CoinbaseTipOrdering<BasePooledTransaction>,
+            InMemoryBlobStore,
+        >,
+        MockEvmConfig,
+        Arc<TestConsensus>,
+    >,
 >;
 /// An [`ExExContext`] using the [`Adapter`] type.
 pub type TestExExContext = ExExContext<Adapter>;
@@ -79,7 +94,7 @@ pub type TestExExContext = ExExContext<Adapter>;
 #[derive(Debug)]
 pub struct TestExExHandle {
     /// Genesis block that was inserted into the storage
-    pub genesis: RecoveredBlock<reth_ethereum_primitives::Block>,
+    pub genesis: RecoveredBlock<BaseBlock>,
     /// Provider Factory for accessing the emphemeral storage of the host node
     pub provider_factory: ProviderFactory<NodeTypesWithDBAdapter<TestNode, TmpDB>>,
     /// Channel for receiving events from the Execution Extension
@@ -151,7 +166,12 @@ impl TestExExHandle {
 pub async fn test_exex_context_with_chain_spec(
     chain_spec: Arc<ChainSpec>,
 ) -> eyre::Result<(ExExContext<Adapter>, TestExExHandle)> {
-    let transaction_pool = testing_pool();
+    let transaction_pool = Pool::new(
+        MockTransactionValidator::default(),
+        CoinbaseTipOrdering::default(),
+        InMemoryBlobStore::default(),
+        Default::default(),
+    );
     let evm_config = MockEvmConfig::default();
     let consensus = Arc::new(TestConsensus::default());
 

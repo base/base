@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use reth_exex_types::ExExHead;
-use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes, PrimitivesTy};
+use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_node_core::node_config::NodeConfig;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_provider::BlockReader;
@@ -62,10 +62,10 @@ impl<Node> ExExContext<Node>
 where
     Node: FullNodeComponents,
     Node::Provider: Debug + BlockReader,
-    Node::Types: NodeTypes<Primitives: NodePrimitives>,
+    Node::Types: NodeTypes,
 {
     /// Returns dynamic version of the context
-    pub fn into_dyn(self) -> ExExContextDyn<PrimitivesTy<Node::Types>> {
+    pub fn into_dyn(self) -> ExExContextDyn {
         ExExContextDyn::from(self)
     }
 }
@@ -73,7 +73,7 @@ where
 impl<Node> ExExContext<Node>
 where
     Node: FullNodeComponents,
-    Node::Types: NodeTypes<Primitives: NodePrimitives>,
+    Node::Types: NodeTypes,
 {
     /// Returns the transaction pool of the node.
     pub fn pool(&self) -> &Node::Pool {

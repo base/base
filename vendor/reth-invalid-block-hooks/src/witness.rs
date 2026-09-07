@@ -3,10 +3,11 @@ use std::{collections::BTreeMap, fmt::Debug, fs::File, io::Write, path::PathBuf}
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;
 use reth_evm::{ConfigureEvm, execute::Executor};
-use reth_primitives_traits::{NodePrimitives, RecoveredBlock, SealedHeader};
+use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_provider::{BlockExecutionOutput, StateProvider, StateProviderBox, StateProviderFactory};
 use reth_revm::{
     database::StateProviderDatabase,
@@ -205,17 +206,16 @@ impl<P, E> InvalidBlockWitnessHook<P, E> {
     }
 }
 
-impl<P, E, N> InvalidBlockWitnessHook<P, E>
+impl<P, E> InvalidBlockWitnessHook<P, E>
 where
     P: StateProviderFactory + Send + Sync + 'static,
-    E: ConfigureEvm<Primitives = N> + 'static,
-    N: NodePrimitives,
+    E: ConfigureEvm + 'static,
 {
     /// Re-executes the block and collects execution data
     fn re_execute_block(
         &self,
-        parent_header: &SealedHeader<N::BlockHeader>,
-        block: &RecoveredBlock<N::Block>,
+        parent_header: &SealedHeader<alloy_consensus::Header>,
+        block: &RecoveredBlock<BaseBlock>,
     ) -> eyre::Result<(ExecutionWitness, BundleState)> {
         let mut executor = self.evm_config.batch_executor(StateProviderDatabase::new(
             self.provider.state_by_block_hash(parent_header.hash())?,
@@ -302,8 +302,8 @@ where
     /// Validates state root and trie updates after re-execution
     fn validate_state_root_and_trie(
         &self,
-        parent_header: &SealedHeader<N::BlockHeader>,
-        block: &RecoveredBlock<N::Block>,
+        parent_header: &SealedHeader<alloy_consensus::Header>,
+        block: &RecoveredBlock<BaseBlock>,
         bundle_state: &BundleState,
         trie_updates: Option<(&TrieUpdates, B256)>,
         block_prefix: &str,
@@ -348,9 +348,9 @@ where
 
     fn on_invalid_block(
         &self,
-        parent_header: &SealedHeader<N::BlockHeader>,
-        block: &RecoveredBlock<N::Block>,
-        output: &BlockExecutionOutput<N::Receipt>,
+        parent_header: &SealedHeader<alloy_consensus::Header>,
+        block: &RecoveredBlock<BaseBlock>,
+        output: &BlockExecutionOutput<BaseReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,
     ) -> eyre::Result<()> {
         // TODO(alexey): unify with `DebugApi::debug_execution_witness`
@@ -395,16 +395,16 @@ where
     }
 }
 
-impl<P, E, N: NodePrimitives> InvalidBlockHook<N> for InvalidBlockWitnessHook<P, E>
+impl<P, E> InvalidBlockHook for InvalidBlockWitnessHook<P, E>
 where
     P: StateProviderFactory + Send + Sync + 'static,
-    E: ConfigureEvm<Primitives = N> + 'static,
+    E: ConfigureEvm + 'static,
 {
     fn on_invalid_block(
         &self,
-        parent_header: &SealedHeader<N::BlockHeader>,
-        block: &RecoveredBlock<N::Block>,
-        output: &BlockExecutionOutput<N::Receipt>,
+        parent_header: &SealedHeader<alloy_consensus::Header>,
+        block: &RecoveredBlock<BaseBlock>,
+        output: &BlockExecutionOutput<BaseReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,
     ) {
         if let Err(err) = self.on_invalid_block(parent_header, block, output, trie_updates) {
@@ -418,14 +418,13 @@ mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Address, B256, Bytes, U256, map::HashMap};
     use reth_chainspec::ChainSpec;
-    use reth_ethereum_primitives::EthPrimitives;
     use reth_evm::TestEvmConfig;
     use reth_provider::test_utils::MockEthProvider;
     use reth_revm::{
         db::{BundleAccount, BundleState},
         test_utils::StateProviderTest,
     };
-    use reth_testing_utils::generators::{self, BlockParams, random_block, random_eoa_accounts};
+    use reth_testing_utils::generators::{self, BlockParams, random_eoa_accounts};
     use revm::{bytecode::Bytecode, database::states::reverts::AccountRevert};
     use tempfile::TempDir;
 
@@ -580,7 +579,7 @@ mod tests {
         let parent_header = generators::random_header(&mut rng, 1, None);
 
         // Create a random block that inherits from the parent header
-        let recovered_block = random_block(
+        let recovered_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             2, // block number
             BlockParams {
@@ -599,15 +598,12 @@ mod tests {
     }
 
     /// Creates test `InvalidBlockWitnessHook` with temporary directory
-    fn create_test_hook() -> (
-        InvalidBlockWitnessHook<MockEthProvider<EthPrimitives, ChainSpec>, TestEvmConfig>,
-        PathBuf,
-        TempDir,
-    ) {
+    fn create_test_hook()
+    -> (InvalidBlockWitnessHook<MockEthProvider<ChainSpec>, TestEvmConfig>, PathBuf, TempDir) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let output_directory = temp_dir.path().to_path_buf();
 
-        let provider = MockEthProvider::<EthPrimitives, ChainSpec>::default();
+        let provider = MockEthProvider::<ChainSpec>::default();
         let evm_config = TestEvmConfig::default();
 
         let hook =
@@ -795,7 +791,7 @@ mod tests {
         // Generate test data
         let mut rng = generators::rng();
         let parent_header = generators::random_header(&mut rng, 1, None);
-        let recovered_block = random_block(
+        let recovered_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             2,
             BlockParams {
@@ -830,7 +826,7 @@ mod tests {
         // Generate test data
         let mut rng = generators::rng();
         let parent_header = generators::random_header(&mut rng, 1, None);
-        let recovered_block = random_block(
+        let recovered_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             2,
             BlockParams {
@@ -976,7 +972,7 @@ mod tests {
 
         let mut rng = generators::rng();
         let parent_header = generators::random_header(&mut rng, 1, None);
-        let recovered_block = random_block(
+        let recovered_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             2,
             BlockParams {
@@ -1008,7 +1004,7 @@ mod tests {
 
         // Create a realistic block scenario
         let parent_header = generators::random_header(&mut rng, 100, None);
-        let invalid_block = random_block(
+        let invalid_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             101,
             BlockParams {
@@ -1045,7 +1041,7 @@ mod tests {
 
         // Create test data
         let parent_header = generators::random_header(&mut rng, 50, None);
-        let _invalid_block = random_block(
+        let _invalid_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             51,
             BlockParams {

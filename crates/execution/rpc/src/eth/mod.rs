@@ -24,7 +24,7 @@ use eyre::WrapErr;
 pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
 use reth_chainspec::{EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
-use reth_node_api::{FullNodeComponents, FullNodeTypes, HeaderTy, NodeTypes};
+use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
@@ -111,7 +111,7 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
 impl<N, Rpc> EthApiTypes for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     type Error = BaseEthApiError;
     type NetworkTypes = Rpc::Network;
@@ -125,9 +125,8 @@ where
 impl<N, Rpc> RpcNodeCore for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives>,
+    Rpc: RpcConvert,
 {
-    type Primitives = N::Primitives;
     type Provider = N::Provider;
     type Pool = N::Pool;
     type Evm = N::Evm;
@@ -157,10 +156,10 @@ where
 impl<N, Rpc> RpcNodeCoreExt for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives>,
+    Rpc: RpcConvert,
 {
     #[inline]
-    fn cache(&self) -> &EthStateCache<N::Primitives> {
+    fn cache(&self) -> &EthStateCache {
         self.inner.eth_api.cache()
     }
 }
@@ -168,7 +167,7 @@ where
 impl<N, Rpc> EthApiSpec for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     #[inline]
     fn starting_block(&self) -> U256 {
@@ -179,7 +178,7 @@ where
 impl<N, Rpc> SpawnBlocking for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     #[inline]
     fn io_task_spawner(&self) -> &Runtime {
@@ -206,7 +205,7 @@ impl<N, Rpc> LoadFee for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     #[inline]
     fn gas_oracle(&self) -> &GasPriceOracle<Self::Provider> {
@@ -231,7 +230,7 @@ where
 impl<N, Rpc> LoadState for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives>,
+    Rpc: RpcConvert,
     Self: LoadPendingBlock,
 {
 }
@@ -239,7 +238,7 @@ where
 impl<N, Rpc> EthState for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
     Self: LoadPendingBlock,
 {
     #[inline]
@@ -252,7 +251,7 @@ impl<N, Rpc> EthFees for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }
 
@@ -260,7 +259,7 @@ impl<N, Rpc> Trace for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
+    Rpc: RpcConvert<Error = BaseEthApiError, Evm = N::Evm>,
 {
 }
 
@@ -268,7 +267,7 @@ impl<N, Rpc> GetBlockAccessList for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
+    Rpc: RpcConvert<Error = BaseEthApiError, Evm = N::Evm>,
 {
 }
 
@@ -378,7 +377,7 @@ impl<NetworkT> BaseEthApiBuilder<NetworkT> {
 impl<N, NetworkT> EthApiBuilder<N> for BaseEthApiBuilder<NetworkT>
 where
     N: FullNodeComponents<
-            Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<HeaderTy<N::Types>>>,
+            Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<alloy_consensus::Header>>,
             Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>,
         >,
     NetworkT: RpcTypes,

@@ -5,6 +5,10 @@ use std::sync::Arc;
 use alloy_consensus::{BlockHeader, Header, SignableTransaction, TxEip2930, constants::ETH_TO_WEI};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
+use base_common_consensus::{
+    BaseBlock as Block, BaseBlockBody as BlockBody, BaseReceipt as Receipt,
+    BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction,
+};
 use base_execution_trie::{
     BaseProofsStorage, BaseProofsStorageError, RocksdbProofsStorage, initialize::InitializationJob,
     live::LiveTrieCollector,
@@ -13,10 +17,8 @@ use derive_more::Constructor;
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN_TRANSACTION_GAS};
 use reth_db::Database;
 use reth_db_common::init::init_genesis;
-use reth_ethereum_primitives::{Block, BlockBody, Receipt, Transaction, TransactionSigned};
-use reth_evm::TestEvmConfig;
-use reth_evm::{ConfigureEvm, execute::Executor};
-use reth_node_api::{NodePrimitives, NodeTypesWithDB};
+use reth_evm::{ConfigureEvm, TestEvmConfig, execute::Executor};
+use reth_node_api::NodeTypesWithDB;
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
 use reth_provider::{
     BlockWriter as _, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef,
@@ -156,9 +158,7 @@ fn execute_block<N>(
     chain_spec: &Arc<ChainSpec>,
 ) -> eyre::Result<reth_evm::execute::BlockExecutionOutput<Receipt>>
 where
-    N: ProviderNodeTypes<
-            Primitives: NodePrimitives<Block = Block, BlockBody = BlockBody, Receipt = Receipt>,
-        > + NodeTypesWithDB,
+    N: ProviderNodeTypes + NodeTypesWithDB,
 {
     let provider = provider_factory.provider()?;
     let db = StateProviderDatabase::new(LatestStateProviderRef::new(&provider));
@@ -183,9 +183,7 @@ fn commit_block_to_database<N>(
     provider_factory: &ProviderFactory<N>,
 ) -> eyre::Result<()>
 where
-    N: ProviderNodeTypes<
-            Primitives: NodePrimitives<Block = Block, BlockBody = BlockBody, Receipt = Receipt>,
-        > + NodeTypesWithDB,
+    N: ProviderNodeTypes + NodeTypesWithDB,
 {
     let execution_outcome = ExecutionOutcome {
         bundle: execution_output.state.clone(),
@@ -221,9 +219,7 @@ fn run_test_scenario<N>(
     storage: BaseProofsStorage<Arc<RocksdbProofsStorage>>,
 ) -> eyre::Result<()>
 where
-    N: ProviderNodeTypes<
-            Primitives: NodePrimitives<Block = Block, BlockBody = BlockBody, Receipt = Receipt>,
-        > + NodeTypesWithDB,
+    N: ProviderNodeTypes + NodeTypesWithDB,
 {
     let genesis_hash = chain_spec.genesis_hash();
     let mut nonce_counter = 0u64;

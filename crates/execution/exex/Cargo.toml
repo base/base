@@ -30,6 +30,7 @@ reth-primitives-traits = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 reth-node-builder = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 reth-ethereum-primitives = { workspace = true, features = ["default"] }

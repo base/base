@@ -35,8 +35,9 @@ derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
 alloy-rpc-types-engine = { workspace = true, optional = true }
-reth-ethereum-primitives = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-common-consensus = { workspace = true, features = ["reth", "evm"] }
+
 [dev-dependencies]
 reth-ethereum-primitives = { workspace = true }
 [features]
@@ -56,7 +57,6 @@ std = [
     "derive_more/std",
     "reth-storage-api/std",
     "reth-trie-common/std",
-    "reth-ethereum-primitives?/std",
     "alloy-eip7928/std",
     "fixed-cache/std",
 ]
@@ -67,5 +67,4 @@ test-utils = [
     "dep:alloy-rpc-types-engine",
     "reth-primitives-traits/test-utils",
     "reth-trie-common/test-utils",
-    "reth-ethereum-primitives/test-utils",
 ]

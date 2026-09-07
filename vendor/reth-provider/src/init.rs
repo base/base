@@ -10,8 +10,8 @@ use reth_db::{
 use tracing::trace;
 
 use crate::{
-    ChainSpecProvider, DBProvider, EitherWriter, HistoryWriter, NodePrimitivesProvider,
-    ProviderResult, RocksDBProviderFactory, StorageSettingsCache,
+    ChainSpecProvider, DBProvider, EitherWriter, HistoryWriter, ProviderResult,
+    RocksDBProviderFactory, StorageSettingsCache,
 };
 
 /// Inserts history indices for genesis accounts and storage.
@@ -27,8 +27,7 @@ where
         + HistoryWriter
         + ChainSpecProvider
         + StorageSettingsCache
-        + RocksDBProviderFactory
-        + NodePrimitivesProvider,
+        + RocksDBProviderFactory,
 {
     let genesis_block_number = provider.chain_spec().genesis_header().number();
     insert_history(provider, alloc, genesis_block_number)
@@ -44,8 +43,7 @@ where
         + HistoryWriter
         + ChainSpecProvider
         + StorageSettingsCache
-        + RocksDBProviderFactory
-        + NodePrimitivesProvider,
+        + RocksDBProviderFactory,
 {
     let genesis_block_number = provider.chain_spec().genesis_header().number();
     insert_account_history(provider, alloc, genesis_block_number)
@@ -61,8 +59,7 @@ where
         + HistoryWriter
         + ChainSpecProvider
         + StorageSettingsCache
-        + RocksDBProviderFactory
-        + NodePrimitivesProvider,
+        + RocksDBProviderFactory,
 {
     let genesis_block_number = provider.chain_spec().genesis_header().number();
     insert_storage_history(provider, alloc, genesis_block_number)
@@ -78,11 +75,8 @@ pub fn insert_history<'a, 'b, Provider>(
     block: u64,
 ) -> ProviderResult<()>
 where
-    Provider: DBProvider<Tx: DbTxMut>
-        + HistoryWriter
-        + StorageSettingsCache
-        + RocksDBProviderFactory
-        + NodePrimitivesProvider,
+    Provider:
+        DBProvider<Tx: DbTxMut> + HistoryWriter + StorageSettingsCache + RocksDBProviderFactory,
 {
     insert_account_history(provider, alloc.clone(), block)?;
     insert_storage_history(provider, alloc, block)?;
@@ -96,11 +90,8 @@ pub fn insert_account_history<'a, 'b, Provider>(
     block: u64,
 ) -> ProviderResult<()>
 where
-    Provider: DBProvider<Tx: DbTxMut>
-        + HistoryWriter
-        + StorageSettingsCache
-        + RocksDBProviderFactory
-        + NodePrimitivesProvider,
+    Provider:
+        DBProvider<Tx: DbTxMut> + HistoryWriter + StorageSettingsCache + RocksDBProviderFactory,
 {
     provider.with_rocksdb_batch(|batch| {
         let mut writer = EitherWriter::new_accounts_history(provider, batch)?;
@@ -122,11 +113,8 @@ pub fn insert_storage_history<'a, 'b, Provider>(
     block: u64,
 ) -> ProviderResult<()>
 where
-    Provider: DBProvider<Tx: DbTxMut>
-        + HistoryWriter
-        + StorageSettingsCache
-        + RocksDBProviderFactory
-        + NodePrimitivesProvider,
+    Provider:
+        DBProvider<Tx: DbTxMut> + HistoryWriter + StorageSettingsCache + RocksDBProviderFactory,
 {
     provider.with_rocksdb_batch(|batch| {
         let mut writer = EitherWriter::new_storages_history(provider, batch)?;

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{B256, BlockNumber};
+use base_common_consensus::BaseBlock;
 use reth_config::{PruneConfig, config::StageConfig};
 use reth_consensus::FullConsensus;
 use reth_downloaders::{
@@ -14,7 +15,6 @@ use reth_exex::ExExManagerHandle;
 use reth_network_p2p::{
     BlockClient, bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader,
 };
-use reth_node_api::HeaderTy;
 use reth_provider::{ProviderFactory, providers::ProviderNodeTypes};
 use reth_stages::{Pipeline, StageId, StageSet, prelude::DefaultStages, stages::ExecutionStage};
 use reth_static_file::StaticFileProducer;
@@ -22,14 +22,12 @@ use reth_tasks::TaskExecutor;
 use reth_tracing::tracing::debug;
 use tokio::sync::watch;
 
-use crate::BlockTy;
-
 /// Constructs a [Pipeline] that's wired to the network
 #[expect(clippy::too_many_arguments)]
 pub fn build_networked_pipeline<N, Client, Evm>(
     config: &StageConfig,
     client: Client,
-    consensus: Arc<dyn FullConsensus<N::Primitives>>,
+    consensus: Arc<dyn FullConsensus>,
     provider_factory: ProviderFactory<N>,
     task_executor: &TaskExecutor,
     metrics_tx: reth_stages::MetricEventsSender,
@@ -37,13 +35,13 @@ pub fn build_networked_pipeline<N, Client, Evm>(
     max_block: Option<BlockNumber>,
     static_file_producer: StaticFileProducer<ProviderFactory<N>>,
     evm_config: Evm,
-    exex_manager_handle: ExExManagerHandle<N::Primitives>,
+    exex_manager_handle: ExExManagerHandle,
     disabled_stages: &[StageId],
 ) -> eyre::Result<Pipeline<N>>
 where
     N: ProviderNodeTypes,
-    Client: BlockClient<Block = BlockTy<N>> + 'static,
-    Evm: ConfigureEvm<Primitives = N::Primitives> + 'static,
+    Client: BlockClient<Block = BaseBlock> + 'static,
+    Evm: ConfigureEvm + 'static,
 {
     // building network downloaders using the fetch client
     let header_downloader = ReverseHeadersDownloaderBuilder::new(config.headers)
@@ -79,20 +77,20 @@ pub fn build_pipeline<N, H, B, Evm>(
     stage_config: &StageConfig,
     header_downloader: H,
     body_downloader: B,
-    consensus: Arc<dyn FullConsensus<N::Primitives>>,
+    consensus: Arc<dyn FullConsensus>,
     max_block: Option<u64>,
     metrics_tx: reth_stages::MetricEventsSender,
     prune_config: PruneConfig,
     static_file_producer: StaticFileProducer<ProviderFactory<N>>,
     evm_config: Evm,
-    exex_manager_handle: ExExManagerHandle<N::Primitives>,
+    exex_manager_handle: ExExManagerHandle,
     disabled_stages: &[StageId],
 ) -> eyre::Result<Pipeline<N>>
 where
     N: ProviderNodeTypes,
-    H: HeaderDownloader<Header = HeaderTy<N>> + 'static,
-    B: BodyDownloader<Block = BlockTy<N>> + 'static,
-    Evm: ConfigureEvm<Primitives = N::Primitives> + 'static,
+    H: HeaderDownloader<Header = alloy_consensus::Header> + 'static,
+    B: BodyDownloader<Block = BaseBlock> + 'static,
+    Evm: ConfigureEvm + 'static,
 {
     let mut builder = Pipeline::<N>::builder();
 

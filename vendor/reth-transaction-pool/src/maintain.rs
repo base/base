@@ -14,6 +14,7 @@ use alloy_primitives::{
     map::{AddressSet, HashSet},
 };
 use alloy_rlp::Encodable;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use futures_util::{
     FutureExt, Stream, StreamExt,
     future::{BoxFuture, Fuse, FusedFuture},
@@ -22,9 +23,7 @@ use reth_chain_state::CanonStateNotification;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_execution_types::ChangedAccount;
 use reth_fs_util::FsPathError;
-use reth_primitives_traits::{
-    NodePrimitives, SealedHeader, transaction::signed::SignedTransaction,
-};
+use reth_primitives_traits::{SealedHeader, transaction::signed::SignedTransaction};
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory, errors::provider::ProviderError};
 use reth_tasks::Runtime;
 use serde::{Deserialize, Serialize};
@@ -97,7 +96,7 @@ impl LocalTransactionBackupConfig {
 }
 
 /// Returns a spawnable future for maintaining the state of the transaction pool.
-pub fn maintain_transaction_pool_future<N, Client, P, St>(
+pub fn maintain_transaction_pool_future<Client, P, St>(
     client: Client,
     pool: P,
     events: St,
@@ -105,15 +104,17 @@ pub fn maintain_transaction_pool_future<N, Client, P, St>(
     config: MaintainPoolConfig,
 ) -> BoxFuture<'static, ()>
 where
-    N: NodePrimitives,
     Client: StateProviderFactory
-        + BlockReaderIdExt<Header = N::BlockHeader>
-        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = N::BlockHeader> + EthereumHardforks>
-        + Clone
+        + BlockReaderIdExt<Header = alloy_consensus::Header>
+        + ChainSpecProvider<
+            ChainSpec: EthChainSpec<Header = alloy_consensus::Header> + EthereumHardforks,
+        > + Clone
         + 'static,
-    P: TransactionPoolExt<Transaction: PoolTransaction<Consensus = N::SignedTx>, Block = N::Block>
-        + 'static,
-    St: Stream<Item = CanonStateNotification<N>> + Send + Unpin + 'static,
+    P: TransactionPoolExt<
+            Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
+            Block = BaseBlock,
+        > + 'static,
+    St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
 {
     async move {
         maintain_transaction_pool(client, pool, events, task_spawner, config).await;
@@ -124,22 +125,24 @@ where
 /// Maintains the state of the transaction pool by handling new blocks and reorgs.
 ///
 /// This listens for any new blocks and reorgs and updates the transaction pool's state accordingly
-pub async fn maintain_transaction_pool<N, Client, P, St>(
+pub async fn maintain_transaction_pool<Client, P, St>(
     client: Client,
     pool: P,
     mut events: St,
     task_spawner: Runtime,
     config: MaintainPoolConfig,
 ) where
-    N: NodePrimitives,
     Client: StateProviderFactory
-        + BlockReaderIdExt<Header = N::BlockHeader>
-        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = N::BlockHeader> + EthereumHardforks>
-        + Clone
+        + BlockReaderIdExt<Header = alloy_consensus::Header>
+        + ChainSpecProvider<
+            ChainSpec: EthChainSpec<Header = alloy_consensus::Header> + EthereumHardforks,
+        > + Clone
         + 'static,
-    P: TransactionPoolExt<Transaction: PoolTransaction<Consensus = N::SignedTx>, Block = N::Block>
-        + 'static,
-    St: Stream<Item = CanonStateNotification<N>> + Send + Unpin + 'static,
+    P: TransactionPoolExt<
+            Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
+            Block = BaseBlock,
+        > + 'static,
+    St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
 {
     let metrics = MaintainPoolMetrics::default();
     let MaintainPoolConfig { max_update_depth, max_reload_accounts, .. } = config;
@@ -436,7 +439,7 @@ pub async fn maintain_transaction_pool<N, Client, P, St>(
                 let _ = pool.add_external_transactions(pruned_old_transactions).await;
 
                 // keep track of new mined blob transactions
-                blob_store_tracker.add_new_chain_blocks(&new_blocks);
+                blob_store_tracker.add_new_chain_blocks(new_blocks.iter().map(|(_, block)| block));
             }
             CanonStateNotification::Commit { new } => {
                 let (blocks, state) = new.inner();
@@ -476,7 +479,7 @@ pub async fn maintain_transaction_pool<N, Client, P, St>(
                     pool.set_block_info(info);
 
                     // keep track of mined blob transactions
-                    blob_store_tracker.add_new_chain_blocks(&blocks);
+                    blob_store_tracker.add_new_chain_blocks(blocks.iter().map(|(_, block)| block));
 
                     continue;
                 }
@@ -510,7 +513,7 @@ pub async fn maintain_transaction_pool<N, Client, P, St>(
                 pool.on_canonical_state_change(update);
 
                 // keep track of mined blob transactions
-                blob_store_tracker.add_new_chain_blocks(&blocks);
+                blob_store_tracker.add_new_chain_blocks(blocks.iter().map(|(_, block)| block));
 
                 // If Osaka activates in 2 slots we need to convert blobs to new format.
                 if !chain_spec.is_osaka_active_at_timestamp(tip.timestamp())

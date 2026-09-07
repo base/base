@@ -28,6 +28,7 @@ jsonrpsee-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-evm = { workspace = true, features = ["rpc"] }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 serde_json = { workspace = true, features = ["alloc"] }

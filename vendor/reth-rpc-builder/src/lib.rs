@@ -19,7 +19,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use core::marker::PhantomData;
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -29,6 +28,7 @@ use std::{
 
 use alloy_network::{Ethereum, IntoWallet};
 use alloy_provider::{Provider, ProviderBuilder, fillers::RecommendedFillers};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 pub use cors::CorsDomainError;
 use error::{ConflictingModules, RpcError, ServerKind};
 use http::{HeaderMap, header::AUTHORIZATION};
@@ -51,7 +51,6 @@ pub use reth_ipc::server::{
 };
 use reth_network_api::{NetworkInfo, Peers, noop::NoopNetwork};
 use reth_payload_primitives::PayloadTypes;
-use reth_primitives_traits::{NodePrimitives, TxTy};
 use reth_rpc::{
     AdminApi, DebugApi, EngineEthApi, EthApi, EthApiBuilder, EthBundle, MinerApi, NetApi,
     OtterscanApi, RPCApi, RethApi, TraceApi, TxPoolApi, Web3Api,
@@ -70,9 +69,7 @@ use reth_rpc_eth_api::{
 use reth_rpc_eth_types::{EthConfig, EthSubscriptionIdProvider, receipt::EthReceiptConverter};
 use reth_rpc_layer::{AuthLayer, Claims, CompressionLayer, JwtAuthValidator, JwtSecret};
 pub use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, constants};
-use reth_storage_api::{
-    BlockReader, ChangeSetReader, FullRpcProvider, NodePrimitivesProvider, StateProviderFactory,
-};
+use reth_storage_api::{BlockReader, ChangeSetReader, FullRpcProvider, StateProviderFactory};
 use reth_tasks::{Runtime, pool::BlockingTaskGuard};
 use reth_tokio_util::EventSender;
 use reth_transaction_pool::{TransactionPool, noop::NoopTransactionPool};
@@ -118,7 +115,7 @@ pub mod rate_limiter;
 ///
 /// This is the main entrypoint and the easiest way to configure an RPC server.
 #[derive(Debug, Clone)]
-pub struct RpcModuleBuilder<N, Provider, Pool, Network, EvmConfig, Consensus> {
+pub struct RpcModuleBuilder<Provider, Pool, Network, EvmConfig, Consensus> {
     /// The Provider type to when creating all rpc handlers
     provider: Provider,
     /// The Pool type to when creating all rpc handlers
@@ -131,14 +128,12 @@ pub struct RpcModuleBuilder<N, Provider, Pool, Network, EvmConfig, Consensus> {
     evm_config: EvmConfig,
     /// The consensus implementation.
     consensus: Consensus,
-    /// Node data primitives.
-    _primitives: PhantomData<N>,
 }
 
 // === impl RpcBuilder ===
 
-impl<N, Provider, Pool, Network, EvmConfig, Consensus>
-    RpcModuleBuilder<N, Provider, Pool, Network, EvmConfig, Consensus>
+impl<Provider, Pool, Network, EvmConfig, Consensus>
+    RpcModuleBuilder<Provider, Pool, Network, EvmConfig, Consensus>
 {
     /// Create a new instance of the builder
     pub const fn new(
@@ -149,33 +144,25 @@ impl<N, Provider, Pool, Network, EvmConfig, Consensus>
         evm_config: EvmConfig,
         consensus: Consensus,
     ) -> Self {
-        Self {
-            provider,
-            pool,
-            network,
-            executor: Some(executor),
-            evm_config,
-            consensus,
-            _primitives: PhantomData,
-        }
+        Self { provider, pool, network, executor: Some(executor), evm_config, consensus }
     }
 
     /// Configure the provider instance.
     pub fn with_provider<P>(
         self,
         provider: P,
-    ) -> RpcModuleBuilder<N, P, Pool, Network, EvmConfig, Consensus> {
-        let Self { pool, network, executor, evm_config, consensus, _primitives, .. } = self;
-        RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus, _primitives }
+    ) -> RpcModuleBuilder<P, Pool, Network, EvmConfig, Consensus> {
+        let Self { pool, network, executor, evm_config, consensus, .. } = self;
+        RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus }
     }
 
     /// Configure the transaction pool instance.
     pub fn with_pool<P>(
         self,
         pool: P,
-    ) -> RpcModuleBuilder<N, Provider, P, Network, EvmConfig, Consensus> {
-        let Self { provider, network, executor, evm_config, consensus, _primitives, .. } = self;
-        RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus, _primitives }
+    ) -> RpcModuleBuilder<Provider, P, Network, EvmConfig, Consensus> {
+        let Self { provider, network, executor, evm_config, consensus, .. } = self;
+        RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus }
     }
 
     /// Configure a [`NoopTransactionPool`] instance.
@@ -185,8 +172,8 @@ impl<N, Provider, Pool, Network, EvmConfig, Consensus>
     /// [`EthApi`] which requires a [`TransactionPool`] implementation.
     pub fn with_noop_pool(
         self,
-    ) -> RpcModuleBuilder<N, Provider, NoopTransactionPool, Network, EvmConfig, Consensus> {
-        let Self { provider, executor, network, evm_config, consensus, _primitives, .. } = self;
+    ) -> RpcModuleBuilder<Provider, NoopTransactionPool, Network, EvmConfig, Consensus> {
+        let Self { provider, executor, network, evm_config, consensus, .. } = self;
         RpcModuleBuilder {
             provider,
             executor,
@@ -194,7 +181,6 @@ impl<N, Provider, Pool, Network, EvmConfig, Consensus>
             evm_config,
             pool: NoopTransactionPool::default(),
             consensus,
-            _primitives,
         }
     }
 
@@ -202,9 +188,9 @@ impl<N, Provider, Pool, Network, EvmConfig, Consensus>
     pub fn with_network<Net>(
         self,
         network: Net,
-    ) -> RpcModuleBuilder<N, Provider, Pool, Net, EvmConfig, Consensus> {
-        let Self { provider, pool, executor, evm_config, consensus, _primitives, .. } = self;
-        RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus, _primitives }
+    ) -> RpcModuleBuilder<Provider, Pool, Net, EvmConfig, Consensus> {
+        let Self { provider, pool, executor, evm_config, consensus, .. } = self;
+        RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus }
     }
 
     /// Configure a [`NoopNetwork`] instance.
@@ -214,8 +200,8 @@ impl<N, Provider, Pool, Network, EvmConfig, Consensus>
     /// [`EthApi`] which requires a [`NetworkInfo`] implementation.
     pub fn with_noop_network(
         self,
-    ) -> RpcModuleBuilder<N, Provider, Pool, NoopNetwork, EvmConfig, Consensus> {
-        let Self { provider, pool, executor, evm_config, consensus, _primitives, .. } = self;
+    ) -> RpcModuleBuilder<Provider, Pool, NoopNetwork, EvmConfig, Consensus> {
+        let Self { provider, pool, executor, evm_config, consensus, .. } = self;
         RpcModuleBuilder {
             provider,
             pool,
@@ -223,40 +209,31 @@ impl<N, Provider, Pool, Network, EvmConfig, Consensus>
             network: NoopNetwork::default(),
             evm_config,
             consensus,
-            _primitives,
         }
     }
 
     /// Configure the task executor to use for additional tasks.
     pub fn with_executor(self, executor: Runtime) -> Self {
-        let Self { pool, network, provider, evm_config, consensus, _primitives, .. } = self;
-        Self {
-            provider,
-            network,
-            pool,
-            executor: Some(executor),
-            evm_config,
-            consensus,
-            _primitives,
-        }
+        let Self { pool, network, provider, evm_config, consensus, .. } = self;
+        Self { provider, network, pool, executor: Some(executor), evm_config, consensus }
     }
 
     /// Configure the evm configuration type
     pub fn with_evm_config<E>(
         self,
         evm_config: E,
-    ) -> RpcModuleBuilder<N, Provider, Pool, Network, E, Consensus> {
-        let Self { provider, pool, executor, network, consensus, _primitives, .. } = self;
-        RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus, _primitives }
+    ) -> RpcModuleBuilder<Provider, Pool, Network, E, Consensus> {
+        let Self { provider, pool, executor, network, consensus, .. } = self;
+        RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus }
     }
 
     /// Configure the consensus implementation.
     pub fn with_consensus<C>(
         self,
         consensus: C,
-    ) -> RpcModuleBuilder<N, Provider, Pool, Network, EvmConfig, C> {
-        let Self { provider, network, pool, executor, evm_config, _primitives, .. } = self;
-        RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus, _primitives }
+    ) -> RpcModuleBuilder<Provider, Pool, Network, EvmConfig, C> {
+        let Self { provider, network, pool, executor, evm_config, .. } = self;
+        RpcModuleBuilder { provider, network, pool, executor, evm_config, consensus }
     }
 
     /// Instantiates a new [`EthApiBuilder`] from the configured components.
@@ -309,19 +286,18 @@ impl<N, Provider, Pool, Network, EvmConfig, Consensus>
     }
 }
 
-impl<N, Provider, Pool, Network, EvmConfig, Consensus>
-    RpcModuleBuilder<N, Provider, Pool, Network, EvmConfig, Consensus>
+impl<Provider, Pool, Network, EvmConfig, Consensus>
+    RpcModuleBuilder<Provider, Pool, Network, EvmConfig, Consensus>
 where
-    N: NodePrimitives,
-    Provider: FullRpcProvider<Block = N::Block, Receipt = N::Receipt, Header = N::BlockHeader>
-        + CanonStateSubscriptions<Primitives = N>
-        + ForkChoiceSubscriptions<Header = N::BlockHeader>
+    Provider: FullRpcProvider<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+        + CanonStateSubscriptions
+        + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
         + PersistedBlockSubscriptions
         + ChangeSetReader,
     Pool: TransactionPool + Clone + 'static,
     Network: NetworkInfo + Peers + Clone + 'static,
-    EvmConfig: ConfigureEvm<Primitives = N> + 'static,
-    Consensus: FullConsensus<N> + Clone + 'static,
+    EvmConfig: ConfigureEvm + 'static,
+    Consensus: FullConsensus + Clone + 'static,
 {
     /// Configures all [`RpcModule`]s specific to the given [`TransportRpcModuleConfig`] which can
     /// be used to start the transport server(s).
@@ -334,7 +310,7 @@ where
         module_config: TransportRpcModuleConfig,
         engine: impl IntoEngineApiRpcModule,
         eth: EthApi,
-        engine_events: EventSender<ConsensusEngineEvent<N>>,
+        engine_events: EventSender<ConsensusEngineEvent>,
         beacon_engine_handle: ConsensusEngineHandle<Payload>,
     ) -> (
         TransportRpcModules,
@@ -362,7 +338,7 @@ where
         self,
         config: RpcModuleConfig,
         eth: EthApi,
-        engine_events: EventSender<ConsensusEngineEvent<N>>,
+        engine_events: EventSender<ConsensusEngineEvent>,
     ) -> RpcRegistryInner<Provider, Pool, Network, EthApi, EvmConfig, Consensus>
     where
         EthApi: FullEthApiServer<Provider = Provider, Pool = Pool>,
@@ -389,7 +365,7 @@ where
         self,
         module_config: TransportRpcModuleConfig,
         eth: EthApi,
-        engine_events: EventSender<ConsensusEngineEvent<N>>,
+        engine_events: EventSender<ConsensusEngineEvent>,
     ) -> TransportRpcModules<()>
     where
         EthApi: FullEthApiServer<Provider = Provider, Pool = Pool>,
@@ -404,17 +380,9 @@ where
     }
 }
 
-impl<N: NodePrimitives> Default for RpcModuleBuilder<N, (), (), (), (), ()> {
+impl Default for RpcModuleBuilder<(), (), (), (), ()> {
     fn default() -> Self {
-        Self {
-            provider: (),
-            pool: (),
-            network: (),
-            executor: None,
-            evm_config: (),
-            consensus: (),
-            _primitives: PhantomData,
-        }
+        Self { provider: (), pool: (), network: (), executor: None, evm_config: (), consensus: () }
     }
 }
 
@@ -504,26 +472,24 @@ pub struct RpcRegistryInner<Provider, Pool, Network, EthApi: EthApiTypes, EvmCon
     /// eth config settings
     eth_config: EthConfig,
     /// Notification channel for engine API events
-    engine_events:
-        EventSender<ConsensusEngineEvent<<EthApi::RpcConvert as RpcConvert>::Primitives>>,
+    engine_events: EventSender<ConsensusEngineEvent>,
 }
 
 // === impl RpcRegistryInner ===
 
-impl<N, Provider, Pool, Network, EthApi, EvmConfig, Consensus>
+impl<Provider, Pool, Network, EthApi, EvmConfig, Consensus>
     RpcRegistryInner<Provider, Pool, Network, EthApi, EvmConfig, Consensus>
 where
-    N: NodePrimitives,
     Provider: StateProviderFactory
-        + CanonStateSubscriptions<Primitives = N>
-        + BlockReader<Block = N::Block, Receipt = N::Receipt>
+        + CanonStateSubscriptions
+        + BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
         + Clone
         + Unpin
         + 'static,
     Pool: Send + Sync + Clone + 'static,
     Network: Clone + 'static,
     EthApi: FullEthApiTypes + 'static,
-    EvmConfig: ConfigureEvm<Primitives = N>,
+    EvmConfig: ConfigureEvm,
 {
     /// Creates a new, empty instance.
     #[expect(clippy::too_many_arguments)]
@@ -536,12 +502,10 @@ where
         config: RpcModuleConfig,
         evm_config: EvmConfig,
         eth_api: EthApi,
-        engine_events: EventSender<
-            ConsensusEngineEvent<<EthApi::Provider as NodePrimitivesProvider>::Primitives>,
-        >,
+        engine_events: EventSender<ConsensusEngineEvent>,
     ) -> Self
     where
-        EvmConfig: ConfigureEvm<Primitives = N>,
+        EvmConfig: ConfigureEvm,
     {
         let blocking_pool_guard = BlockingTaskGuard::new(config.eth.max_tracing_requests);
 
@@ -654,18 +618,17 @@ where
     }
 }
 
-impl<N, Provider, Pool, Network, EthApi, EvmConfig, Consensus>
+impl<Provider, Pool, Network, EthApi, EvmConfig, Consensus>
     RpcRegistryInner<Provider, Pool, Network, EthApi, EvmConfig, Consensus>
 where
-    N: NodePrimitives,
     Provider: FullRpcProvider<
-            Header = N::BlockHeader,
-            Block = N::Block,
-            Receipt = N::Receipt,
-            Transaction = N::SignedTx,
+            Header = alloy_consensus::Header,
+            Block = BaseBlock,
+            Receipt = BaseReceipt,
+            Transaction = BaseTxEnvelope,
         > + ChangeSetReader
-        + CanonStateSubscriptions<Primitives = N>
-        + ForkChoiceSubscriptions<Header = N::BlockHeader>
+        + CanonStateSubscriptions
+        + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
         + PersistedBlockSubscriptions,
     Network: NetworkInfo + Peers + Clone + 'static,
     EthApi: EthApiServer<
@@ -674,9 +637,9 @@ where
             RpcBlock<EthApi::NetworkTypes>,
             RpcReceipt<EthApi::NetworkTypes>,
             RpcHeader<EthApi::NetworkTypes>,
-            TxTy<N>,
+            BaseTxEnvelope,
         > + EthApiTypes,
-    EvmConfig: ConfigureEvm<Primitives = N> + 'static,
+    EvmConfig: ConfigureEvm + 'static,
 {
     /// Register Eth Namespace
     ///
@@ -696,7 +659,7 @@ where
     /// If called outside of the tokio runtime. See also [`Self::eth_api`]
     pub fn register_ots(&mut self) -> &mut Self
     where
-        EthApi: TraceExt + EthTransactions<Primitives = N>,
+        EthApi: TraceExt + EthTransactions,
     {
         let otterscan_api = self.otterscan_api();
         self.modules.insert(RethRpcModule::Ots, otterscan_api.into_rpc().into());
@@ -771,19 +734,18 @@ where
     }
 }
 
-impl<N, Provider, Pool, Network, EthApi, EvmConfig, Consensus>
+impl<Provider, Pool, Network, EthApi, EvmConfig, Consensus>
     RpcRegistryInner<Provider, Pool, Network, EthApi, EvmConfig, Consensus>
 where
-    N: NodePrimitives,
     Provider: FullRpcProvider<
-            Block = N::Block,
-            Header = N::BlockHeader,
-            Transaction = N::SignedTx,
-            Receipt = N::Receipt,
+            Block = BaseBlock,
+            Header = alloy_consensus::Header,
+            Transaction = BaseTxEnvelope,
+            Receipt = BaseReceipt,
         > + ChangeSetReader,
     Network: NetworkInfo + Peers + Clone + 'static,
     EthApi: EthApiTypes,
-    EvmConfig: ConfigureEvm<Primitives = N>,
+    EvmConfig: ConfigureEvm,
 {
     /// Instantiates `TraceApi`
     ///
@@ -852,20 +814,19 @@ where
     }
 }
 
-impl<N, Provider, Pool, Network, EthApi, EvmConfig, Consensus>
+impl<Provider, Pool, Network, EthApi, EvmConfig, Consensus>
     RpcRegistryInner<Provider, Pool, Network, EthApi, EvmConfig, Consensus>
 where
-    N: NodePrimitives,
-    Provider: FullRpcProvider<Block = N::Block>
-        + CanonStateSubscriptions<Primitives = N>
-        + ForkChoiceSubscriptions<Header = N::BlockHeader>
+    Provider: FullRpcProvider<Block = BaseBlock>
+        + CanonStateSubscriptions
+        + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
         + PersistedBlockSubscriptions
         + ChangeSetReader,
     Pool: TransactionPool + Clone + 'static,
     Network: NetworkInfo + Peers + Clone + 'static,
     EthApi: FullEthApiServer,
-    EvmConfig: ConfigureEvm<Primitives = N> + 'static,
-    Consensus: FullConsensus<N> + Clone + 'static,
+    EvmConfig: ConfigureEvm + 'static,
+    Consensus: FullConsensus + Clone + 'static,
 {
     /// Configures the auth module that includes the
     ///   * `engine_` namespace

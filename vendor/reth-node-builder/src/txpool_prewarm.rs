@@ -3,11 +3,11 @@
 use std::fmt::Debug;
 
 use alloy_primitives::B256;
+use base_common_consensus::BaseTxEnvelope;
 use reth_engine_tree::tree::{
     TxPoolPrewarmSource as PrewarmSource, TxPoolPrewarmTransaction as Transaction,
     TxPoolPrewarmTransactions as Transactions,
 };
-use reth_primitives_traits::{NodePrimitives, TxTy};
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
 };
@@ -23,17 +23,16 @@ impl<P> Source<P> {
     }
 }
 
-impl<N, P> PrewarmSource<N> for Source<P>
+impl<P> PrewarmSource for Source<P>
 where
-    N: NodePrimitives,
-    P: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<N>>>
+    P: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>
         + Clone
         + Send
         + Sync
         + Debug
         + 'static,
 {
-    fn best_transactions(&self, parent_hash: B256) -> Option<Transactions<N>> {
+    fn best_transactions(&self, parent_hash: B256) -> Option<Transactions> {
         let block_info = self.0.block_info();
         if block_info.last_seen_block_hash != parent_hash {
             return None;

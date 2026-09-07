@@ -23,11 +23,11 @@ use alloy_eips::{
 };
 use alloy_primitives::U256;
 use alloy_rlp::Encodable;
+use base_common_consensus::BaseBlock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{
-    Account, BlockTy, GotExpected, HeaderTy, SealedBlock,
-    transaction::error::InvalidTransactionError,
+    Account, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };
 use reth_storage_api::{
     AccountInfoReader, BlockReaderIdExt, BytecodeReader, StateProviderBox, StateProviderFactory,
@@ -899,7 +899,7 @@ where
             .collect()
     }
 
-    fn on_new_head_block(&self, new_tip_block: &HeaderTy<Evm::Primitives>) {
+    fn on_new_head_block(&self, new_tip_block: &alloy_consensus::Header) {
         // update all forks
         if self.chain_spec().is_shanghai_active_at_timestamp(new_tip_block.timestamp()) {
             self.fork_tracker.shanghai.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -987,7 +987,7 @@ where
     Evm: ConfigureEvm,
 {
     type Transaction = Tx;
-    type Block = BlockTy<Evm::Primitives>;
+    type Block = BaseBlock;
 
     async fn validate_transaction(
         &self,
@@ -1094,7 +1094,7 @@ impl<Client, Evm> EthTransactionValidatorBuilder<Client, Evm> {
     pub fn new(client: Client, evm_config: Evm) -> Self
     where
         Client: ChainSpecProvider<ChainSpec: EthChainSpec + EthereumHardforks>
-            + BlockReaderIdExt<Header = HeaderTy<Evm::Primitives>>,
+            + BlockReaderIdExt<Header = alloy_consensus::Header>,
         Evm: ConfigureEvm,
     {
         let chain_spec = client.chain_spec();

@@ -5,8 +5,9 @@
 use alloy_consensus::transaction::TxHashRef;
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::TransactionInfo;
+use base_common_consensus::BaseTxEnvelope;
 use reth_ethereum_primitives::TransactionSigned;
-use reth_primitives_traits::{NodePrimitives, Recovered, SignedTransaction};
+use reth_primitives_traits::{Recovered, SignedTransaction};
 use reth_rpc_convert::{RpcConvert, RpcTransaction};
 
 /// Represents from where a transaction was fetched.
@@ -39,38 +40,6 @@ impl<T: SignedTransaction> TransactionSource<T> {
     /// Consumes the type and returns the wrapped transaction.
     pub fn into_recovered(self) -> Recovered<T> {
         self.into()
-    }
-
-    /// Conversion into network specific transaction type.
-    pub fn into_transaction<Builder>(
-        self,
-        resp_builder: &Builder,
-    ) -> Result<RpcTransaction<Builder::Network>, Builder::Error>
-    where
-        Builder: RpcConvert<Primitives: NodePrimitives<SignedTx = T>>,
-    {
-        match self {
-            Self::Pool(tx) => resp_builder.fill_pending(tx),
-            Self::Block {
-                transaction,
-                index,
-                block_hash,
-                block_number,
-                block_timestamp,
-                base_fee,
-            } => {
-                let tx_info = TransactionInfo {
-                    hash: Some(*transaction.tx_hash()),
-                    index: Some(index),
-                    block_hash: Some(block_hash),
-                    block_number: Some(block_number),
-                    block_timestamp: Some(block_timestamp),
-                    base_fee,
-                };
-
-                resp_builder.fill(transaction, tx_info)
-            }
-        }
     }
 
     /// Returns the transaction and block related info, if not pending
@@ -110,6 +79,40 @@ impl<T> From<TransactionSource<T>> for Recovered<T> {
         match value {
             TransactionSource::Pool(tx) => tx,
             TransactionSource::Block { transaction, .. } => transaction,
+        }
+    }
+}
+
+impl TransactionSource<BaseTxEnvelope> {
+    /// Conversion into network specific transaction type.
+    pub fn into_transaction<Builder>(
+        self,
+        resp_builder: &Builder,
+    ) -> Result<RpcTransaction<Builder::Network>, Builder::Error>
+    where
+        Builder: RpcConvert,
+    {
+        match self {
+            Self::Pool(tx) => resp_builder.fill_pending(tx),
+            Self::Block {
+                transaction,
+                index,
+                block_hash,
+                block_number,
+                block_timestamp,
+                base_fee,
+            } => {
+                let tx_info = TransactionInfo {
+                    hash: Some(*transaction.tx_hash()),
+                    index: Some(index),
+                    block_hash: Some(block_hash),
+                    block_number: Some(block_number),
+                    block_timestamp: Some(block_timestamp),
+                    base_fee,
+                };
+
+                resp_builder.fill(transaction, tx_info)
+            }
         }
     }
 }

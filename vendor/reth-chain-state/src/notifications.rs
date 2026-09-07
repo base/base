@@ -7,10 +7,10 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use derive_more::{Deref, DerefMut};
 use reth_execution_types::{BlockReceipts, Chain};
-use reth_primitives_traits::{NodePrimitives, RecoveredBlock, SealedHeader};
-use reth_storage_api::NodePrimitivesProvider;
+use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use tokio::sync::{broadcast, watch};
 use tokio_stream::{
     Stream,
@@ -19,22 +19,20 @@ use tokio_stream::{
 use tracing::debug;
 
 /// Type alias for a receiver that receives [`CanonStateNotification`]
-pub type CanonStateNotifications<N = reth_ethereum_primitives::EthPrimitives> =
-    broadcast::Receiver<CanonStateNotification<N>>;
+pub type CanonStateNotifications = broadcast::Receiver<CanonStateNotification>;
 
 /// Type alias for a sender that sends [`CanonStateNotification`]
-pub type CanonStateNotificationSender<N = reth_ethereum_primitives::EthPrimitives> =
-    broadcast::Sender<CanonStateNotification<N>>;
+pub type CanonStateNotificationSender = broadcast::Sender<CanonStateNotification>;
 
 /// A type that allows to register chain related event subscriptions.
-pub trait CanonStateSubscriptions: NodePrimitivesProvider + Send + Sync {
+pub trait CanonStateSubscriptions: Send + Sync {
     /// Get notified when a new canonical chain was imported.
     ///
     /// A canonical chain be one or more blocks, a reorg or a revert.
-    fn subscribe_to_canonical_state(&self) -> CanonStateNotifications<Self::Primitives>;
+    fn subscribe_to_canonical_state(&self) -> CanonStateNotifications;
 
     /// Convenience method to get a stream of [`CanonStateNotification`].
-    fn canonical_state_stream(&self) -> CanonStateNotificationStream<Self::Primitives> {
+    fn canonical_state_stream(&self) -> CanonStateNotificationStream {
         CanonStateNotificationStream {
             st: BroadcastStream::new(self.subscribe_to_canonical_state()),
         }
@@ -42,11 +40,11 @@ pub trait CanonStateSubscriptions: NodePrimitivesProvider + Send + Sync {
 }
 
 impl<T: CanonStateSubscriptions> CanonStateSubscriptions for &T {
-    fn subscribe_to_canonical_state(&self) -> CanonStateNotifications<Self::Primitives> {
+    fn subscribe_to_canonical_state(&self) -> CanonStateNotifications {
         (*self).subscribe_to_canonical_state()
     }
 
-    fn canonical_state_stream(&self) -> CanonStateNotificationStream<Self::Primitives> {
+    fn canonical_state_stream(&self) -> CanonStateNotificationStream {
         (*self).canonical_state_stream()
     }
 }
@@ -54,14 +52,13 @@ impl<T: CanonStateSubscriptions> CanonStateSubscriptions for &T {
 /// A Stream of [`CanonStateNotification`].
 #[derive(Debug)]
 #[pin_project::pin_project]
-pub struct CanonStateNotificationStream<N: NodePrimitives = reth_ethereum_primitives::EthPrimitives>
-{
+pub struct CanonStateNotificationStream {
     #[pin]
-    st: BroadcastStream<CanonStateNotification<N>>,
+    st: BroadcastStream<CanonStateNotification>,
 }
 
-impl<N: NodePrimitives> Stream for CanonStateNotificationStream<N> {
-    type Item = CanonStateNotification<N>;
+impl Stream for CanonStateNotificationStream {
+    type Item = CanonStateNotification;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
@@ -84,11 +81,11 @@ impl<N: NodePrimitives> Stream for CanonStateNotificationStream<N> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(bound = ""))]
-pub enum CanonStateNotification<N: NodePrimitives = reth_ethereum_primitives::EthPrimitives> {
+pub enum CanonStateNotification {
     /// The canonical chain was extended.
     Commit {
         /// The newly added chain segment.
-        new: Arc<Chain<N>>,
+        new: Arc<Chain>,
     },
     /// A chain segment was reverted or reorged.
     ///
@@ -98,18 +95,18 @@ pub enum CanonStateNotification<N: NodePrimitives = reth_ethereum_primitives::Et
     ///   chain segment.
     Reorg {
         /// The chain segment that was reverted.
-        old: Arc<Chain<N>>,
+        old: Arc<Chain>,
         /// The chain segment that was added on top of the canonical chain, minus the reverted
         /// blocks.
         ///
         /// In the case of a revert, not a reorg, this chain segment is empty.
-        new: Arc<Chain<N>>,
+        new: Arc<Chain>,
     },
 }
 
-impl<N: NodePrimitives> CanonStateNotification<N> {
+impl CanonStateNotification {
     /// Get the chain segment that was reverted, if any.
-    pub fn reverted(&self) -> Option<Arc<Chain<N>>> {
+    pub fn reverted(&self) -> Option<Arc<Chain>> {
         match self {
             Self::Commit { .. } => None,
             Self::Reorg { old, .. } => Some(old.clone()),
@@ -117,7 +114,7 @@ impl<N: NodePrimitives> CanonStateNotification<N> {
     }
 
     /// Get the newly imported chain segment, if any.
-    pub fn committed(&self) -> Arc<Chain<N>> {
+    pub fn committed(&self) -> Arc<Chain> {
         match self {
             Self::Commit { new } | Self::Reorg { new, .. } => new.clone(),
         }
@@ -131,7 +128,7 @@ impl<N: NodePrimitives> CanonStateNotification<N> {
     /// # Panics
     ///
     /// If chain doesn't have any blocks.
-    pub fn tip(&self) -> &RecoveredBlock<N::Block> {
+    pub fn tip(&self) -> &RecoveredBlock<BaseBlock> {
         match self {
             Self::Commit { new } | Self::Reorg { new, .. } => new.tip(),
         }
@@ -141,7 +138,7 @@ impl<N: NodePrimitives> CanonStateNotification<N> {
     ///
     /// If the chain has no blocks, it returns `None`. Otherwise, it returns the new tip for
     /// [`Self::Reorg`] and [`Self::Commit`] variants.
-    pub fn tip_checked(&self) -> Option<&RecoveredBlock<N::Block>> {
+    pub fn tip_checked(&self) -> Option<&RecoveredBlock<BaseBlock>> {
         match self {
             Self::Commit { new } | Self::Reorg { new, .. } => {
                 if new.is_empty() {
@@ -158,7 +155,7 @@ impl<N: NodePrimitives> CanonStateNotification<N> {
     ///
     /// The boolean in the tuple (2nd element) denotes whether the receipt was from the reverted
     /// chain segment.
-    pub fn block_receipts(&self) -> Vec<(BlockReceipts<N::Receipt>, bool)> {
+    pub fn block_receipts(&self) -> Vec<(BlockReceipts<BaseReceipt>, bool)> {
         let mut receipts = Vec::new();
 
         // get old receipts
@@ -256,7 +253,7 @@ mod tests {
 
     use alloy_consensus::{BlockBody, SignableTransaction, TxLegacy};
     use alloy_primitives::{B256, Signature, b256};
-    use reth_ethereum_primitives::{Receipt, TransactionSigned, TxType};
+    use base_common_consensus::BaseTxEnvelope as TransactionSigned;
     use reth_execution_types::ExecutionOutcome;
     use reth_primitives_traits::SealedBlock;
 
@@ -264,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_commit_notification() {
-        let block: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let block: RecoveredBlock<BaseBlock> = Default::default();
         let block1_hash = B256::new([0x01; 32]);
         let block2_hash = B256::new([0x02; 32]);
 
@@ -297,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_reorg_notification() {
-        let block: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let block: RecoveredBlock<BaseBlock> = Default::default();
         let block1_hash = B256::new([0x01; 32]);
         let block2_hash = B256::new([0x02; 32]);
         let block3_hash = B256::new([0x03; 32]);
@@ -370,12 +367,11 @@ mod tests {
         block2.set_hash(block2_hash);
 
         // Create a receipt for the transaction in block1.
-        let receipt1 = Receipt {
-            tx_type: TxType::Legacy,
+        let receipt1 = BaseReceipt::Legacy(alloy_consensus::Receipt {
             cumulative_gas_used: 12345,
             logs: vec![],
-            success: true,
-        };
+            status: true.into(),
+        });
 
         // Wrap the receipt in a `Receipts` structure, as expected in the `ExecutionOutcome`.
         let receipts = vec![vec![receipt1.clone()]];
@@ -433,12 +429,11 @@ mod tests {
         old_block1.set_hash(B256::new([0x01; 32]));
 
         // Create a receipt for a transaction in the reverted block.
-        let old_receipt = Receipt {
-            tx_type: TxType::Legacy,
+        let old_receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
             cumulative_gas_used: 54321,
             logs: vec![],
-            success: false,
-        };
+            status: false.into(),
+        });
         let old_receipts = vec![vec![old_receipt.clone()]];
 
         let old_execution_outcome =
@@ -462,12 +457,11 @@ mod tests {
         new_block1.set_hash(B256::new([0x02; 32]));
 
         // Create a receipt for a transaction in the new committed block.
-        let new_receipt = Receipt {
-            tx_type: TxType::Legacy,
+        let new_receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
             cumulative_gas_used: 12345,
             logs: vec![],
-            success: true,
-        };
+            status: true.into(),
+        });
         let new_receipts = vec![vec![new_receipt.clone()]];
 
         let new_execution_outcome =

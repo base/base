@@ -1,5 +1,5 @@
 use alloc::sync::Arc;
-use core::{fmt::Debug, marker::PhantomData};
+use core::fmt::Debug;
 
 use alloy_consensus::{BlockHeader, Header};
 #[cfg(feature = "std")]
@@ -8,7 +8,7 @@ use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, EIP1559ParamError};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder,
     BaseSpecId, BaseTransaction, BaseTxEnv,
@@ -22,9 +22,9 @@ use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
 use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnvMut, precompiles::PrecompilesMap};
-use reth_primitives_traits::{NodePrimitives, SealedBlock, SealedHeader, SignedTransaction};
 #[cfg(feature = "std")]
-use reth_primitives_traits::{TxTy, WithEncoded};
+use reth_primitives_traits::WithEncoded;
+use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
 #[cfg(not(feature = "std"))]
 use reth_storage_errors as _;
 #[cfg(feature = "std")]
@@ -76,7 +76,6 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
 #[derive(Debug)]
 pub struct BaseEvmConfig<
     ChainSpec = BaseChainSpec,
-    N: NodePrimitives = BasePrimitives,
     R = BaseRethReceiptBuilder,
     EvmFactory = BaseEvmFactory,
 > {
@@ -84,21 +83,16 @@ pub struct BaseEvmConfig<
     pub executor_factory: BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmFactory>,
     /// Base block assembler.
     pub block_assembler: BaseBlockAssembler<ChainSpec>,
-    #[doc(hidden)]
-    pub _pd: PhantomData<N>,
 }
 
 /// Helper type with backwards compatible methods to obtain executor providers.
 pub type BaseExecutorProvider = BaseEvmConfig;
 
-impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
-    for BaseEvmConfig<ChainSpec, N, R, EvmFactory>
-{
+impl<ChainSpec, R: Clone, EvmFactory: Clone> Clone for BaseEvmConfig<ChainSpec, R, EvmFactory> {
     fn clone(&self) -> Self {
         Self {
             executor_factory: self.executor_factory.clone(),
             block_assembler: self.block_assembler.clone(),
-            _pd: self._pd,
         }
     }
 }
@@ -110,7 +104,7 @@ impl<ChainSpec: Upgrades> BaseEvmConfig<ChainSpec> {
     }
 }
 
-impl<ChainSpec: Upgrades, N: NodePrimitives, R> BaseEvmConfig<ChainSpec, N, R> {
+impl<ChainSpec: Upgrades, R> BaseEvmConfig<ChainSpec, R> {
     /// Creates a new [`BaseEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
         let activation_admin_address = chain_spec.as_ref().activation_admin_address();
@@ -121,15 +115,13 @@ impl<ChainSpec: Upgrades, N: NodePrimitives, R> BaseEvmConfig<ChainSpec, N, R> {
                 chain_spec,
                 BaseEvmFactory::new(activation_admin_address),
             ),
-            _pd: PhantomData,
         }
     }
 }
 
-impl<ChainSpec, N, R, EvmFactory> BaseEvmConfig<ChainSpec, N, R, EvmFactory>
+impl<ChainSpec, R, EvmFactory> BaseEvmConfig<ChainSpec, R, EvmFactory>
 where
     ChainSpec: Upgrades,
-    N: NodePrimitives,
 {
     /// Returns the chain spec associated with this configuration.
     pub const fn chain_spec(&self) -> &Arc<ChainSpec> {
@@ -137,18 +129,11 @@ where
     }
 }
 
-impl<ChainSpec, N, R, EvmF> ConfigureEvm for BaseEvmConfig<ChainSpec, N, R, EvmF>
+impl<ChainSpec, R, EvmF> ConfigureEvm for BaseEvmConfig<ChainSpec, R, EvmF>
 where
     ChainSpec: EthChainSpec<Header = Header> + Upgrades,
-    N: NodePrimitives<
-            Receipt = R::Receipt,
-            SignedTx = R::Transaction,
-            BlockHeader = Header,
-            BlockBody = alloy_consensus::BlockBody<R::Transaction>,
-            Block = alloy_consensus::Block<R::Transaction>,
-        >,
-    BaseTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
-    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction> + Clone,
+    BaseTransaction<TxEnv>: FromRecoveredTx<BaseTxEnvelope> + FromTxWithEncoded<BaseTxEnvelope>,
+    R: BaseReceiptBuilder<Receipt = BaseReceipt, Transaction = BaseTxEnvelope> + Clone,
     EvmF: EvmFactory<
             Tx: FromRecoveredTx<R::Transaction>
                     + FromTxWithEncoded<R::Transaction>
@@ -160,7 +145,6 @@ where
         > + Debug,
     Self: Send + Sync + Unpin + Clone + 'static,
 {
-    type Primitives = N;
     type Error = EIP1559ParamError;
     type NextBlockEnvCtx = BaseNextBlockEnvAttributes;
     type BlockExecutorFactory = BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmF>;
@@ -191,7 +175,7 @@ where
 
     fn context_for_block(
         &self,
-        block: &'_ SealedBlock<N::Block>,
+        block: &'_ SealedBlock<BaseBlock>,
     ) -> Result<BaseBlockExecutionCtx, Self::Error> {
         Ok(BaseBlockExecutionCtx {
             parent_hash: block.header().parent_hash(),
@@ -202,7 +186,7 @@ where
 
     fn context_for_next_block(
         &self,
-        parent: &SealedHeader<N::BlockHeader>,
+        parent: &SealedHeader<alloy_consensus::Header>,
         attributes: Self::NextBlockEnvCtx,
     ) -> Result<BaseBlockExecutionCtx, Self::Error> {
         Ok(BaseBlockExecutionCtx {
@@ -214,18 +198,11 @@ where
 }
 
 #[cfg(feature = "std")]
-impl<ChainSpec, N, R> ConfigureEngineEvm<ExecutionData> for BaseEvmConfig<ChainSpec, N, R>
+impl<ChainSpec, R> ConfigureEngineEvm<ExecutionData> for BaseEvmConfig<ChainSpec, R>
 where
     ChainSpec: EthChainSpec<Header = Header> + Upgrades,
-    N: NodePrimitives<
-            Receipt = R::Receipt,
-            SignedTx = R::Transaction,
-            BlockHeader = Header,
-            BlockBody = alloy_consensus::BlockBody<R::Transaction>,
-            Block = alloy_consensus::Block<R::Transaction>,
-        >,
-    BaseTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
-    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction> + Clone,
+    BaseTransaction<TxEnv>: FromRecoveredTx<BaseTxEnvelope> + FromTxWithEncoded<BaseTxEnvelope>,
+    R: BaseReceiptBuilder<Receipt = BaseReceipt, Transaction = BaseTxEnvelope> + Clone,
     Self: Send + Sync + Unpin + Clone + 'static,
 {
     fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
@@ -249,8 +226,7 @@ where
     ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
         let transactions = payload.payload.transactions().clone();
         let convert = |encoded: Bytes| {
-            let tx = TxTy::<Self::Primitives>::decode_2718_exact(encoded.as_ref())
-                .map_err(AnyError::new)?;
+            let tx = BaseTxEnvelope::decode_2718_exact(encoded.as_ref()).map_err(AnyError::new)?;
             let signer = tx.try_recover().map_err(AnyError::new)?;
             Ok::<_, AnyError>(WithEncoded::new(encoded, tx.with_signer(signer)))
         };
@@ -271,7 +247,7 @@ mod tests {
         Address, B256, LogData, U256, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
+    use base_common_consensus::{BaseBlock, BaseReceipt};
     use base_common_evm::BaseSpecId;
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -529,8 +505,7 @@ mod tests {
 
         // Create a Chain object with a BTreeMap of blocks mapped to their block numbers,
         // including block1_hash and block2_hash, and the execution_outcome
-        let chain: Chain<BasePrimitives> =
-            Chain::new([block1, block2], execution_outcome.clone(), BTreeMap::new());
+        let chain: Chain = Chain::new([block1, block2], execution_outcome.clone(), BTreeMap::new());
 
         // Assert that the proper receipt vector is returned for block1_hash
         assert_eq!(chain.receipts_by_block_hash(block1_hash), Some(vec![&receipt1]));

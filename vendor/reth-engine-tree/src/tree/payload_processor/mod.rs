@@ -11,6 +11,7 @@ use std::{
 
 use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
+use base_common_consensus::BaseReceipt;
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use prewarm::PrewarmMetrics;
 use rayon::prelude::*;
@@ -19,7 +20,7 @@ use reth_evm::{
     block::ExecutableTxParts,
     execute::{ExecutableTxFor, WithTxEnv},
 };
-use reth_primitives_traits::{FastInstant as Instant, NodePrimitives};
+use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
     BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader,
     StageCheckpointReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
@@ -55,11 +56,8 @@ pub const SMALL_BLOCK_TX_THRESHOLD: usize = 5;
 /// Type alias for [`PayloadHandle`] returned by payload processor spawn methods.
 type IteratorTx<Evm, I> = RecoveredTx<TxEnvFor<Evm>, <I as ExecutableTxIterator<Evm>>::Recovered>;
 
-type IteratorPayloadHandle<Evm, I> = PayloadHandle<
-    IteratorTx<Evm, I>,
-    <I as ExecutableTxTuple>::Error,
-    <<Evm as ConfigureEvm>::Primitives as NodePrimitives>::Receipt,
->;
+type IteratorPayloadHandle<Evm, I> =
+    PayloadHandle<IteratorTx<Evm, I>, <I as ExecutableTxTuple>::Error, BaseReceipt>;
 
 type IteratorPrewarmTxReceiver<Evm, I> =
     PrewarmTxReceiver<TxEnvFor<Evm>, <I as ExecutableTxIterator<Evm>>::Recovered>;
@@ -172,7 +170,7 @@ where
         &self,
         env: ExecutionEnv<Evm>,
         transactions: I,
-        provider_builder: StateProviderBuilder<Evm::Primitives, P>,
+        provider_builder: StateProviderBuilder<P>,
         hint_stream: Option<StateRootHintStream>,
         hashed_update_stream: Option<StateRootUpdateStream>,
         parallel_bal_execution: bool,
@@ -342,11 +340,11 @@ where
         &self,
         env: ExecutionEnv<Evm>,
         transactions: mpsc::Receiver<(usize, impl ExecutableTxFor<Evm> + Clone + Send + 'static)>,
-        provider_builder: StateProviderBuilder<Evm::Primitives, P>,
+        provider_builder: StateProviderBuilder<P>,
         hint_stream: Option<StateRootHintStream>,
         hashed_update_stream: Option<StateRootUpdateStream>,
         parallel_bal_execution: bool,
-    ) -> CacheTaskHandle<<Evm::Primitives as NodePrimitives>::Receipt>
+    ) -> CacheTaskHandle<BaseReceipt>
     where
         P: DatabaseProviderFactory + Clone + 'static,
         P::Provider: BlockNumReader

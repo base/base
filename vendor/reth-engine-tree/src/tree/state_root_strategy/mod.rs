@@ -53,6 +53,7 @@
 //! `eth_getProof` and anything else that reads the stored trie will not work for new blocks.
 //! Sparse-trie cache pruning uses node epochs to retain the in-memory block range.
 
+use base_common_consensus::{BaseBlock, BaseReceipt};
 mod sparse_trie;
 
 use std::{
@@ -70,7 +71,7 @@ use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
 use reth_errors::ProviderResult;
 use reth_evm::{ConfigureEvm, OnStateHook};
 use reth_primitives_traits::{
-    AlloyBlockHeader, FastInstant as Instant, NodePrimitives, RecoveredBlock, SealedHeader,
+    AlloyBlockHeader, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
 use reth_provider::{
     BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, DatabaseProviderROFactory,
@@ -109,19 +110,16 @@ use crate::tree::{
 pub type LazyHashedPostState = reth_tasks::LazyHandle<Arc<HashedPostState>>;
 
 /// Strategy used by engine-tree validation to prepare per-block state-root work.
-pub trait StateRootStrategy<N, P, Evm>: Send + Sync
+pub trait StateRootStrategy<P, Evm>: Send + Sync
 where
-    N: NodePrimitives,
-    Evm: ConfigureEvm<Primitives = N>,
+    Evm: ConfigureEvm,
 {
     /// Prepares a per-block state-root job before execution starts.
     ///
     /// A custom strategy that maintains a reusable sparse trie is responsible for consuming the
     /// pending prune request from the context when it starts the corresponding job.
-    fn prepare(
-        &self,
-        ctx: StateRootJobContext<'_, N, P, Evm>,
-    ) -> ProviderResult<PreparedStateRootJob<N>>;
+    fn prepare(&self, ctx: StateRootJobContext<'_, P, Evm>)
+    -> ProviderResult<PreparedStateRootJob>;
 
     /// Prepares the optional payload-builder state-root handle used for FCU-triggered block
     /// building.
@@ -131,32 +129,26 @@ where
     /// synchronous MPT state root. The default implementation returns `None`.
     fn prepare_payload_builder(
         &self,
-        _ctx: PayloadStateRootJobContext<'_, N, P>,
+        _ctx: PayloadStateRootJobContext<'_, P>,
     ) -> ProviderResult<Option<PayloadStateRootHandle>> {
         Ok(None)
     }
 }
 
 /// Data available while preparing one payload-builder state-root handle.
-pub struct PayloadStateRootJobContext<'a, N, P>
-where
-    N: NodePrimitives,
-{
+pub struct PayloadStateRootJobContext<'a, P> {
     executor: &'a reth_tasks::Runtime,
-    overlay_manager: &'a OverlayManager<N>,
+    overlay_manager: &'a OverlayManager,
     parent_hash: B256,
-    parent_header: &'a N::BlockHeader,
+    parent_header: &'a alloy_consensus::Header,
     timestamp: u64,
-    state: &'a mut EngineApiTreeState<N>,
-    provider_builder: StateProviderBuilder<N, P>,
-    overlay_factory: OverlayStateProviderFactory<P, N>,
+    state: &'a mut EngineApiTreeState,
+    provider_builder: StateProviderBuilder<P>,
+    overlay_factory: OverlayStateProviderFactory<P>,
     config: &'a TreeConfig,
 }
 
-impl<N, P> fmt::Debug for PayloadStateRootJobContext<'_, N, P>
-where
-    N: NodePrimitives,
-{
+impl<P> fmt::Debug for PayloadStateRootJobContext<'_, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PayloadStateRootJobContext")
             .field("parent_hash", &self.parent_hash)
@@ -167,21 +159,18 @@ where
     }
 }
 
-impl<'a, N, P> PayloadStateRootJobContext<'a, N, P>
-where
-    N: NodePrimitives,
-{
+impl<'a, P> PayloadStateRootJobContext<'a, P> {
     /// Creates a payload-builder state-root job context.
     #[expect(clippy::too_many_arguments)]
     pub(crate) const fn new(
         executor: &'a reth_tasks::Runtime,
-        overlay_manager: &'a OverlayManager<N>,
+        overlay_manager: &'a OverlayManager,
         parent_hash: B256,
-        parent_header: &'a N::BlockHeader,
+        parent_header: &'a alloy_consensus::Header,
         timestamp: u64,
-        state: &'a mut EngineApiTreeState<N>,
-        provider_builder: StateProviderBuilder<N, P>,
-        overlay_factory: OverlayStateProviderFactory<P, N>,
+        state: &'a mut EngineApiTreeState,
+        provider_builder: StateProviderBuilder<P>,
+        overlay_factory: OverlayStateProviderFactory<P>,
         config: &'a TreeConfig,
     ) -> Self {
         Self {
@@ -206,7 +195,7 @@ where
     ///
     /// This is the chain's concrete header type, so chain-specific strategies can read
     /// chain-specific fields, and number-activated forks can dispatch on the parent number.
-    pub const fn parent_header(&self) -> &N::BlockHeader {
+    pub const fn parent_header(&self) -> &alloy_consensus::Header {
         self.parent_header
     }
 
@@ -228,7 +217,7 @@ where
     }
 
     /// Returns a clone of the state provider builder.
-    pub fn provider_builder(&self) -> StateProviderBuilder<N, P>
+    pub fn provider_builder(&self) -> StateProviderBuilder<P>
     where
         P: Clone,
     {
@@ -239,32 +228,30 @@ where
     ///
     /// Custom strategies that maintain a reusable sparse trie should call this when starting the
     /// corresponding job. Strategies that do not use the request should leave it pending.
-    pub fn take_sparse_trie_prune_blocks(&mut self) -> Option<Vec<ExecutedBlock<N>>> {
+    pub fn take_sparse_trie_prune_blocks(&mut self) -> Option<Vec<ExecutedBlock>> {
         self.state.take_sparse_trie_prune_blocks(self.parent_hash)
     }
 }
 
 /// Data available while preparing one state-root job.
-pub struct StateRootJobContext<'a, N, P, Evm>
+pub struct StateRootJobContext<'a, P, Evm>
 where
-    N: NodePrimitives,
-    Evm: ConfigureEvm<Primitives = N>,
+    Evm: ConfigureEvm,
 {
     executor: &'a reth_tasks::Runtime,
-    overlay_manager: &'a OverlayManager<N>,
+    overlay_manager: &'a OverlayManager,
     env: &'a ExecutionEnv<Evm>,
-    parent_header: &'a SealedHeader<N::BlockHeader>,
-    provider_builder: StateProviderBuilder<N, P>,
-    overlay_factory: OverlayStateProviderFactory<P, N>,
+    parent_header: &'a SealedHeader<alloy_consensus::Header>,
+    provider_builder: StateProviderBuilder<P>,
+    overlay_factory: OverlayStateProviderFactory<P>,
     config: &'a TreeConfig,
     parallel_bal_execution: bool,
-    state: &'a mut EngineApiTreeState<N>,
+    state: &'a mut EngineApiTreeState,
 }
 
-impl<N, P, Evm> fmt::Debug for StateRootJobContext<'_, N, P, Evm>
+impl<P, Evm> fmt::Debug for StateRootJobContext<'_, P, Evm>
 where
-    N: NodePrimitives,
-    Evm: ConfigureEvm<Primitives = N>,
+    Evm: ConfigureEvm,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StateRootJobContext")
@@ -274,23 +261,22 @@ where
     }
 }
 
-impl<'a, N, P, Evm> StateRootJobContext<'a, N, P, Evm>
+impl<'a, P, Evm> StateRootJobContext<'a, P, Evm>
 where
-    N: NodePrimitives,
-    Evm: ConfigureEvm<Primitives = N>,
+    Evm: ConfigureEvm,
 {
     /// Creates a new state-root job context.
     #[expect(clippy::too_many_arguments)]
     pub(crate) const fn new(
         executor: &'a reth_tasks::Runtime,
-        overlay_manager: &'a OverlayManager<N>,
+        overlay_manager: &'a OverlayManager,
         env: &'a ExecutionEnv<Evm>,
-        parent_header: &'a SealedHeader<N::BlockHeader>,
-        provider_builder: StateProviderBuilder<N, P>,
-        overlay_factory: OverlayStateProviderFactory<P, N>,
+        parent_header: &'a SealedHeader<alloy_consensus::Header>,
+        provider_builder: StateProviderBuilder<P>,
+        overlay_factory: OverlayStateProviderFactory<P>,
         config: &'a TreeConfig,
         parallel_bal_execution: bool,
-        state: &'a mut EngineApiTreeState<N>,
+        state: &'a mut EngineApiTreeState,
     ) -> Self {
         Self {
             executor,
@@ -311,7 +297,7 @@ where
     }
 
     /// Returns the sealed parent block header.
-    pub const fn parent_header(&self) -> &SealedHeader<N::BlockHeader> {
+    pub const fn parent_header(&self) -> &SealedHeader<alloy_consensus::Header> {
         self.parent_header
     }
 
@@ -326,7 +312,7 @@ where
     }
 
     /// Returns a clone of the state provider builder.
-    pub fn provider_builder(&self) -> StateProviderBuilder<N, P>
+    pub fn provider_builder(&self) -> StateProviderBuilder<P>
     where
         P: Clone,
     {
@@ -337,7 +323,7 @@ where
     ///
     /// Custom strategies that maintain a reusable sparse trie should call this when starting the
     /// corresponding job. Strategies that do not use the request should leave it pending.
-    pub fn take_sparse_trie_prune_blocks(&mut self) -> Option<Vec<ExecutedBlock<N>>> {
+    pub fn take_sparse_trie_prune_blocks(&mut self) -> Option<Vec<ExecutedBlock>> {
         self.state.take_sparse_trie_prune_blocks(self.env.parent_hash)
     }
 }
@@ -348,15 +334,15 @@ where
 /// mode: the execution hook on the serial path, the hashed update stream on the parallel BAL
 /// path, never both. Each capability is taken once by the code that produces its messages
 /// and is not retained here, so the task's update channel closes when the producers are done.
-pub struct PreparedStateRootJob<N: NodePrimitives> {
-    job: Box<dyn StateRootJob<N>>,
+pub struct PreparedStateRootJob {
+    job: Box<dyn StateRootJob>,
     execution_hook: Option<StateRootUpdateHook>,
     hint_stream: Option<StateRootHintStream>,
     hashed_update_stream: Option<StateRootUpdateStream>,
     hashed_state_rx: Option<mpsc::Receiver<Arc<HashedPostState>>>,
 }
 
-impl<N: NodePrimitives> fmt::Debug for PreparedStateRootJob<N> {
+impl fmt::Debug for PreparedStateRootJob {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PreparedStateRootJob")
             .field("name", &self.job.name())
@@ -368,10 +354,10 @@ impl<N: NodePrimitives> fmt::Debug for PreparedStateRootJob<N> {
     }
 }
 
-impl<N: NodePrimitives> PreparedStateRootJob<N> {
+impl PreparedStateRootJob {
     /// Creates a prepared state-root job without update-stream capabilities.
     pub const fn new(
-        job: Box<dyn StateRootJob<N>>,
+        job: Box<dyn StateRootJob>,
         hashed_state_rx: Option<mpsc::Receiver<Arc<HashedPostState>>>,
     ) -> Self {
         Self {
@@ -433,8 +419,8 @@ impl<N: NodePrimitives> PreparedStateRootJob<N> {
     /// Completes the job after execution.
     pub fn finish(
         &mut self,
-        block: &RecoveredBlock<N::Block>,
-        output: Arc<BlockExecutionOutput<N::Receipt>>,
+        block: &RecoveredBlock<BaseBlock>,
+        output: Arc<BlockExecutionOutput<BaseReceipt>>,
         hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {
         self.job.finish(block, output, hashed_state)
@@ -442,7 +428,7 @@ impl<N: NodePrimitives> PreparedStateRootJob<N> {
 }
 
 /// Per-block state-root job prepared before execution and finished after execution.
-pub trait StateRootJob<N: NodePrimitives>: Send {
+pub trait StateRootJob: Send {
     /// Human-readable strategy name used in logs.
     fn name(&self) -> &'static str;
 
@@ -451,8 +437,8 @@ pub trait StateRootJob<N: NodePrimitives>: Send {
     /// Called at most once per prepared job; implementations may panic if called again.
     fn finish(
         &mut self,
-        block: &RecoveredBlock<N::Block>,
-        output: Arc<BlockExecutionOutput<N::Receipt>>,
+        block: &RecoveredBlock<BaseBlock>,
+        output: Arc<BlockExecutionOutput<BaseReceipt>>,
         hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome>;
 }
@@ -517,15 +503,14 @@ impl DefaultStateRootStrategy {
     /// explicitly finished after execution so the task observes the end of the update stream.
     /// An unknown transaction count uses the full proof-worker pool.
     #[instrument(level = "debug", target = "engine::tree::payload_processor", skip_all)]
-    fn spawn_state_root<N, F>(
+    fn spawn_state_root<F>(
         &self,
         executor: &reth_tasks::Runtime,
-        overlay_manager: &OverlayManager<N>,
+        overlay_manager: &OverlayManager,
         multiproof_provider_factory: F,
-        options: StateRootTaskOptions<'_, N>,
+        options: StateRootTaskOptions<'_>,
     ) -> StateRootHandle
     where
-        N: NodePrimitives,
         F: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
             + Clone
             + Send
@@ -589,10 +574,10 @@ impl DefaultStateRootStrategy {
 
     /// Spawns the sparse-trie task and preserves its trie for the next state-root job.
     #[expect(clippy::too_many_arguments)]
-    fn spawn_sparse_trie_task<N: NodePrimitives>(
+    fn spawn_sparse_trie_task(
         &self,
         executor: &reth_tasks::Runtime,
-        overlay_manager: &OverlayManager<N>,
+        overlay_manager: &OverlayManager,
         proof_worker_handle: ProofWorkerHandle,
         proof_result_tx: CrossbeamSender<ProofResultMessage>,
         proof_result_rx: CrossbeamReceiver<ProofResultMessage>,
@@ -600,7 +585,7 @@ impl DefaultStateRootStrategy {
         hashed_state_tx: mpsc::Sender<Arc<HashedPostState>>,
         from_multi_proof: CrossbeamReceiver<StateRootMessage>,
         cancel_rx: CrossbeamReceiver<()>,
-        options: SparseTrieTaskOptions<N>,
+        options: SparseTrieTaskOptions,
     ) {
         let SparseTrieTaskOptions {
             parent_header,
@@ -763,24 +748,24 @@ impl DefaultStateRootStrategy {
     }
 }
 
-struct SparseTrieTaskOptions<N: NodePrimitives> {
-    parent_header: SealedHeader<N::BlockHeader>,
+struct SparseTrieTaskOptions {
+    parent_header: SealedHeader<alloy_consensus::Header>,
     preserved_sparse_trie: Option<PreservedSparseTrie>,
     chunk_size: usize,
     /// `None` disables pruning. `Some(Vec::new())` prunes nodes older than the current block.
-    pending_sparse_trie_prune_blocks: Option<Vec<ExecutedBlock<N>>>,
+    pending_sparse_trie_prune_blocks: Option<Vec<ExecutedBlock>>,
 }
 
-struct StateRootTaskOptions<'a, N: NodePrimitives> {
-    parent_header: SealedHeader<N::BlockHeader>,
+struct StateRootTaskOptions<'a> {
+    parent_header: SealedHeader<alloy_consensus::Header>,
     preserved_sparse_trie: Option<PreservedSparseTrie>,
     transaction_count: Option<usize>,
     config: &'a TreeConfig,
-    pending_sparse_trie_prune_blocks: Option<Vec<ExecutedBlock<N>>>,
+    pending_sparse_trie_prune_blocks: Option<Vec<ExecutedBlock>>,
 }
 
-fn sparse_trie_prune_before<N: NodePrimitives>(
-    pending_sparse_trie_prune_blocks: Option<&[ExecutedBlock<N>]>,
+fn sparse_trie_prune_before(
+    pending_sparse_trie_prune_blocks: Option<&[ExecutedBlock]>,
     new_epoch: TrieNodeEpoch,
 ) -> Option<TrieNodeEpoch> {
     // The parent chain is ordered newest to oldest. An empty chain means the block being
@@ -792,10 +777,10 @@ fn sparse_trie_prune_before<N: NodePrimitives>(
     }
 }
 
-fn published_sparse_trie_anchor_hash<N: NodePrimitives>(
+fn published_sparse_trie_anchor_hash(
     sparse_trie_anchor_hash: B256,
     reused_preserved_sparse_trie: bool,
-    pending_sparse_trie_prune_blocks: Option<&[ExecutedBlock<N>]>,
+    pending_sparse_trie_prune_blocks: Option<&[ExecutedBlock]>,
 ) -> B256 {
     if !reused_preserved_sparse_trie {
         return sparse_trie_anchor_hash;
@@ -818,9 +803,8 @@ fn published_sparse_trie_anchor_hash<N: NodePrimitives>(
     oldest_prune_block.recovered_block().parent_hash()
 }
 
-impl<N, P, Evm> StateRootStrategy<N, P, Evm> for DefaultStateRootStrategy
+impl<P, Evm> StateRootStrategy<P, Evm> for DefaultStateRootStrategy
 where
-    N: NodePrimitives,
     P: DatabaseProviderFactory + Clone + 'static,
     P::Provider: BlockNumReader
         + PruneCheckpointReader
@@ -828,15 +812,15 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    OverlayStateProviderFactory<P, N>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
+    OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
         + Clone
         + 'static,
-    Evm: ConfigureEvm<Primitives = N> + 'static,
+    Evm: ConfigureEvm + 'static,
 {
     fn prepare(
         &self,
-        mut ctx: StateRootJobContext<'_, N, P, Evm>,
-    ) -> ProviderResult<PreparedStateRootJob<N>> {
+        mut ctx: StateRootJobContext<'_, P, Evm>,
+    ) -> ProviderResult<PreparedStateRootJob> {
         if ctx.config.skip_state_root() {
             return Ok(PreparedStateRootJob::new(Box::new(SkippedStateRootJob {}), None));
         }
@@ -923,7 +907,7 @@ where
 
     fn prepare_payload_builder(
         &self,
-        mut ctx: PayloadStateRootJobContext<'_, N, P>,
+        mut ctx: PayloadStateRootJobContext<'_, P>,
     ) -> ProviderResult<Option<PayloadStateRootHandle>> {
         // Sharing the engine state-root task with the payload builder is opt-in, and needs a
         // host that can run the task pipeline at all.
@@ -969,15 +953,15 @@ where
 #[derive(Debug)]
 struct SkippedStateRootJob {}
 
-impl<N: NodePrimitives> StateRootJob<N> for SkippedStateRootJob {
+impl StateRootJob for SkippedStateRootJob {
     fn name(&self) -> &'static str {
         "skipped"
     }
 
     fn finish(
         &mut self,
-        block: &RecoveredBlock<N::Block>,
-        _output: Arc<BlockExecutionOutput<N::Receipt>>,
+        block: &RecoveredBlock<BaseBlock>,
+        _output: Arc<BlockExecutionOutput<BaseReceipt>>,
         _hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {
         Ok(StateRootJobOutcome::new(block.header().state_root(), Arc::new(TrieUpdates::default())))
@@ -985,13 +969,12 @@ impl<N: NodePrimitives> StateRootJob<N> for SkippedStateRootJob {
 }
 
 #[derive(Debug)]
-struct SynchronousStateRootJob<N: NodePrimitives, P> {
-    provider_builder: StateProviderBuilder<N, P>,
+struct SynchronousStateRootJob<P> {
+    provider_builder: StateProviderBuilder<P>,
 }
 
-impl<N, P> StateRootJob<N> for SynchronousStateRootJob<N, P>
+impl<P> StateRootJob for SynchronousStateRootJob<P>
 where
-    N: NodePrimitives,
     P: DatabaseProviderFactory + Clone + 'static,
     P::Provider: BlockNumReader
         + PruneCheckpointReader
@@ -1006,8 +989,8 @@ where
 
     fn finish(
         &mut self,
-        _block: &RecoveredBlock<N::Block>,
-        _output: Arc<BlockExecutionOutput<N::Receipt>>,
+        _block: &RecoveredBlock<BaseBlock>,
+        _output: Arc<BlockExecutionOutput<BaseReceipt>>,
         hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {
         let provider = self.provider_builder.clone().build()?;
@@ -1018,19 +1001,18 @@ where
 }
 
 #[derive(Debug)]
-struct SparseTrieStateRootJob<N: NodePrimitives, P> {
+struct SparseTrieStateRootJob<P> {
     handle: StateRootHandle,
-    provider_builder: StateProviderBuilder<N, P>,
-    overlay_factory: OverlayStateProviderFactory<P, N>,
+    provider_builder: StateProviderBuilder<P>,
+    overlay_factory: OverlayStateProviderFactory<P>,
     executor: reth_tasks::Runtime,
     timeout: Option<Duration>,
     compare_trie_updates: bool,
     metrics: BlockValidationMetrics,
 }
 
-impl<N, P> SparseTrieStateRootJob<N, P>
+impl<P> SparseTrieStateRootJob<P>
 where
-    N: NodePrimitives,
     P: DatabaseProviderFactory + Clone + 'static,
     P::Provider: BlockNumReader
         + PruneCheckpointReader
@@ -1038,14 +1020,14 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    OverlayStateProviderFactory<P, N>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
+    OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
         + Clone
         + 'static,
 {
     fn serial_fallback(
         executor: &reth_tasks::Runtime,
-        provider_builder: StateProviderBuilder<N, P>,
-        output: Arc<BlockExecutionOutput<N::Receipt>>,
+        provider_builder: StateProviderBuilder<P>,
+        output: Arc<BlockExecutionOutput<BaseReceipt>>,
     ) -> ProviderResult<SerialFallbackRx> {
         let provider = provider_builder.build()?;
         let (fallback_tx, fallback_rx) = mpsc::channel();
@@ -1068,7 +1050,7 @@ where
     /// post state is returned in the outcome for validation to re-check against.
     fn compute_serial(
         &self,
-        output: &BlockExecutionOutput<N::Receipt>,
+        output: &BlockExecutionOutput<BaseReceipt>,
     ) -> ProviderResult<StateRootJobOutcome> {
         let provider = self.provider_builder.clone().build()?;
         let hashed_state = Arc::new(provider.hashed_post_state(&output.state)?);
@@ -1085,8 +1067,8 @@ where
     /// rejects the block.
     fn verified_sparse_outcome(
         &self,
-        block: &RecoveredBlock<N::Block>,
-        output: &BlockExecutionOutput<N::Receipt>,
+        block: &RecoveredBlock<BaseBlock>,
+        output: &BlockExecutionOutput<BaseReceipt>,
         outcome: StateRootComputeOutcome,
     ) -> ProviderResult<StateRootJobOutcome> {
         let outcome = self.sparse_outcome(block, output, outcome);
@@ -1104,8 +1086,8 @@ where
 
     fn sparse_outcome(
         &self,
-        _block: &RecoveredBlock<N::Block>,
-        output: &BlockExecutionOutput<N::Receipt>,
+        _block: &RecoveredBlock<BaseBlock>,
+        output: &BlockExecutionOutput<BaseReceipt>,
         outcome: StateRootComputeOutcome,
     ) -> StateRootJobOutcome {
         let StateRootComputeOutcome {
@@ -1138,9 +1120,8 @@ where
     }
 }
 
-impl<N, P> StateRootJob<N> for SparseTrieStateRootJob<N, P>
+impl<P> StateRootJob for SparseTrieStateRootJob<P>
 where
-    N: NodePrimitives,
     P: DatabaseProviderFactory + Clone + 'static,
     P::Provider: BlockNumReader
         + PruneCheckpointReader
@@ -1148,7 +1129,7 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    OverlayStateProviderFactory<P, N>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
+    OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
         + Clone
         + 'static,
 {
@@ -1158,8 +1139,8 @@ where
 
     fn finish(
         &mut self,
-        block: &RecoveredBlock<N::Block>,
-        output: Arc<BlockExecutionOutput<N::Receipt>>,
+        block: &RecoveredBlock<BaseBlock>,
+        output: Arc<BlockExecutionOutput<BaseReceipt>>,
         _hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {
         if self.timeout.is_none() {
@@ -1238,14 +1219,13 @@ where
     }
 }
 
-fn compare_trie_updates_with_serial<N, P>(
-    state_provider_builder: StateProviderBuilder<N, P>,
-    overlay_factory: OverlayStateProviderFactory<P, N>,
-    output: &BlockExecutionOutput<N::Receipt>,
+fn compare_trie_updates_with_serial<P>(
+    state_provider_builder: StateProviderBuilder<P>,
+    overlay_factory: OverlayStateProviderFactory<P>,
+    output: &BlockExecutionOutput<BaseReceipt>,
     task_trie_updates: TrieUpdates,
 ) -> bool
 where
-    N: NodePrimitives,
     P: DatabaseProviderFactory,
     P::Provider: BlockNumReader
         + PruneCheckpointReader
@@ -1253,7 +1233,7 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    OverlayStateProviderFactory<P, N>:
+    OverlayStateProviderFactory<P>:
         DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>,
 {
     debug!(target: "engine::tree::state_root_strategy", "Comparing trie updates with serial computation");
@@ -1347,9 +1327,7 @@ mod tests {
     use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_chainspec::ChainSpec;
     use reth_db_common::init::init_genesis;
-    use reth_ethereum_primitives::EthPrimitives;
-    use reth_evm::OnStateHook;
-    use reth_evm::TestEvmConfig;
+    use reth_evm::{OnStateHook, TestEvmConfig};
     use reth_primitives_traits::{Account, StorageEntry};
     use reth_provider::{
         HashingWriter, providers::BlockchainProvider,
@@ -1365,11 +1343,8 @@ mod tests {
     #[test]
     fn sparse_trie_prune_before_uses_requested_range() {
         let new_epoch = TrieNodeEpoch::new(10);
-        assert_eq!(sparse_trie_prune_before::<EthPrimitives>(None, new_epoch), None);
-        assert_eq!(
-            sparse_trie_prune_before::<EthPrimitives>(Some(&[]), new_epoch),
-            Some(new_epoch)
-        );
+        assert_eq!(sparse_trie_prune_before(None, new_epoch), None);
+        assert_eq!(sparse_trie_prune_before(Some(&[]), new_epoch), Some(new_epoch));
 
         let mut blocks: Vec<_> = TestBlockBuilder::eth().get_executed_blocks(7..10).collect();
         blocks.reverse();
@@ -1511,7 +1486,7 @@ mod tests {
         let provider_factory = BlockchainProvider::new(factory).unwrap();
         let env: ExecutionEnv<TestEvmConfig> = ExecutionEnv::test_default();
         let runtime = reth_tasks::Runtime::test();
-        let overlay_manager = OverlayManager::<EthPrimitives>::default();
+        let overlay_manager = OverlayManager::default();
         let mut state_root_handle = DefaultStateRootStrategy::default().spawn_state_root(
             &runtime,
             &overlay_manager,

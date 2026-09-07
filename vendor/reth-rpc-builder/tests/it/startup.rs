@@ -27,7 +27,12 @@ async fn test_http_addr_in_use() {
     let handle = launch_http(vec![RethRpcModule::Admin]).await;
     let addr = handle.http_local_addr().unwrap();
     let builder = test_rpc_builder();
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let server = builder.build(
         TransportRpcModuleConfig::set_http(vec![RethRpcModule::Admin]),
         eth_api,
@@ -44,7 +49,12 @@ async fn test_ws_addr_in_use() {
     let handle = launch_ws(vec![RethRpcModule::Admin]).await;
     let addr = handle.ws_local_addr().unwrap();
     let builder = test_rpc_builder();
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(vec![RethRpcModule::Admin]),
         eth_api,
@@ -66,7 +76,12 @@ async fn test_launch_same_port() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_launch_same_port_different_modules() {
     let builder = test_rpc_builder();
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(vec![RethRpcModule::Admin])
             .with_http(vec![RethRpcModule::Eth]),
@@ -90,7 +105,12 @@ async fn test_launch_same_port_different_modules() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_launch_same_port_same_cors() {
     let builder = test_rpc_builder();
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(vec![RethRpcModule::Eth])
             .with_http(vec![RethRpcModule::Eth]),
@@ -112,7 +132,12 @@ async fn test_launch_same_port_same_cors() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_launch_same_port_different_cors() {
     let builder = test_rpc_builder();
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(vec![RethRpcModule::Eth])
             .with_http(vec![RethRpcModule::Eth]),

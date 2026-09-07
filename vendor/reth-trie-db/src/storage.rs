@@ -114,9 +114,7 @@ mod tests {
     use super::*;
 
     fn append_storage_changesets_to_static_files(
-        factory: &impl StaticFileProviderFactory<
-            Primitives: reth_primitives_traits::NodePrimitives<BlockHeader = Header>,
-        >,
+        factory: &impl StaticFileProviderFactory,
         changesets: Vec<(u64, Vec<reth_db_api::models::StorageBeforeTx>)>,
     ) {
         let sf = factory.static_file_provider();
@@ -127,12 +125,7 @@ mod tests {
         writer.commit().unwrap();
     }
 
-    fn append_headers_to_static_files(
-        factory: &impl StaticFileProviderFactory<
-            Primitives: reth_primitives_traits::NodePrimitives<BlockHeader = Header>,
-        >,
-        up_to_block: u64,
-    ) {
+    fn append_headers_to_static_files(factory: &impl StaticFileProviderFactory, up_to_block: u64) {
         let sf = factory.static_file_provider();
         let mut writer = sf.latest_writer(StaticFileSegment::Headers).unwrap();
         let mut header = Header::default();

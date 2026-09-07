@@ -480,6 +480,7 @@ mod tests {
 
         use alloy_consensus::{BlockHeader, Header};
         use alloy_primitives::{B256, BlockNumber, TxNumber, map::B256Map};
+        use base_common_consensus::{BaseBlock as Block, BaseBlockBody as BlockBody};
         use futures_util::Stream;
         use reth_db::{static_file::HeaderWithHashMask, tables};
         use reth_db_api::{
@@ -487,7 +488,6 @@ mod tests {
             models::{StoredBlockBodyIndices, StoredBlockOmmers},
             transaction::{DbTx, DbTxMut},
         };
-        use reth_ethereum_primitives::{Block, BlockBody};
         use reth_network_p2p::{
             bodies::{
                 downloader::{BodyDownloader, BodyDownloaderResult},
@@ -502,9 +502,7 @@ mod tests {
         };
         use reth_stages_api::{ExecInput, ExecOutput, UnwindInput};
         use reth_static_file_types::StaticFileSegment;
-        use reth_testing_utils::generators::{
-            self, BlockRangeParams, random_block_range, random_signed_tx,
-        };
+        use reth_testing_utils::generators::{self, BlockRangeParams};
 
         use crate::{
             stages::bodies::BodyStage,
@@ -573,7 +571,7 @@ mod tests {
                 let mut rng = generators::rng();
 
                 // Static files do not support gaps in headers, so we need to generate 0 to end
-                let blocks = random_block_range(
+                let blocks = reth_testing_utils::BaseTestData::random_block_range(
                     &mut rng,
                     0..=end,
                     BlockRangeParams {
@@ -598,7 +596,8 @@ mod tests {
                         static_file_producer.set_block_range(0..=progress.number);
 
                         body.tx_num_range().try_for_each(|tx_num| {
-                            let transaction = random_signed_tx(&mut rng);
+                            let transaction =
+                                reth_testing_utils::BaseTestData::random_signed_tx(&mut rng);
                             static_file_producer.append_transaction(tx_num, &transaction).map(drop)
                         })?;
 

@@ -35,6 +35,7 @@ reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 reth-exex-types = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 assert_matches = { workspace = true }

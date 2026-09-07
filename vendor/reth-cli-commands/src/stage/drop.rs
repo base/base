@@ -1,6 +1,7 @@
 //! Database debugging tool
 use std::sync::Arc;
 
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use clap::Parser;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
@@ -16,7 +17,6 @@ use reth_db_common::{
         insert_genesis_storage_history,
     },
 };
-use reth_node_api::{HeaderTy, ReceiptTy, TxTy};
 use reth_node_core::args::StageEnum;
 use reth_provider::{
     DBProvider, RocksDBProviderFactory, StaticFileProviderFactory, StaticFileWriter,
@@ -110,7 +110,7 @@ impl<C: ChainSpecParser> Command<C> {
         match self.stage {
             StageEnum::Headers => {
                 tx.clear::<tables::CanonicalHeaders>()?;
-                tx.clear::<tables::Headers<HeaderTy<N>>>()?;
+                tx.clear::<tables::Headers<alloy_consensus::Header>>()?;
                 tx.clear::<tables::HeaderNumbers>()?;
                 reset_stage_checkpoint(tx, StageId::Headers)?;
 
@@ -118,10 +118,10 @@ impl<C: ChainSpecParser> Command<C> {
             }
             StageEnum::Bodies => {
                 tx.clear::<tables::BlockBodyIndices>()?;
-                tx.clear::<tables::Transactions<TxTy<N>>>()?;
+                tx.clear::<tables::Transactions<BaseTxEnvelope>>()?;
 
                 tx.clear::<tables::TransactionBlocks>()?;
-                tx.clear::<tables::BlockOmmers<HeaderTy<N>>>()?;
+                tx.clear::<tables::BlockOmmers<alloy_consensus::Header>>()?;
                 tx.clear::<tables::BlockWithdrawals>()?;
                 reset_stage_checkpoint(tx, StageId::Bodies)?;
 
@@ -142,7 +142,7 @@ impl<C: ChainSpecParser> Command<C> {
                 tx.clear::<tables::AccountChangeSets>()?;
                 tx.clear::<tables::StorageChangeSets>()?;
                 tx.clear::<tables::Bytecodes>()?;
-                tx.clear::<tables::Receipts<ReceiptTy<N>>>()?;
+                tx.clear::<tables::Receipts<BaseReceipt>>()?;
 
                 reset_prune_checkpoint(tx, PruneSegment::Receipts)?;
                 reset_prune_checkpoint(tx, PruneSegment::ContractLogs)?;

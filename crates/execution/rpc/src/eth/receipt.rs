@@ -7,15 +7,14 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTransaction};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTransaction, BaseTxEnvelope};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{
     BaseLogResponse, BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields,
 };
 use base_execution_evm::RethL1BlockInfo;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
-use reth_node_api::{BlockBody, NodePrimitives};
-use reth_primitives_traits::{SealedBlock, SealedHeaderFor};
+use reth_primitives_traits::SealedBlock;
 use reth_rpc_eth_api::{
     RpcConvert,
     helpers::LoadReceipt,
@@ -30,7 +29,7 @@ use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 impl<N, Rpc> LoadReceipt for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }
 
@@ -48,10 +47,9 @@ impl<Provider> BaseReceiptConverter<Provider> {
     }
 }
 
-impl<Provider, N> ReceiptConverter<N> for BaseReceiptConverter<Provider>
+impl<Provider> ReceiptConverter for BaseReceiptConverter<Provider>
 where
-    N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
-    Provider: BlockReader<Block = N::Block, Transaction = N::SignedTx>
+    Provider: BlockReader<Block = BaseBlock, Transaction = BaseTxEnvelope>
         + ChainSpecProvider<ChainSpec: Upgrades>
         + Debug
         + 'static,
@@ -63,10 +61,10 @@ where
     fn convert_log(
         &self,
         log: Log,
-        _receipt: &N::Receipt,
-        header: &SealedHeaderFor<N>,
+        _receipt: &BaseReceipt,
+        header: &reth_primitives_traits::SealedHeader,
     ) -> Result<Self::RpcLog, Self::Error> {
-        let block_timestamp_ms = self.base_time.get::<N::SignedTx, _>(
+        let block_timestamp_ms = self.base_time.get::<BaseTxEnvelope, _>(
             &self.provider,
             header.hash(),
             header.number(),
@@ -78,7 +76,7 @@ where
 
     fn convert_receipts(
         &self,
-        inputs: Vec<ConvertReceiptInput<'_, N>>,
+        inputs: Vec<ConvertReceiptInput<'_>>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
         let Some(block_number) = inputs.first().map(|r| r.meta.block_number) else {
             return Ok(Vec::new());
@@ -94,14 +92,14 @@ where
 
     fn convert_receipts_with_block(
         &self,
-        inputs: Vec<ConvertReceiptInput<'_, N>>,
-        block: &SealedBlock<N::Block>,
+        inputs: Vec<ConvertReceiptInput<'_>>,
+        block: &SealedBlock<BaseBlock>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
         let block_timestamp_ms = self.base_time.insert_from_transactions(
             block.hash(),
             block.header().number(),
             block.header().timestamp(),
-            block.body().transactions(),
+            &block.body().transactions,
         );
         let mut l1_block_info = match base_execution_evm::extract_l1_info(block.body()) {
             Ok(l1_block_info) => l1_block_info,
@@ -321,14 +319,11 @@ pub struct BaseReceiptBuilder {
 
 impl BaseReceiptBuilder {
     /// Returns a new builder.
-    pub fn new<N>(
+    pub fn new(
         chain_spec: &impl Upgrades,
-        input: ConvertReceiptInput<'_, N>,
+        input: ConvertReceiptInput<'_>,
         l1_block_info: &mut base_common_evm::L1BlockInfo,
-    ) -> Result<Self, BaseEthApiError>
-    where
-        N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
-    {
+    ) -> Result<Self, BaseEthApiError> {
         let timestamp = input.meta.timestamp;
         let block_number = input.meta.block_number;
         let tx_signed = *input.tx.inner();
@@ -413,7 +408,7 @@ mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
     use base_common_chains::ChainConfig;
-    use base_common_consensus::{BasePrimitives, BaseTransactionSigned, BaseTypedTransaction};
+    use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction};
     use base_execution_chainspec::BaseChainSpec;
     use reth_primitives_traits::Recovered;
 
@@ -714,7 +709,7 @@ mod tests {
 
         let receipt = BaseReceiptBuilder::new(
             &upgrades,
-            ConvertReceiptInput::<BasePrimitives> {
+            ConvertReceiptInput {
                 tx: Recovered::new_unchecked(&tx, Address::default()),
                 receipt: BaseReceipt::Eip7702(Receipt {
                     status: Eip658Value::Eip658(true),
@@ -768,7 +763,7 @@ mod tests {
 
         let receipt = BaseReceiptBuilder::new(
             &upgrades,
-            ConvertReceiptInput::<BasePrimitives> {
+            ConvertReceiptInput {
                 tx: Recovered::new_unchecked(&tx, Address::default()),
                 receipt: BaseReceipt::Eip7702(Receipt {
                     status: Eip658Value::Eip658(true),

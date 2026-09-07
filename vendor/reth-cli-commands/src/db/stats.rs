@@ -10,7 +10,7 @@ use reth_db::{DatabaseEnv, mdbx, static_file::iter_static_files};
 use reth_db_api::{TableViewer, Tables, database::Database};
 use reth_db_common::DbTool;
 use reth_fs_util as fs;
-use reth_node_builder::{NodePrimitives, NodeTypesWithDB, NodeTypesWithDBAdapter};
+use reth_node_builder::{NodeTypesWithDB, NodeTypesWithDBAdapter};
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{
     RocksDBProviderFactory,
@@ -58,7 +58,7 @@ impl Command {
             println!("\n");
         }
 
-        let static_files_stats_table = self.static_files_stats_table::<N::Primitives>(data_dir)?;
+        let static_files_stats_table = self.static_files_stats_table(data_dir)?;
         println!("{static_files_stats_table}");
 
         println!("\n");
@@ -222,7 +222,7 @@ impl Command {
         table
     }
 
-    fn static_files_stats_table<N: NodePrimitives>(
+    fn static_files_stats_table(
         &self,
         data_dir: ChainPath<DataDirPath>,
     ) -> eyre::Result<ComfyTable> {
@@ -252,7 +252,7 @@ impl Command {
         }
 
         let static_files = iter_static_files(&data_dir.static_files())?;
-        let static_file_provider = StaticFileProvider::<N>::read_only(data_dir.static_files())?;
+        let static_file_provider = StaticFileProvider::read_only(data_dir.static_files())?;
 
         let mut total_data_size = 0;
         let mut total_index_size = 0;

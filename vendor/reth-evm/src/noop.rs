@@ -1,6 +1,7 @@
 //! Helpers for testing.
 
-use reth_primitives_traits::{BlockTy, HeaderTy, SealedBlock, SealedHeader};
+use base_common_consensus::BaseBlock;
+use reth_primitives_traits::{SealedBlock, SealedHeader};
 
 use crate::{ConfigureEvm, EvmEnvFor};
 
@@ -30,7 +31,6 @@ impl<Inner> ConfigureEvm for NoopEvmConfig<Inner>
 where
     Inner: ConfigureEvm,
 {
-    type Primitives = Inner::Primitives;
     type Error = Inner::Error;
     type NextBlockEnvCtx = Inner::NextBlockEnvCtx;
     type BlockExecutorFactory = Inner::BlockExecutorFactory;
@@ -44,13 +44,13 @@ where
         self.inner().block_assembler()
     }
 
-    fn evm_env(&self, header: &HeaderTy<Self::Primitives>) -> Result<EvmEnvFor<Self>, Self::Error> {
+    fn evm_env(&self, header: &alloy_consensus::Header) -> Result<EvmEnvFor<Self>, Self::Error> {
         self.inner().evm_env(header)
     }
 
     fn next_evm_env(
         &self,
-        parent: &HeaderTy<Self::Primitives>,
+        parent: &alloy_consensus::Header,
         attributes: &Self::NextBlockEnvCtx,
     ) -> Result<EvmEnvFor<Self>, Self::Error> {
         self.inner().next_evm_env(parent, attributes)
@@ -58,14 +58,14 @@ where
 
     fn context_for_block<'a>(
         &self,
-        block: &'a SealedBlock<BlockTy<Self::Primitives>>,
+        block: &'a SealedBlock<BaseBlock>,
     ) -> Result<crate::ExecutionCtxFor<'a, Self>, Self::Error> {
         self.inner().context_for_block(block)
     }
 
     fn context_for_next_block(
         &self,
-        parent: &SealedHeader<HeaderTy<Self::Primitives>>,
+        parent: &SealedHeader<alloy_consensus::Header>,
         attributes: Self::NextBlockEnvCtx,
     ) -> Result<crate::ExecutionCtxFor<'_, Self>, Self::Error> {
         self.inner().context_for_next_block(parent, attributes)

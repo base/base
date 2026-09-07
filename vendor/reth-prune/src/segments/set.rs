@@ -1,5 +1,4 @@
-use reth_db_api::{table::Value, transaction::DbTxMut};
-use reth_primitives_traits::NodePrimitives;
+use reth_db_api::transaction::DbTxMut;
 use reth_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, providers::StaticFileProvider,
@@ -46,9 +45,8 @@ impl<Provider> SegmentSet<Provider> {
 
 impl<Provider> SegmentSet<Provider>
 where
-    Provider: StaticFileProviderFactory<
-            Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-        > + DBProvider<Tx: DbTxMut>
+    Provider: StaticFileProviderFactory
+        + DBProvider<Tx: DbTxMut>
         + PruneCheckpointWriter
         + PruneCheckpointReader
         + BlockReader
@@ -61,7 +59,7 @@ where
     /// Creates a [`SegmentSet`] from an existing components, such as [`StaticFileProvider`] and
     /// [`PruneModes`].
     pub fn from_components(
-        _static_file_provider: StaticFileProvider<Provider::Primitives>,
+        _static_file_provider: StaticFileProvider,
         prune_modes: PruneModes,
     ) -> Self {
         let PruneModes {

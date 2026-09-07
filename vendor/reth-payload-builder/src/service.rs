@@ -18,7 +18,7 @@ use reth_chain_state::CanonStateNotification;
 use reth_execution_cache::SavedCache;
 use reth_payload_builder_primitives::{Events, PayloadBuilderError, PayloadEvents};
 use reth_payload_primitives::{BuiltPayload, PayloadAttributes, PayloadKind, PayloadTypes};
-use reth_primitives_traits::{FastInstant as Instant, NodePrimitives};
+use reth_primitives_traits::FastInstant as Instant;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use tokio::sync::{
     broadcast, mpsc,
@@ -393,13 +393,12 @@ where
     }
 }
 
-impl<Gen, St, T, N> Future for PayloadBuilderService<Gen, St, T>
+impl<Gen, St, T> Future for PayloadBuilderService<Gen, St, T>
 where
     T: PayloadTypes,
-    N: NodePrimitives,
     Gen: PayloadJobGenerator + Unpin + 'static,
     <Gen as PayloadJobGenerator>::Job: Unpin + 'static,
-    St: Stream<Item = CanonStateNotification<N>> + Send + Unpin + 'static,
+    St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
     Gen::Job: PayloadJob<PayloadAttributes = T::PayloadAttributes>,
     <Gen::Job as PayloadJob>::BuiltPayload: Into<T::BuiltPayload>,
 {

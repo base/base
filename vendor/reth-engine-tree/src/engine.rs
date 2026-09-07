@@ -6,12 +6,12 @@ use std::{
 };
 
 use alloy_primitives::{B256, map::B256Set};
+use base_common_consensus::BaseBlock;
 use crossbeam_channel::Sender;
 use futures::{Stream, StreamExt};
 use reth_engine_primitives::{BeaconEngineMessage, ConsensusEngineEvent};
-use reth_ethereum_primitives::EthPrimitives;
 use reth_payload_primitives::{BuiltPayloadExecutedBlock, PayloadTypes};
-use reth_primitives_traits::{Block, NodePrimitives, SealedBlock};
+use reth_primitives_traits::{Block, SealedBlock};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{
@@ -170,30 +170,30 @@ pub trait EngineRequestHandler: Send + Sync {
 /// In case required blocks are missing, the handler will request them from the network, by emitting
 /// a download request upstream.
 #[derive(Debug)]
-pub struct EngineApiRequestHandler<Request, N: NodePrimitives> {
+pub struct EngineApiRequestHandler<Request> {
     /// channel to send messages to the tree to execute the payload.
-    to_tree: Sender<FromEngine<Request, N::Block>>,
+    to_tree: Sender<FromEngine<Request, BaseBlock>>,
     /// channel to receive messages from the tree.
-    from_tree: UnboundedReceiver<EngineApiEvent<N>>,
+    from_tree: UnboundedReceiver<EngineApiEvent>,
 }
 
-impl<Request, N: NodePrimitives> EngineApiRequestHandler<Request, N> {
+impl<Request> EngineApiRequestHandler<Request> {
     /// Creates a new `EngineApiRequestHandler`.
     pub const fn new(
-        to_tree: Sender<FromEngine<Request, N::Block>>,
-        from_tree: UnboundedReceiver<EngineApiEvent<N>>,
+        to_tree: Sender<FromEngine<Request, BaseBlock>>,
+        from_tree: UnboundedReceiver<EngineApiEvent>,
     ) -> Self {
         Self { to_tree, from_tree }
     }
 }
 
-impl<Request, N: NodePrimitives> EngineRequestHandler for EngineApiRequestHandler<Request, N>
+impl<Request> EngineRequestHandler for EngineApiRequestHandler<Request>
 where
     Request: Send,
 {
-    type Event = ConsensusEngineEvent<N>;
+    type Event = ConsensusEngineEvent;
     type Request = Request;
-    type Block = N::Block;
+    type Block = BaseBlock;
 
     fn on_event(&mut self, event: FromEngine<Self::Request, Self::Block>) {
         // delegate to the tree
@@ -242,14 +242,14 @@ impl EngineApiKind {
 
 /// The request variants that the engine API handler can receive.
 #[derive(Debug)]
-pub enum EngineApiRequest<T: PayloadTypes, N: NodePrimitives> {
+pub enum EngineApiRequest<T: PayloadTypes> {
     /// A request received from the consensus engine.
     Beacon(BeaconEngineMessage<T>),
     /// Request to insert an already executed block, e.g. via payload building.
-    InsertExecutedBlock(BuiltPayloadExecutedBlock<N>),
+    InsertExecutedBlock(BuiltPayloadExecutedBlock),
 }
 
-impl<T: PayloadTypes, N: NodePrimitives> Display for EngineApiRequest<T, N> {
+impl<T: PayloadTypes> Display for EngineApiRequest<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Beacon(msg) => msg.fmt(f),
@@ -260,41 +260,39 @@ impl<T: PayloadTypes, N: NodePrimitives> Display for EngineApiRequest<T, N> {
     }
 }
 
-impl<T: PayloadTypes, N: NodePrimitives> From<BeaconEngineMessage<T>> for EngineApiRequest<T, N> {
+impl<T: PayloadTypes> From<BeaconEngineMessage<T>> for EngineApiRequest<T> {
     fn from(msg: BeaconEngineMessage<T>) -> Self {
         Self::Beacon(msg)
     }
 }
 
-impl<T: PayloadTypes, N: NodePrimitives> From<EngineApiRequest<T, N>>
-    for FromEngine<EngineApiRequest<T, N>, N::Block>
-{
-    fn from(req: EngineApiRequest<T, N>) -> Self {
+impl<T: PayloadTypes> From<EngineApiRequest<T>> for FromEngine<EngineApiRequest<T>, BaseBlock> {
+    fn from(req: EngineApiRequest<T>) -> Self {
         Self::Request(req)
     }
 }
 
 /// Events emitted by the engine API handler.
 #[derive(Debug)]
-pub enum EngineApiEvent<N: NodePrimitives = EthPrimitives> {
+pub enum EngineApiEvent {
     /// Event from the consensus engine.
     // TODO(mattsse): find a more appropriate name for this variant, consider phasing it out.
-    BeaconConsensus(ConsensusEngineEvent<N>),
+    BeaconConsensus(ConsensusEngineEvent),
     /// Backfill action is needed.
     BackfillAction(BackfillAction),
     /// Block download is needed.
     Download(DownloadRequest),
 }
 
-impl<N: NodePrimitives> EngineApiEvent<N> {
+impl EngineApiEvent {
     /// Returns `true` if the event is a backfill action.
     pub const fn is_backfill_action(&self) -> bool {
         matches!(self, Self::BackfillAction(_))
     }
 }
 
-impl<N: NodePrimitives> From<ConsensusEngineEvent<N>> for EngineApiEvent<N> {
-    fn from(event: ConsensusEngineEvent<N>) -> Self {
+impl From<ConsensusEngineEvent> for EngineApiEvent {
+    fn from(event: ConsensusEngineEvent) -> Self {
         Self::BeaconConsensus(event)
     }
 }

@@ -12,3 +12,6 @@ pub mod generators;
 pub mod genesis_allocator;
 
 pub use genesis_allocator::GenesisAllocator;
+
+mod base;
+pub use base::BaseTestData;

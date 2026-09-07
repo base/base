@@ -15,6 +15,7 @@ use alloy_rpc_types_trace::geth::{
     BlockTraceResult, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult,
 };
 use async_trait::async_trait;
+use base_common_consensus::BaseBlock;
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
@@ -22,9 +23,7 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_errors::RethError;
 use reth_evm::{ConfigureEvm, EvmEnvFor, block::BlockExecutor, execute::Executor};
-use reth_primitives_traits::{
-    Block as BlockTrait, BlockBody, BlockTy, ReceiptWithBloom, RecoveredBlock,
-};
+use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
 use reth_revm::{db::State, witness::ExecutionWitnessRecord};
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_convert::RpcTxReq;
@@ -67,7 +66,7 @@ where
         eth_api: Eth,
         blocking_task_guard: BlockingTaskGuard,
         executor: &Runtime,
-        mut stream: impl Stream<Item = ConsensusEngineEvent<Eth::Primitives>> + Send + Unpin + 'static,
+        mut stream: impl Stream<Item = ConsensusEngineEvent> + Send + Unpin + 'static,
     ) -> Self {
         let bad_block_store = BadBlockStore::default();
         let inner = Arc::new(DebugApiInner {
@@ -121,7 +120,7 @@ where
     ) -> Result<Vec<TraceResult>, Eth::Error> {
         self.eth_api()
             .spawn_with_state_at_block(block.parent_hash(), move |eth_api, mut db| {
-                let mut results = Vec::with_capacity(block.body().transactions().len());
+                let mut results = Vec::with_capacity(block.body().transactions.len());
 
                 eth_api.apply_pre_execution_changes(&block, &mut db)?;
 
@@ -407,12 +406,11 @@ where
         let mut replay_block_txs = true;
 
         // if a transaction index is provided, we need to replay the transactions until the index
-        let num_txs =
-            transaction_index.index().unwrap_or_else(|| block.body().transactions().len());
+        let num_txs = transaction_index.index().unwrap_or_else(|| block.body().transactions.len());
         // but if all transactions are to be replayed, we can use the state at the block itself
         // this works with the exception of the PENDING block, because its state might not exist if
         // built locally
-        if !target_block.is_pending() && num_txs == block.body().transactions().len() {
+        if !target_block.is_pending() && num_txs == block.body().transactions.len() {
             at = block.hash();
             replay_block_txs = false;
         }
@@ -714,7 +712,7 @@ where
 
                 eth_api.apply_pre_execution_changes(&block, &mut db)?;
 
-                let mut roots = Vec::with_capacity(block.body().transactions().len());
+                let mut roots = Vec::with_capacity(block.body().transactions.len());
                 let mut evm = eth_api.evm_config().evm_with_env(&mut db, evm_env);
                 for tx in block.transactions_recovered() {
                     let tx_env = eth_api.evm_config().tx_env(tx);
@@ -799,7 +797,7 @@ where
     /// Handler for `debug_getRawTransactions`
     /// Returns the bytes of the transaction for the given hash.
     async fn raw_transactions(&self, block_id: BlockId) -> RpcResult<Vec<Bytes>> {
-        let block: RecoveredBlock<BlockTy<Eth::Primitives>> = self
+        let block: RecoveredBlock<BaseBlock> = self
             .provider()
             .block_with_senders_by_id(block_id, TransactionVariant::NoHash)
             .to_rpc_result()?
@@ -1209,7 +1207,7 @@ struct DebugApiInner<Eth: RpcNodeCore> {
     // restrict the number of concurrent calls to blocking calls
     blocking_task_guard: BlockingTaskGuard,
     /// Cache for bad blocks.
-    bad_block_store: BadBlockStore<BlockTy<Eth::Primitives>>,
+    bad_block_store: BadBlockStore<BaseBlock>,
 }
 
 /// A bounded, deduplicating store of recently observed bad blocks.

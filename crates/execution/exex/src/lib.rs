@@ -22,7 +22,7 @@ use base_execution_trie::{
 use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
-use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes};
+use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
@@ -223,10 +223,9 @@ where
     }
 }
 
-impl<Node, Storage, Primitives> BaseProofsExEx<Node, Storage>
+impl<Node, Storage> BaseProofsExEx<Node, Storage>
 where
-    Node: FullNodeComponents<Types: NodeTypes<Primitives = Primitives>>,
-    Primitives: NodePrimitives,
+    Node: FullNodeComponents<Types: NodeTypes>,
     Storage: BaseProofsBatchStore + Clone + 'static,
 {
     /// Main execution loop for the `ExEx`
@@ -469,8 +468,7 @@ where
                 "Processing proofs storage sync turn"
             );
 
-            let mut batch: Vec<BatchBlock<Primitives>> =
-                Vec::with_capacity((end - latest) as usize);
+            let mut batch: Vec<BatchBlock> = Vec::with_capacity((end - latest) as usize);
             for block_num in (latest + 1)..=end {
                 let cached = sync_target.take(block_num);
                 match Self::build_batch_entry(block_num, cached, provider, verification_interval) {
@@ -497,7 +495,7 @@ where
         cached: Option<CachedBlockTrieData>,
         provider: &Node::Provider,
         verification_interval: u64,
-    ) -> eyre::Result<BatchBlock<Primitives>> {
+    ) -> eyre::Result<BatchBlock> {
         let should_verify =
             verification_interval > 0 && block_number.is_multiple_of(verification_interval);
         let has_cached = cached.is_some();
@@ -548,7 +546,7 @@ where
 
     fn handle_notification(
         &self,
-        notification: ExExNotification<Primitives>,
+        notification: ExExNotification,
         sync_target: &SyncTarget,
     ) -> eyre::Result<()> {
         match &notification {
@@ -579,7 +577,7 @@ where
 
     fn handle_chain_committed(
         &self,
-        new: Arc<Chain<Primitives>>,
+        new: Arc<Chain>,
         sync_target: &SyncTarget,
     ) -> eyre::Result<()> {
         debug!(
@@ -627,8 +625,8 @@ where
 
     fn handle_chain_reorged(
         &self,
-        old: Arc<Chain<Primitives>>,
-        new: Arc<Chain<Primitives>>,
+        old: Arc<Chain>,
+        new: Arc<Chain>,
         sync_target: &SyncTarget,
     ) -> eyre::Result<()> {
         info!(
@@ -680,11 +678,7 @@ where
         Ok(())
     }
 
-    fn handle_chain_reverted(
-        &self,
-        old: Arc<Chain<Primitives>>,
-        sync_target: &SyncTarget,
-    ) -> eyre::Result<()> {
+    fn handle_chain_reverted(&self, old: Arc<Chain>, sync_target: &SyncTarget) -> eyre::Result<()> {
         info!(
             target: "base::exex",
             old_block_number = old.tip().number(),
@@ -708,11 +702,11 @@ mod tests {
 
     use alloy_consensus::private::alloy_primitives::B256;
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
+    use base_common_consensus::{BaseBlock as Block, BaseReceipt as Receipt};
     use base_execution_trie::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
     use reth_db::test_utils::tempdir_path;
-    use reth_ethereum_primitives::{Block, Receipt};
     use reth_execution_types::{Chain, ExecutionOutcome};
     use reth_primitives_traits::RecoveredBlock;
     use reth_trie::{
@@ -747,11 +741,7 @@ mod tests {
         b
     }
 
-    fn mk_chain_with_updates(
-        from: u64,
-        to: u64,
-        hash_override: Option<B256>,
-    ) -> Chain<reth_ethereum_primitives::EthPrimitives> {
+    fn mk_chain_with_updates(from: u64, to: u64, hash_override: Option<B256>) -> Chain {
         let mut blocks: Vec<RecoveredBlock<Block>> = Vec::new();
         let mut trie_data = BTreeMap::new();
 

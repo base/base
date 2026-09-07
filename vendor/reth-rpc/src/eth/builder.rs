@@ -5,7 +5,6 @@ use std::{sync::Arc, time::Duration};
 use alloy_network::Ethereum;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::ChainSpecProvider;
-use reth_primitives_traits::HeaderTy;
 use reth_rpc_convert::{RpcConvert, RpcConverter};
 use reth_rpc_eth_api::{
     RpcNodeCore, helpers::pending_block::PendingEnvBuilder, node::RpcNodeCoreAdapter,
@@ -38,7 +37,7 @@ pub struct EthApiBuilder<N: RpcNodeCore, Rpc, NextEnv = ()> {
     fee_history_cache_config: FeeHistoryCacheConfig,
     proof_permits: usize,
     eth_state_cache_config: EthStateCacheConfig,
-    eth_cache: Option<EthStateCache<N::Primitives>>,
+    eth_cache: Option<EthStateCache>,
     gas_oracle_config: GasPriceOracleConfig,
     gas_oracle: Option<GasPriceOracle<N::Provider>>,
     blocking_task_pool: Option<BlockingTaskPool>,
@@ -299,7 +298,7 @@ where
     }
 
     /// Sets `eth_cache` instance
-    pub fn eth_cache(mut self, eth_cache: EthStateCache<N::Primitives>) -> Self {
+    pub fn eth_cache(mut self, eth_cache: EthStateCache) -> Self {
         self.eth_cache = Some(eth_cache);
         self
     }
@@ -548,7 +547,7 @@ where
             GasPriceOracle::new(provider.clone(), gas_oracle_config, eth_cache.clone())
         });
         let fee_history_cache =
-            FeeHistoryCache::<HeaderTy<N::Primitives>>::new(fee_history_cache_config);
+            FeeHistoryCache::<alloy_consensus::Header>::new(fee_history_cache_config);
         let new_canonical_blocks = provider.canonical_state_stream();
         let fhc = fee_history_cache.clone();
         let cache = eth_cache.clone();

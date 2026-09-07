@@ -2,13 +2,13 @@
 
 use std::fmt::Debug;
 
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_chain_state::{
     CanonStateSubscriptions, ForkChoiceSubscriptions, PersistedBlockSubscriptions,
 };
-use reth_node_types::{BlockTy, HeaderTy, NodeTypesWithDB, ReceiptTy, TxTy};
+use reth_node_types::NodeTypesWithDB;
 use reth_storage_api::{
-    NodePrimitivesProvider, StorageChangeSetReader, StorageSettingsCache,
-    TryIntoHistoricalStateProvider,
+    StorageChangeSetReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
 
 use crate::{
@@ -29,14 +29,13 @@ pub trait FullProvider<N: NodeTypesWithDB>:
                       + StorageSettingsCache
                       + TryIntoHistoricalStateProvider
                       + 'static,
-    > + NodePrimitivesProvider<Primitives = N::Primitives>
-    + StaticFileProviderFactory<Primitives = N::Primitives>
+    > + StaticFileProviderFactory
     + RocksDBProviderFactory
     + BlockReaderIdExt<
-        Transaction = TxTy<N>,
-        Block = BlockTy<N>,
-        Receipt = ReceiptTy<N>,
-        Header = HeaderTy<N>,
+        Transaction = BaseTxEnvelope,
+        Block = BaseBlock,
+        Receipt = BaseReceipt,
+        Header = alloy_consensus::Header,
     > + BalProvider
     + StateProviderFactory
     + StateRangeProviderFactory
@@ -45,7 +44,7 @@ pub trait FullProvider<N: NodeTypesWithDB>:
     + ChangeSetReader
     + StorageChangeSetReader
     + CanonStateSubscriptions
-    + ForkChoiceSubscriptions<Header = HeaderTy<N>>
+    + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
     + PersistedBlockSubscriptions
     + StageCheckpointReader
     + PruneCheckpointReader
@@ -67,14 +66,13 @@ impl<T, N: NodeTypesWithDB> FullProvider<N> for T where
                           + StorageSettingsCache
                           + TryIntoHistoricalStateProvider
                           + 'static,
-        > + NodePrimitivesProvider<Primitives = N::Primitives>
-        + StaticFileProviderFactory<Primitives = N::Primitives>
+        > + StaticFileProviderFactory
         + RocksDBProviderFactory
         + BlockReaderIdExt<
-            Transaction = TxTy<N>,
-            Block = BlockTy<N>,
-            Receipt = ReceiptTy<N>,
-            Header = HeaderTy<N>,
+            Transaction = BaseTxEnvelope,
+            Block = BaseBlock,
+            Receipt = BaseReceipt,
+            Header = alloy_consensus::Header,
         > + BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
@@ -83,7 +81,7 @@ impl<T, N: NodeTypesWithDB> FullProvider<N> for T where
         + ChangeSetReader
         + StorageChangeSetReader
         + CanonStateSubscriptions
-        + ForkChoiceSubscriptions<Header = HeaderTy<N>>
+        + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
         + PersistedBlockSubscriptions
         + StageCheckpointReader
         + PruneCheckpointReader

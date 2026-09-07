@@ -1,11 +1,11 @@
 //! Helper trait for interfacing with [`FullNodeComponents`].
 
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_network_api::NetworkInfo;
-use reth_node_api::{FullNodeComponents, NodePrimitives, PrimitivesTy};
-use reth_primitives_traits::{BlockTy, HeaderTy, ReceiptTy, TxTy};
+use reth_node_api::FullNodeComponents;
 use reth_rpc_eth_types::EthStateCache;
 use reth_storage_api::{
     BalProvider, BlockReader, BlockReaderIdExt, PruneCheckpointReader, StageCheckpointReader,
@@ -23,20 +23,18 @@ use reth_transaction_pool::{PoolTransaction, TransactionPool};
 ///
 /// Every type that is a [`FullNodeComponents`] also implements this trait.
 pub trait RpcNodeCore: Clone + Send + Sync + Unpin + 'static {
-    /// Blockchain data primitives.
-    type Primitives: NodePrimitives;
     /// The provider type used to interact with the node.
     type Provider: BlockReaderIdExt<
-            Block = BlockTy<Self::Primitives>,
-            Receipt = ReceiptTy<Self::Primitives>,
-            Header = HeaderTy<Self::Primitives>,
-            Transaction = TxTy<Self::Primitives>,
+            Block = BaseBlock,
+            Receipt = BaseReceipt,
+            Header = alloy_consensus::Header,
+            Transaction = BaseTxEnvelope,
         > + ChainSpecProvider<
-            ChainSpec: EthChainSpec<Header = HeaderTy<Self::Primitives>>
+            ChainSpec: EthChainSpec<Header = alloy_consensus::Header>
                            + Hardforks
                            + EthereumHardforks,
         > + StateProviderFactory
-        + CanonStateSubscriptions<Primitives = Self::Primitives>
+        + CanonStateSubscriptions
         + StageCheckpointReader
         + PruneCheckpointReader
         + BalProvider
@@ -46,9 +44,9 @@ pub trait RpcNodeCore: Clone + Send + Sync + Unpin + 'static {
         + Unpin
         + 'static;
     /// The transaction pool of the node.
-    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Self::Primitives>>>;
+    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>;
     /// The node's EVM configuration, defining settings for the Ethereum Virtual Machine.
-    type Evm: ConfigureEvm<Primitives = Self::Primitives> + Send + Sync + 'static;
+    type Evm: ConfigureEvm + Send + Sync + 'static;
     /// Network API.
     type Network: NetworkInfo + Clone;
 
@@ -69,7 +67,6 @@ impl<T> RpcNodeCore for T
 where
     T: FullNodeComponents<Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks>>,
 {
-    type Primitives = PrimitivesTy<T::Types>;
     type Provider = T::Provider;
     type Pool = T::Pool;
     type Evm = T::Evm;
@@ -100,7 +97,7 @@ where
 /// server.
 pub trait RpcNodeCoreExt: RpcNodeCore<Provider: BlockReader> {
     /// Returns handle to RPC cache service.
-    fn cache(&self) -> &EthStateCache<Self::Primitives>;
+    fn cache(&self) -> &EthStateCache;
 }
 
 /// An adapter that allows to construct [`RpcNodeCore`] from components.
@@ -122,16 +119,16 @@ impl<Provider, Pool, Network, Evm> RpcNodeCoreAdapter<Provider, Pool, Network, E
 impl<Provider, Pool, Network, Evm> RpcNodeCore for RpcNodeCoreAdapter<Provider, Pool, Network, Evm>
 where
     Provider: BlockReaderIdExt<
-            Block = BlockTy<Evm::Primitives>,
-            Receipt = ReceiptTy<Evm::Primitives>,
-            Header = HeaderTy<Evm::Primitives>,
-            Transaction = TxTy<Evm::Primitives>,
+            Block = BaseBlock,
+            Receipt = BaseReceipt,
+            Header = alloy_consensus::Header,
+            Transaction = BaseTxEnvelope,
         > + ChainSpecProvider<
-            ChainSpec: EthChainSpec<Header = HeaderTy<Evm::Primitives>>
+            ChainSpec: EthChainSpec<Header = alloy_consensus::Header>
                            + Hardforks
                            + EthereumHardforks,
         > + StateProviderFactory
-        + CanonStateSubscriptions<Primitives = Evm::Primitives>
+        + CanonStateSubscriptions
         + StageCheckpointReader
         + PruneCheckpointReader
         + BalProvider
@@ -141,12 +138,10 @@ where
         + Clone
         + 'static,
     Evm: ConfigureEvm + Clone + 'static,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Evm::Primitives>>>
-        + Unpin
-        + 'static,
+    Pool:
+        TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
     Network: NetworkInfo + Clone + Unpin + 'static,
 {
-    type Primitives = Evm::Primitives;
     type Provider = Provider;
     type Pool = Pool;
     type Evm = Evm;

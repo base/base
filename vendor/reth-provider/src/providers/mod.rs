@@ -1,8 +1,7 @@
 //! Contains the main provider types and traits for interacting with the blockchain's storage.
 
 use reth_chainspec::EthereumHardforks;
-use reth_db_api::table::Value;
-use reth_node_types::{NodePrimitives, NodeTypes, NodeTypesWithDB};
+use reth_node_types::{NodeTypes, NodeTypesWithDB};
 
 mod database;
 pub use database::*;
@@ -39,20 +38,12 @@ pub use rocksdb::{
 /// [`ProviderNodeTypes`].
 pub trait NodeTypesForProvider
 where
-    Self: NodeTypes<
-            ChainSpec: EthereumHardforks,
-            Storage: ChainStorage<Self::Primitives>,
-            Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-        >,
+    Self: NodeTypes<ChainSpec: EthereumHardforks, Storage: ChainStorage>,
 {
 }
 
 impl<T> NodeTypesForProvider for T where
-    T: NodeTypes<
-            ChainSpec: EthereumHardforks,
-            Storage: ChainStorage<T::Primitives>,
-            Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-        >
+    T: NodeTypes<ChainSpec: EthereumHardforks, Storage: ChainStorage>
 {
 }
 

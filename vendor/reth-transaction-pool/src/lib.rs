@@ -208,7 +208,7 @@
 //! async fn t<C, Evm>(client: C, evm_config: Evm)
 //! where
 //!     C: ChainSpecProvider<ChainSpec: EthereumHardforks> + StateProviderFactory + BlockReaderIdExt<Header = Header> + Clone + 'static,
-//!     Evm: ConfigureEvm<Primitives: reth_primitives_traits::NodePrimitives<BlockHeader = Header>> + 'static,
+//!     Evm: ConfigureEvm + 'static,
 //! {
 //!     let blob_store = InMemoryBlobStore::default();
 //!     let runtime = Runtime::test();
@@ -241,13 +241,12 @@
 //! use reth_transaction_pool::blobstore::InMemoryBlobStore;
 //! use reth_transaction_pool::maintain::{maintain_transaction_pool_future};
 //! use reth_evm::ConfigureEvm;
-//! use reth_ethereum_primitives::EthPrimitives;
 //! use alloy_consensus::Header;
 //!
 //!  async fn t<C, St, Evm>(client: C, stream: St, evm_config: Evm)
 //!    where C: StateProviderFactory + BlockReaderIdExt<Header = Header> + ChainSpecProvider<ChainSpec = ChainSpec> + Clone + 'static,
-//!     St: Stream<Item = CanonStateNotification<EthPrimitives>> + Send + Unpin + 'static,
-//!     Evm: ConfigureEvm<Primitives = EthPrimitives> + 'static,
+//!     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
+//!     Evm: ConfigureEvm + 'static,
 //!     {
 //!     let blob_store = InMemoryBlobStore::default();
 //!     let runtime = Runtime::test();
@@ -289,7 +288,7 @@ use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
 use reth_eth_wire_types::HandleMempoolData;
 use reth_evm::ConfigureEvm;
 use reth_execution_types::ChangedAccount;
-use reth_primitives_traits::{HeaderTy, Recovered};
+use reth_primitives_traits::Recovered;
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 use tokio::sync::mpsc::Receiver;
 use tracing::{instrument, trace};
@@ -415,7 +414,7 @@ where
     Client: ChainSpecProvider<ChainSpec: EthereumHardforks>
         + StateProviderFactory
         + Clone
-        + BlockReaderIdExt<Header = HeaderTy<Evm::Primitives>>
+        + BlockReaderIdExt<Header = alloy_consensus::Header>
         + 'static,
     S: BlobStore,
     Evm: ConfigureEvm + 'static,
@@ -439,7 +438,7 @@ where
     /// # fn t<C, Evm>(client: C, evm_config: Evm, runtime: Runtime)
     /// # where
     /// #     C: ChainSpecProvider<ChainSpec: EthereumHardforks> + StateProviderFactory + BlockReaderIdExt<Header = Header> + Clone + 'static,
-    /// #     Evm: ConfigureEvm<Primitives: reth_primitives_traits::NodePrimitives<BlockHeader = Header>> + 'static,
+    /// #     Evm: ConfigureEvm + 'static,
     /// # {
     /// let blob_store = InMemoryBlobStore::default();
     /// let pool = Pool::eth_pool(

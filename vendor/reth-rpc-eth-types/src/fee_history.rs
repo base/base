@@ -9,6 +9,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Header, Transaction, TxReceipt};
 use alloy_eips::eip7840::BlobParams;
 use alloy_rpc_types_eth::TxGasAndReward;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use futures::{
     FutureExt, Stream, StreamExt,
     future::{Fuse, FusedFuture},
@@ -16,7 +17,7 @@ use futures::{
 use metrics::atomics::AtomicU64;
 use reth_chain_state::CanonStateNotification;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
-use reth_primitives_traits::{Block, BlockBody, NodePrimitives, SealedBlock};
+use reth_primitives_traits::{Block, BlockBody, SealedBlock};
 use reth_rpc_server_types::constants::gas_oracle::MAX_HEADER_HISTORY;
 use reth_storage_api::BlockReaderIdExt;
 use serde::{Deserialize, Serialize};
@@ -214,17 +215,15 @@ struct FeeHistoryCacheInner<H> {
 
 /// Awaits for new chain events and directly inserts them into the cache so they're available
 /// immediately before they need to be fetched from disk.
-pub async fn fee_history_cache_new_blocks_task<St, Provider, N>(
-    fee_history_cache: FeeHistoryCache<N::BlockHeader>,
+pub async fn fee_history_cache_new_blocks_task<St, Provider>(
+    fee_history_cache: FeeHistoryCache<alloy_consensus::Header>,
     mut events: St,
     provider: Provider,
-    cache: EthStateCache<N>,
+    cache: EthStateCache,
 ) where
-    St: Stream<Item = CanonStateNotification<N>> + Unpin + 'static,
+    St: Stream<Item = CanonStateNotification> + Unpin + 'static,
     Provider:
-        BlockReaderIdExt<Block = N::Block, Receipt = N::Receipt> + ChainSpecProvider + 'static,
-    N: NodePrimitives,
-    N::BlockHeader: BlockHeader + Clone,
+        BlockReaderIdExt<Block = BaseBlock, Receipt = BaseReceipt> + ChainSpecProvider + 'static,
 {
     // We're listening for new blocks emitted when the node is in live sync.
     // If the node transitions to stage sync, we need to fetch the missing blocks

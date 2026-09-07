@@ -17,10 +17,8 @@ use futures::StreamExt;
 use itertools::Itertools;
 use metrics::Gauge;
 use reth_chain_state::ForkChoiceStream;
-use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::ConfigureEvm;
 use reth_metrics::{Metrics, metrics::Counter};
-use reth_node_api::NodePrimitives;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::HeaderProvider;
 use reth_tracing::tracing::{debug, warn};
@@ -77,13 +75,13 @@ struct ExExMetrics {
 /// [`ExExHandle::new`] should be given to the `ExEx`, while the handle itself should be given to
 /// the manager in [`ExExManager::new`].
 #[derive(Debug)]
-pub struct ExExHandle<N: NodePrimitives = EthPrimitives> {
+pub struct ExExHandle {
     /// The execution extension's ID.
     id: String,
     /// Metrics for an `ExEx`.
     metrics: ExExMetrics,
     /// Channel to send [`ExExNotification`]s to the `ExEx`.
-    sender: PollSender<ExExNotification<N>>,
+    sender: PollSender<ExExNotification>,
     /// Channel to receive [`ExExEvent`]s from the `ExEx`.
     receiver: UnboundedReceiver<ExExEvent>,
     /// The ID of the next notification to send to this `ExEx`.
@@ -94,17 +92,17 @@ pub struct ExExHandle<N: NodePrimitives = EthPrimitives> {
     finished_height: Option<BlockNumHash>,
 }
 
-impl<N: NodePrimitives> ExExHandle<N> {
+impl ExExHandle {
     /// Create a new handle for the given `ExEx`.
     ///
     /// Returns the handle, as well as a [`UnboundedSender`] for [`ExExEvent`]s and a
     /// [`mpsc::Receiver`] for [`ExExNotification`]s that should be given to the `ExEx`.
-    pub fn new<P, E: ConfigureEvm<Primitives = N>>(
+    pub fn new<P, E: ConfigureEvm>(
         id: String,
         node_head: BlockNumHash,
         provider: P,
         evm_config: E,
-        wal_handle: WalHandle<N>,
+        wal_handle: WalHandle,
     ) -> (Self, UnboundedSender<ExExEvent>, ExExNotifications<P, E>) {
         let (notification_tx, notification_rx) = mpsc::channel(1);
         let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -132,8 +130,8 @@ impl<N: NodePrimitives> ExExHandle<N> {
     fn send(
         &mut self,
         cx: &mut Context<'_>,
-        (notification_id, notification): &(usize, ExExNotification<N>),
-    ) -> Poll<Result<(), PollSendError<ExExNotification<N>>>> {
+        (notification_id, notification): &(usize, ExExNotification),
+    ) -> Poll<Result<(), PollSendError<ExExNotification>>> {
         if let Some(finished_height) = self.finished_height {
             match notification {
                 ExExNotification::ChainCommitted { new } => {
@@ -216,15 +214,15 @@ pub struct ExExManagerMetrics {
 /// - Error handling
 /// - Monitoring
 #[derive(Debug)]
-pub struct ExExManager<P, N: NodePrimitives> {
+pub struct ExExManager<P> {
     /// Provider for querying headers.
     provider: P,
 
     /// Handles to communicate with the `ExEx`'s.
-    exex_handles: Vec<ExExHandle<N>>,
+    exex_handles: Vec<ExExHandle>,
 
     /// [`ExExNotification`] channel from the [`ExExManagerHandle`]s.
-    handle_rx: UnboundedReceiver<(ExExNotificationSource, ExExNotification<N>)>,
+    handle_rx: UnboundedReceiver<(ExExNotificationSource, ExExNotification)>,
 
     /// The minimum notification ID currently present in the buffer.
     min_id: usize,
@@ -234,7 +232,7 @@ pub struct ExExManager<P, N: NodePrimitives> {
     ///
     /// The first element of the tuple is a monotonically increasing ID unique to the notification
     /// (the second element of the tuple).
-    buffer: VecDeque<(usize, ExExNotification<N>)>,
+    buffer: VecDeque<(usize, ExExNotification)>,
     /// Max size of the internal state notifications buffer.
     max_capacity: usize,
     /// Current state notifications buffer capacity.
@@ -249,22 +247,19 @@ pub struct ExExManager<P, N: NodePrimitives> {
     finished_height: watch::Sender<FinishedExExHeight>,
 
     /// Write-Ahead Log for the [`ExExNotification`]s.
-    wal: Wal<N>,
+    wal: Wal,
     /// A stream of finalized headers.
-    finalized_header_stream: ForkChoiceStream<SealedHeader<N::BlockHeader>>,
+    finalized_header_stream: ForkChoiceStream<SealedHeader<alloy_consensus::Header>>,
     /// The threshold for the number of blocks in the WAL before emitting a warning.
     wal_blocks_warning: usize,
 
     /// A handle to the `ExEx` manager.
-    handle: ExExManagerHandle<N>,
+    handle: ExExManagerHandle,
     /// Metrics for the `ExEx` manager.
     metrics: ExExManagerMetrics,
 }
 
-impl<P, N> ExExManager<P, N>
-where
-    N: NodePrimitives,
-{
+impl<P> ExExManager<P> {
     /// Create a new [`ExExManager`].
     ///
     /// You must provide an [`ExExHandle`] for each `ExEx` and the maximum capacity of the
@@ -274,10 +269,10 @@ where
     /// notifications over [`ExExManagerHandle`]s until there is capacity again.
     pub fn new(
         provider: P,
-        handles: Vec<ExExHandle<N>>,
+        handles: Vec<ExExHandle>,
         max_capacity: usize,
-        wal: Wal<N>,
-        finalized_header_stream: ForkChoiceStream<SealedHeader<N::BlockHeader>>,
+        wal: Wal,
+        finalized_header_stream: ForkChoiceStream<SealedHeader<alloy_consensus::Header>>,
     ) -> Self {
         let num_exexs = handles.len();
 
@@ -328,7 +323,7 @@ where
     }
 
     /// Returns the handle to the manager.
-    pub fn handle(&self) -> ExExManagerHandle<N> {
+    pub fn handle(&self) -> ExExManagerHandle {
         self.handle.clone()
     }
 
@@ -357,23 +352,25 @@ where
 
     /// Pushes a new notification into the managers internal buffer, assigning the notification a
     /// unique ID.
-    fn push_notification(&mut self, notification: ExExNotification<N>) {
+    fn push_notification(&mut self, notification: ExExNotification) {
         let next_id = self.next_id;
         self.buffer.push_back((next_id, notification));
         self.next_id += 1;
     }
 }
 
-impl<P, N> ExExManager<P, N>
+impl<P> ExExManager<P>
 where
     P: HeaderProvider,
-    N: NodePrimitives,
 {
     /// Finalizes the WAL according to the passed finalized header.
     ///
     /// This function checks if all ExExes are on the canonical chain and finalizes the WAL if
     /// necessary.
-    fn finalize_wal(&self, finalized_header: SealedHeader<N::BlockHeader>) -> eyre::Result<()> {
+    fn finalize_wal(
+        &self,
+        finalized_header: SealedHeader<alloy_consensus::Header>,
+    ) -> eyre::Result<()> {
         debug!(target: "exex::manager", header = ?finalized_header.num_hash(), "Received finalized header");
 
         // Check if all ExExes are on the canonical chain
@@ -439,10 +436,9 @@ where
     }
 }
 
-impl<P, N> Future for ExExManager<P, N>
+impl<P> Future for ExExManager<P>
 where
     P: HeaderProvider + Unpin + 'static,
-    N: NodePrimitives,
 {
     type Output = eyre::Result<()>;
 
@@ -556,9 +552,9 @@ where
 
 /// A handle to communicate with the [`ExExManager`].
 #[derive(Debug)]
-pub struct ExExManagerHandle<N: NodePrimitives = EthPrimitives> {
+pub struct ExExManagerHandle {
     /// Channel to send notifications to the `ExEx` manager.
-    exex_tx: UnboundedSender<(ExExNotificationSource, ExExNotification<N>)>,
+    exex_tx: UnboundedSender<(ExExNotificationSource, ExExNotification)>,
     /// The number of `ExEx`'s running on the node.
     num_exexs: usize,
     /// A watch channel denoting whether the manager is ready for new notifications or not.
@@ -576,7 +572,7 @@ pub struct ExExManagerHandle<N: NodePrimitives = EthPrimitives> {
     finished_height: watch::Receiver<FinishedExExHeight>,
 }
 
-impl<N: NodePrimitives> ExExManagerHandle<N> {
+impl ExExManagerHandle {
     /// Creates an empty manager handle.
     ///
     /// Use this if there is no manager present.
@@ -603,8 +599,8 @@ impl<N: NodePrimitives> ExExManagerHandle<N> {
     pub fn send(
         &self,
         source: ExExNotificationSource,
-        notification: ExExNotification<N>,
-    ) -> Result<(), SendError<(ExExNotificationSource, ExExNotification<N>)>> {
+        notification: ExExNotification,
+    ) -> Result<(), SendError<(ExExNotificationSource, ExExNotification)>> {
         self.exex_tx.send((source, notification))
     }
 
@@ -615,8 +611,8 @@ impl<N: NodePrimitives> ExExManagerHandle<N> {
     pub async fn send_async(
         &mut self,
         source: ExExNotificationSource,
-        notification: ExExNotification<N>,
-    ) -> Result<(), SendError<(ExExNotificationSource, ExExNotification<N>)>> {
+        notification: ExExNotification,
+    ) -> Result<(), SendError<(ExExNotificationSource, ExExNotification)>> {
         self.ready().await;
         self.exex_tx.send((source, notification))
     }
@@ -665,7 +661,7 @@ async fn make_wait_future(mut rx: watch::Receiver<bool>) -> watch::Receiver<bool
     rx
 }
 
-impl<N: NodePrimitives> Clone for ExExManagerHandle<N> {
+impl Clone for ExExManagerHandle {
     fn clone(&self) -> Self {
         Self {
             exex_tx: self.exex_tx.clone(),
@@ -681,6 +677,7 @@ impl<N: NodePrimitives> Clone for ExExManagerHandle<N> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
+    use base_common_consensus::BaseBlock;
     use futures::{StreamExt, TryStreamExt};
     use rand::Rng;
     use reth_db_common::init::init_genesis;
@@ -690,7 +687,7 @@ mod tests {
         BlockReader, BlockWriter, Chain, DBProvider, DatabaseProviderFactory, TransactionVariant,
         providers::BlockchainProvider, test_utils::create_test_provider_factory,
     };
-    use reth_testing_utils::generators::{self, BlockParams, random_block};
+    use reth_testing_utils::generators::{self, BlockParams};
 
     use super::*;
     use crate::wal::WalResult;
@@ -792,7 +789,7 @@ mod tests {
             ExExManager::new((), vec![exex_handle], 10, wal, empty_finalized_header_stream());
 
         // Define the notification for testing
-        let mut block1: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let mut block1: RecoveredBlock<BaseBlock> = Default::default();
         block1.set_hash(B256::new([0x01; 32]));
         block1.set_block_number(10);
 
@@ -810,7 +807,7 @@ mod tests {
         assert_eq!(exex_manager.next_id, 1);
 
         // Push another notification
-        let mut block2: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let mut block2: RecoveredBlock<BaseBlock> = Default::default();
         block2.set_hash(B256::new([0x02; 32]));
         block2.set_block_number(20);
 
@@ -853,7 +850,7 @@ mod tests {
         );
 
         // Push some notifications to fill part of the buffer
-        let mut block1: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let mut block1: RecoveredBlock<BaseBlock> = Default::default();
         block1.set_hash(B256::new([0x01; 32]));
         block1.set_block_number(10);
 
@@ -1142,11 +1139,11 @@ mod tests {
         assert_eq!(exex_handle.next_notification_id, 0);
 
         // Setup two blocks for the chain commit notification
-        let mut block1: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let mut block1: RecoveredBlock<BaseBlock> = Default::default();
         block1.set_hash(B256::new([0x01; 32]));
         block1.set_block_number(10);
 
-        let mut block2: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let mut block2: RecoveredBlock<BaseBlock> = Default::default();
         block2.set_hash(B256::new([0x02; 32]));
         block2.set_block_number(11);
 
@@ -1195,7 +1192,7 @@ mod tests {
         // Set finished_height to a value higher than the block tip
         exex_handle.finished_height = Some(BlockNumHash::new(15, B256::random()));
 
-        let mut block1: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let mut block1: RecoveredBlock<BaseBlock> = Default::default();
         block1.set_hash(B256::new([0x01; 32]));
         block1.set_block_number(10);
 
@@ -1321,7 +1318,7 @@ mod tests {
             .unwrap()
             .ok_or_else(|| eyre::eyre!("genesis block not found"))?;
 
-        let block = random_block(
+        let block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), ..Default::default() },
@@ -1463,7 +1460,13 @@ mod tests {
         // Helper to create notifications
         let mut rng = generators::rng();
         let mut make_notif = |id: u64| {
-            let block = random_block(&mut rng, id, BlockParams::default()).try_recover().unwrap();
+            let block = reth_testing_utils::BaseTestData::random_block(
+                &mut rng,
+                id,
+                BlockParams::default(),
+            )
+            .try_recover()
+            .unwrap();
             ExExNotification::ChainCommitted {
                 new: Arc::new(Chain::new(vec![block], Default::default(), Default::default())),
             }

@@ -17,15 +17,15 @@ use std::sync::{
     mpsc::{self, Receiver, Sender, channel},
 };
 
-use alloy_consensus::transaction::TxHashRef;
 use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, U256, keccak256};
+use base_common_consensus::BaseReceipt;
 use metrics::{Counter, Gauge, Histogram};
 use rayon::prelude::*;
 use reth_evm::{ConfigureEvm, Evm, EvmFor, RecoveredTx, SpecFor, execute::ExecutableTxFor};
 use reth_metrics::Metrics;
-use reth_primitives_traits::{Account, FastInstant as Instant, NodePrimitives};
+use reth_primitives_traits::{Account, FastInstant as Instant};
 use reth_provider::{
     AccountReader, BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory,
     PruneCheckpointReader, StageCheckpointReader, StorageSettingsCache,
@@ -74,26 +74,24 @@ pub enum PrewarmMode<Tx> {
 ///
 /// Note: This task runs until cancelled externally.
 #[derive(Debug)]
-pub struct PrewarmCacheTask<N, P, Evm>
+pub struct PrewarmCacheTask<P, Evm>
 where
-    N: NodePrimitives,
-    Evm: ConfigureEvm<Primitives = N>,
+    Evm: ConfigureEvm,
 {
     /// The executor used to spawn execution tasks.
     executor: Runtime,
     /// Shared execution cache.
     execution_cache: PayloadExecutionCache,
     /// Context provided to execution tasks
-    ctx: PrewarmContext<N, P, Evm>,
+    ctx: PrewarmContext<P, Evm>,
     /// Receiver for events produced by tx execution
-    actions_rx: Receiver<PrewarmTaskEvent<N::Receipt>>,
+    actions_rx: Receiver<PrewarmTaskEvent<BaseReceipt>>,
     /// Parent span for tracing
     parent_span: Span,
 }
 
-impl<N, P, Evm> PrewarmCacheTask<N, P, Evm>
+impl<P, Evm> PrewarmCacheTask<P, Evm>
 where
-    N: NodePrimitives,
     P: DatabaseProviderFactory + Clone + 'static,
     P::Provider: BlockNumReader
         + PruneCheckpointReader
@@ -101,14 +99,14 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    Evm: ConfigureEvm<Primitives = N> + 'static,
+    Evm: ConfigureEvm + 'static,
 {
     /// Initializes the task with the given transactions pending execution
     pub fn new(
         executor: Runtime,
         execution_cache: PayloadExecutionCache,
-        ctx: PrewarmContext<N, P, Evm>,
-    ) -> (Self, Sender<PrewarmTaskEvent<N::Receipt>>) {
+        ctx: PrewarmContext<P, Evm>,
+    ) -> (Self, Sender<PrewarmTaskEvent<BaseReceipt>>) {
         let (actions_tx, actions_rx) = channel();
 
         trace!(
@@ -133,7 +131,7 @@ where
     fn spawn_txs_prewarm<Tx>(
         &self,
         pending: mpsc::Receiver<(usize, Tx)>,
-        actions_tx: Sender<PrewarmTaskEvent<N::Receipt>>,
+        actions_tx: Sender<PrewarmTaskEvent<BaseReceipt>>,
         state_root_hint_stream: Option<StateRootHintStream>,
     ) where
         Tx: ExecutableTxFor<Evm> + Send + 'static,
@@ -211,7 +209,7 @@ where
     /// Lazily initialises per-thread [`PrewarmEvmState`] via
     /// [`get_or_init`](reth_tasks::pool::Worker::get_or_init) on first access.
     fn transact_worker<Tx>(
-        ctx: &PrewarmContext<N, P, Evm>,
+        ctx: &PrewarmContext<P, Evm>,
         index: usize,
         tx: Tx,
         state_root_hint_stream: Option<&StateRootHintStream>,
@@ -283,7 +281,7 @@ where
     #[instrument(level = "debug", target = "engine::tree::payload_processor::prewarm", skip_all)]
     fn save_cache(
         self,
-        execution_outcome: Arc<BlockExecutionOutput<N::Receipt>>,
+        execution_outcome: Arc<BlockExecutionOutput<BaseReceipt>>,
         valid_block_rx: mpsc::Receiver<()>,
     ) {
         let start = Instant::now();
@@ -344,7 +342,7 @@ where
     fn run_bal_prewarm(
         &self,
         decoded_bal: Arc<DecodedBal>,
-        actions_tx: Sender<PrewarmTaskEvent<N::Receipt>>,
+        actions_tx: Sender<PrewarmTaskEvent<BaseReceipt>>,
         hashed_update_stream: Option<StateRootUpdateStream>,
     ) {
         let bal = decoded_bal.as_bal();
@@ -458,7 +456,7 @@ where
         name = "prewarm and caching",
         skip_all
     )]
-    pub fn run<Tx>(self, mode: PrewarmMode<Tx>, actions_tx: Sender<PrewarmTaskEvent<N::Receipt>>)
+    pub fn run<Tx>(self, mode: PrewarmMode<Tx>, actions_tx: Sender<PrewarmTaskEvent<BaseReceipt>>)
     where
         Tx: ExecutableTxFor<Evm> + Send + 'static,
     {
@@ -523,10 +521,9 @@ where
 
 /// Context required by tx execution tasks.
 #[derive(Debug, Clone)]
-pub struct PrewarmContext<N, P, Evm>
+pub struct PrewarmContext<P, Evm>
 where
-    N: NodePrimitives,
-    Evm: ConfigureEvm<Primitives = N>,
+    Evm: ConfigureEvm,
 {
     /// The execution environment.
     pub env: ExecutionEnv<Evm>,
@@ -535,7 +532,7 @@ where
     /// The saved cache.
     pub saved_cache: Option<SavedCache>,
     /// Provider to obtain the state
-    pub provider: StateProviderBuilder<N, P>,
+    pub provider: StateProviderBuilder<P>,
     /// Dedicated blocking pool for warming the BAL read-set. `Some` only on the BAL parallel
     /// execution path; the pool is owned by the [`PayloadProcessor`](super::PayloadProcessor).
     pub(crate) bal_prewarm_pool: Option<Arc<BalPrewarmPool>>,
@@ -568,9 +565,8 @@ where
 type PrewarmEvmState<Evm> =
     Option<EvmFor<Evm, StateProviderDatabase<reth_provider::StateProviderBox>>>;
 
-impl<N, P, Evm> PrewarmContext<N, P, Evm>
+impl<P, Evm> PrewarmContext<P, Evm>
 where
-    N: NodePrimitives,
     P: DatabaseProviderFactory,
     P::Provider: BlockNumReader
         + PruneCheckpointReader
@@ -578,7 +574,7 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    Evm: ConfigureEvm<Primitives = N> + 'static,
+    Evm: ConfigureEvm + 'static,
 {
     /// Creates a per-thread EVM for prewarming.
     #[instrument(level = "debug", target = "engine::tree::payload_processor::prewarm", skip_all)]

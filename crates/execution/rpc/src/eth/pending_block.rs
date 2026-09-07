@@ -17,10 +17,10 @@ impl<N, Rpc> LoadPendingBlock for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     #[inline]
-    fn pending_block(&self) -> &tokio::sync::Mutex<Option<PendingBlock<N::Primitives>>> {
+    fn pending_block(&self) -> &tokio::sync::Mutex<Option<PendingBlock>> {
         self.inner.eth_api.pending_block()
     }
 
@@ -43,9 +43,7 @@ where
     }
 
     /// Returns the locally built pending block
-    async fn local_pending_block(
-        &self,
-    ) -> Result<Option<BlockAndReceipts<Self::Primitives>>, Self::Error> {
+    async fn local_pending_block(&self) -> Result<Option<BlockAndReceipts>, Self::Error> {
         // See: <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/miner/worker.go#L367-L375>
         let latest = self
             .provider()

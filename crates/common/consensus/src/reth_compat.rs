@@ -7,7 +7,7 @@
 use alloc::{borrow::Cow, vec::Vec};
 
 use alloy_consensus::{
-    Header, Receipt, Sealed, Signed, TxEip1559, TxEip2930, TxEip7702, TxLegacy, TxReceipt,
+    Receipt, Sealed, Signed, TxEip1559, TxEip2930, TxEip7702, TxLegacy, TxReceipt,
     constants::EIP7702_TX_TYPE_ID,
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
@@ -21,8 +21,8 @@ use reth_codecs::{
 };
 
 use crate::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID,
-    DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt, OpTxType, TxDeposit, TxEip8130,
+    BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID, DepositReceipt,
+    EIP8130_TX_TYPE_ID, Eip8130Receipt, OpTxType, TxDeposit, TxEip8130,
 };
 
 // ---------------------------------------------------------------------------
@@ -506,26 +506,6 @@ impl DepositReceiptExt for BaseReceipt {
             _ => None,
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// BaseBlockBody / BasePrimitives
-// ---------------------------------------------------------------------------
-
-/// Base-specific block body type.
-pub type BaseBlockBody = <BaseBlock as reth_primitives_traits::Block>::Body;
-
-/// Primitive types for the Base node.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct BasePrimitives;
-
-impl reth_primitives_traits::NodePrimitives for BasePrimitives {
-    type Block = BaseBlock;
-    type BlockHeader = Header;
-    type BlockBody = BaseBlockBody;
-    type SignedTx = BaseTxEnvelope;
-    type Receipt = BaseReceipt;
 }
 
 #[cfg(test)]

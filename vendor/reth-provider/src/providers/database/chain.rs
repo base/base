@@ -1,76 +1,55 @@
+use base_common_consensus::BaseTxEnvelope;
 use reth_db_api::transaction::{DbTx, DbTxMut};
-use reth_node_types::NodePrimitives;
-use reth_primitives_traits::{FullBlockHeader, FullSignedTx};
 use reth_storage_api::{ChainStorageReader, ChainStorageWriter, EmptyBodyStorage, EthStorage};
 
 use crate::{DatabaseProvider, providers::NodeTypesForProvider};
 
 /// Trait that provides access to implementations of [`ChainStorage`]
-pub trait ChainStorage<Primitives: NodePrimitives>: Send + Sync {
+pub trait ChainStorage: Send + Sync {
     /// Provides access to the chain reader.
-    fn reader<TX, Types>(&self) -> impl ChainStorageReader<DatabaseProvider<TX, Types>, Primitives>
+    fn reader<TX, Types>(&self) -> impl ChainStorageReader<DatabaseProvider<TX, Types>>
     where
         TX: DbTx + 'static,
-        Types: NodeTypesForProvider<Primitives = Primitives>;
+        Types: NodeTypesForProvider;
 
     /// Provides access to the chain writer.
-    fn writer<TX, Types>(&self) -> impl ChainStorageWriter<DatabaseProvider<TX, Types>, Primitives>
+    fn writer<TX, Types>(&self) -> impl ChainStorageWriter<DatabaseProvider<TX, Types>>
     where
         TX: DbTxMut + DbTx + 'static,
-        Types: NodeTypesForProvider<Primitives = Primitives>;
+        Types: NodeTypesForProvider;
 }
 
-impl<N, T, H> ChainStorage<N> for EthStorage<T, H>
-where
-    T: FullSignedTx,
-    H: FullBlockHeader,
-    N: NodePrimitives<
-            Block = alloy_consensus::Block<T, H>,
-            BlockHeader = H,
-            BlockBody = alloy_consensus::BlockBody<T, H>,
-            SignedTx = T,
-        >,
-{
-    fn reader<TX, Types>(&self) -> impl ChainStorageReader<DatabaseProvider<TX, Types>, N>
+impl ChainStorage for EthStorage<BaseTxEnvelope, alloy_consensus::Header> {
+    fn reader<TX, Types>(&self) -> impl ChainStorageReader<DatabaseProvider<TX, Types>>
     where
         TX: DbTx + 'static,
-        Types: NodeTypesForProvider<Primitives = N>,
+        Types: NodeTypesForProvider,
     {
         self
     }
 
-    fn writer<TX, Types>(&self) -> impl ChainStorageWriter<DatabaseProvider<TX, Types>, N>
+    fn writer<TX, Types>(&self) -> impl ChainStorageWriter<DatabaseProvider<TX, Types>>
     where
         TX: DbTxMut + DbTx + 'static,
-        Types: NodeTypesForProvider<Primitives = N>,
+        Types: NodeTypesForProvider,
     {
         self
     }
 }
 
-impl<N, T, H> ChainStorage<N> for EmptyBodyStorage<T, H>
-where
-    T: FullSignedTx,
-    H: FullBlockHeader,
-    N: NodePrimitives<
-            Block = alloy_consensus::Block<T, H>,
-            BlockHeader = H,
-            BlockBody = alloy_consensus::BlockBody<T, H>,
-            SignedTx = T,
-        >,
-{
-    fn reader<TX, Types>(&self) -> impl ChainStorageReader<DatabaseProvider<TX, Types>, N>
+impl ChainStorage for EmptyBodyStorage<BaseTxEnvelope, alloy_consensus::Header> {
+    fn reader<TX, Types>(&self) -> impl ChainStorageReader<DatabaseProvider<TX, Types>>
     where
         TX: DbTx + 'static,
-        Types: NodeTypesForProvider<Primitives = N>,
+        Types: NodeTypesForProvider,
     {
         self
     }
 
-    fn writer<TX, Types>(&self) -> impl ChainStorageWriter<DatabaseProvider<TX, Types>, N>
+    fn writer<TX, Types>(&self) -> impl ChainStorageWriter<DatabaseProvider<TX, Types>>
     where
         TX: DbTxMut + DbTx + 'static,
-        Types: NodeTypesForProvider<Primitives = N>,
+        Types: NodeTypesForProvider,
     {
         self
     }

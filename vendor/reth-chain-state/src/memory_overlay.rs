@@ -5,7 +5,7 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, StorageKey, StorageValue, U256, keccak256,
 };
 use reth_errors::ProviderResult;
-use reth_primitives_traits::{Account, Bytecode, NodePrimitives};
+use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateProvider, StateProviderBox, StateRootProvider, StorageRootProvider,
@@ -21,19 +21,16 @@ use super::ExecutedBlock;
 /// A state provider that stores references to in-memory blocks along with their state as well as a
 /// reference of the historical state provider for fallback lookups.
 #[expect(missing_debug_implementations)]
-pub struct MemoryOverlayStateProviderRef<
-    'a,
-    N: NodePrimitives = reth_ethereum_primitives::EthPrimitives,
-> {
+pub struct MemoryOverlayStateProviderRef<'a> {
     /// Historical state provider for state lookups that are not found in memory blocks.
     pub(crate) historical: Box<dyn StateProvider + 'a>,
     /// The collection of executed parent blocks. Expected order is newest to oldest.
-    pub(crate) in_memory: Cow<'a, [ExecutedBlock<N>]>,
+    pub(crate) in_memory: Cow<'a, [ExecutedBlock]>,
     /// Lazy-loaded in-memory trie data.
     pub(crate) trie_input: OnceLock<TrieInput>,
 }
 
-impl<'a, N: NodePrimitives> MemoryOverlayStateProviderRef<'a, N> {
+impl<'a> MemoryOverlayStateProviderRef<'a> {
     /// Create new memory overlay state provider.
     ///
     /// ## Arguments
@@ -41,7 +38,7 @@ impl<'a, N: NodePrimitives> MemoryOverlayStateProviderRef<'a, N> {
     /// - `in_memory` - the collection of executed ancestor blocks in reverse.
     /// - `historical` - a historical state provider for the latest ancestor block stored in the
     ///   database.
-    pub fn new(historical: Box<dyn StateProvider + 'a>, in_memory: Vec<ExecutedBlock<N>>) -> Self {
+    pub fn new(historical: Box<dyn StateProvider + 'a>, in_memory: Vec<ExecutedBlock>) -> Self {
         Self { historical, in_memory: Cow::Owned(in_memory), trie_input: OnceLock::new() }
     }
 
@@ -72,7 +69,7 @@ impl<'a, N: NodePrimitives> MemoryOverlayStateProviderRef<'a, N> {
     }
 }
 
-impl<N: NodePrimitives> BlockHashReader for MemoryOverlayStateProviderRef<'_, N> {
+impl BlockHashReader for MemoryOverlayStateProviderRef<'_> {
     fn block_hash(&self, number: BlockNumber) -> ProviderResult<Option<B256>> {
         for block in self.in_memory.iter() {
             if block.recovered_block().number() == number {
@@ -113,7 +110,7 @@ impl<N: NodePrimitives> BlockHashReader for MemoryOverlayStateProviderRef<'_, N>
     }
 }
 
-impl<N: NodePrimitives> AccountReader for MemoryOverlayStateProviderRef<'_, N> {
+impl AccountReader for MemoryOverlayStateProviderRef<'_> {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         for block in self.in_memory.iter() {
             if let Some(account) = block.execution_output.account(address) {
@@ -125,7 +122,7 @@ impl<N: NodePrimitives> AccountReader for MemoryOverlayStateProviderRef<'_, N> {
     }
 }
 
-impl<N: NodePrimitives> StateRootProvider for MemoryOverlayStateProviderRef<'_, N> {
+impl StateRootProvider for MemoryOverlayStateProviderRef<'_> {
     fn state_root(&self, state: HashedPostState) -> ProviderResult<B256> {
         self.state_root_from_nodes(TrieInput::from_state(state))
     }
@@ -151,7 +148,7 @@ impl<N: NodePrimitives> StateRootProvider for MemoryOverlayStateProviderRef<'_, 
     }
 }
 
-impl<N: NodePrimitives> StorageRootProvider for MemoryOverlayStateProviderRef<'_, N> {
+impl StorageRootProvider for MemoryOverlayStateProviderRef<'_> {
     // TODO: Currently this does not reuse available in-memory trie nodes.
     fn storage_root(&self, address: Address, storage: HashedStorage) -> ProviderResult<B256> {
         let merged = self.merged_hashed_storage(address, storage);
@@ -181,7 +178,7 @@ impl<N: NodePrimitives> StorageRootProvider for MemoryOverlayStateProviderRef<'_
     }
 }
 
-impl<N: NodePrimitives> StateProofProvider for MemoryOverlayStateProviderRef<'_, N> {
+impl StateProofProvider for MemoryOverlayStateProviderRef<'_> {
     fn proof(
         &self,
         mut input: TrieInput,
@@ -212,7 +209,7 @@ impl<N: NodePrimitives> StateProofProvider for MemoryOverlayStateProviderRef<'_,
     }
 }
 
-impl<N: NodePrimitives> HashedPostStateProvider for MemoryOverlayStateProviderRef<'_, N> {
+impl HashedPostStateProvider for MemoryOverlayStateProviderRef<'_> {
     fn hashed_post_state(&self, bundle_state: &BundleState) -> ProviderResult<HashedPostState> {
         let mut hashed_state = self.historical.hashed_post_state(bundle_state)?;
 
@@ -236,7 +233,7 @@ impl<N: NodePrimitives> HashedPostStateProvider for MemoryOverlayStateProviderRe
     }
 }
 
-impl<N: NodePrimitives> StateProvider for MemoryOverlayStateProviderRef<'_, N> {
+impl StateProvider for MemoryOverlayStateProviderRef<'_> {
     fn storage(
         &self,
         address: Address,
@@ -252,7 +249,7 @@ impl<N: NodePrimitives> StateProvider for MemoryOverlayStateProviderRef<'_, N> {
     }
 }
 
-impl<N: NodePrimitives> BytecodeReader for MemoryOverlayStateProviderRef<'_, N> {
+impl BytecodeReader for MemoryOverlayStateProviderRef<'_> {
     fn bytecode_by_hash(&self, code_hash: &B256) -> ProviderResult<Option<Bytecode>> {
         for block in self.in_memory.iter() {
             if let Some(contract) = block.execution_output.bytecode(code_hash) {
@@ -267,16 +264,16 @@ impl<N: NodePrimitives> BytecodeReader for MemoryOverlayStateProviderRef<'_, N> 
 /// An owned state provider that stores references to in-memory blocks along with their state as
 /// well as a reference of the historical state provider for fallback lookups.
 #[expect(missing_debug_implementations)]
-pub struct MemoryOverlayStateProvider<N: NodePrimitives = reth_ethereum_primitives::EthPrimitives> {
+pub struct MemoryOverlayStateProvider {
     /// Historical state provider for state lookups that are not found in memory blocks.
     pub(crate) historical: StateProviderBox,
     /// The collection of executed parent blocks. Expected order is newest to oldest.
-    pub(crate) in_memory: Vec<ExecutedBlock<N>>,
+    pub(crate) in_memory: Vec<ExecutedBlock>,
     /// Lazy-loaded in-memory trie data.
     pub(crate) trie_input: OnceLock<TrieInput>,
 }
 
-impl<N: NodePrimitives> MemoryOverlayStateProvider<N> {
+impl MemoryOverlayStateProvider {
     /// Create new memory overlay state provider.
     ///
     /// ## Arguments
@@ -284,13 +281,13 @@ impl<N: NodePrimitives> MemoryOverlayStateProvider<N> {
     /// - `in_memory` - the collection of executed ancestor blocks in reverse.
     /// - `historical` - a historical state provider for the latest ancestor block stored in the
     ///   database.
-    pub fn new(historical: StateProviderBox, in_memory: Vec<ExecutedBlock<N>>) -> Self {
+    pub fn new(historical: StateProviderBox, in_memory: Vec<ExecutedBlock>) -> Self {
         Self { historical, in_memory, trie_input: OnceLock::new() }
     }
 
     /// Returns a new provider that takes the `TX` as reference
     #[inline(always)]
-    fn as_ref(&self) -> MemoryOverlayStateProviderRef<'_, N> {
+    fn as_ref(&self) -> MemoryOverlayStateProviderRef<'_> {
         MemoryOverlayStateProviderRef {
             historical: Box::new(self.historical.as_ref()),
             in_memory: Cow::Borrowed(&self.in_memory),
@@ -305,11 +302,11 @@ impl<N: NodePrimitives> MemoryOverlayStateProvider<N> {
 }
 
 // Delegates all provider impls to [`MemoryOverlayStateProviderRef`]
-reth_storage_api::macros::delegate_provider_impls!(MemoryOverlayStateProvider<N> where [N: NodePrimitives]);
+reth_storage_api::macros::delegate_provider_impls!(MemoryOverlayStateProvider);
 
 #[cfg(test)]
 mod tests {
-    use reth_ethereum_primitives::EthPrimitives;
+
     use reth_storage_api::noop::NoopProvider;
     use revm::database::{AccountStatus, BundleAccount};
 
@@ -318,10 +315,8 @@ mod tests {
     #[test]
     fn created_and_destroyed_account_skips_in_memory_trie_aggregation() {
         let address = Address::with_last_byte(1);
-        let provider = MemoryOverlayStateProviderRef::<EthPrimitives>::new(
-            Box::new(NoopProvider::default()),
-            Vec::new(),
-        );
+        let provider =
+            MemoryOverlayStateProviderRef::new(Box::new(NoopProvider::default()), Vec::new());
         let mut bundle_state = BundleState::default();
         bundle_state.state.insert(
             address,

@@ -5,10 +5,10 @@ use std::sync::Arc;
 use alloy_eip7928::bal::{DecodedBal, RawBal};
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::B256;
+use base_common_consensus::BaseBlock;
 use reth_chain_state::{ExecutedBlock, ExecutionTimingStats};
 use reth_evm::{ConfigureEvm, EvmEnvFor};
 use reth_execution_cache::TxPoolPrewarmCacheSnapshot;
-use reth_primitives_traits::{BlockTy, NodePrimitives};
 
 use crate::tree::error::InsertPayloadError;
 
@@ -65,27 +65,26 @@ where
 }
 
 /// Result of block or payload validation.
-pub type ValidationOutcome<N, E = InsertPayloadError<BlockTy<N>>> = Result<ValidationOutput<N>, E>;
+pub type ValidationOutcome<E = InsertPayloadError<BaseBlock>> = Result<ValidationOutput, E>;
 
 /// Result type for block validation with optional timing stats.
-pub(crate) type InsertPayloadResult<N> =
-    Result<ValidationOutput<N>, InsertPayloadError<<N as NodePrimitives>::Block>>;
+pub(crate) type InsertPayloadResult = Result<ValidationOutput, InsertPayloadError<BaseBlock>>;
 
 /// Output of block or payload validation.
 #[derive(Clone, Debug)]
-pub struct ValidationOutput<N: NodePrimitives> {
+pub struct ValidationOutput {
     /// The executed block produced by validation.
-    pub executed_block: ExecutedBlock<N>,
+    pub executed_block: ExecutedBlock,
     /// Optional execution timing stats collected during validation.
     pub execution_timing_stats: Option<Box<ExecutionTimingStats>>,
     /// Validated raw block access list carried by the payload.
     pub raw_bal: Option<RawBal>,
 }
 
-impl<N: NodePrimitives> ValidationOutput<N> {
+impl ValidationOutput {
     /// Creates a new validation output.
     pub const fn new(
-        executed_block: ExecutedBlock<N>,
+        executed_block: ExecutedBlock,
         execution_timing_stats: Option<Box<ExecutionTimingStats>>,
     ) -> Self {
         Self { executed_block, execution_timing_stats, raw_bal: None }

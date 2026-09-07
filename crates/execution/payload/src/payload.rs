@@ -2,7 +2,7 @@
 
 use std::{fmt::Debug, sync::Arc};
 
-use alloy_consensus::{Block, BlockHeader};
+use alloy_consensus::BlockHeader;
 use alloy_eips::{
     eip1559::BaseFeeParams, eip2718::Decodable2718, eip4895::Withdrawals, eip7685::Requests,
 };
@@ -12,9 +12,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes, PayloadId,
 };
 use base_common_chains::Upgrades;
-use base_common_consensus::{
-    BasePrimitives, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
-};
+use base_common_consensus::{BaseBlock, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 /// Re-export for use in downstream arguments.
 pub use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_common_rpc_types_engine::{
@@ -26,7 +24,7 @@ use reth_chainspec::EthChainSpec;
 use reth_payload_builder::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayload, BuiltPayloadExecutedBlock};
 use reth_primitives_traits::{
-    Block as _, NodePrimitives, SealedBlock, SealedHeader, SignedTransaction, WithEncoded,
+    Block as _, SealedBlock, SealedHeader, SignedTransaction, WithEncoded,
 };
 
 /// Minimal Ethereum payload builder attributes retained for Base payload construction.
@@ -264,13 +262,13 @@ where
 
 /// Contains the built payload.
 #[derive(Debug, Clone)]
-pub struct BaseBuiltPayload<N: NodePrimitives = BasePrimitives> {
+pub struct BaseBuiltPayload {
     /// Identifier of the payload
     pub(crate) id: PayloadId,
     /// Sealed block
-    pub(crate) block: Arc<SealedBlock<N::Block>>,
+    pub(crate) block: Arc<SealedBlock<BaseBlock>>,
     /// Block execution data for the payload, if any.
-    pub(crate) executed_block: Option<BuiltPayloadExecutedBlock<N>>,
+    pub(crate) executed_block: Option<BuiltPayloadExecutedBlock>,
     /// Amsterdam block access list RLP bytes, if any.
     pub(crate) block_access_list: Option<Bytes>,
     /// The fees of the block
@@ -279,13 +277,13 @@ pub struct BaseBuiltPayload<N: NodePrimitives = BasePrimitives> {
 
 // === impl BuiltPayload ===
 
-impl<N: NodePrimitives> BaseBuiltPayload<N> {
+impl BaseBuiltPayload {
     /// Initializes the payload with the given initial block.
     pub const fn new(
         id: PayloadId,
-        block: Arc<SealedBlock<N::Block>>,
+        block: Arc<SealedBlock<BaseBlock>>,
         fees: U256,
-        executed_block: Option<BuiltPayloadExecutedBlock<N>>,
+        executed_block: Option<BuiltPayloadExecutedBlock>,
         block_access_list: Option<Bytes>,
     ) -> Self {
         Self { id, block, fees, executed_block, block_access_list }
@@ -297,7 +295,7 @@ impl<N: NodePrimitives> BaseBuiltPayload<N> {
     }
 
     /// Returns the built block(sealed)
-    pub fn block(&self) -> &SealedBlock<N::Block> {
+    pub fn block(&self) -> &SealedBlock<BaseBlock> {
         &self.block
     }
 
@@ -307,15 +305,13 @@ impl<N: NodePrimitives> BaseBuiltPayload<N> {
     }
 
     /// Converts the value into [`SealedBlock`].
-    pub fn into_sealed_block(self) -> SealedBlock<N::Block> {
+    pub fn into_sealed_block(self) -> SealedBlock<BaseBlock> {
         Arc::unwrap_or_clone(self.block)
     }
 }
 
-impl<N: NodePrimitives> BuiltPayload for BaseBuiltPayload<N> {
-    type Primitives = N;
-
-    fn block(&self) -> &SealedBlock<N::Block> {
+impl BuiltPayload for BaseBuiltPayload {
+    fn block(&self) -> &SealedBlock<BaseBlock> {
         self.block()
     }
 
@@ -323,7 +319,7 @@ impl<N: NodePrimitives> BuiltPayload for BaseBuiltPayload<N> {
         self.fees
     }
 
-    fn executed_block(&self) -> Option<BuiltPayloadExecutedBlock<N>> {
+    fn executed_block(&self) -> Option<BuiltPayloadExecutedBlock> {
         self.executed_block.clone()
     }
 
@@ -336,11 +332,8 @@ impl<N: NodePrimitives> BuiltPayload for BaseBuiltPayload<N> {
     }
 }
 
-impl<N: NodePrimitives> From<BaseBuiltPayload<N>> for base_common_rpc_types_engine::ExecutionData
-where
-    N::SignedTx: SignedTransaction,
-{
-    fn from(value: BaseBuiltPayload<N>) -> Self {
+impl From<BaseBuiltPayload> for base_common_rpc_types_engine::ExecutionData {
+    fn from(value: BaseBuiltPayload) -> Self {
         let BaseBuiltPayload { block, block_access_list, .. } = value;
         let block_hash = block.hash();
         let block = Arc::unwrap_or_clone(block).into_block();
@@ -354,12 +347,8 @@ where
 }
 
 // V1 engine_getPayloadV1 response
-impl<T, N> From<BaseBuiltPayload<N>> for ExecutionPayloadV1
-where
-    T: SignedTransaction,
-    N: NodePrimitives<Block = Block<T>>,
-{
-    fn from(value: BaseBuiltPayload<N>) -> Self {
+impl From<BaseBuiltPayload> for ExecutionPayloadV1 {
+    fn from(value: BaseBuiltPayload) -> Self {
         Self::from_block_unchecked(
             value.block().hash(),
             &Arc::unwrap_or_clone(value.block).into_block(),
@@ -368,12 +357,8 @@ where
 }
 
 // V2 engine_getPayloadV2 response
-impl<T, N> From<BaseBuiltPayload<N>> for ExecutionPayloadEnvelopeV2
-where
-    T: SignedTransaction,
-    N: NodePrimitives<Block = Block<T>>,
-{
-    fn from(value: BaseBuiltPayload<N>) -> Self {
+impl From<BaseBuiltPayload> for ExecutionPayloadEnvelopeV2 {
+    fn from(value: BaseBuiltPayload) -> Self {
         let BaseBuiltPayload { block, fees, .. } = value;
 
         Self {
@@ -386,12 +371,8 @@ where
     }
 }
 
-impl<T, N> From<BaseBuiltPayload<N>> for BaseExecutionPayloadEnvelopeV3
-where
-    T: SignedTransaction,
-    N: NodePrimitives<Block = Block<T>>,
-{
-    fn from(value: BaseBuiltPayload<N>) -> Self {
+impl From<BaseBuiltPayload> for BaseExecutionPayloadEnvelopeV3 {
+    fn from(value: BaseBuiltPayload) -> Self {
         let BaseBuiltPayload { block, fees, .. } = value;
 
         let parent_beacon_block_root = block.parent_beacon_block_root.unwrap_or_default();
@@ -418,12 +399,8 @@ where
     }
 }
 
-impl<T, N> From<BaseBuiltPayload<N>> for BaseExecutionPayloadEnvelopeV4
-where
-    T: SignedTransaction,
-    N: NodePrimitives<Block = Block<T>>,
-{
-    fn from(value: BaseBuiltPayload<N>) -> Self {
+impl From<BaseBuiltPayload> for BaseExecutionPayloadEnvelopeV4 {
+    fn from(value: BaseBuiltPayload) -> Self {
         let BaseBuiltPayload { block, fees, .. } = value;
 
         let parent_beacon_block_root = block.parent_beacon_block_root.unwrap_or_default();
@@ -457,12 +434,8 @@ where
     }
 }
 
-impl<T, N> From<BaseBuiltPayload<N>> for BaseExecutionPayloadEnvelopeV5
-where
-    T: SignedTransaction,
-    N: NodePrimitives<Block = Block<T>>,
-{
-    fn from(value: BaseBuiltPayload<N>) -> Self {
+impl From<BaseBuiltPayload> for BaseExecutionPayloadEnvelopeV5 {
+    fn from(value: BaseBuiltPayload) -> Self {
         let BaseBuiltPayload { block, fees, .. } = value;
 
         let l2_withdrawals_root = block.withdrawals_root.unwrap_or_default();

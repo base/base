@@ -11,22 +11,18 @@ pub type EthRpcConverter<ChainSpec, Evm> =
 //tests for simulate
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Transaction, TxType};
+    use alloy_consensus::Transaction;
     use alloy_rpc_types_eth::TransactionRequest;
     use reth_chainspec::MAINNET;
     use reth_rpc_eth_types::simulate::resolve_transaction;
     use revm::database::CacheDB;
 
-    use super::*;
-    use reth_evm::TestEvmConfig;
-
     #[test]
     fn test_resolve_transaction_empty_request() {
-        let builder =
-            EthRpcConverter::<_, TestEvmConfig>::new(EthReceiptConverter::new(MAINNET.clone()));
+        let builder = crate::test_utils::RpcTestUtils::converter(MAINNET.clone());
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
         let tx = TransactionRequest::default();
-        let result = resolve_transaction(tx, 21000, 0, 1, false, &mut db, &builder).unwrap();
+        let result = resolve_transaction(tx.into(), 21000, 0, 1, false, &mut db, &builder).unwrap();
 
         // For an empty request, we should get a valid transaction with defaults
         let tx = result.into_inner();
@@ -38,14 +34,13 @@ mod tests {
     #[test]
     fn test_resolve_transaction_legacy() {
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
-        let builder =
-            EthRpcConverter::<_, TestEvmConfig>::new(EthReceiptConverter::new(MAINNET.clone()));
+        let builder = crate::test_utils::RpcTestUtils::converter(MAINNET.clone());
 
         let tx = TransactionRequest { gas_price: Some(100), ..Default::default() };
 
-        let tx = resolve_transaction(tx, 21000, 0, 1, false, &mut db, &builder).unwrap();
+        let tx = resolve_transaction(tx.into(), 21000, 0, 1, false, &mut db, &builder).unwrap();
 
-        assert_eq!(tx.tx_type(), TxType::Legacy);
+        assert_eq!(tx.tx_type(), base_common_consensus::OpTxType::Legacy);
 
         let tx = tx.into_inner();
         assert_eq!(tx.gas_price(), Some(100));
@@ -55,8 +50,7 @@ mod tests {
     #[test]
     fn test_resolve_transaction_partial_eip1559() {
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
-        let rpc_converter =
-            EthRpcConverter::<_, TestEvmConfig>::new(EthReceiptConverter::new(MAINNET.clone()));
+        let rpc_converter = crate::test_utils::RpcTestUtils::converter(MAINNET.clone());
 
         let tx = TransactionRequest {
             max_fee_per_gas: Some(200),
@@ -64,9 +58,10 @@ mod tests {
             ..Default::default()
         };
 
-        let result = resolve_transaction(tx, 21000, 0, 1, false, &mut db, &rpc_converter).unwrap();
+        let result =
+            resolve_transaction(tx.into(), 21000, 0, 1, false, &mut db, &rpc_converter).unwrap();
 
-        assert_eq!(result.tx_type(), TxType::Eip1559);
+        assert_eq!(result.tx_type(), base_common_consensus::OpTxType::Eip1559);
         let tx = result.into_inner();
         assert_eq!(tx.max_fee_per_gas(), 200);
         assert_eq!(tx.max_priority_fee_per_gas(), Some(10));
@@ -76,12 +71,12 @@ mod tests {
     #[test]
     fn test_resolve_transaction_wraps_max_nonce_when_nonce_check_disabled() {
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
-        let rpc_converter =
-            EthRpcConverter::<_, TestEvmConfig>::new(EthReceiptConverter::new(MAINNET.clone()));
+        let rpc_converter = crate::test_utils::RpcTestUtils::converter(MAINNET.clone());
 
         let tx = TransactionRequest { nonce: Some(u64::MAX), ..Default::default() };
 
-        let result = resolve_transaction(tx, 21000, 0, 1, true, &mut db, &rpc_converter).unwrap();
+        let result =
+            resolve_transaction(tx.into(), 21000, 0, 1, true, &mut db, &rpc_converter).unwrap();
 
         assert_eq!(result.nonce(), 0);
     }

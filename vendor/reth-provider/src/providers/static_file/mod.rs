@@ -90,13 +90,13 @@ mod tests {
 
     use alloy_consensus::{Header, SignableTransaction, Transaction, TxLegacy};
     use alloy_primitives::{Address, B256, BlockHash, Signature, TxNumber, U160, U256};
+    use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
     use rand::seq::SliceRandom;
     use reth_db::{
         models::{AccountBeforeTx, StorageBeforeTx},
         test_utils::create_test_static_files_dir,
     };
     use reth_db_api::{CanonicalHeaders, HeaderNumbers, Headers, transaction::DbTxMut};
-    use reth_ethereum_primitives::{EthPrimitives, Receipt, TransactionSigned};
     use reth_primitives_traits::Account;
     use reth_static_file_types::{
         DEFAULT_BLOCKS_PER_STATIC_FILE, SegmentRangeInclusive, find_fixed_range,
@@ -200,11 +200,10 @@ mod tests {
 
         // [ Headers Creation and Commit ]
         {
-            let sf_rw: StaticFileProvider<EthPrimitives> =
-                StaticFileProviderBuilder::read_write(&static_dir)
-                    .with_blocks_per_file(blocks_per_file)
-                    .build()
-                    .expect("Failed to build static file provider");
+            let sf_rw: StaticFileProvider = StaticFileProviderBuilder::read_write(&static_dir)
+                .with_blocks_per_file(blocks_per_file)
+                .build()
+                .expect("Failed to build static file provider");
 
             let mut header_writer = sf_rw.latest_writer(StaticFileSegment::Headers).unwrap();
 
@@ -219,8 +218,8 @@ mod tests {
 
         // Helper function to prune headers and validate truncation results
         fn prune_and_validate(
-            writer: &mut StaticFileProviderRWRefMut<'_, EthPrimitives>,
-            sf_rw: &StaticFileProvider<EthPrimitives>,
+            writer: &mut StaticFileProviderRWRefMut<'_>,
+            sf_rw: &StaticFileProvider,
             static_dir: impl AsRef<Path>,
             prune_count: u64,
             expected_tip: Option<u64>,
@@ -333,19 +332,19 @@ mod tests {
     /// * `10..=19`: no txs/receipts
     /// * `20..=29`: only one tx/receipt
     fn setup_tx_based_scenario(
-        sf_rw: &StaticFileProvider<EthPrimitives>,
+        sf_rw: &StaticFileProvider,
         segment: StaticFileSegment,
         blocks_per_file: u64,
     ) {
         fn setup_block_ranges(
-            writer: &mut StaticFileProviderRWRefMut<'_, EthPrimitives>,
-            sf_rw: &StaticFileProvider<EthPrimitives>,
+            writer: &mut StaticFileProviderRWRefMut<'_>,
+            sf_rw: &StaticFileProvider,
             segment: StaticFileSegment,
             block_range: &Range<u64>,
             mut tx_count: u64,
             next_tx_num: &mut u64,
         ) {
-            let mut receipt = Receipt::default();
+            let mut receipt = BaseReceipt::Legacy(Default::default());
             let mut tx = TxLegacy::default();
 
             for block in block_range.clone() {
@@ -362,13 +361,13 @@ mod tests {
                         StaticFileSegment::Transactions => {
                             // Used as ID for validation
                             tx.nonce = *next_tx_num;
-                            let tx: TransactionSigned =
+                            let tx: BaseTxEnvelope =
                                 tx.clone().into_signed(Signature::test_signature()).into();
                             writer.append_transaction(*next_tx_num, &tx).unwrap();
                         }
                         StaticFileSegment::Receipts => {
                             // Used as ID for validation
-                            receipt.cumulative_gas_used = *next_tx_num;
+                            receipt.as_receipt_mut().cumulative_gas_used = *next_tx_num;
                             writer.append_receipt(*next_tx_num, &receipt).unwrap();
                         }
                         StaticFileSegment::TransactionSenders => {
@@ -460,7 +459,7 @@ mod tests {
 
         #[expect(clippy::too_many_arguments)]
         fn prune_and_validate(
-            sf_rw: &StaticFileProvider<EthPrimitives>,
+            sf_rw: &StaticFileProvider,
             static_dir: impl AsRef<Path>,
             segment: StaticFileSegment,
             prune_count: u64,
@@ -512,7 +511,7 @@ mod tests {
                     )?,
                     StaticFileSegment::Receipts => assert_eyre(
                         expected_tx_tip,
-                        sf_rw.receipt(id)?.map(|r| r.cumulative_gas_used),
+                        sf_rw.receipt(id)?.map(|r| r.as_receipt().cumulative_gas_used),
                         "receipt mismatch",
                     )?,
                     StaticFileSegment::TransactionSenders => assert_eyre(
@@ -634,10 +633,9 @@ mod tests {
         let (static_dir, _) = create_test_static_files_dir();
 
         {
-            let sf_rw: StaticFileProvider<EthPrimitives> =
-                StaticFileProviderBuilder::read_write(&static_dir)
-                    .with_blocks_per_file(10)
-                    .build()?;
+            let sf_rw: StaticFileProvider = StaticFileProviderBuilder::read_write(&static_dir)
+                .with_blocks_per_file(10)
+                .build()?;
             let mut header_writer = sf_rw.latest_writer(StaticFileSegment::Headers)?;
 
             let mut header = Header::default();
@@ -658,10 +656,9 @@ mod tests {
         }
 
         {
-            let sf_rw: StaticFileProvider<EthPrimitives> =
-                StaticFileProviderBuilder::read_write(&static_dir)
-                    .with_blocks_per_file(5)
-                    .build()?;
+            let sf_rw: StaticFileProvider = StaticFileProviderBuilder::read_write(&static_dir)
+                .with_blocks_per_file(5)
+                .build()?;
             let mut header_writer = sf_rw.latest_writer(StaticFileSegment::Headers)?;
 
             let mut header = Header::default();
@@ -683,10 +680,9 @@ mod tests {
         }
 
         {
-            let sf_rw: StaticFileProvider<EthPrimitives> =
-                StaticFileProviderBuilder::read_write(&static_dir)
-                    .with_blocks_per_file(15)
-                    .build()?;
+            let sf_rw: StaticFileProvider = StaticFileProviderBuilder::read_write(&static_dir)
+                .with_blocks_per_file(15)
+                .build()?;
             let mut header_writer = sf_rw.latest_writer(StaticFileSegment::Headers)?;
 
             let mut header = Header::default();
@@ -716,7 +712,7 @@ mod tests {
     fn test_account_changeset_static_files() {
         let (static_dir, _) = create_test_static_files_dir();
 
-        let sf_rw = StaticFileProvider::<EthPrimitives>::read_write(&static_dir)
+        let sf_rw = StaticFileProvider::read_write(&static_dir)
             .expect("Failed to create static file provider");
 
         // Helper function to generate test changesets
@@ -787,7 +783,7 @@ mod tests {
     fn test_get_account_before_block() {
         let (static_dir, _) = create_test_static_files_dir();
 
-        let sf_rw = StaticFileProvider::<EthPrimitives>::read_write(&static_dir)
+        let sf_rw = StaticFileProvider::read_write(&static_dir)
             .expect("Failed to create static file provider");
 
         // Setup test data
@@ -891,11 +887,10 @@ mod tests {
 
         // Setup: Create account changesets for multiple blocks
         {
-            let sf_rw: StaticFileProvider<EthPrimitives> =
-                StaticFileProviderBuilder::read_write(&static_dir)
-                    .with_blocks_per_file(blocks_per_file)
-                    .build()
-                    .expect("failed to create static file provider");
+            let sf_rw: StaticFileProvider = StaticFileProviderBuilder::read_write(&static_dir)
+                .with_blocks_per_file(blocks_per_file)
+                .build()
+                .expect("failed to create static file provider");
 
             let mut writer = sf_rw.latest_writer(StaticFileSegment::AccountChangeSets).unwrap();
 
@@ -927,7 +922,7 @@ mod tests {
 
         // Helper function to validate truncation
         fn validate_truncation(
-            sf_rw: &StaticFileProvider<EthPrimitives>,
+            sf_rw: &StaticFileProvider,
             static_dir: impl AsRef<Path>,
             expected_tip: Option<u64>,
             expected_file_count: u64,
@@ -1005,7 +1000,7 @@ mod tests {
     fn test_changeset_binary_search() {
         let (static_dir, _) = create_test_static_files_dir();
 
-        let sf_rw = StaticFileProvider::<EthPrimitives>::read_write(&static_dir)
+        let sf_rw = StaticFileProvider::read_write(&static_dir)
             .expect("Failed to create static file provider");
 
         // Create a block with many account changes to test binary search
@@ -1079,7 +1074,7 @@ mod tests {
     fn test_storage_changeset_static_files() {
         let (static_dir, _) = create_test_static_files_dir();
 
-        let sf_rw = StaticFileProvider::<EthPrimitives>::read_write(&static_dir)
+        let sf_rw = StaticFileProvider::read_write(&static_dir)
             .expect("Failed to create static file provider");
 
         // Test writing and reading storage changesets
@@ -1133,7 +1128,7 @@ mod tests {
     fn test_get_storage_before_block() {
         let (static_dir, _) = create_test_static_files_dir();
 
-        let sf_rw = StaticFileProvider::<EthPrimitives>::read_write(&static_dir)
+        let sf_rw = StaticFileProvider::read_write(&static_dir)
             .expect("Failed to create static file provider");
 
         let test_address = Address::from([1u8; 20]);
@@ -1228,11 +1223,10 @@ mod tests {
 
         // Setup: Create storage changesets for multiple blocks
         {
-            let sf_rw: StaticFileProvider<EthPrimitives> =
-                StaticFileProviderBuilder::read_write(&static_dir)
-                    .with_blocks_per_file(blocks_per_file)
-                    .build()
-                    .expect("failed to create static file provider");
+            let sf_rw: StaticFileProvider = StaticFileProviderBuilder::read_write(&static_dir)
+                .with_blocks_per_file(blocks_per_file)
+                .build()
+                .expect("failed to create static file provider");
 
             let mut writer = sf_rw.latest_writer(StaticFileSegment::StorageChangeSets).unwrap();
 
@@ -1259,7 +1253,7 @@ mod tests {
         }
 
         fn validate_truncation(
-            sf_rw: &StaticFileProvider<EthPrimitives>,
+            sf_rw: &StaticFileProvider,
             static_dir: impl AsRef<Path>,
             expected_tip: Option<u64>,
             expected_file_count: u64,
@@ -1329,7 +1323,7 @@ mod tests {
     fn test_storage_changeset_binary_search() {
         let (static_dir, _) = create_test_static_files_dir();
 
-        let sf_rw = StaticFileProvider::<EthPrimitives>::read_write(&static_dir)
+        let sf_rw = StaticFileProvider::read_write(&static_dir)
             .expect("Failed to create static file provider");
 
         let block_num = 0u64;
@@ -1388,7 +1382,7 @@ mod tests {
     fn test_last_block_flushed_on_commit() {
         let (static_dir, _) = create_test_static_files_dir();
 
-        let sf_rw = StaticFileProvider::<EthPrimitives>::read_write(&static_dir)
+        let sf_rw = StaticFileProvider::read_write(&static_dir)
             .expect("Failed to create static file provider");
 
         let address = Address::from([5u8; 20]);

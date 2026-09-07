@@ -8,8 +8,9 @@ use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_chains::Upgrades;
+use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_builder::{
-    Attributes, PayloadPrimitives,
+    Attributes,
     builder::{BasePayloadBuilderCtx, Builder},
 };
 use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
@@ -19,12 +20,12 @@ use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_evm::{ConfigureEvm, execute::Executor};
-use reth_node_api::{BuildNextEnv, NodePrimitives, PayloadBuilderError};
+use reth_node_api::{BuildNextEnv, PayloadBuilderError};
 use reth_payload_util::NoopPayloadTransactions;
-use reth_primitives_traits::{SealedHeader, TxTy};
+use reth_primitives_traits::SealedHeader;
 use reth_provider::{
-    BlockReaderIdExt, ChainSpecProvider, HeaderProvider, NodePrimitivesProvider, ProviderError,
-    ProviderResult, StateProviderFactory,
+    BlockReaderIdExt, ChainSpecProvider, HeaderProvider, ProviderError, ProviderResult,
+    StateProviderFactory,
 };
 use reth_revm::{State, database::StateProviderDatabase, witness::ExecutionWitnessRecord};
 use reth_rpc_api::eth::helpers::FullEthApi;
@@ -80,8 +81,8 @@ where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
     Storage: BaseProofsStore + Clone + 'static,
-    Provider: BlockReaderIdExt + NodePrimitivesProvider<Primitives: PayloadPrimitives>,
-    EvmConfig: ConfigureEvm<Primitives = Provider::Primitives> + 'static,
+    Provider: BlockReaderIdExt,
+    EvmConfig: ConfigureEvm + 'static,
 {
     /// Creates a new instance of the `DebugApiExt`.
     pub fn new(
@@ -121,7 +122,6 @@ where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'static,
-    Provider: NodePrimitivesProvider<Primitives: PayloadPrimitives>,
 {
     fn new(
         provider: Provider,
@@ -148,9 +148,7 @@ where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'static,
-    Provider: BlockReaderIdExt
-        + NodePrimitivesProvider<Primitives: PayloadPrimitives>
-        + HeaderProvider<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>,
+    Provider: BlockReaderIdExt + HeaderProvider<Header = alloy_consensus::Header>,
 {
     fn parent_header(
         &self,
@@ -164,24 +162,21 @@ where
 }
 
 #[async_trait]
-impl<Eth, P, Provider, EvmConfig, Attrs, N> DebugApiOverrideServer<Attrs::RpcPayloadAttributes>
+impl<Eth, P, Provider, EvmConfig, Attrs> DebugApiOverrideServer<Attrs::RpcPayloadAttributes>
     for DebugApiExt<Eth, P, Provider, EvmConfig, Attrs>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'static,
-    Attrs: Attributes<Transaction = TxTy<EvmConfig::Primitives>>,
+    Attrs: Attributes<Transaction = BaseTxEnvelope>,
     Attrs::RpcPayloadAttributes: Send + Sync + 'static,
-    N: PayloadPrimitives<_TX = base_common_consensus::BaseTransactionSigned>,
     EvmConfig: ConfigureEvm<
-            Primitives = N,
-            NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Provider::ChainSpec>,
+            NextBlockEnvCtx: BuildNextEnv<Attrs, alloy_consensus::Header, Provider::ChainSpec>,
         > + 'static,
-    Provider: BlockReaderIdExt<Header = N::BlockHeader>
+    Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + StateProviderFactory
         + ChainSpecProvider<ChainSpec: Upgrades>
-        + NodePrimitivesProvider<Primitives = N>
-        + HeaderProvider<Header = N::BlockHeader>
+        + HeaderProvider<Header = alloy_consensus::Header>
         + Clone
         + 'static,
 {

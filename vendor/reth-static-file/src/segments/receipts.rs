@@ -1,9 +1,8 @@
 use std::ops::RangeInclusive;
 
 use alloy_primitives::BlockNumber;
-use reth_codecs::Compact;
-use reth_db_api::{cursor::DbCursorRO, table::Value, tables, transaction::DbTx};
-use reth_primitives_traits::NodePrimitives;
+use base_common_consensus::BaseReceipt;
+use reth_db_api::{cursor::DbCursorRO, tables, transaction::DbTx};
 use reth_provider::{BlockReader, DBProvider, StaticFileProviderFactory};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
@@ -16,9 +15,7 @@ pub struct Receipts;
 
 impl<Provider> Segment<Provider> for Receipts
 where
-    Provider: StaticFileProviderFactory<Primitives: NodePrimitives<Receipt: Value + Compact>>
-        + DBProvider
-        + BlockReader,
+    Provider: StaticFileProviderFactory + DBProvider + BlockReader,
 {
     fn segment(&self) -> StaticFileSegment {
         StaticFileSegment::Receipts
@@ -32,9 +29,8 @@ where
         let mut static_file_writer =
             provider.get_static_file_writer(*block_range.start(), StaticFileSegment::Receipts)?;
 
-        let mut receipts_cursor = provider
-            .tx_ref()
-            .cursor_read::<tables::Receipts<<Provider::Primitives as NodePrimitives>::Receipt>>()?;
+        let mut receipts_cursor =
+            provider.tx_ref().cursor_read::<tables::Receipts<BaseReceipt>>()?;
 
         for block in block_range {
             static_file_writer.increment_block(block)?;

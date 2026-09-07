@@ -25,7 +25,7 @@ impl<N, Rpc> EthTransactions for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+    Rpc: RpcConvert<Error = EthApiError>,
 {
     #[inline]
     fn signers(&self) -> &SignersForRpc<Self::Provider, Self::NetworkTypes> {
@@ -126,18 +126,16 @@ impl<N, Rpc> LoadTransaction for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+    Rpc: RpcConvert<Error = EthApiError>,
 {
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{
-        BlobTransactionSidecar, Block, Header, SidecarBuilder, SimpleCoder, Transaction,
-    };
+    use alloy_consensus::{Block, Header, Transaction};
     use alloy_primitives::{Address, Bytes, U256, map::AddressMap};
     use alloy_rpc_types_eth::request::TransactionRequest;
-    use reth_chainspec::{ChainSpec, ChainSpecBuilder};
+    use reth_chainspec::ChainSpecBuilder;
     use reth_evm::TestEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
@@ -145,19 +143,20 @@ mod tests {
         test_utils::{ExtendedAccount, MockEthProvider},
     };
     use reth_rpc_eth_api::node::RpcNodeCoreAdapter;
-    use reth_transaction_pool::{
-        TransactionOrigin, TransactionPool,
-        test_utils::{TestPool, testing_pool},
-    };
+    use reth_transaction_pool::{TransactionOrigin, TransactionPool};
 
     use super::*;
-    use crate::eth::helpers::types::EthRpcConverter;
 
     fn mock_eth_api(
         accounts: AddressMap<ExtendedAccount>,
     ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, TestEvmConfig>,
-        EthRpcConverter<ChainSpec, TestEvmConfig>,
+        RpcNodeCoreAdapter<
+            MockEthProvider,
+            crate::test_utils::TestPool,
+            NoopNetwork,
+            TestEvmConfig,
+        >,
+        crate::test_utils::TestRpcConverter,
     > {
         mock_eth_api_with_sync_timeout(accounts, Duration::from_secs(30))
     }
@@ -166,15 +165,20 @@ mod tests {
         accounts: AddressMap<ExtendedAccount>,
         send_raw_transaction_sync_timeout: Duration,
     ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, TestEvmConfig>,
-        EthRpcConverter<ChainSpec, TestEvmConfig>,
+        RpcNodeCoreAdapter<
+            MockEthProvider,
+            crate::test_utils::TestPool,
+            NoopNetwork,
+            TestEvmConfig,
+        >,
+        crate::test_utils::TestRpcConverter,
     > {
         let mock_provider = MockEthProvider::default()
             .with_chain_spec(ChainSpecBuilder::mainnet().cancun_activated().build());
         mock_provider.extend_accounts(accounts);
 
         let evm_config = TestEvmConfig::new(mock_provider.chain_spec());
-        let pool = testing_pool();
+        let pool = crate::test_utils::RpcTestUtils::pool();
 
         let genesis_header = Header {
             number: 0,
@@ -189,9 +193,14 @@ mod tests {
         let genesis_hash = B256::ZERO;
         mock_provider.add_block(genesis_hash, Block::new(genesis_header, Default::default()));
 
-        crate::EthApiBuilder::new(mock_provider, pool, NoopNetwork::default(), evm_config)
-            .send_raw_transaction_sync_timeout(send_raw_transaction_sync_timeout)
-            .build()
+        crate::test_utils::RpcTestUtils::api_builder(
+            mock_provider,
+            pool,
+            NoopNetwork::default(),
+            evm_config,
+        )
+        .send_raw_transaction_sync_timeout(send_raw_transaction_sync_timeout)
+        .build()
     }
 
     fn raw_transfer_tx() -> Bytes {
@@ -309,7 +318,7 @@ mod tests {
         };
 
         let filled =
-            eth_api.fill_transaction(tx_req).await.expect("fill_transaction should succeed");
+            eth_api.fill_transaction(tx_req.into()).await.expect("fill_transaction should succeed");
 
         // Should fill with the chain id from provider
         assert!(filled.tx.chain_id().is_some());
@@ -336,7 +345,7 @@ mod tests {
         };
 
         let filled =
-            eth_api.fill_transaction(tx_req).await.expect("fill_transaction should succeed");
+            eth_api.fill_transaction(tx_req.into()).await.expect("fill_transaction should succeed");
 
         assert_eq!(filled.tx.nonce(), nonce);
     }
@@ -364,7 +373,7 @@ mod tests {
         };
 
         let filled =
-            eth_api.fill_transaction(tx_req).await.expect("fill_transaction should succeed");
+            eth_api.fill_transaction(tx_req.into()).await.expect("fill_transaction should succeed");
 
         // Should preserve the provided nonce and gas limit
         assert_eq!(filled.tx.nonce(), provided_nonce);
@@ -388,84 +397,9 @@ mod tests {
         };
 
         let filled =
-            eth_api.fill_transaction(tx_req).await.expect("fill_transaction should succeed");
+            eth_api.fill_transaction(tx_req.into()).await.expect("fill_transaction should succeed");
 
         assert!(filled.tx.is_eip1559());
-    }
-
-    #[tokio::test]
-    async fn test_fill_transaction_eip4844_blob_fee() {
-        let address = Address::random();
-        let accounts = AddressMap::from_iter([(
-            address,
-            ExtendedAccount::new(0, U256::from(10_000_000_000_000_000_000u64)),
-        )]);
-
-        let eth_api = mock_eth_api(accounts);
-
-        let mut builder = SidecarBuilder::<SimpleCoder>::new();
-        builder.ingest(b"dummy blob");
-
-        // EIP-4844 blob transaction with versioned hashes but no blob fee
-        let tx_req = TransactionRequest {
-            from: Some(address),
-            to: Some(Address::random().into()),
-            sidecar: Some(BlobTransactionSidecarVariant::from(
-                builder.build::<BlobTransactionSidecar>().unwrap(),
-            )),
-            ..Default::default()
-        };
-
-        let filled =
-            eth_api.fill_transaction(tx_req).await.expect("fill_transaction should succeed");
-
-        // Blob transaction should have max_fee_per_blob_gas filled
-        assert!(
-            filled.tx.max_fee_per_blob_gas().is_some(),
-            "max_fee_per_blob_gas should be filled for blob tx"
-        );
-        assert!(
-            filled.tx.blob_versioned_hashes().is_some(),
-            "blob_versioned_hashes should be preserved"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_fill_transaction_eip4844_preserves_blob_fee() {
-        let address = Address::random();
-        let accounts = AddressMap::from_iter([(
-            address,
-            ExtendedAccount::new(0, U256::from(10_000_000_000_000_000_000u64)),
-        )]);
-
-        let eth_api = mock_eth_api(accounts);
-
-        let provided_blob_fee = 5000000u128;
-
-        let mut builder = SidecarBuilder::<SimpleCoder>::new();
-        builder.ingest(b"dummy blob");
-
-        // EIP-4844 blob transaction with blob fee already set
-        let tx_req = TransactionRequest {
-            from: Some(address),
-            to: Some(Address::random().into()),
-            transaction_type: Some(3), // EIP-4844
-            sidecar: Some(BlobTransactionSidecarVariant::from(
-                builder.build::<BlobTransactionSidecar>().unwrap(),
-            )),
-            max_fee_per_blob_gas: Some(provided_blob_fee), // Already set
-            ..Default::default()
-        };
-
-        let filled =
-            eth_api.fill_transaction(tx_req).await.expect("fill_transaction should succeed");
-
-        // Should preserve the provided blob fee
-        assert_eq!(
-            filled.tx.max_fee_per_blob_gas(),
-            Some(provided_blob_fee),
-            "should preserve provided max_fee_per_blob_gas"
-        );
     }
 
     #[tokio::test]
@@ -487,7 +421,7 @@ mod tests {
         };
 
         let filled =
-            eth_api.fill_transaction(tx_req).await.expect("fill_transaction should succeed");
+            eth_api.fill_transaction(tx_req.into()).await.expect("fill_transaction should succeed");
 
         // Non-blob transaction should NOT have blob fee filled
         assert!(

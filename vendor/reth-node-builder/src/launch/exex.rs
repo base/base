@@ -10,7 +10,7 @@ use reth_exex::{
     DEFAULT_EXEX_MANAGER_CAPACITY, DEFAULT_WAL_BLOCKS_WARNING, ExExContext, ExExHandle,
     ExExManager, ExExManagerHandle, ExExNotificationSource, Wal,
 };
-use reth_node_api::{FullNodeComponents, NodeTypes, PrimitivesTy};
+use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_provider::CanonStateSubscriptions;
 use reth_tracing::tracing::{debug, info};
 use tracing::Instrument;
@@ -67,9 +67,7 @@ impl<Node: FullNodeComponents + Clone> ExExLauncher<Node> {
     ///
     /// Spawns all extensions and returns the handle to the exex manager if any extensions are
     /// installed.
-    pub async fn launch(
-        self,
-    ) -> eyre::Result<Option<ExExManagerHandle<PrimitivesTy<Node::Types>>>> {
+    pub async fn launch(self) -> eyre::Result<Option<ExExManagerHandle>> {
         let Self { head, extensions, components, config_container, wal_blocks_warning, capacity } =
             self;
         let head = BlockNumHash::new(head.number, head.hash);

@@ -1,7 +1,7 @@
 //! Utilities for serving `eth_simulateV1`
 
 use alloy_chains::Chain;
-use alloy_consensus::{BlockHeader, Transaction as _, transaction::TxHashRef};
+use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_eips::eip2718::WithEncoded;
 use alloy_evm::{block::TxResult, precompiles::PrecompilesMap};
 use alloy_network::{NetworkTransactionBuilder, TransactionBuilder};
@@ -10,14 +10,13 @@ use alloy_rpc_types_eth::{
     simulate::{SimBlock, SimCallResult, SimulateError, SimulatedBlock},
     state::StateOverride,
 };
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
 use reth_evm::{
     Evm, HaltReasonFor,
     execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutor},
 };
-use reth_primitives_traits::{
-    BlockBody as _, BlockTy, NodePrimitives, Recovered, RecoveredBlock, SealedHeader,
-};
+use reth_primitives_traits::{BlockBody as _, Recovered, RecoveredBlock, SealedHeader};
 use reth_rpc_convert::{RpcBlock, RpcConvert, RpcTxReq};
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
 use reth_storage_api::{StateProvider, noop::NoopProvider};
@@ -310,14 +309,14 @@ pub fn execute_transactions<S, T>(
     converter: &T,
 ) -> Result<
     (
-        BlockBuilderOutcome<S::Primitives>,
+        BlockBuilderOutcome,
         Vec<ExecutionResult<<<S::Executor as BlockExecutor>::Evm as Evm>::HaltReason>>,
     ),
     EthApiError,
 >
 where
     S: BlockBuilder<Executor: BlockExecutor<Evm: Evm<DB: Database<Error: Into<EthApiError>>>>>,
-    T: RpcConvert<Primitives = S::Primitives>,
+    T: RpcConvert,
 {
     builder.apply_pre_execution_changes()?;
 
@@ -413,7 +412,7 @@ where
 /// This will set the defaults as defined in <https://github.com/ethereum/execution-apis/blob/e56d3208789259d0b09fa68e9d8594aa4d73c725/docs/ethsimulatev1-notes.md#default-values-for-transactions>
 ///
 /// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
-pub fn resolve_transaction<DB: Database, Tx, T>(
+pub fn resolve_transaction<DB: Database, T>(
     mut tx: RpcTxReq<T::Network>,
     default_gas_limit: u64,
     block_base_fee_per_gas: u64,
@@ -421,10 +420,10 @@ pub fn resolve_transaction<DB: Database, Tx, T>(
     disable_nonce_check: bool,
     db: &mut DB,
     converter: &T,
-) -> Result<Recovered<Tx>, EthApiError>
+) -> Result<Recovered<BaseTxEnvelope>, EthApiError>
 where
     DB::Error: Into<EthApiError>,
-    T: RpcConvert<Primitives: NodePrimitives<SignedTx = Tx>>,
+    T: RpcConvert,
 {
     // If we're missing any fields we try to fill nonce, gas and
     // gas price.
@@ -489,7 +488,7 @@ where
 
 /// Handles outputs of the calls execution and builds a [`SimulatedBlock`].
 pub fn build_simulated_block<Err, T>(
-    block: RecoveredBlock<BlockTy<T::Primitives>>,
+    block: RecoveredBlock<BaseBlock>,
     results: Vec<ExecutionResult<HaltReasonFor<T::Evm>>>,
     txs_kind: BlockTransactionsKind,
     converter: &T,
@@ -550,7 +549,7 @@ where
                             inner: log,
                             log_index: Some(log_index - 1),
                             transaction_index: Some(index as u64),
-                            transaction_hash: Some(*tx.tx_hash()),
+                            transaction_hash: Some(tx.tx_hash()),
                             block_hash: Some(block.hash()),
                             block_number: Some(block.header().number()),
                             block_timestamp: Some(block.header().timestamp()),

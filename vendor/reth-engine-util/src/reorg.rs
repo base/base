@@ -10,6 +10,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_primitives::Bytes;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadStatus};
+use base_common_consensus::BaseBlock;
 use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Either;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
@@ -22,10 +23,8 @@ use reth_evm::{
     ConfigureEvm,
     execute::{BlockBuilder, BlockBuilderOutcome},
 };
-use reth_payload_primitives::{BuiltPayload, PayloadTypes};
-use reth_primitives_traits::{
-    BlockBody as _, BlockTy, HeaderTy, SealedBlock, SignedTransaction, block::Block as _,
-};
+use reth_payload_primitives::PayloadTypes;
+use reth_primitives_traits::{BlockBody as _, SealedBlock, SignedTransaction, block::Block as _};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::{BlockReader, StateProviderFactory, errors::ProviderError};
 use tokio::sync::oneshot;
@@ -100,12 +99,12 @@ impl<S, T: PayloadTypes, Provider, Evm, Validator> EngineReorg<S, T, Provider, E
 impl<S, T, Provider, Evm, Validator> Stream for EngineReorg<S, T, Provider, Evm, Validator>
 where
     S: Stream<Item = BeaconEngineMessage<T>>,
-    T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = Evm::Primitives>>,
-    Provider: BlockReader<Header = HeaderTy<Evm::Primitives>, Block = BlockTy<Evm::Primitives>>
+    T: PayloadTypes,
+    Provider: BlockReader<Header = alloy_consensus::Header, Block = BaseBlock>
         + StateProviderFactory
         + ChainSpecProvider,
     Evm: ConfigureEvm,
-    Validator: EngineValidator<T, Evm::Primitives>,
+    Validator: EngineValidator<T>,
 {
     type Item = S::Item;
 
@@ -231,14 +230,14 @@ fn create_reorg_head<Provider, Evm, T, Validator>(
     payload_validator: &Validator,
     mut depth: usize,
     next_payload: T::ExecutionData,
-) -> RethResult<(SealedBlock<BlockTy<Evm::Primitives>>, Option<Bytes>)>
+) -> RethResult<(SealedBlock<BaseBlock>, Option<Bytes>)>
 where
-    Provider: BlockReader<Header = HeaderTy<Evm::Primitives>, Block = BlockTy<Evm::Primitives>>
+    Provider: BlockReader<Header = alloy_consensus::Header, Block = BaseBlock>
         + StateProviderFactory
         + ChainSpecProvider<ChainSpec: EthChainSpec>,
     Evm: ConfigureEvm,
-    T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = Evm::Primitives>>,
-    Validator: EngineValidator<T, Evm::Primitives>,
+    T: PayloadTypes,
+    Validator: EngineValidator<T>,
 {
     // Ensure next payload is valid.
     let next_block =
@@ -246,7 +245,7 @@ where
 
     // Fetch reorg target block depending on its depth and its parent.
     let mut previous_hash = next_block.parent_hash();
-    let mut candidate_transactions = next_block.into_body().transactions().to_vec();
+    let mut candidate_transactions = next_block.into_body().transactions;
     let reorg_target = 'target: {
         loop {
             let reorg_target = provider

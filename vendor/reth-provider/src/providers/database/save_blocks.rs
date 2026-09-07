@@ -2,8 +2,6 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::BlockNumber;
 use reth_chain_state::ExecutedBlock;
-use reth_ethereum_primitives::EthPrimitives;
-use reth_primitives_traits::NodePrimitives;
 
 /// Input for advancing the engine's two persistence frontiers.
 ///
@@ -30,15 +28,15 @@ use reth_primitives_traits::NodePrimitives;
 ///
 /// Genesis must already be initialized because this input only advances an existing database tip.
 #[derive(Debug)]
-pub struct SaveBlocksInput<N: NodePrimitives = EthPrimitives> {
-    blocks: Vec<ExecutedBlock<N>>,
+pub struct SaveBlocksInput {
+    blocks: Vec<ExecutedBlock>,
     prev_db_tip: BlockNumber,
     prev_partial_state_trie: BlockNumber,
     new_db_tip: BlockNumber,
     new_partial_state_trie: BlockNumber,
 }
 
-impl<N: NodePrimitives> SaveBlocksInput<N> {
+impl SaveBlocksInput {
     /// Creates an input that advances the existing frontiers to `new_db_tip` and
     /// `new_partial_state_trie`.
     ///
@@ -52,7 +50,7 @@ impl<N: NodePrimitives> SaveBlocksInput<N> {
     /// frontier exceeds the database frontier, or `blocks` is not the exact contiguous range
     /// `(prev_partial_state_trie, new_db_tip]`.
     pub fn new(
-        blocks: Vec<ExecutedBlock<N>>,
+        blocks: Vec<ExecutedBlock>,
         prev_db_tip: BlockNumber,
         prev_partial_state_trie: BlockNumber,
         new_db_tip: BlockNumber,
@@ -122,19 +120,19 @@ impl<N: NodePrimitives> SaveBlocksInput<N> {
     }
 
     /// Returns the first block whose block, execution, and history data will be persisted.
-    pub fn first_persist_rest_block(&self) -> Option<&ExecutedBlock<N>> {
+    pub fn first_persist_rest_block(&self) -> Option<&ExecutedBlock> {
         self.persist_rest_blocks().first()
     }
 
     /// Returns newly persisted blocks whose block, execution, and history data should be written.
-    pub fn persist_rest_blocks(&self) -> &[ExecutedBlock<N>] {
+    pub fn persist_rest_blocks(&self) -> &[ExecutedBlock] {
         &self.blocks[(self.prev_db_tip - self.prev_partial_state_trie) as usize..]
     }
 
     /// Returns all blocks whose hashed-state/trie updates are candidates for persistence.
     ///
     /// Updates overwritten by [`Self::state_trie_masking_blocks`] are filtered out by the writer.
-    pub fn state_trie_blocks(&self) -> &[ExecutedBlock<N>] {
+    pub fn state_trie_blocks(&self) -> &[ExecutedBlock] {
         &self.blocks[..(self.new_partial_state_trie - self.prev_partial_state_trie) as usize]
     }
 
@@ -142,7 +140,7 @@ impl<N: NodePrimitives> SaveBlocksInput<N> {
     ///
     /// This suffix suppresses older updates to the same hashed keys and trie nodes. It is also the
     /// overlay required to use the database at the new Finish checkpoint.
-    pub fn state_trie_masking_blocks(&self) -> &[ExecutedBlock<N>] {
+    pub fn state_trie_masking_blocks(&self) -> &[ExecutedBlock] {
         &self.blocks[(self.new_partial_state_trie - self.prev_partial_state_trie) as usize..]
     }
 }
@@ -215,7 +213,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "at least one persistence frontier must advance")]
     fn requires_a_frontier_to_advance() {
-        let _ = SaveBlocksInput::<EthPrimitives>::new(vec![], 1, 1, 1, 1);
+        let _ = SaveBlocksInput::new(vec![], 1, 1, 1, 1);
     }
 
     #[test]

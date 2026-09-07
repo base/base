@@ -1,26 +1,25 @@
 //! Helper type that represents one of two possible executor types
 
 // re-export Either
+use base_common_consensus::{BaseBlock, BaseReceipt};
 pub use futures_util::future::Either;
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
-use reth_primitives_traits::{NodePrimitives, RecoveredBlock};
+use reth_primitives_traits::RecoveredBlock;
 
 use crate::{Database, OnStateHook, execute::Executor};
 
 impl<A, B, DB> Executor<DB> for Either<A, B>
 where
     A: Executor<DB>,
-    B: Executor<DB, Primitives = A::Primitives, Error = A::Error>,
+    B: Executor<DB, Error = A::Error>,
     DB: Database,
 {
-    type Primitives = A::Primitives;
     type Error = A::Error;
 
     fn execute_one(
         &mut self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
-    ) -> Result<BlockExecutionResult<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
-    {
+        block: &RecoveredBlock<BaseBlock>,
+    ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error> {
         match self {
             Self::Left(a) => a.execute_one(block),
             Self::Right(b) => b.execute_one(block),
@@ -29,9 +28,9 @@ where
 
     fn execute_one_with_state_hook<F>(
         &mut self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
+        block: &RecoveredBlock<BaseBlock>,
         state_hook: F,
-    ) -> Result<BlockExecutionResult<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
+    ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>
     where
         F: OnStateHook + 'static,
     {
@@ -43,9 +42,8 @@ where
 
     fn execute(
         self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
-    ) -> Result<BlockExecutionOutput<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
-    {
+        block: &RecoveredBlock<BaseBlock>,
+    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error> {
         match self {
             Self::Left(a) => a.execute(block),
             Self::Right(b) => b.execute(block),
@@ -54,9 +52,9 @@ where
 
     fn execute_with_state_closure<F>(
         self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
+        block: &RecoveredBlock<BaseBlock>,
         state: F,
-    ) -> Result<BlockExecutionOutput<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
+    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
     where
         F: FnMut(&revm::database::State<DB>),
     {

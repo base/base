@@ -1,4 +1,3 @@
-use core::marker::PhantomData;
 use std::{
     ops::Range,
     sync::{Arc, Mutex},
@@ -9,18 +8,17 @@ use alloy_eips::eip1559::{ETHEREUM_BLOCK_GAS_LIMIT_30M, INITIAL_BASE_FEE};
 use alloy_primitives::{Address, B256, BlockNumber, U256, map::B256HashMap};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_common_consensus::{
+    BaseBlock as Block, BaseBlockBody as BlockBody, BaseReceipt as Receipt,
+    BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction,
+};
 use rand::Rng;
 use reth_chainspec::{ChainSpec, EthereumHardfork, MIN_TRANSACTION_GAS};
-use reth_ethereum_primitives::{
-    Block, BlockBody, EthPrimitives, Receipt, Transaction, TransactionSigned,
-};
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};
 use reth_primitives_traits::{
-    Account, NodePrimitives, Recovered, RecoveredBlock, SealedBlock, SealedHeader,
-    SignedTransaction,
+    Account, Recovered, RecoveredBlock, SealedBlock, SealedHeader, SignedTransaction,
     proofs::{calculate_receipt_root, calculate_transaction_root, calculate_withdrawals_root},
 };
-use reth_storage_api::NodePrimitivesProvider;
 use reth_trie::{ComputedTrieData, SortedTrieData, root::state_root_unhashed};
 use revm::{database::BundleState, state::AccountInfo};
 use tokio::sync::broadcast::{self, Sender};
@@ -39,7 +37,7 @@ const TEST_STORAGE_SLOT: U256 = U256::from_limbs([1, 0, 0, 0]);
 /// Functionality to build blocks for tests and help with assertions about
 /// their execution.
 #[derive(Debug)]
-pub struct TestBlockBuilder<N: NodePrimitives = EthPrimitives> {
+pub struct TestBlockBuilder {
     /// The account that signs all the block's transactions.
     pub signer: Address,
     /// Private key for signing.
@@ -58,10 +56,9 @@ pub struct TestBlockBuilder<N: NodePrimitives = EthPrimitives> {
     /// When true, generated blocks include proper `BundleState` with account/storage
     /// changes and reverts. When false, blocks use `BundleState::default()`.
     pub with_state: bool,
-    _prims: PhantomData<N>,
 }
 
-impl<N: NodePrimitives> Default for TestBlockBuilder<N> {
+impl Default for TestBlockBuilder {
     fn default() -> Self {
         let initial_account_info = AccountInfo::from_balance(U256::from(10).pow(U256::from(18)));
         let signer_pk = PrivateKeySigner::random();
@@ -74,12 +71,11 @@ impl<N: NodePrimitives> Default for TestBlockBuilder<N> {
             signer_build_account_info: initial_account_info,
             post_block_state: B256HashMap::default(),
             with_state: false,
-            _prims: PhantomData,
         }
     }
 }
 
-impl<N: NodePrimitives> TestBlockBuilder<N> {
+impl TestBlockBuilder {
     /// Signer pk setter.
     pub fn with_signer_pk(mut self, signer_pk: PrivateKeySigner) -> Self {
         self.signer = signer_pk.address();
@@ -111,7 +107,7 @@ impl<N: NodePrimitives> TestBlockBuilder<N> {
         &mut self,
         number: BlockNumber,
         parent_hash: B256,
-    ) -> SealedBlock<reth_ethereum_primitives::Block> {
+    ) -> SealedBlock<Block> {
         let mut rng = rand::rng();
 
         let mock_tx = |nonce: u64| -> Recovered<_> {
@@ -144,13 +140,12 @@ impl<N: NodePrimitives> TestBlockBuilder<N> {
         let receipts = transactions
             .iter()
             .enumerate()
-            .map(|(idx, tx)| {
-                Receipt {
-                    tx_type: tx.tx_type(),
-                    success: true,
+            .map(|(idx, _tx)| {
+                Receipt::Eip1559(alloy_consensus::Receipt::<alloy_primitives::Log> {
+                    status: true.into(),
                     cumulative_gas_used: (idx as u64 + 1) * MIN_TRANSACTION_GAS,
                     ..Default::default()
-                }
+                })
                 .into_with_bloom()
             })
             .collect::<Vec<_>>();
@@ -303,11 +298,12 @@ impl<N: NodePrimitives> TestBlockBuilder<N> {
                 .transactions
                 .iter()
                 .enumerate()
-                .map(|(idx, tx)| Receipt {
-                    tx_type: tx.tx_type(),
-                    success: true,
-                    cumulative_gas_used: (idx as u64 + 1) * MIN_TRANSACTION_GAS,
-                    ..Default::default()
+                .map(|(idx, _tx)| {
+                    Receipt::Eip1559(alloy_consensus::Receipt::<alloy_primitives::Log> {
+                        status: true.into(),
+                        cumulative_gas_used: (idx as u64 + 1) * MIN_TRANSACTION_GAS,
+                        ..Default::default()
+                    })
                 })
                 .collect()
         } else {
@@ -376,8 +372,8 @@ impl<N: NodePrimitives> TestBlockBuilder<N> {
     /// updated.
     pub fn get_execution_outcome(
         &mut self,
-        block: RecoveredBlock<reth_ethereum_primitives::Block>,
-    ) -> ExecutionOutcome {
+        block: RecoveredBlock<Block>,
+    ) -> ExecutionOutcome<Receipt> {
         let num_txs = block.body().transactions.len() as u64;
         let single_cost = Self::single_tx_cost();
 
@@ -393,11 +389,12 @@ impl<N: NodePrimitives> TestBlockBuilder<N> {
             .transactions
             .iter()
             .enumerate()
-            .map(|(idx, tx)| Receipt {
-                tx_type: tx.tx_type(),
-                success: true,
-                cumulative_gas_used: (idx as u64 + 1) * MIN_TRANSACTION_GAS,
-                ..Default::default()
+            .map(|(idx, _tx)| {
+                Receipt::Eip1559(alloy_consensus::Receipt::<alloy_primitives::Log> {
+                    status: true.into(),
+                    cumulative_gas_used: (idx as u64 + 1) * MIN_TRANSACTION_GAS,
+                    ..Default::default()
+                })
             })
             .collect::<Vec<_>>();
 
@@ -426,9 +423,8 @@ impl TestBlockBuilder {
 }
 /// A test `ChainEventSubscriptions`
 #[derive(Clone, Debug, Default)]
-pub struct TestCanonStateSubscriptions<N: NodePrimitives = reth_ethereum_primitives::EthPrimitives>
-{
-    canon_notif_tx: Arc<Mutex<Vec<Sender<CanonStateNotification<N>>>>>,
+pub struct TestCanonStateSubscriptions {
+    canon_notif_tx: Arc<Mutex<Vec<Sender<CanonStateNotification>>>>,
 }
 
 impl TestCanonStateSubscriptions {
@@ -445,10 +441,6 @@ impl TestCanonStateSubscriptions {
         let event = CanonStateNotification::Reorg { old, new };
         self.canon_notif_tx.lock().as_mut().unwrap().retain(|tx| tx.send(event.clone()).is_ok())
     }
-}
-
-impl NodePrimitivesProvider for TestCanonStateSubscriptions {
-    type Primitives = EthPrimitives;
 }
 
 impl CanonStateSubscriptions for TestCanonStateSubscriptions {

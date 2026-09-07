@@ -18,8 +18,7 @@ use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_chainspec::EthChainSpec;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
-    BuiltPayload, EngineApiValidator, EngineTypes, InsertBlockErrorKind, NodePrimitives,
-    PayloadValidator,
+    BuiltPayload, EngineApiValidator, EngineTypes, InsertBlockErrorKind, PayloadValidator,
     payload::{
         EngineApiMessageVersion, EngineObjectValidationError, MessageValidationKind,
         NewPayloadError, PayloadOrAttributes, PayloadTypes, VersionSpecificValidationError,
@@ -49,9 +48,7 @@ where
     type PayloadAttributes = T::PayloadAttributes;
 
     fn block_to_payload(
-        block: SealedBlock<
-            <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
-        >,
+        block: SealedBlock<BaseBlock>,
         bal: Option<Bytes>,
     ) -> <T as PayloadTypes>::ExecutionData {
         ExecutionData::from_block_unchecked_with_extras(
@@ -65,7 +62,7 @@ where
 impl<T: PayloadTypes<ExecutionData = ExecutionData>> EngineTypes for BaseEngineTypes<T>
 where
     ExecutionData: From<T::BuiltPayload>,
-    T::BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = BaseBlock>>
+    T::BuiltPayload: BuiltPayload
         + TryInto<ExecutionPayloadV1>
         + TryInto<ExecutionPayloadEnvelopeV2>
         + TryInto<BaseExecutionPayloadEnvelopeV3>
@@ -260,7 +257,7 @@ where
     Types: PayloadTypes<
             PayloadAttributes = BasePayloadBuilderAttributes<Tx>,
             ExecutionData = ExecutionData,
-            BuiltPayload: BuiltPayload<Primitives: NodePrimitives<SignedTx = Tx>>,
+            BuiltPayload: BuiltPayload,
         >,
     Tx: BaseTransaction + SignedTransaction + Unpin + 'static,
     ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
@@ -400,7 +397,7 @@ mod tests {
     use alloy_primitives::{Address, B64, B256, U256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::{BaseUpgrade, ChainConfig};
-    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
@@ -751,8 +748,8 @@ mod tests {
         RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), signers)
     }
 
-    fn parent_state(millis_part: u16) -> MockEthProvider<BasePrimitives> {
-        let provider = MockEthProvider::<BasePrimitives>::new();
+    fn parent_state(millis_part: u16) -> MockEthProvider {
+        let provider = MockEthProvider::new();
         provider.add_account(
             Predeploys::BASE_TIME,
             ExtendedAccount::new(0, U256::ZERO).extend_storage([(

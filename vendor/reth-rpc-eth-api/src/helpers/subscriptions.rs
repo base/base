@@ -14,9 +14,7 @@ use crate::{EthApiTypes, RpcConvert, RpcLog, RpcNodeCore, RpcReceipt};
 /// Provides streams subscriptions for `eth_subscribe`.
 ///
 /// Override the default methods to inject additional data sources (e.g. flashblocks).
-pub trait EthSubscriptions:
-    RpcNodeCore + EthApiTypes<RpcConvert: RpcConvert<Primitives = Self::Primitives>>
-{
+pub trait EthSubscriptions: RpcNodeCore + EthApiTypes<RpcConvert: RpcConvert> {
     /// Returns a stream that yields matching logs from canonical chain updates.
     fn log_stream(
         &self,

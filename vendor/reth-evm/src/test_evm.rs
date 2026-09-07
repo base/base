@@ -4,7 +4,7 @@
 
 use std::{borrow::Cow, convert::Infallible, sync::Arc};
 
-use alloy_consensus::{Header, TxType};
+use alloy_consensus::{Eip658Value, Header, Receipt};
 use alloy_eips::Decodable2718;
 use alloy_evm::{
     EthEvmFactory,
@@ -15,10 +15,12 @@ use alloy_evm::{
 };
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_types_engine::ExecutionData;
+use base_common_consensus::{
+    BaseBlock as Block, BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType,
+};
 use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks, MAINNET};
-use reth_ethereum_primitives::{Block, EthPrimitives, Receipt, TransactionSigned};
 use reth_primitives_traits::{
-    SealedBlock, SealedHeader, SignedTransaction, TxTy, constants::MAX_TX_GAS_LIMIT_OSAKA,
+    SealedBlock, SealedHeader, SignedTransaction, constants::MAX_TX_GAS_LIMIT_OSAKA,
 };
 use reth_storage_errors::any::AnyError;
 use revm::{
@@ -27,11 +29,10 @@ use revm::{
     primitives::hardfork::SpecId,
 };
 
-use crate::TestBlockAssembler;
 use crate::{
     ConfigureEngineEvm, ConfigureEvm, Evm, EvmEnv, EvmEnvFor, ExecutableTxIterator,
-    ExecutionCtxFor, NextBlockEnvAttributes, SenderRecoveryCache, eth::NextEvmEnvAttributes,
-    noop::NoopEvmConfig,
+    ExecutionCtxFor, NextBlockEnvAttributes, SenderRecoveryCache, TestBlockAssembler,
+    eth::NextEvmEnvAttributes, noop::NoopEvmConfig,
 };
 
 /// Test EVM using Alloy's interpreter and a supplied test fork schedule.
@@ -75,21 +76,31 @@ pub type MockEvmConfig = NoopEvmConfig<TestEvmConfig>;
 pub struct TestReceiptBuilder;
 
 impl ReceiptBuilder for TestReceiptBuilder {
-    type Transaction = TransactionSigned;
-    type Receipt = Receipt;
+    type Transaction = BaseTxEnvelope;
+    type Receipt = BaseReceipt;
 
-    fn build_receipt<E: Evm>(&self, ctx: ReceiptBuilderCtx<'_, TxType, E>) -> Receipt {
-        Receipt {
-            tx_type: ctx.tx_type,
-            success: ctx.result.is_success(),
+    fn build_receipt<E: Evm>(&self, ctx: ReceiptBuilderCtx<'_, OpTxType, E>) -> BaseReceipt {
+        let receipt = Receipt {
+            status: Eip658Value::Eip658(ctx.result.is_success()),
             cumulative_gas_used: ctx.cumulative_gas_used,
             logs: ctx.result.into_logs(),
+        };
+        match ctx.tx_type {
+            OpTxType::Legacy => BaseReceipt::Legacy(receipt),
+            OpTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
+            OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
+            OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
+            OpTxType::Deposit => BaseReceipt::Deposit(DepositReceipt {
+                inner: receipt,
+                deposit_nonce: None,
+                deposit_receipt_version: None,
+            }),
+            OpTxType::Eip8130 => BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, Vec::new())),
         }
     }
 }
 
 impl ConfigureEvm for TestEvmConfig {
-    type Primitives = EthPrimitives;
     type Error = Infallible;
     type NextBlockEnvCtx = NextBlockEnvAttributes;
     type BlockExecutorFactory =
@@ -243,8 +254,7 @@ impl ConfigureEngineEvm<ExecutionData> for TestEvmConfig {
         let txs = payload.payload.transactions().clone();
         let sender_recovery_cache = self.sender_recovery_cache.clone();
         let convert = move |tx: Bytes| {
-            let tx =
-                TxTy::<Self::Primitives>::decode_2718_exact(tx.as_ref()).map_err(AnyError::new)?;
+            let tx = BaseTxEnvelope::decode_2718_exact(tx.as_ref()).map_err(AnyError::new)?;
             let signer = if let Some(cache) = &sender_recovery_cache {
                 cache.recover(&tx)
             } else {

@@ -54,6 +54,7 @@ reth-metrics = { workspace = true, features = ["common"] }
 moka = { workspace = true, features = ["default", "sync"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 crossbeam-channel = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
 reth-trie-parallel = { workspace = true, features = ["default"] }
 reth-storage-overlay = { workspace = true, features = ["rayon"] }

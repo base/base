@@ -5,16 +5,15 @@ use std::{
 };
 
 use alloy_primitives::BlockNumber;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use futures::{
     StreamExt,
     stream::{FuturesOrdered, Stream},
 };
-use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::{
     ConfigureEvm,
     execute::{BlockExecutionError, BlockExecutionOutput},
 };
-use reth_node_api::NodePrimitives;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{BlockReader, Chain, StateProviderFactory};
 use reth_prune_types::PruneModes;
@@ -43,11 +42,8 @@ struct BackfillTaskOutput<T> {
 /// Ordered queue of [`JoinHandle`]s that yield [`BackfillTaskOutput`]s.
 type BackfillTasks<T> = FuturesOrdered<JoinHandle<BackfillTaskOutput<T>>>;
 
-type SingleBlockStreamItem<N = EthPrimitives> = (
-    RecoveredBlock<<N as NodePrimitives>::Block>,
-    BlockExecutionOutput<<N as NodePrimitives>::Receipt>,
-);
-type BatchBlockStreamItem<N = EthPrimitives> = Chain<N>;
+type SingleBlockStreamItem = (RecoveredBlock<BaseBlock>, BlockExecutionOutput<BaseReceipt>);
+type BatchBlockStreamItem = Chain;
 
 /// Stream for processing backfill jobs asynchronously.
 ///
@@ -118,12 +114,12 @@ where
     }
 }
 
-impl<E, P> Stream for StreamBackfillJob<E, P, SingleBlockStreamItem<E::Primitives>>
+impl<E, P> Stream for StreamBackfillJob<E, P, SingleBlockStreamItem>
 where
-    E: ConfigureEvm<Primitives: NodePrimitives<Block = P::Block>> + 'static,
-    P: BlockReader + StateProviderFactory + Clone + Unpin + 'static,
+    E: ConfigureEvm + 'static,
+    P: BlockReader<Block = BaseBlock> + StateProviderFactory + Clone + Unpin + 'static,
 {
-    type Item = BackfillJobResult<SingleBlockStreamItem<E::Primitives>>;
+    type Item = BackfillJobResult<SingleBlockStreamItem>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -151,12 +147,12 @@ where
     }
 }
 
-impl<E, P> Stream for StreamBackfillJob<E, P, BatchBlockStreamItem<E::Primitives>>
+impl<E, P> Stream for StreamBackfillJob<E, P, BatchBlockStreamItem>
 where
-    E: ConfigureEvm<Primitives: NodePrimitives<Block = P::Block>> + 'static,
-    P: BlockReader + StateProviderFactory + Clone + Unpin + 'static,
+    E: ConfigureEvm + 'static,
+    P: BlockReader<Block = BaseBlock> + StateProviderFactory + Clone + Unpin + 'static,
 {
-    type Item = BackfillJobResult<BatchBlockStreamItem<E::Primitives>>;
+    type Item = BackfillJobResult<BatchBlockStreamItem>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -217,7 +213,7 @@ impl<E, P> From<SingleBlockBackfillJob<E, P>> for StreamBackfillJob<E, P, Single
     }
 }
 
-impl<E, P> From<BackfillJob<E, P>> for StreamBackfillJob<E, P, BatchBlockStreamItem<E::Primitives>>
+impl<E, P> From<BackfillJob<E, P>> for StreamBackfillJob<E, P, BatchBlockStreamItem>
 where
     E: ConfigureEvm,
 {
@@ -245,22 +241,20 @@ mod tests {
 
     use alloy_consensus::{Header, TxEip2930, constants::ETH_TO_WEI};
     use alloy_primitives::{Address, TxKind, U256, b256};
+    use base_common_consensus::{BaseBlock, BaseBlockBody, BaseTypedTransaction};
     use eyre::Result;
     use futures::StreamExt;
     use reth_chainspec::{ChainSpec, EthereumHardfork, MIN_TRANSACTION_GAS};
     use reth_db_common::init::init_genesis;
-    use reth_ethereum_primitives::{Block, BlockBody, Transaction};
     use reth_evm::TestEvmConfig;
-    use reth_primitives_traits::{
-        Block as _, NodePrimitives, crypto::secp256k1::public_key_to_address,
-    };
+    use reth_primitives_traits::{Block as _, crypto::secp256k1::public_key_to_address};
     use reth_provider::{
         ProviderFactory,
         providers::{BlockchainProvider, ProviderNodeTypes},
         test_utils::create_test_provider_factory_with_chain_spec,
     };
     use reth_stages_api::ExecutionStageThresholds;
-    use reth_testing_utils::{generators, generators::sign_tx_with_key_pair};
+    use reth_testing_utils::generators;
     use secp256k1::Keypair;
 
     use super::*;
@@ -349,12 +343,12 @@ mod tests {
         chain_spec: &Arc<ChainSpec>,
         key_pair: Keypair,
         n: u64,
-    ) -> Result<Vec<RecoveredBlock<reth_ethereum_primitives::Block>>> {
+    ) -> Result<Vec<RecoveredBlock<BaseBlock>>> {
         let mut blocks = Vec::with_capacity(n as usize);
         let mut parent_hash = chain_spec.genesis_hash();
 
         for (i, nonce) in (1..=n).zip(0..n) {
-            let block = Block {
+            let block = BaseBlock {
                 header: Header {
                     parent_hash,
                     // Hardcoded receipts_root matching the original test (same tx in each block)
@@ -367,10 +361,10 @@ mod tests {
                     gas_used: MIN_TRANSACTION_GAS,
                     ..Default::default()
                 },
-                body: BlockBody {
-                    transactions: vec![sign_tx_with_key_pair(
+                body: BaseBlockBody {
+                    transactions: vec![reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                         key_pair,
-                        Transaction::Eip2930(TxEip2930 {
+                        BaseTypedTransaction::Eip2930(TxEip2930 {
                             chain_id: chain_spec.chain.id(),
                             nonce,
                             gas_limit: MIN_TRANSACTION_GAS,
@@ -395,16 +389,10 @@ mod tests {
     fn execute_and_commit_blocks<N>(
         provider_factory: &ProviderFactory<N>,
         chain_spec: &Arc<ChainSpec>,
-        blocks: &[RecoveredBlock<reth_ethereum_primitives::Block>],
+        blocks: &[RecoveredBlock<BaseBlock>],
     ) -> Result<()>
     where
-        N: ProviderNodeTypes<
-            Primitives: NodePrimitives<
-                Block = reth_ethereum_primitives::Block,
-                BlockBody = reth_ethereum_primitives::BlockBody,
-                Receipt = reth_ethereum_primitives::Receipt,
-            >,
-        >,
+        N: ProviderNodeTypes,
     {
         for block in blocks {
             execute_block_and_commit_to_database(provider_factory, chain_spec.clone(), block)?;

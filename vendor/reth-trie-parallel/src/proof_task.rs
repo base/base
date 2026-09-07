@@ -1195,10 +1195,7 @@ mod tests {
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec);
         let factory = reth_storage_overlay::OverlayStateProviderFactory::new(
             provider_factory,
-            reth_storage_overlay::OverlayManager::<
-                reth_ethereum_primitives::EthPrimitives,
-            >::default()
-            .overlay_builder(anchor_hash),
+            reth_storage_overlay::OverlayManager::default().overlay_builder(anchor_hash),
         );
         let ctx = test_ctx(factory);
 

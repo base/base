@@ -17,7 +17,6 @@ use futures_util::{Stream, StreamExt, stream::Fuse};
 use reth_engine_primitives::ConsensusEngineHandle;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_payload_primitives::{BuiltPayload, PayloadAttributesBuilder, PayloadKind, PayloadTypes};
-use reth_primitives_traits::{HeaderTy, SealedHeaderFor};
 use reth_storage_api::BlockReader;
 use reth_transaction_pool::TransactionPool;
 use tokio::time::Interval;
@@ -141,7 +140,7 @@ pub struct LocalMiner<T: PayloadTypes, B, Pool: TransactionPool + Unpin> {
     /// The payload builder for the engine
     payload_builder: PayloadBuilderHandle<T>,
     /// Latest block in the chain so far.
-    last_header: SealedHeaderFor<<T::BuiltPayload as BuiltPayload>::Primitives>,
+    last_header: reth_primitives_traits::SealedHeader,
     /// Stores latest mined blocks.
     last_block_hashes: VecDeque<B256>,
     /// Number of confirmations required before a block is finalized.
@@ -156,15 +155,12 @@ pub struct LocalMiner<T: PayloadTypes, B, Pool: TransactionPool + Unpin> {
 impl<T, B, Pool> LocalMiner<T, B, Pool>
 where
     T: PayloadTypes,
-    B: PayloadAttributesBuilder<
-            T::PayloadAttributes,
-            HeaderTy<<T::BuiltPayload as BuiltPayload>::Primitives>,
-        >,
+    B: PayloadAttributesBuilder<T::PayloadAttributes, alloy_consensus::Header>,
     Pool: TransactionPool + Unpin,
 {
     /// Spawns a new [`LocalMiner`] with the given parameters.
     pub fn new(
-        provider: impl BlockReader<Header = HeaderTy<<T::BuiltPayload as BuiltPayload>::Primitives>>,
+        provider: impl BlockReader<Header = alloy_consensus::Header>,
         payload_attributes_builder: B,
         to_engine: ConsensusEngineHandle<T>,
         mode: MiningMode<Pool>,

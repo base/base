@@ -8,6 +8,7 @@ use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, Bytes, TxHash, TxNumber};
 use alloy_rpc_types_engine::ForkchoiceState;
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_chain_state::{
     BlockState, CanonicalInMemoryState, ForkChoiceNotifications, ForkChoiceSubscriptions,
     MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
@@ -15,7 +16,7 @@ use reth_chain_state::{
 use reth_chainspec::ChainInfo;
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
 use reth_execution_types::ExecutionOutcome;
-use reth_node_types::{BlockTy, HeaderTy, NodeTypesWithDB, ReceiptTy, TxTy};
+use reth_node_types::NodeTypesWithDB;
 use reth_primitives_traits::{
     Account, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
 };
@@ -23,9 +24,9 @@ use reth_prune_types::{PruneCheckpoint, PruneSegment};
 use reth_stages_types::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
-    BlockBodyIndicesProvider, NodePrimitivesProvider, RangeEnd, RangeResponse, RangeResult,
-    StateRangeProvider, StateRangeProviderFactory, StateRangeView, StorageChangeSetReader,
-    StorageRangeResult, TryIntoHistoricalStateProvider,
+    BlockBodyIndicesProvider, RangeEnd, RangeResponse, RangeResult, StateRangeProvider,
+    StateRangeProviderFactory, StateRangeView, StorageChangeSetReader, StorageRangeResult,
+    TryIntoHistoricalStateProvider,
 };
 use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::{
@@ -72,7 +73,7 @@ pub struct BlockchainProvider<N: NodeTypesWithDB> {
     pub(crate) database: ProviderFactory<N>,
     /// Tracks the chain info wrt forkchoice updates and in memory canonical
     /// state.
-    pub(crate) canonical_in_memory_state: CanonicalInMemoryState<N::Primitives>,
+    pub(crate) canonical_in_memory_state: CanonicalInMemoryState,
     /// Store for BALs associated with this provider view.
     pub(crate) bal_store: BalStoreHandle,
 }
@@ -109,7 +110,7 @@ impl<N: ProviderNodeTypes> BlockchainProvider<N> {
     /// `database`.
     pub fn with_latest(
         storage: ProviderFactory<N>,
-        latest: SealedHeader<HeaderTy<N>>,
+        latest: SealedHeader<alloy_consensus::Header>,
     ) -> ProviderResult<Self> {
         let provider = storage.provider()?;
         let finalized_header = provider
@@ -141,7 +142,7 @@ impl<N: ProviderNodeTypes> BlockchainProvider<N> {
     }
 
     /// Gets a clone of `canonical_in_memory_state`.
-    pub fn canonical_in_memory_state(&self) -> CanonicalInMemoryState<N::Primitives> {
+    pub fn canonical_in_memory_state(&self) -> CanonicalInMemoryState {
         self.canonical_in_memory_state.clone()
     }
 
@@ -156,8 +157,8 @@ impl<N: ProviderNodeTypes> BlockchainProvider<N> {
     /// This uses a given [`BlockState`] to initialize a state provider for that block.
     fn block_state_provider(
         &self,
-        state: &BlockState<N::Primitives>,
-    ) -> ProviderResult<MemoryOverlayStateProvider<N::Primitives>> {
+        state: &BlockState,
+    ) -> ProviderResult<MemoryOverlayStateProvider> {
         let provider = self.database.provider()?;
         let anchor =
             anchor_for_parent(state.hash(), state.chain().map(|state| state.block()), &provider)?;
@@ -237,10 +238,6 @@ impl<N: ProviderNodeTypes> BlockchainProvider<N> {
         reth_storage_api::DatabaseProviderROFactory::database_provider_ro(&overlay_factory)
             .map(Some)
     }
-}
-
-impl<N: NodeTypesWithDB> NodePrimitivesProvider for BlockchainProvider<N> {
-    type Primitives = N::Primitives;
 }
 
 impl<N: ProviderNodeTypes> BalProvider for BlockchainProvider<N> {
@@ -395,7 +392,7 @@ impl<N: ProviderNodeTypes> DatabaseProviderFactory for BlockchainProvider<N> {
 }
 
 impl<N: ProviderNodeTypes> StaticFileProviderFactory for BlockchainProvider<N> {
-    fn static_file_provider(&self) -> StaticFileProvider<Self::Primitives> {
+    fn static_file_provider(&self) -> StaticFileProvider {
         self.database.static_file_provider()
     }
 
@@ -403,7 +400,7 @@ impl<N: ProviderNodeTypes> StaticFileProviderFactory for BlockchainProvider<N> {
         &self,
         block: BlockNumber,
         segment: StaticFileSegment,
-    ) -> ProviderResult<StaticFileProviderRWRefMut<'_, Self::Primitives>> {
+    ) -> ProviderResult<StaticFileProviderRWRefMut<'_>> {
         self.database.get_static_file_writer(block, segment)
     }
 }
@@ -427,7 +424,7 @@ impl<N: ProviderNodeTypes> RocksDBProviderFactory for BlockchainProvider<N> {
 }
 
 impl<N: ProviderNodeTypes> HeaderProvider for BlockchainProvider<N> {
-    type Header = HeaderTy<N>;
+    type Header = alloy_consensus::Header;
 
     fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
         self.consistent_provider()?.header(block_hash)
@@ -518,7 +515,7 @@ impl<N: ProviderNodeTypes> BlockIdReader for BlockchainProvider<N> {
 }
 
 impl<N: ProviderNodeTypes> BlockReader for BlockchainProvider<N> {
-    type Block = BlockTy<N>;
+    type Block = BaseBlock;
 
     fn find_block_by_hash(
         &self,
@@ -596,7 +593,7 @@ impl<N: ProviderNodeTypes> BlockReader for BlockchainProvider<N> {
 }
 
 impl<N: ProviderNodeTypes> TransactionsProvider for BlockchainProvider<N> {
-    type Transaction = TxTy<N>;
+    type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
         self.consistent_provider()?.transaction_id(tx_hash)
@@ -658,7 +655,7 @@ impl<N: ProviderNodeTypes> TransactionsProvider for BlockchainProvider<N> {
 }
 
 impl<N: ProviderNodeTypes> ReceiptProvider for BlockchainProvider<N> {
-    type Receipt = ReceiptTy<N>;
+    type Receipt = BaseReceipt;
 
     fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
         self.consistent_provider()?.receipt(id)
@@ -858,7 +855,7 @@ impl<N: ProviderNodeTypes> StateProviderFactory for BlockchainProvider<N> {
 }
 
 impl<N: ProviderNodeTypes> CanonChainTracker for BlockchainProvider<N> {
-    type Header = HeaderTy<N>;
+    type Header = alloy_consensus::Header;
 
     fn on_forkchoice_update_received(&self, _update: &ForkchoiceState) {
         // update timestamp
@@ -917,13 +914,13 @@ where
 }
 
 impl<N: ProviderNodeTypes> CanonStateSubscriptions for BlockchainProvider<N> {
-    fn subscribe_to_canonical_state(&self) -> CanonStateNotifications<Self::Primitives> {
+    fn subscribe_to_canonical_state(&self) -> CanonStateNotifications {
         self.canonical_in_memory_state.subscribe_canon_state()
     }
 }
 
 impl<N: ProviderNodeTypes> ForkChoiceSubscriptions for BlockchainProvider<N> {
-    type Header = HeaderTy<N>;
+    type Header = alloy_consensus::Header;
 
     fn subscribe_safe_block(&self) -> ForkChoiceNotifications<Self::Header> {
         let receiver = self.canonical_in_memory_state.subscribe_safe_block();
@@ -993,7 +990,7 @@ impl<N: ProviderNodeTypes> ChangeSetReader for BlockchainProvider<N> {
 }
 
 impl<N: ProviderNodeTypes> StateReader for BlockchainProvider<N> {
-    type Receipt = ReceiptTy<N>;
+    type Receipt = BaseReceipt;
 
     /// Re-constructs the [`ExecutionOutcome`] from in-memory and database state, if necessary.
     ///
@@ -1023,6 +1020,7 @@ mod tests {
     use alloy_consensus::constants::EMPTY_ROOT_HASH;
     use alloy_eips::{BlockHashOrNumber, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, BlockNumber, TxNumber, U256, keccak256};
+    use base_common_consensus::{BaseBlock, BaseReceipt};
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{
@@ -1031,7 +1029,6 @@ mod tests {
     };
     use reth_chainspec::{ChainSpec, MAINNET};
     use reth_db_api::models::{AccountBeforeTx, StoredBlockBodyIndices};
-    use reth_ethereum_primitives::{Block, Receipt};
     use reth_execution_types::{
         BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
     };
@@ -1048,8 +1045,7 @@ mod tests {
         TransactionsProvider,
     };
     use reth_testing_utils::generators::{
-        self, BlockParams, BlockRangeParams, random_block, random_block_range,
-        random_changeset_range, random_eoa_accounts, random_receipt,
+        self, BlockParams, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };
     use reth_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdates};
     use revm::database::{BundleState, OriginalValuesKnown};
@@ -1076,7 +1072,7 @@ mod tests {
         requests_count: Option<Range<u8>>,
         withdrawals_count: Option<Range<u8>>,
         tx_count: impl RangeBounds<u8>,
-    ) -> (Vec<SealedBlock<Block>>, Vec<SealedBlock<Block>>) {
+    ) -> (Vec<SealedBlock<BaseBlock>>, Vec<SealedBlock<BaseBlock>>) {
         let block_range = (database_blocks + in_memory_blocks - 1) as u64;
 
         let tx_start = match tx_count.start_bound() {
@@ -1088,7 +1084,7 @@ mod tests {
             Bound::Unbounded => u8::MAX,
         };
 
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             rng,
             0..=block_range,
             BlockRangeParams {
@@ -1111,9 +1107,9 @@ mod tests {
         block_range_params: BlockRangeParams,
     ) -> eyre::Result<(
         BlockchainProvider<MockNodeTypesWithDB>,
-        Vec<SealedBlock<Block>>,
-        Vec<SealedBlock<Block>>,
-        Vec<Vec<Receipt>>,
+        Vec<SealedBlock<BaseBlock>>,
+        Vec<SealedBlock<BaseBlock>>,
+        Vec<Vec<BaseReceipt>>,
     )> {
         let (database_blocks, in_memory_blocks) = random_blocks(
             rng,
@@ -1128,7 +1124,12 @@ mod tests {
             .iter()
             .chain(in_memory_blocks.iter())
             .map(|block| block.body().transactions.iter())
-            .map(|tx| tx.map(|tx| random_receipt(rng, tx, Some(2), None)).collect())
+            .map(|tx| {
+                tx.map(|tx| {
+                    reth_testing_utils::BaseTestData::random_receipt(rng, tx, Some(2), None)
+                })
+                .collect()
+            })
             .collect();
 
         let factory = create_test_provider_factory_with_chain_spec(chain_spec);
@@ -1144,7 +1145,7 @@ mod tests {
         // Insert receipts into the database
         if let Some(first_block) = database_blocks.first() {
             provider_rw.write_state(
-                &ExecutionOutcome {
+                &ExecutionOutcome::<BaseReceipt> {
                     first_block: first_block.number,
                     receipts: receipts.iter().take(database_blocks.len()).cloned().collect(),
                     ..Default::default()
@@ -1170,7 +1171,7 @@ mod tests {
                 .map(|block| {
                     let senders = block.senders().expect("failed to recover senders");
                     let block_receipts = receipts.get(block.number as usize).unwrap().clone();
-                    let execution_outcome = BlockExecutionOutput {
+                    let execution_outcome = BlockExecutionOutput::<BaseReceipt> {
                         result: BlockExecutionResult {
                             receipts: block_receipts,
                             requests: Default::default(),
@@ -1216,9 +1217,9 @@ mod tests {
         block_range_params: BlockRangeParams,
     ) -> eyre::Result<(
         BlockchainProvider<MockNodeTypesWithDB>,
-        Vec<SealedBlock<Block>>,
-        Vec<SealedBlock<Block>>,
-        Vec<Vec<Receipt>>,
+        Vec<SealedBlock<BaseBlock>>,
+        Vec<SealedBlock<BaseBlock>>,
+        Vec<Vec<BaseReceipt>>,
     )> {
         provider_with_chain_spec_and_random_blocks(
             rng,
@@ -1275,7 +1276,7 @@ mod tests {
         let factory = create_test_provider_factory();
 
         // Generate 10 random blocks and split into database and in-memory blocks
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
@@ -1374,7 +1375,7 @@ mod tests {
         let factory = create_test_provider_factory();
 
         // Generate 10 random blocks and split into database and in-memory blocks
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
@@ -1451,7 +1452,7 @@ mod tests {
 
         // Generate a random block
         let mut rng = generators::rng();
-        let block = random_block(
+        let block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             0,
             BlockParams { parent: Some(B256::ZERO), ..Default::default() },
@@ -1936,7 +1937,7 @@ mod tests {
                 .into_iter()
                 .map(|b| b.try_recover().expect("failed to seal block with senders"))
                 .collect(),
-            &ExecutionOutcome {
+            &ExecutionOutcome::<BaseReceipt> {
                 bundle: BundleState::new(
                     database_state.into_iter().map(|(address, (account, _))| {
                         (address, None, Some(account.into()), Default::default())
@@ -2332,16 +2333,22 @@ mod tests {
     #[test]
     fn test_methods_by_tx_range() -> eyre::Result<()> {
         test_by_tx_range!([
-            (senders_by_tx_range, |block: &SealedBlock<Block>, _: &Vec<Vec<Receipt>>| block
-                .senders()
-                .unwrap()),
-            (transactions_by_tx_range, |block: &SealedBlock<Block>, _: &Vec<Vec<Receipt>>| block
-                .body()
-                .transactions
-                .clone()),
-            (receipts_by_tx_range, |block: &SealedBlock<Block>, receipts: &Vec<Vec<Receipt>>| {
-                receipts[block.number as usize].clone()
-            })
+            (senders_by_tx_range, |block: &SealedBlock<BaseBlock>, _: &Vec<Vec<BaseReceipt>>| {
+                block.senders().unwrap()
+            }),
+            (
+                transactions_by_tx_range,
+                |block: &SealedBlock<BaseBlock>, _: &Vec<Vec<BaseReceipt>>| block
+                    .body()
+                    .transactions
+                    .clone()
+            ),
+            (
+                receipts_by_tx_range,
+                |block: &SealedBlock<BaseBlock>, receipts: &Vec<Vec<BaseReceipt>>| {
+                    receipts[block.number as usize].clone()
+                }
+            )
         ]);
 
         Ok(())
@@ -2425,18 +2432,18 @@ mod tests {
         // todo(joshie) add canonical_hashes_range below after changing its interface into range
         // instead start end
         test_by_block_range!([
-            (headers_range, |block: &SealedBlock<Block>| block.header().clone()),
-            (sealed_headers_range, |block: &SealedBlock<Block>| block.clone_sealed_header()),
-            (block_range, |block: &SealedBlock<Block>| block.clone().into_block()),
-            (block_with_senders_range, |block: &SealedBlock<Block>| block
+            (headers_range, |block: &SealedBlock<BaseBlock>| block.header().clone()),
+            (sealed_headers_range, |block: &SealedBlock<BaseBlock>| block.clone_sealed_header()),
+            (block_range, |block: &SealedBlock<BaseBlock>| block.clone().into_block()),
+            (block_with_senders_range, |block: &SealedBlock<BaseBlock>| block
                 .clone()
                 .try_recover()
                 .unwrap()),
-            (recovered_block_range, |block: &SealedBlock<Block>| block
+            (recovered_block_range, |block: &SealedBlock<BaseBlock>| block
                 .clone()
                 .try_recover()
                 .unwrap()),
-            (transactions_by_block_range, |block: &SealedBlock<Block>| block
+            (transactions_by_block_range, |block: &SealedBlock<BaseBlock>| block
                 .body()
                 .transactions
                 .clone()),
@@ -2496,8 +2503,8 @@ mod tests {
         let mut in_memory_blocks: std::collections::VecDeque<_> = in_memory_blocks.into();
 
         $(
-            let tx_hash = |block: &SealedBlock<Block>| *block.body().transactions[0].tx_hash();
-            let tx_num = |block: &SealedBlock<Block>| {
+            let tx_hash = |block: &SealedBlock<BaseBlock>| block.body().transactions[0].tx_hash();
+            let tx_num = |block: &SealedBlock<BaseBlock>| {
                 database_blocks
                     .iter()
                     .chain(in_memory_blocks.iter())
@@ -2518,7 +2525,7 @@ mod tests {
             }
 
             // database_blocks is changed above
-            let tx_num = |block: &SealedBlock<Block>| {
+            let tx_num = |block: &SealedBlock<BaseBlock>| {
                 database_blocks
                     .iter()
                     .chain(in_memory_blocks.iter())
@@ -2554,7 +2561,10 @@ mod tests {
             (
                 ONE,
                 header,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     block.hash(),
                     Some(block.header().clone())
                 ),
@@ -2563,7 +2573,10 @@ mod tests {
             (
                 ONE,
                 header_by_number,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     block.number,
                     Some(block.header().clone())
                 ),
@@ -2572,7 +2585,10 @@ mod tests {
             (
                 ONE,
                 sealed_header,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     block.number,
                     Some(block.clone_sealed_header())
                 ),
@@ -2581,25 +2597,28 @@ mod tests {
             (
                 ONE,
                 block_hash,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
-                    block.number,
-                    Some(block.hash())
-                ),
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (block.number, Some(block.hash())),
                 u64::MAX
             ),
             (
                 ONE,
                 block_number,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
-                    block.hash(),
-                    Some(block.number)
-                ),
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (block.hash(), Some(block.number)),
                 B256::random()
             ),
             (
                 ONE,
                 block,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     BlockHashOrNumber::Hash(block.hash()),
                     Some(block.clone().into_block())
                 ),
@@ -2608,7 +2627,10 @@ mod tests {
             (
                 ONE,
                 block,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     BlockHashOrNumber::Number(block.number),
                     Some(block.clone().into_block())
                 ),
@@ -2617,7 +2639,10 @@ mod tests {
             (
                 ONE,
                 block_body_indices,
-                |block: &SealedBlock<Block>, tx_num: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 tx_num: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     block.number,
                     Some(StoredBlockBodyIndices {
                         first_tx_num: tx_num,
@@ -2629,7 +2654,10 @@ mod tests {
             (
                 TWO,
                 recovered_block,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     (BlockHashOrNumber::Number(block.number), TransactionVariant::WithHash),
                     block.clone().try_recover().ok()
                 ),
@@ -2638,7 +2666,10 @@ mod tests {
             (
                 TWO,
                 recovered_block,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     (BlockHashOrNumber::Hash(block.hash()), TransactionVariant::WithHash),
                     block.clone().try_recover().ok()
                 ),
@@ -2647,7 +2678,10 @@ mod tests {
             (
                 TWO,
                 sealed_block_with_senders,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     (BlockHashOrNumber::Number(block.number), TransactionVariant::WithHash),
                     block.clone().try_recover().ok()
                 ),
@@ -2656,7 +2690,10 @@ mod tests {
             (
                 TWO,
                 sealed_block_with_senders,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     (BlockHashOrNumber::Hash(block.hash()), TransactionVariant::WithHash),
                     block.clone().try_recover().ok()
                 ),
@@ -2665,16 +2702,19 @@ mod tests {
             (
                 ONE,
                 transaction_id,
-                |_: &SealedBlock<Block>, tx_num: TxNumber, tx_hash: B256, _: &Vec<Vec<Receipt>>| (
-                    tx_hash,
-                    Some(tx_num)
-                ),
+                |_: &SealedBlock<BaseBlock>,
+                 tx_num: TxNumber,
+                 tx_hash: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (tx_hash, Some(tx_num)),
                 B256::random()
             ),
             (
                 ONE,
                 transaction_by_id,
-                |block: &SealedBlock<Block>, tx_num: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 tx_num: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     tx_num,
                     Some(block.body().transactions[test_tx_index].clone())
                 ),
@@ -2683,7 +2723,10 @@ mod tests {
             (
                 ONE,
                 transaction_by_id_unhashed,
-                |block: &SealedBlock<Block>, tx_num: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 tx_num: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     tx_num,
                     Some(block.body().transactions[test_tx_index].clone())
                 ),
@@ -2692,7 +2735,10 @@ mod tests {
             (
                 ONE,
                 transaction_by_hash,
-                |block: &SealedBlock<Block>, _: TxNumber, tx_hash: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 tx_hash: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     tx_hash,
                     Some(block.body().transactions[test_tx_index].clone())
                 ),
@@ -2701,16 +2747,19 @@ mod tests {
             (
                 ONE,
                 block_by_transaction_id,
-                |block: &SealedBlock<Block>, tx_num: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
-                    tx_num,
-                    Some(block.number)
-                ),
+                |block: &SealedBlock<BaseBlock>,
+                 tx_num: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (tx_num, Some(block.number)),
                 u64::MAX
             ),
             (
                 ONE,
                 transactions_by_block,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     BlockHashOrNumber::Number(block.number),
                     Some(block.body().transactions.clone())
                 ),
@@ -2719,7 +2768,10 @@ mod tests {
             (
                 ONE,
                 transactions_by_block,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     BlockHashOrNumber::Hash(block.hash()),
                     Some(block.body().transactions.clone())
                 ),
@@ -2728,7 +2780,10 @@ mod tests {
             (
                 ONE,
                 transaction_sender,
-                |block: &SealedBlock<Block>, tx_num: TxNumber, _: B256, _: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 tx_num: TxNumber,
+                 _: B256,
+                 _: &Vec<Vec<BaseReceipt>>| (
                     tx_num,
                     block.body().transactions[test_tx_index].recover_signer().ok()
                 ),
@@ -2737,10 +2792,10 @@ mod tests {
             (
                 ONE,
                 receipt,
-                |block: &SealedBlock<Block>,
+                |block: &SealedBlock<BaseBlock>,
                  tx_num: TxNumber,
                  _: B256,
-                 receipts: &Vec<Vec<Receipt>>| (
+                 receipts: &Vec<Vec<BaseReceipt>>| (
                     tx_num,
                     Some(receipts[block.number as usize][test_tx_index].clone())
                 ),
@@ -2749,10 +2804,10 @@ mod tests {
             (
                 ONE,
                 receipt_by_hash,
-                |block: &SealedBlock<Block>,
+                |block: &SealedBlock<BaseBlock>,
                  _: TxNumber,
                  tx_hash: B256,
-                 receipts: &Vec<Vec<Receipt>>| (
+                 receipts: &Vec<Vec<BaseReceipt>>| (
                     tx_hash,
                     Some(receipts[block.number as usize][test_tx_index].clone())
                 ),
@@ -2761,7 +2816,10 @@ mod tests {
             (
                 ONE,
                 receipts_by_block,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, receipts: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 receipts: &Vec<Vec<BaseReceipt>>| (
                     BlockHashOrNumber::Number(block.number),
                     Some(receipts[block.number as usize].clone())
                 ),
@@ -2770,7 +2828,10 @@ mod tests {
             (
                 ONE,
                 receipts_by_block,
-                |block: &SealedBlock<Block>, _: TxNumber, _: B256, receipts: &Vec<Vec<Receipt>>| (
+                |block: &SealedBlock<BaseBlock>,
+                 _: TxNumber,
+                 _: B256,
+                 receipts: &Vec<Vec<BaseReceipt>>| (
                     BlockHashOrNumber::Hash(block.hash()),
                     Some(receipts[block.number as usize].clone())
                 ),
@@ -2797,7 +2858,7 @@ mod tests {
 
         persist_block_after_db_tx_creation(provider.clone(), in_memory_blocks[0].number);
         let transaction = in_memory_blocks[0].body().transactions[0].clone();
-        assert_eq!(provider.transaction_by_hash(*transaction.tx_hash())?, Some(transaction));
+        assert_eq!(provider.transaction_by_hash(transaction.tx_hash())?, Some(transaction));
 
         Ok(())
     }
@@ -2811,8 +2872,11 @@ mod tests {
         let factory = create_test_provider_factory();
         let provider_rw = factory.provider_rw()?;
         let mut rng = generators::rng();
-        let genesis =
-            random_block(&mut rng, 0, BlockParams { tx_count: Some(0), ..Default::default() });
+        let genesis = reth_testing_utils::BaseTestData::random_block(
+            &mut rng,
+            0,
+            BlockParams { tx_count: Some(0), ..Default::default() },
+        );
         provider_rw
             .insert_block(&genesis.try_recover().expect("failed to seal block with senders"))?;
         provider_rw.save_stage_checkpoint(StageId::Finish, StageCheckpoint::new(0))?;
@@ -2968,7 +3032,7 @@ mod tests {
         let mut parent = B256::ZERO;
 
         for number in 0..=SNAPSHOT_STATE_RETENTION {
-            let mut block = random_block(
+            let mut block = reth_testing_utils::BaseTestData::random_block(
                 &mut rng,
                 number,
                 BlockParams { parent: Some(parent), tx_count: Some(0), ..Default::default() },
@@ -3034,7 +3098,7 @@ mod tests {
         // persisted history, which has no block with this root) resolved it.
         let unique_root = B256::repeat_byte(0x77);
         let parent = provider.canonical_in_memory_state.get_canonical_head();
-        let mut block = random_block(
+        let mut block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             parent.number + 1,
             BlockParams { parent: Some(parent.hash()), tx_count: Some(0), ..Default::default() },
@@ -3047,7 +3111,7 @@ mod tests {
             Arc::new(hashed_state.into_sorted()),
             Arc::new(TrieUpdates::default().into_sorted()),
         );
-        let execution_output = BlockExecutionOutput {
+        let execution_output = BlockExecutionOutput::<BaseReceipt> {
             result: BlockExecutionResult {
                 receipts: Default::default(),
                 requests: Default::default(),
@@ -3083,7 +3147,7 @@ mod tests {
         target_state.accounts.insert(target_hashed, Some(target_account));
 
         let unique_root = B256::repeat_byte(0x77);
-        let mut block = random_block(
+        let mut block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             genesis.number + 1,
             BlockParams { parent: Some(genesis.hash()), tx_count: Some(0), ..Default::default() },
@@ -3095,7 +3159,7 @@ mod tests {
             Arc::new(target_state.into_sorted()),
             Arc::new(TrieUpdates::default().into_sorted()),
         );
-        let execution_output = BlockExecutionOutput {
+        let execution_output = BlockExecutionOutput::<BaseReceipt> {
             result: BlockExecutionResult {
                 receipts: Default::default(),
                 requests: Default::default(),
@@ -3113,7 +3177,7 @@ mod tests {
         // the database on top of the same genesis anchor while the in-memory chain above still
         // references genesis as its anchor.
         let (noise_address, noise_account) = random_account(2);
-        let noise_block = random_block(
+        let noise_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             genesis.number + 1,
             BlockParams { parent: Some(genesis.hash()), tx_count: Some(0), ..Default::default() },
@@ -3125,7 +3189,7 @@ mod tests {
         let provider_rw = provider.database.provider_rw()?;
         provider_rw.append_blocks_with_state(
             vec![noise_block],
-            &ExecutionOutcome {
+            &ExecutionOutcome::<BaseReceipt> {
                 bundle: BundleState::new(
                     [(noise_address, None, Some(noise_account.into()), Default::default())],
                     [[(noise_address, Some(None), [])]],
@@ -3174,7 +3238,7 @@ mod tests {
         let anchor_root = factory.latest()?.state_root(HashedPostState::default())?;
 
         let genesis_hash = factory.sealed_header(0)?.unwrap().hash();
-        let mut anchor_block = random_block(
+        let mut anchor_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -3212,7 +3276,7 @@ mod tests {
         state_b.storages.insert(hashed_address, HashedStorage::from_iter([(hashed_slot, value_b)]));
 
         let state_b_root = factory.latest()?.state_root(state_b.clone())?;
-        let mut later_block = random_block(
+        let mut later_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             2,
             BlockParams { parent: Some(anchor_hash), tx_count: Some(0), ..Default::default() },
@@ -3225,7 +3289,7 @@ mod tests {
         let provider_rw = factory.provider_rw()?;
         provider_rw.append_blocks_with_state(
             vec![later_block],
-            &ExecutionOutcome {
+            &ExecutionOutcome::<BaseReceipt> {
                 bundle: BundleState::new(
                     [(address, Some(account_a.into()), Some(account_b.into()), storage)],
                     [[(address, Some(Some(account_a.into())), [(slot, value_a)])]],

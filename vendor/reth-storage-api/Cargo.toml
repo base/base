@@ -33,6 +33,7 @@ reth-ethereum-primitives = { workspace = true }
 reth-db-api = { workspace = true, optional = true }
 reth-tokio-util = { workspace = true, optional = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
 [dev-dependencies]

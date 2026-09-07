@@ -14,8 +14,9 @@
 extern crate alloc;
 
 use alloy_primitives::Bytes;
+use base_common_consensus::BaseBlock;
 use reth_chainspec::EthereumHardforks;
-use reth_primitives_traits::{NodePrimitives, SealedBlock};
+use reth_primitives_traits::SealedBlock;
 
 mod error;
 pub use error::{
@@ -49,12 +50,7 @@ pub trait PayloadTypes: Send + Sync + Unpin + core::fmt::Debug + Clone + 'static
     type PayloadAttributes: PayloadAttributes + Unpin;
 
     /// Converts a sealed block into the execution payload format.
-    fn block_to_payload(
-        block: SealedBlock<
-            <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
-        >,
-        bal: Option<Bytes>,
-    ) -> Self::ExecutionData;
+    fn block_to_payload(block: SealedBlock<BaseBlock>, bal: Option<Bytes>) -> Self::ExecutionData;
 }
 
 /// Validates the timestamp depending on the version called:

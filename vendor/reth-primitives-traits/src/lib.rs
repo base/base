@@ -177,17 +177,13 @@ pub mod sync;
 pub mod header;
 /// Heuristic size trait
 pub use alloy_consensus::InMemorySize;
-pub use header::{Header, SealedHeader, SealedHeaderFor};
+pub use header::{Header, SealedHeader};
 
 /// Rayon utilities
 #[cfg(feature = "rayon")]
 pub mod rayon;
 #[cfg(feature = "rayon")]
 pub use rayon::ParallelBridgeBuffered;
-
-/// Node traits
-pub mod node;
-pub use node::{BlockTy, BodyTy, HeaderTy, NodePrimitives, ReceiptTy, TxTy};
 
 /// Helper trait that requires de-/serialize implementation since `serde` feature is enabled.
 #[cfg(feature = "serde")]

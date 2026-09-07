@@ -183,7 +183,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         &self,
         config: &Config,
         db: DatabaseEnv,
-        static_file_provider: StaticFileProvider<N::Primitives>,
+        static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
         access: AccessRights,
         runtime: reth_tasks::Runtime,
@@ -306,11 +306,11 @@ type FullTypesAdapter<T> = FullNodeTypesAdapter<
 /// [`NodeTypes`] in CLI.
 pub trait CliNodeTypes: NodeTypesForProvider {
     /// EVM used by offline execution commands.
-    type Evm: ConfigureEvm<Primitives = Self::Primitives> + 'static;
+    type Evm: ConfigureEvm + 'static;
     /// Consensus used by offline validation commands.
-    type Consensus: FullConsensus<Self::Primitives> + Clone + Unpin + 'static;
+    type Consensus: FullConsensus + Clone + Unpin + 'static;
     /// Wire types used by peer commands.
-    type NetworkPrimitives: NetPrimitivesFor<Self::Primitives>;
+    type NetworkPrimitives: NetPrimitivesFor;
 }
 
 impl<N> CliNodeTypes for N

@@ -1,16 +1,17 @@
 use std::pin::Pin;
 
-use alloy_consensus::{BlockHeader, transaction::TxHashRef};
+use alloy_consensus::BlockHeader;
 use alloy_eips::BlockId;
-use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes, Sealable};
+use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::BlockNumberOrTag;
+use base_common_consensus::BaseBlock;
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
 use reth_chainspec::EthereumHardforks;
 use reth_network_api::test_utils::PeersHandleProvider;
-use reth_node_api::{Block, BlockBody, BlockTy, FullNodeComponents, PayloadTypes, PrimitivesTy};
+use reth_node_api::{Block, FullNodeComponents, PayloadTypes};
 use reth_node_builder::{FullNode, NodeTypes, rpc::RethRpcAddOns};
 use reth_payload_primitives::BuiltPayload;
 use reth_provider::{
@@ -41,7 +42,7 @@ where
     /// Context for testing RPC features.
     pub rpc: RpcTestContext<Node, AddOns::EthApi>,
     /// Canonical state events.
-    pub canonical_stream: CanonStateNotificationStream<PrimitivesTy<Node::Types>>,
+    pub canonical_stream: CanonStateNotificationStream,
 }
 
 impl<Node, Payload, AddOns> NodeTestContext<Node, AddOns>
@@ -86,9 +87,8 @@ where
         tx_generator: impl Fn(u64) -> Pin<Box<dyn Future<Output = Bytes>>>,
     ) -> eyre::Result<Vec<Payload::BuiltPayload>>
     where
-        AddOns::EthApi: EthApiSpec<Provider: BlockReader<Block = BlockTy<Node::Types>>>
-            + EthTransactions
-            + TraceExt,
+        AddOns::EthApi:
+            EthApiSpec<Provider: BlockReader<Block = BaseBlock>> + EthTransactions + TraceExt,
     {
         let mut chain = Vec::with_capacity(length as usize);
         for i in 0..length {
@@ -230,7 +230,7 @@ where
         // get head block from notifications stream and verify the tx has been pushed to the
         // pool is actually present in the canonical block
         let head = self.canonical_stream.next().await.unwrap();
-        let tx = head.tip().body().transactions().first();
+        let tx = head.tip().body().transactions.first();
         assert_eq!(tx.unwrap().tx_hash().as_slice(), tip_tx_hash.as_slice());
 
         loop {

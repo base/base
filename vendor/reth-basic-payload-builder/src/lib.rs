@@ -30,7 +30,7 @@ use reth_payload_builder::{
 };
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuiltPayload, PayloadAttributes, PayloadKind};
-use reth_primitives_traits::{HeaderTy, NodePrimitives, SealedHeader};
+use reth_primitives_traits::SealedHeader;
 use reth_revm::{cached::CachedReads, cancelled::CancelOnDrop};
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 use reth_tasks::Runtime;
@@ -52,8 +52,8 @@ pub use stack::PayloadBuilderStack;
 
 const PAYLOAD_BUILDER_THREAD_NAME: &str = "payload-builder";
 
-/// Helper to access [`NodePrimitives::BlockHeader`] from [`PayloadBuilder::BuiltPayload`].
-pub type HeaderForPayload<P> = <<P as BuiltPayload>::Primitives as NodePrimitives>::BlockHeader;
+/// Header used by payload builders.
+pub type HeaderForPayload = alloy_consensus::Header;
 
 /// The [`PayloadJobGenerator`] that creates [`BasicPayloadJob`]s.
 #[derive(Debug)]
@@ -152,7 +152,7 @@ impl<Client, Builder> BasicPayloadJobGenerator<Client, Builder> {
 impl<Client, Builder> PayloadJobGenerator for BasicPayloadJobGenerator<Client, Builder>
 where
     Client: StateProviderFactory
-        + BlockReaderIdExt<Header = HeaderForPayload<Builder::BuiltPayload>>
+        + BlockReaderIdExt<Header = HeaderForPayload>
         + Clone
         + Unpin
         + 'static,
@@ -215,7 +215,7 @@ where
         Ok(job)
     }
 
-    fn on_new_state<N: NodePrimitives>(&mut self, new_state: CanonStateNotification<N>) {
+    fn on_new_state(&mut self, new_state: CanonStateNotification) {
         if !self.config.pre_cache_state {
             self.pre_cached = None;
             return;
@@ -372,7 +372,7 @@ where
     Builder: PayloadBuilder,
 {
     /// The configuration for how the payload will be created.
-    config: PayloadConfig<Builder::Attributes, HeaderForPayload<Builder::BuiltPayload>>,
+    config: PayloadConfig<Builder::Attributes, HeaderForPayload>,
     /// How to spawn building tasks
     executor: Runtime,
     /// The deadline when this job should resolve.
@@ -940,7 +940,7 @@ pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     /// invalidated and cleared.
     pub state_root_handle: Option<PayloadStateRootHandle>,
     /// How to configure the payload.
-    pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
+    pub config: PayloadConfig<Attributes, alloy_consensus::Header>,
     /// A marker that can be used to cancel the job.
     pub cancel: CancelOnDrop,
     /// The best payload achieved so far.
@@ -953,7 +953,7 @@ impl<Attributes, Payload: BuiltPayload> BuildArguments<Attributes, Payload> {
         cached_reads: CachedReads,
         execution_cache: Option<SavedCache>,
         state_root_handle: Option<PayloadStateRootHandle>,
-        config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
+        config: PayloadConfig<Attributes, alloy_consensus::Header>,
         cancel: CancelOnDrop,
         best_payload: Option<Payload>,
     ) -> Self {
@@ -1005,7 +1005,7 @@ pub trait PayloadBuilder: Send + Sync + Clone {
     /// Builds an empty payload without any transaction.
     fn build_empty_payload(
         &self,
-        config: PayloadConfig<Self::Attributes, HeaderForPayload<Self::BuiltPayload>>,
+        config: PayloadConfig<Self::Attributes, HeaderForPayload>,
     ) -> Result<Self::BuiltPayload, PayloadBuilderError>;
 }
 

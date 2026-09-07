@@ -16,6 +16,7 @@ use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, StorageKey, StorageValue, TxHash, TxNumber, keccak256,
     map::{AddressSet, B256Map, HashMap, hash_map},
 };
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use rayon::slice::ParallelSliceMut;
@@ -33,7 +34,7 @@ use reth_db_api::{
     transaction::{DbTx, DbTxMut},
 };
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};
-use reth_node_types::{BlockTy, BodyTy, HeaderTy, NodeTypes, ReceiptTy, TxTy};
+use reth_node_types::NodeTypes;
 use reth_primitives_traits::{
     Account, Block as _, BlockBody as _, Bytecode, FastInstant as Instant, RecoveredBlock,
     SealedHeader, StorageEntry,
@@ -44,9 +45,9 @@ use reth_prune_types::{
 use reth_stages_types::{FinishCheckpoint, StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
-    BlockBodyIndicesProvider, BlockBodyReader, MetadataProvider, MetadataWriter,
-    NodePrimitivesProvider, StateProvider, StateReader, StateWriteConfig, StorageChangeSetReader,
-    StoragePath, StorageSettingsCache, TryIntoHistoricalStateProvider, WriteStateInput,
+    BlockBodyIndicesProvider, BlockBodyReader, MetadataProvider, MetadataWriter, StateProvider,
+    StateReader, StateWriteConfig, StorageChangeSetReader, StoragePath, StorageSettingsCache,
+    TryIntoHistoricalStateProvider, WriteStateInput,
 };
 use reth_storage_errors::provider::{ProviderResult, StaticFileWriterError};
 use reth_storage_overlay::OverlayManager;
@@ -189,7 +190,7 @@ pub struct DatabaseProvider<TX, N: NodeTypes> {
     /// Chain spec
     chain_spec: Arc<N::ChainSpec>,
     /// Static File provider
-    static_file_provider: StaticFileProvider<N::Primitives>,
+    static_file_provider: StaticFileProvider,
     /// Pruning configuration
     prune_modes: PruneModes,
     /// Node storage handler.
@@ -199,7 +200,7 @@ pub struct DatabaseProvider<TX, N: NodeTypes> {
     /// `RocksDB` provider
     rocksdb_provider: RocksDBProvider,
     /// Manager for state trie overlays and cached changesets.
-    overlay_manager: OverlayManager<N::Primitives>,
+    overlay_manager: OverlayManager,
     /// Task runtime for spawning parallel I/O work.
     runtime: reth_tasks::Runtime,
     /// Path to the database directory.
@@ -350,13 +351,9 @@ impl<TX: DbTx + 'static, N: NodeTypes> DatabaseProvider<TX, N> {
     }
 }
 
-impl<TX, N: NodeTypes> NodePrimitivesProvider for DatabaseProvider<TX, N> {
-    type Primitives = N::Primitives;
-}
-
 impl<TX, N: NodeTypes> StaticFileProviderFactory for DatabaseProvider<TX, N> {
     /// Returns a static file provider
-    fn static_file_provider(&self) -> StaticFileProvider<Self::Primitives> {
+    fn static_file_provider(&self) -> StaticFileProvider {
         self.static_file_provider.clone()
     }
 
@@ -364,7 +361,7 @@ impl<TX, N: NodeTypes> StaticFileProviderFactory for DatabaseProvider<TX, N> {
         &self,
         block: BlockNumber,
         segment: StaticFileSegment,
-    ) -> ProviderResult<crate::providers::StaticFileProviderRWRefMut<'_, Self::Primitives>> {
+    ) -> ProviderResult<crate::providers::StaticFileProviderRWRefMut<'_>> {
         self.static_file_provider.get_writer(block, segment)
     }
 }
@@ -404,12 +401,12 @@ impl<TX: DbTxMut, N: NodeTypes> DatabaseProvider<TX, N> {
     fn new_rw_inner(
         tx: TX,
         chain_spec: Arc<N::ChainSpec>,
-        static_file_provider: StaticFileProvider<N::Primitives>,
+        static_file_provider: StaticFileProvider,
         prune_modes: PruneModes,
         storage: Arc<N::Storage>,
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
-        overlay_manager: OverlayManager<N::Primitives>,
+        overlay_manager: OverlayManager,
         runtime: reth_tasks::Runtime,
         db_path: PathBuf,
         commit_order: CommitOrder,
@@ -439,12 +436,12 @@ impl<TX: DbTxMut, N: NodeTypes> DatabaseProvider<TX, N> {
     pub fn new_rw(
         tx: TX,
         chain_spec: Arc<N::ChainSpec>,
-        static_file_provider: StaticFileProvider<N::Primitives>,
+        static_file_provider: StaticFileProvider,
         prune_modes: PruneModes,
         storage: Arc<N::Storage>,
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
-        overlay_manager: OverlayManager<N::Primitives>,
+        overlay_manager: OverlayManager,
         runtime: reth_tasks::Runtime,
         db_path: PathBuf,
         metrics: Arc<DatabaseProviderMetrics>,
@@ -470,12 +467,12 @@ impl<TX: DbTxMut, N: NodeTypes> DatabaseProvider<TX, N> {
     pub fn new_unwind_rw(
         tx: TX,
         chain_spec: Arc<N::ChainSpec>,
-        static_file_provider: StaticFileProvider<N::Primitives>,
+        static_file_provider: StaticFileProvider,
         prune_modes: PruneModes,
         storage: Arc<N::Storage>,
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
-        overlay_manager: OverlayManager<N::Primitives>,
+        overlay_manager: OverlayManager,
         runtime: reth_tasks::Runtime,
         db_path: PathBuf,
         metrics: Arc<DatabaseProviderMetrics>,
@@ -565,7 +562,7 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
     /// Ordinary block data and hashed-state/trie updates advance independently according to the
     /// ranges derived by the input.
     #[instrument(level = "debug", target = "providers::db", skip_all, fields(block_count = input.persist_rest_blocks().len()))]
-    pub fn save_blocks(&self, input: &SaveBlocksInput<N::Primitives>) -> ProviderResult<()> {
+    pub fn save_blocks(&self, input: &SaveBlocksInput) -> ProviderResult<()> {
         let (db_tip, partial_state_trie) = self
             .get_stage_checkpoint(StageId::Finish)?
             .map(|checkpoint| {
@@ -599,9 +596,9 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
 
     fn save_blocks_inner(
         &self,
-        blocks: &[ExecutedBlock<N::Primitives>],
-        state_trie_blocks: &[ExecutedBlock<N::Primitives>],
-        state_trie_masking_blocks: &[ExecutedBlock<N::Primitives>],
+        blocks: &[ExecutedBlock],
+        state_trie_blocks: &[ExecutedBlock],
+        state_trie_masking_blocks: &[ExecutedBlock],
         partial_state_trie: Option<BlockNumber>,
         save_mode: SaveBlocksMode,
     ) -> ProviderResult<()> {
@@ -830,7 +827,7 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
     #[instrument(level = "debug", target = "providers::db", skip_all)]
     fn insert_block_mdbx_only(
         &self,
-        block: &RecoveredBlock<BlockTy<N>>,
+        block: &RecoveredBlock<BaseBlock>,
         first_tx_num: TxNumber,
     ) -> ProviderResult<StoredBlockBodyIndices> {
         let block_number = block.number();
@@ -850,7 +847,7 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
     fn write_block_body_indices(
         &self,
         block_number: BlockNumber,
-        body: &BodyTy<N>,
+        body: &alloy_consensus::BlockBody<BaseTxEnvelope>,
         first_tx_num: TxNumber,
         tx_count: u64,
     ) -> ProviderResult<()> {
@@ -923,7 +920,7 @@ impl<TX: DbTx + DbTxMut + 'static, N: NodeTypesForProvider> DatabaseProvider<TX,
         last_block: BlockNumber,
     ) -> ProviderResult<()> {
         // iterate over block body and remove receipts
-        self.remove::<tables::Receipts<ReceiptTy<N>>>(from_tx..)?;
+        self.remove::<tables::Receipts<BaseReceipt>>(from_tx..)?;
 
         if EitherWriter::receipts_destination(self).is_static_file() {
             let static_file_receipt_num =
@@ -1012,12 +1009,12 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
     pub fn new(
         tx: TX,
         chain_spec: Arc<N::ChainSpec>,
-        static_file_provider: StaticFileProvider<N::Primitives>,
+        static_file_provider: StaticFileProvider,
         prune_modes: PruneModes,
         storage: Arc<N::Storage>,
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
-        overlay_manager: OverlayManager<N::Primitives>,
+        overlay_manager: OverlayManager,
         runtime: reth_tasks::Runtime,
         db_path: PathBuf,
         metrics: Arc<DatabaseProviderMetrics>,
@@ -1071,9 +1068,13 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
         construct_block: BF,
     ) -> ProviderResult<Option<B>>
     where
-        H: AsRef<HeaderTy<N>>,
+        H: AsRef<alloy_consensus::Header>,
         HF: FnOnce(BlockNumber) -> ProviderResult<Option<H>>,
-        BF: FnOnce(H, BodyTy<N>, Vec<Address>) -> ProviderResult<Option<B>>,
+        BF: FnOnce(
+            H,
+            alloy_consensus::BlockBody<BaseTxEnvelope>,
+            Vec<Address>,
+        ) -> ProviderResult<Option<B>>,
     {
         let Some(block_number) = self.convert_hash_or_number(id)? else { return Ok(None) };
         let earliest_available = self.static_file_provider.earliest_history_height();
@@ -1114,8 +1115,8 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
             let known_senders: HashMap<TxNumber, Address> =
                 EitherReader::new_senders(self)?.senders_by_tx_range(tx_range.clone())?;
 
-            let mut senders = Vec::with_capacity(body.transactions().len());
-            for (tx_num, tx) in tx_range.zip(body.transactions()) {
+            let mut senders = Vec::with_capacity(body.transactions.len());
+            for (tx_num, tx) in tx_range.zip(&body.transactions) {
                 match known_senders.get(&tx_num) {
                     None => {
                         let sender = tx.recover_signer_unchecked()?;
@@ -1146,9 +1147,13 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
         mut assemble_block: F,
     ) -> ProviderResult<Vec<R>>
     where
-        H: AsRef<HeaderTy<N>>,
+        H: AsRef<alloy_consensus::Header>,
         HF: FnOnce(RangeInclusive<BlockNumber>) -> ProviderResult<Vec<H>>,
-        F: FnMut(H, BodyTy<N>, Range<TxNumber>) -> ProviderResult<R>,
+        F: FnMut(
+            H,
+            alloy_consensus::BlockBody<BaseTxEnvelope>,
+            Range<TxNumber>,
+        ) -> ProviderResult<R>,
     {
         if range.is_empty() {
             return Ok(Vec::new());
@@ -1208,9 +1213,9 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
         assemble_block: BF,
     ) -> ProviderResult<Vec<B>>
     where
-        H: AsRef<HeaderTy<N>>,
+        H: AsRef<alloy_consensus::Header>,
         HF: Fn(RangeInclusive<BlockNumber>) -> ProviderResult<Vec<H>>,
-        BF: Fn(H, BodyTy<N>, Vec<Address>) -> ProviderResult<B>,
+        BF: Fn(H, alloy_consensus::BlockBody<BaseTxEnvelope>, Vec<Address>) -> ProviderResult<B>,
     {
         self.block_range(range, headers_range, |header, body, tx_range| {
             let senders = if tx_range.is_empty() {
@@ -1219,8 +1224,8 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> DatabaseProvider<TX, N> {
                 let known_senders: HashMap<TxNumber, Address> =
                     EitherReader::new_senders(self)?.senders_by_tx_range(tx_range.clone())?;
 
-                let mut senders = Vec::with_capacity(body.transactions().len());
-                for (tx_num, tx) in tx_range.zip(body.transactions()) {
+                let mut senders = Vec::with_capacity(body.transactions.len());
+                for (tx_num, tx) in tx_range.zip(&body.transactions) {
                     match known_senders.get(&tx_num) {
                         None => {
                             // recover the sender from the transaction if not found
@@ -1479,7 +1484,7 @@ impl<TX: DbTx, N: NodeTypes> ChangeSetReader for DatabaseProvider<TX, N> {
 }
 
 impl<Tx: DbTx + 'static, N: NodeTypesForProvider> StateReader for DatabaseProvider<Tx, N> {
-    type Receipt = ReceiptTy<N>;
+    type Receipt = BaseReceipt;
 
     fn get_state(
         &self,
@@ -1518,7 +1523,7 @@ impl<Tx: DbTx + 'static, N: NodeTypesForProvider> StateReader for DatabaseProvid
 impl<TX: DbTx + 'static, N: NodeTypesForProvider> HeaderSyncGapProvider
     for DatabaseProvider<TX, N>
 {
-    type Header = HeaderTy<N>;
+    type Header = alloy_consensus::Header;
 
     fn local_tip_header(
         &self,
@@ -1561,7 +1566,7 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> HeaderSyncGapProvider
 }
 
 impl<TX: DbTx + 'static, N: NodeTypesForProvider> HeaderProvider for DatabaseProvider<TX, N> {
-    type Header = HeaderTy<N>;
+    type Header = alloy_consensus::Header;
 
     fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
         if let Some(num) = self.block_number(block_hash)? {
@@ -1638,7 +1643,7 @@ impl<TX: DbTx + 'static, N: NodeTypes> BlockNumReader for DatabaseProvider<TX, N
 }
 
 impl<TX: DbTx + 'static, N: NodeTypesForProvider> BlockReader for DatabaseProvider<TX, N> {
-    type Block = BlockTy<N>;
+    type Block = BaseBlock;
 
     fn find_block_by_hash(
         &self,
@@ -1807,7 +1812,7 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> TransactionsProviderExt
 
 // Calculates the hash of the given transaction
 impl<TX: DbTx + 'static, N: NodeTypesForProvider> TransactionsProvider for DatabaseProvider<TX, N> {
-    type Transaction = TxTy<N>;
+    type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
         self.with_rocksdb_snapshot(|rocksdb_ref| {
@@ -1925,7 +1930,7 @@ impl<TX: DbTx + 'static, N: NodeTypesForProvider> TransactionsProvider for Datab
 }
 
 impl<TX: DbTx + 'static, N: NodeTypesForProvider> ReceiptProvider for DatabaseProvider<TX, N> {
-    type Receipt = ReceiptTy<N>;
+    type Receipt = BaseReceipt;
 
     fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
         self.static_file_provider.get_with_static_file_or_database(
@@ -2207,7 +2212,7 @@ impl<TX: DbTx + 'static, N: NodeTypes> StorageReader for DatabaseProvider<TX, N>
 impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> StateWriter
     for DatabaseProvider<TX, N>
 {
-    type Receipt = ReceiptTy<N>;
+    type Receipt = BaseReceipt;
 
     #[instrument(level = "debug", target = "providers::db", skip_all)]
     fn write_state<'a>(
@@ -3040,10 +3045,7 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypes> HistoryWriter for DatabaseProvi
 impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> BlockExecutionWriter
     for DatabaseProvider<TX, N>
 {
-    fn take_block_and_execution_above(
-        &self,
-        block: BlockNumber,
-    ) -> ProviderResult<Chain<Self::Primitives>> {
+    fn take_block_and_execution_above(&self, block: BlockNumber) -> ProviderResult<Chain> {
         let range = block + 1..=self.last_block_number()?;
 
         self.unwind_trie_state_from(block + 1)?;
@@ -3084,8 +3086,8 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> BlockExecutionWriter
 impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> BlockWriter
     for DatabaseProvider<TX, N>
 {
-    type Block = BlockTy<N>;
-    type Receipt = ReceiptTy<N>;
+    type Block = BaseBlock;
+    type Receipt = BaseReceipt;
 
     /// Inserts the block into the database, writing to both static files and MDBX.
     ///
@@ -3100,7 +3102,7 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> BlockWriter
         // Wrap block in ExecutedBlock with empty execution output (no receipts/state/trie)
         let executed_block = ExecutedBlock::new(
             Arc::new(block.clone()),
-            Arc::new(BlockExecutionOutput {
+            Arc::new(BlockExecutionOutput::<BaseReceipt> {
                 result: BlockExecutionResult {
                     receipts: Default::default(),
                     requests: Default::default(),
@@ -3127,7 +3129,7 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> BlockWriter
 
     fn append_block_bodies(
         &self,
-        bodies: Vec<(BlockNumber, Option<&BodyTy<N>>)>,
+        bodies: Vec<(BlockNumber, Option<&alloy_consensus::BlockBody<BaseTxEnvelope>>)>,
     ) -> ProviderResult<()> {
         let Some(from_block) = bodies.first().map(|(block, _)| *block) else { return Ok(()) };
 
@@ -3145,7 +3147,7 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> BlockWriter
             // Increment block on static file header.
             tx_writer.increment_block(*block_number)?;
 
-            let tx_count = body.as_ref().map(|b| b.transactions().len() as u64).unwrap_or_default();
+            let tx_count = body.as_ref().map(|b| b.transactions.len() as u64).unwrap_or_default();
             let block_indices = StoredBlockBodyIndices { first_tx_num: next_tx_num, tx_count };
 
             let mut durations_recorder = metrics::DurationsRecorder::new(&self.metrics);
@@ -3158,13 +3160,13 @@ impl<TX: DbTxMut + DbTx + 'static, N: NodeTypesForProvider> BlockWriter
             let Some(body) = body else { continue };
 
             // write transaction block index
-            if !body.transactions().is_empty() {
+            if !body.transactions.is_empty() {
                 tx_block_cursor.append(block_indices.last_tx_num(), block_number)?;
                 durations_recorder.record_relative(metrics::Action::InsertTransactionBlocks);
             }
 
             // write transactions
-            for transaction in body.transactions() {
+            for transaction in &body.transactions {
                 tx_writer.append_transaction(next_tx_num, transaction)?;
 
                 // Increment transaction id for each transaction.
@@ -3544,6 +3546,7 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{U256, map::B256Map};
+    use base_common_consensus::{BaseBlock, BaseReceipt};
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
     use reth_chain_state::test_utils::TestBlockBuilder;
@@ -3551,7 +3554,7 @@ mod tests {
     use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_primitives_traits::SealedBlock;
     use reth_storage_api::{MetadataProvider, MetadataWriter};
-    use reth_testing_utils::generators::{self, BlockParams, random_block};
+    use reth_testing_utils::generators::{self, BlockParams};
     use reth_trie::{
         HashedPostState, KeccakKeyHasher, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey,
         SortedTrieData,
@@ -3568,7 +3571,7 @@ mod tests {
     /// advancing an existing persistence frontier.
     fn save_genesis<TX, N>(
         provider: &DatabaseProvider<TX, N>,
-        genesis: &ExecutedBlock<N::Primitives>,
+        genesis: &ExecutedBlock,
     ) -> ProviderResult<()>
     where
         TX: DbTx + DbTxMut + 'static,
@@ -3593,7 +3596,7 @@ mod tests {
         let start = 10u64;
         let end = 9u64;
         let result = provider.receipts_by_block_range(start..=end).unwrap();
-        assert_eq!(result, Vec::<Vec<reth_ethereum_primitives::Receipt>>::new());
+        assert_eq!(result, Vec::<Vec<base_common_consensus::BaseReceipt>>::new());
     }
 
     #[test]
@@ -3656,7 +3659,11 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
+                &ExecutionOutcome::<BaseReceipt> {
+                    first_block: 0,
+                    receipts: vec![vec![]],
+                    ..Default::default()
+                },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig {
                     write_receipts: true,
@@ -3697,7 +3704,11 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
+                &ExecutionOutcome::<BaseReceipt> {
+                    first_block: 0,
+                    receipts: vec![vec![]],
+                    ..Default::default()
+                },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig {
                     write_receipts: true,
@@ -3742,7 +3753,11 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
+                &ExecutionOutcome::<BaseReceipt> {
+                    first_block: 0,
+                    receipts: vec![vec![]],
+                    ..Default::default()
+                },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig {
                     write_receipts: true,
@@ -3788,7 +3803,11 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
+                &ExecutionOutcome::<BaseReceipt> {
+                    first_block: 0,
+                    receipts: vec![vec![]],
+                    ..Default::default()
+                },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig {
                     write_receipts: true,
@@ -3837,8 +3856,11 @@ mod tests {
         // create blocks with no transactions
         let mut blocks = Vec::new();
         for i in 0..3 {
-            let block =
-                random_block(&mut rng, i, BlockParams { tx_count: Some(0), ..Default::default() });
+            let block = reth_testing_utils::BaseTestData::random_block(
+                &mut rng,
+                i,
+                BlockParams { tx_count: Some(0), ..Default::default() },
+            );
             blocks.push(block);
         }
 
@@ -3866,7 +3888,11 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
+                &ExecutionOutcome::<BaseReceipt> {
+                    first_block: 0,
+                    receipts: vec![vec![]],
+                    ..Default::default()
+                },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig {
                     write_receipts: true,
@@ -4350,7 +4376,11 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
+                &ExecutionOutcome::<BaseReceipt> {
+                    first_block: 0,
+                    receipts: vec![vec![]],
+                    ..Default::default()
+                },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig::default(),
             )
@@ -4537,7 +4567,7 @@ mod tests {
         let accounts_per_block = 5usize;
         let slots_per_account = 3usize;
 
-        let genesis = SealedBlock::<reth_ethereum_primitives::Block>::from_sealed_parts(
+        let genesis = SealedBlock::<BaseBlock>::from_sealed_parts(
             SealedHeader::new(
                 Header { number: 0, difficulty: U256::from(1), ..Default::default() },
                 B256::ZERO,
@@ -4547,7 +4577,7 @@ mod tests {
 
         let genesis_executed: ExecutedBlock = ExecutedBlock::new(
             Arc::new(genesis.try_recover().unwrap()),
-            Arc::new(BlockExecutionOutput {
+            Arc::new(BlockExecutionOutput::<BaseReceipt> {
                 result: BlockExecutionResult {
                     receipts: vec![],
                     requests: Default::default(),
@@ -4608,15 +4638,12 @@ mod tests {
                 difficulty: U256::from(1),
                 ..Default::default()
             };
-            let block = SealedBlock::<reth_ethereum_primitives::Block>::seal_parts(
-                header,
-                Default::default(),
-            );
+            let block = SealedBlock::<BaseBlock>::seal_parts(header, Default::default());
             parent_hash = block.hash();
 
             let executed = ExecutedBlock::new(
                 Arc::new(block.try_recover().unwrap()),
-                Arc::new(BlockExecutionOutput {
+                Arc::new(BlockExecutionOutput::<BaseReceipt> {
                     result: BlockExecutionResult {
                         receipts: vec![],
                         requests: Default::default(),

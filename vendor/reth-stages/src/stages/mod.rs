@@ -47,6 +47,7 @@ mod tests {
         B256, BlockNumber, Signature, U256, address, hex_literal::hex, keccak256,
     };
     use alloy_rlp::Decodable;
+    use base_common_consensus::{BaseBlock as Block, BaseReceipt, BaseTxEnvelope};
     use reth_chainspec::ChainSpecBuilder;
     use reth_consensus_common::test_utils::TestConsensus;
     use reth_db::mdbx::{RW, cursor::Cursor};
@@ -58,7 +59,6 @@ mod tests {
         tables,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_ethereum_primitives::Block;
     use reth_evm::TestEvmConfig;
     use reth_exex::ExExManagerHandle;
     use reth_primitives_traits::{Account, Bytecode, SealedBlock, SignerRecoverable};
@@ -75,9 +75,7 @@ mod tests {
     };
     use reth_static_file_types::StaticFileSegment;
     use reth_storage_api::StorageSettingsCache;
-    use reth_testing_utils::generators::{
-        self, BlockRangeParams, random_block, random_block_range, random_receipt,
-    };
+    use reth_testing_utils::generators::{self, BlockRangeParams};
 
     use super::*;
     use crate::test_utils::{StorageKind, TestStageDB};
@@ -101,7 +99,7 @@ mod tests {
         // Fill with bogus blocks to respect PruneMode distance.
         let mut rng = generators::rng();
         for block_number in 2..=tip {
-            let nblock = random_block(
+            let nblock = reth_testing_utils::BaseTestData::random_block(
                 &mut rng,
                 block_number,
                 generators::BlockParams { parent: Some(head), ..Default::default() },
@@ -266,7 +264,7 @@ mod tests {
         let genesis_hash = B256::ZERO;
         let tip = (num_blocks - 1) as u64;
 
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=tip,
             BlockRangeParams { parent: Some(genesis_hash), tx_count: 2..3, ..Default::default() },
@@ -278,7 +276,15 @@ mod tests {
         for block in &blocks {
             let mut block_receipts = Vec::with_capacity(block.transaction_count());
             for transaction in &block.body().transactions {
-                block_receipts.push((tx_num, random_receipt(&mut rng, transaction, Some(0), None)));
+                block_receipts.push((
+                    tx_num,
+                    reth_testing_utils::BaseTestData::random_receipt(
+                        &mut rng,
+                        transaction,
+                        Some(0),
+                        None,
+                    ),
+                ));
                 tx_num += 1;
             }
             receipts.push((block.number, block_receipts));
@@ -560,7 +566,7 @@ mod tests {
             .unwrap();
 
         // Creates a gap of one transaction: static_file <missing> db
-        update_db_with_and_check::<tables::Transactions>(
+        update_db_with_and_check::<tables::Transactions<BaseTxEnvelope>>(
             &db,
             current + 2,
             Some(PipelineTarget::Unwind(89)),
@@ -568,7 +574,7 @@ mod tests {
         );
 
         // Fill the gap, and ensure no unwind is necessary.
-        update_db_with_and_check::<tables::Transactions>(
+        update_db_with_and_check::<tables::Transactions<BaseTxEnvelope>>(
             &db,
             current + 1,
             None,
@@ -586,10 +592,20 @@ mod tests {
             .unwrap();
 
         // Creates a gap of one receipt: static_file <missing> db
-        update_db_and_check::<tables::Receipts>(&db, current + 2, Some(PipelineTarget::Unwind(89)));
+        update_db_with_and_check::<tables::Receipts<BaseReceipt>>(
+            &db,
+            current + 2,
+            Some(PipelineTarget::Unwind(89)),
+            &BaseReceipt::Legacy(Default::default()),
+        );
 
         // Fill the gap, and ensure no unwind is necessary.
-        update_db_and_check::<tables::Receipts>(&db, current + 1, None);
+        update_db_with_and_check::<tables::Receipts<BaseReceipt>>(
+            &db,
+            current + 1,
+            None,
+            &BaseReceipt::Legacy(Default::default()),
+        );
     }
 
     #[test]

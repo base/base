@@ -8,9 +8,8 @@ use alloy_primitives::{B256, BlockHash};
 use metrics::{Counter, Histogram};
 use reth_chain_state::ExecutedBlock;
 use reth_errors::{ProviderError, ProviderResult};
-use reth_ethereum_primitives::EthPrimitives;
 use reth_metrics::Metrics;
-use reth_primitives_traits::{AlloyBlockHeader, NodePrimitives};
+use reth_primitives_traits::AlloyBlockHeader;
 use reth_prune_types::PruneSegment;
 use reth_stages_types::StageId;
 use reth_storage_api::{
@@ -63,13 +62,13 @@ pub enum OverlaySource {
 /// This stores the overlay manager, overlay configuration, and the logic for resolving overlays
 /// and collecting reverts.
 #[derive(Debug, Clone)]
-pub struct OverlayBuilder<N: NodePrimitives = EthPrimitives> {
+pub struct OverlayBuilder {
     /// Parent hash requested by the caller.
     parent_hash: B256,
     /// Optional overlay source.
     overlay_source: Option<OverlaySource>,
     /// Manager used for cached changesets and in-memory parent state.
-    overlay_manager: OverlayManager<N>,
+    overlay_manager: OverlayManager,
     /// Anchor hash of the reused sparse trie, if this task reused one.
     reused_sparse_trie_anchor_hash: Option<B256>,
     /// Whether building the overlay may query revert changesets.
@@ -78,9 +77,9 @@ pub struct OverlayBuilder<N: NodePrimitives = EthPrimitives> {
     metrics: OverlayBuilderMetrics,
 }
 
-impl<N: NodePrimitives> OverlayBuilder<N> {
+impl OverlayBuilder {
     /// Create a new manager-backed overlay builder.
-    pub(crate) fn new(parent_hash: B256, overlay_manager: OverlayManager<N>) -> Self {
+    pub(crate) fn new(parent_hash: B256, overlay_manager: OverlayManager) -> Self {
         Self {
             parent_hash,
             overlay_source: Some(OverlaySource::Managed),
@@ -123,10 +122,7 @@ impl<N: NodePrimitives> OverlayBuilder<N> {
     }
 
     /// Returns the durable anchor to use for this builder's parent.
-    pub fn anchor_at_parent<Provider>(
-        &self,
-        provider: &Provider,
-    ) -> ProviderResult<AnchorForParent<N>>
+    pub fn anchor_at_parent<Provider>(&self, provider: &Provider) -> ProviderResult<AnchorForParent>
     where
         Provider: StageCheckpointReader + BlockNumReader + PruneCheckpointReader,
     {
@@ -140,7 +136,7 @@ impl<N: NodePrimitives> OverlayBuilder<N> {
         provider: &Provider,
         partial_state_trie: BlockNumHash,
         finish: BlockNumHash,
-    ) -> ProviderResult<AnchorForParent<N>>
+    ) -> ProviderResult<AnchorForParent>
     where
         Provider: BlockNumReader + PruneCheckpointReader,
     {
@@ -447,9 +443,9 @@ struct OverlayBuilderMetrics {
     sparse_trie_overlay_skips: Counter,
 }
 
-fn anchor_for_parent_in<N: NodePrimitives>(
+fn anchor_for_parent_in(
     parent_hash: B256,
-    mut in_mem_chain: impl Iterator<Item = ExecutedBlock<N>>,
+    mut in_mem_chain: impl Iterator<Item = ExecutedBlock>,
     preferred_anchor: B256,
 ) -> B256 {
     if parent_hash == preferred_anchor {
@@ -471,13 +467,13 @@ fn anchor_for_parent_in<N: NodePrimitives>(
 
 /// Describes whether an overlay must revert the database before using its anchor.
 #[derive(Debug)]
-pub enum AnchorForParent<N: NodePrimitives> {
+pub enum AnchorForParent {
     /// The in-memory chain covers the durable frontiers through this anchor.
     NoReverts {
         /// Block to anchor the overlay to.
         anchor: BlockNumHash,
         /// In-memory blocks from `parent_hash` through, but excluding, `anchor`.
-        overlay: Vec<ExecutedBlock<N>>,
+        overlay: Vec<ExecutedBlock>,
     },
     /// The database must be reverted from `finish` to `anchor` first.
     RevertsRequired {
@@ -486,7 +482,7 @@ pub enum AnchorForParent<N: NodePrimitives> {
         /// Current Finish frontier.
         finish: BlockNumHash,
         /// In-memory blocks from `parent_hash` through, but excluding, `anchor`.
-        overlay: Vec<ExecutedBlock<N>>,
+        overlay: Vec<ExecutedBlock>,
     },
 }
 
@@ -496,13 +492,12 @@ pub enum AnchorForParent<N: NodePrimitives> {
 /// * `parent`: The block whose post-state is being targeted.
 /// * `in_mem_chain`: Yields the in-memory blocks in the chain, starting at `parent_hash`.
 /// * `provider`: Used to resolve the durable frontiers and check changeset availability.
-pub fn anchor_for_parent<N, Provider>(
+pub fn anchor_for_parent<Provider>(
     parent_hash: B256,
-    in_mem_chain: impl Iterator<Item = ExecutedBlock<N>>,
+    in_mem_chain: impl Iterator<Item = ExecutedBlock>,
     provider: &Provider,
-) -> ProviderResult<AnchorForParent<N>>
+) -> ProviderResult<AnchorForParent>
 where
-    N: NodePrimitives,
     Provider: StageCheckpointReader + BlockNumReader + PruneCheckpointReader,
 {
     let (partial_state_trie, finish) = database_state_frontiers(provider)?;
@@ -524,15 +519,14 @@ where
 /// * `partial_state_trie`: The durable state/trie frontier.
 /// * `finish`: The durable Finish frontier.
 /// * `provider`: Used to resolve the parent and check changeset availability.
-pub fn anchor_for_parent_with_frontiers<N, Provider>(
+pub fn anchor_for_parent_with_frontiers<Provider>(
     parent_hash: B256,
-    in_mem_chain: impl Iterator<Item = ExecutedBlock<N>>,
+    in_mem_chain: impl Iterator<Item = ExecutedBlock>,
     partial_state_trie: BlockNumHash,
     finish: BlockNumHash,
     provider: &Provider,
-) -> ProviderResult<AnchorForParent<N>>
+) -> ProviderResult<AnchorForParent>
 where
-    N: NodePrimitives,
     Provider: BlockNumReader + PruneCheckpointReader,
 {
     use std::io::Error;
@@ -625,10 +619,7 @@ mod tests {
 
     use super::*;
 
-    fn with_unique_trie_data(
-        block: &ExecutedBlock<EthPrimitives>,
-        id: u8,
-    ) -> ExecutedBlock<EthPrimitives> {
+    fn with_unique_trie_data(block: &ExecutedBlock, id: u8) -> ExecutedBlock {
         let hashed_address = B256::with_last_byte(id);
         let hashed_slot = B256::with_last_byte(id.saturating_add(32));
         let hashed_state = HashedPostState::default()
@@ -653,7 +644,7 @@ mod tests {
         )
     }
 
-    fn test_blocks() -> Vec<ExecutedBlock<EthPrimitives>> {
+    fn test_blocks() -> Vec<ExecutedBlock> {
         TestBlockBuilder::eth()
             .get_executed_blocks(0..5)
             .enumerate()
@@ -665,7 +656,7 @@ mod tests {
     fn setup_frontiers(
         state_trie_tip_index: usize,
         finish_tip_index: usize,
-    ) -> (ProviderFactory<MockNodeTypesWithDB>, Vec<ExecutedBlock<EthPrimitives>>) {
+    ) -> (ProviderFactory<MockNodeTypesWithDB>, Vec<ExecutedBlock>) {
         let factory = create_test_provider_factory();
         let blocks = test_blocks();
         let provider_rw = factory.provider_rw().unwrap();
@@ -751,7 +742,7 @@ mod tests {
         let (factory, blocks) = setup_frontiers(2, 3);
         let provider = factory.provider().unwrap();
 
-        let error = OverlayManager::<EthPrimitives>::default()
+        let error = OverlayManager::default()
             .overlay_builder(blocks[1].recovered_block().hash())
             .with_no_reverts()
             .build_overlay(&provider)
@@ -790,7 +781,7 @@ mod tests {
     fn overlay_after_state_trie_frontier_requires_managed_coverage() {
         let (factory, blocks) = setup_frontiers(1, 3);
         let provider = factory.provider().unwrap();
-        let error = OverlayManager::<EthPrimitives>::default()
+        let error = OverlayManager::default()
             .overlay_builder(blocks[3].recovered_block().hash())
             .with_overlay_source(None)
             .build_overlay(&provider)
@@ -808,7 +799,7 @@ mod tests {
         let (factory, blocks) = setup_frontiers(1, 3);
         let provider = factory.provider().unwrap();
         let parent_hash = blocks[3].recovered_block().hash();
-        let error = OverlayManager::<EthPrimitives>::default()
+        let error = OverlayManager::default()
             .overlay_builder(parent_hash)
             .build_overlay(&provider)
             .unwrap_err();
@@ -819,7 +810,7 @@ mod tests {
     #[test]
     fn managed_overlay_skips_manager_for_persisted_parent() {
         let parent_hash = B256::with_last_byte(1);
-        let builder = OverlayManager::<EthPrimitives>::default().overlay_builder(parent_hash);
+        let builder = OverlayManager::default().overlay_builder(parent_hash);
 
         let (trie, state) = builder.resolve_overlays(parent_hash).unwrap();
         assert!(trie.is_empty());
@@ -830,7 +821,7 @@ mod tests {
     fn managed_overlay_errors_if_parent_is_not_persisted_or_managed() {
         let parent_hash = B256::with_last_byte(1);
         let anchor_hash = B256::with_last_byte(2);
-        let builder = OverlayManager::<EthPrimitives>::default().overlay_builder(parent_hash);
+        let builder = OverlayManager::default().overlay_builder(parent_hash);
 
         let err = builder.resolve_overlays(anchor_hash).unwrap_err();
 
@@ -840,7 +831,7 @@ mod tests {
     #[test]
     fn managed_overlay_skip_requires_both_frontiers() {
         let parent_hash = B256::with_last_byte(1);
-        let builder = OverlayManager::<EthPrimitives>::default().overlay_builder(parent_hash);
+        let builder = OverlayManager::default().overlay_builder(parent_hash);
         assert!(!builder.should_skip_overlay_for_reused_sparse_trie(parent_hash, parent_hash));
 
         let builder = builder.with_skip_overlay_for_reused_sparse_trie(parent_hash);

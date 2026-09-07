@@ -8,7 +8,6 @@ use reth_config::config::EtlConfig;
 use reth_db_api::{
     DbTxUnwindExt, RawKey, RawTable, RawValue,
     cursor::{DbCursorRO, DbCursorRW},
-    table::Value,
     tables,
     transaction::{DbTx, DbTxMut},
 };
@@ -17,7 +16,7 @@ use reth_network_p2p::headers::{
     downloader::{HeaderDownloader, HeaderSyncGap, SyncTarget},
     error::HeadersDownloaderError,
 };
-use reth_primitives_traits::{FullBlockHeader, HeaderTy, NodePrimitives, SealedHeader};
+use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockHashReader, DBProvider, HeaderSyncGapProvider, StaticFileProviderFactory,
     providers::StaticFileWriter,
@@ -100,8 +99,7 @@ where
     fn write_headers<P>(&mut self, provider: &P) -> Result<BlockNumber, StageError>
     where
         P: DBProvider<Tx: DbTxMut> + StaticFileProviderFactory,
-        Downloader: HeaderDownloader<Header = <P::Primitives as NodePrimitives>::BlockHeader>,
-        <P::Primitives as NodePrimitives>::BlockHeader: Value + FullBlockHeader,
+        Downloader: HeaderDownloader<Header = alloy_consensus::Header>,
     {
         let total_headers = self.header_collector.len();
 
@@ -187,9 +185,8 @@ where
 impl<Provider, P, D> Stage<Provider> for HeaderStage<P, D>
 where
     Provider: DBProvider<Tx: DbTxMut> + StaticFileProviderFactory,
-    P: HeaderSyncGapProvider<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>,
-    D: HeaderDownloader<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>,
-    <Provider::Primitives as NodePrimitives>::BlockHeader: FullBlockHeader + Value,
+    P: HeaderSyncGapProvider<Header = alloy_consensus::Header>,
+    D: HeaderDownloader<Header = alloy_consensus::Header>,
 {
     /// Return the id of the stage
     fn id(&self) -> StageId {
@@ -335,9 +332,9 @@ where
                 (input.unwind_to + 1)..,
             )?;
         provider.tx_ref().unwind_table_by_num::<tables::CanonicalHeaders>(input.unwind_to)?;
-        let unfinalized_headers_unwound = provider.tx_ref().unwind_table_by_num::<tables::Headers<
-            HeaderTy<Provider::Primitives>,
-        >>(input.unwind_to)?;
+        let unfinalized_headers_unwound = provider
+            .tx_ref()
+            .unwind_table_by_num::<tables::Headers<alloy_consensus::Header>>(input.unwind_to)?;
 
         // determine how many headers to unwind from the static files based on the highest block and
         // the unwind_to block

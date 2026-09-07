@@ -75,7 +75,12 @@ where
 #[tokio::test(flavor = "multi_thread")]
 async fn test_rpc_middleware() {
     let builder = test_rpc_builder();
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let modules = builder.build(
         TransportRpcModuleConfig::set_http(RpcModuleSelection::All),
         eth_api,

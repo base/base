@@ -82,7 +82,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C>
         self,
         config: Config,
         provider_factory: ProviderFactory<N>,
-        evm_config: impl ConfigureEvm<Primitives = N::Primitives> + 'static,
+        evm_config: impl ConfigureEvm + 'static,
     ) -> Result<Pipeline<N>, eyre::Error> {
         let stage_conf = &config.stages;
         let prune_modes = config.prune.segments.clone();

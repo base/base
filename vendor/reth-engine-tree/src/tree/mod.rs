@@ -14,6 +14,7 @@ use alloy_primitives::{B256, map::B256Map};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use crossbeam_channel::{Receiver, Sender};
 use error::{InsertBlockError, InsertBlockFatalError, InsertBlockValidationError};
 use reth_chain_state::{
@@ -28,10 +29,8 @@ use reth_engine_primitives::{
 use reth_errors::{ConsensusError, ProviderResult};
 use reth_evm::ConfigureEvm;
 use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
-use reth_payload_primitives::{BuiltPayload, NewPayloadError, PayloadAttributes, PayloadTypes};
-use reth_primitives_traits::{
-    FastInstant as Instant, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
-};
+use reth_payload_primitives::{NewPayloadError, PayloadAttributes, PayloadTypes};
+use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_provider::{
     BalProvider, BlockExecutionOutput, BlockExecutionResult, BlockNumReader, BlockReader,
     ChangeSetReader, DatabaseProviderFactory, LatestStateProvider, ProviderError,
@@ -116,27 +115,27 @@ const CHANGESET_CACHE_RETENTION_BLOCKS: u64 = 64;
 
 /// A builder for creating state providers that can be used across threads.
 #[derive(Clone, Debug)]
-pub struct StateProviderBuilder<N: NodePrimitives, P> {
+pub struct StateProviderBuilder<P> {
     /// The provider factory used to create providers.
     provider_factory: P,
     /// Hash of the block whose state to provide.
     parent_hash: B256,
     /// Tracks the in-memory parent chain and its overlays.
-    overlay_manager: OverlayManager<N>,
+    overlay_manager: OverlayManager,
 }
 
-impl<N: NodePrimitives, P> StateProviderBuilder<N, P> {
+impl<P> StateProviderBuilder<P> {
     /// Creates a new state provider builder for `parent_hash`.
     pub const fn new(
         provider_factory: P,
         parent_hash: B256,
-        overlay_manager: OverlayManager<N>,
+        overlay_manager: OverlayManager,
     ) -> Self {
         Self { provider_factory, parent_hash, overlay_manager }
     }
 }
 
-impl<N: NodePrimitives, P> StateProviderBuilder<N, P>
+impl<P> StateProviderBuilder<P>
 where
     P: DatabaseProviderFactory,
     P::Provider: BlockNumReader
@@ -179,28 +178,28 @@ where
 ///
 /// This type is not shareable.
 #[derive(Debug)]
-pub struct EngineApiTreeState<N: NodePrimitives> {
+pub struct EngineApiTreeState {
     /// Tracks the state of the blockchain tree.
-    tree_state: TreeState<N>,
+    tree_state: TreeState,
     /// Whether the next sparse trie task should attempt cache pruning during trie preservation.
     pending_sparse_trie_prune: bool,
     /// Tracks the forkchoice state updates received by the CL.
     forkchoice_state_tracker: ForkchoiceStateTracker,
     /// Buffer of detached blocks.
-    buffer: BlockBuffer<N::Block>,
+    buffer: BlockBuffer<BaseBlock>,
     /// Tracks the header of invalid payloads that were rejected by the engine because they're
     /// invalid.
     invalid_headers: InvalidHeaderCache,
 }
 
-impl<N: NodePrimitives> EngineApiTreeState<N> {
+impl EngineApiTreeState {
     fn new(
         block_buffer_limit: u32,
         max_invalid_header_cache_length: u32,
         invalid_header_hit_eviction_threshold: u8,
         canonical_block: BlockNumHash,
         engine_kind: EngineApiKind,
-        overlay_manager: OverlayManager<N>,
+        overlay_manager: OverlayManager,
     ) -> Self {
         Self {
             invalid_headers: InvalidHeaderCache::new(
@@ -215,7 +214,7 @@ impl<N: NodePrimitives> EngineApiTreeState<N> {
     }
 
     /// Returns a reference to the tree state.
-    pub const fn tree_state(&self) -> &TreeState<N> {
+    pub const fn tree_state(&self) -> &TreeState {
         &self.tree_state
     }
 
@@ -238,7 +237,7 @@ impl<N: NodePrimitives> EngineApiTreeState<N> {
     pub fn take_sparse_trie_prune_blocks(
         &mut self,
         parent_hash: B256,
-    ) -> Option<Vec<ExecutedBlock<N>>> {
+    ) -> Option<Vec<ExecutedBlock>> {
         if !self.pending_sparse_trie_prune {
             return None;
         }
@@ -340,17 +339,16 @@ pub enum TreeAction {
 ///
 /// This type is responsible for processing engine API requests, maintaining the canonical state and
 /// emitting events.
-pub struct EngineApiTreeHandler<N, P, T, V, C>
+pub struct EngineApiTreeHandler<P, T, V, C>
 where
-    N: NodePrimitives,
     T: PayloadTypes,
-    C: ConfigureEvm<Primitives = N> + 'static,
+    C: ConfigureEvm + 'static,
 {
     provider: P,
-    consensus: Arc<dyn FullConsensus<N>>,
+    consensus: Arc<dyn FullConsensus>,
     payload_validator: V,
     /// Keeps track of internals such as executed and buffered blocks.
-    state: EngineApiTreeState<N>,
+    state: EngineApiTreeState,
     /// The half for sending messages to the engine.
     ///
     /// This is kept so that we can queue in messages to ourself that we can process later, for
@@ -359,20 +357,20 @@ where
     /// them one by one so that we can handle incoming engine API in between and don't become
     /// unresponsive. This can happen during live sync transition where we're trying to close the
     /// gap (up to 3 epochs of blocks in the worst case).
-    incoming_tx: Sender<FromEngine<EngineApiRequest<T, N>, N::Block>>,
+    incoming_tx: Sender<FromEngine<EngineApiRequest<T>, BaseBlock>>,
     /// Incoming engine API requests.
-    incoming: Receiver<FromEngine<EngineApiRequest<T, N>, N::Block>>,
+    incoming: Receiver<FromEngine<EngineApiRequest<T>, BaseBlock>>,
     /// Outgoing events that are emitted to the handler.
-    outgoing: UnboundedSender<EngineApiEvent<N>>,
+    outgoing: UnboundedSender<EngineApiEvent>,
     /// Channels to the persistence layer.
-    persistence: PersistenceHandle<N>,
+    persistence: PersistenceHandle,
     /// Tracks the state changes of the persistence task.
     persistence_state: PersistenceState,
     /// Flag indicating the state of the node's backfill synchronization process.
     backfill_sync_state: BackfillSyncState,
     /// Keeps track of the state of the canonical chain that isn't persisted yet.
     /// This is intended to be accessed from external sources, such as rpc.
-    canonical_in_memory_state: CanonicalInMemoryState<N>,
+    canonical_in_memory_state: CanonicalInMemoryState,
     /// Handle to the payload builder that will receive payload attributes for valid forkchoice
     /// updates
     payload_builder: PayloadBuilderHandle<T>,
@@ -399,11 +397,10 @@ where
     runtime: reth_tasks::Runtime,
 }
 
-impl<N, P: Debug, T: PayloadTypes + Debug, V: Debug, C> std::fmt::Debug
-    for EngineApiTreeHandler<N, P, T, V, C>
+impl<P: Debug, T: PayloadTypes + Debug, V: Debug, C> std::fmt::Debug
+    for EngineApiTreeHandler<P, T, V, C>
 where
-    N: NodePrimitives,
-    C: Debug + ConfigureEvm<Primitives = N>,
+    C: Debug + ConfigureEvm,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EngineApiTreeHandler")
@@ -429,17 +426,16 @@ where
     }
 }
 
-impl<N, P, T, V, C> EngineApiTreeHandler<N, P, T, V, C>
+impl<P, T, V, C> EngineApiTreeHandler<P, T, V, C>
 where
-    N: NodePrimitives,
     P: DatabaseProviderFactory
-        + BlockReader<Block = N::Block, Header = N::BlockHeader>
+        + BlockReader<Block = BaseBlock, Header = alloy_consensus::Header>
         + StateProviderFactory
-        + StateReader<Receipt = N::Receipt>
+        + StateReader<Receipt = BaseReceipt>
         + BalProvider
         + Clone
         + 'static,
-    P::Provider: BlockReader<Block = N::Block, Header = N::BlockHeader>
+    P::Provider: BlockReader<Block = BaseBlock, Header = alloy_consensus::Header>
         + PruneCheckpointReader
         + StageCheckpointReader
         + ChangeSetReader
@@ -447,20 +443,20 @@ where
         + StorageSettingsCache
         + TryIntoHistoricalStateProvider
         + 'static,
-    C: ConfigureEvm<Primitives = N> + 'static,
-    T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>,
+    C: ConfigureEvm + 'static,
+    T: PayloadTypes,
     V: EngineValidator<T> + WaitForCaches,
 {
     /// Creates a new [`EngineApiTreeHandler`].
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         provider: P,
-        consensus: Arc<dyn FullConsensus<N>>,
+        consensus: Arc<dyn FullConsensus>,
         payload_validator: V,
-        outgoing: UnboundedSender<EngineApiEvent<N>>,
-        state: EngineApiTreeState<N>,
-        canonical_in_memory_state: CanonicalInMemoryState<N>,
-        persistence: PersistenceHandle<N>,
+        outgoing: UnboundedSender<EngineApiEvent>,
+        state: EngineApiTreeState,
+        canonical_in_memory_state: CanonicalInMemoryState,
+        persistence: PersistenceHandle,
         persistence_state: PersistenceState,
         payload_builder: PayloadBuilderHandle<T>,
         config: TreeConfig,
@@ -505,17 +501,17 @@ where
     #[expect(clippy::complexity)]
     pub fn spawn_new(
         provider: P,
-        consensus: Arc<dyn FullConsensus<N>>,
+        consensus: Arc<dyn FullConsensus>,
         payload_validator: V,
-        persistence: PersistenceHandle<N>,
+        persistence: PersistenceHandle,
         payload_builder: PayloadBuilderHandle<T>,
-        canonical_in_memory_state: CanonicalInMemoryState<N>,
-        overlay_manager: OverlayManager<N>,
+        canonical_in_memory_state: CanonicalInMemoryState,
+        overlay_manager: OverlayManager,
         config: TreeConfig,
         kind: EngineApiKind,
         evm_config: C,
         runtime: reth_tasks::Runtime,
-    ) -> (Sender<FromEngine<EngineApiRequest<T, N>, N::Block>>, UnboundedReceiver<EngineApiEvent<N>>)
+    ) -> (Sender<FromEngine<EngineApiRequest<T>, BaseBlock>>, UnboundedReceiver<EngineApiEvent>)
     {
         let best_block_number = provider.best_block_number().unwrap_or(0);
         let header = provider.sealed_header(best_block_number).ok().flatten().unwrap_or_default();
@@ -568,7 +564,7 @@ where
     }
 
     /// Returns a new [`Sender`] to send messages to this type.
-    pub fn sender(&self) -> Sender<FromEngine<EngineApiRequest<T, N>, N::Block>> {
+    pub fn sender(&self) -> Sender<FromEngine<EngineApiRequest<T>, BaseBlock>> {
         self.incoming_tx.clone()
     }
 
@@ -697,7 +693,7 @@ where
     ///
     /// Unlike `wait_for_event`, this deliberately does not read from the tree input channel. Any
     /// requests sent to the tree remain queued upstream until persistence catches up.
-    fn wait_for_persistence_event(&mut self) -> LoopEvent<T, N> {
+    fn wait_for_persistence_event(&mut self) -> LoopEvent<T> {
         let maybe_persistence = self.persistence_state.rx.take();
 
         if let Some((persistence_rx, start_time, _action)) = maybe_persistence {
@@ -717,7 +713,7 @@ where
     /// without reclaiming the in-memory overlay while a payload job may still access it. Otherwise,
     /// uses biased selection to prioritize persistence completion to update in-memory state and
     /// unblock further writes.
-    fn wait_for_event(&mut self) -> LoopEvent<T, N> {
+    fn wait_for_event(&mut self) -> LoopEvent<T> {
         if self.pending_persisted_handoff.is_some() {
             self.metrics.engine.backpressure_active.set(0.0);
             return crossbeam_channel::select_biased! {
@@ -788,7 +784,7 @@ where
     /// block request processing isn't blocked for a long time.
     fn on_downloaded(
         &mut self,
-        mut blocks: Vec<SealedBlock<N::Block>>,
+        mut blocks: Vec<SealedBlock<BaseBlock>>,
     ) -> Result<Option<TreeEvent>, InsertBlockFatalError> {
         if blocks.is_empty() {
             // nothing to execute
@@ -994,7 +990,7 @@ where
     ///
     /// Note: This does not update the tracked state and instead returns the new chain based on the
     /// given head.
-    fn on_new_head(&self, new_head: B256) -> ProviderResult<Option<NewCanonicalChain<N>>> {
+    fn on_new_head(&self, new_head: B256) -> ProviderResult<Option<NewCanonicalChain>> {
         // get the executed new head block
         let Some(new_head_block) = self.state.tree_state.blocks_by_hash.get(&new_head) else {
             debug!(target: "engine::tree", new_head=?new_head, "New head block not found in inmemory tree state");
@@ -1088,7 +1084,7 @@ where
     /// Caution: This unwinds the canonical chain
     fn update_latest_block_to_canonical_ancestor(
         &mut self,
-        canonical_header: &SealedHeader<N::BlockHeader>,
+        canonical_header: &SealedHeader<alloy_consensus::Header>,
     ) -> ProviderResult<()> {
         debug!(target: "engine::tree", head = ?canonical_header.num_hash(), "Update latest block to canonical ancestor");
         let current_head_number = self.state.tree_state.canonical_block_number();
@@ -1126,7 +1122,7 @@ where
     fn handle_canonical_chain_unwind(
         &self,
         current_head_number: u64,
-        canonical_header: &SealedHeader<N::BlockHeader>,
+        canonical_header: &SealedHeader<alloy_consensus::Header>,
     ) -> ProviderResult<()> {
         let new_head_number = canonical_header.number();
         debug!(
@@ -1149,7 +1145,7 @@ where
         &self,
         new_head_number: u64,
         current_head_number: u64,
-    ) -> Vec<ExecutedBlock<N>> {
+    ) -> Vec<ExecutedBlock> {
         let mut old_blocks =
             Vec::with_capacity((current_head_number.saturating_sub(new_head_number)) as usize);
 
@@ -1178,8 +1174,8 @@ where
     /// Applies the canonical ancestor block via a reorg operation.
     fn apply_canonical_ancestor_via_reorg(
         &self,
-        canonical_header: &SealedHeader<N::BlockHeader>,
-        old_blocks: Vec<ExecutedBlock<N>>,
+        canonical_header: &SealedHeader<alloy_consensus::Header>,
+        old_blocks: Vec<ExecutedBlock>,
     ) -> ProviderResult<()> {
         let new_head_hash = canonical_header.hash();
         let new_head_number = canonical_header.number();
@@ -1207,7 +1203,7 @@ where
     /// Handles chain advance or same height scenarios.
     fn handle_chain_advance_or_same_height(
         &self,
-        canonical_header: &SealedHeader<N::BlockHeader>,
+        canonical_header: &SealedHeader<alloy_consensus::Header>,
     ) -> ProviderResult<()> {
         // Load the block into memory if it's not already present
         self.ensure_block_in_memory(canonical_header.number(), canonical_header.hash())?;
@@ -1510,7 +1506,7 @@ where
 
     /// Helper method to save blocks and set the persistence state. This ensures we keep track of
     /// the current persistence action while we're saving blocks.
-    fn persist_blocks(&mut self, input: SaveBlocksInput<N>) {
+    fn persist_blocks(&mut self, input: SaveBlocksInput) {
         let highest_num_hash = input.last_block();
         debug!(target: "engine::tree", count=input.persist_rest_blocks().len(), blocks = ?input.persist_rest_blocks().iter().map(|block| block.recovered_block().num_hash()).collect::<Vec<_>>(), "Persisting blocks");
 
@@ -1718,7 +1714,7 @@ where
     /// Returns `ControlFlow::Break(())` if the engine should terminate.
     fn on_engine_message(
         &mut self,
-        msg: FromEngine<EngineApiRequest<T, N>, N::Block>,
+        msg: FromEngine<EngineApiRequest<T>, BaseBlock>,
     ) -> Result<ops::ControlFlow<()>, InsertBlockFatalError> {
         match msg {
             FromEngine::Event(event) => match event {
@@ -2226,7 +2222,7 @@ where
     }
 
     /// Emits an outgoing event to the engine.
-    fn emit_event(&mut self, event: impl Into<EngineApiEvent<N>>) {
+    fn emit_event(&mut self, event: impl Into<EngineApiEvent>) {
         let event = event.into();
 
         if event.is_backfill_action() {
@@ -2261,7 +2257,7 @@ where
     /// Threshold persistence honors the normal scheduling gates and retains the configured
     /// in-memory block buffer. Head persistence bypasses those gates during shutdown and returns
     /// `None` once both persistence frontiers have reached the canonical head.
-    fn get_save_blocks_input(&self, target: PersistTarget) -> Option<SaveBlocksInput<N>> {
+    fn get_save_blocks_input(&self, target: PersistTarget) -> Option<SaveBlocksInput> {
         // We will calculate the state root using the database, so we need to be sure there are no
         // changes
         debug_assert!(!self.persistence_state.in_progress());
@@ -2389,7 +2385,7 @@ where
     /// pruned for a given block, this operation will return an error. On archive nodes, it
     /// can retrieve any block.
     #[instrument(level = "debug", target = "engine::tree", skip(self))]
-    fn canonical_block_by_hash(&self, hash: B256) -> ProviderResult<ExecutedBlock<N>> {
+    fn canonical_block_by_hash(&self, hash: B256) -> ProviderResult<ExecutedBlock> {
         trace!(target: "engine::tree", ?hash, "Fetching executed block by hash");
         // check memory first
         if let Some(block) = self.state.tree_state.executed_block_by_hash(hash) {
@@ -2430,7 +2426,7 @@ where
         let sorted_trie_updates = Arc::new(trie_updates);
         let trie_data = ComputedTrieData::new(sorted_hashed_state, sorted_trie_updates);
 
-        let execution_output = Arc::new(BlockExecutionOutput {
+        let execution_output = Arc::new(BlockExecutionOutput::<BaseReceipt> {
             state: execution_output.bundle,
             result: BlockExecutionResult {
                 receipts: execution_output.receipts.pop().unwrap_or_default(),
@@ -2462,7 +2458,7 @@ where
     fn sealed_header_by_hash(
         &self,
         hash: B256,
-    ) -> ProviderResult<Option<SealedHeader<N::BlockHeader>>> {
+    ) -> ProviderResult<Option<SealedHeader<alloy_consensus::Header>>> {
         // check memory first
         let header = self.state.tree_state.sealed_header_by_hash(&hash);
 
@@ -2566,7 +2562,7 @@ where
     fn check_invalid_ancestor_with_head(
         &mut self,
         check: B256,
-        head: &SealedBlock<N::Block>,
+        head: &SealedBlock<BaseBlock>,
     ) -> ProviderResult<Option<PayloadStatus>> {
         // check if the check hash was previously marked as invalid
         let Some(header) = self.state.invalid_headers.get(&check) else { return Ok(None) };
@@ -2577,7 +2573,7 @@ where
     /// Invoked when a new payload received is invalid.
     fn on_invalid_new_payload(
         &mut self,
-        head: SealedBlock<N::Block>,
+        head: SealedBlock<BaseBlock>,
         invalid: BlockWithParent,
     ) -> ProviderResult<PayloadStatus> {
         // populate the latest valid hash field
@@ -2674,7 +2670,7 @@ where
 
     /// Validate if block is correct and satisfies all the consensus rules that concern the header
     /// and block body itself.
-    fn validate_block(&self, block: &SealedBlock<N::Block>) -> Result<(), ConsensusError> {
+    fn validate_block(&self, block: &SealedBlock<BaseBlock>) -> Result<(), ConsensusError> {
         if let Err(e) = self.consensus.validate_header(block.sealed_header()) {
             error!(target: "engine::tree", ?block, "Failed to validate header {}: {e}", block.hash());
             return Err(e);
@@ -2736,8 +2732,8 @@ where
     /// Pre-validates the block and inserts it into the buffer.
     fn buffer_block(
         &mut self,
-        block: SealedBlock<N::Block>,
-    ) -> Result<(), InsertBlockError<N::Block>> {
+        block: SealedBlock<BaseBlock>,
+    ) -> Result<(), InsertBlockError<BaseBlock>> {
         if let Err(err) = self.validate_block(&block) {
             return Err(InsertBlockError::consensus_error(err, block));
         }
@@ -2889,7 +2885,7 @@ where
     /// Invoked when we the canonical chain has been updated.
     ///
     /// This is invoked on a valid forkchoice update, or if we can make the target block canonical.
-    fn on_canonical_chain_update(&mut self, chain_update: NewCanonicalChain<N>) {
+    fn on_canonical_chain_update(&mut self, chain_update: NewCanonicalChain) {
         trace!(target: "engine::tree", new_blocks = %chain_update.new_block_count(), reorged_blocks =  %chain_update.reorged_block_count(), "applying new chain update");
         let start = Instant::now();
 
@@ -2950,7 +2946,7 @@ where
     }
 
     /// This reinserts any blocks in the new chain that do not already exist in the tree
-    fn reinsert_reorged_blocks(&mut self, new_chain: Vec<ExecutedBlock<N>>) {
+    fn reinsert_reorged_blocks(&mut self, new_chain: Vec<ExecutedBlock>) {
         for block in new_chain {
             if self
                 .state
@@ -3059,7 +3055,7 @@ where
     #[instrument(level = "debug", target = "engine::tree", skip_all, fields(block_hash = %block.hash(), block_num = %block.number()))]
     fn on_downloaded_block(
         &mut self,
-        block: SealedBlock<N::Block>,
+        block: SealedBlock<BaseBlock>,
     ) -> Result<Option<TreeEvent>, InsertBlockFatalError> {
         let block_num_hash = block.num_hash();
         let lowest_buffered_ancestor = self.lowest_buffered_ancestor_or(block_num_hash.hash);
@@ -3112,7 +3108,7 @@ where
     fn insert_payload(
         &mut self,
         payload: T::ExecutionData,
-    ) -> Result<InsertPayloadOk, InsertPayloadError<N::Block>> {
+    ) -> Result<InsertPayloadOk, InsertPayloadError<BaseBlock>> {
         self.insert_block_or_payload(
             payload.block_with_parent(),
             payload,
@@ -3123,8 +3119,8 @@ where
 
     fn insert_block(
         &mut self,
-        block: SealedBlock<N::Block>,
-    ) -> Result<InsertPayloadOk, InsertPayloadError<N::Block>> {
+        block: SealedBlock<BaseBlock>,
+    ) -> Result<InsertPayloadOk, InsertPayloadError<BaseBlock>> {
         self.insert_block_or_payload(
             block.block_with_parent(),
             block,
@@ -3154,11 +3150,11 @@ where
         &mut self,
         block_id: BlockWithParent,
         input: Input,
-        execute: impl FnOnce(&mut V, Input, TreeCtx<'_, N>) -> Result<ValidationOutput<N>, Err>,
-        convert_to_block: impl FnOnce(&mut Self, Input) -> Result<SealedBlock<N::Block>, Err>,
+        execute: impl FnOnce(&mut V, Input, TreeCtx<'_>) -> Result<ValidationOutput, Err>,
+        convert_to_block: impl FnOnce(&mut Self, Input) -> Result<SealedBlock<BaseBlock>, Err>,
     ) -> Result<InsertPayloadOk, Err>
     where
-        Err: From<InsertBlockError<N::Block>>,
+        Err: From<InsertBlockError<BaseBlock>>,
     {
         let block_insert_start = Instant::now();
         let block_num_hash = block_id.block;
@@ -3292,7 +3288,7 @@ where
     /// Returns the proper payload status response if the block is invalid.
     fn on_insert_block_error(
         &mut self,
-        error: InsertBlockError<N::Block>,
+        error: InsertBlockError<BaseBlock>,
     ) -> Result<PayloadStatus, InsertBlockFatalError> {
         let (block, error) = error.split();
 
@@ -3367,7 +3363,7 @@ where
     pub fn find_canonical_header(
         &self,
         hash: B256,
-    ) -> Result<Option<SealedHeader<N::BlockHeader>>, ProviderError> {
+    ) -> Result<Option<SealedHeader<alloy_consensus::Header>>, ProviderError> {
         let mut canonical = self.canonical_in_memory_state.header_by_hash(hash);
 
         if canonical.is_none() {
@@ -3486,7 +3482,7 @@ where
     fn process_payload_attributes(
         &mut self,
         attributes: T::PayloadAttributes,
-        head: &N::BlockHeader,
+        head: &alloy_consensus::Header,
         state: ForkchoiceState,
     ) -> OnForkChoiceUpdated {
         if let Err(err) =
@@ -3574,7 +3570,7 @@ where
     pub fn state_provider_builder(
         &self,
         hash: B256,
-    ) -> ProviderResult<Option<StateProviderBuilder<N, P>>>
+    ) -> ProviderResult<Option<StateProviderBuilder<P>>>
     where
         P: BlockReader + StateProviderFactory + StateReader + Clone,
     {
@@ -3593,13 +3589,12 @@ where
 
 /// Events received in the main engine loop.
 #[derive(Debug)]
-enum LoopEvent<T, N>
+enum LoopEvent<T>
 where
-    N: NodePrimitives,
     T: PayloadTypes,
 {
     /// An engine API message was received.
-    EngineMessage(FromEngine<EngineApiRequest<T, N>, N::Block>),
+    EngineMessage(FromEngine<EngineApiRequest<T>, BaseBlock>),
     /// A persistence task completed.
     PersistenceComplete {
         /// The unified result of the persistence operation.

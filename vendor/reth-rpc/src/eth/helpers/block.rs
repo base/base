@@ -13,7 +13,7 @@ impl<N, Rpc> EthBlocks for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+    Rpc: RpcConvert<Error = EthApiError>,
 {
 }
 
@@ -21,6 +21,6 @@ impl<N, Rpc> LoadBlock for EthApi<N, Rpc>
 where
     Self: LoadPendingBlock,
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+    Rpc: RpcConvert<Error = EthApiError>,
 {
 }

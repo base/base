@@ -4,8 +4,8 @@ use alloy_rpc_types_eth::{
     BlockOverrides, EIP1186AccountProofResponse, Filter, SyncStatus, state::StateOverride,
 };
 use alloy_serde::JsonStorageKey;
+use base_common_consensus::BaseTxEnvelope;
 use jsonrpsee::core::RpcResult as Result;
-use reth_primitives_traits::TxTy;
 use reth_rpc_api::{EngineEthApiServer, EthApiServer};
 use reth_rpc_convert::RpcTxReq;
 /// Re-export for convenience
@@ -53,7 +53,7 @@ where
             RpcBlock<Eth::NetworkTypes>,
             RpcReceipt<Eth::NetworkTypes>,
             RpcHeader<Eth::NetworkTypes>,
-            TxTy<Eth::Primitives>,
+            BaseTxEnvelope,
         > + FullEthApiTypes,
     EthFilter: EngineEthFilter<RpcLog<Eth::NetworkTypes>>,
 {

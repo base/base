@@ -2,7 +2,6 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
     BaseProofStoragePruner, BaseProofsStorage, BaseProofsStore, MdbxProofsStorage,
@@ -76,7 +75,7 @@ pub struct PruneCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
     /// Execute [`PruneCommand`].
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = BasePrimitives>>(
+    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>>(
         self,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()> {

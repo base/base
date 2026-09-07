@@ -17,6 +17,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadSidecar, PraguePayloadFields,
 };
 use async_trait::async_trait;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
@@ -31,9 +32,7 @@ use reth_metrics::{
     metrics::{Gauge, gauge},
 };
 use reth_node_api::{NewPayloadError, PayloadTypes};
-use reth_primitives_traits::{
-    BlockBody, GotExpected, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeaderFor,
-};
+use reth_primitives_traits::{BlockBody, GotExpected, RecoveredBlock, SealedBlock};
 use reth_revm::{cached::CachedReads, database::StateProviderDatabase};
 use reth_rpc_api::BlockSubmissionValidationApiServer;
 use reth_rpc_server_types::result::{internal_rpc_err, invalid_params_rpc_err};
@@ -59,13 +58,11 @@ where
     /// Create a new instance of the [`ValidationApi`]
     pub fn new(
         provider: Provider,
-        consensus: Arc<dyn FullConsensus<E::Primitives>>,
+        consensus: Arc<dyn FullConsensus>,
         evm_config: E,
         config: ValidationApiConfig,
         task_spawner: Runtime,
-        payload_validator: Arc<
-            dyn PayloadValidator<T, Block = <E::Primitives as NodePrimitives>::Block>,
-        >,
+        payload_validator: Arc<dyn PayloadValidator<T, Block = BaseBlock>>,
     ) -> Self {
         let ValidationApiConfig { disallow, validation_window } = config;
 
@@ -109,7 +106,7 @@ where
 
 impl<Provider, E, T> ValidationApi<Provider, E, T>
 where
-    Provider: BlockReaderIdExt<Header = <E::Primitives as NodePrimitives>::BlockHeader>
+    Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + ChainSpecProvider<ChainSpec: EthereumHardforks>
         + StateProviderFactory
         + 'static,
@@ -119,7 +116,7 @@ where
     /// Validates the given block and a [`BidTrace`] against it.
     pub async fn validate_message_against_block(
         &self,
-        block: RecoveredBlock<<E::Primitives as NodePrimitives>::Block>,
+        block: RecoveredBlock<BaseBlock>,
         message: BidTrace,
         registered_gas_limit: u64,
         decoded_bal: Option<DecodedBal>,
@@ -247,7 +244,7 @@ where
     /// Ensures that fields of [`BidTrace`] match the fields of the [`SealedHeaderFor`].
     fn validate_message_against_header(
         &self,
-        header: &SealedHeaderFor<E::Primitives>,
+        header: &reth_primitives_traits::SealedHeader,
         message: &BidTrace,
     ) -> Result<(), ValidationApiError> {
         if header.hash() != message.block_hash {
@@ -281,8 +278,8 @@ where
     /// to checking the latest block transaction.
     fn ensure_payment(
         &self,
-        block: &SealedBlock<<E::Primitives as NodePrimitives>::Block>,
-        output: &BlockExecutionOutput<<E::Primitives as NodePrimitives>::Receipt>,
+        block: &SealedBlock<BaseBlock>,
+        output: &BlockExecutionOutput<BaseReceipt>,
         message: &BidTrace,
     ) -> Result<(), ValidationApiError> {
         let (mut balance_before, balance_after) = if let Some(acc) =
@@ -507,7 +504,7 @@ where
 #[async_trait]
 impl<Provider, E, T> BlockSubmissionValidationApiServer for ValidationApi<Provider, E, T>
 where
-    Provider: BlockReaderIdExt<Header = <E::Primitives as NodePrimitives>::BlockHeader>
+    Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + ChainSpecProvider<ChainSpec: EthereumHardforks>
         + StateProviderFactory
         + Clone
@@ -608,10 +605,9 @@ pub struct ValidationApiInner<Provider, E: ConfigureEvm, T: PayloadTypes> {
     /// The provider that can interact with the chain.
     provider: Provider,
     /// Consensus implementation.
-    consensus: Arc<dyn FullConsensus<E::Primitives>>,
+    consensus: Arc<dyn FullConsensus>,
     /// Execution payload validator.
-    payload_validator:
-        Arc<dyn PayloadValidator<T, Block = <E::Primitives as NodePrimitives>::Block>>,
+    payload_validator: Arc<dyn PayloadValidator<T, Block = BaseBlock>>,
     /// Block executor factory.
     evm_config: E,
     /// Set of disallowed addresses

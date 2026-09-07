@@ -14,7 +14,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
-    AccountChange, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
+    AccountChange, BaseBlock, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
     Eip8130TimestampError, InitialActor, SignedChange,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
@@ -33,8 +33,7 @@ use parking_lot::RwLock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{
-    Block, BlockBody, BlockTy, GotExpected, SealedBlock,
-    transaction::error::InvalidTransactionError,
+    Block, BlockBody, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };
 use reth_storage_api::{
     AccountInfoReader, AccountReader, BlockReaderIdExt, StateProvider, StateProviderFactory,
@@ -2135,7 +2134,7 @@ where
     Evm: ConfigureEvm,
 {
     type Transaction = Tx;
-    type Block = BlockTy<Evm::Primitives>;
+    type Block = BaseBlock;
 
     async fn validate_transaction(
         &self,
@@ -2149,7 +2148,7 @@ where
         self.inner.on_new_head_block(new_tip_block);
         self.update_l1_block_info(
             new_tip_block.header(),
-            new_tip_block.body().transactions().first(),
+            new_tip_block.body().transactions.first(),
         );
     }
 }
@@ -2163,8 +2162,8 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        AccountChange, AccountChangeChannel, BasePrimitives, BaseTransactionSigned, BaseTxEnvelope,
-        ChangeType, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
+        AccountChange, AccountChangeChannel, BaseTransactionSigned, BaseTxEnvelope, ChangeType,
+        CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
         SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -2181,7 +2180,7 @@ mod tests {
     use crate::BasePooledTransaction;
 
     type TestValidator = BaseTransactionValidator<
-        MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        MockEthProvider<Arc<BaseChainSpec>>,
         BasePooledTransaction,
         BaseEvmConfig,
     >;
@@ -2189,9 +2188,8 @@ mod tests {
     /// Builds a [`BaseTransactionValidator`] configured against the given chain spec with
     /// no accounts seeded.
     fn build_test_validator_with_spec(chain_spec: Arc<BaseChainSpec>) -> TestValidator {
-        let client = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::clone(&chain_spec))
-            .with_genesis_block();
+        let client =
+            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
@@ -2211,9 +2209,8 @@ mod tests {
     /// Builds a Cobalt-activated validator with a custom encoded transaction-size limit.
     fn build_test_validator_with_max_tx_input_bytes(max_tx_input_bytes: usize) -> TestValidator {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
-        let client = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::clone(&chain_spec))
-            .with_genesis_block();
+        let client =
+            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
@@ -2229,9 +2226,8 @@ mod tests {
         account: ExtendedAccount,
     ) -> TestValidator {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
-        let client = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::clone(&chain_spec))
-            .with_genesis_block();
+        let client =
+            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
         client.add_account(address, account);
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
@@ -3463,9 +3459,8 @@ mod tests {
             "balance must be insufficient once the operator fee is included"
         );
 
-        let client = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::clone(&chain_spec))
-            .with_genesis_block();
+        let client =
+            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
         client.add_account(sender, ExtendedAccount::new(0, balance));
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
@@ -3527,9 +3522,8 @@ mod tests {
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
 
-        let client = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::clone(&chain_spec))
-            .with_genesis_block();
+        let client =
+            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
         client
             .add_account(sender, ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)));
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
@@ -3595,9 +3589,8 @@ mod tests {
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
 
-        let client = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::clone(&chain_spec))
-            .with_genesis_block();
+        let client =
+            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
         client.add_account(
             signer.address(),
             ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),

@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
@@ -15,7 +14,6 @@ use reth_node_builder::NodeTypes;
 pub struct BaseCliTypes;
 
 impl NodeTypes for BaseCliTypes {
-    type Primitives = BasePrimitives;
     type ChainSpec = BaseChainSpec;
     type Storage = BaseStorage;
     type Payload = BaseEngineTypes;

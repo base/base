@@ -5,13 +5,14 @@ use std::sync::Arc;
 use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{BlockId, TransactionInfo};
+use base_common_consensus::BaseBlock;
 use futures::Future;
 use reth_errors::RethError;
 use reth_evm::{
     ConfigureEvm, Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor, IntoTxEnv, TxEnvFor,
     block::BlockExecutor, evm::EvmFactoryExt, tracing::TracingCtx,
 };
-use reth_primitives_traits::{BlockBody, BlockTy, Recovered, RecoveredBlock};
+use reth_primitives_traits::{BlockBody, Recovered, RecoveredBlock};
 use reth_rpc_eth_types::cache::db::StateCacheDb;
 use reth_storage_api::{ProviderBlock, ProviderTx};
 use revm::{context::Block, context_interface::result::ResultAndState};
@@ -134,7 +135,7 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> + Call {
     fn replay_block_until(
         &self,
         db: &mut StateCacheDb,
-        block: &RecoveredBlock<BlockTy<Self::Primitives>>,
+        block: &RecoveredBlock<BaseBlock>,
         target_tx_index: usize,
     ) -> Result<(), Self::Error> {
         self.apply_pre_execution_changes(block, db)?;
@@ -153,7 +154,7 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> + Call {
     #[expect(clippy::type_complexity)]
     fn inspect_transaction_in_block<'a>(
         &self,
-        block: &RecoveredBlock<BlockTy<Self::Primitives>>,
+        block: &RecoveredBlock<BaseBlock>,
         db: &'a mut StateCacheDb,
         inspector: impl InspectorFor<Self::Evm, &'a mut StateCacheDb>,
         target_tx_index: usize,
@@ -255,7 +256,7 @@ pub trait Trace: LoadState<Error: FromEvmError<Self::Evm>> + Call {
             let Some(block) = block else { return Ok(None) };
             let evm_env = self.evm_env_for_header(block.sealed_block().sealed_header())?;
 
-            if block.body().transactions().is_empty() {
+            if block.body().transactions.is_empty() {
                 // nothing to trace
                 return Ok(Some(Vec::new()));
             }

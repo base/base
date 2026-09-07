@@ -2,11 +2,12 @@
 
 use std::{future::Future, marker::PhantomData};
 
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_chainspec::EthChainSpec;
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_network::{EthNetworkPrimitives, NetworkPrimitives, types::NetPrimitivesFor};
 use reth_network_api::{FullNetwork, noop::NoopNetwork};
-use reth_node_api::{BlockTy, BodyTy, HeaderTy, NodeTypes, PrimitivesTy, ReceiptTy, TxTy};
+use reth_node_api::NodeTypes;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_transaction_pool::{
     EthPoolTransaction, EthPooledTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
@@ -361,10 +362,7 @@ where
             Node,
             PoolB::Pool,
             Network: FullNetwork<
-                Primitives: NetPrimitivesFor<
-                    PrimitivesTy<Node::Types>,
-                    PooledTransaction = PoolPooledTx<PoolB::Pool>,
-                >,
+                Primitives: NetPrimitivesFor<PooledTransaction = PoolPooledTx<PoolB::Pool>>,
             >,
         >,
     PayloadB: PayloadServiceBuilder<Node, PoolB::Pool, ExecB::EVM>,
@@ -440,20 +438,14 @@ pub trait NodeComponentsBuilder<Node: FullNodeTypes>: Send {
 
 impl<Node, Net, F, Fut, Pool, EVM, Cons> NodeComponentsBuilder<Node> for F
 where
-    Net: FullNetwork<
-        Primitives: NetPrimitivesFor<
-            PrimitivesTy<Node::Types>,
-            PooledTransaction = PoolPooledTx<Pool>,
-        >,
-    >,
+    Net: FullNetwork<Primitives: NetPrimitivesFor<PooledTransaction = PoolPooledTx<Pool>>>,
     Node: FullNodeTypes,
     F: FnOnce(&BuilderContext<Node>) -> Fut + Send,
     Fut: Future<Output = eyre::Result<Components<Node, Net, Pool, EVM, Cons>>> + Send,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
-        + Unpin
-        + 'static,
-    EVM: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + 'static,
-    Cons: FullConsensus<PrimitivesTy<Node::Types>> + Clone + Unpin + 'static,
+    Pool:
+        TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
+    EVM: ConfigureEvm + 'static,
+    Cons: FullConsensus + Clone + Unpin + 'static,
 {
     type Components = Components<Node, Net, Pool, EVM, Cons>;
 
@@ -472,7 +464,7 @@ pub struct NoopTransactionPoolBuilder<Tx = EthPooledTransaction>(PhantomData<Tx>
 impl<N, Tx, Evm> PoolBuilder<N, Evm> for NoopTransactionPoolBuilder<Tx>
 where
     N: FullNodeTypes,
-    Tx: EthPoolTransaction<Consensus = TxTy<N::Types>> + Unpin,
+    Tx: EthPoolTransaction<Consensus = BaseTxEnvelope> + Unpin,
     Evm: Send,
 {
     type Pool = NoopTransactionPool<Tx>;
@@ -508,10 +500,10 @@ where
     N: FullNodeTypes,
     Pool: TransactionPool,
     Net: NetworkPrimitives<
-            BlockHeader = HeaderTy<N::Types>,
-            BlockBody = BodyTy<N::Types>,
-            Block = BlockTy<N::Types>,
-            Receipt = ReceiptTy<N::Types>,
+            BlockHeader = alloy_consensus::Header,
+            BlockBody = alloy_consensus::BlockBody<BaseTxEnvelope>,
+            Block = BaseBlock,
+            Receipt = BaseReceipt,
         >,
 {
     type Network = NoopNetwork<Net>;
@@ -554,7 +546,7 @@ impl<N, Pool, EVM> PayloadServiceBuilder<N, Pool, EVM> for NoopPayloadBuilder
 where
     N: FullNodeTypes,
     Pool: TransactionPool,
-    EVM: ConfigureEvm<Primitives = PrimitivesTy<N::Types>> + 'static,
+    EVM: ConfigureEvm + 'static,
 {
     async fn spawn_payload_builder_service(
         self,

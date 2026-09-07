@@ -21,6 +21,7 @@ alloy-consensus = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [features]
 default = ["std"]

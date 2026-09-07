@@ -1,7 +1,8 @@
 use std::marker::PhantomData;
 
+use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_builder::{
-    Attributes, PayloadPrimitives,
+    Attributes,
     config::{BaseDAConfig, GasLimitConfig},
 };
 use base_execution_rpc::{
@@ -13,7 +14,7 @@ use base_execution_rpc::{
 use base_execution_txpool::BasePooledTx;
 use base_node_core::{BaseEngineApiBuilder, BaseNodeTypes, BasePayloadValidatorBuilder};
 use reth_evm::ConfigureEvm;
-use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
+use reth_node_api::{BuildNextEnv, FullNodeComponents, NodeAddOns, PayloadTypes};
 use reth_node_builder::{
     node::NodeTypes,
     rpc::{
@@ -22,7 +23,6 @@ use reth_node_builder::{
         RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
     },
 };
-use reth_primitives_traits::header::HeaderMut;
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
@@ -184,7 +184,7 @@ where
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     Attrs,
-                    HeaderTy<N::Types>,
+                    alloy_consensus::Header,
                     base_execution_chainspec::BaseChainSpec,
                 >,
             >,
@@ -196,10 +196,9 @@ where
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
     Attrs: Attributes<
-            Transaction = TxTy<N::Types>,
+            Transaction = BaseTxEnvelope,
             RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
         >,
-    <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type Handle = RpcHandle<N, EthB::EthApi>;
 
@@ -266,7 +265,7 @@ where
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     Attrs,
-                    HeaderTy<N::Types>,
+                    alloy_consensus::Header,
                     base_execution_chainspec::BaseChainSpec,
                 >,
             >,
@@ -278,10 +277,9 @@ where
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
     Attrs: Attributes<
-            Transaction = TxTy<N::Types>,
+            Transaction = BaseTxEnvelope,
             RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
         >,
-    <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type EthApi = EthB::EthApi;
 

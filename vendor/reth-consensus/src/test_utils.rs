@@ -1,8 +1,9 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use alloy_primitives::B256;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use reth_execution_types::BlockExecutionResult;
-use reth_primitives_traits::{Block, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader};
+use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SealedHeader};
 
 use crate::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 
@@ -49,11 +50,11 @@ impl TestConsensus {
     }
 }
 
-impl<N: NodePrimitives> FullConsensus<N> for TestConsensus {
+impl FullConsensus for TestConsensus {
     fn validate_block_post_execution(
         &self,
-        _block: &RecoveredBlock<N::Block>,
-        _result: &BlockExecutionResult<N::Receipt>,
+        _block: &RecoveredBlock<BaseBlock>,
+        _result: &BlockExecutionResult<BaseReceipt>,
         _receipt_root_bloom: Option<ReceiptRootBloom>,
         _block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {

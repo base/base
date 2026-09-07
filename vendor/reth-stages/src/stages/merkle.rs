@@ -477,6 +477,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use assert_matches::assert_matches;
+    use base_common_consensus::BaseBlock;
     use reth_db_api::cursor::{DbCursorRO, DbDupCursorRO};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::{
@@ -486,8 +487,7 @@ mod tests {
     use reth_stages_api::StageUnitCheckpoint;
     use reth_static_file_types::StaticFileSegment;
     use reth_testing_utils::generators::{
-        self, BlockParams, BlockRangeParams, random_block, random_block_range,
-        random_changeset_range, random_contract_account_range,
+        self, BlockParams, BlockRangeParams, random_changeset_range, random_contract_account_range,
     };
     use reth_trie::test_utils::{state_root, state_root_prehashed};
 
@@ -674,7 +674,7 @@ mod tests {
     }
 
     impl ExecuteStageTestRunner for MerkleTestRunner {
-        type Seed = Vec<SealedBlock<reth_ethereum_primitives::Block>>;
+        type Seed = Vec<SealedBlock<BaseBlock>>;
 
         fn seed_execution(&mut self, input: ExecInput) -> Result<Self::Seed, TestRunnerError> {
             let stage_progress = input.checkpoint().block_number;
@@ -684,7 +684,7 @@ mod tests {
 
             let mut preblocks = vec![];
             if stage_progress > 0 {
-                preblocks.append(&mut random_block_range(
+                preblocks.append(&mut reth_testing_utils::BaseTestData::random_block_range(
                     &mut rng,
                     0..=stage_progress - 1,
                     BlockRangeParams {
@@ -705,7 +705,7 @@ mod tests {
                 accounts.iter().map(|(addr, acc)| (*addr, (*acc, std::iter::empty()))),
             )?;
 
-            let (header, body) = random_block(
+            let (header, body) = reth_testing_utils::BaseTestData::random_block(
                 &mut rng,
                 stage_progress,
                 BlockParams { parent: preblocks.last().map(|b| b.hash()), ..Default::default() },
@@ -719,14 +719,12 @@ mod tests {
                     .into_iter()
                     .map(|(address, account)| (address, (account, std::iter::empty()))),
             );
-            let sealed_head = SealedBlock::<reth_ethereum_primitives::Block>::from_sealed_parts(
-                SealedHeader::seal_slow(header),
-                body,
-            );
+            let sealed_head =
+                SealedBlock::<BaseBlock>::from_sealed_parts(SealedHeader::seal_slow(header), body);
 
             let head_hash = sealed_head.hash();
             let mut blocks = vec![sealed_head];
-            blocks.extend(random_block_range(
+            blocks.extend(reth_testing_utils::BaseTestData::random_block_range(
                 &mut rng,
                 start..=end,
                 BlockRangeParams { parent: Some(head_hash), tx_count: 0..3, ..Default::default() },

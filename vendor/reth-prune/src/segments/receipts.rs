@@ -3,12 +3,11 @@
 //! - [`crate::segments::user::Receipts`] is responsible for pruning receipts according to the
 //!   user-configured settings (for example, on a full node or with a custom prune config)
 
-use reth_db_api::{table::Value, tables, transaction::DbTxMut};
-use reth_primitives_traits::NodePrimitives;
+use base_common_consensus::BaseReceipt;
+use reth_db_api::{tables, transaction::DbTxMut};
 use reth_provider::{
-    BlockReader, DBProvider, EitherWriter, NodePrimitivesProvider, PruneCheckpointWriter,
-    StaticFileProviderFactory, StorageSettingsCache, TransactionsProvider,
-    errors::provider::ProviderResult,
+    BlockReader, DBProvider, EitherWriter, PruneCheckpointWriter, StaticFileProviderFactory,
+    StorageSettingsCache, TransactionsProvider, errors::provider::ProviderResult,
 };
 use reth_prune_types::{PruneCheckpoint, PruneSegment, SegmentOutput, SegmentOutputCheckpoint};
 use reth_static_file_types::StaticFileSegment;
@@ -29,8 +28,7 @@ where
         + TransactionsProvider
         + BlockReader
         + StorageSettingsCache
-        + StaticFileProviderFactory
-        + NodePrimitivesProvider<Primitives: NodePrimitives<Receipt: Value>>,
+        + StaticFileProviderFactory,
 {
     if EitherWriter::receipts_destination(provider).is_static_file() {
         debug!(target: "pruner", "Pruning receipts from static files.");
@@ -51,14 +49,13 @@ where
     let mut limiter = input.limiter;
 
     let mut last_pruned_transaction = tx_range_end;
-    let (pruned, done) = provider.tx_ref().prune_table_with_range::<tables::Receipts<
-        <Provider::Primitives as NodePrimitives>::Receipt,
-    >>(
-        tx_range,
-        &mut limiter,
-        |_| false,
-        |row| last_pruned_transaction = row.0,
-    )?;
+    let (pruned, done) =
+        provider.tx_ref().prune_table_with_range::<tables::Receipts<BaseReceipt>>(
+            tx_range,
+            &mut limiter,
+            |_| false,
+            |row| last_pruned_transaction = row.0,
+        )?;
     trace!(target: "pruner", %pruned, %done, "Pruned receipts");
 
     let last_pruned_block = provider

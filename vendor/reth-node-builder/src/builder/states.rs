@@ -320,20 +320,17 @@ where
 
 #[cfg(test)]
 mod test {
+    use base_common_consensus::BaseTxEnvelope;
     use reth_chainspec::ChainSpec;
     use reth_consensus::noop::NoopConsensus;
     use reth_db_api::mock::DatabaseMock;
     use reth_engine_primitives::TestEngineTypes;
-    use reth_ethereum_primitives::EthPrimitives;
-    use reth_evm::MockEvmConfig;
-    use reth_evm::noop::NoopEvmConfig;
-    use reth_network::EthNetworkPrimitives;
+    use reth_evm::{MockEvmConfig, noop::NoopEvmConfig};
+    use reth_network::primitives::BasicNetworkPrimitives;
     use reth_network_api::noop::NoopNetwork;
-    use reth_node_api::AnyNodeTypes;
-    use reth_node_api::FullNodeTypesAdapter;
+    use reth_node_api::{AnyNodeTypes, FullNodeTypesAdapter};
     use reth_payload_builder::PayloadBuilderHandle;
-    use reth_provider::EthStorage;
-    use reth_provider::noop::NoopProvider;
+    use reth_provider::{EthStorage, noop::NoopProvider};
     use reth_tasks::Runtime;
     use reth_transaction_pool::noop::NoopTransactionPool;
 
@@ -344,19 +341,20 @@ mod test {
     fn test_noop_components() {
         let components = Components::<
             FullNodeTypesAdapter<
-                AnyNodeTypes<EthPrimitives, ChainSpec, EthStorage, TestEngineTypes>,
+                AnyNodeTypes<ChainSpec, EthStorage<BaseTxEnvelope>, TestEngineTypes>,
                 DatabaseMock,
                 NoopProvider,
             >,
-            NoopNetwork<EthNetworkPrimitives>,
+            NoopNetwork<BasicNetworkPrimitives<base_common_consensus::BasePooledTransaction>>,
             _,
             NoopEvmConfig<MockEvmConfig>,
             _,
         > {
-            transaction_pool: NoopTransactionPool::default(),
+            transaction_pool:
+                NoopTransactionPool::<base_execution_txpool::BasePooledTransaction>::new(),
             evm_config: NoopEvmConfig::default(),
             consensus: NoopConsensus::default(),
-            network: NoopNetwork::default(),
+            network: NoopNetwork::new(),
             payload_builder_handle: PayloadBuilderHandle::<TestEngineTypes>::noop(),
         };
 

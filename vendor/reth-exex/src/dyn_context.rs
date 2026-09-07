@@ -5,8 +5,7 @@ use std::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use reth_chainspec::EthChainSpec;
-use reth_ethereum_primitives::EthPrimitives;
-use reth_node_api::{FullNodeComponents, HeaderTy, NodePrimitives, NodeTypes, PrimitivesTy};
+use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::BlockReader;
 use tokio::sync::mpsc;
@@ -15,11 +14,11 @@ use crate::{ExExContext, ExExEvent, ExExNotificationsStream};
 
 // TODO(0xurb) - add `node` after abstractions
 /// Captures the context that an `ExEx` has access to.
-pub struct ExExContextDyn<N: NodePrimitives = EthPrimitives> {
+pub struct ExExContextDyn {
     /// The current head of the blockchain at launch.
     pub head: BlockNumHash,
     /// The config of the node
-    pub config: NodeConfig<Box<dyn EthChainSpec<Header = N::BlockHeader> + 'static>>,
+    pub config: NodeConfig<Box<dyn EthChainSpec<Header = alloy_consensus::Header> + 'static>>,
     /// The loaded node config
     pub reth_config: reth_config::Config,
     /// Channel used to send [`ExExEvent`]s to the rest of the node.
@@ -36,10 +35,10 @@ pub struct ExExContextDyn<N: NodePrimitives = EthPrimitives> {
     ///
     /// Once an [`ExExNotification`](crate::ExExNotification) is sent over the channel, it is
     /// considered delivered by the node.
-    pub notifications: Box<dyn ExExNotificationsStream<N>>,
+    pub notifications: Box<dyn ExExNotificationsStream>,
 }
 
-impl<N: NodePrimitives> Debug for ExExContextDyn<N> {
+impl Debug for ExExContextDyn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExExContext")
             .field("head", &self.head)
@@ -51,14 +50,14 @@ impl<N: NodePrimitives> Debug for ExExContextDyn<N> {
     }
 }
 
-impl<Node> From<ExExContext<Node>> for ExExContextDyn<PrimitivesTy<Node::Types>>
+impl<Node> From<ExExContext<Node>> for ExExContextDyn
 where
-    Node: FullNodeComponents<Types: NodeTypes<Primitives: NodePrimitives>>,
+    Node: FullNodeComponents<Types: NodeTypes>,
     Node::Provider: Debug + BlockReader,
 {
     fn from(ctx: ExExContext<Node>) -> Self {
         let config = ctx.config.map_chainspec(|chainspec| {
-            Box::new(chainspec) as Box<dyn EthChainSpec<Header = HeaderTy<Node::Types>>>
+            Box::new(chainspec) as Box<dyn EthChainSpec<Header = alloy_consensus::Header>>
         });
         let notifications = Box::new(ctx.notifications) as Box<_>;
 

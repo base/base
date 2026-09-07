@@ -5,7 +5,6 @@ use std::{
     sync::Arc,
 };
 
-use alloy_consensus::transaction::TxHashRef;
 use alloy_primitives::{
     Address, B256, BlockNumber, TxNumber,
     map::{AddressMap, HashMap},
@@ -1374,9 +1373,9 @@ impl RocksDBProvider {
     /// the provided storage settings. Each operation runs in parallel with its own batch,
     /// pushing to `ctx.pending_batches` for later commit.
     #[instrument(level = "debug", target = "providers::rocksdb", skip_all, fields(num_blocks = blocks.len(), first_block = ctx.first_block_number))]
-    pub(crate) fn write_blocks_data<N: reth_node_types::NodePrimitives>(
+    pub(crate) fn write_blocks_data(
         &self,
-        blocks: &[ExecutedBlock<N>],
+        blocks: &[ExecutedBlock],
         tx_nums: &[TxNumber],
         ctx: RocksDBWriteCtx,
         runtime: &reth_tasks::Runtime,
@@ -1434,9 +1433,9 @@ impl RocksDBProvider {
 
     /// Writes transaction hash to number mappings for the given blocks.
     #[instrument(level = "debug", target = "providers::rocksdb", skip_all)]
-    fn write_tx_hash_numbers<N: reth_node_types::NodePrimitives>(
+    fn write_tx_hash_numbers(
         &self,
-        blocks: &[ExecutedBlock<N>],
+        blocks: &[ExecutedBlock],
         tx_nums: &[TxNumber],
         ctx: &RocksDBWriteCtx,
     ) -> ProviderResult<()> {
@@ -1444,7 +1443,7 @@ impl RocksDBProvider {
         for (block, &first_tx_num) in blocks.iter().zip(tx_nums) {
             let body = block.recovered_block().body();
             for (tx_num, transaction) in (first_tx_num..).zip(body.transactions_iter()) {
-                batch.put::<tables::TransactionHashNumbers>(*transaction.tx_hash(), &tx_num)?;
+                batch.put::<tables::TransactionHashNumbers>(transaction.tx_hash(), &tx_num)?;
             }
         }
         ctx.pending_batches.lock().push(batch.into_inner());
@@ -1455,9 +1454,9 @@ impl RocksDBProvider {
     ///
     /// Derives history indices from reverts (same source as changesets) to ensure consistency.
     #[instrument(level = "debug", target = "providers::rocksdb", skip_all)]
-    fn write_account_history<N: reth_node_types::NodePrimitives>(
+    fn write_account_history(
         &self,
-        blocks: &[ExecutedBlock<N>],
+        blocks: &[ExecutedBlock],
         ctx: &RocksDBWriteCtx,
     ) -> ProviderResult<()> {
         let mut account_history: BTreeMap<Address, Vec<u64>> = BTreeMap::new();
@@ -1482,9 +1481,9 @@ impl RocksDBProvider {
     ///
     /// Derives history indices from reverts (same source as changesets) to ensure consistency.
     #[instrument(level = "debug", target = "providers::rocksdb", skip_all)]
-    fn write_storage_history<N: reth_node_types::NodePrimitives>(
+    fn write_storage_history(
         &self,
-        blocks: &[ExecutedBlock<N>],
+        blocks: &[ExecutedBlock],
         ctx: &RocksDBWriteCtx,
     ) -> ProviderResult<()> {
         let mut storage_history: BTreeMap<(Address, B256), Vec<u64>> = BTreeMap::new();

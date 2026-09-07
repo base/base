@@ -9,8 +9,7 @@ use std::collections::HashSet;
 use alloy_primitives::BlockNumber;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_db::models::{ShardedKey, storage_sharded_key::StorageShardedKey};
-use reth_db_api::{table::Value, tables};
-use reth_primitives_traits::NodePrimitives;
+use reth_db_api::tables;
 use reth_stages_types::StageId;
 use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
@@ -60,9 +59,7 @@ impl RocksDBProvider {
             + StorageChangeSetReader
             + ChangeSetReader
             + ChainSpecProvider
-            + StaticFileProviderFactory<
-                Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-            >,
+            + StaticFileProviderFactory,
     {
         let mut unwind_target: Option<BlockNumber> = None;
 
@@ -98,9 +95,7 @@ impl RocksDBProvider {
         Provider: DBProvider
             + StageCheckpointReader
             + BlockBodyIndicesProvider
-            + StaticFileProviderFactory<
-                Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-            >,
+            + StaticFileProviderFactory,
     {
         let checkpoint = provider
             .get_stage_checkpoint(StageId::TransactionLookup)?
@@ -218,9 +213,7 @@ impl RocksDBProvider {
         tx_range: std::ops::RangeInclusive<u64>,
     ) -> ProviderResult<()>
     where
-        Provider: StaticFileProviderFactory<
-            Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-        >,
+        Provider: StaticFileProviderFactory,
     {
         if tx_range.is_empty() {
             return Ok(());
@@ -610,7 +603,7 @@ mod tests {
 
         // Generate blocks with real transactions and insert them
         let mut rng = generators::rng();
-        let blocks = generators::random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=2,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -625,7 +618,7 @@ mod tests {
                     .insert_block(&block.clone().try_recover().expect("recover block"))
                     .unwrap();
                 for tx in &block.body().transactions {
-                    let hash = *tx.tx_hash();
+                    let hash = tx.tx_hash();
                     tx_hashes.push(hash);
                     rocksdb.put::<tables::TransactionHashNumbers>(hash, &tx_count).unwrap();
                     tx_count += 1;
@@ -738,7 +731,7 @@ mod tests {
 
         // Generate blocks with real transactions (blocks 0-2, 6 transactions total)
         let mut rng = generators::rng();
-        let blocks = generators::random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=2,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -752,7 +745,7 @@ mod tests {
                     .insert_block(&block.clone().try_recover().expect("recover block"))
                     .unwrap();
                 for tx in &block.body().transactions {
-                    let hash = *tx.tx_hash();
+                    let hash = tx.tx_hash();
                     rocksdb.put::<tables::TransactionHashNumbers>(hash, &tx_count).unwrap();
                     tx_count += 1;
                 }
@@ -797,7 +790,7 @@ mod tests {
         // Generate blocks with real transactions:
         // Blocks 0-5, each with 2 transactions = 12 total transactions (0-11)
         let mut rng = generators::rng();
-        let blocks = generators::random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=5,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -814,7 +807,7 @@ mod tests {
                     .insert_block(&block.clone().try_recover().expect("recover block"))
                     .unwrap();
                 for tx in &block.body().transactions {
-                    let hash = *tx.tx_hash();
+                    let hash = tx.tx_hash();
                     tx_hashes.push(hash);
                     rocksdb.put::<tables::TransactionHashNumbers>(hash, &tx_count).unwrap();
                     tx_count += 1;
@@ -984,7 +977,7 @@ mod tests {
         // Block 0 (genesis) has no transactions
         // Blocks 1-5 each have 2 transactions = 10 transactions total
         let mut rng = generators::rng();
-        let blocks = generators::random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=5,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -1003,7 +996,7 @@ mod tests {
 
                 // Store transaction hash -> tx_number mappings in RocksDB
                 for tx in &block.body().transactions {
-                    let hash = *tx.tx_hash();
+                    let hash = tx.tx_hash();
                     tx_hashes.push(hash);
                     rocksdb.put::<tables::TransactionHashNumbers>(hash, &tx_count).unwrap();
                     tx_count += 1;

@@ -1,5 +1,4 @@
-use reth_db_api::{table::Value, transaction::DbTxMut};
-use reth_primitives_traits::NodePrimitives;
+use reth_db_api::transaction::DbTxMut;
 use reth_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StageCheckpointReader, StaticFileProviderFactory,
@@ -45,9 +44,8 @@ where
         + BlockReader
         + ChainStateBlockReader
         + StageCheckpointReader
-        + StaticFileProviderFactory<
-            Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-        > + StorageSettingsCache
+        + StaticFileProviderFactory
+        + StorageSettingsCache
         + ChangeSetReader
         + StorageChangeSetReader
         + RocksDBProviderFactory,
@@ -153,9 +151,8 @@ where
         + BlockReader
         + ChainStateBlockReader
         + StageCheckpointReader
-        + StaticFileProviderFactory<
-            Primitives: NodePrimitives<SignedTx: Value, Receipt: Value, BlockHeader: Value>,
-        > + StorageSettingsCache
+        + StaticFileProviderFactory
+        + StorageSettingsCache
         + ChangeSetReader
         + StorageChangeSetReader
         + RocksDBProviderFactory,
@@ -193,13 +190,13 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use reth_ethereum_primitives::Block;
+    use base_common_consensus::BaseBlock as Block;
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use reth_provider::{
         TransactionsProvider, TransactionsProviderExt, providers::StaticFileWriter,
     };
     use reth_prune::PruneMode;
-    use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
+    use reth_testing_utils::generators::{self, BlockRangeParams};
 
     use super::*;
     use crate::test_utils::{
@@ -237,7 +234,7 @@ mod tests {
 
         fn seed_execution(&mut self, input: ExecInput) -> Result<Self::Seed, TestRunnerError> {
             let mut rng = generators::rng();
-            let blocks = random_block_range(
+            let blocks = reth_testing_utils::BaseTestData::random_block_range(
                 &mut rng,
                 input.checkpoint().block_number..=input.target(),
                 BlockRangeParams { parent: Some(B256::ZERO), tx_count: 1..3, ..Default::default() },

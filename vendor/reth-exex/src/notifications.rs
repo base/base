@@ -8,11 +8,10 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
+use base_common_consensus::BaseBlock;
 use futures::{Stream, StreamExt};
-use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::ConfigureEvm;
 use reth_exex_types::ExExHead;
-use reth_node_api::NodePrimitives;
 use reth_provider::{BlockNumReader, BlockReader, Chain, HeaderProvider, StateProviderFactory};
 use reth_stages_api::ExecutionStageThresholds;
 use reth_tracing::tracing::debug;
@@ -34,9 +33,7 @@ where
 /// A trait, that represents a stream of [`ExExNotification`]s. The stream will emit notifications
 /// for all blocks. If the stream is configured with a head via [`ExExNotifications::set_with_head`]
 /// or [`ExExNotifications::with_head`], it will run backfill jobs to catch up to the node head.
-pub trait ExExNotificationsStream<N: NodePrimitives = EthPrimitives>:
-    Stream<Item = eyre::Result<ExExNotification<N>>> + Unpin
-{
+pub trait ExExNotificationsStream: Stream<Item = eyre::Result<ExExNotification>> + Unpin {
     /// Sets [`ExExNotificationsStream`] to a stream of [`ExExNotification`]s without a head.
     ///
     /// It's a no-op if the stream has already been configured without a head.
@@ -114,8 +111,8 @@ where
         node_head: BlockNumHash,
         provider: P,
         evm_config: E,
-        notifications: Receiver<ExExNotification<E::Primitives>>,
-        wal_handle: WalHandle<E::Primitives>,
+        notifications: Receiver<ExExNotification>,
+        wal_handle: WalHandle,
     ) -> Self {
         Self {
             inner: ExExNotificationsInner::WithoutHead(ExExNotificationsWithoutHead::new(
@@ -164,10 +161,15 @@ where
     }
 }
 
-impl<P, E> ExExNotificationsStream<E::Primitives> for ExExNotifications<P, E>
+impl<P, E> ExExNotificationsStream for ExExNotifications<P, E>
 where
-    P: BlockReader + HeaderProvider + StateProviderFactory + Clone + Unpin + 'static,
-    E: ConfigureEvm<Primitives: NodePrimitives<Block = P::Block>> + Clone + Unpin + 'static,
+    P: BlockReader<Block = BaseBlock>
+        + HeaderProvider
+        + StateProviderFactory
+        + Clone
+        + Unpin
+        + 'static,
+    E: ConfigureEvm + Clone + Unpin + 'static,
 {
     fn set_without_head(&mut self) {
         let current = std::mem::replace(&mut self.inner, ExExNotificationsInner::Invalid);
@@ -223,10 +225,15 @@ where
 
 impl<P, E> Stream for ExExNotifications<P, E>
 where
-    P: BlockReader + HeaderProvider + StateProviderFactory + Clone + Unpin + 'static,
-    E: ConfigureEvm<Primitives: NodePrimitives<Block = P::Block>> + 'static,
+    P: BlockReader<Block = BaseBlock>
+        + HeaderProvider
+        + StateProviderFactory
+        + Clone
+        + Unpin
+        + 'static,
+    E: ConfigureEvm + 'static,
 {
-    type Item = eyre::Result<ExExNotification<E::Primitives>>;
+    type Item = eyre::Result<ExExNotification>;
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
@@ -250,8 +257,8 @@ where
     node_head: BlockNumHash,
     provider: P,
     evm_config: E,
-    notifications: Receiver<ExExNotification<E::Primitives>>,
-    wal_handle: WalHandle<E::Primitives>,
+    notifications: Receiver<ExExNotification>,
+    wal_handle: WalHandle,
 }
 
 impl<P: Debug, E> Debug for ExExNotificationsWithoutHead<P, E>
@@ -276,8 +283,8 @@ where
         node_head: BlockNumHash,
         provider: P,
         evm_config: E,
-        notifications: Receiver<ExExNotification<E::Primitives>>,
-        wal_handle: WalHandle<E::Primitives>,
+        notifications: Receiver<ExExNotification>,
+        wal_handle: WalHandle,
     ) -> Self {
         Self { node_head, provider, evm_config, notifications, wal_handle }
     }
@@ -299,7 +306,7 @@ impl<P: Unpin, E> Stream for ExExNotificationsWithoutHead<P, E>
 where
     E: ConfigureEvm,
 {
-    type Item = ExExNotification<E::Primitives>;
+    type Item = ExExNotification;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.get_mut().notifications.poll_recv(cx)
@@ -323,8 +330,8 @@ where
     initial_local_head: BlockNumHash,
     provider: P,
     evm_config: E,
-    notifications: Receiver<ExExNotification<E::Primitives>>,
-    wal_handle: WalHandle<E::Primitives>,
+    notifications: Receiver<ExExNotification>,
+    wal_handle: WalHandle,
     /// The exex head at launch
     initial_exex_head: ExExHead,
 
@@ -335,12 +342,12 @@ where
     /// the missing blocks.
     pending_check_backfill: bool,
     /// The backfill job to run before consuming any notifications.
-    backfill_job: Option<StreamBackfillJob<E, P, Chain<E::Primitives>>>,
+    backfill_job: Option<StreamBackfillJob<E, P, Chain>>,
     /// Custom thresholds for the backfill job, if set.
     backfill_thresholds: Option<ExecutionStageThresholds>,
     /// Notifications that arrived during backfill and need to be delivered after it completes.
     /// These are notifications for blocks beyond the backfill range that we must not drop.
-    pending_notifications: VecDeque<ExExNotification<E::Primitives>>,
+    pending_notifications: VecDeque<ExExNotification>,
 }
 
 impl<P, E> ExExNotificationsWithHead<P, E>
@@ -352,8 +359,8 @@ where
         node_head: BlockNumHash,
         provider: P,
         evm_config: E,
-        notifications: Receiver<ExExNotification<E::Primitives>>,
-        wal_handle: WalHandle<E::Primitives>,
+        notifications: Receiver<ExExNotification>,
+        wal_handle: WalHandle,
         exex_head: ExExHead,
     ) -> Self {
         Self {
@@ -387,15 +394,20 @@ where
 
 impl<P, E> ExExNotificationsWithHead<P, E>
 where
-    P: BlockReader + HeaderProvider + StateProviderFactory + Clone + Unpin + 'static,
-    E: ConfigureEvm<Primitives: NodePrimitives<Block = P::Block>> + Clone + Unpin + 'static,
+    P: BlockReader<Block = BaseBlock>
+        + HeaderProvider
+        + StateProviderFactory
+        + Clone
+        + Unpin
+        + 'static,
+    E: ConfigureEvm + Clone + Unpin + 'static,
 {
     /// Checks if the ExEx head is on the canonical chain.
     ///
     /// If the head block is not found in the database or it's ahead of the node head, it means
     /// we're not on the canonical chain and we need to revert the notification with the ExEx
     /// head block.
-    fn check_canonical(&mut self) -> eyre::Result<Option<ExExNotification<E::Primitives>>> {
+    fn check_canonical(&mut self) -> eyre::Result<Option<ExExNotification>> {
         if self.provider.is_known(self.initial_exex_head.block.hash)?
             && self.initial_exex_head.block.number <= self.initial_local_head.number
         {
@@ -477,10 +489,15 @@ where
 
 impl<P, E> Stream for ExExNotificationsWithHead<P, E>
 where
-    P: BlockReader + HeaderProvider + StateProviderFactory + Clone + Unpin + 'static,
-    E: ConfigureEvm<Primitives: NodePrimitives<Block = P::Block>> + Clone + Unpin + 'static,
+    P: BlockReader<Block = BaseBlock>
+        + HeaderProvider
+        + StateProviderFactory
+        + Clone
+        + Unpin
+        + 'static,
+    E: ConfigureEvm + Clone + Unpin + 'static,
 {
-    type Item = eyre::Result<ExExNotification<E::Primitives>>;
+    type Item = eyre::Result<ExExNotification>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -573,17 +590,17 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_eips::BlockNumHash;
+    use base_common_consensus::BaseBlock;
     use eyre::OptionExt;
     use futures::StreamExt;
     use reth_db_common::init::init_genesis;
-    use reth_ethereum_primitives::Block;
     use reth_evm::TestEvmConfig;
     use reth_primitives_traits::Block as _;
     use reth_provider::{
         BlockWriter, Chain, DBProvider, DatabaseProviderFactory, providers::BlockchainProvider,
         test_utils::create_test_provider_factory,
     };
-    use reth_testing_utils::generators::{self, BlockParams, random_block};
+    use reth_testing_utils::generators::{self, BlockParams};
     use tokio::sync::mpsc;
 
     use super::*;
@@ -604,7 +621,7 @@ mod tests {
 
         let provider = BlockchainProvider::new(provider_factory.clone())?;
 
-        let node_head_block = random_block(
+        let node_head_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -620,7 +637,7 @@ mod tests {
         let notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    random_block(
+                    reth_testing_utils::BaseTestData::random_block(
                         &mut rng,
                         node_head.number + 1,
                         BlockParams { parent: Some(node_head.hash), ..Default::default() },
@@ -697,7 +714,7 @@ mod tests {
         notifications.set_with_head(exex_head);
 
         // Block 1 is delivered live and consumed, but the ExEx fails to durably process it.
-        let node_head_block = random_block(
+        let node_head_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -730,7 +747,7 @@ mod tests {
         let block_2_notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    random_block(
+                    reth_testing_utils::BaseTestData::random_block(
                         &mut rng,
                         node_head.number + 1,
                         BlockParams { parent: Some(node_head.hash), ..Default::default() },
@@ -780,7 +797,7 @@ mod tests {
         let notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    Block {
+                    BaseBlock {
                         header: Header {
                             parent_hash: node_head.hash,
                             number: node_head.number + 1,
@@ -830,7 +847,7 @@ mod tests {
 
         let provider = BlockchainProvider::new(provider_factory)?;
 
-        let node_head_block = random_block(
+        let node_head_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -849,7 +866,7 @@ mod tests {
             ),
         };
 
-        let exex_head_block = random_block(
+        let exex_head_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -867,7 +884,7 @@ mod tests {
         let new_notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    random_block(
+                    reth_testing_utils::BaseTestData::random_block(
                         &mut rng,
                         node_head.number + 1,
                         BlockParams { parent: Some(node_head.hash), ..Default::default() },
@@ -923,7 +940,7 @@ mod tests {
 
         let provider = BlockchainProvider::new(provider_factory)?;
 
-        let exex_head_block = random_block(
+        let exex_head_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -945,7 +962,7 @@ mod tests {
         let new_notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    random_block(
+                    reth_testing_utils::BaseTestData::random_block(
                         &mut rng,
                         genesis_block.number + 1,
                         BlockParams { parent: Some(genesis_hash), ..Default::default() },
@@ -1011,7 +1028,7 @@ mod tests {
         let provider = BlockchainProvider::new(provider_factory.clone())?;
 
         // Insert block 1 into the DB so there's something to backfill
-        let node_head_block = random_block(
+        let node_head_block = reth_testing_utils::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -1030,7 +1047,7 @@ mod tests {
         let post_backfill_notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    random_block(
+                    reth_testing_utils::BaseTestData::random_block(
                         &mut rng,
                         node_head.number + 1,
                         BlockParams { parent: Some(node_head.hash), ..Default::default() },
@@ -1046,7 +1063,7 @@ mod tests {
         let probe_notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    random_block(
+                    reth_testing_utils::BaseTestData::random_block(
                         &mut rng,
                         node_head.number + 2,
                         BlockParams { parent: None, ..Default::default() },

@@ -12,7 +12,6 @@ mod tests {
     use std::{fs::OpenOptions, io::Write as _, path::PathBuf};
 
     use alloy_primitives::{Address, U256};
-    use reth_chain_state::EthPrimitives;
     use reth_db::{models::AccountBeforeTx, test_utils::create_test_static_files_dir};
     use reth_primitives_traits::Account;
     use reth_static_file_types::{ChangesetOffset, ChangesetOffsetReader, StaticFileSegment};
@@ -28,7 +27,7 @@ mod tests {
     fn setup_test_provider(
         static_dir: &tempfile::TempDir,
         blocks_per_file: u64,
-    ) -> StaticFileProvider<EthPrimitives> {
+    ) -> StaticFileProvider {
         StaticFileProviderBuilder::read_write(static_dir)
             .with_blocks_per_file(blocks_per_file)
             .build()
@@ -57,7 +56,7 @@ mod tests {
     /// Writes test blocks to the `AccountChangeSets` segment.
     /// Returns the path to the sidecar file.
     fn write_test_blocks(
-        provider: &StaticFileProvider<EthPrimitives>,
+        provider: &StaticFileProvider,
         num_blocks: u64,
         changes_per_block: usize,
     ) -> PathBuf {
@@ -75,7 +74,7 @@ mod tests {
     }
 
     /// Gets the .csoff sidecar path for a given block.
-    fn get_sidecar_path(provider: &StaticFileProvider<EthPrimitives>, block: u64) -> PathBuf {
+    fn get_sidecar_path(provider: &StaticFileProvider, block: u64) -> PathBuf {
         let range = provider.find_fixed_range(StaticFileSegment::AccountChangeSets, block);
         let filename = StaticFileSegment::AccountChangeSets.filename(&range);
         provider.directory().join(filename).with_extension("csoff")
@@ -118,7 +117,7 @@ mod tests {
     }
 
     /// Reads the `changeset_offsets_len` from the segment header.
-    fn get_header_block_count(provider: &StaticFileProvider<EthPrimitives>, block: u64) -> u64 {
+    fn get_header_block_count(provider: &StaticFileProvider, block: u64) -> u64 {
         let jar_provider = provider
             .get_segment_provider_for_block(StaticFileSegment::AccountChangeSets, block, None)
             .unwrap();
@@ -126,7 +125,7 @@ mod tests {
     }
 
     /// Gets the actual row count from `NippyJar`.
-    fn get_nippy_row_count(provider: &StaticFileProvider<EthPrimitives>, block: u64) -> u64 {
+    fn get_nippy_row_count(provider: &StaticFileProvider, block: u64) -> u64 {
         let jar_provider = provider
             .get_segment_provider_for_block(StaticFileSegment::AccountChangeSets, block, None)
             .unwrap();

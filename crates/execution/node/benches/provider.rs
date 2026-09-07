@@ -4,10 +4,10 @@ use std::{cell::Cell, hint::black_box, time::Duration};
 
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256, U256, map::HashMap};
+use base_common_consensus::BaseBlock as Block;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use reth_db_api::models::StorageSettings;
 use reth_db_common::init::init_genesis_with_settings;
-use reth_ethereum_primitives::Block;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
     AccountReader, BlockHashReader, BlockWriter, DBProvider, DatabaseProviderFactory,
@@ -194,9 +194,7 @@ impl HistoricalReadFixture {
 }
 
 fn historical_read_benches(c: &mut Criterion) {
-    let fixtures = [
-        ("v2", HistoricalReadFixture::new(StorageSettings::v2())),
-    ];
+    let fixtures = [("v2", HistoricalReadFixture::new(StorageSettings::v2()))];
 
     let mut group = c.benchmark_group("historical_provider");
     group.sample_size(20);

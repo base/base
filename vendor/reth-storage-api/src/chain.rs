@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 
 use alloy_consensus::Header;
 use alloy_primitives::BlockNumber;
+use base_common_consensus::BaseBlock;
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
 use reth_db_api::{
     DbTxUnwindExt,
@@ -13,9 +14,7 @@ use reth_db_api::{
 };
 use reth_db_models::StoredBlockWithdrawals;
 use reth_ethereum_primitives::TransactionSigned;
-use reth_primitives_traits::{
-    Block, BlockBody, FullBlockHeader, NodePrimitives, SignedTransaction,
-};
+use reth_primitives_traits::{Block, BlockBody, FullBlockHeader, SignedTransaction};
 use reth_storage_errors::provider::ProviderResult;
 
 use crate::DBProvider;
@@ -42,12 +41,12 @@ pub trait BlockBodyWriter<Provider, Body: BlockBody> {
 }
 
 /// Trait that implements how chain-specific types are written to the storage.
-pub trait ChainStorageWriter<Provider, Primitives: NodePrimitives>:
-    BlockBodyWriter<Provider, <Primitives::Block as Block>::Body>
+pub trait ChainStorageWriter<Provider>:
+    BlockBodyWriter<Provider, <BaseBlock as Block>::Body>
 {
 }
-impl<T, Provider, Primitives: NodePrimitives> ChainStorageWriter<Provider, Primitives> for T where
-    T: BlockBodyWriter<Provider, <Primitives::Block as Block>::Body>
+impl<T, Provider> ChainStorageWriter<Provider> for T where
+    T: BlockBodyWriter<Provider, <BaseBlock as Block>::Body>
 {
 }
 
@@ -75,12 +74,9 @@ pub trait BlockBodyReader<Provider> {
 }
 
 /// Trait that implements how chain-specific types are read from storage.
-pub trait ChainStorageReader<Provider, Primitives: NodePrimitives>:
-    BlockBodyReader<Provider, Block = Primitives::Block>
-{
-}
-impl<T, Provider, Primitives: NodePrimitives> ChainStorageReader<Provider, Primitives> for T where
-    T: BlockBodyReader<Provider, Block = Primitives::Block>
+pub trait ChainStorageReader<Provider>: BlockBodyReader<Provider, Block = BaseBlock> {}
+impl<T, Provider> ChainStorageReader<Provider> for T where
+    T: BlockBodyReader<Provider, Block = BaseBlock>
 {
 }
 

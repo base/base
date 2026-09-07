@@ -2,7 +2,6 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
     BaseProofsStorage, BaseProofsStore, MdbxProofsStorage, RocksdbProofsStorage,
@@ -54,7 +53,7 @@ pub struct UnwindCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> UnwindCommand<C> {
     /// Execute [`UnwindCommand`].
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = BasePrimitives>>(
+    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>>(
         self,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()> {

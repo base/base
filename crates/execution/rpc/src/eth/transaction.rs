@@ -42,7 +42,7 @@ where
     N: RpcNodeCore,
     N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
     BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     fn signers(&self) -> &SignersForRpc<Self::Provider, Self::NetworkTypes> {
         self.inner.eth_api.signers()
@@ -186,7 +186,7 @@ impl<N, Rpc> LoadTransaction for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     async fn transaction_by_hash(
         &self,
@@ -227,7 +227,7 @@ where
 impl<N, Rpc> BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives>,
+    Rpc: RpcConvert,
 {
     /// Returns the [`SequencerClient`] if one is set.
     pub fn raw_tx_forwarder(&self) -> Option<SequencerClient> {
@@ -239,7 +239,7 @@ impl<N, Rpc> BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     fn is_cobalt_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
         let Some(header) = self.provider().latest_header()? else {

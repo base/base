@@ -9,8 +9,9 @@ use alloy_consensus::{
 };
 use alloy_eips::{BlockNumHash, eip1898::ForkBlock};
 use alloy_primitives::{Address, BlockHash, BlockNumber, Log, TxHash, map::HashSet};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_primitives_traits::{
-    Block, BlockBody, IndexedTx, NodePrimitives, RecoveredBlock, SealedHeader,
+    Block, BlockBody, IndexedTx, RecoveredBlock, SealedHeader,
     transaction::signed::SignedTransaction,
 };
 use reth_trie_common::LazyTrieData;
@@ -29,30 +30,30 @@ use crate::ExecutionOutcome;
 /// A chain of blocks should not be empty.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Chain<N: NodePrimitives = reth_ethereum_primitives::EthPrimitives> {
+pub struct Chain {
     /// All blocks in this chain.
-    blocks: BTreeMap<BlockNumber, Arc<RecoveredBlock<N::Block>>>,
+    blocks: BTreeMap<BlockNumber, Arc<RecoveredBlock<BaseBlock>>>,
     /// The outcome of block execution for this chain.
     ///
     /// This field contains the state of all accounts after the execution of all blocks in this
     /// chain, ranging from the [`Chain::first`] block to the [`Chain::tip`] block, inclusive.
     ///
     /// Additionally, it includes the individual state changes that led to the current state.
-    execution_outcome: ExecutionOutcome<N::Receipt>,
+    execution_outcome: ExecutionOutcome<BaseReceipt>,
     /// Lazy trie data for each block in the chain, keyed by block number.
     ///
     /// Contains handles to lazily-initialized sorted trie updates and hashed state.
     trie_data: BTreeMap<BlockNumber, LazyTrieData>,
 }
 
-type ChainTxReceiptMeta<'a, N> = (
-    &'a Arc<RecoveredBlock<<N as NodePrimitives>::Block>>,
-    IndexedTx<'a, <N as NodePrimitives>::Block>,
-    &'a <N as NodePrimitives>::Receipt,
-    &'a [<N as NodePrimitives>::Receipt],
+type ChainTxReceiptMeta<'a> = (
+    &'a Arc<RecoveredBlock<BaseBlock>>,
+    IndexedTx<'a, BaseBlock>,
+    &'a BaseReceipt,
+    &'a [BaseReceipt],
 );
 
-impl<N: NodePrimitives> Default for Chain<N> {
+impl Default for Chain {
     fn default() -> Self {
         Self {
             blocks: Default::default(),
@@ -62,15 +63,15 @@ impl<N: NodePrimitives> Default for Chain<N> {
     }
 }
 
-impl<N: NodePrimitives> Chain<N> {
+impl Chain {
     /// Create new Chain from blocks and state.
     ///
     /// # Warning
     ///
     /// A chain of blocks should not be empty.
     pub fn new(
-        blocks: impl IntoIterator<Item: Into<Arc<RecoveredBlock<N::Block>>>>,
-        execution_outcome: ExecutionOutcome<N::Receipt>,
+        blocks: impl IntoIterator<Item: Into<Arc<RecoveredBlock<BaseBlock>>>>,
+        execution_outcome: ExecutionOutcome<BaseReceipt>,
         trie_data: BTreeMap<BlockNumber, LazyTrieData>,
     ) -> Self {
         let blocks = blocks
@@ -87,8 +88,8 @@ impl<N: NodePrimitives> Chain<N> {
 
     /// Create new Chain from a single block and its state.
     pub fn from_block(
-        block: impl Into<Arc<RecoveredBlock<N::Block>>>,
-        execution_outcome: ExecutionOutcome<N::Receipt>,
+        block: impl Into<Arc<RecoveredBlock<BaseBlock>>>,
+        execution_outcome: ExecutionOutcome<BaseReceipt>,
         trie_data: LazyTrieData,
     ) -> Self {
         let block = block.into();
@@ -97,17 +98,17 @@ impl<N: NodePrimitives> Chain<N> {
     }
 
     /// Get the blocks in this chain.
-    pub const fn blocks(&self) -> &BTreeMap<BlockNumber, Arc<RecoveredBlock<N::Block>>> {
+    pub const fn blocks(&self) -> &BTreeMap<BlockNumber, Arc<RecoveredBlock<BaseBlock>>> {
         &self.blocks
     }
 
     /// Consumes the type and only returns the blocks in this chain.
-    pub fn into_blocks(self) -> BTreeMap<BlockNumber, Arc<RecoveredBlock<N::Block>>> {
+    pub fn into_blocks(self) -> BTreeMap<BlockNumber, Arc<RecoveredBlock<BaseBlock>>> {
         self.blocks
     }
 
     /// Returns an iterator over all headers in the block with increasing block numbers.
-    pub fn headers(&self) -> impl Iterator<Item = SealedHeader<N::BlockHeader>> + '_ {
+    pub fn headers(&self) -> impl Iterator<Item = SealedHeader<alloy_consensus::Header>> + '_ {
         self.blocks.values().map(|block| block.clone_sealed_header())
     }
 
@@ -127,12 +128,12 @@ impl<N: NodePrimitives> Chain<N> {
     }
 
     /// Get execution outcome of this chain
-    pub const fn execution_outcome(&self) -> &ExecutionOutcome<N::Receipt> {
+    pub const fn execution_outcome(&self) -> &ExecutionOutcome<BaseReceipt> {
         &self.execution_outcome
     }
 
     /// Get mutable execution outcome of this chain
-    pub const fn execution_outcome_mut(&mut self) -> &mut ExecutionOutcome<N::Receipt> {
+    pub const fn execution_outcome_mut(&mut self) -> &mut ExecutionOutcome<BaseReceipt> {
         &mut self.execution_outcome
     }
 
@@ -147,7 +148,7 @@ impl<N: NodePrimitives> Chain<N> {
     }
 
     /// Returns the block with matching hash.
-    pub fn recovered_block(&self, block_hash: BlockHash) -> Option<&RecoveredBlock<N::Block>> {
+    pub fn recovered_block(&self, block_hash: BlockHash) -> Option<&RecoveredBlock<BaseBlock>> {
         self.blocks
             .iter()
             .find_map(|(_num, block)| (block.hash() == block_hash).then_some(block.as_ref()))
@@ -157,7 +158,7 @@ impl<N: NodePrimitives> Chain<N> {
     pub fn execution_outcome_at_block(
         &self,
         block_number: BlockNumber,
-    ) -> Option<ExecutionOutcome<N::Receipt>> {
+    ) -> Option<ExecutionOutcome<BaseReceipt>> {
         if self.tip().number() == block_number {
             return Some(self.execution_outcome.clone());
         }
@@ -178,8 +179,8 @@ impl<N: NodePrimitives> Chain<N> {
     pub fn into_inner(
         self,
     ) -> (
-        ChainBlocks<'static, N::Block>,
-        ExecutionOutcome<N::Receipt>,
+        ChainBlocks<'static, BaseBlock>,
+        ExecutionOutcome<BaseReceipt>,
         BTreeMap<BlockNumber, LazyTrieData>,
     ) {
         (ChainBlocks { blocks: Cow::Owned(self.blocks) }, self.execution_outcome, self.trie_data)
@@ -188,54 +189,51 @@ impl<N: NodePrimitives> Chain<N> {
     /// Destructure the chain into its inner components:
     /// 1. A reference to the blocks contained in the chain.
     /// 2. A reference to the execution outcome representing the final state.
-    pub const fn inner(&self) -> (ChainBlocks<'_, N::Block>, &ExecutionOutcome<N::Receipt>) {
+    pub const fn inner(&self) -> (ChainBlocks<'_, BaseBlock>, &ExecutionOutcome<BaseReceipt>) {
         (ChainBlocks { blocks: Cow::Borrowed(&self.blocks) }, &self.execution_outcome)
     }
 
     /// Returns an iterator over all the receipts of the blocks in the chain.
-    pub fn block_receipts_iter(&self) -> impl Iterator<Item = &Vec<N::Receipt>> + '_ {
+    pub fn block_receipts_iter(&self) -> impl Iterator<Item = &Vec<BaseReceipt>> + '_ {
         self.execution_outcome.receipts().iter()
     }
 
     /// Returns an iterator over all receipts in the chain.
-    pub fn receipts_iter(&self) -> impl Iterator<Item = &N::Receipt> + '_ {
+    pub fn receipts_iter(&self) -> impl Iterator<Item = &BaseReceipt> + '_ {
         self.block_receipts_iter().flatten()
     }
 
     /// Returns an iterator over all logs in the chain.
-    pub fn logs_iter(&self) -> impl Iterator<Item = &Log> + '_
-    where
-        N::Receipt: TxReceipt<Log = Log>,
-    {
+    pub fn logs_iter(&self) -> impl Iterator<Item = &Log> + '_ {
         self.receipts_iter().flat_map(|receipt| receipt.logs())
     }
 
     /// Returns an iterator over all blocks in the chain with increasing block number.
-    pub fn blocks_iter(&self) -> impl Iterator<Item = &Arc<RecoveredBlock<N::Block>>> + '_ {
+    pub fn blocks_iter(&self) -> impl Iterator<Item = &Arc<RecoveredBlock<BaseBlock>>> + '_ {
         self.blocks().values()
     }
 
     /// Returns an iterator over all transactions in the chain.
-    pub fn transactions_iter(&self) -> impl Iterator<Item = &N::SignedTx> + '_ {
+    pub fn transactions_iter(&self) -> impl Iterator<Item = &BaseTxEnvelope> + '_ {
         self.blocks_iter().flat_map(|block| block.body().transactions())
     }
 
     /// Returns an iterator over all transaction hashes in the chain.
     pub fn transaction_hashes(&self) -> impl Iterator<Item = &TxHash> + '_ {
-        self.transactions_iter().map(|tx| tx.tx_hash())
+        self.transactions_iter().map(|tx| tx.hash())
     }
 
     /// Returns an iterator over all [`Recovered`] transaction references in the chain.
     pub fn transactions_recovered_iter(
         &self,
-    ) -> impl Iterator<Item = Recovered<&N::SignedTx>> + '_ {
+    ) -> impl Iterator<Item = Recovered<&BaseTxEnvelope>> + '_ {
         self.blocks_iter().flat_map(|block| block.transactions_recovered())
     }
 
     /// Returns an iterator over all blocks and their receipts in the chain.
     pub fn blocks_and_receipts(
         &self,
-    ) -> impl Iterator<Item = (&Arc<RecoveredBlock<N::Block>>, &Vec<N::Receipt>)> + '_ {
+    ) -> impl Iterator<Item = (&Arc<RecoveredBlock<BaseBlock>>, &Vec<BaseReceipt>)> + '_ {
         self.blocks_iter().zip(self.block_receipts_iter())
     }
 
@@ -245,7 +243,7 @@ impl<N: NodePrimitives> Chain<N> {
     pub fn find_transaction_and_receipt_by_hash(
         &self,
         tx_hash: TxHash,
-    ) -> Option<ChainTxReceiptMeta<'_, N>> {
+    ) -> Option<ChainTxReceiptMeta<'_>> {
         for (block, receipts) in self.blocks_and_receipts() {
             let Some(indexed_tx) = block.find_indexed(tx_hash) else {
                 continue;
@@ -272,7 +270,7 @@ impl<N: NodePrimitives> Chain<N> {
     ///
     /// If chain doesn't have any blocks.
     #[track_caller]
-    pub fn first(&self) -> &RecoveredBlock<N::Block> {
+    pub fn first(&self) -> &RecoveredBlock<BaseBlock> {
         self.blocks.first_key_value().expect("Chain should have at least one block").1
     }
 
@@ -282,7 +280,7 @@ impl<N: NodePrimitives> Chain<N> {
     ///
     /// If chain doesn't have any blocks.
     #[track_caller]
-    pub fn tip(&self) -> &RecoveredBlock<N::Block> {
+    pub fn tip(&self) -> &RecoveredBlock<BaseBlock> {
         self.blocks.last_key_value().expect("Chain should have at least one block").1
     }
 
@@ -301,7 +299,7 @@ impl<N: NodePrimitives> Chain<N> {
     }
 
     /// Get all receipts for the given block.
-    pub fn receipts_by_block_hash(&self, block_hash: BlockHash) -> Option<Vec<&N::Receipt>> {
+    pub fn receipts_by_block_hash(&self, block_hash: BlockHash) -> Option<Vec<&BaseReceipt>> {
         let num = self.block_number(block_hash)?;
         Some(self.execution_outcome.receipts_by_block(num).iter().collect())
     }
@@ -309,7 +307,7 @@ impl<N: NodePrimitives> Chain<N> {
     /// Get all receipts with attachment.
     ///
     /// Attachment includes block number, block hash, transaction hash and transaction index.
-    pub fn receipts_with_attachment(&self) -> Vec<BlockReceipts<N::Receipt>> {
+    pub fn receipts_with_attachment(&self) -> Vec<BlockReceipts<BaseReceipt>> {
         let mut receipt_attach = Vec::with_capacity(self.blocks().len());
 
         self.blocks_and_receipts().for_each(|(block, receipts)| {
@@ -317,10 +315,10 @@ impl<N: NodePrimitives> Chain<N> {
 
             let tx_receipts = block
                 .body()
-                .transactions()
+                .transactions
                 .iter()
                 .zip(receipts)
-                .map(|(tx, receipt)| (*tx.tx_hash(), receipt.clone()))
+                .map(|(tx, receipt)| (*tx.hash(), receipt.clone()))
                 .collect();
 
             receipt_attach.push(BlockReceipts {
@@ -337,8 +335,8 @@ impl<N: NodePrimitives> Chain<N> {
     /// This method assumes that blocks attachment to the chain has already been validated.
     pub fn append_block(
         &mut self,
-        block: impl Into<Arc<RecoveredBlock<N::Block>>>,
-        execution_outcome: ExecutionOutcome<N::Receipt>,
+        block: impl Into<Arc<RecoveredBlock<BaseBlock>>>,
+        execution_outcome: ExecutionOutcome<BaseReceipt>,
         trie_data: LazyTrieData,
     ) {
         let block = block.into();
@@ -509,12 +507,11 @@ pub struct BlockReceipts<T = reth_ethereum_primitives::Receipt> {
 #[cfg(feature = "serde-bincode-compat")]
 pub(super) mod serde_bincode_compat {
     use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
-    use core::marker::PhantomData;
 
     use alloy_primitives::{Address, BlockNumber, Bytes};
     use alloy_rlp::Decodable;
-    use reth_ethereum_primitives::EthPrimitives;
-    use reth_primitives_traits::{NodePrimitives, SealedBlock};
+    use base_common_consensus::BaseBlock;
+    use reth_primitives_traits::SealedBlock;
     use reth_trie_common::ComputedTrieData;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
@@ -538,12 +535,7 @@ pub(super) mod serde_bincode_compat {
     /// ```
     #[derive(Debug, Serialize, Deserialize)]
     #[serde(bound = "")]
-    pub struct Chain<'a, N = EthPrimitives>
-    where
-        N: NodePrimitives,
-    {
-        #[serde(skip)]
-        _phantom: PhantomData<N>,
+    pub struct Chain<'a> {
         blocks: BTreeMap<BlockNumber, RecoveredBlockRepr>,
         execution_outcome: serde_bincode_compat::ExecutionOutcome<'a>,
         #[serde(default)]
@@ -564,13 +556,9 @@ pub(super) mod serde_bincode_compat {
         senders: Vec<Address>,
     }
 
-    impl<'a, N> From<&'a super::Chain<N>> for Chain<'a, N>
-    where
-        N: NodePrimitives,
-    {
-        fn from(value: &'a super::Chain<N>) -> Self {
+    impl<'a> From<&'a super::Chain> for Chain<'a> {
+        fn from(value: &'a super::Chain) -> Self {
             Self {
-                _phantom: PhantomData,
                 blocks: value
                     .blocks
                     .iter()
@@ -595,11 +583,8 @@ pub(super) mod serde_bincode_compat {
         }
     }
 
-    impl<'a, N> From<Chain<'a, N>> for super::Chain<N>
-    where
-        N: NodePrimitives,
-    {
-        fn from(value: Chain<'a, N>) -> Self {
+    impl<'a> From<Chain<'a>> for super::Chain {
+        fn from(value: Chain<'a>) -> Self {
             use reth_primitives_traits::RecoveredBlock;
             use reth_trie_common::LazyTrieData;
 
@@ -625,7 +610,7 @@ pub(super) mod serde_bincode_compat {
                 .blocks
                 .into_iter()
                 .map(|(num, repr)| {
-                    let block = N::Block::decode(&mut repr.rlp.as_ref())
+                    let block = BaseBlock::decode(&mut repr.rlp.as_ref())
                         .expect("invalid RLP for block in serde_bincode_compat");
                     let sealed = SealedBlock::new_unhashed(block);
                     (num, Arc::new(RecoveredBlock::new_sealed(sealed, repr.senders)))
@@ -636,11 +621,8 @@ pub(super) mod serde_bincode_compat {
         }
     }
 
-    impl<N> SerializeAs<super::Chain<N>> for Chain<'_, N>
-    where
-        N: NodePrimitives,
-    {
-        fn serialize_as<S>(source: &super::Chain<N>, serializer: S) -> Result<S::Ok, S::Error>
+    impl SerializeAs<super::Chain> for Chain<'_> {
+        fn serialize_as<S>(source: &super::Chain, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
@@ -648,11 +630,8 @@ pub(super) mod serde_bincode_compat {
         }
     }
 
-    impl<'de, N> DeserializeAs<'de, super::Chain<N>> for Chain<'de, N>
-    where
-        N: NodePrimitives,
-    {
-        fn deserialize_as<D>(deserializer: D) -> Result<super::Chain<N>, D::Error>
+    impl<'de> DeserializeAs<'de, super::Chain> for Chain<'de> {
+        fn deserialize_as<D>(deserializer: D) -> Result<super::Chain, D::Error>
         where
             D: Deserializer<'de>,
         {
@@ -662,7 +641,11 @@ pub(super) mod serde_bincode_compat {
 
     #[cfg(test)]
     mod tests {
+        use alloc::collections::BTreeMap;
+
+        use alloy_primitives::Address;
         use arbitrary::Arbitrary;
+        use base_common_consensus::BaseBlock;
         use rand::Rng;
         use reth_primitives_traits::RecoveredBlock;
         use serde::{Deserialize, Serialize};
@@ -672,8 +655,6 @@ pub(super) mod serde_bincode_compat {
 
         #[test]
         fn test_chain_bincode_roundtrip() {
-            use alloc::collections::BTreeMap;
-
             #[serde_as]
             #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
             struct Data {
@@ -683,12 +664,13 @@ pub(super) mod serde_bincode_compat {
 
             let mut bytes = [0u8; 1024];
             rand::rng().fill(bytes.as_mut_slice());
+            let block = BaseBlock::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
+            // Serialization preserves supplied senders; arbitrary Base transactions need not
+            // carry recoverable signatures (for example, account-abstraction transactions).
+            let senders = vec![Address::ZERO; block.body.transactions.len()];
             let data = Data {
                 chain: Chain::new(
-                    vec![
-                        RecoveredBlock::arbitrary(&mut arbitrary::Unstructured::new(&bytes))
-                            .unwrap(),
-                    ],
+                    vec![RecoveredBlock::new_unhashed(block, senders)],
                     Default::default(),
                     BTreeMap::new(),
                 ),
@@ -703,16 +685,15 @@ pub(super) mod serde_bincode_compat {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::TxType;
     use alloy_primitives::{Address, B256, map::HashMap};
-    use reth_ethereum_primitives::Receipt;
+    use base_common_consensus::{BaseBlock, BaseReceipt};
     use revm::{database::BundleState, state::AccountInfo};
 
     use super::*;
 
     #[test]
     fn chain_append() {
-        let block: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let block: RecoveredBlock<BaseBlock> = Default::default();
         let block1_hash = B256::new([0x01; 32]);
         let block2_hash = B256::new([0x02; 32]);
         let block3_hash = B256::new([0x03; 32]);
@@ -748,7 +729,7 @@ mod tests {
 
     #[test]
     fn test_number_split() {
-        let execution_outcome1: ExecutionOutcome = ExecutionOutcome::new(
+        let execution_outcome1: ExecutionOutcome<BaseReceipt> = ExecutionOutcome::new(
             BundleState::new(
                 vec![(
                     Address::new([2; 20]),
@@ -780,13 +761,13 @@ mod tests {
             vec![],
         );
 
-        let mut block1: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let mut block1: RecoveredBlock<BaseBlock> = Default::default();
         let block1_hash = B256::new([15; 32]);
         block1.set_block_number(1);
         block1.set_hash(block1_hash);
         block1.push_sender(Address::new([4; 20]));
 
-        let mut block2: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let mut block2: RecoveredBlock<BaseBlock> = Default::default();
         let block2_hash = B256::new([16; 32]);
         block2.set_block_number(2);
         block2.set_hash(block2_hash);
@@ -810,7 +791,7 @@ mod tests {
     #[test]
     fn receipts_by_block_hash() {
         // Create a default RecoveredBlock object
-        let block: RecoveredBlock<reth_ethereum_primitives::Block> = Default::default();
+        let block: RecoveredBlock<BaseBlock> = Default::default();
 
         // Define block hashes for block1 and block2
         let block1_hash = B256::new([0x01; 32]);
@@ -825,20 +806,18 @@ mod tests {
         block2.set_hash(block2_hash);
 
         // Create a random receipt object, receipt1
-        let receipt1 = Receipt {
-            tx_type: TxType::Legacy,
+        let receipt1 = BaseReceipt::Legacy(alloy_consensus::Receipt {
             cumulative_gas_used: 46913,
             logs: vec![],
-            success: true,
-        };
+            status: true.into(),
+        });
 
         // Create another random receipt object, receipt2
-        let receipt2 = Receipt {
-            tx_type: TxType::Legacy,
+        let receipt2 = BaseReceipt::Legacy(alloy_consensus::Receipt {
             cumulative_gas_used: 1325345,
             logs: vec![],
-            success: true,
-        };
+            status: true.into(),
+        });
 
         // Create a Receipts object with a vector of receipt vectors
         let receipts = vec![vec![receipt1.clone()], vec![receipt2]];

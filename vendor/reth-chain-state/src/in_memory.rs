@@ -5,14 +5,13 @@ use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
 use alloy_eips::{BlockHashOrNumber, BlockNumHash};
 use alloy_primitives::{B256, BlockNumber, TxHash, map::B256Map};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use parking_lot::RwLock;
 use reth_chainspec::ChainInfo;
-use reth_ethereum_primitives::EthPrimitives;
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};
 use reth_metrics::{Metrics, metrics::Gauge};
 use reth_primitives_traits::{
-    BlockBody as _, IndexedTx, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
-    SignedTransaction,
+    BlockBody as _, IndexedTx, RecoveredBlock, SealedBlock, SealedHeader,
 };
 use reth_storage_api::StateProviderBox;
 use reth_trie::{
@@ -56,22 +55,22 @@ pub(crate) struct InMemoryStateMetrics {
 /// This holds, because only lookup by number functions need to acquire the numbers lock first to
 /// get the block hash.
 #[derive(Debug, Default)]
-pub(crate) struct InMemoryState<N: NodePrimitives = EthPrimitives> {
+pub(crate) struct InMemoryState {
     /// All canonical blocks that are not on disk yet.
-    blocks: RwLock<B256Map<Arc<BlockState<N>>>>,
+    blocks: RwLock<B256Map<Arc<BlockState>>>,
     /// Mapping of block numbers to block hashes.
     numbers: RwLock<BTreeMap<u64, B256>>,
     /// The pending block that has not yet been made canonical.
-    pending: watch::Sender<Option<BlockState<N>>>,
+    pending: watch::Sender<Option<BlockState>>,
     /// Metrics for the in-memory state.
     metrics: InMemoryStateMetrics,
 }
 
-impl<N: NodePrimitives> InMemoryState<N> {
+impl InMemoryState {
     pub(crate) fn new(
-        blocks: B256Map<Arc<BlockState<N>>>,
+        blocks: B256Map<Arc<BlockState>>,
         numbers: BTreeMap<u64, B256>,
-        pending: Option<BlockState<N>>,
+        pending: Option<BlockState>,
     ) -> Self {
         let (pending, _) = watch::channel(pending);
         let this = Self {
@@ -107,12 +106,12 @@ impl<N: NodePrimitives> InMemoryState<N> {
     }
 
     /// Returns the state for a given block hash.
-    pub(crate) fn state_by_hash(&self, hash: B256) -> Option<Arc<BlockState<N>>> {
+    pub(crate) fn state_by_hash(&self, hash: B256) -> Option<Arc<BlockState>> {
         self.blocks.read().get(&hash).cloned()
     }
 
     /// Returns the state for a given block number.
-    pub(crate) fn state_by_number(&self, number: u64) -> Option<Arc<BlockState<N>>> {
+    pub(crate) fn state_by_number(&self, number: u64) -> Option<Arc<BlockState>> {
         let hash = self.hash_by_number(number)?;
         self.state_by_hash(hash)
     }
@@ -123,14 +122,14 @@ impl<N: NodePrimitives> InMemoryState<N> {
     }
 
     /// Returns the current chain head state.
-    pub(crate) fn head_state(&self) -> Option<Arc<BlockState<N>>> {
+    pub(crate) fn head_state(&self) -> Option<Arc<BlockState>> {
         let hash = *self.numbers.read().last_key_value()?.1;
         self.state_by_hash(hash)
     }
 
     /// Returns the pending state corresponding to the current head plus one,
     /// from the payload received in newPayload that does not have a FCU yet.
-    pub(crate) fn pending_state(&self) -> Option<BlockState<N>> {
+    pub(crate) fn pending_state(&self) -> Option<BlockState> {
         self.pending.borrow().clone()
     }
 
@@ -143,17 +142,17 @@ impl<N: NodePrimitives> InMemoryState<N> {
 /// Inner type to provide in memory state. It includes a chain tracker to be
 /// advanced internally by the tree.
 #[derive(Debug)]
-pub(crate) struct CanonicalInMemoryStateInner<N: NodePrimitives> {
+pub(crate) struct CanonicalInMemoryStateInner {
     /// Tracks certain chain information, such as the canonical head, safe head, and finalized
     /// head.
-    pub(crate) chain_info_tracker: ChainInfoTracker<N>,
+    pub(crate) chain_info_tracker: ChainInfoTracker,
     /// Tracks blocks at the tip of the chain that have not been persisted to disk yet.
-    pub(crate) in_memory_state: InMemoryState<N>,
+    pub(crate) in_memory_state: InMemoryState,
     /// A broadcast stream that emits events when the canonical chain is updated.
-    pub(crate) canon_state_notification_sender: CanonStateNotificationSender<N>,
+    pub(crate) canon_state_notification_sender: CanonStateNotificationSender,
 }
 
-impl<N: NodePrimitives> CanonicalInMemoryStateInner<N> {
+impl CanonicalInMemoryStateInner {
     /// Clears all entries in the in memory state.
     fn clear(&self) {
         {
@@ -170,26 +169,25 @@ impl<N: NodePrimitives> CanonicalInMemoryStateInner<N> {
     }
 }
 
-type PendingBlockAndReceipts<N> =
-    (RecoveredBlock<<N as NodePrimitives>::Block>, Vec<reth_primitives_traits::ReceiptTy<N>>);
+type PendingBlockAndReceipts = (RecoveredBlock<BaseBlock>, Vec<BaseReceipt>);
 
 /// This type is responsible for providing the blocks, receipts, and state for
 /// all canonical blocks not on disk yet and keeps track of the block range that
 /// is in memory.
 #[derive(Debug, Clone)]
-pub struct CanonicalInMemoryState<N: NodePrimitives = EthPrimitives> {
-    pub(crate) inner: Arc<CanonicalInMemoryStateInner<N>>,
+pub struct CanonicalInMemoryState {
+    pub(crate) inner: Arc<CanonicalInMemoryStateInner>,
 }
 
-impl<N: NodePrimitives> CanonicalInMemoryState<N> {
+impl CanonicalInMemoryState {
     /// Create a new in-memory state with the given blocks, numbers, pending state, and optional
     /// finalized header.
     pub fn new(
-        blocks: B256Map<Arc<BlockState<N>>>,
+        blocks: B256Map<Arc<BlockState>>,
         numbers: BTreeMap<u64, B256>,
-        pending: Option<BlockState<N>>,
-        finalized: Option<SealedHeader<N::BlockHeader>>,
-        safe: Option<SealedHeader<N::BlockHeader>>,
+        pending: Option<BlockState>,
+        finalized: Option<SealedHeader<alloy_consensus::Header>>,
+        safe: Option<SealedHeader<alloy_consensus::Header>>,
     ) -> Self {
         let in_memory_state = InMemoryState::new(blocks, numbers, pending);
         let header = in_memory_state.head_state().map_or_else(SealedHeader::default, |state| {
@@ -216,9 +214,9 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     /// Create a new in memory state with the given local head and finalized header
     /// if it exists.
     pub fn with_head(
-        head: SealedHeader<N::BlockHeader>,
-        finalized: Option<SealedHeader<N::BlockHeader>>,
-        safe: Option<SealedHeader<N::BlockHeader>>,
+        head: SealedHeader<alloy_consensus::Header>,
+        finalized: Option<SealedHeader<alloy_consensus::Header>>,
+        safe: Option<SealedHeader<alloy_consensus::Header>>,
     ) -> Self {
         let chain_info_tracker = ChainInfoTracker::new(head, finalized, safe);
         let in_memory_state = InMemoryState::default();
@@ -239,7 +237,7 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     }
 
     /// Returns the header corresponding to the given hash.
-    pub fn header_by_hash(&self, hash: B256) -> Option<SealedHeader<N::BlockHeader>> {
+    pub fn header_by_hash(&self, hash: B256) -> Option<SealedHeader<alloy_consensus::Header>> {
         self.state_by_hash(hash)
             .map(|block| block.block_ref().recovered_block().clone_sealed_header())
     }
@@ -252,7 +250,7 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     /// Updates the pending block with the given block.
     ///
     /// Note: This assumes that the parent block of the pending block is canonical.
-    pub fn set_pending_block(&self, pending: ExecutedBlock<N>) {
+    pub fn set_pending_block(&self, pending: ExecutedBlock) {
         // fetch the state of the pending block's parent block
         let parent = self.state_by_hash(pending.recovered_block().parent_hash());
         let pending = BlockState::with_parent(pending, parent);
@@ -268,8 +266,8 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     /// them to their parent blocks.
     fn update_blocks<I, R>(&self, new_blocks: I, reorged: R)
     where
-        I: IntoIterator<Item = ExecutedBlock<N>>,
-        R: IntoIterator<Item = ExecutedBlock<N>>,
+        I: IntoIterator<Item = ExecutedBlock>,
+        R: IntoIterator<Item = ExecutedBlock>,
     {
         {
             // acquire locks, starting with the numbers lock
@@ -305,7 +303,7 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     }
 
     /// Update the in memory state with the given chain update.
-    pub fn update_chain(&self, new_chain: NewCanonicalChain<N>) {
+    pub fn update_chain(&self, new_chain: NewCanonicalChain) {
         match new_chain {
             NewCanonicalChain::Commit { new } => {
                 self.update_blocks(new, vec![]);
@@ -386,22 +384,22 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     }
 
     /// Returns in memory state corresponding the given hash.
-    pub fn state_by_hash(&self, hash: B256) -> Option<Arc<BlockState<N>>> {
+    pub fn state_by_hash(&self, hash: B256) -> Option<Arc<BlockState>> {
         self.inner.in_memory_state.state_by_hash(hash)
     }
 
     /// Returns in memory state corresponding the block number.
-    pub fn state_by_number(&self, number: u64) -> Option<Arc<BlockState<N>>> {
+    pub fn state_by_number(&self, number: u64) -> Option<Arc<BlockState>> {
         self.inner.in_memory_state.state_by_number(number)
     }
 
     /// Returns the in memory head state.
-    pub fn head_state(&self) -> Option<Arc<BlockState<N>>> {
+    pub fn head_state(&self) -> Option<Arc<BlockState>> {
         self.inner.in_memory_state.head_state()
     }
 
     /// Returns the in memory pending state.
-    pub fn pending_state(&self) -> Option<BlockState<N>> {
+    pub fn pending_state(&self) -> Option<BlockState> {
         self.inner.in_memory_state.pending_state()
     }
 
@@ -444,17 +442,17 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     }
 
     /// Canonical head setter.
-    pub fn set_canonical_head(&self, header: SealedHeader<N::BlockHeader>) {
+    pub fn set_canonical_head(&self, header: SealedHeader<alloy_consensus::Header>) {
         self.inner.chain_info_tracker.set_canonical_head(header);
     }
 
     /// Safe head setter.
-    pub fn set_safe(&self, header: SealedHeader<N::BlockHeader>) {
+    pub fn set_safe(&self, header: SealedHeader<alloy_consensus::Header>) {
         self.inner.chain_info_tracker.set_safe(header);
     }
 
     /// Finalized head setter.
-    pub fn set_finalized(&self, header: SealedHeader<N::BlockHeader>) {
+    pub fn set_finalized(&self, header: SealedHeader<alloy_consensus::Header>) {
         self.inner.chain_info_tracker.set_finalized(header);
     }
 
@@ -464,17 +462,17 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     }
 
     /// Canonical head getter.
-    pub fn get_canonical_head(&self) -> SealedHeader<N::BlockHeader> {
+    pub fn get_canonical_head(&self) -> SealedHeader<alloy_consensus::Header> {
         self.inner.chain_info_tracker.get_canonical_head()
     }
 
     /// Finalized header getter.
-    pub fn get_finalized_header(&self) -> Option<SealedHeader<N::BlockHeader>> {
+    pub fn get_finalized_header(&self) -> Option<SealedHeader<alloy_consensus::Header>> {
         self.inner.chain_info_tracker.get_finalized_header()
     }
 
     /// Safe header getter.
-    pub fn get_safe_header(&self) -> Option<SealedHeader<N::BlockHeader>> {
+    pub fn get_safe_header(&self) -> Option<SealedHeader<alloy_consensus::Header>> {
         self.inner.chain_info_tracker.get_safe_header()
     }
 
@@ -484,32 +482,29 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     }
 
     /// Returns the `SealedHeader` corresponding to the pending state.
-    pub fn pending_sealed_header(&self) -> Option<SealedHeader<N::BlockHeader>> {
+    pub fn pending_sealed_header(&self) -> Option<SealedHeader<alloy_consensus::Header>> {
         self.pending_state().map(|h| h.block_ref().recovered_block().clone_sealed_header())
     }
 
     /// Returns the `Header` corresponding to the pending state.
-    pub fn pending_header(&self) -> Option<N::BlockHeader> {
+    pub fn pending_header(&self) -> Option<alloy_consensus::Header> {
         self.pending_sealed_header().map(|sealed_header| sealed_header.unseal())
     }
 
     /// Returns the `SealedBlock` corresponding to the pending state.
-    pub fn pending_block(&self) -> Option<SealedBlock<N::Block>> {
+    pub fn pending_block(&self) -> Option<SealedBlock<BaseBlock>> {
         self.pending_state()
             .map(|block_state| block_state.block_ref().recovered_block().sealed_block().clone())
     }
 
     /// Returns the `RecoveredBlock` corresponding to the pending state.
-    pub fn pending_recovered_block(&self) -> Option<RecoveredBlock<N::Block>>
-    where
-        N::SignedTx: SignedTransaction,
-    {
+    pub fn pending_recovered_block(&self) -> Option<RecoveredBlock<BaseBlock>> {
         self.pending_state().map(|block_state| block_state.block_ref().recovered_block().clone())
     }
 
     /// Returns a tuple with the `SealedBlock` corresponding to the pending
     /// state and a vector of its `Receipt`s.
-    pub fn pending_block_and_receipts(&self) -> Option<PendingBlockAndReceipts<N>> {
+    pub fn pending_block_and_receipts(&self) -> Option<PendingBlockAndReceipts> {
         self.pending_state().map(|block_state| {
             (
                 block_state.block_ref().recovered_block().clone(),
@@ -519,19 +514,21 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     }
 
     /// Subscribe to new blocks events.
-    pub fn subscribe_canon_state(&self) -> CanonStateNotifications<N> {
+    pub fn subscribe_canon_state(&self) -> CanonStateNotifications {
         self.inner.canon_state_notification_sender.subscribe()
     }
 
     /// Subscribe to new safe block events.
-    pub fn subscribe_safe_block(&self) -> watch::Receiver<Option<SealedHeader<N::BlockHeader>>> {
+    pub fn subscribe_safe_block(
+        &self,
+    ) -> watch::Receiver<Option<SealedHeader<alloy_consensus::Header>>> {
         self.inner.chain_info_tracker.subscribe_safe_block()
     }
 
     /// Subscribe to new finalized block events.
     pub fn subscribe_finalized_block(
         &self,
-    ) -> watch::Receiver<Option<SealedHeader<N::BlockHeader>>> {
+    ) -> watch::Receiver<Option<SealedHeader<alloy_consensus::Header>>> {
         self.inner.chain_info_tracker.subscribe_finalized_block()
     }
 
@@ -541,7 +538,7 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     }
 
     /// Attempts to send a new [`CanonStateNotification`] to all active Receiver handles.
-    pub fn notify_canon_state(&self, event: CanonStateNotification<N>) {
+    pub fn notify_canon_state(&self, event: CanonStateNotification) {
         self.inner.canon_state_notification_sender.send(event).ok();
     }
 
@@ -553,7 +550,7 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
         &self,
         hash: B256,
         historical: StateProviderBox,
-    ) -> MemoryOverlayStateProvider<N> {
+    ) -> MemoryOverlayStateProvider {
         let in_memory = if let Some(state) = self.state_by_hash(hash) {
             state.chain().map(|block_state| block_state.block()).collect()
         } else {
@@ -567,12 +564,12 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     /// oldest (highest to lowest).
     ///
     /// This iterator contains a snapshot of the in-memory state at the time of the call.
-    pub fn canonical_chain(&self) -> impl Iterator<Item = Arc<BlockState<N>>> {
+    pub fn canonical_chain(&self) -> impl Iterator<Item = Arc<BlockState>> {
         self.inner.in_memory_state.head_state().into_iter().flat_map(|head| head.iter())
     }
 
     /// Returns [`SignedTransaction`] type for the given `TxHash` if found.
-    pub fn transaction_by_hash(&self, hash: TxHash) -> Option<N::SignedTx> {
+    pub fn transaction_by_hash(&self, hash: TxHash) -> Option<BaseTxEnvelope> {
         for block_state in self.canonical_chain() {
             if let Some(tx) =
                 block_state.block_ref().recovered_block().body().transaction_by_hash(&hash)
@@ -588,7 +585,7 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
     pub fn transaction_by_hash_with_meta(
         &self,
         tx_hash: TxHash,
-    ) -> Option<(N::SignedTx, TransactionMeta)> {
+    ) -> Option<(BaseTxEnvelope, TransactionMeta)> {
         for block_state in self.canonical_chain() {
             if let Some(indexed) = block_state.find_indexed(tx_hash) {
                 return Some((indexed.tx().clone(), indexed.meta()));
@@ -601,27 +598,27 @@ impl<N: NodePrimitives> CanonicalInMemoryState<N> {
 /// State after applying the given block, this block is part of the canonical chain that partially
 /// stored in memory and can be traced back to a canonical block on disk.
 #[derive(Debug, Clone)]
-pub struct BlockState<N: NodePrimitives = EthPrimitives> {
+pub struct BlockState {
     /// The executed block that determines the state after this block has been executed.
-    block: ExecutedBlock<N>,
+    block: ExecutedBlock,
     /// The block's parent block if it exists.
     parent: Option<Arc<Self>>,
 }
 
-impl<N: NodePrimitives> PartialEq for BlockState<N> {
+impl PartialEq for BlockState {
     fn eq(&self, other: &Self) -> bool {
         self.block == other.block && self.parent == other.parent
     }
 }
 
-impl<N: NodePrimitives> BlockState<N> {
+impl BlockState {
     /// [`BlockState`] constructor.
-    pub const fn new(block: ExecutedBlock<N>) -> Self {
+    pub const fn new(block: ExecutedBlock) -> Self {
         Self { block, parent: None }
     }
 
     /// [`BlockState`] constructor with parent.
-    pub const fn with_parent(block: ExecutedBlock<N>, parent: Option<Arc<Self>>) -> Self {
+    pub const fn with_parent(block: ExecutedBlock, parent: Option<Arc<Self>>) -> Self {
         Self { block, parent }
     }
 
@@ -635,12 +632,12 @@ impl<N: NodePrimitives> BlockState<N> {
     }
 
     /// Returns the executed block that determines the state.
-    pub fn block(&self) -> ExecutedBlock<N> {
+    pub fn block(&self) -> ExecutedBlock {
         self.block.clone()
     }
 
     /// Returns a reference to the executed block that determines the state.
-    pub const fn block_ref(&self) -> &ExecutedBlock<N> {
+    pub const fn block_ref(&self) -> &ExecutedBlock {
         &self.block
     }
 
@@ -661,7 +658,7 @@ impl<N: NodePrimitives> BlockState<N> {
     }
 
     /// Returns the `Receipts` of executed block that determines the state.
-    pub fn receipts(&self) -> &Vec<N::Receipt> {
+    pub fn receipts(&self) -> &Vec<BaseReceipt> {
         &self.block.execution_outcome().receipts
     }
 
@@ -671,7 +668,7 @@ impl<N: NodePrimitives> BlockState<N> {
     /// the state.
     ///
     /// This clones the vector of receipts. To avoid it, use [`Self::executed_block_receipts_ref`].
-    pub fn executed_block_receipts(&self) -> Vec<N::Receipt> {
+    pub fn executed_block_receipts(&self) -> Vec<BaseReceipt> {
         self.receipts().clone()
     }
 
@@ -679,7 +676,7 @@ impl<N: NodePrimitives> BlockState<N> {
     /// We assume that the `Receipts` in the executed block `ExecutionOutcome`
     /// has only one element corresponding to the executed block associated to
     /// the state.
-    pub fn executed_block_receipts_ref(&self) -> &[N::Receipt] {
+    pub fn executed_block_receipts_ref(&self) -> &[BaseReceipt] {
         self.receipts()
     }
 
@@ -721,7 +718,7 @@ impl<N: NodePrimitives> BlockState<N> {
     ///
     /// This merges the state of all blocks that are part of the chain that the this block is
     /// the head of. This includes all blocks that connect back to the canonical block on disk.
-    pub fn state_provider(&self, historical: StateProviderBox) -> MemoryOverlayStateProvider<N> {
+    pub fn state_provider(&self, historical: StateProviderBox) -> MemoryOverlayStateProvider {
         let in_memory = self.chain().map(|block_state| block_state.block()).collect();
 
         MemoryOverlayStateProvider::new(historical, in_memory)
@@ -736,7 +733,7 @@ impl<N: NodePrimitives> BlockState<N> {
     }
 
     /// Tries to find a transaction by [`TxHash`] in the chain ending at this block.
-    pub fn transaction_on_chain(&self, hash: TxHash) -> Option<N::SignedTx> {
+    pub fn transaction_on_chain(&self, hash: TxHash) -> Option<BaseTxEnvelope> {
         self.chain().find_map(|block_state| {
             block_state.block_ref().recovered_block().body().transaction_by_hash(&hash).cloned()
         })
@@ -746,25 +743,25 @@ impl<N: NodePrimitives> BlockState<N> {
     pub fn transaction_meta_on_chain(
         &self,
         tx_hash: TxHash,
-    ) -> Option<(N::SignedTx, TransactionMeta)> {
+    ) -> Option<(BaseTxEnvelope, TransactionMeta)> {
         self.chain().find_map(|block_state| {
             block_state.find_indexed(tx_hash).map(|indexed| (indexed.tx().clone(), indexed.meta()))
         })
     }
 
     /// Finds a transaction by hash and returns it with its index and block context.
-    pub fn find_indexed(&self, tx_hash: TxHash) -> Option<IndexedTx<'_, N::Block>> {
+    pub fn find_indexed(&self, tx_hash: TxHash) -> Option<IndexedTx<'_, BaseBlock>> {
         self.block_ref().recovered_block().find_indexed(tx_hash)
     }
 }
 
 /// Represents an executed block stored in-memory.
 #[derive(Clone, Debug)]
-pub struct ExecutedBlock<N: NodePrimitives = EthPrimitives> {
+pub struct ExecutedBlock {
     /// Recovered Block
-    pub recovered_block: Arc<RecoveredBlock<N::Block>>,
+    pub recovered_block: Arc<RecoveredBlock<BaseBlock>>,
     /// Block's execution outcome.
-    pub execution_output: Arc<BlockExecutionOutput<N::Receipt>>,
+    pub execution_output: Arc<BlockExecutionOutput<BaseReceipt>>,
     /// Deferred trie data produced by execution.
     ///
     /// This allows deferring the computation of the trie data which can be expensive.
@@ -772,7 +769,7 @@ pub struct ExecutedBlock<N: NodePrimitives = EthPrimitives> {
     pub trie_data: LazyTrieData,
 }
 
-impl<N: NodePrimitives> Default for ExecutedBlock<N> {
+impl Default for ExecutedBlock {
     fn default() -> Self {
         Self {
             recovered_block: Default::default(),
@@ -790,7 +787,7 @@ impl<N: NodePrimitives> Default for ExecutedBlock<N> {
     }
 }
 
-impl<N: NodePrimitives> PartialEq for ExecutedBlock<N> {
+impl PartialEq for ExecutedBlock {
     fn eq(&self, other: &Self) -> bool {
         // Trie data is computed asynchronously and doesn't define block identity.
         self.recovered_block == other.recovered_block
@@ -798,14 +795,14 @@ impl<N: NodePrimitives> PartialEq for ExecutedBlock<N> {
     }
 }
 
-impl<N: NodePrimitives> ExecutedBlock<N> {
+impl ExecutedBlock {
     /// Create a new [`ExecutedBlock`] with already-computed trie data.
     ///
     /// Use this constructor when trie data is available immediately (e.g., sequencers,
     /// payload builders). This is the safe default path.
     pub fn new(
-        recovered_block: Arc<RecoveredBlock<N::Block>>,
-        execution_output: Arc<BlockExecutionOutput<N::Receipt>>,
+        recovered_block: Arc<RecoveredBlock<BaseBlock>>,
+        execution_output: Arc<BlockExecutionOutput<BaseReceipt>>,
         trie_data: ComputedTrieData,
     ) -> Self {
         Self { recovered_block, execution_output, trie_data: LazyTrieData::ready(trie_data) }
@@ -825,8 +822,8 @@ impl<N: NodePrimitives> ExecutedBlock<N> {
     ///
     /// Use [`Self::new()`] instead when trie data is already computed and available immediately.
     pub const fn with_deferred_trie_data(
-        recovered_block: Arc<RecoveredBlock<N::Block>>,
-        execution_output: Arc<BlockExecutionOutput<N::Receipt>>,
+        recovered_block: Arc<RecoveredBlock<BaseBlock>>,
+        execution_output: Arc<BlockExecutionOutput<BaseReceipt>>,
         trie_data: LazyTrieData,
     ) -> Self {
         Self { recovered_block, execution_output, trie_data }
@@ -834,19 +831,19 @@ impl<N: NodePrimitives> ExecutedBlock<N> {
 
     /// Returns a reference to an inner [`SealedBlock`]
     #[inline]
-    pub fn sealed_block(&self) -> &SealedBlock<N::Block> {
+    pub fn sealed_block(&self) -> &SealedBlock<BaseBlock> {
         self.recovered_block.sealed_block()
     }
 
     /// Returns a reference to [`RecoveredBlock`]
     #[inline]
-    pub fn recovered_block(&self) -> &RecoveredBlock<N::Block> {
+    pub fn recovered_block(&self) -> &RecoveredBlock<BaseBlock> {
         &self.recovered_block
     }
 
     /// Returns a reference to the block's execution outcome
     #[inline]
-    pub fn execution_outcome(&self) -> &BlockExecutionOutput<N::Receipt> {
+    pub fn execution_outcome(&self) -> &BlockExecutionOutput<BaseReceipt> {
         &self.execution_output
     }
 
@@ -895,23 +892,23 @@ impl<N: NodePrimitives> ExecutedBlock<N> {
 
 /// Non-empty chain of blocks.
 #[derive(Debug)]
-pub enum NewCanonicalChain<N: NodePrimitives = EthPrimitives> {
+pub enum NewCanonicalChain {
     /// A simple append to the current canonical head
     Commit {
         /// all blocks that lead back to the canonical head
-        new: Vec<ExecutedBlock<N>>,
+        new: Vec<ExecutedBlock>,
     },
     /// A reorged chain consists of two chains that trace back to a shared ancestor block at which
     /// point they diverge.
     Reorg {
         /// All blocks of the _new_ chain
-        new: Vec<ExecutedBlock<N>>,
+        new: Vec<ExecutedBlock>,
         /// All blocks of the _old_ chain
-        old: Vec<ExecutedBlock<N>>,
+        old: Vec<ExecutedBlock>,
     },
 }
 
-impl<N: NodePrimitives<SignedTx: SignedTransaction>> NewCanonicalChain<N> {
+impl NewCanonicalChain {
     /// Returns the length of the new chain.
     pub const fn new_block_count(&self) -> usize {
         match self {
@@ -928,7 +925,7 @@ impl<N: NodePrimitives<SignedTx: SignedTransaction>> NewCanonicalChain<N> {
     }
 
     /// Converts the new chain into a notification that will be emitted to listeners
-    pub fn to_chain_notification(&self) -> CanonStateNotification<N> {
+    pub fn to_chain_notification(&self) -> CanonStateNotification {
         match self {
             Self::Commit { new } => {
                 CanonStateNotification::Commit { new: Arc::new(Self::blocks_to_chain(new)) }
@@ -941,7 +938,7 @@ impl<N: NodePrimitives<SignedTx: SignedTransaction>> NewCanonicalChain<N> {
     }
 
     /// Converts a slice of executed blocks into a [`Chain`].
-    fn blocks_to_chain(blocks: &[ExecutedBlock<N>]) -> Chain<N> {
+    fn blocks_to_chain(blocks: &[ExecutedBlock]) -> Chain {
         match blocks {
             [] => Chain::default(),
             [first, rest @ ..] => {
@@ -972,7 +969,7 @@ impl<N: NodePrimitives<SignedTx: SignedTransaction>> NewCanonicalChain<N> {
     ///
     /// Returns the new tip for [`Self::Reorg`] and [`Self::Commit`] variants which commit at least
     /// 1 new block.
-    pub fn tip(&self) -> &RecoveredBlock<N::Block> {
+    pub fn tip(&self) -> &RecoveredBlock<BaseBlock> {
         match self {
             Self::Commit { new } | Self::Reorg { new, .. } => {
                 new.last().expect("non empty blocks").recovered_block()
@@ -987,7 +984,6 @@ mod tests {
     use alloy_primitives::{Address, BlockNumber, Bytes, StorageKey, StorageValue};
     use rand::Rng;
     use reth_errors::ProviderResult;
-    use reth_ethereum_primitives::{EthPrimitives, Receipt};
     use reth_primitives_traits::{Account, Bytecode};
     use reth_storage_api::{
         AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider,
@@ -1002,7 +998,7 @@ mod tests {
     use crate::test_utils::TestBlockBuilder;
 
     fn create_mock_state(
-        test_block_builder: &mut TestBlockBuilder<EthPrimitives>,
+        test_block_builder: &mut TestBlockBuilder,
         block_number: u64,
         parent_hash: B256,
     ) -> BlockState {
@@ -1012,7 +1008,7 @@ mod tests {
     }
 
     fn create_mock_state_chain(
-        test_block_builder: &mut TestBlockBuilder<EthPrimitives>,
+        test_block_builder: &mut TestBlockBuilder,
         num_blocks: u64,
     ) -> Vec<BlockState> {
         let mut chain = Vec::with_capacity(num_blocks as usize);
@@ -1255,7 +1251,7 @@ mod tests {
 
     #[test]
     fn test_state_receipts() {
-        let receipts = vec![vec![Receipt::default()]];
+        let receipts = vec![vec![BaseReceipt::Legacy(Default::default())]];
         let mut test_block_builder: TestBlockBuilder = TestBlockBuilder::default();
         let block =
             test_block_builder.get_executed_block_with_receipts(receipts.clone(), B256::random());
@@ -1450,7 +1446,7 @@ mod tests {
     #[test]
     fn test_canonical_in_memory_state_canonical_chain_with_pending_block() {
         let mut parent_hash = B256::random();
-        let mut block_builder = TestBlockBuilder::<EthPrimitives>::eth();
+        let mut block_builder = TestBlockBuilder::eth();
         let state: CanonicalInMemoryState = CanonicalInMemoryState::empty();
 
         for i in 1..=2 {

@@ -48,6 +48,7 @@ serde = { workspace = true, features = ["derive", "rc"] }
 alloy-consensus = { workspace = true, features = ["kzg"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

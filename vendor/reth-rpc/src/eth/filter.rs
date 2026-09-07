@@ -12,11 +12,12 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Sealable, TxHash};
+use alloy_primitives::TxHash;
 use alloy_rpc_types_eth::{
     Filter, FilterBlockOption, FilterChanges, FilterId, PendingTransactionFilterKind,
 };
 use async_trait::async_trait;
+use base_common_consensus::BaseTxEnvelope;
 use futures::{
     Future,
     future::TryFutureExt,
@@ -25,7 +26,7 @@ use futures::{
 use itertools::Itertools;
 use jsonrpsee::{core::RpcResult, server::IdProvider};
 use reth_errors::ProviderError;
-use reth_primitives_traits::{NodePrimitives, SealedHeader};
+use reth_primitives_traits::SealedHeader;
 use reth_rpc_eth_api::{
     EngineEthFilter, EthApiTypes, EthFilterApiServer, FullEthApiTypes, QueryLimits, RpcConvert,
     RpcLog, RpcNodeCoreExt, RpcTransaction,
@@ -474,7 +475,7 @@ where
     }
 
     /// Access the underlying [`EthStateCache`].
-    fn eth_cache(&self) -> &EthStateCache<Eth::Primitives> {
+    fn eth_cache(&self) -> &EthStateCache {
         self.eth_api.cache()
     }
 
@@ -856,8 +857,8 @@ struct FullTransactionsReceiver<T: PoolTransaction, TxCompat> {
 
 impl<T, TxCompat> FullTransactionsReceiver<T, TxCompat>
 where
-    T: PoolTransaction + 'static,
-    TxCompat: RpcConvert<Primitives: NodePrimitives<SignedTx = T::Consensus>>,
+    T: PoolTransaction<Consensus = BaseTxEnvelope> + 'static,
+    TxCompat: RpcConvert,
 {
     /// Creates a new `FullTransactionsReceiver` encapsulating the provided transaction stream.
     fn new(stream: NewSubpoolTransactionStream<T>, converter: TxCompat) -> Self {
@@ -894,8 +895,8 @@ trait FullTransactionsFilter<T>: fmt::Debug + Send + Sync + Unpin + 'static {
 impl<T, TxCompat> FullTransactionsFilter<RpcTransaction<TxCompat::Network>>
     for FullTransactionsReceiver<T, TxCompat>
 where
-    T: PoolTransaction + 'static,
-    TxCompat: RpcConvert<Primitives: NodePrimitives<SignedTx = T::Consensus>> + 'static,
+    T: PoolTransaction<Consensus = BaseTxEnvelope> + 'static,
+    TxCompat: RpcConvert + 'static,
 {
     async fn drain(&self) -> FilterChanges<RpcTransaction<TxCompat::Network>> {
         Self::drain(self).await
@@ -1366,23 +1367,19 @@ impl<
 mod tests {
     use std::{collections::VecDeque, sync::Arc};
 
-    use alloy_network::Ethereum;
     use alloy_primitives::FixedBytes;
+    use base_common_consensus::{BaseBlock, BaseReceipt};
     use rand::Rng;
-    use reth_chainspec::{ChainSpec, ChainSpecProvider};
-    use reth_ethereum_primitives::TxType;
+    use reth_chainspec::ChainSpecProvider;
     use reth_evm::TestEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::test_utils::MockEthProvider;
-    use reth_rpc_convert::RpcConverter;
     use reth_rpc_eth_api::node::RpcNodeCoreAdapter;
-    use reth_rpc_eth_types::receipt::EthReceiptConverter;
     use reth_tasks::Runtime;
     use reth_testing_utils::generators;
-    use reth_transaction_pool::test_utils::{TestPool, testing_pool};
 
     use super::*;
-    use crate::{EthApiBuilder, eth::EthApi};
+    use crate::eth::EthApi;
 
     #[test]
     fn test_block_range_iter() {
@@ -1411,12 +1408,17 @@ mod tests {
     fn build_test_eth_api(
         provider: MockEthProvider,
     ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, TestPool, NoopNetwork, TestEvmConfig>,
-        RpcConverter<Ethereum, TestEvmConfig, EthReceiptConverter<ChainSpec>>,
+        RpcNodeCoreAdapter<
+            MockEthProvider,
+            crate::test_utils::TestPool,
+            NoopNetwork,
+            TestEvmConfig,
+        >,
+        crate::test_utils::TestRpcConverter,
     > {
-        EthApiBuilder::new(
+        crate::test_utils::RpcTestUtils::api_builder(
             provider.clone(),
-            testing_pool(),
+            crate::test_utils::RpcTestUtils::pool(),
             NoopNetwork::default(),
             TestEvmConfig::new(provider.chain_spec()),
         )
@@ -1473,24 +1475,21 @@ mod tests {
         let expected_block_hash_2 = FixedBytes::from([2u8; 32]);
 
         // create mock receipts to test receipt handling
-        let mock_receipt_1 = reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Legacy,
+        let mock_receipt_1 = BaseReceipt::Legacy(alloy_consensus::Receipt {
             cumulative_gas_used: 100_000,
             logs: vec![],
-            success: true,
-        };
-        let mock_receipt_2 = reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Eip1559,
+            status: (true).into(),
+        });
+        let mock_receipt_2 = BaseReceipt::Eip1559(alloy_consensus::Receipt {
             cumulative_gas_used: 200_000,
             logs: vec![],
-            success: true,
-        };
-        let mock_receipt_3 = reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Eip2930,
+            status: (true).into(),
+        });
+        let mock_receipt_3 = BaseReceipt::Eip2930(alloy_consensus::Receipt {
             cumulative_gas_used: 150_000,
             logs: vec![],
-            success: false, // Different success status
-        };
+            status: (false).into(), // Different success status
+        });
 
         let mock_result_1 = ReceiptBlockResult {
             receipts: Arc::new(vec![mock_receipt_1.clone(), mock_receipt_2.clone()]),
@@ -1527,18 +1526,24 @@ mod tests {
 
         // verify receipts
         assert_eq!(receipt_result1.receipts.len(), 2);
-        assert_eq!(receipt_result1.receipts[0].tx_type, mock_receipt_1.tx_type);
+        assert_eq!(receipt_result1.receipts[0].tx_type(), mock_receipt_1.tx_type());
         assert_eq!(
-            receipt_result1.receipts[0].cumulative_gas_used,
-            mock_receipt_1.cumulative_gas_used
+            receipt_result1.receipts[0].as_receipt().cumulative_gas_used,
+            mock_receipt_1.as_receipt().cumulative_gas_used
         );
-        assert_eq!(receipt_result1.receipts[0].success, mock_receipt_1.success);
-        assert_eq!(receipt_result1.receipts[1].tx_type, mock_receipt_2.tx_type);
         assert_eq!(
-            receipt_result1.receipts[1].cumulative_gas_used,
-            mock_receipt_2.cumulative_gas_used
+            receipt_result1.receipts[0].as_receipt().status,
+            mock_receipt_1.as_receipt().status
         );
-        assert_eq!(receipt_result1.receipts[1].success, mock_receipt_2.success);
+        assert_eq!(receipt_result1.receipts[1].tx_type(), mock_receipt_2.tx_type());
+        assert_eq!(
+            receipt_result1.receipts[1].as_receipt().cumulative_gas_used,
+            mock_receipt_2.as_receipt().cumulative_gas_used
+        );
+        assert_eq!(
+            receipt_result1.receipts[1].as_receipt().status,
+            mock_receipt_2.as_receipt().status
+        );
 
         // second call should return the second queued result
         let result2 = range_mode.next().await;
@@ -1549,12 +1554,15 @@ mod tests {
 
         // verify receipts
         assert_eq!(receipt_result2.receipts.len(), 1);
-        assert_eq!(receipt_result2.receipts[0].tx_type, mock_receipt_3.tx_type);
+        assert_eq!(receipt_result2.receipts[0].tx_type(), mock_receipt_3.tx_type());
         assert_eq!(
-            receipt_result2.receipts[0].cumulative_gas_used,
-            mock_receipt_3.cumulative_gas_used
+            receipt_result2.receipts[0].as_receipt().cumulative_gas_used,
+            mock_receipt_3.as_receipt().cumulative_gas_used
         );
-        assert_eq!(receipt_result2.receipts[0].success, mock_receipt_3.success);
+        assert_eq!(
+            receipt_result2.receipts[0].as_receipt().status,
+            mock_receipt_3.as_receipt().status
+        );
 
         // queue should now be empty
         assert!(range_mode.next.is_empty());
@@ -1611,24 +1619,21 @@ mod tests {
             data: alloy_primitives::LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
         };
 
-        let receipt_100_1 = reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Legacy,
+        let receipt_100_1 = BaseReceipt::Legacy(alloy_consensus::Receipt {
             cumulative_gas_used: 21_000,
             logs: vec![mock_log.clone()],
-            success: true,
-        };
-        let receipt_100_2 = reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Eip1559,
+            status: (true).into(),
+        });
+        let receipt_100_2 = BaseReceipt::Eip1559(alloy_consensus::Receipt {
             cumulative_gas_used: 42_000,
             logs: vec![mock_log.clone()],
-            success: true,
-        };
-        let receipt_101_1 = reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Eip2930,
+            status: (true).into(),
+        });
+        let receipt_101_1 = BaseReceipt::Eip2930(alloy_consensus::Receipt {
             cumulative_gas_used: 30_000,
             logs: vec![mock_log.clone()],
-            success: false,
-        };
+            status: (false).into(),
+        });
 
         provider.add_receipts(100, vec![receipt_100_1.clone(), receipt_100_2.clone()]);
         provider.add_receipts(101, vec![receipt_101_1.clone()]);
@@ -1663,19 +1668,25 @@ mod tests {
         assert_eq!(receipt_result.receipts.len(), 2);
 
         // verify receipts
-        assert_eq!(receipt_result.receipts[0].tx_type, receipt_100_1.tx_type);
+        assert_eq!(receipt_result.receipts[0].tx_type(), receipt_100_1.tx_type());
         assert_eq!(
-            receipt_result.receipts[0].cumulative_gas_used,
-            receipt_100_1.cumulative_gas_used
+            receipt_result.receipts[0].as_receipt().cumulative_gas_used,
+            receipt_100_1.as_receipt().cumulative_gas_used
         );
-        assert_eq!(receipt_result.receipts[0].success, receipt_100_1.success);
+        assert_eq!(
+            receipt_result.receipts[0].as_receipt().status,
+            receipt_100_1.as_receipt().status
+        );
 
-        assert_eq!(receipt_result.receipts[1].tx_type, receipt_100_2.tx_type);
+        assert_eq!(receipt_result.receipts[1].tx_type(), receipt_100_2.tx_type());
         assert_eq!(
-            receipt_result.receipts[1].cumulative_gas_used,
-            receipt_100_2.cumulative_gas_used
+            receipt_result.receipts[1].as_receipt().cumulative_gas_used,
+            receipt_100_2.as_receipt().cumulative_gas_used
         );
-        assert_eq!(receipt_result.receipts[1].success, receipt_100_2.success);
+        assert_eq!(
+            receipt_result.receipts[1].as_receipt().status,
+            receipt_100_2.as_receipt().status
+        );
 
         // second call should return the second block with receipts
         let result2 = range_mode.next().await;
@@ -1687,12 +1698,15 @@ mod tests {
         assert_eq!(receipt_result2.receipts.len(), 1);
 
         // verify receipts
-        assert_eq!(receipt_result2.receipts[0].tx_type, receipt_101_1.tx_type);
+        assert_eq!(receipt_result2.receipts[0].tx_type(), receipt_101_1.tx_type());
         assert_eq!(
-            receipt_result2.receipts[0].cumulative_gas_used,
-            receipt_101_1.cumulative_gas_used
+            receipt_result2.receipts[0].as_receipt().cumulative_gas_used,
+            receipt_101_1.as_receipt().cumulative_gas_used
         );
-        assert_eq!(receipt_result2.receipts[0].success, receipt_101_1.success);
+        assert_eq!(
+            receipt_result2.receipts[0].as_receipt().status,
+            receipt_101_1.as_receipt().status
+        );
 
         // third call should return None since no more blocks with receipts
         let result3 = range_mode.next().await;
@@ -1715,12 +1729,11 @@ mod tests {
         provider.add_header(block_hash_101, header_101.clone());
 
         // Add mock receipts so headers are actually processed
-        let mock_receipt = reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Legacy,
+        let mock_receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
             cumulative_gas_used: 21_000,
             logs: vec![],
-            success: true,
-        };
+            status: (true).into(),
+        });
         provider.add_receipts(100, vec![mock_receipt.clone()]);
         provider.add_receipts(101, vec![mock_receipt.clone()]);
 
@@ -1782,12 +1795,11 @@ mod tests {
             data: alloy_primitives::LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
         };
 
-        let mock_receipt = reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Legacy,
+        let mock_receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
             cumulative_gas_used: 21_000,
             logs: vec![mock_log],
-            success: true,
-        };
+            status: (true).into(),
+        });
 
         let provider = MockEthProvider::default();
         provider.add_header(test_hash, test_header.header().clone());
@@ -1808,12 +1820,15 @@ mod tests {
         assert_eq!(receipt_block_result.header.hash(), test_hash);
         assert_eq!(receipt_block_result.header.number, test_block_number);
         assert_eq!(receipt_block_result.receipts.len(), 1);
-        assert_eq!(receipt_block_result.receipts[0].tx_type, mock_receipt.tx_type);
+        assert_eq!(receipt_block_result.receipts[0].tx_type(), mock_receipt.tx_type());
         assert_eq!(
-            receipt_block_result.receipts[0].cumulative_gas_used,
-            mock_receipt.cumulative_gas_used
+            receipt_block_result.receipts[0].as_receipt().cumulative_gas_used,
+            mock_receipt.as_receipt().cumulative_gas_used
         );
-        assert_eq!(receipt_block_result.receipts[0].success, mock_receipt.success);
+        assert_eq!(
+            receipt_block_result.receipts[0].as_receipt().status,
+            mock_receipt.as_receipt().status
+        );
 
         // iterator should be exhausted
         let result2 = cached_mode.next().await;
@@ -1844,8 +1859,8 @@ mod tests {
         let provider = MockEthProvider::default();
 
         use alloy_consensus::TxLegacy;
+        use base_common_consensus::BaseTxEnvelope as TransactionSigned;
         use reth_db_api::models::StoredBlockBodyIndices;
-        use reth_ethereum_primitives::{TransactionSigned, TxType};
 
         let tx_inner = TxLegacy {
             chain_id: Some(1),
@@ -1864,12 +1879,11 @@ mod tests {
             data: alloy_primitives::LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
         };
 
-        let receipt = reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Legacy,
+        let receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
             cumulative_gas_used: 21_000,
             logs: vec![mock_log],
-            success: true,
-        };
+            status: (true).into(),
+        });
 
         let mut prev_hash = alloy_primitives::B256::default();
         for (idx, block_number) in (100u64..=102).enumerate() {
@@ -1882,9 +1896,9 @@ mod tests {
             let hash = header.hash_slow();
             prev_hash = hash;
 
-            let block = reth_ethereum_primitives::Block {
+            let block = BaseBlock {
                 header,
-                body: reth_ethereum_primitives::BlockBody {
+                body: base_common_consensus::BaseBlockBody {
                     transactions: vec![tx.clone()],
                     ..Default::default()
                 },
@@ -1930,7 +1944,7 @@ mod tests {
 
         // Create a transaction for blocks that will have receipts
         use alloy_consensus::TxLegacy;
-        use reth_ethereum_primitives::{TransactionSigned, TxType};
+        use base_common_consensus::BaseTxEnvelope as TransactionSigned;
 
         let tx_inner = TxLegacy {
             chain_id: Some(1),
@@ -1964,9 +1978,9 @@ mod tests {
             // Add transaction to blocks that will have receipts (100 and 102)
             let transactions = if i == 100 || i == 102 { vec![tx.clone()] } else { vec![] };
 
-            let block = reth_ethereum_primitives::Block {
+            let block = BaseBlock {
                 header,
-                body: reth_ethereum_primitives::BlockBody { transactions, ..Default::default() },
+                body: base_common_consensus::BaseBlockBody { transactions, ..Default::default() },
             };
             provider.add_block(hash, block);
         }
@@ -1977,12 +1991,11 @@ mod tests {
             data: alloy_primitives::LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
         };
 
-        let receipt = reth_ethereum_primitives::Receipt {
-            tx_type: TxType::Legacy,
+        let receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
             cumulative_gas_used: 21_000,
             logs: vec![mock_log],
-            success: true,
-        };
+            status: (true).into(),
+        });
 
         provider.add_receipts(100, vec![receipt.clone()]);
         provider.add_receipts(101, vec![]);

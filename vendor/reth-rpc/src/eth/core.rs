@@ -100,7 +100,6 @@ where
     N: RpcNodeCore,
     Rpc: RpcConvert,
 {
-    type Primitives = N::Primitives;
     type Provider = N::Provider;
     type Pool = N::Pool;
     type Evm = N::Evm;
@@ -129,7 +128,7 @@ where
     Rpc: RpcConvert,
 {
     #[inline]
-    fn cache(&self) -> &EthStateCache<N::Primitives> {
+    fn cache(&self) -> &EthStateCache {
         self.inner.cache()
     }
 }
@@ -178,7 +177,7 @@ pub struct EthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     /// All configured Signers
     signers: SignersForRpc<N::Provider, Rpc::Network>,
     /// The async cache frontend for eth related data
-    eth_cache: EthStateCache<N::Primitives>,
+    eth_cache: EthStateCache,
     /// The async gas oracle frontend for gas price suggestions
     gas_oracle: GasPriceOracle<N::Provider>,
     /// Maximum gas limit for `eth_call` and call tracing RPC methods.
@@ -194,7 +193,7 @@ pub struct EthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     /// The type that can spawn tasks which would otherwise block.
     task_spawner: Runtime,
     /// Cached pending block if any
-    pending_block: Mutex<Option<PendingBlock<N::Primitives>>>,
+    pending_block: Mutex<Option<PendingBlock>>,
     /// A pool dedicated to CPU heavy blocking tasks.
     blocking_task_pool: BlockingTaskPool,
     /// Cache for block fees history
@@ -247,7 +246,7 @@ where
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         components: N,
-        eth_cache: EthStateCache<N::Primitives>,
+        eth_cache: EthStateCache,
         gas_oracle: GasPriceOracle<N::Provider>,
         gas_cap: impl Into<GasCap>,
         max_simulate_blocks: u64,
@@ -335,13 +334,13 @@ where
 
     /// Returns a handle to data in memory.
     #[inline]
-    pub const fn cache(&self) -> &EthStateCache<N::Primitives> {
+    pub const fn cache(&self) -> &EthStateCache {
         &self.eth_cache
     }
 
     /// Returns a handle to the pending block.
     #[inline]
-    pub const fn pending_block(&self) -> &Mutex<Option<PendingBlock<N::Primitives>>> {
+    pub const fn pending_block(&self) -> &Mutex<Option<PendingBlock>> {
         &self.pending_block
     }
 
@@ -525,11 +524,13 @@ mod tests {
     use alloy_primitives::{B256, Signature, U64};
     use alloy_rpc_types::FeeHistory;
     use alloy_rpc_types_eth::{Bundle, TransactionRequest};
+    use base_common_consensus::{
+        BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTxEnvelope as TransactionSigned,
+    };
     use jsonrpsee_types::error::INVALID_PARAMS_CODE;
     use rand::Rng;
     use reth_chain_state::CanonStateSubscriptions;
     use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
-    use reth_ethereum_primitives::TransactionSigned;
     use reth_evm::TestEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
@@ -539,25 +540,24 @@ mod tests {
     use reth_rpc_eth_api::{EthApiServer, node::RpcNodeCoreAdapter};
     use reth_storage_api::{BalProvider, BlockReader, BlockReaderIdExt, StateProviderFactory};
     use reth_testing_utils::generators;
-    use reth_transaction_pool::test_utils::{TestPool, testing_pool};
 
-    use crate::{EthApi, EthApiBuilder, eth::helpers::types::EthRpcConverter};
+    use crate::EthApi;
 
     type FakeEthApi<P = MockEthProvider> = EthApi<
-        RpcNodeCoreAdapter<P, TestPool, NoopNetwork, TestEvmConfig>,
-        EthRpcConverter<ChainSpec, TestEvmConfig>,
+        RpcNodeCoreAdapter<P, crate::test_utils::TestPool, NoopNetwork, TestEvmConfig>,
+        crate::test_utils::TestRpcConverter,
     >;
 
     fn build_test_eth_api<
         P: BlockReaderIdExt<
-                Block = reth_ethereum_primitives::Block,
-                Receipt = reth_ethereum_primitives::Receipt,
+                Block = BaseBlock,
+                Receipt = BaseReceipt,
                 Header = alloy_consensus::Header,
-                Transaction = reth_ethereum_primitives::TransactionSigned,
+                Transaction = BaseTxEnvelope,
             > + BlockReader
             + ChainSpecProvider<ChainSpec = ChainSpec>
             + StateProviderFactory
-            + CanonStateSubscriptions<Primitives = reth_ethereum_primitives::EthPrimitives>
+            + CanonStateSubscriptions
             + StageCheckpointReader
             + PruneCheckpointReader
             + BalProvider
@@ -567,9 +567,9 @@ mod tests {
     >(
         provider: P,
     ) -> FakeEthApi<P> {
-        EthApiBuilder::new(
+        crate::test_utils::RpcTestUtils::api_builder(
             provider.clone(),
-            testing_pool(),
+            crate::test_utils::RpcTestUtils::pool(),
             NoopNetwork::default(),
             TestEvmConfig::new(provider.chain_spec()),
         )
@@ -617,7 +617,7 @@ mod tests {
 
                 if let Some(base_fee_per_gas) = header.base_fee_per_gas {
                     let transaction = TransactionSigned::new_unhashed(
-                        reth_ethereum_primitives::Transaction::Eip1559(
+                        base_common_consensus::BaseTypedTransaction::Eip1559(
                             alloy_consensus::TxEip1559 {
                                 max_priority_fee_per_gas: random_fee,
                                 max_fee_per_gas: random_fee + base_fee_per_gas as u128,
@@ -630,7 +630,7 @@ mod tests {
                     transactions.push(transaction);
                 } else {
                     let transaction = TransactionSigned::new_unhashed(
-                        reth_ethereum_primitives::Transaction::Legacy(Default::default()),
+                        base_common_consensus::BaseTypedTransaction::Legacy(Default::default()),
                         Signature::test_signature(),
                     );
 
@@ -730,7 +730,7 @@ mod tests {
     async fn test_call_many_maps_provider_block_lookup_error_with_eth_api_conversion() {
         let eth_api = build_test_eth_api(MockEthProvider::default());
         let bundles = vec![Bundle {
-            transactions: vec![TransactionRequest::default()],
+            transactions: vec![TransactionRequest::default().into()],
             block_override: None,
         }];
 
@@ -755,7 +755,7 @@ mod tests {
     async fn test_call_many_keeps_header_not_found_when_block_hash_absent() {
         let eth_api = build_test_eth_api(NoopProvider::default());
         let bundles = vec![Bundle {
-            transactions: vec![TransactionRequest::default()],
+            transactions: vec![TransactionRequest::default().into()],
             block_override: None,
         }];
 

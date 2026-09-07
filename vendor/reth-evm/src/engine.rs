@@ -1,7 +1,7 @@
 use alloy_consensus::transaction::Either;
 use alloy_evm::{RecoveredTx, block::ExecutableTxParts};
+use base_common_consensus::BaseTxEnvelope;
 use rayon::prelude::*;
-use reth_primitives_traits::TxTy;
 
 use crate::{ConfigureEvm, EvmEnvFor, ExecutionCtxFor, TxEnvFor, execute::ExecutableTxFor};
 
@@ -128,14 +128,14 @@ pub trait ExecutableTxIterator<Evm: ConfigureEvm>:
 {
     /// HACK: for some reason, this duplicated AT is the only way to enforce the inner Recovered:
     /// Send + Sync bound. Effectively alias for `Self::Tx::Recovered`.
-    type Recovered: RecoveredTx<TxTy<Evm::Primitives>> + Send + Sync;
+    type Recovered: RecoveredTx<BaseTxEnvelope> + Send + Sync;
 }
 
 impl<T, Evm: ConfigureEvm> ExecutableTxIterator<Evm> for T
 where
     T: ExecutableTxTuple<Tx: ExecutableTxFor<Evm, Recovered: Send + Sync>>,
 {
-    type Recovered = <T::Tx as ExecutableTxParts<TxEnvFor<Evm>, TxTy<Evm::Primitives>>>::Recovered;
+    type Recovered = <T::Tx as ExecutableTxParts<TxEnvFor<Evm>, BaseTxEnvelope>>::Recovered;
 }
 
 /// Wraps `Either<L, R>` to implement both [`IntoParallelIterator`] and [`IntoIterator`],

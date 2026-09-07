@@ -11,8 +11,6 @@ use base_observability_events::{
 };
 use chrono::Local;
 use lru::LruCache;
-use reth_node_api::{BlockBody, NodePrimitives};
-use reth_primitives_traits::transaction::TxHashRef;
 use reth_provider::{CanonStateNotification, Chain};
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
@@ -107,19 +105,19 @@ impl Tracker {
     }
 
     /// Parse [`CanonStateNotification`]s and update the tracker.
-    pub fn handle_canon_state_notification<N: NodePrimitives>(
+    pub fn handle_canon_state_notification(
         &mut self,
-        notification: CanonStateNotification<N>,
+        notification: CanonStateNotification,
         received_at: Instant,
     ) {
         self.track_committed_chain(&notification.committed(), received_at);
     }
 
-    fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>, received_at: Instant) {
+    fn track_committed_chain(&mut self, chain: &Chain, received_at: Instant) {
         for block in chain.blocks().values() {
             for transaction in block.body().transactions() {
                 self.transaction_completed(
-                    *transaction.tx_hash(),
+                    transaction.tx_hash(),
                     TxEvent::BlockInclusion,
                     received_at,
                 );

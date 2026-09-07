@@ -6,13 +6,13 @@
 
 use std::sync::Arc;
 
+use base_common_consensus::BaseBlock;
 use futures::Stream;
 use reth_consensus::FullConsensus;
 use reth_engine_primitives::BeaconEngineMessage;
 use reth_evm::ConfigureEvm;
 use reth_network_p2p::BlockClient;
 use reth_payload_builder::PayloadBuilderHandle;
-use reth_primitives_traits::NodePrimitives;
 use reth_provider::{
     ProviderFactory,
     providers::{BlockchainProvider, ProviderNodeTypes},
@@ -52,7 +52,7 @@ use crate::{
 #[expect(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn build_engine_orchestrator<N, Client, S, V, C>(
     engine_kind: EngineApiKind,
-    consensus: Arc<dyn FullConsensus<N::Primitives>>,
+    consensus: Arc<dyn FullConsensus>,
     client: Client,
     incoming_requests: S,
     pipeline: Pipeline<N>,
@@ -62,30 +62,29 @@ pub fn build_engine_orchestrator<N, Client, S, V, C>(
     pruner: PrunerWithFactory<ProviderFactory<N>>,
     payload_builder: PayloadBuilderHandle<N::Payload>,
     payload_validator: V,
-    overlay_manager: OverlayManager<N::Primitives>,
+    overlay_manager: OverlayManager,
     tree_config: TreeConfig,
     sync_metrics_tx: MetricEventsSender,
     evm_config: C,
     runtime: Runtime,
 ) -> ChainOrchestrator<
     EngineHandler<
-        EngineApiRequestHandler<EngineApiRequest<N::Payload, N::Primitives>, N::Primitives>,
+        EngineApiRequestHandler<EngineApiRequest<N::Payload>>,
         S,
-        BasicBlockDownloader<Client, <N::Primitives as NodePrimitives>::Block>,
+        BasicBlockDownloader<Client, BaseBlock>,
     >,
     PipelineSync<N>,
 >
 where
     N: ProviderNodeTypes,
-    Client: BlockClient<Block = <N::Primitives as NodePrimitives>::Block> + 'static,
+    Client: BlockClient<Block = BaseBlock> + 'static,
     S: Stream<Item = BeaconEngineMessage<N::Payload>> + Send + Sync + Unpin + 'static,
     V: EngineValidator<N::Payload> + WaitForCaches,
-    C: ConfigureEvm<Primitives = N::Primitives> + 'static,
+    C: ConfigureEvm + 'static,
 {
     let downloader = BasicBlockDownloader::new(client, consensus.clone());
 
-    let persistence_handle =
-        PersistenceHandle::<N::Primitives>::spawn_service(provider, pruner, sync_metrics_tx);
+    let persistence_handle = PersistenceHandle::spawn_service(provider, pruner, sync_metrics_tx);
 
     let canonical_in_memory_state = blockchain_db.canonical_in_memory_state();
 

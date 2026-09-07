@@ -1,14 +1,12 @@
-use alloy_consensus::transaction::TxHashRef;
 use alloy_primitives::{TxHash, TxNumber};
 use reth_config::config::{EtlConfig, TransactionLookupConfig};
 use reth_db_api::{
     Tables,
-    table::{Decode, Decompress, Value},
+    table::{Decode, Decompress},
     tables,
     transaction::DbTxMut,
 };
 use reth_etl::Collector;
-use reth_primitives_traits::{NodePrimitives, SignedTransaction};
 use reth_provider::{
     BlockReader, DBProvider, EitherWriter, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, StatsReader, StorageSettingsCache,
@@ -63,7 +61,7 @@ where
         + BlockReader
         + PruneCheckpointReader
         + StatsReader
-        + StaticFileProviderFactory<Primitives: NodePrimitives<SignedTx: Value + SignedTransaction>>
+        + StaticFileProviderFactory
         + TransactionsProviderExt
         + StorageSettingsCache
         + RocksDBProviderFactory,
@@ -236,7 +234,7 @@ where
                 for transaction in
                     static_file_provider.transactions_by_tx_range(body.tx_num_range())?
                 {
-                    writer.delete_transaction_hash_number(*transaction.tx_hash())?;
+                    writer.delete_transaction_hash_number(transaction.tx_hash())?;
                 }
             }
 
@@ -285,16 +283,14 @@ mod tests {
 
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
+    use base_common_consensus::BaseBlock as Block;
     use reth_db_api::{cursor::DbCursorRO, transaction::DbTx};
-    use reth_ethereum_primitives::Block;
     use reth_primitives_traits::SealedBlock;
     use reth_provider::{
         BlockBodyIndicesProvider, DatabaseProviderFactory, providers::StaticFileWriter,
     };
     use reth_stages_api::StageUnitCheckpoint;
-    use reth_testing_utils::generators::{
-        self, BlockParams, BlockRangeParams, random_block, random_block_range,
-    };
+    use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
 
     use super::*;
     use crate::test_utils::{
@@ -321,7 +317,7 @@ mod tests {
         let non_empty_block_number = stage_progress + 10;
         let blocks = (stage_progress..=input.target())
             .map(|number| {
-                random_block(
+                reth_testing_utils::BaseTestData::random_block(
                     &mut rng,
                     number,
                     BlockParams {
@@ -370,7 +366,7 @@ mod tests {
         };
 
         // Seed only once with full input range
-        let seed = random_block_range(
+        let seed = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             stage_progress + 1..=previous_stage,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..2, ..Default::default() },
@@ -408,7 +404,7 @@ mod tests {
         let db = TestStageDB::default();
         let mut rng = generators::rng();
 
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=100,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..10, ..Default::default() },
@@ -423,7 +419,7 @@ mod tests {
         for block in &blocks[..=max_processed_block] {
             for transaction in &block.body().transactions {
                 if block.number > max_pruned_block {
-                    tx_hash_numbers.push((*transaction.tx_hash(), tx_hash_number));
+                    tx_hash_numbers.push((transaction.tx_hash(), tx_hash_number));
                 }
                 tx_hash_number += 1;
             }
@@ -538,7 +534,7 @@ mod tests {
             let end = input.target();
             let mut rng = generators::rng();
 
-            let blocks = random_block_range(
+            let blocks = reth_testing_utils::BaseTestData::random_block_range(
                 &mut rng,
                 stage_progress + 1..=end,
                 BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..2, ..Default::default() },
@@ -589,7 +585,7 @@ mod tests {
                                 provider.transaction_by_id(tx_id)?.expect("no transaction entry");
                             assert_eq!(
                                 Some(tx_id),
-                                provider.transaction_id(*transaction.tx_hash())?
+                                provider.transaction_id(transaction.tx_hash())?
                             );
                         }
                     }
@@ -631,7 +627,7 @@ mod tests {
             };
 
             // Insert blocks with transactions
-            let blocks = random_block_range(
+            let blocks = reth_testing_utils::BaseTestData::random_block_range(
                 &mut rng,
                 stage_progress + 1..=previous_stage,
                 BlockRangeParams {
@@ -666,7 +662,7 @@ mod tests {
             let mut rocksdb_count = 0;
             for block in &blocks {
                 for tx in &block.body().transactions {
-                    let hash = *tx.tx_hash();
+                    let hash = tx.tx_hash();
                     let result = rocksdb.get::<tables::TransactionHashNumbers>(hash).unwrap();
                     assert!(result.is_some(), "Transaction hash {:?} not found in RocksDB", hash);
                     rocksdb_count += 1;
@@ -692,7 +688,7 @@ mod tests {
             runner.db.factory.set_storage_settings_cache(StorageSettings::v2());
 
             // Insert blocks with transactions
-            let blocks = random_block_range(
+            let blocks = reth_testing_utils::BaseTestData::random_block_range(
                 &mut rng,
                 stage_progress + 1..=previous_stage,
                 BlockRangeParams {
@@ -723,7 +719,7 @@ mod tests {
             let rocksdb = runner.db.factory.rocksdb_provider();
             for block in &blocks {
                 for tx in &block.body().transactions {
-                    let hash = *tx.tx_hash();
+                    let hash = tx.tx_hash();
                     let result = rocksdb.get::<tables::TransactionHashNumbers>(hash).unwrap();
                     assert!(
                         result.is_some(),
@@ -746,7 +742,7 @@ mod tests {
             let rocksdb = runner.db.factory.rocksdb_provider();
             for block in &blocks {
                 for tx in &block.body().transactions {
-                    let hash = *tx.tx_hash();
+                    let hash = tx.tx_hash();
                     let result = rocksdb.get::<tables::TransactionHashNumbers>(hash).unwrap();
                     assert!(
                         result.is_none(),

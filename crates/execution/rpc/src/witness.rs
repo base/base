@@ -5,17 +5,18 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chains::Upgrades;
-use base_execution_payload_builder::{Attributes, BasePayloadBuilder, PayloadPrimitives};
+use base_common_consensus::BaseTxEnvelope;
+use base_execution_payload_builder::{Attributes, BasePayloadBuilder};
 use base_execution_txpool::BasePooledTx;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
-use reth_node_api::{BuildNextEnv, NodePrimitives};
-use reth_primitives_traits::{SealedHeader, TxTy};
+use reth_node_api::BuildNextEnv;
+use reth_primitives_traits::SealedHeader;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_storage_api::{
-    BlockReaderIdExt, NodePrimitivesProvider, StateProviderFactory,
+    BlockReaderIdExt, StateProviderFactory,
     errors::{ProviderError, ProviderResult},
 };
 use reth_tasks::Runtime;
@@ -56,8 +57,7 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
 impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs>
 where
     EvmConfig: ConfigureEvm,
-    Provider: NodePrimitivesProvider<Primitives: NodePrimitives<BlockHeader = Provider::Header>>
-        + BlockReaderIdExt,
+    Provider: BlockReaderIdExt,
 {
     /// Fetches the parent header by hash.
     fn parent_header(
@@ -75,22 +75,15 @@ where
 impl<Pool, Provider, EvmConfig, Attrs> DebugExecutionWitnessApiServer<Attrs::RpcPayloadAttributes>
     for BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs>
 where
-    Pool: TransactionPool<
-            Transaction: BasePooledTx<
-                Consensus = <Provider::Primitives as NodePrimitives>::SignedTx,
-            >,
-        > + 'static,
-    Provider: BlockReaderIdExt<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>
-        + NodePrimitivesProvider<Primitives: PayloadPrimitives>
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + 'static,
+    Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + StateProviderFactory
         + ChainSpecProvider<ChainSpec: Upgrades>
         + Clone
         + 'static,
-    EvmConfig: ConfigureEvm<
-            Primitives = Provider::Primitives,
-            NextBlockEnvCtx: BuildNextEnv<Attrs, Provider::Header, Provider::ChainSpec>,
-        > + 'static,
-    Attrs: Attributes<Transaction = TxTy<EvmConfig::Primitives>>,
+    EvmConfig: ConfigureEvm<NextBlockEnvCtx: BuildNextEnv<Attrs, Provider::Header, Provider::ChainSpec>>
+        + 'static,
+    Attrs: Attributes<Transaction = BaseTxEnvelope>,
     Attrs::RpcPayloadAttributes: Send + Sync + 'static,
 {
     async fn execute_payload(

@@ -11,14 +11,13 @@ use alloy_evm::{
     block::{CommitChanges, ExecutableTxParts},
 };
 use alloy_primitives::{Address, B256};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 pub use reth_execution_errors::{
     BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
 };
 use reth_execution_types::BlockExecutionResult;
 pub use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};
-use reth_primitives_traits::{
-    Block, HeaderTy, NodePrimitives, ReceiptTy, Recovered, RecoveredBlock, SealedHeader, TxTy,
-};
+use reth_primitives_traits::{Block, Recovered, RecoveredBlock, SealedHeader};
 use reth_storage_api::StateProvider;
 pub use reth_storage_errors::provider::ProviderError;
 use reth_trie_common::{HashedPostState, updates::TrieUpdates};
@@ -32,24 +31,22 @@ use crate::{ConfigureEvm, Database, OnStateHook, TxEnvFor};
 /// A type that knows how to execute a block. It is assumed to operate on a
 /// [`crate::Evm`] internally and use [`State`] as database.
 pub trait Executor<DB: Database>: Sized {
-    /// The primitive types used by the executor.
-    type Primitives: NodePrimitives;
     /// The error type returned by the executor.
     type Error;
 
     /// Executes a single block and returns [`BlockExecutionResult`], without the state changes.
     fn execute_one(
         &mut self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
-    ) -> Result<BlockExecutionResult<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>;
+        block: &RecoveredBlock<BaseBlock>,
+    ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>;
 
     /// Executes the EVM with the given input and accepts a state hook closure that is invoked with
     /// the EVM state after execution.
     fn execute_one_with_state_hook<F>(
         &mut self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
+        block: &RecoveredBlock<BaseBlock>,
         state_hook: F,
-    ) -> Result<BlockExecutionResult<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
+    ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>
     where
         F: OnStateHook + 'static;
 
@@ -62,9 +59,8 @@ pub trait Executor<DB: Database>: Sized {
     /// The output of the block execution.
     fn execute(
         mut self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
-    ) -> Result<BlockExecutionOutput<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
-    {
+        block: &RecoveredBlock<BaseBlock>,
+    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error> {
         let result = self.execute_one(block)?;
         let mut state = self.into_state();
         Ok(BlockExecutionOutput { state: state.take_bundle(), result })
@@ -74,9 +70,9 @@ pub trait Executor<DB: Database>: Sized {
     fn execute_batch<'a, I>(
         mut self,
         blocks: I,
-    ) -> Result<ExecutionOutcome<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
+    ) -> Result<ExecutionOutcome<BaseReceipt>, Self::Error>
     where
-        I: IntoIterator<Item = &'a RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>>,
+        I: IntoIterator<Item = &'a RecoveredBlock<BaseBlock>>,
     {
         let blocks_iter = blocks.into_iter();
         let capacity = blocks_iter.size_hint().0;
@@ -100,9 +96,9 @@ pub trait Executor<DB: Database>: Sized {
     /// the EVM state after execution.
     fn execute_with_state_closure<F>(
         mut self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
+        block: &RecoveredBlock<BaseBlock>,
         mut f: F,
-    ) -> Result<BlockExecutionOutput<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
+    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
     where
         F: FnMut(&State<DB>),
     {
@@ -116,9 +112,9 @@ pub trait Executor<DB: Database>: Sized {
     /// with the EVM state after execution, even after failure.
     fn execute_with_state_closure_always<F>(
         mut self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
+        block: &RecoveredBlock<BaseBlock>,
         mut f: F,
-    ) -> Result<BlockExecutionOutput<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
+    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
     where
         F: FnMut(&State<DB>),
     {
@@ -133,9 +129,9 @@ pub trait Executor<DB: Database>: Sized {
     /// the EVM state after execution.
     fn execute_with_state_hook<F>(
         mut self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
+        block: &RecoveredBlock<BaseBlock>,
         state_hook: F,
-    ) -> Result<BlockExecutionOutput<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
+    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
     where
         F: OnStateHook + 'static,
     {
@@ -307,15 +303,15 @@ pub trait BlockAssembler<F: BlockExecutorFactory> {
 
 /// Output of block building.
 #[derive(Debug, Clone)]
-pub struct BlockBuilderOutcome<N: NodePrimitives> {
+pub struct BlockBuilderOutcome {
     /// Result of block execution.
-    pub execution_result: BlockExecutionResult<N::Receipt>,
+    pub execution_result: BlockExecutionResult<BaseReceipt>,
     /// Hashed state after execution.
     pub hashed_state: HashedPostState,
     /// Trie updates collected during state root calculation.
     pub trie_updates: TrieUpdates,
     /// The built block.
-    pub block: RecoveredBlock<N::Block>,
+    pub block: RecoveredBlock<BaseBlock>,
     /// Block access list built during execution (EIP-7928, Amsterdam).
     pub block_access_list: Option<BlockAccessList>,
 }
@@ -327,10 +323,8 @@ pub struct BlockBuilderOutcome<N: NodePrimitives> {
 ///
 /// This is a helper to erase `BasicBlockBuilder` type.
 pub trait BlockBuilder {
-    /// The primitive types used by the inner [`BlockExecutor`].
-    type Primitives: NodePrimitives;
     /// Inner [`BlockExecutor`].
-    type Executor: BlockExecutor<Transaction = TxTy<Self::Primitives>, Receipt = ReceiptTy<Self::Primitives>>;
+    type Executor: BlockExecutor<Transaction = BaseTxEnvelope, Receipt = BaseReceipt>;
 
     /// Invokes [`BlockExecutor::apply_pre_execution_changes`].
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError>;
@@ -375,7 +369,7 @@ pub trait BlockBuilder {
         self,
         state_provider: impl StateProvider,
         state_root_precomputed: Option<(B256, TrieUpdates)>,
-    ) -> Result<BlockBuilderOutcome<Self::Primitives>, BlockExecutionError>;
+    ) -> Result<BlockBuilderOutcome, BlockExecutionError>;
 
     /// Provides mutable access to the inner [`BlockExecutor`].
     fn executor_mut(&mut self) -> &mut Self::Executor;
@@ -399,18 +393,18 @@ pub trait BlockBuilder {
 
 /// A type that constructs a block from transactions and execution results.
 #[derive(Debug)]
-pub struct BasicBlockBuilder<'a, F, Executor, Builder, N: NodePrimitives>
+pub struct BasicBlockBuilder<'a, F, Executor, Builder>
 where
     F: BlockExecutorFactory,
 {
     /// The block executor used to execute transactions.
     pub executor: Executor,
     /// The transactions executed in this block.
-    pub transactions: Vec<Recovered<TxTy<N>>>,
+    pub transactions: Vec<Recovered<BaseTxEnvelope>>,
     /// The parent block execution context.
     pub ctx: F::ExecutionCtx<'a>,
     /// The sealed parent block header.
-    pub parent: &'a SealedHeader<HeaderTy<N>>,
+    pub parent: &'a SealedHeader<alloy_consensus::Header>,
     /// The assembler used to build the block.
     pub assembler: Builder,
 }
@@ -453,10 +447,9 @@ where
     }
 }
 
-impl<'a, F, DB, Executor, Builder, N> BlockBuilder
-    for BasicBlockBuilder<'a, F, Executor, Builder, N>
+impl<'a, F, DB, Executor, Builder> BlockBuilder for BasicBlockBuilder<'a, F, Executor, Builder>
 where
-    F: BlockExecutorFactory<Transaction = N::SignedTx, Receipt = N::Receipt>,
+    F: BlockExecutorFactory<Transaction = BaseTxEnvelope, Receipt = BaseReceipt>,
     Executor: BlockExecutor<
             Evm: Evm<
                 Spec = <F::EvmFactory as EvmFactory>::Spec,
@@ -464,14 +457,12 @@ where
                 BlockEnv = <F::EvmFactory as EvmFactory>::BlockEnv,
                 DB = &'a mut State<DB>,
             >,
-            Transaction = N::SignedTx,
-            Receipt = N::Receipt,
+            Transaction = BaseTxEnvelope,
+            Receipt = BaseReceipt,
         >,
     DB: Database + 'a,
-    Builder: BlockAssembler<F, Block = N::Block>,
-    N: NodePrimitives,
+    Builder: BlockAssembler<F, Block = BaseBlock>,
 {
-    type Primitives = N;
     type Executor = Executor;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
@@ -502,7 +493,7 @@ where
         self,
         state: impl StateProvider,
         state_root_precomputed: Option<(B256, TrieUpdates)>,
-    ) -> Result<BlockBuilderOutcome<N>, BlockExecutionError> {
+    ) -> Result<BlockBuilderOutcome, BlockExecutionError> {
         let (evm, result) = self.executor.finish()?;
         let (db, evm_env) = evm.finish();
 
@@ -584,14 +575,12 @@ where
     F: ConfigureEvm,
     DB: Database,
 {
-    type Primitives = F::Primitives;
     type Error = BlockExecutionError;
 
     fn execute_one(
         &mut self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
-    ) -> Result<BlockExecutionResult<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
-    {
+        block: &RecoveredBlock<BaseBlock>,
+    ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error> {
         let mut executor = self
             .strategy_factory
             .executor_for_block(&mut self.db, block)
@@ -627,9 +616,9 @@ where
 
     fn execute_one_with_state_hook<H>(
         &mut self,
-        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
+        block: &RecoveredBlock<BaseBlock>,
         state_hook: H,
-    ) -> Result<BlockExecutionResult<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
+    ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>
     where
         H: OnStateHook + 'static,
     {
@@ -664,12 +653,12 @@ where
 /// A helper trait marking a 'static type that can be converted into an [`ExecutableTxParts`] for
 /// block executor.
 pub trait ExecutableTxFor<Evm: ConfigureEvm>:
-    ExecutableTxParts<TxEnvFor<Evm>, TxTy<Evm::Primitives>> + RecoveredTx<TxTy<Evm::Primitives>>
+    ExecutableTxParts<TxEnvFor<Evm>, BaseTxEnvelope> + RecoveredTx<BaseTxEnvelope>
 {
 }
 
 impl<T, Evm: ConfigureEvm> ExecutableTxFor<Evm> for T where
-    T: ExecutableTxParts<TxEnvFor<Evm>, TxTy<Evm::Primitives>> + RecoveredTx<TxTy<Evm::Primitives>>
+    T: ExecutableTxParts<TxEnvFor<Evm>, BaseTxEnvelope> + RecoveredTx<BaseTxEnvelope>
 {
 }
 
@@ -725,7 +714,7 @@ impl<TxEnv, T: RecoveredTx<Tx>, Tx> ExecutableTxParts<TxEnv, Tx> for WithTxEnv<T
 mod tests {
     use core::marker::PhantomData;
 
-    use reth_ethereum_primitives::EthPrimitives;
+    use base_common_consensus::{BaseBlock, BaseReceipt};
     use revm::database::{CacheDB, EmptyDB};
 
     use super::*;
@@ -745,22 +734,20 @@ mod tests {
     struct TestExecutor<DB>(PhantomData<DB>);
 
     impl<DB: Database> Executor<DB> for TestExecutor<DB> {
-        type Primitives = EthPrimitives;
         type Error = BlockExecutionError;
 
         fn execute_one(
             &mut self,
-            _block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
-        ) -> Result<BlockExecutionResult<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
-        {
+            _block: &RecoveredBlock<BaseBlock>,
+        ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error> {
             Err(BlockExecutionError::msg("execution unavailable for tests"))
         }
 
         fn execute_one_with_state_hook<F>(
             &mut self,
-            _block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
+            _block: &RecoveredBlock<BaseBlock>,
             _state_hook: F,
-        ) -> Result<BlockExecutionResult<<Self::Primitives as NodePrimitives>::Receipt>, Self::Error>
+        ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>
         where
             F: OnStateHook + 'static,
         {

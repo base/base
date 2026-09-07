@@ -8,12 +8,12 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{BlockHash, BlockNumber, TxNumber, U256};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
 use reth_codecs::Compact;
 use reth_db::models::{AccountBeforeTx, StorageBeforeTx};
 use reth_db_api::models::CompactU256;
 use reth_nippy_jar::{NippyJar, NippyJarError, NippyJarWriter};
-use reth_node_types::NodePrimitives;
 use reth_primitives_traits::FastInstant as Instant;
 use reth_static_file_types::{
     ChangesetOffset, ChangesetOffsetReader, ChangesetOffsetWriter, SegmentHeader,
@@ -73,16 +73,16 @@ enum PruneStrategy {
 /// WARNING: Trying to use more than one writer for the same segment type **will result in a
 /// deadlock**.
 #[derive(Debug)]
-pub(crate) struct StaticFileWriters<N> {
-    headers: RwLock<Option<StaticFileProviderRW<N>>>,
-    transactions: RwLock<Option<StaticFileProviderRW<N>>>,
-    receipts: RwLock<Option<StaticFileProviderRW<N>>>,
-    transaction_senders: RwLock<Option<StaticFileProviderRW<N>>>,
-    account_change_sets: RwLock<Option<StaticFileProviderRW<N>>>,
-    storage_change_sets: RwLock<Option<StaticFileProviderRW<N>>>,
+pub(crate) struct StaticFileWriters {
+    headers: RwLock<Option<StaticFileProviderRW>>,
+    transactions: RwLock<Option<StaticFileProviderRW>>,
+    receipts: RwLock<Option<StaticFileProviderRW>>,
+    transaction_senders: RwLock<Option<StaticFileProviderRW>>,
+    account_change_sets: RwLock<Option<StaticFileProviderRW>>,
+    storage_change_sets: RwLock<Option<StaticFileProviderRW>>,
 }
 
-impl<N> Default for StaticFileWriters<N> {
+impl Default for StaticFileWriters {
     fn default() -> Self {
         Self {
             headers: Default::default(),
@@ -95,12 +95,12 @@ impl<N> Default for StaticFileWriters<N> {
     }
 }
 
-impl<N: NodePrimitives> StaticFileWriters<N> {
+impl StaticFileWriters {
     pub(crate) fn get_or_create(
         &self,
         segment: StaticFileSegment,
-        create_fn: impl FnOnce() -> ProviderResult<StaticFileProviderRW<N>>,
-    ) -> ProviderResult<StaticFileProviderRWRefMut<'_, N>> {
+        create_fn: impl FnOnce() -> ProviderResult<StaticFileProviderRW>,
+    ) -> ProviderResult<StaticFileProviderRWRefMut<'_>> {
         let mut write_guard = match segment {
             StaticFileSegment::Headers => self.headers.write(),
             StaticFileSegment::Transactions => self.transactions.write(),
@@ -211,19 +211,19 @@ impl<N: NodePrimitives> StaticFileWriters<N> {
 
 /// Mutable reference to a [`StaticFileProviderRW`] behind a [`RwLockWriteGuard`].
 #[derive(Debug)]
-pub struct StaticFileProviderRWRefMut<'a, N>(
-    pub(crate) RwLockWriteGuard<'a, RawRwLock, Option<StaticFileProviderRW<N>>>,
+pub struct StaticFileProviderRWRefMut<'a>(
+    pub(crate) RwLockWriteGuard<'a, RawRwLock, Option<StaticFileProviderRW>>,
 );
 
-impl<N> std::ops::DerefMut for StaticFileProviderRWRefMut<'_, N> {
+impl std::ops::DerefMut for StaticFileProviderRWRefMut<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // This is always created by [`StaticFileWriters::get_or_create`]
         self.0.as_mut().expect("static file writer provider should be init")
     }
 }
 
-impl<N> std::ops::Deref for StaticFileProviderRWRefMut<'_, N> {
-    type Target = StaticFileProviderRW<N>;
+impl std::ops::Deref for StaticFileProviderRWRefMut<'_> {
+    type Target = StaticFileProviderRW;
 
     fn deref(&self) -> &Self::Target {
         // This is always created by [`StaticFileWriters::get_or_create`]
@@ -233,12 +233,12 @@ impl<N> std::ops::Deref for StaticFileProviderRWRefMut<'_, N> {
 
 #[derive(Debug)]
 /// Extends `StaticFileProvider` with writing capabilities
-pub struct StaticFileProviderRW<N> {
+pub struct StaticFileProviderRW {
     /// Reference back to the provider. We need [Weak] here because [`StaticFileProviderRW`] is
     /// stored in a [`reth_primitives_traits::dashmap::DashMap`] inside the parent
     /// [`StaticFileProvider`].which is an [Arc]. If we were to use an [Arc] here, we would
     /// create a reference cycle.
-    reader: Weak<StaticFileProviderInner<N>>,
+    reader: Weak<StaticFileProviderInner>,
     /// A [`NippyJarWriter`] instance.
     writer: NippyJarWriter<SegmentHeader>,
     /// Path to opened file.
@@ -257,7 +257,7 @@ pub struct StaticFileProviderRW<N> {
     current_changeset_offset: Option<ChangesetOffset>,
 }
 
-impl<N: NodePrimitives> StaticFileProviderRW<N> {
+impl StaticFileProviderRW {
     /// Creates a new [`StaticFileProviderRW`] for a [`StaticFileSegment`].
     ///
     /// Before use, transaction based segments should ensure the block end range is the expected
@@ -265,7 +265,7 @@ impl<N: NodePrimitives> StaticFileProviderRW<N> {
     pub fn new(
         segment: StaticFileSegment,
         block: BlockNumber,
-        reader: Weak<StaticFileProviderInner<N>>,
+        reader: Weak<StaticFileProviderInner>,
         metrics: Option<Arc<StaticFileProviderMetrics>>,
     ) -> ProviderResult<Self> {
         let (writer, data_path) = Self::open(segment, block, reader.clone(), metrics.clone())?;
@@ -298,7 +298,7 @@ impl<N: NodePrimitives> StaticFileProviderRW<N> {
     fn open(
         segment: StaticFileSegment,
         block: u64,
-        reader: Weak<StaticFileProviderInner<N>>,
+        reader: Weak<StaticFileProviderInner>,
         metrics: Option<Arc<StaticFileProviderMetrics>>,
     ) -> ProviderResult<(NippyJarWriter<SegmentHeader>, PathBuf)> {
         let start = Instant::now();
@@ -1130,10 +1130,11 @@ impl<N: NodePrimitives> StaticFileProviderRW<N> {
     ///
     /// It **CALLS** `increment_block()` since the number of headers is equal to the number of
     /// blocks.
-    pub fn append_header(&mut self, header: &N::BlockHeader, hash: &BlockHash) -> ProviderResult<()>
-    where
-        N::BlockHeader: Compact,
-    {
+    pub fn append_header(
+        &mut self,
+        header: &alloy_consensus::Header,
+        hash: &BlockHash,
+    ) -> ProviderResult<()> {
         self.append_header_with_td(header, U256::ZERO, hash)
     }
 
@@ -1143,13 +1144,10 @@ impl<N: NodePrimitives> StaticFileProviderRW<N> {
     /// blocks.
     pub fn append_header_with_td(
         &mut self,
-        header: &N::BlockHeader,
+        header: &alloy_consensus::Header,
         total_difficulty: U256,
         hash: &BlockHash,
-    ) -> ProviderResult<()>
-    where
-        N::BlockHeader: Compact,
-    {
+    ) -> ProviderResult<()> {
         let start = Instant::now();
         self.ensure_no_queued_prune()?;
 
@@ -1176,13 +1174,10 @@ impl<N: NodePrimitives> StaticFileProviderRW<N> {
     /// This is useful for genesis blocks with non-zero block numbers.
     pub fn append_header_direct(
         &mut self,
-        header: &N::BlockHeader,
+        header: &alloy_consensus::Header,
         total_difficulty: U256,
         hash: &BlockHash,
-    ) -> ProviderResult<()>
-    where
-        N::BlockHeader: Compact,
-    {
+    ) -> ProviderResult<()> {
         let start = Instant::now();
         self.ensure_no_queued_prune()?;
 
@@ -1207,10 +1202,11 @@ impl<N: NodePrimitives> StaticFileProviderRW<N> {
     ///
     /// It **DOES NOT CALL** `increment_block()`, it should be handled elsewhere. There might be
     /// empty blocks and this function wouldn't be called.
-    pub fn append_transaction(&mut self, tx_num: TxNumber, tx: &N::SignedTx) -> ProviderResult<()>
-    where
-        N::SignedTx: Compact,
-    {
+    pub fn append_transaction(
+        &mut self,
+        tx_num: TxNumber,
+        tx: &BaseTxEnvelope,
+    ) -> ProviderResult<()> {
         let start = Instant::now();
         self.ensure_no_queued_prune()?;
 
@@ -1232,10 +1228,11 @@ impl<N: NodePrimitives> StaticFileProviderRW<N> {
     ///
     /// It **DOES NOT** call `increment_block()`, it should be handled elsewhere. There might be
     /// empty blocks and this function wouldn't be called.
-    pub fn append_receipt(&mut self, tx_num: TxNumber, receipt: &N::Receipt) -> ProviderResult<()>
-    where
-        N::Receipt: Compact,
-    {
+    pub fn append_receipt(
+        &mut self,
+        tx_num: TxNumber,
+        receipt: &BaseReceipt,
+    ) -> ProviderResult<()> {
         let start = Instant::now();
         self.ensure_no_queued_prune()?;
 
@@ -1257,8 +1254,7 @@ impl<N: NodePrimitives> StaticFileProviderRW<N> {
     pub fn append_receipts<I, R>(&mut self, receipts: I) -> ProviderResult<()>
     where
         I: Iterator<Item = Result<(TxNumber, R), ProviderError>>,
-        R: Borrow<N::Receipt>,
-        N::Receipt: Compact,
+        R: Borrow<BaseReceipt>,
     {
         debug_assert!(self.writer.user_header().segment() == StaticFileSegment::Receipts);
 
@@ -1684,7 +1680,7 @@ impl<N: NodePrimitives> StaticFileProviderRW<N> {
     }
 
     /// Returns a [`StaticFileProvider`] associated with this writer.
-    pub fn reader(&self) -> StaticFileProvider<N> {
+    pub fn reader(&self) -> StaticFileProvider {
         Self::upgrade_provider_to_strong_reference(&self.reader)
     }
 
@@ -1697,8 +1693,8 @@ impl<N: NodePrimitives> StaticFileProviderRW<N> {
     /// active. In reality, it's impossible to detach the [`StaticFileProviderRW`] from the
     /// [`StaticFileProvider`].
     fn upgrade_provider_to_strong_reference(
-        provider: &Weak<StaticFileProviderInner<N>>,
-    ) -> StaticFileProvider<N> {
+        provider: &Weak<StaticFileProviderInner>,
+    ) -> StaticFileProvider {
         provider.upgrade().map(StaticFileProvider).expect("StaticFileProvider is dropped")
     }
 

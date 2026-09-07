@@ -5,18 +5,17 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::{
     BlockHeader, Transaction,
-    transaction::{SignerRecoverable, TransactionMeta, TxHashRef},
+    transaction::{SignerRecoverable, TransactionMeta},
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_network::{TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::{TransactionInfo, state::EvmOverrides};
+use base_common_consensus::BaseTxEnvelope;
 use futures::{Future, StreamExt};
 use reth_chain_state::CanonStateSubscriptions;
-use reth_primitives_traits::{
-    BlockBody, Recovered, RecoveredBlock, SignedTransaction, TxTy, WithEncoded,
-};
+use reth_primitives_traits::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
 use reth_rpc_convert::{RpcTxReq, TransactionConversionError, transaction::RpcConvert};
 use reth_rpc_eth_types::{
     EthApiError::{self, TransactionConfirmationTimeout},
@@ -209,7 +208,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
             self.cache()
                 .get_recovered_block(block)
                 .await
-                .map(|b| b.map(|b| b.body().transactions().to_vec()))
+                .map(|b| b.map(|b| b.body().transactions.to_vec()))
                 .map_err(Self::Error::from_eth_err)
         }
     }
@@ -370,7 +369,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                 let base_fee_per_gas = block.base_fee_per_gas();
                 if let Some((signer, tx)) = block.transactions_with_sender().nth(index) {
                     let tx_info = TransactionInfo {
-                        hash: Some(*tx.tx_hash()),
+                        hash: Some(tx.tx_hash()),
                         block_hash: Some(block_hash),
                         block_number: Some(block_number),
                         block_timestamp: Some(block_timestamp),
@@ -446,7 +445,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                         .find(|(_, (signer, tx))| **signer == sender && (*tx).nonce() == nonce)
                         .map(|(index, (signer, tx))| {
                             let tx_info = TransactionInfo {
-                                hash: Some(*tx.tx_hash()),
+                                hash: Some(tx.tx_hash()),
                                 block_hash: Some(block_hash),
                                 block_number: Some(block_number),
                                 block_timestamp: Some(block_timestamp),
@@ -474,7 +473,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     {
         async move {
             if let Some(block) = self.recovered_block(block_id).await?
-                && let Some(tx) = block.body().transactions().get(index)
+                && let Some(tx) = block.body().transactions.get(index)
             {
                 return Ok(Some(tx.encoded_2718().into()));
             }
@@ -542,7 +541,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     fn fill_transaction(
         &self,
         mut request: RpcTxReq<Self::NetworkTypes>,
-    ) -> impl Future<Output = Result<FillTransaction<TxTy<Self::Primitives>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<FillTransaction<BaseTxEnvelope>, Self::Error>> + Send
     where
         Self: EthApiSpec + LoadBlock + EstimateCall + LoadFee,
     {

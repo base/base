@@ -8,9 +8,7 @@ use std::{
 use alloy_primitives::BlockNumber;
 use parking_lot::Mutex;
 use rayon::prelude::*;
-use reth_codecs::Compact;
-use reth_db_api::table::Value;
-use reth_primitives_traits::{FastInstant as Instant, NodePrimitives};
+use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
     StaticFileProviderFactory, providers::StaticFileWriter,
@@ -90,13 +88,8 @@ impl<Provider> StaticFileProducerInner<Provider>
 where
     Provider: StaticFileProviderFactory
         + DatabaseProviderFactory<
-            Provider: StaticFileProviderFactory<
-                Primitives: NodePrimitives<
-                    SignedTx: Value + Compact,
-                    BlockHeader: Value + Compact,
-                    Receipt: Value + Compact,
-                >,
-            > + StageCheckpointReader
+            Provider: StaticFileProviderFactory
+                          + StageCheckpointReader
                           + BlockReader
                           + reth_provider::ChangeSetReader,
         >,
@@ -244,9 +237,7 @@ mod tests {
     use reth_prune_types::PruneModes;
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_static_file_types::{HighestStaticFiles, StaticFileSegment};
-    use reth_testing_utils::generators::{
-        self, BlockRangeParams, random_block_range, random_receipt,
-    };
+    use reth_testing_utils::generators::{self, BlockRangeParams};
     use tempfile::TempDir;
 
     use crate::static_file_producer::{
@@ -257,7 +248,7 @@ mod tests {
         let mut rng = generators::rng();
         let db = TestStageDB::default();
 
-        let blocks = random_block_range(
+        let blocks = reth_testing_utils::BaseTestData::random_block_range(
             &mut rng,
             0..=3,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -280,7 +271,12 @@ mod tests {
             for transaction in &block.body().transactions {
                 receipts.push((
                     receipts.len() as u64,
-                    random_receipt(&mut rng, transaction, Some(0), None),
+                    reth_testing_utils::BaseTestData::random_receipt(
+                        &mut rng,
+                        transaction,
+                        Some(0),
+                        None,
+                    ),
                 ));
             }
         }

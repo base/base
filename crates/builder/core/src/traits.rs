@@ -1,7 +1,7 @@
 //! Trait bounds for Base builder components.
 
 use alloy_consensus::Header;
-use base_common_consensus::{BasePrimitives, BaseTransactionSigned};
+use base_common_consensus::BaseTransactionSigned;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::ParkablePayloadTransactions;
 use base_execution_txpool::{BasePooledTx, StateDiffInvalidation, TimestampedTransaction};
@@ -12,24 +12,12 @@ use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
 
 /// Composite trait bound for a full node type compatible with the Base builder.
 pub trait NodeBounds:
-    FullNodeTypes<
-    Types: NodeTypes<
-        Payload = BaseEngineTypes,
-        ChainSpec = BaseChainSpec,
-        Primitives = BasePrimitives,
-    >,
->
+    FullNodeTypes<Types: NodeTypes<Payload = BaseEngineTypes, ChainSpec = BaseChainSpec>>
 {
 }
 
 impl<T> NodeBounds for T where
-    T: FullNodeTypes<
-        Types: NodeTypes<
-            Payload = BaseEngineTypes,
-            ChainSpec = BaseChainSpec,
-            Primitives = BasePrimitives,
-        >,
-    >
+    T: FullNodeTypes<Types: NodeTypes<Payload = BaseEngineTypes, ChainSpec = BaseChainSpec>>
 {
 }
 

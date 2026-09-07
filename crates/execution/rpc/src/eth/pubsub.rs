@@ -1,6 +1,5 @@
 //! Base `eth_subscribe` stream customization.
 
-use base_common_consensus::BasePrimitives;
 use base_common_rpc_types::{BaseHeaderResponse, BaseRpcTypes};
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
@@ -12,8 +11,8 @@ use crate::BaseEthApiError;
 
 impl<N, Rpc> EthSubscriptions for BaseEthApi<N, Rpc>
 where
-    N: RpcNodeCore<Primitives = BasePrimitives>,
-    Rpc: RpcConvert<Primitives = BasePrimitives, Network = BaseRpcTypes, Error = BaseEthApiError>,
+    N: RpcNodeCore,
+    Rpc: RpcConvert<Network = BaseRpcTypes, Error = BaseEthApiError>,
 {
     fn header_stream(&self) -> impl futures::Stream<Item = BaseHeaderResponse> + Send + Unpin {
         let converter = self.eth_api().converter();

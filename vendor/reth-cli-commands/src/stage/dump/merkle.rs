@@ -9,7 +9,6 @@ use reth_db_api::{database::Database, models::BlockNumberAddress, table::TableIm
 use reth_db_common::DbTool;
 use reth_evm::ConfigureEvm;
 use reth_exex::ExExManagerHandle;
-use reth_node_api::HeaderTy;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{
     DatabaseProviderFactory, ProviderFactory,
@@ -33,8 +32,8 @@ pub(crate) async fn dump_merkle_stage<N>(
     to: BlockNumber,
     output_datadir: ChainPath<DataDirPath>,
     should_run: bool,
-    evm_config: impl ConfigureEvm<Primitives = N::Primitives>,
-    consensus: impl FullConsensus<N::Primitives> + 'static,
+    evm_config: impl ConfigureEvm,
+    consensus: impl FullConsensus + 'static,
     runtime: reth_tasks::Runtime,
 ) -> Result<()>
 where
@@ -43,7 +42,7 @@ where
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
 
     output_db.update(|tx| {
-        tx.import_table_with_range::<tables::Headers<HeaderTy<N>>, _>(
+        tx.import_table_with_range::<tables::Headers<alloy_consensus::Header>, _>(
             &db_tool.provider_factory.db_ref().tx()?,
             Some(from),
             to,
@@ -83,8 +82,8 @@ fn unwind_and_copy<N: ProviderNodeTypes>(
     range: (u64, u64),
     tip_block_number: u64,
     output_db: &DatabaseEnv,
-    evm_config: impl ConfigureEvm<Primitives = N::Primitives>,
-    consensus: impl FullConsensus<N::Primitives> + 'static,
+    evm_config: impl ConfigureEvm,
+    consensus: impl FullConsensus + 'static,
 ) -> eyre::Result<()> {
     let (from, to) = range;
     let provider = db_tool.provider_factory.database_provider_rw()?;

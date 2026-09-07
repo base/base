@@ -7,6 +7,7 @@
 //!
 //! Components depend on a fully type configured node: [`FullNodeTypes`].
 
+use base_common_consensus::BaseTxEnvelope;
 mod builder;
 mod consensus;
 mod execute;
@@ -25,7 +26,7 @@ pub use pool::*;
 use reth_consensus::FullConsensus;
 use reth_network::types::NetPrimitivesFor;
 use reth_network_api::FullNetwork;
-use reth_node_api::{NodeTypes, PrimitivesTy, TxTy};
+use reth_node_api::NodeTypes;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_transaction_pool::{PoolPooledTx, PoolTransaction, TransactionPool};
 
@@ -38,16 +39,16 @@ use crate::{ConfigureEvm, FullNodeTypes};
 ///  - payload builder.
 pub trait NodeComponents<T: FullNodeTypes>: Clone + Debug + Unpin + Send + Sync + 'static {
     /// The transaction pool of the node.
-    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<T::Types>>> + Unpin;
+    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin;
 
     /// The node's EVM configuration, defining settings for the Ethereum Virtual Machine.
-    type Evm: ConfigureEvm<Primitives = <T::Types as NodeTypes>::Primitives>;
+    type Evm: ConfigureEvm;
 
     /// The consensus type of the node.
-    type Consensus: FullConsensus<<T::Types as NodeTypes>::Primitives> + Clone + Unpin + 'static;
+    type Consensus: FullConsensus + Clone + Unpin + 'static;
 
     /// Network API.
-    type Network: FullNetwork<Primitives: NetPrimitivesFor<<T::Types as NodeTypes>::Primitives>>;
+    type Network: FullNetwork<Primitives: NetPrimitivesFor>;
 
     /// Returns the transaction pool of the node.
     fn pool(&self) -> &Self::Pool;
@@ -87,17 +88,11 @@ impl<Node, Pool, EVM, Cons, Network> NodeComponents<Node>
     for Components<Node, Network, Pool, EVM, Cons>
 where
     Node: FullNodeTypes,
-    Network: FullNetwork<
-        Primitives: NetPrimitivesFor<
-            PrimitivesTy<Node::Types>,
-            PooledTransaction = PoolPooledTx<Pool>,
-        >,
-    >,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
-        + Unpin
-        + 'static,
-    EVM: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + 'static,
-    Cons: FullConsensus<PrimitivesTy<Node::Types>> + Clone + Unpin + 'static,
+    Network: FullNetwork<Primitives: NetPrimitivesFor<PooledTransaction = PoolPooledTx<Pool>>>,
+    Pool:
+        TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
+    EVM: ConfigureEvm + 'static,
+    Cons: FullConsensus + Clone + Unpin + 'static,
 {
     type Pool = Pool;
     type Evm = EVM;

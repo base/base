@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, B256, BlockHash, hex};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use clap::Parser;
 use reth_db::{
     RawDupSort,
@@ -17,7 +18,6 @@ use reth_db_api::{
     transaction::DbTx,
 };
 use reth_db_common::DbTool;
-use reth_node_api::{HeaderTy, ReceiptTy, TxTy};
 use reth_node_builder::NodeTypesWithDB;
 use reth_primitives_traits::ValueWithSubKey;
 use reth_provider::{
@@ -178,17 +178,17 @@ impl Command {
                     StaticFileSegment::Headers => (
                         table_key::<tables::Headers>(&key)?,
                         None,
-                        <HeaderWithHashMask<HeaderTy<N>>>::MASK,
+                        <HeaderWithHashMask<alloy_consensus::Header>>::MASK,
                     ),
                     StaticFileSegment::Transactions => (
                         table_key::<tables::Transactions>(&key)?,
                         None,
-                        <TransactionMask<TxTy<N>>>::MASK,
+                        <TransactionMask<BaseTxEnvelope>>::MASK,
                     ),
                     StaticFileSegment::Receipts => (
                         table_key::<tables::Receipts>(&key)?,
                         None,
-                        <ReceiptMask<ReceiptTy<N>>>::MASK,
+                        <ReceiptMask<BaseReceipt>>::MASK,
                     ),
                     StaticFileSegment::TransactionSenders => (
                         table_key::<tables::TransactionSenders>(&key)?,
@@ -255,7 +255,8 @@ impl Command {
                         } else {
                             match segment {
                                 StaticFileSegment::Headers => {
-                                    let header = HeaderTy::<N>::decompress(content[0].as_slice())?;
+                                    let header =
+                                        alloy_consensus::Header::decompress(content[0].as_slice())?;
                                     let block_hash = BlockHash::decompress(content[1].as_slice())?;
                                     println!(
                                         "Header\n{}\n\nBlockHash\n{}",
@@ -264,12 +265,12 @@ impl Command {
                                     );
                                 }
                                 StaticFileSegment::Transactions => {
-                                    let transaction = TxTy::<N>::decompress(content[0].as_slice())?;
+                                    let transaction =
+                                        BaseTxEnvelope::decompress(content[0].as_slice())?;
                                     println!("{}", serde_json::to_string_pretty(&transaction)?);
                                 }
                                 StaticFileSegment::Receipts => {
-                                    let receipt =
-                                        ReceiptTy::<N>::decompress(content[0].as_slice())?;
+                                    let receipt = BaseReceipt::decompress(content[0].as_slice())?;
                                     println!("{}", serde_json::to_string_pretty(&receipt)?);
                                 }
                                 StaticFileSegment::TransactionSenders => {

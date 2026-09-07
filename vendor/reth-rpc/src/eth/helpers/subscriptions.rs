@@ -9,6 +9,6 @@ use crate::EthApi;
 impl<N, Rpc> EthSubscriptions for EthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError>,
+    Rpc: RpcConvert<Error = EthApiError>,
 {
 }

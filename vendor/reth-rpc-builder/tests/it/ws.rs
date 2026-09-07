@@ -134,7 +134,12 @@ async fn test_eth_subscribe_not_available_over_http() {
     reth_tracing::init_test_tracing();
 
     let builder = test_rpc_builder();
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let modules = RpcModuleSelection::Standard;
     let server =
         builder.build(TransportRpcModuleConfig::set_http(modules), eth_api, EventSender::new(1));
@@ -155,14 +160,11 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
     use reth_provider::test_utils::NoopProvider;
     use reth_rpc_builder::RpcModuleBuilder;
     use reth_tasks::Runtime;
-    use reth_transaction_pool::{
-        PoolTransaction, TransactionOrigin, TransactionPool,
-        test_utils::{TestPool, TestPoolBuilder},
-    };
+    use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 
     reth_tracing::init_test_tracing();
 
-    let pool: TestPool = TestPoolBuilder::default().into();
+    let pool: reth_rpc::test_utils::TestPool = reth_rpc::test_utils::RpcTestUtils::pool();
     let pool_clone = pool.clone();
 
     let builder = RpcModuleBuilder::default()
@@ -173,7 +175,12 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
         .with_evm_config(TestEvmConfig::default())
         .with_consensus(NoopConsensus::default());
 
-    let eth_api = builder.bootstrap_eth_api();
+    let eth_api = builder
+        .eth_api_builder()
+        .map_converter(|_| {
+            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
+        })
+        .build();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(RpcModuleSelection::Standard),
         eth_api,
@@ -198,7 +205,21 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
         .unwrap();
 
     // Insert a transaction into the pool
-    let tx = reth_transaction_pool::test_utils::MockTransaction::eip1559();
+    let signed = alloy_consensus::Signed::new_unhashed(
+        alloy_consensus::TxEip1559 {
+            gas_limit: 21_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            ..Default::default()
+        },
+        alloy_primitives::Signature::test_signature(),
+    );
+    let tx = <reth_rpc::test_utils::TestPool as TransactionPool>::Transaction::from_pooled(
+        alloy_consensus::transaction::Recovered::new_unchecked(
+            base_common_consensus::BasePooledTransaction::from(signed),
+            alloy_primitives::Address::ZERO,
+        ),
+    );
     let expected_hash = *tx.hash();
     pool_clone.add_transaction(TransactionOrigin::External, tx).await.unwrap();
 

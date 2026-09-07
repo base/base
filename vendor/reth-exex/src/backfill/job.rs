@@ -6,13 +6,13 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
-use reth_ethereum_primitives::Receipt;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use reth_evm::{
     ConfigureEvm,
     execute::{BlockExecutionError, BlockExecutionOutput, Executor},
 };
-use reth_node_api::{Block as _, BlockBody as _, NodePrimitives};
-use reth_primitives_traits::{RecoveredBlock, SignedTransaction, format_gas_throughput};
+use reth_node_api::{Block as _, BlockBody as _};
+use reth_primitives_traits::{RecoveredBlock, format_gas_throughput};
 use reth_provider::{
     BlockReader, Chain, ExecutionOutcome, HeaderProvider, ProviderError, StateProviderFactory,
     TransactionVariant,
@@ -43,10 +43,10 @@ pub struct BackfillJob<E, P> {
 
 impl<E, P> Iterator for BackfillJob<E, P>
 where
-    E: ConfigureEvm<Primitives: NodePrimitives<Block = P::Block>> + 'static,
-    P: HeaderProvider + BlockReader<Transaction: SignedTransaction> + StateProviderFactory,
+    E: ConfigureEvm + 'static,
+    P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
 {
-    type Item = BackfillJobResult<Chain<E::Primitives>>;
+    type Item = BackfillJobResult<Chain>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.range.is_empty() {
@@ -59,8 +59,8 @@ where
 
 impl<E, P> BackfillJob<E, P>
 where
-    E: ConfigureEvm<Primitives: NodePrimitives<Block = P::Block>> + 'static,
-    P: BlockReader<Transaction: SignedTransaction> + HeaderProvider + StateProviderFactory,
+    E: ConfigureEvm + 'static,
+    P: BlockReader<Block = BaseBlock> + HeaderProvider + StateProviderFactory,
 {
     /// Converts the backfill job into a single block backfill job.
     pub fn into_single_blocks(self) -> SingleBlockBackfillJob<E, P> {
@@ -68,11 +68,11 @@ where
     }
 
     /// Converts the backfill job into a stream.
-    pub fn into_stream(self) -> StreamBackfillJob<E, P, Chain<E::Primitives>> {
+    pub fn into_stream(self) -> StreamBackfillJob<E, P, Chain> {
         self.into()
     }
 
-    fn execute_range(&mut self) -> BackfillJobResult<Chain<E::Primitives>> {
+    fn execute_range(&mut self) -> BackfillJobResult<Chain> {
         debug!(
             target: "exex::backfill",
             range = ?self.range,
@@ -109,7 +109,7 @@ where
             cumulative_gas += block.gas_used();
 
             // Configure the executor to use the current state.
-            trace!(target: "exex::backfill", number = block_number, txs = block.body().transactions().len(), "Executing block");
+            trace!(target: "exex::backfill", number = block_number, txs = block.body().transactions.len(), "Executing block");
 
             // Execute the block
             let execute_start = Instant::now();
@@ -171,13 +171,10 @@ pub struct SingleBlockBackfillJob<E, P> {
 
 impl<E, P> Iterator for SingleBlockBackfillJob<E, P>
 where
-    E: ConfigureEvm<Primitives: NodePrimitives<Block = P::Block>> + 'static,
-    P: HeaderProvider + BlockReader + StateProviderFactory,
+    E: ConfigureEvm + 'static,
+    P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
 {
-    type Item = BackfillJobResult<(
-        RecoveredBlock<P::Block>,
-        BlockExecutionOutput<<E::Primitives as NodePrimitives>::Receipt>,
-    )>;
+    type Item = BackfillJobResult<(RecoveredBlock<P::Block>, BlockExecutionOutput<BaseReceipt>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.range.next().map(|block_number| self.execute_block(block_number))
@@ -186,17 +183,14 @@ where
 
 impl<E, P> SingleBlockBackfillJob<E, P>
 where
-    E: ConfigureEvm<Primitives: NodePrimitives<Block = P::Block>> + 'static,
-    P: HeaderProvider + BlockReader + StateProviderFactory,
+    E: ConfigureEvm + 'static,
+    P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
 {
     /// Converts the single block backfill job into a stream.
     pub fn into_stream(
         self,
-    ) -> StreamBackfillJob<
-        E,
-        P,
-        (RecoveredBlock<reth_ethereum_primitives::Block>, BlockExecutionOutput<Receipt>),
-    > {
+    ) -> StreamBackfillJob<E, P, (RecoveredBlock<BaseBlock>, BlockExecutionOutput<BaseReceipt>)>
+    {
         self.into()
     }
 
@@ -204,10 +198,7 @@ where
     pub(crate) fn execute_block(
         &self,
         block_number: u64,
-    ) -> BackfillJobResult<(
-        RecoveredBlock<P::Block>,
-        BlockExecutionOutput<<E::Primitives as NodePrimitives>::Receipt>,
-    )> {
+    ) -> BackfillJobResult<(RecoveredBlock<P::Block>, BlockExecutionOutput<BaseReceipt>)> {
         // Fetch the block with senders for execution.
         let block_with_senders = self
             .provider
