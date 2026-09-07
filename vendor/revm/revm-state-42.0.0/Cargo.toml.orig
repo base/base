@@ -1,0 +1,57 @@
+[package]
+name = "revm-state"
+description = "Revm state types"
+version = "42.0.0"
+authors.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# revm
+primitives.workspace = true
+bytecode.workspace = true
+
+# alloy
+alloy-eip7928.workspace = true
+
+# misc
+bitflags.workspace = true
+nonmax = { version = "0.5.5", default-features = false }
+
+# Optional
+serde = { workspace = true, features = ["derive", "rc"], optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true, features = ["alloc"] }
+
+[features]
+default = ["std"]
+std = [
+    "serde?/std",
+    "serde_json/std",
+    "primitives/std",
+    "bitflags/std",
+    "bytecode/std",
+    "alloy-eip7928/std",
+    "nonmax/std",
+]
+serde = [
+    "dep:serde",
+    "primitives/serde",
+    "bitflags/serde",
+    "bytecode/serde",
+    "alloy-eip7928/serde",
+    "nonmax/serde",
+]
+map-foldhash = ["primitives/map-foldhash"]

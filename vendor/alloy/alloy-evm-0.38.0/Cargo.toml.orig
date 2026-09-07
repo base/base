@@ -1,0 +1,62 @@
+[package]
+name = "alloy-evm"
+description = "EVM abstraction for Alloy"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-consensus = { workspace = true, features = ["k256"] }
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+alloy-eips.workspace = true
+alloy-hardforks.workspace = true
+alloy-rpc-types-eth = { workspace = true, optional = true }
+alloy-rpc-types-engine = { workspace = true, optional = true }
+
+revm.workspace = true
+
+auto_impl.workspace = true
+derive_more.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+alloy-primitives = { workspace = true, features = ["serde"] }
+serde_json.workspace = true
+test-case.workspace = true
+
+[features]
+default = ["std"]
+secp256k1 = [
+    "std",
+    "alloy-consensus/secp256k1",
+]
+std = [
+	"alloy-primitives/std",
+	"revm/std",
+	"alloy-consensus/std",
+	"alloy-eips/std",
+	"alloy-sol-types/std",
+	"derive_more/std",
+	"thiserror/std",
+	"alloy-rpc-types-eth?/std",
+	"alloy-rpc-types-engine?/std",
+	"tracing/std"
+]
+gmp = [
+    "revm/gmp",
+]
+overrides = ["dep:alloy-rpc-types-eth"]
+call-util = ["overrides"]
+engine = ["dep:alloy-rpc-types-engine"]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
+rpc = ["dep:alloy-rpc-types-eth"]

@@ -1,0 +1,622 @@
+//! This module contains [`CfgEnv`] and implements [`Cfg`] trait for it.
+pub use context_interface::Cfg;
+
+use context_interface::cfg::GasParams;
+use primitives::{eip170, eip3860, eip7825, eip7954, hardfork::SpecId};
+
+/// EVM configuration
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct CfgEnv<SPEC = SpecId> {
+    /// Specification for EVM represent the hardfork
+    ///
+    /// [`CfgEnv::new_with_spec`] is going to set both gas params and spec.
+    ///
+    /// As GasParams is spec dependent, it is recommended to use one of following function to set both of them.
+    /// [`CfgEnv::set_spec_and_mainnet_gas_params`], [`CfgEnv::with_mainnet_gas_params`], [`CfgEnv::with_mainnet_gas_params`]
+    pub spec: SPEC,
+
+    /// Gas params for the EVM. Use [`CfgEnv::set_gas_params`] to set the gas params.
+    /// If gas_params was not set it will be set to the default gas params for the spec.
+    pub gas_params: GasParams,
+
+    /// Chain ID of the EVM. Used in CHAINID opcode and transaction's chain ID check.
+    ///
+    /// Chain ID is introduced EIP-155.
+    pub chain_id: u64,
+
+    /// Whether to check the transaction's chain ID.
+    ///
+    /// If set to `false`, the transaction's chain ID check will be skipped.
+    pub tx_chain_id_check: bool,
+
+    /// Contract code size limit override.
+    ///
+    /// If None, the limit will be determined by the SpecId (EIP-170 or EIP-7954) at runtime.
+    /// If Some, this specific limit will be used regardless of SpecId.
+    ///
+    /// Useful to increase this because of tests.
+    pub limit_contract_code_size: Option<usize>,
+    /// Contract initcode size limit override.
+    ///
+    /// If None, the limit will check if `limit_contract_code_size` is set.
+    /// If it is set, it will double it for a limit.
+    /// If it is not set, the limit will be determined by the SpecId (EIP-170 or EIP-7954) at runtime.
+    ///
+    /// Useful to increase this because of tests.
+    pub limit_contract_initcode_size: Option<usize>,
+    /// Skips the nonce validation against the account's nonce
+    pub disable_nonce_check: bool,
+    /// Blob max count. EIP-7840 Add blob schedule to EL config files.
+    ///
+    /// If this config is not set, the check for max blobs will be skipped.
+    pub max_blobs_per_tx: Option<u64>,
+    /// Blob base fee update fraction. EIP-4844 Blob base fee update fraction.
+    ///
+    /// If this config is not set, the blob base fee update fraction will be set to the default value.
+    /// See also [CfgEnv::blob_base_fee_update_fraction].
+    ///
+    /// Default values for Cancun is [`primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN`]
+    /// and for Prague is [`primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE`].
+    pub blob_base_fee_update_fraction: Option<u64>,
+    /// Configures the gas limit cap for the transaction.
+    ///
+    /// If `None`, default value defined by spec will be used.
+    ///
+    /// Introduced in Osaka in [EIP-7825: Transaction Gas Limit Cap](https://eips.ethereum.org/EIPS/eip-7825)
+    /// with initials cap of 30M.
+    pub tx_gas_limit_cap: Option<u64>,
+    /// A hard memory limit in bytes beyond which
+    /// [OutOfGasError::Memory][context_interface::result::OutOfGasError::Memory] cannot be resized.
+    ///
+    /// In cases where the gas limit may be extraordinarily high, it is recommended to set this to
+    /// a sane value to prevent memory allocation panics.
+    ///
+    /// Defaults to `2^32 - 1` bytes per EIP-1985.
+    #[cfg(feature = "memory_limit")]
+    pub memory_limit: u64,
+    /// Skip balance checks if `true`
+    ///
+    /// Adds transaction cost to balance to ensure execution doesn't fail.
+    ///
+    /// By default, it is set to `false`.
+    #[cfg(feature = "optional_balance_check")]
+    pub disable_balance_check: bool,
+    /// There are use cases where it's allowed to provide a gas limit that's higher than a block's gas limit.
+    ///
+    /// To that end, you can disable the block gas limit validation.
+    ///
+    /// By default, it is set to `false`.
+    #[cfg(feature = "optional_block_gas_limit")]
+    pub disable_block_gas_limit: bool,
+    /// EIP-3541 rejects the creation of contracts that starts with 0xEF
+    ///
+    /// This is useful for chains that do not implement EIP-3541.
+    ///
+    /// By default, it is set to `false`.
+    #[cfg(feature = "optional_eip3541")]
+    pub disable_eip3541: bool,
+    /// EIP-3607 rejects transactions from senders with deployed code
+    ///
+    /// In development, it can be desirable to simulate calls from contracts, which this setting allows.
+    ///
+    /// By default, it is set to `false`.
+    #[cfg(feature = "optional_eip3607")]
+    pub disable_eip3607: bool,
+    /// EIP-7623 increases calldata cost.
+    ///
+    /// This EIP can be considered irrelevant in the context of an EVM-compatible L2 rollup,
+    /// if it does not make use of blobs.
+    ///
+    /// By default, it is set to `false`.
+    #[cfg(feature = "optional_eip7623")]
+    pub disable_eip7623: bool,
+    /// Disables base fee checks for EIP-1559 transactions
+    ///
+    /// This is useful for testing method calls with zero gas price.
+    ///
+    /// By default, it is set to `false`.
+    #[cfg(feature = "optional_no_base_fee")]
+    pub disable_base_fee: bool,
+    /// Disables "max fee must be less than or equal to max priority fee" check for EIP-1559 transactions.
+    /// This is useful because some chains (e.g. Arbitrum) do not enforce this check.
+    /// By default, it is set to `false`.
+    #[cfg(feature = "optional_priority_fee_check")]
+    pub disable_priority_fee_check: bool,
+    /// Disables fee charging for transactions.
+    /// This is useful when executing `eth_call` for example, on OP-chains where setting the base fee
+    /// to 0 isn't sufficient.
+    /// By default, it is set to `false`.
+    #[cfg(feature = "optional_fee_charge")]
+    pub disable_fee_charge: bool,
+    /// Enables EIP-8037 (Amsterdam) state creation gas cost increase.
+    ///
+    /// EIP-8037 introduces dual gas limits: regular gas for execution and state gas
+    /// for storage creation. State gas is tracked via a reservoir model.
+    /// It specifies concrete gas values based on `cost_per_state_byte` and adds
+    /// a hash cost for deployed bytecode.
+    ///
+    /// By default, it is set to `false`.
+    pub enable_amsterdam_eip8037: bool,
+    /// Enables EIP-2780 (Amsterdam) reduced intrinsic transaction gas.
+    ///
+    /// Replaces the legacy 21,000 base with the decomposed
+    /// `TX_BASE_COST + to-based + value-based` model and adds top-level
+    /// execution charges for empty recipients with value (state gas) and
+    /// EIP-7702-delegated recipients (extra cold access).
+    ///
+    /// By default, it is set to `false`.
+    pub enable_amsterdam_eip2780: bool,
+    /// Disables EIP-7708 (ETH transfers emit logs).
+    ///
+    /// By default, it is set to `false`.
+    pub amsterdam_eip7708_disabled: bool,
+    /// Disables the EIP-8246 delayed clearing of self-destructed accounts.
+    ///
+    /// When enabled, revm tracks all self-destructed addresses and, at the end of the
+    /// transaction, clears the code, storage and nonce of any that still have a remaining
+    /// balance while preserving the balance ([EIP-8246]). This can be disabled for performance
+    /// reasons as it requires storing and iterating over all self-destructed accounts. When
+    /// disabled, this clearing can be done outside of revm when applying accounts to database
+    /// state.
+    ///
+    /// By default, it is set to `false`.
+    ///
+    /// [EIP-8246]: https://eips.ethereum.org/EIPS/eip-8246
+    pub amsterdam_eip8246_delayed_clear_disabled: bool,
+}
+
+impl CfgEnv {
+    /// Creates new `CfgEnv` with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<SPEC> CfgEnv<SPEC> {
+    /// Returns the spec for the `CfgEnv`.
+    #[inline]
+    pub const fn spec(&self) -> &SPEC {
+        &self.spec
+    }
+
+    /// Consumes `self` and returns a new `CfgEnv` with the specified chain ID.
+    pub const fn with_chain_id(mut self, chain_id: u64) -> Self {
+        self.chain_id = chain_id;
+        self
+    }
+
+    /// Sets the gas params for the `CfgEnv`.
+    #[inline]
+    pub fn with_gas_params(mut self, gas_params: GasParams) -> Self {
+        self.set_gas_params(gas_params);
+        self
+    }
+
+    /// Sets the spec for the `CfgEnv`.
+    #[inline]
+    #[deprecated(note = "Use [`CfgEnv::set_spec_and_mainnet_gas_params`] instead")]
+    pub fn set_spec(&mut self, spec: SPEC) {
+        self.spec = spec;
+    }
+
+    /// Sets the gas params for the `CfgEnv`.
+    #[inline]
+    pub fn set_gas_params(&mut self, gas_params: GasParams) {
+        self.gas_params = gas_params;
+    }
+
+    /// Enables the transaction's chain ID check.
+    pub const fn enable_tx_chain_id_check(mut self) -> Self {
+        self.tx_chain_id_check = true;
+        self
+    }
+
+    /// Disables the transaction's chain ID check.
+    pub const fn disable_tx_chain_id_check(mut self) -> Self {
+        self.tx_chain_id_check = false;
+        self
+    }
+
+    /// Sets the spec for the `CfgEnv`.
+    #[inline]
+    #[deprecated(note = "Use [`CfgEnv::with_spec_and_mainnet_gas_params`] instead")]
+    pub fn with_spec(mut self, spec: SPEC) -> Self {
+        self.spec = spec;
+        self
+    }
+
+    /// Sets the spec for the `CfgEnv` and the gas params to the mainnet gas params.
+    ///
+    /// Automatically enables EIP-8037 and EIP-2780 for AMSTERDAM and later.
+    pub fn with_spec_and_mainnet_gas_params<OSPEC: Into<SpecId> + Clone>(
+        self,
+        spec: OSPEC,
+    ) -> CfgEnv<OSPEC> {
+        let is_amsterdam = spec.clone().into().is_enabled_in(SpecId::AMSTERDAM);
+        let enable_amsterdam_eip8037 = self.enable_amsterdam_eip8037 || is_amsterdam;
+        let enable_amsterdam_eip2780 = self.enable_amsterdam_eip2780 || is_amsterdam;
+        let mut cfg = self.with_spec_and_gas_params(spec.clone(), GasParams::new_spec(spec.into()));
+        cfg.enable_amsterdam_eip8037 = enable_amsterdam_eip8037;
+        cfg.enable_amsterdam_eip2780 = enable_amsterdam_eip2780;
+        cfg
+    }
+
+    /// Consumes `self` and returns a new `CfgEnv` with the specified spec.
+    ///
+    /// Resets the gas params override function as it is generic over SPEC.
+    pub fn with_spec_and_gas_params<OSPEC: Into<SpecId> + Clone>(
+        self,
+        spec: OSPEC,
+        gas_params: GasParams,
+    ) -> CfgEnv<OSPEC> {
+        CfgEnv {
+            chain_id: self.chain_id,
+            tx_chain_id_check: self.tx_chain_id_check,
+            limit_contract_code_size: self.limit_contract_code_size,
+            limit_contract_initcode_size: self.limit_contract_initcode_size,
+            spec,
+            disable_nonce_check: self.disable_nonce_check,
+            tx_gas_limit_cap: self.tx_gas_limit_cap,
+            max_blobs_per_tx: self.max_blobs_per_tx,
+            blob_base_fee_update_fraction: self.blob_base_fee_update_fraction,
+            gas_params,
+            #[cfg(feature = "memory_limit")]
+            memory_limit: self.memory_limit,
+            #[cfg(feature = "optional_balance_check")]
+            disable_balance_check: self.disable_balance_check,
+            #[cfg(feature = "optional_block_gas_limit")]
+            disable_block_gas_limit: self.disable_block_gas_limit,
+            #[cfg(feature = "optional_eip3541")]
+            disable_eip3541: self.disable_eip3541,
+            #[cfg(feature = "optional_eip3607")]
+            disable_eip3607: self.disable_eip3607,
+            #[cfg(feature = "optional_eip7623")]
+            disable_eip7623: self.disable_eip7623,
+            #[cfg(feature = "optional_no_base_fee")]
+            disable_base_fee: self.disable_base_fee,
+            #[cfg(feature = "optional_priority_fee_check")]
+            disable_priority_fee_check: self.disable_priority_fee_check,
+            #[cfg(feature = "optional_fee_charge")]
+            disable_fee_charge: self.disable_fee_charge,
+            enable_amsterdam_eip8037: self.enable_amsterdam_eip8037,
+            enable_amsterdam_eip2780: self.enable_amsterdam_eip2780,
+            amsterdam_eip7708_disabled: self.amsterdam_eip7708_disabled,
+            amsterdam_eip8246_delayed_clear_disabled: self.amsterdam_eip8246_delayed_clear_disabled,
+        }
+    }
+
+    /// Sets the blob target
+    pub const fn with_max_blobs_per_tx(mut self, max_blobs_per_tx: u64) -> Self {
+        self.set_max_blobs_per_tx(max_blobs_per_tx);
+        self
+    }
+
+    /// Sets the blob target
+    pub const fn set_max_blobs_per_tx(&mut self, max_blobs_per_tx: u64) {
+        self.max_blobs_per_tx = Some(max_blobs_per_tx);
+    }
+
+    /// Clears the blob target and max count over hardforks.
+    pub const fn clear_max_blobs_per_tx(&mut self) {
+        self.max_blobs_per_tx = None;
+    }
+
+    /// Sets the disable priority fee check flag.
+    #[cfg(feature = "optional_priority_fee_check")]
+    pub const fn with_disable_priority_fee_check(mut self, disable: bool) -> Self {
+        self.disable_priority_fee_check = disable;
+        self
+    }
+
+    /// Sets the disable fee charge flag.
+    #[cfg(feature = "optional_fee_charge")]
+    pub const fn with_disable_fee_charge(mut self, disable: bool) -> Self {
+        self.disable_fee_charge = disable;
+        self
+    }
+
+    /// Sets the disable eip7623 flag.
+    #[cfg(feature = "optional_eip7623")]
+    pub const fn with_disable_eip7623(mut self, disable: bool) -> Self {
+        self.disable_eip7623 = disable;
+        self
+    }
+
+    /// Sets the enable EIP-8037 (Amsterdam) state creation gas cost flag.
+    pub const fn with_enable_amsterdam_eip8037(mut self, enable: bool) -> Self {
+        self.enable_amsterdam_eip8037 = enable;
+        self
+    }
+
+    /// Sets the enable EIP-2780 (Amsterdam) reduced intrinsic transaction
+    /// gas flag.
+    pub const fn with_enable_amsterdam_eip2780(mut self, enable: bool) -> Self {
+        self.enable_amsterdam_eip2780 = enable;
+        self
+    }
+}
+
+impl<SPEC: Into<SpecId> + Clone> CfgEnv<SPEC> {
+    /// Create new `CfgEnv` with default values and specified spec.
+    pub fn new_with_spec_and_gas_params(spec: SPEC, gas_params: GasParams) -> Self {
+        let is_amsterdam = spec.clone().into().is_enabled_in(SpecId::AMSTERDAM);
+        Self {
+            chain_id: 1,
+            tx_chain_id_check: true,
+            limit_contract_code_size: None,
+            limit_contract_initcode_size: None,
+            spec,
+            disable_nonce_check: false,
+            max_blobs_per_tx: None,
+            tx_gas_limit_cap: None,
+            blob_base_fee_update_fraction: None,
+            gas_params,
+            #[cfg(feature = "memory_limit")]
+            memory_limit: (1 << 32) - 1,
+            #[cfg(feature = "optional_balance_check")]
+            disable_balance_check: false,
+            #[cfg(feature = "optional_block_gas_limit")]
+            disable_block_gas_limit: false,
+            #[cfg(feature = "optional_eip3541")]
+            disable_eip3541: false,
+            #[cfg(feature = "optional_eip3607")]
+            disable_eip3607: false,
+            #[cfg(feature = "optional_eip7623")]
+            disable_eip7623: false,
+            #[cfg(feature = "optional_no_base_fee")]
+            disable_base_fee: false,
+            #[cfg(feature = "optional_priority_fee_check")]
+            disable_priority_fee_check: false,
+            #[cfg(feature = "optional_fee_charge")]
+            disable_fee_charge: false,
+            enable_amsterdam_eip8037: is_amsterdam,
+            enable_amsterdam_eip2780: is_amsterdam,
+            amsterdam_eip7708_disabled: false,
+            amsterdam_eip8246_delayed_clear_disabled: false,
+        }
+    }
+
+    /// Returns the blob base fee update fraction from [CfgEnv::blob_base_fee_update_fraction].
+    ///
+    /// If this field is not set, return the default value for the spec.
+    ///
+    /// Default values for Cancun is [`primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN`]
+    /// and for Prague is [`primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE`].
+    pub fn blob_base_fee_update_fraction(&self) -> u64 {
+        self.blob_base_fee_update_fraction.unwrap_or_else(|| {
+            let spec: SpecId = self.spec.clone().into();
+            if spec.is_enabled_in(SpecId::PRAGUE) {
+                primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+            } else {
+                primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
+            }
+        })
+    }
+
+    /// Create new `CfgEnv` with default values and specified spec.
+    /// It will create a new gas params based on mainnet spec.
+    ///
+    /// Internally it will call [`CfgEnv::new_with_spec_and_gas_params`] with the mainnet gas params.
+    pub fn new_with_spec(spec: SPEC) -> Self {
+        Self::new_with_spec_and_gas_params(spec.clone(), GasParams::new_spec(spec.into()))
+    }
+
+    /// Sets the gas params for the `CfgEnv` to the mainnet gas params.
+    ///
+    /// If spec gets changed, calling this function would use this spec to set the mainnetF gas params.
+    pub fn with_mainnet_gas_params(mut self) -> Self {
+        self.set_gas_params(GasParams::new_spec(self.spec.clone().into()));
+        self
+    }
+
+    /// Sets the spec for the `CfgEnv` and the gas params to the mainnet gas params.
+    ///
+    /// Automatically enables EIP-8037 and EIP-2780 for AMSTERDAM and later.
+    #[inline]
+    pub fn set_spec_and_mainnet_gas_params(&mut self, spec: SPEC) {
+        self.spec = spec.clone();
+        self.set_gas_params(GasParams::new_spec(spec.clone().into()));
+        // EIP-8037/EIP-2780: Enable for AMSTERDAM and later
+        if spec.into().is_enabled_in(SpecId::AMSTERDAM) {
+            self.enable_amsterdam_eip8037 = true;
+            self.enable_amsterdam_eip2780 = true;
+        }
+    }
+}
+
+impl<SPEC: Into<SpecId> + Clone> Cfg for CfgEnv<SPEC> {
+    type Spec = SPEC;
+
+    #[inline]
+    fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
+    #[inline]
+    fn spec(&self) -> Self::Spec {
+        self.spec.clone()
+    }
+
+    #[inline]
+    fn tx_chain_id_check(&self) -> bool {
+        self.tx_chain_id_check
+    }
+
+    #[inline]
+    fn tx_gas_limit_cap(&self) -> u64 {
+        self.tx_gas_limit_cap
+            .unwrap_or(if self.spec.clone().into().is_enabled_in(SpecId::OSAKA) {
+                eip7825::TX_GAS_LIMIT_CAP
+            } else {
+                u64::MAX
+            })
+    }
+
+    #[inline]
+    fn max_blobs_per_tx(&self) -> Option<u64> {
+        self.max_blobs_per_tx
+    }
+
+    fn max_code_size(&self) -> usize {
+        self.limit_contract_code_size.unwrap_or(
+            if self.spec.clone().into().is_enabled_in(SpecId::AMSTERDAM) {
+                eip7954::MAX_CODE_SIZE
+            } else {
+                eip170::MAX_CODE_SIZE
+            },
+        )
+    }
+
+    fn max_initcode_size(&self) -> usize {
+        self.limit_contract_initcode_size
+            .or_else(|| {
+                self.limit_contract_code_size
+                    .map(|size| size.saturating_mul(2))
+            })
+            .unwrap_or(
+                if self.spec.clone().into().is_enabled_in(SpecId::AMSTERDAM) {
+                    eip7954::MAX_INITCODE_SIZE
+                } else {
+                    eip3860::MAX_INITCODE_SIZE
+                },
+            )
+    }
+
+    fn is_eip3541_disabled(&self) -> bool {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "optional_eip3541")] {
+                self.disable_eip3541
+            } else {
+                false
+            }
+        }
+    }
+
+    fn is_eip3607_disabled(&self) -> bool {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "optional_eip3607")] {
+                self.disable_eip3607
+            } else {
+                false
+            }
+        }
+    }
+
+    fn is_eip7623_disabled(&self) -> bool {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "optional_eip7623")] {
+                self.disable_eip7623
+            } else {
+                false
+            }
+        }
+    }
+
+    fn is_balance_check_disabled(&self) -> bool {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "optional_balance_check")] {
+                self.disable_balance_check
+            } else {
+                false
+            }
+        }
+    }
+
+    /// Returns `true` if the block gas limit is disabled.
+    fn is_block_gas_limit_disabled(&self) -> bool {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "optional_block_gas_limit")] {
+                self.disable_block_gas_limit
+            } else {
+                false
+            }
+        }
+    }
+
+    fn is_nonce_check_disabled(&self) -> bool {
+        self.disable_nonce_check
+    }
+
+    fn is_base_fee_check_disabled(&self) -> bool {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "optional_no_base_fee")] {
+                self.disable_base_fee
+            } else {
+                false
+            }
+        }
+    }
+
+    fn is_priority_fee_check_disabled(&self) -> bool {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "optional_priority_fee_check")] {
+                self.disable_priority_fee_check
+            } else {
+                false
+            }
+        }
+    }
+
+    fn is_fee_charge_disabled(&self) -> bool {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "optional_fee_charge")] {
+                self.disable_fee_charge
+            } else {
+                false
+            }
+        }
+    }
+
+    fn is_eip7708_disabled(&self) -> bool {
+        self.amsterdam_eip7708_disabled
+    }
+
+    fn is_eip8246_delayed_clear_disabled(&self) -> bool {
+        self.amsterdam_eip8246_delayed_clear_disabled
+    }
+
+    fn memory_limit(&self) -> u64 {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "memory_limit")] {
+                self.memory_limit
+            } else {
+                u64::MAX
+            }
+        }
+    }
+
+    #[inline]
+    fn gas_params(&self) -> &GasParams {
+        &self.gas_params
+    }
+
+    fn is_amsterdam_eip8037_enabled(&self) -> bool {
+        self.enable_amsterdam_eip8037
+    }
+
+    fn is_amsterdam_eip2780_enabled(&self) -> bool {
+        self.enable_amsterdam_eip2780
+    }
+}
+
+impl<SPEC: Default + Into<SpecId> + Clone> Default for CfgEnv<SPEC> {
+    fn default() -> Self {
+        Self::new_with_spec_and_gas_params(
+            SPEC::default(),
+            GasParams::new_spec(SPEC::default().into()),
+        )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn blob_max_and_target_count() {
+        let cfg: CfgEnv = Default::default();
+        assert_eq!(cfg.max_blobs_per_tx(), None);
+    }
+}

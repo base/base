@@ -1,0 +1,40 @@
+[package]
+name = "alloy-rpc-types-debug"
+description = "Ethereum RPC debug types"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rlp.workspace = true
+
+serde.workspace = true
+serde_with = { workspace = true, features = ["alloc", "base64"] }
+
+derive_more = { workspace = true, features = [
+	"as_ref",
+	"deref",
+	"deref_mut",
+	"from",
+], default-features = false }
+
+[dev-dependencies]
+serde_json.workspace = true

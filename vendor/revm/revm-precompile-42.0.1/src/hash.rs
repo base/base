@@ -1,0 +1,56 @@
+//! Hash precompiles, it contains SHA-256 and RIPEMD-160 hash precompiles
+//! More details in [`sha256_run`] and [`ripemd160_run`]
+use super::calc_linear_cost;
+use crate::{
+    crypto, eth_precompile_fn, EthPrecompileOutput, EthPrecompileResult, Precompile,
+    PrecompileHalt, PrecompileId,
+};
+
+eth_precompile_fn!(sha256_precompile, sha256_run);
+eth_precompile_fn!(ripemd160_precompile, ripemd160_run);
+
+/// SHA-256 precompile
+pub const SHA256: Precompile = Precompile::new(
+    PrecompileId::Sha256,
+    crate::u64_to_address(2),
+    sha256_precompile,
+);
+
+/// RIPEMD-160 precompile
+pub const RIPEMD160: Precompile = Precompile::new(
+    PrecompileId::Ripemd160,
+    crate::u64_to_address(3),
+    ripemd160_precompile,
+);
+
+/// Computes the SHA-256 hash of the input data
+///
+/// This function follows specifications defined in the following references:
+/// - [Ethereum Yellow Paper](https://ethereum.github.io/yellowpaper/paper.pdf)
+/// - [Solidity Documentation on Mathematical and Cryptographic Functions](https://docs.soliditylang.org/en/develop/units-and-global-variables.html#mathematical-and-cryptographic-functions)
+/// - [Address 0x02](https://etherscan.io/address/0000000000000000000000000000000000000002)
+pub fn sha256_run(input: &[u8], gas_limit: u64) -> EthPrecompileResult {
+    let cost = calc_linear_cost(input.len(), 60, 12);
+    if cost > gas_limit {
+        Err(PrecompileHalt::OutOfGas)
+    } else {
+        let output = crypto().sha256(input);
+        Ok(EthPrecompileOutput::new(cost, output.to_vec().into()))
+    }
+}
+
+/// Computes the RIPEMD-160 hash of the input data
+///
+/// This function follows specifications defined in the following references:
+/// - [Ethereum Yellow Paper](https://ethereum.github.io/yellowpaper/paper.pdf)
+/// - [Solidity Documentation on Mathematical and Cryptographic Functions](https://docs.soliditylang.org/en/develop/units-and-global-variables.html#mathematical-and-cryptographic-functions)
+/// - [Address 03](https://etherscan.io/address/0000000000000000000000000000000000000003)
+pub fn ripemd160_run(input: &[u8], gas_limit: u64) -> EthPrecompileResult {
+    let gas_used = calc_linear_cost(input.len(), 600, 120);
+    if gas_used > gas_limit {
+        Err(PrecompileHalt::OutOfGas)
+    } else {
+        let output = crypto().ripemd160(input);
+        Ok(EthPrecompileOutput::new(gas_used, output.to_vec().into()))
+    }
+}

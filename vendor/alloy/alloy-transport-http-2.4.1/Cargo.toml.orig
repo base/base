@@ -1,0 +1,91 @@
+[package]
+name = "alloy-transport-http"
+description = "HTTP transport implementation"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-json-rpc = { workspace = true, optional = true }
+alloy-transport.workspace = true
+
+itertools.workspace = true
+serde_json = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+url.workspace = true
+
+tracing = { workspace = true, optional = true }
+
+[target.'cfg(not(all(target_os = "wasi", target_env = "p1")))'.dependencies]
+reqwest = { workspace = true, features = ["json"], optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, default-features = false, optional = true }
+hyper-util = { workspace = true, features = ["full"], optional = true }
+hyper-tls = { workspace = true, optional = true }
+
+# auth layer
+alloy-rpc-types-engine = { workspace = true, optional = true }
+jsonwebtoken = { workspace = true, optional = true }
+
+# trace propagation
+opentelemetry = { version = "0.31.0", optional = true }
+opentelemetry-http = { version = "0.31.0", optional = true}
+tracing-opentelemetry = { version = "0.32.0", optional = true}
+
+[features]
+default = ["reqwest", "reqwest-default-tls", "traceparent"]
+reqwest = [
+    "dep:reqwest",
+    "dep:alloy-json-rpc",
+    "dep:serde_json",
+    "dep:tower",
+    "dep:tracing",
+]
+hyper = [
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:http-body-util",
+    "dep:alloy-json-rpc",
+    "dep:serde_json",
+    "dep:tower",
+    "dep:tracing",
+    "hyper-tls",
+]
+hyper-tls = ["hyper", "dep:hyper-tls"]
+jwt-auth = [
+    "hyper",
+    "dep:alloy-rpc-types-engine",
+    "alloy-rpc-types-engine/jwt-aws-lc-rs",
+    "alloy-rpc-types-engine/serde",
+    "dep:jsonwebtoken",
+]
+traceparent = [
+    "dep:tower",
+    "dep:tracing",
+    "dep:alloy-json-rpc",
+    "dep:opentelemetry-http",
+    "dep:opentelemetry",
+    "dep:tracing-opentelemetry",
+]
+reqwest-default-tls = ["reqwest?/default-tls"]
+reqwest-native-tls = ["reqwest?/native-tls"]
+reqwest-rustls-tls = ["reqwest?/rustls"]

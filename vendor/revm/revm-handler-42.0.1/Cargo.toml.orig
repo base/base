@@ -1,0 +1,70 @@
+[package]
+name = "revm-handler"
+description = "Revm handler crates"
+version = "42.0.1"
+authors.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# revm
+database-interface.workspace = true
+interpreter.workspace = true
+precompile.workspace = true
+context-interface.workspace = true
+context.workspace = true
+primitives.workspace = true
+state.workspace = true
+bytecode.workspace = true
+
+auto_impl.workspace = true
+derive-where.workspace = true
+
+# Optional
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+database.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+
+[features]
+default = ["std"]
+std = [
+	"serde?/std",
+	"bytecode/std",
+	"context/std",
+	"context-interface/std",
+	"database/std",
+	"database-interface/std",
+	"interpreter/std",
+	"precompile/std",
+	"primitives/std",
+	"state/std",
+]
+serde = [
+	"dep:serde",
+	"primitives/serde",
+	"state/serde",
+	"context-interface/serde",
+	"bytecode/serde",
+	"context/serde",
+	"database/serde",
+	"database-interface/serde",
+	"interpreter/serde",
+	"derive-where/serde",
+]
+
+# Deprecated, please use `serde` feature instead.
+serde-json = ["serde"]

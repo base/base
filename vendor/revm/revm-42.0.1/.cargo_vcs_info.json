@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "fbb0028e10fac9ba97316463478bce1284fc0edd"
+  },
+  "path_in_vcs": "crates/revm"
+}

@@ -1,0 +1,557 @@
+//! Specific helper functions for creating/loading a mnemonic private key following [BIP-39]
+//! specifications.
+//!
+//! [BIP-39]: https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki
+
+use crate::{LocalSigner, LocalSignerError, PrivateKeySigner};
+use alloy_signer::utils::secret_key_to_address;
+use coins_bip32::{path::DerivationPath, prelude::Parent, xkeys::XPriv};
+use coins_bip39::{English, Mnemonic, Wordlist};
+use k256::ecdsa::SigningKey;
+use rand::Rng;
+use std::{marker::PhantomData, path::PathBuf};
+use thiserror::Error;
+
+#[cfg(feature = "zeroize")]
+use zeroize::{Zeroize, ZeroizeOnDrop};
+
+const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
+const DEFAULT_DERIVATION_PATH: &str = "m/44'/60'/0'/0/0";
+
+/// Represents a structure that can resolve into a `PrivateKeySigner`.
+#[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
+#[derive(Clone, Debug, PartialEq)]
+#[must_use = "builders do nothing unless `build` is called"]
+pub struct MnemonicBuilder<W: Wordlist = English> {
+    /// The mnemonic phrase can be supplied to the builder as a string. A builder that has a valid
+    /// phrase should `build` the signer.
+    phrase: Option<String>,
+    /// The mnemonic builder can also be asked to generate a new random signer by providing the
+    /// number of words in the phrase. By default this is set to 12.
+    word_count: usize,
+    /// The derivation path at which the extended private key child will be derived at. By default
+    /// the mnemonic builder uses the path: "m/44'/60'/0'/0/0".
+    #[cfg_attr(feature = "zeroize", zeroize(skip))]
+    derivation_path: DerivationPath,
+    /// Optional password for the mnemonic phrase.
+    password: Option<String>,
+    /// Optional field that if enabled, writes the mnemonic phrase to disk storage at the provided
+    /// path.
+    #[cfg_attr(feature = "zeroize", zeroize(skip))]
+    write_to: Option<PathBuf>,
+    /// PhantomData
+    _wordlist: PhantomData<W>,
+}
+
+impl<W: Wordlist> Default for MnemonicBuilder<W> {
+    fn default() -> Self {
+        Self {
+            phrase: None,
+            word_count: 12usize,
+            derivation_path: DEFAULT_DERIVATION_PATH.parse().unwrap(),
+            password: None,
+            write_to: None,
+            _wordlist: PhantomData,
+        }
+    }
+}
+
+impl MnemonicBuilder<English> {
+    /// Creates a new [`MnemonicBuilder`] with the [`English`] wordlist.
+    pub fn english() -> Self {
+        Self::default()
+    }
+
+    /// Creates a new [`MnemonicBuilder`] with the [`English`] wordlist and the given phrase.
+    pub fn from_phrase<P: Into<String>>(phrase: P) -> Self {
+        Self::english().phrase(phrase)
+    }
+
+    /// Creates a new [`MnemonicBuilder`] with the [`English`] wordlist and the given phrase and
+    /// returns the signer with the derivation path ` "m/44'/60'/0'/0/{index}"`
+    pub fn try_from_phrase_nth<P: Into<String>>(
+        phrase: P,
+        index: u32,
+    ) -> Result<PrivateKeySigner, LocalSignerError> {
+        Self::from_phrase(phrase).index(index)?.build()
+    }
+
+    /// Creates a new [`MnemonicBuilder`] with the [`English`] wordlist and the given phrase and
+    /// returns the signer with the derivation path ` "m/44'/60'/0'/0/{index}"`
+    ///
+    /// # Panics
+    ///
+    /// Panics if the derivation path cannot be parsed or the signer cannot be built.
+    pub fn from_phrase_nth<P: Into<String>>(phrase: P, index: u32) -> PrivateKeySigner {
+        Self::try_from_phrase_nth(phrase, index).unwrap()
+    }
+
+    /// Creates a new [`MnemonicBuilder`] with the [`English`] wordlist and the given phrase and
+    /// returns the first signer with the derivation path ` "m/44'/60'/0'/0/0"`
+    pub fn try_from_phrase_first<P: Into<String>>(
+        phrase: P,
+    ) -> Result<PrivateKeySigner, LocalSignerError> {
+        Self::try_from_phrase_nth(phrase, 0)
+    }
+
+    /// Creates a new [`MnemonicBuilder`] with the [`English`] wordlist and the given phrase and
+    /// returns the first signer with the derivation path ` "m/44'/60'/0'/0/0"`
+    ///
+    /// # Panics
+    ///
+    /// Panics if the derivation path cannot be parsed or the signer cannot be built.
+    pub fn from_phrase_first<P: Into<String>>(phrase: P) -> PrivateKeySigner {
+        Self::from_phrase_nth(phrase, 0)
+    }
+}
+
+impl<W: Wordlist> MnemonicBuilder<W> {
+    /// Sets the space-separated mnemonic phrase.
+    ///
+    /// The value is parsed as phrase words, not as a file path. Once supplied,
+    /// [`build`](Self::build) derives the signer deterministically.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use alloy_signer_local::{MnemonicBuilder, coins_bip39::English};
+    ///
+    /// let signer = MnemonicBuilder::<English>::default()
+    ///     .phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+    ///     .build()?;
+    /// # Ok::<_, Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn phrase<P: Into<String>>(mut self, phrase: P) -> Self {
+        self.phrase = Some(phrase.into());
+        self
+    }
+
+    /// Sets the word count of a mnemonic phrase to generate with
+    /// [`build_random`](Self::build_random).
+    ///
+    /// Valid BIP-39 word counts are 12, 15, 18, 21, and 24. Random generation returns an error if
+    /// a phrase was also supplied.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use alloy_signer_local::{coins_bip39::English, MnemonicBuilder};
+    ///
+    /// let signer = MnemonicBuilder::<English>::default().word_count(24).build_random()?;
+    /// # Ok::<_, Box<dyn std::error::Error>>(())
+    /// ```
+    pub const fn word_count(mut self, count: usize) -> Self {
+        self.word_count = count;
+        self
+    }
+
+    /// Sets the derivation path of the child key to be derived. The derivation path is calculated
+    /// using the default derivation path prefix used in Ethereum, i.e. "m/44'/60'/0'/0/{index}".
+    pub fn index(self, index: u32) -> Result<Self, LocalSignerError> {
+        self.derivation_path(format!("{DEFAULT_DERIVATION_PATH_PREFIX}{index}"))
+    }
+
+    /// Sets the derivation path of the child key to be derived.
+    pub fn derivation_path<T: AsRef<str>>(mut self, path: T) -> Result<Self, LocalSignerError> {
+        self.derivation_path = path.as_ref().parse()?;
+        Ok(self)
+    }
+
+    /// Returns a reference to the derivation path of the child key to be derived.
+    pub const fn get_derivation_path(&self) -> &DerivationPath {
+        &self.derivation_path
+    }
+
+    /// Sets the optional BIP-39 passphrase used to derive the seed.
+    ///
+    /// This is not encryption: the same mnemonic with a different passphrase silently derives a
+    /// different wallet. The passphrase is required to recover the same keys later.
+    pub fn password<T: Into<String>>(mut self, password: T) -> Self {
+        self.password = Some(password.into());
+        self
+    }
+
+    /// Sets the directory where a randomly generated phrase will be written.
+    ///
+    /// [`build_random`](Self::build_random) writes the phrase in plaintext to a file named after
+    /// the derived signer address. The directory must already exist. This setting is ignored by
+    /// [`build`](Self::build) when deriving from a supplied phrase.
+    ///
+    /// # Security
+    ///
+    /// The file contains the wallet recovery secret in plaintext. Restrict its permissions and do
+    /// not use this option unless plaintext storage is intended.
+    pub fn write_to<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.write_to = Some(path.into());
+        self
+    }
+
+    /// Builds a `PrivateKeySigner` using the parameters set in mnemonic builder. This method
+    /// expects the phrase field to be set.
+    pub fn build(&self) -> Result<PrivateKeySigner, LocalSignerError> {
+        let mnemonic = match &self.phrase {
+            Some(phrase) => Mnemonic::<W>::new_from_phrase(phrase)?,
+            None => return Err(MnemonicBuilderError::ExpectedPhraseNotFound.into()),
+        };
+        self.mnemonic_to_signer(&mnemonic)
+    }
+
+    /// Builds a `PrivateKeySigner` using the parameters set in the mnemonic builder and
+    /// constructing the phrase using the thread RNG.
+    pub fn build_random(&self) -> Result<PrivateKeySigner, LocalSignerError> {
+        self.build_random_with(&mut rand::thread_rng())
+    }
+
+    /// Builds a `PrivateKeySigner` using the parameters set in the mnemonic builder and
+    /// constructing the phrase using the provided random number generator.
+    pub fn build_random_with<R: Rng>(
+        &self,
+        rng: &mut R,
+    ) -> Result<PrivateKeySigner, LocalSignerError> {
+        let mnemonic = match &self.phrase {
+            None => Mnemonic::<W>::new_with_count(rng, self.word_count)?,
+            _ => return Err(MnemonicBuilderError::UnexpectedPhraseFound.into()),
+        };
+        let signer = self.mnemonic_to_signer(&mnemonic)?;
+
+        // Write the mnemonic phrase to storage if a directory has been provided.
+        if let Some(dir) = &self.write_to {
+            std::fs::write(dir.join(signer.address.to_string()), mnemonic.to_phrase().as_bytes())?;
+        }
+
+        Ok(signer)
+    }
+
+    /// Builds a [`MnemonicKey`] by deriving the parent of the configured derivation path from the
+    /// mnemonic phrase.
+    ///
+    /// This pops the last component off the derivation path and derives a key at the remaining
+    /// prefix. For example, the default path `m/44'/60'/0'/0/0` pops `0` and produces a key at
+    /// `m/44'/60'/0'/0`. The popped index is used as the starting point for
+    /// [`IntoIterator`](#impl-IntoIterator-for-MnemonicBuilder<W>).
+    ///
+    /// The returned key can then derive individual children, extract a signer, or be used as an
+    /// iterator.
+    pub fn build_parent_key(&self) -> Result<MnemonicKey, LocalSignerError> {
+        let mnemonic = match &self.phrase {
+            Some(phrase) => Mnemonic::<W>::new_from_phrase(phrase)?,
+            None => return Err(MnemonicBuilderError::ExpectedPhraseNotFound.into()),
+        };
+
+        let mut key = mnemonic.master_key(self.password.as_deref())?;
+        if self.derivation_path.len() > 1 {
+            for &i in self.derivation_path.iter().take(self.derivation_path.len() - 1) {
+                key = key.derive_child(i)?;
+            }
+        }
+
+        Ok(MnemonicKey { key })
+    }
+
+    /// Builds a [`MnemonicKey`] by deriving the full configured derivation path from the
+    /// mnemonic phrase.
+    pub fn build_key(&self) -> Result<MnemonicKey, LocalSignerError> {
+        let mnemonic = match &self.phrase {
+            Some(phrase) => Mnemonic::<W>::new_from_phrase(phrase)?,
+            None => return Err(MnemonicBuilderError::ExpectedPhraseNotFound.into()),
+        };
+        self.mnemonic_to_key(&mnemonic)
+    }
+
+    fn mnemonic_to_signer(
+        &self,
+        mnemonic: &Mnemonic<W>,
+    ) -> Result<PrivateKeySigner, LocalSignerError> {
+        Ok(self.mnemonic_to_key(mnemonic)?.signer())
+    }
+
+    fn mnemonic_to_key(&self, mnemonic: &Mnemonic<W>) -> Result<MnemonicKey, LocalSignerError> {
+        let key = mnemonic.derive_key(&self.derivation_path, self.password.as_deref())?;
+        Ok(MnemonicKey { key })
+    }
+}
+
+impl<W: Wordlist> IntoIterator for MnemonicBuilder<W> {
+    type Item = Result<PrivateKeySigner, LocalSignerError>;
+    type IntoIter = MnemonicSignerIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        if self.phrase.is_none() {
+            return MnemonicSignerIter::missing_phrase();
+        }
+
+        self.build_parent_key()
+            .expect("mnemonic phrase must be set for iteration")
+            .children_from(self.derivation_path.last().copied().unwrap_or(0))
+    }
+}
+
+/// An extended private key derived from a mnemonic phrase.
+///
+/// Created via [`MnemonicBuilder::build_parent_key`]. Supports deriving child keys, extracting a
+/// signer, and iteration over sequential child indices.
+#[derive(Debug, Clone)]
+pub struct MnemonicKey {
+    key: XPriv,
+}
+
+impl MnemonicKey {
+    /// Derives a child key at the given index.
+    pub fn child(&self, index: u32) -> Result<Self, LocalSignerError> {
+        Ok(Self { key: self.key.derive_child(index)? })
+    }
+
+    /// Extracts a [`PrivateKeySigner`] from this key.
+    pub fn signer(&self) -> PrivateKeySigner {
+        xpriv_to_signer(&self.key)
+    }
+
+    /// Creates an iterator that generates signers by incrementing the derivation index starting
+    /// from 0.
+    pub fn children(&self) -> MnemonicSignerIter {
+        self.children_from(0)
+    }
+
+    /// Creates an iterator that generates signers by incrementing the derivation index starting
+    /// from the given index.
+    pub fn children_from(&self, start: u32) -> MnemonicSignerIter {
+        MnemonicSignerIter {
+            state: MnemonicSignerIterState::Signers { key: self.clone(), current_index: start },
+        }
+    }
+}
+
+impl IntoIterator for MnemonicKey {
+    type Item = Result<PrivateKeySigner, LocalSignerError>;
+    type IntoIter = MnemonicSignerIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        MnemonicSignerIter {
+            state: MnemonicSignerIterState::Signers { key: self, current_index: 0 },
+        }
+    }
+}
+
+/// Iterator that generates signers from a mnemonic phrase by incrementing the derivation index.
+#[derive(Debug, Clone)]
+pub struct MnemonicSignerIter {
+    state: MnemonicSignerIterState,
+}
+
+#[derive(Debug, Clone)]
+enum MnemonicSignerIterState {
+    Signers { key: MnemonicKey, current_index: u32 },
+    MissingPhrase { yielded_error: bool },
+}
+
+impl MnemonicSignerIter {
+    const fn missing_phrase() -> Self {
+        Self { state: MnemonicSignerIterState::MissingPhrase { yielded_error: false } }
+    }
+}
+
+impl Iterator for MnemonicSignerIter {
+    type Item = Result<PrivateKeySigner, LocalSignerError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.state {
+            MnemonicSignerIterState::Signers { key, current_index } => {
+                let result = key.child(*current_index).map(|child| child.signer());
+                *current_index += 1;
+                Some(result)
+            }
+            MnemonicSignerIterState::MissingPhrase { yielded_error } => {
+                if *yielded_error {
+                    None
+                } else {
+                    *yielded_error = true;
+                    Some(Err(MnemonicBuilderError::ExpectedPhraseNotFound.into()))
+                }
+            }
+        }
+    }
+}
+
+/// Error produced by the mnemonic signer module.
+#[derive(Debug, Error)]
+pub enum MnemonicBuilderError {
+    /// Error suggests that a phrase (path or words) was expected but not found.
+    #[error("expected phrase not found")]
+    ExpectedPhraseNotFound,
+    /// Error suggests that a phrase (path or words) was not expected but found.
+    #[error("unexpected phrase found")]
+    UnexpectedPhraseFound,
+}
+
+fn xpriv_to_signer(xpriv: &XPriv) -> PrivateKeySigner {
+    let credential: &coins_bip32::prelude::SigningKey = xpriv.as_ref();
+    let credential = credential.clone();
+    let address = secret_key_to_address(&credential);
+    LocalSigner::<SigningKey> { credential, address, chain_id: None }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coins_bip39::English;
+    use tempfile::tempdir;
+
+    const TEST_DERIVATION_PATH: &str = "m/44'/60'/0'/2/1";
+
+    #[test]
+    fn mnemonic_deterministic() {
+        // Testcases have been taken from MyCryptoWallet
+        let tests = [
+            (
+                "work man father plunge mystery proud hollow address reunion sauce theory bonus",
+                0u32,
+                Some("TREZOR123"),
+                "0x431a00DA1D54c281AeF638A73121B3D153e0b0F6",
+            ),
+            (
+                "inject danger program federal spice bitter term garbage coyote breeze thought funny",
+                1u32,
+                Some("LEDGER321"),
+                "0x231a3D0a05d13FAf93078C779FeeD3752ea1350C",
+            ),
+            (
+                "fire evolve buddy tenant talent favorite ankle stem regret myth dream fresh",
+                2u32,
+                None,
+                "0x1D86AD5eBb2380dAdEAF52f61f4F428C485460E9",
+            ),
+            (
+                "thumb soda tape crunch maple fresh imitate cancel order blind denial giraffe",
+                3u32,
+                None,
+                "0xFB78b25f69A8e941036fEE2A5EeAf349D81D4ccc",
+            ),
+        ];
+        for (phrase, index, password, expected_addr) in tests {
+            let mut builder =
+                MnemonicBuilder::<English>::default().phrase(phrase).index(index).unwrap();
+            if let Some(psswd) = password {
+                builder = builder.password(psswd);
+            }
+            let signer = builder.build().unwrap();
+            assert_eq!(&signer.address.to_string(), expected_addr);
+        }
+    }
+
+    #[test]
+    fn mnemonic_write_read() {
+        let dir = tempdir().unwrap();
+
+        let signer1 = MnemonicBuilder::<English>::default()
+            .word_count(24)
+            .derivation_path(TEST_DERIVATION_PATH)
+            .unwrap()
+            .write_to(dir.as_ref())
+            .build_random()
+            .unwrap();
+
+        // Ensure that only one file has been created.
+        let paths = std::fs::read_dir(dir.as_ref()).unwrap();
+        assert_eq!(paths.count(), 1);
+
+        // Use the newly created mnemonic to instantiate signer.
+        let phrase_path = dir.as_ref().join(signer1.address.to_string());
+        let phrase = std::fs::read_to_string(phrase_path).unwrap();
+        let signer2 = MnemonicBuilder::<English>::default()
+            .phrase(phrase)
+            .derivation_path(TEST_DERIVATION_PATH)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        // Ensure that both signers belong to the same address.
+        assert_eq!(signer1.address, signer2.address);
+
+        dir.close().unwrap();
+    }
+
+    #[test]
+    fn mnemonic_key_child() {
+        let phrase =
+            "work man father plunge mystery proud hollow address reunion sauce theory bonus";
+
+        let key = MnemonicBuilder::<English>::default().phrase(phrase).build_parent_key().unwrap();
+
+        // child(0).signer() should match build() at index 0
+        let from_child = key.child(0).unwrap().signer();
+        let from_build =
+            MnemonicBuilder::<English>::default().phrase(phrase).index(0).unwrap().build().unwrap();
+        assert_eq!(from_child.address, from_build.address);
+
+        // child(5).signer() should match build() at index 5
+        let from_child = key.child(5).unwrap().signer();
+        let from_build =
+            MnemonicBuilder::<English>::default().phrase(phrase).index(5).unwrap().build().unwrap();
+        assert_eq!(from_child.address, from_build.address);
+    }
+
+    #[test]
+    fn mnemonic_iterator() {
+        let phrase =
+            "work man father plunge mystery proud hollow address reunion sauce theory bonus";
+
+        // Test that iterator generates different addresses
+        let builder = MnemonicBuilder::<English>::default().phrase(phrase);
+        let signers: Vec<_> = builder.into_iter().take(3).collect::<Result<Vec<_>, _>>().unwrap();
+
+        assert_eq!(signers.len(), 3);
+        // Verify each signer has a different address
+        assert_ne!(signers[0].address, signers[1].address);
+        assert_ne!(signers[1].address, signers[2].address);
+        assert_ne!(signers[0].address, signers[2].address);
+
+        // Verify addresses are deterministic (without password)
+        let first_signer =
+            MnemonicBuilder::<English>::default().phrase(phrase).index(0).unwrap().build().unwrap();
+        assert_eq!(signers[0].address, first_signer.address);
+
+        // Test with password
+        let builder_with_password =
+            MnemonicBuilder::<English>::default().phrase(phrase).password("TREZOR123");
+        let signers_with_password: Vec<_> =
+            builder_with_password.into_iter().take(1).collect::<Result<Vec<_>, _>>().unwrap();
+
+        // This should match the test case from mnemonic_deterministic
+        assert_eq!(
+            signers_with_password[0].address.to_string(),
+            "0x431a00DA1D54c281AeF638A73121B3D153e0b0F6"
+        );
+    }
+
+    #[test]
+    fn mnemonic_iterator_respects_index() {
+        let phrase =
+            "work man father plunge mystery proud hollow address reunion sauce theory bonus";
+
+        // into_iter with index(3) should start iteration from index 3
+        let builder = MnemonicBuilder::<English>::default().phrase(phrase).index(3).unwrap();
+        let signers: Vec<_> = builder.into_iter().take(3).collect::<Result<Vec<_>, _>>().unwrap();
+
+        for (i, signer) in signers.iter().enumerate() {
+            let expected = MnemonicBuilder::<English>::default()
+                .phrase(phrase)
+                .index(3 + i as u32)
+                .unwrap()
+                .build()
+                .unwrap();
+            assert_eq!(signer.address, expected.address);
+        }
+    }
+
+    #[test]
+    fn mnemonic_iterator_without_phrase_returns_error() {
+        let mut iter = MnemonicBuilder::<English>::default().into_iter();
+        let err = iter.next().unwrap().unwrap_err();
+
+        assert!(matches!(
+            err,
+            LocalSignerError::MnemonicBuilderError(MnemonicBuilderError::ExpectedPhraseNotFound)
+        ));
+        assert!(iter.next().is_none());
+    }
+}

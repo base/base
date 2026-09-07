@@ -1,0 +1,32 @@
+[package]
+name = "alloy-json-rpc"
+description = "Core types for JSON-RPC 2.0 clients"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["std", "serde", "map"] }
+serde.workspace = true
+serde_json = { workspace = true, features = ["std", "raw_value"] }
+thiserror = { workspace = true, features = ["std"] }
+tracing.workspace = true
+alloy-sol-types.workspace = true
+http.workspace = true

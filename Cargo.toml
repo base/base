@@ -9,7 +9,7 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
-exclude = ["actions/fixtures"]
+exclude = ["actions/fixtures", "vendor"]
 members = [
   "actions/*",
   "bin/[a-o]*",
@@ -271,117 +271,117 @@ base-metrics = { path = "crates/utilities/metrics", default-features = false }
 base-runtime = { path = "crates/utilities/runtime", default-features = false }
 
 # revm
-revm = { version = "42.0.1", default-features = false }
-revm-bytecode = { version = "42.0.0", default-features = false }
-revm-database = { version = "42.0.0", default-features = false }
-revm-precompile = { version = "42.0.1", default-features = false }
+revm = { path = "vendor/revm/revm-42.0.1", default-features = false }
+revm-bytecode = { path = "vendor/revm/revm-bytecode-42.0.0", default-features = false }
+revm-database = { path = "vendor/revm/revm-database-42.0.0", default-features = false }
+revm-precompile = { path = "vendor/revm/revm-precompile-42.0.1", default-features = false }
 
 # evm2
 evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "9b037449c846515624ff6afde739f2b764851446", default-features = false }
 
 # alloy
-alloy-signer = "2.3.0"
-alloy-pubsub = "2.3.0"
-alloy-network = "2.3.0"
-alloy-provider = "2.3.0"
-alloy-contract = "2.3.0"
-alloy-json-rpc = "2.3.0"
-alloy-transport = "2.3.0"
-alloy-rpc-types = "2.3.0"
-alloy-hardforks = "0.4.7"
-alloy-rpc-client = "2.3.0"
-alloy-signer-local = "2.3.0"
-alloy-transport-ws = "2.3.0"
-alloy-node-bindings = "2.3.0"
-alloy-transport-http = "2.3.0"
-alloy-rpc-types-beacon = "2.3.0"
-alloy-rlp = { version = "0.3.16", default-features = false }
-alloy-trie = { version = "0.9.4", default-features = false }
-alloy-eips = { version = "2.3.0", default-features = false }
-alloy-evm = { version = "0.38.0", default-features = false }
-alloy-serde = { version = "2.3.0", default-features = false }
-alloy-chains = { version = "0.2.33", default-features = false }
-alloy-genesis = { version = "2.3.0", default-features = false }
-alloy-consensus = { version = "2.3.0", default-features = false }
-alloy-sol-types = { version = "1.6.1", default-features = false }
-alloy-primitives = { version = "1.6.1", default-features = false }
-alloy-sol-macro = "1.6.1"
-alloy-rpc-types-eth = { version = "2.3.0", default-features = false }
-alloy-rpc-types-debug = { version = "2.3.0", default-features = false }
-alloy-rpc-types-txpool = { version = "2.3.0", default-features = false }
-alloy-rpc-types-engine = { version = "2.3.0", default-features = false }
-alloy-network-primitives = { version = "2.3.0", default-features = false }
+alloy-signer = { path = "vendor/alloy/alloy-signer-2.4.1" }
+alloy-pubsub = { path = "vendor/alloy/alloy-pubsub-2.4.1" }
+alloy-network = { path = "vendor/alloy/alloy-network-2.4.1" }
+alloy-provider = { path = "vendor/alloy/alloy-provider-2.4.1" }
+alloy-contract = { path = "vendor/alloy/alloy-contract-2.4.1" }
+alloy-json-rpc = { path = "vendor/alloy/alloy-json-rpc-2.4.1" }
+alloy-transport = { path = "vendor/alloy/alloy-transport-2.4.1" }
+alloy-rpc-types = { path = "vendor/alloy/alloy-rpc-types-2.4.1" }
+alloy-hardforks = { path = "vendor/alloy/alloy-hardforks-0.4.7" }
+alloy-sol-macro = { path = "vendor/alloy/alloy-sol-macro-1.6.1" }
+alloy-rpc-client = { path = "vendor/alloy/alloy-rpc-client-2.4.1" }
+alloy-signer-local = { path = "vendor/alloy/alloy-signer-local-2.4.1" }
+alloy-transport-ws = { path = "vendor/alloy/alloy-transport-ws-2.4.1" }
+alloy-node-bindings = { path = "vendor/alloy/alloy-node-bindings-2.4.1" }
+alloy-transport-http = { path = "vendor/alloy/alloy-transport-http-2.4.1" }
+alloy-rpc-types-beacon = { path = "vendor/alloy/alloy-rpc-types-beacon-2.4.1" }
+alloy-rlp = { path = "vendor/alloy/alloy-rlp-0.3.16", default-features = false }
+alloy-evm = { path = "vendor/alloy/alloy-evm-0.38.0", default-features = false }
+alloy-trie = { path = "vendor/alloy/alloy-trie-0.9.5", default-features = false }
+alloy-eips = { path = "vendor/alloy/alloy-eips-2.4.1", default-features = false }
+alloy-serde = { path = "vendor/alloy/alloy-serde-2.4.1", default-features = false }
+alloy-chains = { path = "vendor/alloy/alloy-chains-0.2.36", default-features = false }
+alloy-genesis = { path = "vendor/alloy/alloy-genesis-2.4.1", default-features = false }
+alloy-consensus = { path = "vendor/alloy/alloy-consensus-2.4.1", default-features = false }
+alloy-sol-types = { path = "vendor/alloy/alloy-sol-types-1.6.1", default-features = false }
+alloy-primitives = { path = "vendor/alloy/alloy-primitives-1.6.1", default-features = false }
+alloy-rpc-types-eth = { path = "vendor/alloy/alloy-rpc-types-eth-2.4.1", default-features = false }
+alloy-rpc-types-debug = { path = "vendor/alloy/alloy-rpc-types-debug-2.4.1", default-features = false }
+alloy-rpc-types-txpool = { path = "vendor/alloy/alloy-rpc-types-txpool-2.4.1", default-features = false }
+alloy-rpc-types-engine = { path = "vendor/alloy/alloy-rpc-types-engine-2.4.1", default-features = false }
+alloy-network-primitives = { path = "vendor/alloy/alloy-network-primitives-2.4.1", default-features = false }
 
 # reth
-reth-zstd-compressors = { version = "0.6.0", default-features = false }
-reth-primitives-traits = { version = "0.6.0", default-features = false }
-reth-codecs = { version = "0.6.0", default-features = false, features = ["alloy"] }
-reth-db = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-cli = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-ipc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-evm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-revm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-trie = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-exex = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-tasks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-ecies = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-db-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-discv4 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-discv5 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-trie-db = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-network = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-net-nat = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-tracing = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-eth-wire = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-provider = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-cli-util = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-node-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-db-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-layer = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-node-core = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-consensus = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-chainspec = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-cli-runner = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-convert = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-network-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-network-p2p = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-storage-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-eth-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-chain-state = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-trie-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-payload-util = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-node-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-node-metrics = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-cli-commands = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-evm-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-tracing-otlp = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-testing-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-eth-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-network-peers = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-node-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-engine-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-e2e-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-eth-wire-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-execution-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-execution-cache = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-exex-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-server-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-transaction-pool = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-execution-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-payload-validator = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-payload-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-ethereum-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-basic-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-payload-builder-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-prune-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3", default-features = false }
-reth-stages-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3", default-features = false }
-reth-storage-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3", default-features = false }
-reth-ethereum-forks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3", default-features = false }
-reth-consensus-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3", default-features = false }
-reth-trie-parallel = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
+reth-revm = { path = "vendor/reth/crates/revm" }
+reth-cli = { path = "vendor/reth/crates/cli/cli" }
+reth-ipc = { path = "vendor/reth/crates/rpc/ipc" }
+reth-evm = { path = "vendor/reth/crates/evm/evm" }
+reth-rpc = { path = "vendor/reth/crates/rpc/rpc" }
+reth-tasks = { path = "vendor/reth/crates/tasks" }
+reth-db = { path = "vendor/reth/crates/storage/db" }
+reth-trie = { path = "vendor/reth/crates/trie/trie" }
+reth-exex = { path = "vendor/reth/crates/exex/exex" }
+reth-ecies = { path = "vendor/reth/crates/net/ecies" }
+reth-trie-db = { path = "vendor/reth/crates/trie/db" }
+reth-net-nat = { path = "vendor/reth/crates/net/nat" }
+reth-tracing = { path = "vendor/reth/crates/tracing" }
+reth-discv4 = { path = "vendor/reth/crates/net/discv4" }
+reth-discv5 = { path = "vendor/reth/crates/net/discv5" }
+reth-cli-util = { path = "vendor/reth/crates/cli/util" }
+reth-node-api = { path = "vendor/reth/crates/node/api" }
+reth-rpc-api = { path = "vendor/reth/crates/rpc/rpc-api" }
+reth-network = { path = "vendor/reth/crates/net/network" }
+reth-node-core = { path = "vendor/reth/crates/node/core" }
+reth-chainspec = { path = "vendor/reth/crates/chainspec" }
+reth-network-p2p = { path = "vendor/reth/crates/net/p2p" }
+reth-db-api = { path = "vendor/reth/crates/storage/db-api" }
+reth-eth-wire = { path = "vendor/reth/crates/net/eth-wire" }
+reth-cli-runner = { path = "vendor/reth/crates/cli/runner" }
+reth-rpc-layer = { path = "vendor/reth/crates/rpc/rpc-layer" }
+reth-chain-state = { path = "vendor/reth/crates/chain-state" }
+reth-trie-common = { path = "vendor/reth/crates/trie/common" }
+reth-network-peers = { path = "vendor/reth/crates/net/peers" }
+reth-provider = { path = "vendor/reth/crates/storage/provider" }
+reth-payload-util = { path = "vendor/reth/crates/payload/util" }
+reth-node-builder = { path = "vendor/reth/crates/node/builder" }
+reth-node-metrics = { path = "vendor/reth/crates/node/metrics" }
+reth-cli-commands = { path = "vendor/reth/crates/cli/commands" }
+reth-evm-ethereum = { path = "vendor/reth/crates/ethereum/evm" }
+reth-tracing-otlp = { path = "vendor/reth/crates/tracing-otlp" }
+reth-db-common = { path = "vendor/reth/crates/storage/db-common" }
+reth-rpc-convert = { path = "vendor/reth/crates/rpc/rpc-convert" }
+reth-network-api = { path = "vendor/reth/crates/net/network-api" }
+reth-rpc-eth-api = { path = "vendor/reth/crates/rpc/rpc-eth-api" }
+reth-node-ethereum = { path = "vendor/reth/crates/ethereum/node" }
+reth-trie-parallel = { path = "vendor/reth/crates/trie/parallel" }
+reth-testing-utils = { path = "vendor/reth/testing/testing-utils" }
+reth-consensus = { path = "vendor/reth/crates/consensus/consensus" }
+reth-e2e-test-utils = { path = "vendor/reth/crates/e2e-test-utils" }
+reth-storage-api = { path = "vendor/reth/crates/storage/storage-api" }
+reth-rpc-eth-types = { path = "vendor/reth/crates/rpc/rpc-eth-types" }
+reth-payload-builder = { path = "vendor/reth/crates/payload/builder" }
+reth-exex-test-utils = { path = "vendor/reth/crates/exex/test-utils" }
+reth-rpc-engine-api = { path = "vendor/reth/crates/rpc/rpc-engine-api" }
+reth-eth-wire-types = { path = "vendor/reth/crates/net/eth-wire-types" }
+reth-transaction-pool = { path = "vendor/reth/crates/transaction-pool" }
+reth-execution-types = { path = "vendor/reth/crates/evm/execution-types" }
+reth-payload-validator = { path = "vendor/reth/crates/payload/validator" }
+reth-basic-payload-builder = { path = "vendor/reth/crates/payload/basic" }
+reth-rpc-server-types = { path = "vendor/reth/crates/rpc/rpc-server-types" }
+reth-execution-errors = { path = "vendor/reth/crates/evm/execution-errors" }
+reth-payload-primitives = { path = "vendor/reth/crates/payload/primitives" }
+reth-execution-cache = { path = "vendor/reth/crates/engine/execution-cache" }
+reth-ethereum-primitives = { path = "vendor/reth/crates/ethereum/primitives" }
+reth-prune-types = { path = "vendor/reth/crates/prune/types", default-features = false }
+reth-stages-types = { path = "vendor/reth/crates/stages/types", default-features = false }
+reth-payload-builder-primitives = { path = "vendor/reth/crates/payload/builder-primitives" }
+reth-storage-errors = { path = "vendor/reth/crates/storage/errors", default-features = false }
+reth-ethereum-forks = { path = "vendor/reth/crates/ethereum/hardforks", default-features = false }
+reth-consensus-common = { path = "vendor/reth/crates/consensus/common", default-features = false }
+reth-zstd-compressors = { path = "vendor/reth-primitives/reth-zstd-compressors-0.6.0", default-features = false }
+reth-primitives-traits = { path = "vendor/reth-primitives/reth-primitives-traits-0.6.0", default-features = false }
+reth-codecs = { path = "vendor/reth-primitives/reth-codecs-0.6.0", default-features = false, features = ["alloy"] }
 
 # tokio
 tokio = "1.53.1"
@@ -599,3 +599,74 @@ cargo_metadata = "0.18.1"
 
 # rate limiting
 governor = "0.7"
+
+# Use the same local sources for transitive registry dependencies.
+[patch.crates-io]
+revm = { path = "vendor/revm/revm-42.0.1" }
+alloy-evm = { path = "vendor/alloy/alloy-evm-0.38.0" }
+alloy-rlp = { path = "vendor/alloy/alloy-rlp-0.3.16" }
+alloy-eips = { path = "vendor/alloy/alloy-eips-2.4.1" }
+alloy-trie = { path = "vendor/alloy/alloy-trie-0.9.5" }
+revm-state = { path = "vendor/revm/revm-state-42.0.0" }
+alloy-serde = { path = "vendor/alloy/alloy-serde-2.4.1" }
+alloy-pubsub = { path = "vendor/alloy/alloy-pubsub-2.4.1" }
+alloy-signer = { path = "vendor/alloy/alloy-signer-2.4.1" }
+revm-context = { path = "vendor/revm/revm-context-42.0.0" }
+revm-handler = { path = "vendor/revm/revm-handler-42.0.1" }
+alloy-chains = { path = "vendor/alloy/alloy-chains-0.2.36" }
+alloy-dyn-abi = { path = "vendor/alloy/alloy-dyn-abi-1.6.1" }
+alloy-eip2124 = { path = "vendor/alloy/alloy-eip2124-0.2.0" }
+alloy-eip2930 = { path = "vendor/alloy/alloy-eip2930-0.2.3" }
+alloy-eip7702 = { path = "vendor/alloy/alloy-eip7702-0.6.3" }
+alloy-eip7928 = { path = "vendor/alloy/alloy-eip7928-0.4.5" }
+alloy-genesis = { path = "vendor/alloy/alloy-genesis-2.4.1" }
+alloy-network = { path = "vendor/alloy/alloy-network-2.4.1" }
+revm-bytecode = { path = "vendor/revm/revm-bytecode-42.0.0" }
+revm-database = { path = "vendor/revm/revm-database-42.0.0" }
+alloy-contract = { path = "vendor/alloy/alloy-contract-2.4.1" }
+alloy-json-abi = { path = "vendor/alloy/alloy-json-abi-1.6.1" }
+alloy-json-rpc = { path = "vendor/alloy/alloy-json-rpc-2.4.1" }
+alloy-provider = { path = "vendor/alloy/alloy-provider-2.4.1" }
+revm-inspector = { path = "vendor/revm/revm-inspector-42.0.1" }
+alloy-consensus = { path = "vendor/alloy/alloy-consensus-2.4.1" }
+alloy-rpc-types = { path = "vendor/alloy/alloy-rpc-types-2.4.1" }
+alloy-sol-macro = { path = "vendor/alloy/alloy-sol-macro-1.6.1" }
+alloy-sol-types = { path = "vendor/alloy/alloy-sol-types-1.6.1" }
+alloy-transport = { path = "vendor/alloy/alloy-transport-2.4.1" }
+alloy-tx-macros = { path = "vendor/alloy/alloy-tx-macros-2.4.1" }
+revm-inspectors = { path = "vendor/revm/revm-inspectors-0.42.2" }
+revm-precompile = { path = "vendor/revm/revm-precompile-42.0.1" }
+revm-primitives = { path = "vendor/revm/revm-primitives-42.0.0" }
+alloy-primitives = { path = "vendor/alloy/alloy-primitives-1.6.1" }
+alloy-rpc-client = { path = "vendor/alloy/alloy-rpc-client-2.4.1" }
+reth-codecs = { path = "vendor/reth-primitives/reth-codecs-0.6.0" }
+revm-interpreter = { path = "vendor/revm/revm-interpreter-42.0.0" }
+alloy-rlp-derive = { path = "vendor/alloy/alloy-rlp-derive-0.3.16" }
+alloy-signer-local = { path = "vendor/alloy/alloy-signer-local-2.4.1" }
+alloy-transport-ws = { path = "vendor/alloy/alloy-transport-ws-2.4.1" }
+alloy-consensus-any = { path = "vendor/alloy/alloy-consensus-any-2.4.1" }
+alloy-node-bindings = { path = "vendor/alloy/alloy-node-bindings-2.4.1" }
+alloy-rpc-types-any = { path = "vendor/alloy/alloy-rpc-types-any-2.4.1" }
+alloy-rpc-types-eth = { path = "vendor/alloy/alloy-rpc-types-eth-2.4.1" }
+alloy-rpc-types-mev = { path = "vendor/alloy/alloy-rpc-types-mev-2.4.1" }
+alloy-transport-ipc = { path = "vendor/alloy/alloy-transport-ipc-2.4.1" }
+alloy-transport-http = { path = "vendor/alloy/alloy-transport-http-2.4.1" }
+reth-rpc-traits = { path = "vendor/reth-primitives/reth-rpc-traits-0.6.0" }
+alloy-rpc-types-admin = { path = "vendor/alloy/alloy-rpc-types-admin-2.4.1" }
+alloy-rpc-types-anvil = { path = "vendor/alloy/alloy-rpc-types-anvil-2.4.1" }
+alloy-rpc-types-debug = { path = "vendor/alloy/alloy-rpc-types-debug-2.4.1" }
+alloy-rpc-types-trace = { path = "vendor/alloy/alloy-rpc-types-trace-2.4.1" }
+alloy-sol-macro-input = { path = "vendor/alloy/alloy-sol-macro-input-1.6.1" }
+alloy-sol-type-parser = { path = "vendor/alloy/alloy-sol-type-parser-1.6.1" }
+alloy-rpc-types-beacon = { path = "vendor/alloy/alloy-rpc-types-beacon-2.4.1" }
+alloy-rpc-types-engine = { path = "vendor/alloy/alloy-rpc-types-engine-2.4.1" }
+alloy-rpc-types-txpool = { path = "vendor/alloy/alloy-rpc-types-txpool-2.4.1" }
+revm-context-interface = { path = "vendor/revm/revm-context-interface-42.0.0" }
+reth-codecs-derive = { path = "vendor/reth-primitives/reth-codecs-derive-0.6.0" }
+revm-database-interface = { path = "vendor/revm/revm-database-interface-42.0.0" }
+alloy-network-primitives = { path = "vendor/alloy/alloy-network-primitives-2.4.1" }
+alloy-sol-macro-expander = { path = "vendor/alloy/alloy-sol-macro-expander-1.6.1" }
+reth-zstd-compressors = { path = "vendor/reth-primitives/reth-zstd-compressors-0.6.0" }
+reth-primitives-traits = { path = "vendor/reth-primitives/reth-primitives-traits-0.6.0" }
+alloy-hardforks-0-4-7 = { path = "vendor/alloy/alloy-hardforks-0.4.7", package = "alloy-hardforks" }
+alloy-hardforks-0-2-13 = { path = "vendor/alloy/alloy-hardforks-0.2.13", package = "alloy-hardforks" }

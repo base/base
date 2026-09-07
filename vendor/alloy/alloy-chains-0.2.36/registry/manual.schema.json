@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "alloy-chains manual registry",
+  "type": "object",
+  "required": [
+    "chains"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "chains": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Chain"
+      }
+    }
+  },
+  "definitions": {
+    "Chain": {
+      "type": "object",
+      "required": [
+        "chainId",
+        "internalId",
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "chainId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "internalId": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Za-z0-9]*$"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "serdeName": {
+          "type": "string"
+        },
+        "serdeAliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "averageBlocktimeHint": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "isLegacy": {
+          "type": "boolean"
+        },
+        "supportsShanghai": {
+          "type": "boolean"
+        },
+        "isTestnet": {
+          "type": "boolean"
+        },
+        "nativeCurrencySymbol": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "etherscanApiUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "etherscanBaseUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "etherscanApiKeyName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "ethereum",
+              "optimism",
+              "gnosis",
+              "polygon",
+              "arbitrum",
+              "elastic",
+              "tempo",
+              "custom-sourcify"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "wrappedNativeToken": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{40}$"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,73 @@
+[package]
+name = "alloy-rpc-types"
+description = "Meta-crate for all Ethereum JSON-RPC types"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+authors.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["map"] }
+alloy-serde.workspace = true
+alloy-rpc-types-admin = { workspace = true, optional = true }
+alloy-rpc-types-anvil = { workspace = true, optional = true }
+alloy-rpc-types-any = { workspace = true, optional = true }
+alloy-rpc-types-beacon = { workspace = true, optional = true }
+alloy-rpc-types-debug = { workspace = true, optional = true }
+alloy-rpc-types-engine = { workspace = true, optional = true, features = [
+    "serde",
+] }
+alloy-rpc-types-eth = { workspace = true, optional = true, features = [
+    "serde",
+] }
+alloy-rpc-types-mev = { workspace = true, optional = true }
+alloy-rpc-types-trace = { workspace = true, optional = true }
+alloy-rpc-types-txpool = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive", "std"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+similar-asserts.workspace = true
+
+[features]
+default = [
+    "eth",
+    "alloy-rpc-types-engine?/default",
+    "alloy-rpc-types-eth?/default",
+]
+admin = ["dep:alloy-rpc-types-admin"]
+anvil = ["dep:alloy-rpc-types-anvil"]
+any = ["dep:alloy-rpc-types-any"]
+beacon = ["dep:alloy-rpc-types-beacon"]
+debug = ["dep:alloy-rpc-types-debug"]
+engine = ["dep:alloy-rpc-types-engine"]
+eth = ["dep:alloy-rpc-types-eth"]
+mev = ["dep:alloy-rpc-types-mev"]
+trace = ["dep:alloy-rpc-types-trace"]
+txpool = ["dep:alloy-rpc-types-txpool"]
+
+arbitrary = [
+	"alloy-rpc-types-eth?/arbitrary",
+	"alloy-serde/arbitrary",
+	"alloy-primitives/arbitrary",
+    "alloy-rpc-types-engine?/arbitrary"
+]
+ssz = ["alloy-rpc-types-beacon?/ssz", "alloy-rpc-types-engine?/ssz"]
+k256 = ["alloy-rpc-types-eth?/k256", "alloy-primitives/k256"]
+kzg = ["alloy-rpc-types-engine?/kzg"]

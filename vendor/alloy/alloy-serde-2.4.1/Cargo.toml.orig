@@ -1,0 +1,48 @@
+[package]
+name = "alloy-serde"
+description = "Alloy serde helpers"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+authors.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["serde", "map"] }
+serde.workspace = true
+serde_json = { workspace = true, features = ["alloc"] }
+
+# arbitrary
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+
+[dev-dependencies]
+alloy-primitives = { workspace = true, features = [
+    "rand",
+    "rlp",
+    "serde",
+    "arbitrary",
+] }
+
+arbitrary = { workspace = true, features = ["derive"] }
+rand.workspace = true
+similar-asserts.workspace = true
+
+[features]
+default = ["std"]
+std = ["alloy-primitives/std", "serde/std", "serde_json/std"]
+arbitrary = ["dep:arbitrary", "alloy-primitives/arbitrary", "std"]

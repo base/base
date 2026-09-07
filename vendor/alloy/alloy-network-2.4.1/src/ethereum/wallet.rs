@@ -1,0 +1,164 @@
+use crate::{Network, NetworkWallet, TxSigner};
+use alloy_consensus::{SignableTransaction, Signed};
+use alloy_primitives::{map::AddressHashMap, Address, Signature};
+use std::{fmt::Debug, sync::Arc};
+
+use super::Ethereum;
+
+/// A wallet capable of signing any transaction for the Ethereum network.
+#[derive(Clone, Default)]
+pub struct EthereumWallet {
+    default: Address,
+    signers: AddressHashMap<Arc<dyn TxSigner<Signature> + Send + Sync>>,
+}
+
+impl std::fmt::Debug for EthereumWallet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EthereumWallet")
+            .field("default_signer", &self.default)
+            .field("credentials", &self.signers.len())
+            .finish()
+    }
+}
+
+impl<S> From<S> for EthereumWallet
+where
+    S: TxSigner<Signature> + Send + Sync + 'static,
+{
+    fn from(signer: S) -> Self {
+        Self::new(signer)
+    }
+}
+
+impl EthereumWallet {
+    /// Create a new signer with the given signer as the default signer.
+    pub fn new<S>(signer: S) -> Self
+    where
+        S: TxSigner<Signature> + Send + Sync + 'static,
+    {
+        let mut this = Self::default();
+        this.register_default_signer(signer);
+        this
+    }
+
+    /// Register a new signer on this object. This signer will be used to sign
+    /// [`TransactionRequest`] and [`TypedTransaction`] objects that specify the
+    /// signer's address in the `from` field.
+    ///
+    /// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
+    /// [`TypedTransaction`]: alloy_consensus::TypedTransaction
+    pub fn register_signer<S>(&mut self, signer: S)
+    where
+        S: TxSigner<Signature> + Send + Sync + 'static,
+    {
+        self.signers.insert(signer.address(), Arc::new(signer));
+    }
+
+    /// Register a new signer on this object, and set it as the default signer.
+    /// This signer will be used to sign [`TransactionRequest`] and
+    /// [`TypedTransaction`] objects that do not specify a signer address in the
+    /// `from` field.
+    ///
+    /// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
+    /// [`TypedTransaction`]: alloy_consensus::TypedTransaction
+    pub fn register_default_signer<S>(&mut self, signer: S)
+    where
+        S: TxSigner<Signature> + Send + Sync + 'static,
+    {
+        self.default = signer.address();
+        self.register_signer(signer);
+    }
+
+    /// Sets the default signer to the given address.
+    ///
+    /// The default signer is used to sign [`TransactionRequest`] and [`TypedTransaction`] objects
+    /// that do not specify a signer address in the `from` field.
+    ///
+    /// The provided address must be a registered signer otherwise an error is returned.
+    ///
+    /// If you're looking to add a new signer and set it as default, use
+    /// [`EthereumWallet::register_default_signer`].
+    ///
+    /// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
+    /// [`TypedTransaction`]: alloy_consensus::TypedTransaction
+    pub fn set_default_signer(&mut self, address: Address) -> alloy_signer::Result<()> {
+        if self.signers.contains_key(&address) {
+            self.default = address;
+            Ok(())
+        } else {
+            Err(alloy_signer::Error::message(format!(
+                "{address} is not a registered signer. Use `register_default_signer`"
+            )))
+        }
+    }
+
+    /// Get the default signer.
+    pub fn default_signer(&self) -> Arc<dyn TxSigner<Signature> + Send + Sync + 'static> {
+        self.signers.get(&self.default).cloned().expect("invalid signer")
+    }
+
+    /// Get the signer for the given address.
+    pub fn signer_by_address(
+        &self,
+        address: Address,
+    ) -> Option<Arc<dyn TxSigner<Signature> + Send + Sync + 'static>> {
+        self.signers.get(&address).cloned()
+    }
+
+    #[doc(alias = "sign_tx_inner")]
+    async fn sign_transaction_inner(
+        &self,
+        sender: Address,
+        tx: &mut dyn SignableTransaction<Signature>,
+    ) -> alloy_signer::Result<Signature> {
+        self.signer_by_address(sender)
+            .ok_or_else(|| {
+                alloy_signer::Error::other(format!("Missing signing credential for {sender}"))
+            })?
+            .sign_transaction(tx)
+            .await
+    }
+}
+
+impl<N: Network> NetworkWallet<N> for EthereumWallet
+where
+    N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+    N::UnsignedTx: SignableTransaction<Signature>,
+{
+    fn default_signer_address(&self) -> Address {
+        self.default
+    }
+
+    fn has_signer_for(&self, address: &Address) -> bool {
+        self.signers.contains_key(address)
+    }
+
+    fn signer_addresses(&self) -> impl Iterator<Item = Address> {
+        self.signers.keys().copied()
+    }
+
+    async fn sign_transaction_from(
+        &self,
+        sender: Address,
+        mut tx: N::UnsignedTx,
+    ) -> alloy_signer::Result<N::TxEnvelope> {
+        let sig = self.sign_transaction_inner(sender, &mut tx).await?;
+        Ok(tx.into_signed(sig).into())
+    }
+}
+
+/// A trait for converting a signer into a [`NetworkWallet`].
+pub trait IntoWallet<N: Network = Ethereum>: Send + Sync + Debug {
+    /// The wallet type for the network.
+    type NetworkWallet: NetworkWallet<N>;
+    /// Convert the signer into a wallet.
+    fn into_wallet(self) -> Self::NetworkWallet;
+}
+
+impl<W: NetworkWallet<N>, N: Network> IntoWallet<N> for W {
+    type NetworkWallet = W;
+
+    fn into_wallet(self) -> Self::NetworkWallet {
+        self
+    }
+}

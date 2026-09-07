@@ -1,0 +1,47 @@
+[package]
+name = "alloy-rlp"
+description = "Implementation of Ethereum RLP serialization"
+keywords = ["ethereum", "rlp", "serialization"]
+categories = ["no-std", "encoding", "cryptography::cryptocurrencies"]
+homepage = "https://github.com/alloy-rs/rlp/tree/main/crates/rlp"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+bytes.workspace = true
+alloy-rlp-derive = { workspace = true, optional = true }
+arrayvec = { workspace = true, optional = true }
+
+[dev-dependencies]
+hex.workspace = true
+hex-literal.workspace = true
+
+[features]
+default = ["std"]
+std = ["bytes/std", "arrayvec?/std"]
+derive = ["dep:alloy-rlp-derive"]
+# Enables `core::net::` implementations always instead of conditionally through `std`.
+# Requires Rust 1.77 or newer.
+core-net = []
+# Enables `core::error::Error` implementations always instead of conditionally through `std`.
+# Requires Rust 1.81 or newer.
+core-error = []
+
+arrayvec = ["dep:arrayvec"]
+
+[[example]]
+name = "enum"
+path = "../../examples/enum.rs"
