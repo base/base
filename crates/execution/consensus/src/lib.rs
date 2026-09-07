@@ -10,7 +10,7 @@
 
 extern crate alloc;
 
-use alloc::{format, sync::Arc};
+use alloc::{boxed::Box, format, sync::Arc};
 
 use alloy_consensus::{
     BlockHeader as _, EMPTY_OMMER_ROOT_HASH, Header, constants::MAXIMUM_EXTRA_DATA_SIZE,

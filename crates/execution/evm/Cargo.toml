@@ -11,59 +11,41 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
-alloy-evm = { workspace = true }
 thiserror = { workspace = true }
-alloy-eips = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
-reth-storage-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
-reth-payload-primitives = { workspace = true }
 reth-evm = { workspace = true, features = ["default"] }
-reth-rpc-eth-api = { workspace = true, optional = true }
-alloy-rpc-types-eth = { workspace = true, optional = true }
-reth-chainspec = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-common-evm = { workspace = true, features = ["std", "reth"] }
-reth-execution-types = { workspace = true, features = ["default"] }
 reth-execution-errors = { workspace = true, features = ["default"] }
-base-execution-chainspec = { workspace = true, features = ["default"] }
-base-execution-consensus = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["evm", "reth"] }
-base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+
 [dev-dependencies]
-alloy-genesis = { workspace = true }
+alloy-eips = { workspace = true }
 base-protocol = { workspace = true }
-base-common-genesis = { workspace = true }
+reth-chainspec = { workspace = true, features = ["default"] }
 reth-evm = { workspace = true, features = ["default", "test-utils"] }
 base-common-consensus = { workspace = true, features = ["arbitrary"] }
 reth-revm = { workspace = true, features = ["default", "test-utils"] }
+base-execution-chainspec = { workspace = true, features = ["default"] }
+
 [features]
-default = [ "metrics", "std" ]
-metrics = [ "base-common-evm/metrics", "reth-evm/metrics" ]
+default = ["metrics", "std"]
+metrics = ["base-common-evm/metrics", "reth-evm/metrics"]
 std = [
-	"alloy-consensus/std",
-	"alloy-eips/std",
-	"alloy-evm/std",
-	"alloy-genesis/std",
-	"alloy-primitives/std",
-	"alloy-rpc-types-eth?/std",
-	"base-common-chains/std",
-	"base-common-consensus/std",
-	"base-common-evm/std",
-	"base-common-rpc-types-engine/std",
-	"base-execution-chainspec/std",
-	"base-execution-consensus/std",
-	"reth-chainspec/std",
-	"reth-evm/std",
-	"reth-execution-errors/std",
-	"reth-execution-types/std",
-	"reth-primitives-traits/std",
-	"reth-revm/std",
-	"reth-storage-errors/std",
-	"revm/std",
-	"thiserror/std",
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "alloy-primitives/std",
+    "base-common-chains/std",
+    "base-common-consensus/std",
+    "base-common-evm/std",
+    "base-execution-chainspec/std",
+    "reth-chainspec/std",
+    "reth-evm/std",
+    "reth-execution-errors/std",
+    "reth-primitives-traits/std",
+    "reth-revm/std",
+    "thiserror/std",
 ]
-portable = [ "base-common-evm/portable", "reth-revm/portable", "revm/portable" ]
-rpc = [ "alloy-evm/rpc", "alloy-rpc-types-eth", "reth-rpc-eth-api" ]
+portable = ["base-common-evm/portable", "reth-revm/portable"]
+rpc = ["reth-evm/rpc"]

@@ -18,9 +18,6 @@ use base_common_rpc_types_engine as _;
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
-use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnvMut, precompiles::PrecompilesMap};
-#[cfg(feature = "std")]
-use reth_evm::{EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
 #[cfg(feature = "std")]
 use reth_primitives_traits::WithEncoded;
 use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
@@ -33,7 +30,12 @@ use revm::{
     primitives::{Address, B256, Bytes as RevmBytes},
 };
 
-use crate::{BaseBlockAssembler, BaseEvmEnvBuilder, BaseRethReceiptBuilder};
+use crate::{
+    BaseBlockAssembler, BaseEvmEnvBuilder, BaseRethReceiptBuilder, ConfigureEvm, EvmEnv,
+    TransactionEnvMut, precompiles::PrecompilesMap,
+};
+#[cfg(feature = "std")]
+use crate::{EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
 
 /// Context relevant for execution of a next Base block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,25 +52,6 @@ pub struct BaseNextBlockEnvAttributes {
     pub parent_beacon_block_root: Option<B256>,
     /// Encoded EIP-1559 parameters to include into block's `extra_data` field.
     pub extra_data: RevmBytes,
-}
-
-#[cfg(feature = "rpc")]
-impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv<H>
-    for BaseNextBlockEnvAttributes
-{
-    fn build_pending_env(
-        parent: &SealedHeader<H>,
-        _block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,
-    ) -> Self {
-        Self {
-            timestamp: parent.timestamp().saturating_add(12),
-            suggested_fee_recipient: parent.beneficiary(),
-            prev_randao: B256::random(),
-            gas_limit: parent.gas_limit(),
-            parent_beacon_block_root: parent.parent_beacon_block_root(),
-            extra_data: parent.extra_data().clone(),
-        }
-    }
 }
 
 /// Base EVM configuration.
@@ -237,7 +220,6 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_chainspec::ChainSpec;
-    use reth_evm::{ConfigureEvm, EvmEnv, execute::ProviderError};
     use reth_execution_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
     };
@@ -252,6 +234,7 @@ mod tests {
     };
 
     use super::BaseEvmConfig;
+    use crate::{ConfigureEvm, EvmEnv, execute::ProviderError};
 
     fn test_evm_config() -> BaseEvmConfig {
         BaseEvmConfig::base(Arc::new(BaseChainSpec::mainnet()))

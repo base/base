@@ -8,24 +8,12 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-extern crate alloc;
-
-mod build;
-pub use build::BaseBlockAssembler;
-
-mod config;
-pub use config::{BaseEvmConfig, BaseExecutorProvider, BaseNextBlockEnvAttributes};
-
-mod env;
-pub use env::BaseEvmEnvBuilder;
-
 mod error;
 pub use error::{BaseBlockExecutionError, L1BlockInfoError};
 
 mod l1;
 pub use l1::*;
-
-mod receipts;
-pub use receipts::*;
-
-mod payload_env;
+pub use reth_evm::{
+    BaseBlockAssembler, BaseEvmConfig, BaseEvmEnvBuilder, BaseExecutorProvider,
+    BaseNextBlockEnvAttributes, BaseRethReceiptBuilder,
+};

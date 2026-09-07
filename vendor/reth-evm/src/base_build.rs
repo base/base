@@ -12,11 +12,12 @@ use base_common_consensus::DepositReceiptExt;
 use base_common_evm::BaseBlockExecutionCtx;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
-use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{Receipt, SignedTransaction};
 use revm::context::Block as _;
+
+use crate::execute::{BlockAssembler, BlockAssemblerInput};
 
 /// Block builder for Base.
 #[derive(Debug)]

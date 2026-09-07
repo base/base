@@ -20,30 +20,44 @@ alloy-evm = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 futures-util = { workspace = true }
+base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-trie-common = { workspace = true }
+base-common-chains = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-execution-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
 rayon = { workspace = true, optional = true }
+reth-payload-primitives = { workspace = true }
+base-execution-chainspec = { workspace = true }
+base-execution-consensus = { workspace = true }
 metrics = { workspace = true, optional = true }
 reth-metrics = { workspace = true, optional = true }
 reth-chainspec = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
-alloy-rpc-types-engine = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-consensus = { workspace = true, features = ["reth", "evm"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
+alloy-genesis = { workspace = true }
+base-common-genesis = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
+reth-chainspec = { workspace = true, features = ["default"] }
+
 [features]
 default = ["std"]
 std = [
+    "base-common-chains/std",
+    "base-common-evm/std",
+    "base-execution-chainspec/std",
+    "base-execution-consensus/std",
+    "reth-payload-primitives/std",
+
     "dep:rayon",
     "reth-primitives-traits/std",
     "alloy-eips/std",
@@ -65,7 +79,8 @@ metrics = ["std", "dep:metrics", "dep:reth-metrics"]
 test-utils = [
     "std",
     "dep:reth-chainspec",
-    "dep:alloy-rpc-types-engine",
     "reth-primitives-traits/test-utils",
     "reth-trie-common/test-utils",
 ]
+
+rpc = ["alloy-evm/rpc"]

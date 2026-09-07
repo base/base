@@ -17,6 +17,20 @@
 
 extern crate alloc;
 
+mod base_build;
+pub use base_build::BaseBlockAssembler;
+
+mod base_config;
+pub use base_config::{BaseEvmConfig, BaseExecutorProvider, BaseNextBlockEnvAttributes};
+
+mod base_env;
+pub use base_env::BaseEvmEnvBuilder;
+
+mod base_receipts;
+pub use base_receipts::BaseRethReceiptBuilder;
+
+mod base_payload_env;
+
 use alloc::{string::String, vec::Vec};
 use core::{error::Error, fmt::Debug};
 

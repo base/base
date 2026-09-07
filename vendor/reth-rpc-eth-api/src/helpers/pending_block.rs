@@ -488,6 +488,22 @@ where
     }
 }
 
+impl<H: alloy_consensus::BlockHeader> BuildPendingEnv<H> for reth_evm::BaseNextBlockEnvAttributes {
+    fn build_pending_env(
+        parent: &SealedHeader<H>,
+        _block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,
+    ) -> Self {
+        Self {
+            timestamp: parent.timestamp().saturating_add(12),
+            suggested_fee_recipient: parent.beneficiary(),
+            prev_randao: B256::random(),
+            gas_limit: parent.gas_limit(),
+            parent_beacon_block_root: parent.parent_beacon_block_root(),
+            extra_data: parent.extra_data().clone(),
+        }
+    }
+}
+
 impl<H: BlockHeader> BuildPendingEnv<H> for NextBlockEnvAttributes {
     fn build_pending_env(
         parent: &SealedHeader<H>,
