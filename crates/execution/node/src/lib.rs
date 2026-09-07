@@ -22,9 +22,7 @@ pub mod engine;
 
 pub mod node;
 pub use node::*;
-
-pub mod rpc;
-pub use rpc::BaseEngineApiBuilder;
+pub use reth_node_builder::BaseEngineApiBuilder;
 
 mod payload_service;
 pub use payload_service::{BasePayloadServiceBuilder, BasePayloadServiceMode};

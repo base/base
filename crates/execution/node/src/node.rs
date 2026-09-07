@@ -40,8 +40,8 @@ use reth_node_builder::{
     components::{PoolBuilderConfigOverrides, spawn_maintenance_tasks},
     node::FullNodeTypes,
     rpc::{
-        EngineApiBuilder, Identity, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles,
-        RpcAddOns, RpcContext, RpcHandle,
+        Identity, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext,
+        RpcHandle,
     },
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
@@ -58,7 +58,7 @@ use reth_transaction_pool::{
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
-    BaseComponentsBuilder, BaseEngineApiBuilder, BasePayloadServiceBuilder,
+    BaseComponentsBuilder, BasePayloadServiceBuilder,
     args::{RollupArgs, TxpoolOrdering},
 };
 
@@ -309,10 +309,10 @@ impl BaseNode {
 /// This type provides Base-specific addons to the node and exposes the RPC server and engine
 /// API.
 #[derive(Debug)]
-pub struct BaseAddOns<N: FullNodeComponents, EB = BaseEngineApiBuilder, RpcMiddleware = Identity> {
+pub struct BaseAddOns<N: FullNodeComponents, RpcMiddleware = Identity> {
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
     /// and eth-api.
-    pub rpc_add_ons: RpcAddOns<N, EB, RpcMiddleware>,
+    pub rpc_add_ons: RpcAddOns<N, RpcMiddleware>,
     /// Data availability configuration for the payload builder.
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the payload builder.
@@ -325,7 +325,7 @@ pub struct BaseAddOns<N: FullNodeComponents, EB = BaseEngineApiBuilder, RpcMiddl
     min_suggested_priority_fee: u64,
 }
 
-impl<N, EB, RpcMiddleware> BaseAddOns<N, EB, RpcMiddleware>
+impl<N, RpcMiddleware> BaseAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents,
     BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
@@ -333,7 +333,7 @@ where
     /// Creates a new instance from components.
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
-        rpc_add_ons: RpcAddOns<N, EB, RpcMiddleware>,
+        rpc_add_ons: RpcAddOns<N, RpcMiddleware>,
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
         sequencer_url: Option<String>,
@@ -361,7 +361,7 @@ where
     }
 }
 
-impl<N> BaseAddOns<N, BaseEngineApiBuilder>
+impl<N> BaseAddOns<N>
 where
     N: FullNodeComponents,
     BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
@@ -372,32 +372,11 @@ where
     }
 }
 
-impl<N, EB, RpcMiddleware> BaseAddOns<N, EB, RpcMiddleware>
+impl<N, RpcMiddleware> BaseAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents,
     BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
-    /// Maps the [`reth_node_builder::rpc::EngineApiBuilder`] builder type.
-    pub fn with_engine_api<T>(self, engine_api_builder: T) -> BaseAddOns<N, T, RpcMiddleware> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-            ..
-        } = self;
-        BaseAddOns::new(
-            rpc_add_ons.with_engine_api(engine_api_builder),
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            min_suggested_priority_fee,
-        )
-    }
-
     /// Sets the RPC middleware stack for processing RPC requests.
     ///
     /// This method configures a custom middleware stack that will be applied to all RPC requests
@@ -405,7 +384,7 @@ where
     /// layer, allowing you to intercept, modify, or enhance RPC request processing.
     ///
     /// See also [`RpcAddOns::with_rpc_middleware`].
-    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<N, EB, T> {
+    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<N, T> {
         let Self {
             rpc_add_ons,
             da_config,
@@ -446,10 +425,9 @@ where
     }
 }
 
-impl<N, EB, RpcMiddleware> NodeAddOns<N> for BaseAddOns<N, EB, RpcMiddleware>
+impl<N, RpcMiddleware> NodeAddOns<N> for BaseAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents<Pool: TransactionPool<Transaction: BasePooledTx>>,
-    EB: EngineApiBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
 {
     type Handle = RpcHandle<N, BaseNodeEthApi<N>>;
@@ -509,11 +487,10 @@ where
     }
 }
 
-impl<N, EB, RpcMiddleware> RethRpcAddOns<N> for BaseAddOns<N, EB, RpcMiddleware>
+impl<N, RpcMiddleware> RethRpcAddOns<N> for BaseAddOns<N, RpcMiddleware>
 where
     N: FullNodeComponents,
     <<N as FullNodeComponents>::Pool as TransactionPool>::Transaction: BasePooledTx,
-    EB: EngineApiBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
 {
     type EthApi = BaseNodeEthApi<N>;
@@ -622,11 +599,10 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
 
 impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
     /// Builds an instance of [`BaseAddOns`].
-    pub fn build<N, EB>(self) -> BaseAddOns<N, EB, RpcMiddleware>
+    pub fn build<N>(self) -> BaseAddOns<N, RpcMiddleware>
     where
         N: FullNodeComponents,
         BaseNodeEthApi<N>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
-        EB: Default,
     {
         let Self {
             sequencer_url,
@@ -645,7 +621,6 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
                     .with_sequencer(sequencer_url.clone())
                     .with_sequencer_headers(sequencer_headers.clone())
                     .with_min_suggested_priority_fee(min_suggested_priority_fee),
-                EB::default(),
                 rpc_middleware,
                 Identity::new(),
             )

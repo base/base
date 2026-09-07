@@ -19,7 +19,6 @@ reth-discv5 = { workspace = true }
 reth-db-api = { workspace = true }
 reth-network = { workspace = true }
 reth-rpc-api = { workspace = true }
-base-protocol = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-api = { workspace = true }
 reth-node-core = { workspace = true }
@@ -29,7 +28,6 @@ reth-rpc-eth-api = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-chain-state = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
-reth-rpc-engine-api = { workspace = true }
 reth-payload-builder = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-rpc-server-types = { workspace = true }
@@ -42,13 +40,10 @@ tokio = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, optional = true }
 reth-db = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-reth-evm = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-e2e-test-utils = { workspace = true, optional = true }
-reth-consensus = { workspace = true, features = ["default"] }
 reth-chainspec = { workspace = true, features = ["default"] }
-reth-trie-common = { workspace = true, features = ["default"] }
 reth-node-builder = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-network-peers = { workspace = true, features = ["default"] }
@@ -58,9 +53,7 @@ base-upgrade-signal = { workspace = true, features = ["default"] }
 base-execution-exex = { workspace = true, features = ["metrics"] }
 base-execution-trie = { workspace = true, features = ["metrics"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
-reth-payload-primitives = { workspace = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
-reth-storage-api = { workspace = true, features = ["default", "db-api"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default", "std"] }
 base-execution-evm = { workspace = true, features = ["default", "std", "rpc"] }
@@ -83,6 +76,7 @@ reth-ethereum-forks = { workspace = true }
 base-common-rpc-types = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
+base-protocol = { workspace = true, features = ["test-utils"] }
 reth-revm = { workspace = true, features = ["default", "std"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
@@ -139,15 +133,12 @@ test-utils = [
 	"base-common-consensus/arbitrary",
 	"base-execution-exex/test-utils",
 	"base-node-core/test-utils",
-	"base-protocol/test-utils",
 	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-codec",
-	"reth-consensus/test-utils",
 	"reth-db-api/test-utils",
 	"reth-db/test-utils",
 	"reth-e2e-test-utils",
-	"reth-evm/test-utils",
 	"reth-network/test-utils",
 	"reth-node-builder/test-utils",
 	"reth-payload-builder/test-utils",
@@ -157,7 +148,6 @@ test-utils = [
 	"reth-stages-types/test-utils",
 	"reth-tasks/test-utils",
 	"reth-transaction-pool/test-utils",
-	"reth-trie-common/test-utils",
 	"reth-trie-db/test-utils",
 	"serde_json",
 ]
