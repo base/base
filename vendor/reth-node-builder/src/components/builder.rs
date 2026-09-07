@@ -5,15 +5,13 @@ use std::future::Future;
 use base_common_consensus::BaseTxEnvelope;
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_evm::BaseEvmConfig;
-use reth_network_api::{FullNetwork, noop::NoopNetwork};
+use reth_network_api::FullNetwork;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 use crate::{
     BuilderContext, FullNodeTypes,
-    components::{
-        Components, ConsensusBuilder, NetworkBuilder, NodeComponents, PayloadServiceBuilder,
-    },
+    components::{Components, ConsensusBuilder, NodeComponents, PayloadServiceBuilder},
 };
 
 /// Constructs the components used during node launch.
@@ -48,26 +46,6 @@ where
         ctx: &BuilderContext<Node>,
     ) -> impl Future<Output = eyre::Result<Self::Components>> + Send {
         self(ctx)
-    }
-}
-
-/// Builds [`NoopNetwork`].
-#[derive(Debug, Clone, Default)]
-pub struct NoopNetworkBuilder;
-
-impl<N, Pool> NetworkBuilder<N, Pool> for NoopNetworkBuilder
-where
-    N: FullNodeTypes,
-    Pool: TransactionPool,
-{
-    type Network = NoopNetwork;
-
-    async fn build_network(
-        self,
-        ctx: &BuilderContext<N>,
-        _pool: Pool,
-    ) -> eyre::Result<Self::Network> {
-        Ok(NoopNetwork::new().with_chain_id(ctx.chain_spec().chain_id()))
     }
 }
 

@@ -66,7 +66,7 @@ pub type RethFullAdapter<DB> =
 ///
 ///  - The EVM and Executor configuration: [`BaseEvmConfig`](reth_evm::BaseEvmConfig)
 ///  - The transaction pool: the Base transaction pool builder
-///  - The network: [`NetworkBuilder`](crate::components::NetworkBuilder)
+///  - The network: the Base network builder
 ///  - The payload builder: [`PayloadBuilder`](crate::components::PayloadServiceBuilder)
 ///
 /// Once all the components are configured, the node is ready to be launched.
