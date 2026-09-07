@@ -13,7 +13,7 @@ use reth_evm::{
     evm::EvmFactoryExt, tracing::TracingCtx,
 };
 use reth_primitives_traits::{BlockBody, Recovered, RecoveredBlock};
-use reth_rpc_eth_types::cache::db::StateCacheDb;
+use reth_rpc_eth_types::{BaseEthApiError, cache::db::StateCacheDb};
 use reth_storage_api::{ProviderBlock, ProviderTx};
 use revm::{context::Block, context_interface::result::ResultAndState};
 use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
@@ -22,7 +22,7 @@ use super::{Call, LoadBlock, LoadState, LoadTransaction};
 use crate::{FromEthApiError, FromEvmError};
 
 /// Executes CPU heavy tasks.
-pub trait Trace: LoadState<Error: FromEvmError> + Call {
+pub trait Trace: LoadState + Call {
     /// Executes the [`TxEnvFor`] with [`reth_evm::EvmEnv`] against the given [`StateCacheDb`]
     /// without committing state changes.
     fn inspect<'a>(
@@ -31,11 +31,11 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
         evm_env: EvmEnvFor,
         tx_env: impl IntoTxEnv<TxEnvFor>,
         inspector: impl InspectorFor<&'a mut StateCacheDb>,
-    ) -> Result<ResultAndState<HaltReasonFor>, Self::Error> {
+    ) -> Result<ResultAndState<HaltReasonFor>, BaseEthApiError> {
         self.evm_config()
             .evm_with_env_and_inspector(db, evm_env, inspector)
             .transact(tx_env)
-            .map_err(Self::Error::from_evm_err)
+            .map_err(BaseEthApiError::from_evm_err)
     }
 
     /// Retrieves the transaction if it exists and returns its trace.
@@ -52,7 +52,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
         hash: B256,
         config: TracingInspectorConfig,
         f: F,
-    ) -> impl Future<Output = Result<Option<R>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<R>, BaseEthApiError>> + Send
     where
         Self: LoadTransaction,
         F: FnOnce(
@@ -60,7 +60,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
                 TracingInspector,
                 ResultAndState<HaltReasonFor>,
                 StateCacheDb,
-            ) -> Result<R, Self::Error>
+            ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
         R: Send + 'static,
@@ -82,7 +82,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
         hash: B256,
         mut inspector: Insp,
         f: F,
-    ) -> impl Future<Output = Result<Option<R>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<R>, BaseEthApiError>> + Send
     where
         Self: LoadTransaction,
         F: FnOnce(
@@ -90,7 +90,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
                 Insp,
                 ResultAndState<HaltReasonFor>,
                 StateCacheDb,
-            ) -> Result<R, Self::Error>
+            ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
         Insp: for<'a> InspectorFor<&'a mut StateCacheDb> + Send + 'static,
@@ -137,7 +137,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
         db: &mut StateCacheDb,
         block: &RecoveredBlock<BaseBlock>,
         target_tx_index: usize,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), BaseEthApiError> {
         self.apply_pre_execution_changes(block, db)?;
 
         let evm_env = self.evm_env_for_header(block.sealed_block().sealed_header())?;
@@ -159,7 +159,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
         inspector: impl InspectorFor<&'a mut StateCacheDb>,
         target_tx_index: usize,
         target_tx_env: impl IntoTxEnv<TxEnvFor>,
-    ) -> Result<(ResultAndState<HaltReasonFor>, EvmEnvFor), Self::Error> {
+    ) -> Result<(ResultAndState<HaltReasonFor>, EvmEnvFor), BaseEthApiError> {
         let block_txs = block.transactions_recovered();
 
         self.apply_pre_execution_changes(block, db)?;
@@ -171,7 +171,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
         self.replay_transactions_until_with_evm(&mut evm, block_txs, target_tx_index)?;
         evm.enable_inspector();
 
-        let res = evm.transact(target_tx_env).map_err(Self::Error::from_evm_err)?;
+        let res = evm.transact(target_tx_env).map_err(BaseEthApiError::from_evm_err)?;
 
         let (_, evm_env) = evm.finish();
 
@@ -191,7 +191,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
         highest_index: Option<u64>,
         config: TracingInspectorConfig,
         f: F,
-    ) -> impl Future<Output = Result<Option<Vec<R>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<Vec<R>>, BaseEthApiError>> + Send
     where
         Self: LoadBlock,
         F: Fn(
@@ -201,7 +201,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
                     Recovered<&ProviderTx<Self::Provider>>,
                     EvmFor<&mut StateCacheDb, TracingInspector>,
                 >,
-            ) -> Result<R, Self::Error>
+            ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
         R: Send + 'static,
@@ -232,7 +232,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
         highest_index: Option<u64>,
         mut inspector_setup: Setup,
         f: F,
-    ) -> impl Future<Output = Result<Option<Vec<R>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<Vec<R>>, BaseEthApiError>> + Send
     where
         Self: LoadBlock,
         F: Fn(
@@ -242,7 +242,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
                     Recovered<&ProviderTx<Self::Provider>>,
                     EvmFor<&mut StateCacheDb, Insp>,
                 >,
-            ) -> Result<R, Self::Error>
+            ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
         Setup: FnMut() -> Insp + Send + 'static,
@@ -326,7 +326,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
         block: Option<Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>>,
         config: TracingInspectorConfig,
         f: F,
-    ) -> impl Future<Output = Result<Option<Vec<R>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<Vec<R>>, BaseEthApiError>> + Send
     where
         Self: LoadBlock,
         // This is the callback that's invoked for each transaction with the inspector, the result,
@@ -338,7 +338,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
                     Recovered<&ProviderTx<Self::Provider>>,
                     EvmFor<&mut StateCacheDb, TracingInspector>,
                 >,
-            ) -> Result<R, Self::Error>
+            ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
         R: Send + 'static,
@@ -366,7 +366,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
         block: Option<Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>>,
         insp_setup: Setup,
         f: F,
-    ) -> impl Future<Output = Result<Option<Vec<R>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<Vec<R>>, BaseEthApiError>> + Send
     where
         Self: LoadBlock,
         // This is the callback that's invoked for each transaction with the inspector, the result,
@@ -378,7 +378,7 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
                     Recovered<&ProviderTx<Self::Provider>>,
                     EvmFor<&mut StateCacheDb, Insp>,
                 >,
-            ) -> Result<R, Self::Error>
+            ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
         Setup: FnMut() -> Insp + Send + 'static,
@@ -397,13 +397,13 @@ pub trait Trace: LoadState<Error: FromEvmError> + Call {
         &self,
         block: &RecoveredBlock<ProviderBlock<Self::Provider>>,
         db: &mut StateCacheDb,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), BaseEthApiError> {
         self.evm_config()
             .executor_for_block(db, block.sealed_block())
             .map_err(RethError::other)
-            .map_err(Self::Error::from_eth_err)?
+            .map_err(BaseEthApiError::from_eth_err)?
             .apply_pre_execution_changes()
-            .map_err(Self::Error::from_eth_err)?;
+            .map_err(BaseEthApiError::from_eth_err)?;
         Ok(())
     }
 }

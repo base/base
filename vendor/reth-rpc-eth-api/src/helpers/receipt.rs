@@ -9,7 +9,8 @@ use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::{
-    EthApiError, error::FromEthApiError, utils::calculate_gas_used_and_next_log_index,
+    BaseEthApiError, EthApiError, error::FromEthApiError,
+    utils::calculate_gas_used_and_next_log_index,
 };
 use reth_storage_api::{ProviderBlock, ProviderReceipt, ProviderTx};
 
@@ -29,7 +30,7 @@ pub trait LoadReceipt: EthApiTypes + RpcNodeCoreExt + Send + Sync {
         receipt: ProviderReceipt<Self::Provider>,
         all_receipts: Option<Arc<Vec<ProviderReceipt<Self::Provider>>>>,
         block: Option<Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>>,
-    ) -> impl Future<Output = Result<BaseTransactionReceipt, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<BaseTransactionReceipt, BaseEthApiError>> + Send {
         async move {
             let hash = meta.block_hash;
             let (block, all_receipts) = match (block, all_receipts) {
@@ -39,7 +40,7 @@ pub trait LoadReceipt: EthApiTypes + RpcNodeCoreExt + Send + Sync {
                         .cache()
                         .get_receipts(hash)
                         .await
-                        .map_err(Self::Error::from_eth_err)?
+                        .map_err(BaseEthApiError::from_eth_err)?
                         .ok_or(EthApiError::HeaderNotFound(hash.into()))?;
                     (Some(block), all_receipts)
                 }
@@ -48,7 +49,7 @@ pub trait LoadReceipt: EthApiTypes + RpcNodeCoreExt + Send + Sync {
                         .cache()
                         .get_maybe_block(hash)
                         .await
-                        .map_err(Self::Error::from_eth_err)?;
+                        .map_err(BaseEthApiError::from_eth_err)?;
                     (block, all_receipts)
                 }
                 (None, None) => {
@@ -56,7 +57,7 @@ pub trait LoadReceipt: EthApiTypes + RpcNodeCoreExt + Send + Sync {
                         .cache()
                         .get_receipts_and_maybe_block(hash)
                         .await
-                        .map_err(Self::Error::from_eth_err)?
+                        .map_err(BaseEthApiError::from_eth_err)?
                         .ok_or(EthApiError::HeaderNotFound(hash.into()))?;
                     (block, all_receipts)
                 }

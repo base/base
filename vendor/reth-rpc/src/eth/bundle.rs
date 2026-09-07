@@ -14,7 +14,9 @@ use reth_rpc_eth_api::{
     EthCallBundleApiServer, FromEthApiError, FromEvmError,
     helpers::{Call, EthTransactions, LoadPendingBlock},
 };
-use reth_rpc_eth_types::{EthApiError, RpcInvalidTransactionError, utils::recover_raw_transaction};
+use reth_rpc_eth_types::{
+    BaseEthApiError, EthApiError, RpcInvalidTransactionError, utils::recover_raw_transaction,
+};
 use reth_tasks::pool::BlockingTaskGuard;
 use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
@@ -52,7 +54,7 @@ where
     pub async fn call_bundle(
         &self,
         bundle: EthCallBundle,
-    ) -> Result<EthCallBundleResponse, Eth::Error> {
+    ) -> Result<EthCallBundleResponse, BaseEthApiError> {
         let EthCallBundle {
             txs,
             block_number,
@@ -149,7 +151,7 @@ where
 
                 let initial_coinbase = db
                     .basic_ref(coinbase)
-                    .map_err(Eth::Error::from_eth_err)?
+                    .map_err(BaseEthApiError::from_eth_err)?
                     .map(|acc| acc.balance)
                     .unwrap_or_default();
                 let mut coinbase_balance_before_tx = initial_coinbase;
@@ -171,7 +173,7 @@ where
                         if let EthBlobTransactionSidecar::Present(sidecar) = tx.take_blob() {
                             tx.validate_blob(&sidecar, EnvKzgSettings::Default.get()).map_err(
                                 |e| {
-                                    Eth::Error::from_eth_err(EthApiError::InvalidParams(
+                                    BaseEthApiError::from_eth_err(EthApiError::InvalidParams(
                                         e.to_string(),
                                     ))
                                 },
@@ -184,7 +186,7 @@ where
                     hasher.update(*tx.tx_hash());
                     let ResultAndState { result, state } = evm
                         .transact(eth_api.evm_config().tx_env(&tx))
-                        .map_err(Eth::Error::from_evm_err)?;
+                        .map_err(BaseEthApiError::from_evm_err)?;
 
                     let gas_price = tx
                         .effective_tip_per_gas(basefee)

@@ -65,8 +65,6 @@ impl<N> EthApiTypes for EthApi<N>
 where
     N: RpcNodeCore,
 {
-    type Error = reth_rpc_eth_types::BaseEthApiError;
-
     fn converter(&self) -> &BaseRpcConverter<Self::Provider> {
         &self.converter
     }

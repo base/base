@@ -19,6 +19,7 @@ use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
 use reth_rpc_convert::TransactionConversionError;
 use reth_rpc_eth_types::{
+    BaseEthApiError,
     EthApiError::{self, TransactionConfirmationTimeout},
     FillTransaction, SignError, TransactionSource,
     block::convert_transaction_receipt,
@@ -81,11 +82,11 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     fn send_raw_transaction(
         &self,
         tx: Bytes,
-    ) -> impl Future<Output = Result<B256, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<B256, BaseEthApiError>> + Send {
         async move {
             let pool_transaction =
                 <PoolTx<Self::Pool> as PoolTransaction>::recover_raw_transaction(&tx)
-                    .map_err(Self::Error::from_eth_err)?;
+                    .map_err(BaseEthApiError::from_eth_err)?;
             self.send_pool_transaction(
                 TransactionOrigin::Local,
                 WithEncoded::new(tx, pool_transaction),
@@ -99,7 +100,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         origin: TransactionOrigin,
         tx: WithEncoded<Recovered<PoolPooledTx<Self::Pool>>>,
-    ) -> impl Future<Output = Result<B256, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<B256, BaseEthApiError>> + Send {
         async move {
             let (encoded, recovered) = tx.split();
             let pool_transaction =
@@ -114,7 +115,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         origin: TransactionOrigin,
         tx: WithEncoded<PoolTx<Self::Pool>>,
-    ) -> impl Future<Output = Result<B256, Self::Error>> + Send;
+    ) -> impl Future<Output = Result<B256, BaseEthApiError>> + Send;
 
     /// Decodes and recovers the transaction and submits it to the pool.
     ///
@@ -123,7 +124,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         tx: Bytes,
         timeout_ms: Option<u64>,
-    ) -> impl Future<Output = Result<BaseTransactionReceipt, Self::Error>> + Send
+    ) -> impl Future<Output = Result<BaseTransactionReceipt, BaseEthApiError>> + Send
     where
         Self: LoadReceipt + 'static,
     {
@@ -150,19 +151,19 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                             this.converter(),
                         )
                         .transpose()
-                        .map_err(Self::Error::from)?
+                        .map_err(BaseEthApiError::from)?
                     {
                         return Ok(receipt);
                     }
                 }
-                Err(Self::Error::from_eth_err(TransactionConfirmationTimeout {
+                Err(BaseEthApiError::from_eth_err(TransactionConfirmationTimeout {
                     hash,
                     duration: timeout_duration,
                 }))
             })
             .await
             .unwrap_or_else(|_elapsed| {
-                Err(Self::Error::from_eth_err(TransactionConfirmationTimeout {
+                Err(BaseEthApiError::from_eth_err(TransactionConfirmationTimeout {
                     hash,
                     duration: timeout_duration,
                 }))
@@ -180,19 +181,21 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         hash: B256,
     ) -> impl Future<
-        Output = Result<Option<TransactionSource<ProviderTx<Self::Provider>>>, Self::Error>,
+        Output = Result<Option<TransactionSource<ProviderTx<Self::Provider>>>, BaseEthApiError>,
     > + Send {
         LoadTransaction::transaction_by_hash(self, hash)
     }
 
     /// Returns all transactions from the local pending pool.
-    fn pending_transactions(&self) -> Result<Vec<base_common_rpc_types::Transaction>, Self::Error> {
+    fn pending_transactions(
+        &self,
+    ) -> Result<Vec<base_common_rpc_types::Transaction>, BaseEthApiError> {
         self.pool()
             .pending_transactions()
             .into_iter()
             .map(|tx| self.converter().fill_pending(tx.transaction.clone_into_consensus()))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(Self::Error::from)
+            .map_err(BaseEthApiError::from)
     }
 
     /// Get all transactions in the block with the given hash.
@@ -202,14 +205,14 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     fn transactions_by_block(
         &self,
         block: B256,
-    ) -> impl Future<Output = Result<Option<Vec<ProviderTx<Self::Provider>>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<Vec<ProviderTx<Self::Provider>>>, BaseEthApiError>> + Send
     {
         async move {
             self.cache()
                 .get_recovered_block(block)
                 .await
                 .map(|b| b.map(|b| b.body().transactions.to_vec()))
-                .map_err(Self::Error::from_eth_err)
+                .map_err(BaseEthApiError::from_eth_err)
         }
     }
 
@@ -223,7 +226,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     fn raw_transaction_by_hash(
         &self,
         hash: B256,
-    ) -> impl Future<Output = Result<Option<Bytes>, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<Option<Bytes>, BaseEthApiError>> + Send {
         async move {
             // Note: this is mostly used to fetch pooled transactions so we check the pool first
             if let Some(tx) =
@@ -236,7 +239,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                 Ok(this
                     .provider()
                     .transaction_by_hash(hash)
-                    .map_err(Self::Error::from_eth_err)?
+                    .map_err(BaseEthApiError::from_eth_err)?
                     .map(|tx| tx.encoded_2718().into()))
             })
             .await
@@ -249,7 +252,10 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         hash: B256,
     ) -> impl Future<
-        Output = Result<Option<(TransactionSource<ProviderTx<Self::Provider>>, B256)>, Self::Error>,
+        Output = Result<
+            Option<(TransactionSource<ProviderTx<Self::Provider>>, B256)>,
+            BaseEthApiError,
+        >,
     > + Send {
         async move {
             match self.transaction_by_hash_at(hash).await? {
@@ -266,7 +272,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     fn transaction_receipt(
         &self,
         hash: B256,
-    ) -> impl Future<Output = Result<Option<BaseTransactionReceipt>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<BaseTransactionReceipt>, BaseEthApiError>> + Send
     where
         Self: LoadReceipt + 'static,
     {
@@ -297,7 +303,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                 Option<Arc<Vec<ProviderReceipt<Self::Provider>>>>,
                 Option<Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>>,
             )>,
-            Self::Error,
+            BaseEthApiError,
         >,
     > + Send
     where
@@ -323,7 +329,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                     .cache()
                     .get_receipts(cached.block.hash())
                     .await
-                    .map_err(Self::Error::from_eth_err)?
+                    .map_err(BaseEthApiError::from_eth_err)?
                     && let Some(receipt) = receipts.get(cached.tx_index).cloned()
                 {
                     return Ok(Some((tx, meta, receipt, Some(receipts), Some(cached.block))));
@@ -335,14 +341,16 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                 let provider = this.provider();
                 let Some((tx, meta)) = provider
                     .transaction_by_hash_with_meta(hash)
-                    .map_err(Self::Error::from_eth_err)?
+                    .map_err(BaseEthApiError::from_eth_err)?
                 else {
                     return Ok(None);
                 };
 
-                let tx = tx.try_into_recovered_unchecked().map_err(Self::Error::from_eth_err)?;
+                let tx =
+                    tx.try_into_recovered_unchecked().map_err(BaseEthApiError::from_eth_err)?;
 
-                let receipt = provider.receipt_by_hash(hash).map_err(Self::Error::from_eth_err)?;
+                let receipt =
+                    provider.receipt_by_hash(hash).map_err(BaseEthApiError::from_eth_err)?;
 
                 Ok(receipt.map(|receipt| (tx, meta, receipt, None, None)))
             })
@@ -357,7 +365,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         block_id: BlockId,
         index: usize,
-    ) -> impl Future<Output = Result<Option<base_common_rpc_types::Transaction>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<base_common_rpc_types::Transaction>, BaseEthApiError>> + Send
     where
         Self: LoadBlock,
     {
@@ -393,7 +401,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         sender: Address,
         nonce: u64,
         include_pending: bool,
-    ) -> impl Future<Output = Result<Option<base_common_rpc_types::Transaction>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<base_common_rpc_types::Transaction>, BaseEthApiError>> + Send
     where
         Self: LoadBlock + LoadState,
     {
@@ -418,11 +426,12 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                 return Ok(None);
             }
 
-            let high = self.provider().best_block_number().map_err(Self::Error::from_eth_err)?;
+            let high =
+                self.provider().best_block_number().map_err(BaseEthApiError::from_eth_err)?;
 
             // Perform a binary search over the block range to find the block in which the sender's
             // nonce reached the requested nonce.
-            let num = binary_search::<_, _, Self::Error>(1, high, |mid| async move {
+            let num = binary_search::<_, _, BaseEthApiError>(1, high, |mid| async move {
                 let mid_nonce =
                     self.transaction_count(sender, Some(mid.into())).await?.saturating_to::<u64>();
 
@@ -467,7 +476,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         block_id: BlockId,
         index: usize,
-    ) -> impl Future<Output = Result<Option<Bytes>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<Bytes>, BaseEthApiError>> + Send
     where
         Self: LoadBlock,
     {
@@ -487,7 +496,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     fn send_transaction_request(
         &self,
         mut request: BaseTransactionRequest,
-    ) -> impl Future<Output = Result<B256, Self::Error>> + Send
+    ) -> impl Future<Output = Result<B256, BaseEthApiError>> + Send
     where
         Self: EthApiSpec + LoadBlock + EstimateCall,
     {
@@ -523,7 +532,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                     transaction,
                 )
                 .map_err(|e| {
-                    Self::Error::from_eth_err(TransactionConversionError::Other(e.to_string()))
+                    BaseEthApiError::from_eth_err(TransactionConversionError::Other(e.to_string()))
                 })?;
 
             // submit the transaction to the pool with a `Local` origin
@@ -531,7 +540,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                 .pool()
                 .add_transaction(TransactionOrigin::Local, pool_transaction)
                 .await
-                .map_err(Self::Error::from_eth_err)?;
+                .map_err(BaseEthApiError::from_eth_err)?;
 
             Ok(hash)
         }
@@ -541,7 +550,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     fn fill_transaction(
         &self,
         mut request: BaseTransactionRequest,
-    ) -> impl Future<Output = Result<FillTransaction<BaseTxEnvelope>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<FillTransaction<BaseTxEnvelope>, BaseEthApiError>> + Send
     where
         Self: EthApiSpec + LoadBlock + EstimateCall + LoadFee,
     {
@@ -590,7 +599,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
                 };
                 if request.as_ref().max_fee_per_gas().is_none() {
                     let header =
-                        self.provider().latest_header().map_err(Self::Error::from_eth_err)?;
+                        self.provider().latest_header().map_err(BaseEthApiError::from_eth_err)?;
                     let base_fee = header.and_then(|h| h.base_fee_per_gas()).unwrap_or_default();
                     // Use `2 * base_fee` as headroom, matching go-ethereum's
                     // `setLondonFeeDefaults`, so the transaction does not
@@ -615,12 +624,12 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         from: &Address,
         txn: BaseTransactionRequest,
-    ) -> impl Future<Output = Result<ProviderTx<Self::Provider>, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<ProviderTx<Self::Provider>, BaseEthApiError>> + Send {
         async move {
             self.find_signer(from)?
                 .sign_transaction(txn, from)
                 .await
-                .map_err(Self::Error::from_eth_err)
+                .map_err(BaseEthApiError::from_eth_err)
         }
     }
 
@@ -629,13 +638,13 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         account: Address,
         message: Bytes,
-    ) -> impl Future<Output = Result<Bytes, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<Bytes, BaseEthApiError>> + Send {
         async move {
             Ok(self
                 .find_signer(&account)?
                 .sign(account, &message)
                 .await
-                .map_err(Self::Error::from_eth_err)?
+                .map_err(BaseEthApiError::from_eth_err)?
                 .as_bytes()
                 .into())
         }
@@ -646,7 +655,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     fn sign_transaction(
         &self,
         request: BaseTransactionRequest,
-    ) -> impl Future<Output = Result<Bytes, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<Bytes, BaseEthApiError>> + Send {
         async move {
             let from = match request.as_ref().from() {
                 Some(from) => from,
@@ -658,11 +667,15 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     }
 
     /// Encodes and signs the typed data according EIP-712. Payload must implement Eip712 trait.
-    fn sign_typed_data(&self, data: &TypedData, account: Address) -> Result<Bytes, Self::Error> {
+    fn sign_typed_data(
+        &self,
+        data: &TypedData,
+        account: Address,
+    ) -> Result<Bytes, BaseEthApiError> {
         Ok(self
             .find_signer(&account)?
             .sign_typed_data(account, data)
-            .map_err(Self::Error::from_eth_err)?
+            .map_err(BaseEthApiError::from_eth_err)?
             .as_bytes()
             .into())
     }
@@ -674,7 +687,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         account: &Address,
     ) -> Result<
         Box<dyn EthSigner<ProviderTx<Self::Provider>, BaseTransactionRequest> + 'static>,
-        Self::Error,
+        BaseEthApiError,
     > {
         self.signers()
             .read()
@@ -700,7 +713,7 @@ pub trait LoadTransaction: SpawnBlocking + FullEthApiTypes + RpcNodeCoreExt {
         &self,
         hash: B256,
     ) -> impl Future<
-        Output = Result<Option<TransactionSource<ProviderTx<Self::Provider>>>, Self::Error>,
+        Output = Result<Option<TransactionSource<ProviderTx<Self::Provider>>>, BaseEthApiError>,
     > + Send {
         async move {
             // First, try the RPC cache
@@ -715,7 +728,7 @@ pub trait LoadTransaction: SpawnBlocking + FullEthApiTypes + RpcNodeCoreExt {
                 .spawn_blocking_io(move |this| {
                     this.provider()
                         .transaction_by_hash_with_meta(hash)
-                        .map_err(Self::Error::from_eth_err)
+                        .map_err(BaseEthApiError::from_eth_err)
                 })
                 .await?
             {
@@ -756,7 +769,7 @@ pub trait LoadTransaction: SpawnBlocking + FullEthApiTypes + RpcNodeCoreExt {
     ) -> impl Future<
         Output = Result<
             Option<(TransactionSource<ProviderTx<Self::Provider>>, BlockId)>,
-            Self::Error,
+            BaseEthApiError,
         >,
     > + Send {
         async move {
@@ -780,7 +793,7 @@ pub trait LoadTransaction: SpawnBlocking + FullEthApiTypes + RpcNodeCoreExt {
                 TransactionSource<ProviderTx<Self::Provider>>,
                 Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>,
             )>,
-            Self::Error,
+            BaseEthApiError,
         >,
     > + Send {
         async move {
@@ -798,7 +811,7 @@ pub trait LoadTransaction: SpawnBlocking + FullEthApiTypes + RpcNodeCoreExt {
                 .cache()
                 .get_recovered_block(block_hash)
                 .await
-                .map_err(Self::Error::from_eth_err)?;
+                .map_err(BaseEthApiError::from_eth_err)?;
             Ok(block.map(|block| (transaction, block)))
         }
     }

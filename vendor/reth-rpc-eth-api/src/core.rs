@@ -18,7 +18,7 @@ use base_common_rpc_types::{
     BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BaseTransactionRequest,
 };
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_rpc_eth_types::{EthApiError, EthCapabilities, FillTransaction};
+use reth_rpc_eth_types::{BaseEthApiError, EthApiError, EthCapabilities, FillTransaction};
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use serde_json::Value;
 use tracing::trace;
@@ -468,7 +468,6 @@ impl<T>
     > for T
 where
     T: FullEthApi,
-    jsonrpsee_types::error::ErrorObject<'static>: From<T::Error>,
 {
     /// Handler for: `eth_protocolVersion`
     async fn protocol_version(&self) -> RpcResult<U64> {
@@ -614,7 +613,7 @@ where
             .await?
             .map(|tx| tx.into_transaction(self.converter()))
             .transpose()
-            .map_err(T::Error::from)?)
+            .map_err(BaseEthApiError::from)?)
     }
 
     /// Handler for: `eth_getRawTransactionByBlockHashAndIndex`

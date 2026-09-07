@@ -50,7 +50,7 @@ where
         &self,
         origin: TransactionOrigin,
         tx: WithEncoded<<Self::Pool as TransactionPool>::Transaction>,
-    ) -> Result<B256, Self::Error> {
+    ) -> Result<B256, BaseEthApiError> {
         let (tx, pool_transaction) = tx.split();
 
         if pool_transaction.consensus_ref().ty() == EIP8130_TX_TYPE_ID
@@ -93,7 +93,7 @@ where
             .pool()
             .add_transaction(origin, pool_transaction)
             .await
-            .map_err(Self::Error::from_eth_err)?;
+            .map_err(BaseEthApiError::from_eth_err)?;
 
         Ok(hash)
     }
@@ -105,7 +105,7 @@ where
         &self,
         tx: Bytes,
         timeout_ms: Option<u64>,
-    ) -> impl Future<Output = Result<BaseTransactionReceipt, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<BaseTransactionReceipt, BaseEthApiError>> + Send {
         let this = self.clone();
         let configured_timeout = self.send_raw_transaction_sync_timeout();
         // A positive per-request timeout may shorten, but never extend, the configured maximum.
@@ -138,14 +138,14 @@ where
                         return Ok(receipt);
                     }
                 }
-                Err(Self::Error::from_eth_err(EthApiError::TransactionConfirmationTimeout {
+                Err(BaseEthApiError::from_eth_err(EthApiError::TransactionConfirmationTimeout {
                     hash,
                     duration: timeout_duration,
                 }))
             })
             .await
             .unwrap_or_else(|_elapsed| {
-                Err(Self::Error::from_eth_err(EthApiError::TransactionConfirmationTimeout {
+                Err(BaseEthApiError::from_eth_err(EthApiError::TransactionConfirmationTimeout {
                     hash,
                     duration: timeout_duration,
                 }))
@@ -157,7 +157,7 @@ where
     fn transaction_receipt(
         &self,
         hash: B256,
-    ) -> impl Future<Output = Result<Option<BaseTransactionReceipt>, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<Option<BaseTransactionReceipt>, BaseEthApiError>> + Send {
         let this = self.clone();
         async move {
             let Some((tx, meta, receipt, all_receipts, block)) =
@@ -178,13 +178,13 @@ where
     async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<TransactionSource<ProviderTx<Self::Provider>>>, Self::Error> {
+    ) -> Result<Option<TransactionSource<ProviderTx<Self::Provider>>>, BaseEthApiError> {
         // 1. Try to find the transaction on disk (historical blocks)
         if let Some((tx, meta)) = self
             .spawn_blocking_io(move |this| {
                 this.provider()
                     .transaction_by_hash_with_meta(hash)
-                    .map_err(Self::Error::from_eth_err)
+                    .map_err(BaseEthApiError::from_eth_err)
             })
             .await?
         {

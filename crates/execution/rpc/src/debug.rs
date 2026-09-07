@@ -17,7 +17,6 @@ use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
 use base_execution_txpool::BasePooledTransaction;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
-use jsonrpsee_types::error::ErrorObject;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_node_api::PayloadBuilderError;
@@ -79,7 +78,6 @@ pub struct DebugApiExt<Eth: FullEthApi, Storage, Provider> {
 impl<Eth, Storage, Provider> DebugApiExt<Eth, Storage, Provider>
 where
     Eth: FullEthApi + Send + Sync + 'static,
-    ErrorObject<'static>: From<Eth::Error>,
     Storage: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt,
 {
@@ -118,7 +116,6 @@ pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider> {
 impl<Eth, P, Provider> DebugApiExtInner<Eth, P, Provider>
 where
     Eth: FullEthApi + Send + Sync + 'static,
-    ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'static,
 {
     fn new(
@@ -143,7 +140,6 @@ where
 impl<Eth, P, Provider> DebugApiExt<Eth, P, Provider>
 where
     Eth: FullEthApi + Send + Sync + 'static,
-    ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt + HeaderProvider<Header = alloy_consensus::Header>,
 {
@@ -163,7 +159,6 @@ impl<Eth, P, Provider> DebugApiOverrideServer<BasePayloadAttributes>
     for DebugApiExt<Eth, P, Provider>
 where
     Eth: FullEthApi + Send + Sync + 'static,
-    ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + StateProviderFactory

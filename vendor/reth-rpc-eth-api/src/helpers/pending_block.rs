@@ -23,8 +23,8 @@ use reth_evm::{
 use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_rpc_eth_types::{
-    EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin, block::BlockAndReceipts,
-    builder::config::PendingBlockKind,
+    BaseEthApiError, EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin,
+    block::BlockAndReceipts, builder::config::PendingBlockKind,
 };
 use reth_storage_api::{
     BlockReader, BlockReaderIdExt, ProviderHeader, ProviderTx, StateProviderBox,
@@ -40,12 +40,12 @@ use tokio::sync::Mutex;
 use tracing::debug;
 
 use super::SpawnBlocking;
-use crate::{EthApiTypes, FromEthApiError, FromEvmError, RpcNodeCore};
+use crate::{EthApiTypes, FromEthApiError, RpcNodeCore};
 
 /// Loads a pending block from database.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` blocks RPC methods.
-pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
+pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
     /// Returns a handle to the pending block.
     ///
     /// Data access in default (L1) trait method implementations.
@@ -60,9 +60,9 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
     /// Configures the [`PendingBlockEnv`] for the pending block
     ///
     /// If no pending block is available, this will derive it from the `latest` block
-    fn pending_block_env_and_cfg(&self) -> Result<PendingBlockEnv, Self::Error> {
+    fn pending_block_env_and_cfg(&self) -> Result<PendingBlockEnv, BaseEthApiError> {
         if let Some((block, receipts)) =
-            self.provider().pending_block_and_receipts().map_err(Self::Error::from_eth_err)?
+            self.provider().pending_block_and_receipts().map_err(BaseEthApiError::from_eth_err)?
         {
             // Note: for the PENDING block we assume it is past the known merge block and
             // thus this will not fail when looking up the total
@@ -71,7 +71,7 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
                 .evm_config()
                 .evm_env(block.header())
                 .map_err(RethError::other)
-                .map_err(Self::Error::from_eth_err)?;
+                .map_err(BaseEthApiError::from_eth_err)?;
 
             return Ok(PendingBlockEnv::new(
                 evm_env,
@@ -84,14 +84,14 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
         let latest = self
             .provider()
             .latest_header()
-            .map_err(Self::Error::from_eth_err)?
+            .map_err(BaseEthApiError::from_eth_err)?
             .ok_or(EthApiError::HeaderNotFound(BlockNumberOrTag::Latest.into()))?;
 
         let evm_env = self
             .evm_config()
             .next_evm_env(&latest, &self.next_env_attributes(&latest)?)
             .map_err(RethError::other)
-            .map_err(Self::Error::from_eth_err)?;
+            .map_err(BaseEthApiError::from_eth_err)?;
 
         Ok(PendingBlockEnv::new(evm_env, PendingBlockEnvOrigin::DerivedFromLatest(latest)))
     }
@@ -100,14 +100,14 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
     fn next_env_attributes(
         &self,
         parent: &SealedHeader<ProviderHeader<Self::Provider>>,
-    ) -> Result<BaseNextBlockEnvAttributes, Self::Error> {
+    ) -> Result<BaseNextBlockEnvAttributes, BaseEthApiError> {
         Ok(self.pending_env_builder().pending_env_attributes(parent, None)?)
     }
 
     /// Returns a [`StateProviderBox`] on a mem-pool built pending block overlaying latest.
     fn local_pending_state(
         &self,
-    ) -> impl Future<Output = Result<Option<StateProviderBox>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<StateProviderBox>, BaseEthApiError>> + Send
     where
         Self: SpawnBlocking,
     {
@@ -119,7 +119,7 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
             let latest_historical = self
                 .provider()
                 .history_by_block_hash(pending_block.block().parent_hash())
-                .map_err(Self::Error::from_eth_err)?;
+                .map_err(BaseEthApiError::from_eth_err)?;
 
             let state = BlockState::from(pending_block);
 
@@ -130,7 +130,7 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
     /// Returns a mem-pool built pending block.
     fn pool_pending_block(
         &self,
-    ) -> impl Future<Output = Result<Option<PendingBlock>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<PendingBlock>, BaseEthApiError>> + Send
     where
         Self: SpawnBlocking,
     {
@@ -156,7 +156,7 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
         &self,
         parent: SealedHeader<ProviderHeader<Self::Provider>>,
         evm_env: EvmEnvFor,
-    ) -> impl Future<Output = Result<Option<PendingBlock>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<PendingBlock>, BaseEthApiError>> + Send
     where
         Self: SpawnBlocking,
     {
@@ -205,7 +205,7 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
     /// Returns the locally built pending block
     fn local_pending_block(
         &self,
-    ) -> impl Future<Output = Result<Option<BlockAndReceipts>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<BlockAndReceipts>, BaseEthApiError>> + Send
     where
         Self: SpawnBlocking,
         Self::Pool:
@@ -240,7 +240,7 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
     fn build_block(
         &self,
         parent: &SealedHeader<ProviderHeader<Self::Provider>>,
-    ) -> Result<ExecutedBlock, Self::Error>
+    ) -> Result<ExecutedBlock, BaseEthApiError>
     where
         Self::Pool:
             TransactionPool<Transaction: PoolTransaction<Consensus = ProviderTx<Self::Provider>>>,
@@ -249,7 +249,7 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
         let state_provider = self
             .provider()
             .history_by_block_hash(parent.hash())
-            .map_err(Self::Error::from_eth_err)?;
+            .map_err(BaseEthApiError::from_eth_err)?;
         let state = StateProviderDatabase::new(state_provider);
         let mut db = State::builder().with_database(state).with_bundle_update().build();
 
@@ -257,9 +257,9 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
             .evm_config()
             .builder_for_next_block(&mut db, parent, self.next_env_attributes(parent)?)
             .map_err(RethError::other)
-            .map_err(Self::Error::from_eth_err)?;
+            .map_err(BaseEthApiError::from_eth_err)?;
 
-        builder.apply_pre_execution_changes().map_err(Self::Error::from_eth_err)?;
+        builder.apply_pre_execution_changes().map_err(BaseEthApiError::from_eth_err)?;
 
         let block_gas_limit: u64 = builder.evm().block().gas_limit();
         let is_amsterdam = self
@@ -403,7 +403,7 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
                             continue;
                         }
                         // this is an error that we should treat as fatal for this attempt
-                        Err(err) => return Err(Self::Error::from_eth_err(err)),
+                        Err(err) => return Err(BaseEthApiError::from_eth_err(err)),
                     };
 
                 // add to the total blob gas used if the transaction successfully executed
@@ -425,7 +425,7 @@ pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
         }
 
         let BlockBuilderOutcome { execution_result, block, hashed_state, trie_updates, .. } =
-            builder.finish(NoopProvider::default(), None).map_err(Self::Error::from_eth_err)?;
+            builder.finish(NoopProvider::default(), None).map_err(BaseEthApiError::from_eth_err)?;
 
         let execution_outcome =
             BlockExecutionOutput { state: db.take_bundle(), result: execution_result };

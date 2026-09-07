@@ -30,7 +30,7 @@ use reth_revm::{
     db::{State, bal::EvmDatabaseError},
 };
 use reth_rpc_eth_types::{
-    EthApiError, StateCacheDb,
+    BaseEthApiError, EthApiError, StateCacheDb,
     cache::db::StateProviderTraitObjWrapper,
     error::{AsEthApiError, FromEthApiError},
     simulate::{self, EthSimulateError},
@@ -59,7 +59,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
         request: BaseTransactionRequest,
         at: BlockId,
         overrides: EvmOverrides,
-    ) -> impl Future<Output = Result<U256, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<U256, BaseEthApiError>> + Send {
         EstimateCall::estimate_gas_at(self, request, at, overrides)
     }
 
@@ -71,7 +71,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
         &self,
         payload: SimulatePayload<BaseTransactionRequest>,
         block: Option<BlockId>,
-    ) -> impl Future<Output = SimulatedBlocksResult<Self::Error>> + Send {
+    ) -> impl Future<Output = SimulatedBlocksResult<BaseEthApiError>> + Send {
         async move {
             if payload.block_state_calls.len() > self.max_simulate_blocks() as usize {
                 return Err(EthApiError::other(EthSimulateError::TooManyBlocks).into());
@@ -132,13 +132,13 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                     let attributes = this
                         .pending_env_builder()
                         .pending_env_attributes(&parent, block_overrides.as_ref())
-                        .map_err(Self::Error::from_eth_err)?;
+                        .map_err(BaseEthApiError::from_eth_err)?;
 
                     let mut evm_env = this
                         .evm_config()
                         .next_evm_env(&parent, &attributes)
                         .map_err(RethError::other)
-                        .map_err(Self::Error::from_eth_err)?;
+                        .map_err(BaseEthApiError::from_eth_err)?;
 
                     // Always disable EIP-3607
                     evm_env.cfg_env.disable_eip3607 = true;
@@ -184,7 +184,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                     }
                     if let Some(ref state_overrides) = state_overrides {
                         apply_state_overrides(state_overrides.clone(), &mut db)
-                            .map_err(Self::Error::from_eth_err)?;
+                            .map_err(BaseEthApiError::from_eth_err)?;
                     }
 
                     let chain_id = evm_env.cfg_env.chain_id;
@@ -193,11 +193,11 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                         .evm_config()
                         .context_for_next_block(&parent, attributes)
                         .map_err(RethError::other)
-                        .map_err(Self::Error::from_eth_err)?;
-                    let map_err = |e: EthApiError| -> Self::Error {
+                        .map_err(BaseEthApiError::from_eth_err)?;
+                    let map_err = |e: EthApiError| -> BaseEthApiError {
                         match e.as_simulate_error() {
-                            Some(sim_err) => Self::Error::from_eth_err(EthApiError::other(sim_err)),
-                            None => Self::Error::from_eth_err(e),
+                            Some(sim_err) => BaseEthApiError::from_eth_err(EthApiError::other(sim_err)),
+                            None => BaseEthApiError::from_eth_err(e),
                         }
                     };
 
@@ -215,7 +215,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                                 state_overrides,
                                 builder.evm_mut().precompiles_mut(),
                             )
-                            .map_err(|e| Self::Error::from_eth_err(EthApiError::other(e)))?;
+                            .map_err(|e| BaseEthApiError::from_eth_err(EthApiError::other(e)))?;
                         }
 
                         simulate::execute_transactions(
@@ -237,7 +237,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                                 state_overrides,
                                 builder.evm_mut().precompiles_mut(),
                             )
-                            .map_err(|e| Self::Error::from_eth_err(EthApiError::other(e)))?;
+                            .map_err(|e| BaseEthApiError::from_eth_err(EthApiError::other(e)))?;
                         }
 
                         simulate::execute_transactions(
@@ -259,7 +259,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                     )]));
                     parent = simulated_header;
 
-                    let block = simulate::build_simulated_block::<Self::Error, _>(
+                    let block = simulate::build_simulated_block::<BaseEthApiError, _>(
                         result.block,
                         results,
                         return_full_transactions.into(),
@@ -281,13 +281,13 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
         request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         overrides: EvmOverrides,
-    ) -> impl Future<Output = Result<Bytes, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<Bytes, BaseEthApiError>> + Send {
         async move {
             let _permit = self.acquire_owned_blocking_io().await;
             let res =
                 self.transact_call_at(request, block_number.unwrap_or_default(), overrides).await?;
 
-            Self::Error::ensure_success(res.result)
+            BaseEthApiError::ensure_success(res.result)
         }
     }
 
@@ -298,7 +298,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
         bundles: Vec<Bundle<BaseTransactionRequest>>,
         state_context: Option<StateContext>,
         mut state_override: Option<StateOverride>,
-    ) -> impl Future<Output = Result<Vec<Vec<EthCallResponse>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Vec<Vec<EthCallResponse>>, BaseEthApiError>> + Send
     where
         Self: Trace,
     {
@@ -323,7 +323,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                 let Some(block_hash) = self
                     .provider()
                     .block_hash_for_id(target_block)
-                    .map_err(Self::Error::from_eth_err::<ProviderError>)?
+                    .map_err(BaseEthApiError::from_eth_err::<ProviderError>)?
                 else {
                     return Err(EthApiError::HeaderNotFound(target_block).into());
                 };
@@ -380,7 +380,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                         let (current_evm_env, prepared_tx) = this
                             .prepare_call_env(evm_env.clone(), tx, &mut db, overrides)
                             .map_err(|err| {
-                                Self::Error::from_eth_err(EthApiError::call_many_error(
+                                BaseEthApiError::from_eth_err(EthApiError::call_many_error(
                                     bundle_index,
                                     tx_index,
                                     err.into(),
@@ -388,7 +388,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                             })?;
                         let res = this.transact(&mut db, current_evm_env, prepared_tx).map_err(
                             |err| {
-                                Self::Error::from_eth_err(EthApiError::call_many_error(
+                                BaseEthApiError::from_eth_err(EthApiError::call_many_error(
                                     bundle_index,
                                     tx_index,
                                     err.into(),
@@ -396,7 +396,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                             },
                         )?;
 
-                        match Self::Error::ensure_success(res.result) {
+                        match BaseEthApiError::ensure_success(res.result) {
                             Ok(output) => {
                                 bundle_results
                                     .push(EthCallResponse { value: Some(output), error: None });
@@ -430,7 +430,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
         request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_override: Option<StateOverride>,
-    ) -> impl Future<Output = Result<AccessListResult, Self::Error>> + Send
+    ) -> impl Future<Output = Result<AccessListResult, BaseEthApiError>> + Send
     where
         Self: Trace,
     {
@@ -453,7 +453,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
         at: BlockId,
         request: BaseTransactionRequest,
         state_override: Option<StateOverride>,
-    ) -> impl Future<Output = Result<AccessListResult, Self::Error>> + Send
+    ) -> impl Future<Output = Result<AccessListResult, BaseEthApiError>> + Send
     where
         Self: Trace,
     {
@@ -476,7 +476,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
             let access_list = core::mem::take(evm.inspector_mut()).into_access_list();
             let gas_used = result.result.tx_gas_used();
             tx_env.set_access_list(access_list.clone());
-            if let Err(err) = Self::Error::ensure_success(result.result) {
+            if let Err(err) = BaseEthApiError::ensure_success(result.result) {
                 return Ok(AccessListResult {
                     access_list,
                     gas_used: U256::from(gas_used),
@@ -488,7 +488,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
             evm.disable_inspector();
             let result = evm.transact(tx_env)?;
             let gas_used = result.result.tx_gas_used();
-            let error = Self::Error::ensure_success(result.result).err().map(|e| e.to_string());
+            let error = BaseEthApiError::ensure_success(result.result).err().map(|e| e.to_string());
 
             Ok(AccessListResult { access_list, gas_used: U256::from(gas_used), error })
         })
@@ -496,10 +496,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
 }
 
 /// Executes code on state.
-pub trait Call:
-    LoadState<Error: FromEvmError + From<reth_rpc_eth_types::BaseEthApiError> + From<ProviderError>>
-    + SpawnBlocking
-{
+pub trait Call: LoadState + SpawnBlocking {
     /// Returns default gas limit to use for `eth_call` and tracing RPC methods.
     ///
     /// Data access in default trait method implementations.
@@ -520,8 +517,9 @@ pub trait Call:
         mut db: impl Database<Error: Into<EthApiError>>,
         _evm_env: &EvmEnvFor,
         tx_env: &TxEnvFor,
-    ) -> Result<u64, Self::Error> {
-        alloy_evm::call::caller_gas_allowance(&mut db, tx_env).map_err(Self::Error::from_eth_err)
+    ) -> Result<u64, BaseEthApiError> {
+        alloy_evm::call::caller_gas_allowance(&mut db, tx_env)
+            .map_err(BaseEthApiError::from_eth_err)
     }
 
     /// Executes the `TxEnv` against the given [Database] without committing state
@@ -531,12 +529,12 @@ pub trait Call:
         db: DB,
         evm_env: EvmEnvFor,
         tx_env: TxEnvFor,
-    ) -> Result<ResultAndState<HaltReasonFor>, Self::Error>
+    ) -> Result<ResultAndState<HaltReasonFor>, BaseEthApiError>
     where
         DB: Database<Error = EvmDatabaseError<ProviderError>> + fmt::Debug,
     {
         let mut evm = self.evm_config().evm_with_env(db, evm_env);
-        let res = evm.transact(tx_env).map_err(Self::Error::from_evm_err)?;
+        let res = evm.transact(tx_env).map_err(BaseEthApiError::from_evm_err)?;
 
         Ok(res)
     }
@@ -549,13 +547,13 @@ pub trait Call:
         evm_env: EvmEnvFor,
         tx_env: TxEnvFor,
         inspector: I,
-    ) -> Result<ResultAndState<HaltReasonFor>, Self::Error>
+    ) -> Result<ResultAndState<HaltReasonFor>, BaseEthApiError>
     where
         DB: Database<Error = EvmDatabaseError<ProviderError>> + fmt::Debug,
         I: InspectorFor<DB>,
     {
         let mut evm = self.evm_config().evm_with_env_and_inspector(db, evm_env, inspector);
-        let res = evm.transact(tx_env).map_err(Self::Error::from_evm_err)?;
+        let res = evm.transact(tx_env).map_err(BaseEthApiError::from_evm_err)?;
 
         Ok(res)
     }
@@ -571,7 +569,7 @@ pub trait Call:
         request: BaseTransactionRequest,
         at: BlockId,
         overrides: EvmOverrides,
-    ) -> impl Future<Output = Result<ResultAndState<HaltReasonFor>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<ResultAndState<HaltReasonFor>, BaseEthApiError>> + Send
     where
         Self: LoadPendingBlock,
     {
@@ -599,9 +597,9 @@ pub trait Call:
         &self,
         at: impl Into<BlockId>,
         f: F,
-    ) -> impl Future<Output = Result<R, Self::Error>> + Send
+    ) -> impl Future<Output = Result<R, BaseEthApiError>> + Send
     where
-        F: FnOnce(Self, StateCacheDb) -> Result<R, Self::Error> + Send + 'static,
+        F: FnOnce(Self, StateCacheDb) -> Result<R, BaseEthApiError> + Send + 'static,
         R: Send + 'static,
     {
         let at = at.into();
@@ -635,10 +633,10 @@ pub trait Call:
         at: BlockId,
         overrides: EvmOverrides,
         f: F,
-    ) -> impl Future<Output = Result<R, Self::Error>> + Send
+    ) -> impl Future<Output = Result<R, BaseEthApiError>> + Send
     where
         Self: LoadPendingBlock,
-        F: FnOnce(&mut StateCacheDb, EvmEnvFor, TxEnvFor) -> Result<R, Self::Error>
+        F: FnOnce(&mut StateCacheDb, EvmEnvFor, TxEnvFor) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
         R: Send + 'static,
@@ -668,14 +666,14 @@ pub trait Call:
         &self,
         hash: B256,
         f: F,
-    ) -> impl Future<Output = Result<Option<R>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<R>, BaseEthApiError>> + Send
     where
         Self: LoadBlock + LoadTransaction,
         F: FnOnce(
                 TransactionInfo,
                 ResultAndState<HaltReasonFor>,
                 StateCacheDb,
-            ) -> Result<R, Self::Error>
+            ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
         R: Send + 'static,
@@ -697,20 +695,23 @@ pub trait Call:
                 let mut executor = RpcNodeCore::evm_config(&this)
                     .executor_for_block(&mut db, block.sealed_block())
                     .map_err(RethError::other)
-                    .map_err(Self::Error::from_eth_err)?;
-                executor.apply_pre_execution_changes().map_err(Self::Error::from_eth_err)?;
+                    .map_err(BaseEthApiError::from_eth_err)?;
+                executor.apply_pre_execution_changes().map_err(BaseEthApiError::from_eth_err)?;
 
                 // replay all transactions prior to the targeted transaction
                 for block_tx in block_txs {
                     if block_tx.tx_hash() == tx.tx_hash() {
                         break;
                     }
-                    executor.execute_transaction(block_tx).map_err(Self::Error::from_eth_err)?;
+                    executor
+                        .execute_transaction(block_tx)
+                        .map_err(BaseEthApiError::from_eth_err)?;
                 }
 
                 let tx_env = RpcNodeCore::evm_config(&this).tx_env(tx);
 
-                let res = executor.evm_mut().transact(tx_env).map_err(Self::Error::from_evm_err)?;
+                let res =
+                    executor.evm_mut().transact(tx_env).map_err(BaseEthApiError::from_evm_err)?;
                 drop(executor);
                 f(tx_info, res, db)
             })
@@ -733,7 +734,7 @@ pub trait Call:
         evm: &mut EvmFor<DB, I>,
         transactions: Txs,
         target_tx_index: usize,
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), BaseEthApiError>
     where
         DB: Database<Error = EvmDatabaseError<ProviderError>> + DatabaseCommit + core::fmt::Debug,
         I: InspectorFor<DB>,
@@ -746,7 +747,7 @@ pub trait Call:
             }
 
             let tx_env = self.evm_config().tx_env(tx);
-            evm.transact_commit(tx_env).map_err(Self::Error::from_evm_err)?;
+            evm.transact_commit(tx_env).map_err(BaseEthApiError::from_evm_err)?;
         }
         Ok(())
     }
@@ -759,7 +760,7 @@ pub trait Call:
         evm_env: &EvmEnvFor,
         mut request: BaseTransactionRequest,
         mut db: impl Database<Error: Into<EthApiError>>,
-    ) -> Result<TxEnvFor, Self::Error> {
+    ) -> Result<TxEnvFor, BaseEthApiError> {
         if request.as_ref().nonce().is_none() {
             let nonce = db
                 .basic(request.as_ref().from().unwrap_or_default())
@@ -792,7 +793,7 @@ pub trait Call:
         mut request: BaseTransactionRequest,
         db: &mut DB,
         overrides: EvmOverrides,
-    ) -> Result<(EvmEnvFor, TxEnvFor), Self::Error>
+    ) -> Result<(EvmEnvFor, TxEnvFor), BaseEthApiError>
     where
         DB: Database + DatabaseCommit + OverrideBlockHashes,
         EthApiError: From<<DB as Database>::Error>,

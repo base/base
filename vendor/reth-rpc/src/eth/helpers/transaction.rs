@@ -12,7 +12,7 @@ use reth_rpc_eth_api::{
     FromEvmError, RpcNodeCore,
     helpers::{EthTransactions, LoadTransaction, spec::SignersForRpc},
 };
-use reth_rpc_eth_types::{EthApiError, error::RpcPoolError};
+use reth_rpc_eth_types::{BaseEthApiError, EthApiError, error::RpcPoolError};
 use reth_storage_api::BlockReaderIdExt;
 use reth_transaction_pool::{
     AddedTransactionOutcome, EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction,
@@ -40,7 +40,7 @@ where
         &self,
         origin: reth_transaction_pool::TransactionOrigin,
         tx: WithEncoded<PoolTx<Self::Pool>>,
-    ) -> Result<B256, Self::Error> {
+    ) -> Result<B256, BaseEthApiError> {
         let (tx, mut pool_transaction) = tx.split();
 
         // Optionally convert legacy blob sidecars to EIP-7594 format when Osaka is active

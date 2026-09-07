@@ -19,7 +19,7 @@ use reth_rpc_eth_api::{
     FromEthApiError, FromEvmError,
     helpers::{Call, EthTransactions, block::LoadBlock},
 };
-use reth_rpc_eth_types::{EthApiError, utils::recover_raw_transaction};
+use reth_rpc_eth_types::{BaseEthApiError, EthApiError, utils::recover_raw_transaction};
 use reth_storage_api::ProviderTx;
 use reth_tasks::pool::BlockingTaskGuard;
 use reth_transaction_pool::{PoolPooledTx, PoolTransaction, TransactionPool};
@@ -283,7 +283,7 @@ where
         request: MevSendBundle,
         overrides: SimBundleOverrides,
         logs: bool,
-    ) -> Result<SimBundleResponse, Eth::Error> {
+    ) -> Result<SimBundleResponse, BaseEthApiError> {
         let SimBundleOverrides { parent_block, block_overrides, .. } = overrides;
 
         // Parse and validate bundle
@@ -339,7 +339,7 @@ where
 
                     let ResultAndState { result, state } = evm
                         .transact(eth_api.evm_config().tx_env(&item.tx))
-                        .map_err(Eth::Error::from_evm_err)?;
+                        .map_err(BaseEthApiError::from_evm_err)?;
 
                     if !result.is_success() && !item.can_revert {
                         return Err(EthApiError::InvalidParams(

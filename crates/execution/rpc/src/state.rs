@@ -4,7 +4,6 @@ use alloy_eips::BlockId;
 use base_execution_trie::{
     BaseProofsStorage, BaseProofsStore, provider::BaseProofsStateProviderRef,
 };
-use jsonrpsee_types::error::ErrorObject;
 use reth_provider::{BlockIdReader, ProviderError, ProviderResult, StateProvider};
 use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
@@ -26,7 +25,6 @@ impl<Eth, P> BaseStateProviderFactory<Eth, P> {
 impl<'a, Eth, P> BaseStateProviderFactory<Eth, P>
 where
     Eth: FullEthApi + Send + Sync + 'static,
-    ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'a,
 {
     /// Creates a state provider for the given block id.

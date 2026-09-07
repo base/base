@@ -21,7 +21,7 @@ use std::{
 use alloy_primitives::U256;
 use eyre::WrapErr;
 pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
-use reth_node_api::{FullNodeComponents, FullNodeTypes};
+use reth_node_api::FullNodeComponents;
 mod context;
 pub use context::EthApiCtx;
 use reth_rpc::eth::core::EthApiInner;
@@ -106,8 +106,6 @@ impl<N> EthApiTypes for BaseEthApi<N>
 where
     N: RpcNodeCore,
 {
-    type Error = BaseEthApiError;
-
     fn converter(&self) -> &BaseRpcConverter<Self::Provider> {
         self.inner.eth_api.converter()
     }
@@ -203,7 +201,7 @@ where
         self.inner.eth_api.fee_history_cache()
     }
 
-    async fn suggested_priority_fee(&self) -> Result<U256, Self::Error> {
+    async fn suggested_priority_fee(&self) -> Result<U256, BaseEthApiError> {
         self.inner
             .eth_api
             .gas_oracle()

@@ -11,7 +11,8 @@ use futures::Future;
 use reth_node_api::BlockBody;
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock, SealedHeader, TransactionMeta};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
-use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader, ProviderReceipt, ProviderTx};
+use reth_rpc_eth_types::BaseEthApiError;
+use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader, ProviderTx};
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 use super::{LoadPendingBlock, LoadReceipt, SpawnBlocking};
@@ -20,12 +21,12 @@ use crate::{EthApiTypes, FromEthApiError, FullEthApiTypes, RpcNodeCore, node::Rp
 /// Result type of the fetched block receipts.
 pub type BlockReceiptsResult<E> = Result<Option<Vec<BaseTransactionReceipt>>, E>;
 /// Result type of the fetched block and its receipts.
-pub type BlockAndReceiptsResult<Eth> = Result<
+pub type BlockAndReceiptsResult = Result<
     Option<(
-        Arc<RecoveredBlock<<<Eth as RpcNodeCore>::Provider as BlockReader>::Block>>,
-        Arc<Vec<ProviderReceipt<<Eth as RpcNodeCore>::Provider>>>,
+        Arc<RecoveredBlock<base_common_consensus::BaseBlock>>,
+        Arc<Vec<base_common_consensus::BaseReceipt>>,
     )>,
-    <Eth as EthApiTypes>::Error,
+    BaseEthApiError,
 >;
 
 /// Block related functions for the [`EthApiServer`](crate::EthApiServer) trait in the
@@ -35,7 +36,7 @@ pub trait EthBlocks: LoadBlock {
     fn rpc_block_header(
         &self,
         block_id: BlockId,
-    ) -> impl Future<Output = Result<Option<BaseHeaderResponse>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<BaseHeaderResponse>, BaseEthApiError>> + Send
     where
         Self: FullEthApiTypes,
     {
@@ -55,7 +56,7 @@ pub trait EthBlocks: LoadBlock {
         &self,
         block_id: BlockId,
         full: bool,
-    ) -> impl Future<Output = Result<Option<BaseBlockResponse>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<BaseBlockResponse>, BaseEthApiError>> + Send
     where
         Self: FullEthApiTypes,
     {
@@ -77,7 +78,7 @@ pub trait EthBlocks: LoadBlock {
     fn block_transaction_count(
         &self,
         block_id: BlockId,
-    ) -> impl Future<Output = Result<Option<usize>, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<Option<usize>, BaseEthApiError>> + Send {
         async move { Ok(self.recovered_block(block_id).await?.map(|b| b.body().transaction_count())) }
     }
 
@@ -87,7 +88,7 @@ pub trait EthBlocks: LoadBlock {
     fn block_receipts(
         &self,
         block_id: BlockId,
-    ) -> impl Future<Output = BlockReceiptsResult<Self::Error>> + Send
+    ) -> impl Future<Output = BlockReceiptsResult<BaseEthApiError>> + Send
     where
         Self: LoadReceipt,
     {
@@ -148,7 +149,7 @@ pub trait EthBlocks: LoadBlock {
     fn load_block_and_receipts(
         &self,
         block_id: BlockId,
-    ) -> impl Future<Output = BlockAndReceiptsResult<Self>> + Send
+    ) -> impl Future<Output = BlockAndReceiptsResult> + Send
     where
         Self: LoadReceipt,
         Self::Pool:
@@ -165,7 +166,7 @@ pub trait EthBlocks: LoadBlock {
                 if let Some((block, receipts)) = self
                     .provider()
                     .pending_block_and_receipts()
-                    .map_err(Self::Error::from_eth_err)?
+                    .map_err(BaseEthApiError::from_eth_err)?
                 {
                     return Ok(Some((Arc::new(block), Arc::new(receipts))));
                 }
@@ -176,13 +177,15 @@ pub trait EthBlocks: LoadBlock {
                 }
             }
 
-            if let Some(block_hash) =
-                self.provider().block_hash_for_id(block_id).map_err(Self::Error::from_eth_err)?
+            if let Some(block_hash) = self
+                .provider()
+                .block_hash_for_id(block_id)
+                .map_err(BaseEthApiError::from_eth_err)?
                 && let Some((block, receipts)) = self
                     .cache()
                     .get_block_and_receipts(block_hash)
                     .await
-                    .map_err(Self::Error::from_eth_err)?
+                    .map_err(BaseEthApiError::from_eth_err)?
             {
                 return Ok(Some((block, receipts)));
             }
@@ -198,7 +201,7 @@ pub trait EthBlocks: LoadBlock {
     fn ommers(
         &self,
         block_id: BlockId,
-    ) -> impl Future<Output = Result<Option<Vec<ProviderHeader<Self::Provider>>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<Vec<ProviderHeader<Self::Provider>>>, BaseEthApiError>> + Send
     {
         async move {
             if let Some(block) = self.recovered_block(block_id).await? {
@@ -216,7 +219,7 @@ pub trait EthBlocks: LoadBlock {
         &self,
         block_id: BlockId,
         index: Index,
-    ) -> impl Future<Output = Result<Option<BaseBlockResponse>, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<Option<BaseBlockResponse>, BaseEthApiError>> + Send {
         async move {
             let uncles = self
                 .recovered_block(block_id)
@@ -258,7 +261,7 @@ pub trait LoadBlock: LoadPendingBlock + SpawnBlocking + RpcNodeCoreExt {
     ) -> impl Future<
         Output = Result<
             Option<Arc<RecoveredBlock<<Self::Provider as BlockReader>::Block>>>,
-            Self::Error,
+            BaseEthApiError,
         >,
     > + Send {
         async move {
@@ -269,7 +272,7 @@ pub trait LoadBlock: LoadPendingBlock + SpawnBlocking + RpcNodeCoreExt {
 
                 // Pending block can be fetched directly without need for caching
                 if let Some(pending_block) =
-                    self.provider().pending_block().map_err(Self::Error::from_eth_err)?
+                    self.provider().pending_block().map_err(BaseEthApiError::from_eth_err)?
                 {
                     return Ok(Some(Arc::new(pending_block)));
                 }
@@ -284,13 +287,16 @@ pub trait LoadBlock: LoadPendingBlock + SpawnBlocking + RpcNodeCoreExt {
             let block_hash = match self
                 .provider()
                 .block_hash_for_id(block_id)
-                .map_err(Self::Error::from_eth_err)?
+                .map_err(BaseEthApiError::from_eth_err)?
             {
                 Some(block_hash) => block_hash,
                 None => return Ok(None),
             };
 
-            self.cache().get_recovered_block(block_hash).await.map_err(Self::Error::from_eth_err)
+            self.cache()
+                .get_recovered_block(block_hash)
+                .await
+                .map_err(BaseEthApiError::from_eth_err)
         }
     }
 }

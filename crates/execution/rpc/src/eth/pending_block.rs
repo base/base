@@ -34,7 +34,7 @@ where
     }
 
     /// Returns a [`StateProviderBox`] on a mem-pool built pending block overlaying latest.
-    async fn local_pending_state(&self) -> Result<Option<StateProviderBox>, Self::Error>
+    async fn local_pending_state(&self) -> Result<Option<StateProviderBox>, BaseEthApiError>
     where
         Self: SpawnBlocking,
     {
@@ -42,7 +42,7 @@ where
     }
 
     /// Returns the locally built pending block
-    async fn local_pending_block(&self) -> Result<Option<BlockAndReceipts>, Self::Error> {
+    async fn local_pending_block(&self) -> Result<Option<BlockAndReceipts>, BaseEthApiError> {
         // See: <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/miner/worker.go#L367-L375>
         let latest = self
             .provider()
@@ -53,7 +53,7 @@ where
             .cache()
             .get_block_and_receipts(latest.hash())
             .await
-            .map_err(Self::Error::from_eth_err)?
+            .map_err(BaseEthApiError::from_eth_err)?
             .map(|(block, receipts)| BlockAndReceipts { block, receipts });
         Ok(latest)
     }

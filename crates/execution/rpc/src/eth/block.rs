@@ -18,7 +18,7 @@ where
     async fn rpc_block_header(
         &self,
         block_id: BlockId,
-    ) -> Result<Option<BaseHeaderResponse>, Self::Error>
+    ) -> Result<Option<BaseHeaderResponse>, BaseEthApiError>
     where
         Self: FullEthApiTypes,
     {
@@ -39,7 +39,7 @@ where
         &self,
         block_id: BlockId,
         full: bool,
-    ) -> Result<Option<BaseBlockResponse>, Self::Error>
+    ) -> Result<Option<BaseBlockResponse>, BaseEthApiError>
     where
         Self: FullEthApiTypes,
     {

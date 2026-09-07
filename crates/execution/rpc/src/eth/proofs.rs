@@ -60,7 +60,6 @@ pub struct EthApiExt<Eth, P> {
 impl<Eth, P> EthApiExt<Eth, P>
 where
     Eth: FullEthApi + Send + Sync + 'static,
-    ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'static,
 {
     /// Creates a new instance of the `EthApiExt`.
@@ -73,7 +72,6 @@ where
 impl<Eth, P> EthApiOverrideServer for EthApiExt<Eth, P>
 where
     Eth: FullEthApi + Send + Sync + 'static,
-    ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'static,
 {
     async fn get_proof(
@@ -95,9 +93,9 @@ where
                 .state_provider_factory
                 .state_provider(block_number)
                 .await
-                .map_err(Into::into)?
+                .map_err(crate::BaseEthApiError::from)?
                 .proof(Default::default(), address, &storage_keys)
-                .map_err(Into::into)?;
+                .map_err(crate::BaseEthApiError::from)?;
 
             Ok(proof.into_eip1186_response(keys))
         }
