@@ -173,18 +173,6 @@ impl<H: HeaderResponse> HeaderResponse for BaseHeaderResponse<H> {
     }
 }
 
-#[cfg(feature = "reth")]
-impl<T: alloy_consensus::Sealable> reth_rpc_convert::FromConsensusHeader<T>
-    for BaseHeaderResponse<Header<T>>
-{
-    fn from_consensus_header(
-        header: reth_primitives_traits::SealedHeader<T>,
-        block_size: usize,
-    ) -> Self {
-        Self::new(Header::from_consensus(header.into(), None, Some(U256::from(block_size))))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Header as ConsensusHeader;

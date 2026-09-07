@@ -14,27 +14,28 @@ use alloy_rpc_types_eth::{
 };
 use alloy_serde::JsonStorageKey;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_rpc_types::{
+    BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BaseTransactionRequest,
+};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_types::{EthApiError, EthCapabilities, FillTransaction};
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use serde_json::Value;
 use tracing::trace;
 
-use crate::{
-    RpcBlock, RpcHeader, RpcReceipt, RpcTransaction,
-    helpers::{EthApiSpec, EthBlocks, EthCall, EthFees, EthState, EthTransactions, FullEthApi},
+use crate::helpers::{
+    EthApiSpec, EthBlocks, EthCall, EthFees, EthState, EthTransactions, FullEthApi,
 };
 
 /// Helper trait, unifies functionality that must be supported to implement all RPC methods for
 /// server.
 pub trait FullEthApiServer:
     EthApiServer<
-        RpcTxReq<Self::NetworkTypes>,
-        RpcTransaction<Self::NetworkTypes>,
-        RpcBlock<Self::NetworkTypes>,
-        RpcReceipt<Self::NetworkTypes>,
-        RpcHeader<Self::NetworkTypes>,
+        BaseTransactionRequest,
+        base_common_rpc_types::Transaction,
+        BaseBlockResponse,
+        BaseTransactionReceipt,
+        BaseHeaderResponse,
         BaseTxEnvelope,
     > + FullEthApi
     + Clone
@@ -43,11 +44,11 @@ pub trait FullEthApiServer:
 
 impl<T> FullEthApiServer for T where
     T: EthApiServer<
-            RpcTxReq<T::NetworkTypes>,
-            RpcTransaction<T::NetworkTypes>,
-            RpcBlock<T::NetworkTypes>,
-            RpcReceipt<T::NetworkTypes>,
-            RpcHeader<T::NetworkTypes>,
+            BaseTransactionRequest,
+            base_common_rpc_types::Transaction,
+            BaseBlockResponse,
+            BaseTransactionReceipt,
+            BaseHeaderResponse,
             BaseTxEnvelope,
         > + FullEthApi
         + Clone
@@ -458,11 +459,11 @@ pub trait EthApi<
 #[async_trait::async_trait]
 impl<T>
     EthApiServer<
-        RpcTxReq<T::NetworkTypes>,
-        RpcTransaction<T::NetworkTypes>,
-        RpcBlock<T::NetworkTypes>,
-        RpcReceipt<T::NetworkTypes>,
-        RpcHeader<T::NetworkTypes>,
+        BaseTransactionRequest,
+        base_common_rpc_types::Transaction,
+        BaseBlockResponse,
+        BaseTransactionReceipt,
+        BaseHeaderResponse,
         BaseTxEnvelope,
     > for T
 where
@@ -513,11 +514,7 @@ where
     }
 
     /// Handler for: `eth_getBlockByHash`
-    async fn block_by_hash(
-        &self,
-        hash: B256,
-        full: bool,
-    ) -> RpcResult<Option<RpcBlock<T::NetworkTypes>>> {
+    async fn block_by_hash(&self, hash: B256, full: bool) -> RpcResult<Option<BaseBlockResponse>> {
         trace!(target: "rpc::eth", ?hash, ?full, "Serving eth_getBlockByHash");
         Ok(EthBlocks::rpc_block(self, hash.into(), full).await?)
     }
@@ -527,7 +524,7 @@ where
         &self,
         number: BlockNumberOrTag,
         full: bool,
-    ) -> RpcResult<Option<RpcBlock<T::NetworkTypes>>> {
+    ) -> RpcResult<Option<BaseBlockResponse>> {
         trace!(target: "rpc::eth", ?number, ?full, "Serving eth_getBlockByNumber");
         Ok(EthBlocks::rpc_block(self, number.into(), full).await?)
     }
@@ -576,7 +573,7 @@ where
     async fn block_receipts(
         &self,
         block_id: BlockId,
-    ) -> RpcResult<Option<Vec<RpcReceipt<T::NetworkTypes>>>> {
+    ) -> RpcResult<Option<Vec<BaseTransactionReceipt>>> {
         trace!(target: "rpc::eth", ?block_id, "Serving eth_getBlockReceipts");
         Ok(EthBlocks::block_receipts(self, block_id).await?)
     }
@@ -586,7 +583,7 @@ where
         &self,
         hash: B256,
         index: Index,
-    ) -> RpcResult<Option<RpcBlock<T::NetworkTypes>>> {
+    ) -> RpcResult<Option<BaseBlockResponse>> {
         trace!(target: "rpc::eth", ?hash, ?index, "Serving eth_getUncleByBlockHashAndIndex");
         Ok(EthBlocks::ommer_by_block_and_index(self, hash.into(), index).await?)
     }
@@ -596,7 +593,7 @@ where
         &self,
         number: BlockNumberOrTag,
         index: Index,
-    ) -> RpcResult<Option<RpcBlock<T::NetworkTypes>>> {
+    ) -> RpcResult<Option<BaseBlockResponse>> {
         trace!(target: "rpc::eth", ?number, ?index, "Serving eth_getUncleByBlockNumberAndIndex");
         Ok(EthBlocks::ommer_by_block_and_index(self, number.into(), index).await?)
     }
@@ -611,7 +608,7 @@ where
     async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> RpcResult<Option<RpcTransaction<T::NetworkTypes>>> {
+    ) -> RpcResult<Option<base_common_rpc_types::Transaction>> {
         trace!(target: "rpc::eth", ?hash, "Serving eth_getTransactionByHash");
         Ok(EthTransactions::transaction_by_hash(self, hash)
             .await?
@@ -636,7 +633,7 @@ where
         &self,
         hash: B256,
         index: Index,
-    ) -> RpcResult<Option<RpcTransaction<T::NetworkTypes>>> {
+    ) -> RpcResult<Option<base_common_rpc_types::Transaction>> {
         trace!(target: "rpc::eth", ?hash, ?index, "Serving eth_getTransactionByBlockHashAndIndex");
         Ok(EthTransactions::transaction_by_block_and_tx_index(self, hash.into(), index.into())
             .await?)
@@ -662,7 +659,7 @@ where
         &self,
         number: BlockNumberOrTag,
         index: Index,
-    ) -> RpcResult<Option<RpcTransaction<T::NetworkTypes>>> {
+    ) -> RpcResult<Option<base_common_rpc_types::Transaction>> {
         trace!(target: "rpc::eth", ?number, ?index, "Serving eth_getTransactionByBlockNumberAndIndex");
         Ok(EthTransactions::transaction_by_block_and_tx_index(self, number.into(), index.into())
             .await?)
@@ -673,23 +670,20 @@ where
         &self,
         sender: Address,
         nonce: U64,
-    ) -> RpcResult<Option<RpcTransaction<T::NetworkTypes>>> {
+    ) -> RpcResult<Option<base_common_rpc_types::Transaction>> {
         trace!(target: "rpc::eth", ?sender, ?nonce, "Serving eth_getTransactionBySenderAndNonce");
         Ok(EthTransactions::get_transaction_by_sender_and_nonce(self, sender, nonce.to(), true)
             .await?)
     }
 
     /// Handler for: `eth_pendingTransactions`
-    fn pending_transactions(&self) -> RpcResult<Vec<RpcTransaction<T::NetworkTypes>>> {
+    fn pending_transactions(&self) -> RpcResult<Vec<base_common_rpc_types::Transaction>> {
         trace!(target: "rpc::eth", "Serving eth_pendingTransactions");
         Ok(EthTransactions::pending_transactions(self)?)
     }
 
     /// Handler for: `eth_getTransactionReceipt`
-    async fn transaction_receipt(
-        &self,
-        hash: B256,
-    ) -> RpcResult<Option<RpcReceipt<T::NetworkTypes>>> {
+    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<BaseTransactionReceipt>> {
         trace!(target: "rpc::eth", ?hash, "Serving eth_getTransactionReceipt");
         Ok(EthTransactions::transaction_receipt(self, hash).await?)
     }
@@ -741,13 +735,13 @@ where
     async fn header_by_number(
         &self,
         block_number: BlockNumberOrTag,
-    ) -> RpcResult<Option<RpcHeader<T::NetworkTypes>>> {
+    ) -> RpcResult<Option<BaseHeaderResponse>> {
         trace!(target: "rpc::eth", ?block_number, "Serving eth_getHeaderByNumber");
         Ok(EthBlocks::rpc_block_header(self, block_number.into()).await?)
     }
 
     /// Handler for: `eth_getHeaderByHash`
-    async fn header_by_hash(&self, hash: B256) -> RpcResult<Option<RpcHeader<T::NetworkTypes>>> {
+    async fn header_by_hash(&self, hash: B256) -> RpcResult<Option<BaseHeaderResponse>> {
         trace!(target: "rpc::eth", ?hash, "Serving eth_getHeaderByHash");
         Ok(EthBlocks::rpc_block_header(self, hash.into()).await?)
     }
@@ -755,9 +749,9 @@ where
     /// Handler for: `eth_simulateV1`
     async fn simulate_v1(
         &self,
-        payload: SimulatePayload<RpcTxReq<T::NetworkTypes>>,
+        payload: SimulatePayload<BaseTransactionRequest>,
         block_number: Option<BlockId>,
-    ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<T::NetworkTypes>>>> {
+    ) -> RpcResult<Vec<SimulatedBlock<BaseBlockResponse>>> {
         trace!(target: "rpc::eth", ?block_number, "Serving eth_simulateV1");
         let _permit = self.tracing_task_guard().clone().acquire_owned().await;
         Ok(EthCall::simulate_v1(self, payload, block_number).await?)
@@ -766,7 +760,7 @@ where
     /// Handler for: `eth_call`
     async fn call(
         &self,
-        request: RpcTxReq<T::NetworkTypes>,
+        request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
@@ -784,7 +778,7 @@ where
     /// Handler for: `eth_fillTransaction`
     async fn fill_transaction(
         &self,
-        request: RpcTxReq<T::NetworkTypes>,
+        request: BaseTransactionRequest,
     ) -> RpcResult<FillTransaction<BaseTxEnvelope>> {
         trace!(target: "rpc::eth", ?request, "Serving eth_fillTransaction");
         Ok(EthTransactions::fill_transaction(self, request).await?)
@@ -793,7 +787,7 @@ where
     /// Handler for: `eth_callMany`
     async fn call_many(
         &self,
-        bundles: Vec<Bundle<RpcTxReq<T::NetworkTypes>>>,
+        bundles: Vec<Bundle<BaseTransactionRequest>>,
         state_context: Option<StateContext>,
         state_override: Option<StateOverride>,
     ) -> RpcResult<Vec<Vec<EthCallResponse>>> {
@@ -804,7 +798,7 @@ where
     /// Handler for: `eth_createAccessList`
     async fn create_access_list(
         &self,
-        request: RpcTxReq<T::NetworkTypes>,
+        request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_override: Option<StateOverride>,
     ) -> RpcResult<AccessListResult> {
@@ -815,7 +809,7 @@ where
     /// Handler for: `eth_estimateGas`
     async fn estimate_gas(
         &self,
-        request: RpcTxReq<T::NetworkTypes>,
+        request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_override: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
@@ -914,7 +908,7 @@ where
     }
 
     /// Handler for: `eth_sendTransaction`
-    async fn send_transaction(&self, request: RpcTxReq<T::NetworkTypes>) -> RpcResult<B256> {
+    async fn send_transaction(&self, request: BaseTransactionRequest) -> RpcResult<B256> {
         trace!(target: "rpc::eth", ?request, "Serving eth_sendTransaction");
         Ok(EthTransactions::send_transaction_request(self, request).await?)
     }
@@ -930,7 +924,7 @@ where
         &self,
         tx: Bytes,
         timeout_ms: Option<u64>,
-    ) -> RpcResult<RpcReceipt<T::NetworkTypes>> {
+    ) -> RpcResult<BaseTransactionReceipt> {
         trace!(target: "rpc::eth", ?tx, ?timeout_ms, "Serving eth_sendRawTransactionSync");
         Ok(EthTransactions::send_raw_transaction_sync(self, tx, timeout_ms).await?)
     }
@@ -942,7 +936,7 @@ where
     }
 
     /// Handler for: `eth_signTransaction`
-    async fn sign_transaction(&self, request: RpcTxReq<T::NetworkTypes>) -> RpcResult<Bytes> {
+    async fn sign_transaction(&self, request: BaseTransactionRequest) -> RpcResult<Bytes> {
         trace!(target: "rpc::eth", ?request, "Serving eth_signTransaction");
         Ok(EthTransactions::sign_transaction(self, request).await?)
     }

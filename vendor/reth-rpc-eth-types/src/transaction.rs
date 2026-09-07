@@ -8,7 +8,7 @@ use alloy_rpc_types_eth::TransactionInfo;
 use base_common_consensus::BaseTxEnvelope;
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::{Recovered, SignedTransaction};
-use reth_rpc_convert::{RpcConvert, RpcTransaction};
+use reth_rpc_convert::RpcConvert;
 
 /// Represents from where a transaction was fetched.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -88,7 +88,7 @@ impl TransactionSource<BaseTxEnvelope> {
     pub fn into_transaction<Builder>(
         self,
         resp_builder: &Builder,
-    ) -> Result<RpcTransaction<Builder::Network>, Builder::Error>
+    ) -> Result<base_common_rpc_types::Transaction, Builder::Error>
     where
         Builder: RpcConvert,
     {

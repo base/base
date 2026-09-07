@@ -5,8 +5,9 @@ use std::sync::Arc;
 use alloy_consensus::{BlockHeader, TxReceipt, transaction::TransactionMeta};
 use alloy_primitives::TxHash;
 use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_rpc_types::BaseTransactionReceipt;
 use reth_primitives_traits::{Block, BlockBody, IndexedTx, Recovered, RecoveredBlock, SealedBlock};
-use reth_rpc_convert::{RpcConvert, RpcTypes, transaction::ConvertReceiptInput};
+use reth_rpc_convert::{RpcConvert, transaction::ConvertReceiptInput};
 
 use crate::{TransactionSource, utils::calculate_gas_used_and_next_log_index};
 
@@ -121,7 +122,7 @@ impl BlockAndReceipts {
         &self,
         tx_hash: TxHash,
         converter: &C,
-    ) -> Option<Result<<C::Network as RpcTypes>::Receipt, C::Error>>
+    ) -> Option<Result<BaseTransactionReceipt, C::Error>>
     where
         C: RpcConvert,
     {
@@ -143,7 +144,7 @@ pub fn convert_transaction_receipt<C>(
     tx: IndexedTx<'_, BaseBlock>,
     receipt: &BaseReceipt,
     converter: &C,
-) -> Option<Result<<C::Network as RpcTypes>::Receipt, C::Error>>
+) -> Option<Result<BaseTransactionReceipt, C::Error>>
 where
     C: RpcConvert,
 {
@@ -170,10 +171,7 @@ impl CachedTransaction<BaseBlock, BaseReceipt> {
     /// Converts this cached transaction into an RPC receipt using the given converter.
     ///
     /// Returns `None` if receipts are not available or the transaction index is out of bounds.
-    pub fn into_receipt<C>(
-        self,
-        converter: &C,
-    ) -> Option<Result<<C::Network as RpcTypes>::Receipt, C::Error>>
+    pub fn into_receipt<C>(self, converter: &C) -> Option<Result<BaseTransactionReceipt, C::Error>>
     where
         C: RpcConvert,
     {

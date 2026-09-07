@@ -9,11 +9,12 @@ use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_eth::{Account, AccountInfo, EIP1186AccountProofResponse};
 use alloy_serde::JsonStorageKey;
 use base_common_consensus::BaseBlock;
+use base_common_rpc_types::BaseTransactionRequest;
 use futures::Future;
 use reth_errors::RethError;
 use reth_evm::{ConfigureEvm, EvmEnvFor};
 use reth_primitives_traits::RecoveredBlock;
-use reth_rpc_convert::{RpcConvert, RpcTxReq};
+use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_types::{
     EthApiError, PendingBlockEnv, RpcInvalidTransactionError, SignError,
     error::{FromEvmError, IntoEthApiError},
@@ -309,10 +310,8 @@ pub trait EthState: LoadState + SpawnBlocking {
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` state RPC methods.
 pub trait LoadState:
     LoadPendingBlock
-    + EthApiTypes<
-        Error: FromEvmError<Self::Evm> + FromEthApiError,
-        RpcConvert: RpcConvert<Network = Self::NetworkTypes>,
-    > + RpcNodeCoreExt
+    + EthApiTypes<Error: FromEvmError<Self::Evm> + FromEthApiError, RpcConvert: RpcConvert>
+    + RpcNodeCoreExt
 {
     /// Returns the state at the given block number
     fn state_at_hash(&self, block_hash: B256) -> Result<StateProviderBox, Self::Error> {
@@ -456,7 +455,7 @@ pub trait LoadState:
     /// The provided request must have a from address set.
     fn next_available_nonce_for(
         &self,
-        request: &RpcTxReq<Self::NetworkTypes>,
+        request: &BaseTransactionRequest,
     ) -> impl Future<Output = Result<u64, Self::Error>> + Send
     where
         Self: SpawnBlocking,

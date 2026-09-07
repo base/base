@@ -31,7 +31,7 @@ use reth_node_core::{
 use reth_payload_builder::{PayloadBuilderHandle, PayloadStore};
 use reth_rpc::{
     AdminApi,
-    eth::{DevSigner, EthApiTypes, FullEthApiServer, core::EthRpcConverterFor},
+    eth::{DevSigner, EthApiTypes, FullEthApiServer},
 };
 use reth_rpc_api::{IntoEngineApiRpcModule, eth::helpers::EthTransactions};
 pub use reth_rpc_builder::{
@@ -1286,7 +1286,7 @@ impl<'a, N: FullNodeComponents<Types: NodeTypes<ChainSpec: Hardforks + EthereumH
     EthApiCtx<'a, N>
 {
     /// Provides a [`EthApiBuilder`] with preconfigured config and components.
-    pub fn eth_api_builder(self) -> reth_rpc::EthApiBuilder<N, EthRpcConverterFor<N>> {
+    pub fn eth_api_builder(self) -> reth_rpc::EthApiBuilder<N, ()> {
         reth_rpc::EthApiBuilder::new_with_components(self.components.clone())
             .eth_cache(self.cache)
             .task_spawner(self.components.task_executor().clone())

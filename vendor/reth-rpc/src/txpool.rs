@@ -10,8 +10,7 @@ use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
 use jsonrpsee::core::RpcResult;
 use reth_rpc_api::TxPoolApiServer;
-use reth_rpc_convert::{RpcConvert, RpcTypes};
-use reth_rpc_eth_api::RpcTransaction;
+use reth_rpc_convert::RpcConvert;
 use reth_transaction_pool::{AllPoolTransactions, PoolTransaction, TransactionPool};
 use tracing::trace;
 
@@ -37,14 +36,11 @@ where
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + 'static,
     Eth: RpcConvert,
 {
-    fn content(&self) -> Result<TxpoolContent<RpcTransaction<Eth::Network>>, Eth::Error> {
+    fn content(&self) -> Result<TxpoolContent<base_common_rpc_types::Transaction>, Eth::Error> {
         #[inline]
         fn insert<Tx, RpcTxB>(
             tx: &Tx,
-            content: &mut BTreeMap<
-                Address,
-                BTreeMap<String, <RpcTxB::Network as RpcTypes>::TransactionResponse>,
-            >,
+            content: &mut BTreeMap<Address, BTreeMap<String, base_common_rpc_types::Transaction>>,
             resp_builder: &RpcTxB,
         ) -> Result<(), RpcTxB::Error>
         where
@@ -74,7 +70,7 @@ where
 }
 
 #[async_trait]
-impl<Pool, Eth> TxPoolApiServer<RpcTransaction<Eth::Network>> for TxPoolApi<Pool, Eth>
+impl<Pool, Eth> TxPoolApiServer<base_common_rpc_types::Transaction> for TxPoolApi<Pool, Eth>
 where
     Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + 'static,
     Eth: RpcConvert + 'static,
@@ -131,7 +127,7 @@ where
     async fn txpool_content_from(
         &self,
         from: Address,
-    ) -> RpcResult<TxpoolContentFrom<RpcTransaction<Eth::Network>>> {
+    ) -> RpcResult<TxpoolContentFrom<base_common_rpc_types::Transaction>> {
         trace!(target: "rpc::eth", ?from, "Serving txpool_contentFrom");
         Ok(self.content().map_err(Into::into)?.remove_from(&from))
     }
@@ -141,7 +137,7 @@ where
     ///
     /// See [here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content) for more details
     /// Handler for `txpool_content`
-    async fn txpool_content(&self) -> RpcResult<TxpoolContent<RpcTransaction<Eth::Network>>> {
+    async fn txpool_content(&self) -> RpcResult<TxpoolContent<base_common_rpc_types::Transaction>> {
         trace!(target: "rpc::eth", "Serving txpool_content");
         Ok(self.content().map_err(Into::into)?)
     }

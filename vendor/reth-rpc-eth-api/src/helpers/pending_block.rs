@@ -46,10 +46,7 @@ use crate::{EthApiTypes, FromEthApiError, FromEvmError, RpcNodeCore};
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` blocks RPC methods.
 pub trait LoadPendingBlock:
-    EthApiTypes<
-        Error: FromEvmError<Self::Evm>,
-        RpcConvert: RpcConvert<Network = Self::NetworkTypes>,
-    > + RpcNodeCore
+    EthApiTypes<Error: FromEvmError<Self::Evm>, RpcConvert: RpcConvert> + RpcNodeCore
 {
     /// Returns a handle to the pending block.
     ///

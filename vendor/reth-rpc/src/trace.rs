@@ -18,12 +18,12 @@ use alloy_rpc_types_trace::{
     tracerequest::TraceCallRequest,
 };
 use async_trait::async_trait;
+use base_common_rpc_types::BaseTransactionRequest;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
 use reth_primitives_traits::{BlockBody, BlockHeader};
 use reth_rpc_api::TraceApiServer;
-use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_api::{
     FromEthApiError, RpcNodeCore,
     helpers::{Call, LoadPendingBlock, LoadTransaction, Trace, TraceExt},
@@ -97,7 +97,7 @@ where
     /// Executes the given call and returns a number of possible traces for it.
     pub async fn trace_call(
         &self,
-        trace_request: TraceCallRequest<RpcTxReq<Eth::NetworkTypes>>,
+        trace_request: TraceCallRequest<BaseTransactionRequest>,
     ) -> Result<TraceResults, Eth::Error> {
         let at = trace_request.block_id.unwrap_or_default();
         let config = TracingInspectorConfig::from_parity_config(&trace_request.trace_types);
@@ -149,7 +149,7 @@ where
     /// Note: Allows tracing dependent transactions, hence all transactions are traced in sequence
     pub async fn trace_call_many(
         &self,
-        calls: Vec<(RpcTxReq<Eth::NetworkTypes>, HashSet<TraceType>)>,
+        calls: Vec<(BaseTransactionRequest, HashSet<TraceType>)>,
         block_id: Option<BlockId>,
     ) -> Result<Vec<TraceResults>, Eth::Error> {
         let at = block_id.unwrap_or(BlockId::pending());
@@ -680,7 +680,7 @@ fn apply_trace_filter_pagination(
 }
 
 #[async_trait]
-impl<Eth> TraceApiServer<RpcTxReq<Eth::NetworkTypes>> for TraceApi<Eth>
+impl<Eth> TraceApiServer<BaseTransactionRequest> for TraceApi<Eth>
 where
     Eth: TraceExt + 'static,
 {
@@ -689,7 +689,7 @@ where
     /// Handler for `trace_call`
     async fn trace_call(
         &self,
-        call: RpcTxReq<Eth::NetworkTypes>,
+        call: BaseTransactionRequest,
         trace_types: HashSet<TraceType>,
         block_id: Option<BlockId>,
         state_overrides: Option<StateOverride>,
@@ -704,7 +704,7 @@ where
     /// Handler for `trace_callMany`
     async fn trace_call_many(
         &self,
-        calls: Vec<(RpcTxReq<Eth::NetworkTypes>, HashSet<TraceType>)>,
+        calls: Vec<(BaseTransactionRequest, HashSet<TraceType>)>,
         block_id: Option<BlockId>,
     ) -> RpcResult<Vec<TraceResults>> {
         let _permit = self.acquire_trace_permit().await;

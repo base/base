@@ -5,13 +5,11 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
-use alloy_network::Ethereum;
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
 use derive_more::Deref;
-use reth_chainspec::ChainSpecProvider;
-use reth_node_api::{FullNodeComponents, FullNodeTypes};
-use reth_rpc_convert::{RpcConvert, RpcConverter};
+use reth_node_api::FullNodeComponents;
+use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
     EthApiTypes, RpcNodeCore,
     helpers::{SpawnBlocking, pending_block::PendingEnvBuilder, spec::SignersForRpc},
@@ -19,7 +17,7 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::{
     EthApiError, EthStateCache, FeeHistoryCache, GasCap, GasPriceOracle, PendingBlock,
-    builder::config::PendingBlockKind, receipt::EthReceiptConverter,
+    builder::config::PendingBlockKind,
 };
 use reth_storage_api::{BlockReaderIdExt, ProviderHeader};
 use reth_tasks::{
@@ -32,23 +30,7 @@ use reth_transaction_pool::{
 };
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
 
-use crate::EthApiBuilder;
-
 const DEFAULT_BROADCAST_CAPACITY: usize = 2000;
-
-/// Helper type alias for [`RpcConverter`] with components from the given [`FullNodeComponents`].
-pub type EthRpcConverterFor<N, NetworkT = Ethereum> = RpcConverter<
-    NetworkT,
-    <N as FullNodeComponents>::Evm,
-    EthReceiptConverter<<<N as FullNodeTypes>::Provider as ChainSpecProvider>::ChainSpec>,
->;
-
-/// Helper type alias for [`EthApi`] with components from the given [`FullNodeComponents`].
-pub type EthApiFor<N, NetworkT = Ethereum> = EthApi<N, EthRpcConverterFor<N, NetworkT>>;
-
-/// Helper type alias for [`EthApi`] with components from the given [`FullNodeComponents`].
-pub type EthApiBuilderFor<N, NetworkT = Ethereum> =
-    EthApiBuilder<N, EthRpcConverterFor<N, NetworkT>>;
 
 /// `Eth` API implementation.
 ///
@@ -87,7 +69,7 @@ where
     Rpc: RpcConvert<Error = EthApiError>,
 {
     type Error = EthApiError;
-    type NetworkTypes = Rpc::Network;
+
     type RpcConvert = Rpc;
 
     fn converter(&self) -> &Self::RpcConvert {
@@ -175,7 +157,7 @@ pub struct EthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     /// The components of the node.
     components: N,
     /// All configured Signers
-    signers: SignersForRpc<N::Provider, Rpc::Network>,
+    signers: SignersForRpc<N::Provider>,
     /// The async cache frontend for eth related data
     eth_cache: EthStateCache,
     /// The async gas oracle frontend for gas price suggestions
@@ -409,7 +391,7 @@ where
 
     /// Returns a handle to the signers.
     #[inline]
-    pub const fn signers(&self) -> &SignersForRpc<N::Provider, Rpc::Network> {
+    pub const fn signers(&self) -> &SignersForRpc<N::Provider> {
         &self.signers
     }
 

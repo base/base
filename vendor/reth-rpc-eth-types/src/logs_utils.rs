@@ -8,11 +8,12 @@ use alloy_consensus::{BlockHeader, TxReceipt, transaction::TxHashRef};
 use alloy_primitives::TxHash;
 use alloy_rpc_types_eth::{Filter, Log};
 use base_common_consensus::BaseReceipt;
+use base_common_rpc_types::BaseLogResponse;
 use jsonrpsee_types::ErrorObject;
 use reth_chainspec::ChainInfo;
 use reth_errors::ProviderError;
 use reth_primitives_traits::{BlockBody, RecoveredBlock, SignedTransaction};
-use reth_rpc_convert::{RpcConvert, RpcLog};
+use reth_rpc_convert::RpcConvert;
 use reth_storage_api::{BlockReader, ProviderBlock};
 use thiserror::Error;
 
@@ -26,7 +27,7 @@ pub fn matching_block_logs_with_tx_hashes<'a, I, C>(
     header: &reth_primitives_traits::SealedHeader,
     tx_hashes_and_receipts: I,
     removed: bool,
-) -> Result<Vec<RpcLog<C::Network>>, C::Error>
+) -> Result<Vec<BaseLogResponse>, C::Error>
 where
     I: IntoIterator<Item = (TxHash, &'a BaseReceipt)>,
     C: RpcConvert,
@@ -75,7 +76,7 @@ pub enum ProviderOrBlock<'a, P: BlockReader> {
 /// Appends all matching and converted logs of a block's receipts.
 /// If the log matches, look up the corresponding transaction hash.
 pub fn append_matching_block_logs<P, C>(
-    all_logs: &mut Vec<RpcLog<C::Network>>,
+    all_logs: &mut Vec<BaseLogResponse>,
     converter: &C,
     provider_or_block: ProviderOrBlock<'_, P>,
     filter: &Filter,

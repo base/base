@@ -56,6 +56,7 @@ revm-inspectors = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["reqwest"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
+base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-ethereum-primitives = { workspace = true, features = ["rpc"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

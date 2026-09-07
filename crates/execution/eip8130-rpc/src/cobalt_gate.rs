@@ -3,7 +3,7 @@
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use base_common_chains::Upgrades;
-use base_common_rpc_types::{BaseRpcTypes, EIP8130_PRE_COBALT_RPC_ERROR};
+use base_common_rpc_types::EIP8130_PRE_COBALT_RPC_ERROR;
 use jsonrpsee_types::{
     ErrorObjectOwned,
     error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
@@ -34,7 +34,7 @@ impl Eip8130CobaltGate {
     /// block's timestamp.
     pub fn check<Eth>(eth_api: &Eth, block_id: BlockId) -> Result<(), ErrorObjectOwned>
     where
-        Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
+        Eth: FullEthApi,
         <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
         <<Eth as RpcNodeCore>::Provider as ChainSpecProvider>::ChainSpec: Upgrades,
     {

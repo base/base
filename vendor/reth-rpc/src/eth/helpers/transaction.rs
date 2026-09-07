@@ -28,7 +28,7 @@ where
     Rpc: RpcConvert<Error = EthApiError>,
 {
     #[inline]
-    fn signers(&self) -> &SignersForRpc<Self::Provider, Self::NetworkTypes> {
+    fn signers(&self) -> &SignersForRpc<Self::Provider> {
         self.inner.signers()
     }
 

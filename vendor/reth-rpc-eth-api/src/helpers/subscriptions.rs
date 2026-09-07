@@ -2,14 +2,15 @@
 
 use alloy_consensus::{BlockHeader, TxReceipt, transaction::TxHashRef};
 use alloy_rpc_types_eth::{Filter, pubsub::TransactionReceiptsParams};
+use base_common_rpc_types::{BaseHeaderResponse, BaseLogResponse, BaseTransactionReceipt};
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::TransactionMeta;
-use reth_rpc_convert::{RpcHeader, transaction::ConvertReceiptInput};
+use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::logs_utils;
 use tracing::error;
 
-use crate::{EthApiTypes, RpcConvert, RpcLog, RpcNodeCore, RpcReceipt};
+use crate::{EthApiTypes, RpcConvert, RpcNodeCore};
 
 /// Provides streams subscriptions for `eth_subscribe`.
 ///
@@ -19,7 +20,7 @@ pub trait EthSubscriptions: RpcNodeCore + EthApiTypes<RpcConvert: RpcConvert> {
     fn log_stream(
         &self,
         filter: Filter,
-    ) -> impl futures::Stream<Item = RpcLog<Self::NetworkTypes>> + Send + Unpin {
+    ) -> impl futures::Stream<Item = BaseLogResponse> + Send + Unpin {
         let converter = self.converter();
         self.provider().canonical_state_stream().flat_map(move |canon_state| {
             let reverted_chains = canon_state.reverted();
@@ -56,9 +57,7 @@ pub trait EthSubscriptions: RpcNodeCore + EthApiTypes<RpcConvert: RpcConvert> {
     }
 
     /// Returns a stream that yields new block headers from canonical chain updates.
-    fn header_stream(
-        &self,
-    ) -> impl futures::Stream<Item = RpcHeader<Self::NetworkTypes>> + Send + Unpin {
+    fn header_stream(&self) -> impl futures::Stream<Item = BaseHeaderResponse> + Send + Unpin {
         let converter = self.converter();
         self.provider().canonical_state_stream().flat_map(move |new_chain| {
             let headers = new_chain
@@ -83,7 +82,7 @@ pub trait EthSubscriptions: RpcNodeCore + EthApiTypes<RpcConvert: RpcConvert> {
     fn transaction_receipts_stream(
         &self,
         filter: TransactionReceiptsParams,
-    ) -> impl futures::Stream<Item = Vec<RpcReceipt<Self::NetworkTypes>>> + Send + Unpin {
+    ) -> impl futures::Stream<Item = Vec<BaseTransactionReceipt>> + Send + Unpin {
         let converter = self.converter();
         self.provider().canonical_state_stream().flat_map(move |new_chain| {
             let results: Vec<_> = new_chain

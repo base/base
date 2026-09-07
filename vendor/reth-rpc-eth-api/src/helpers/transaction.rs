@@ -13,10 +13,11 @@ use alloy_network::{TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::{TransactionInfo, state::EvmOverrides};
 use base_common_consensus::BaseTxEnvelope;
+use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use futures::{Future, StreamExt};
 use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
-use reth_rpc_convert::{RpcTxReq, TransactionConversionError, transaction::RpcConvert};
+use reth_rpc_convert::{TransactionConversionError, transaction::RpcConvert};
 use reth_rpc_eth_types::{
     EthApiError::{self, TransactionConfirmationTimeout},
     FillTransaction, SignError, TransactionSource,
@@ -34,8 +35,7 @@ use reth_transaction_pool::{
 
 use super::{EthApiSpec, EthSigner, LoadBlock, LoadFee, LoadReceipt, LoadState, SpawnBlocking};
 use crate::{
-    FromEthApiError, FullEthApiTypes, IntoEthApiError, RpcNodeCore, RpcNodeCoreExt, RpcReceipt,
-    RpcTransaction,
+    FromEthApiError, FullEthApiTypes, IntoEthApiError, RpcNodeCore, RpcNodeCoreExt,
     helpers::{estimate::EstimateCall, spec::SignersForRpc},
 };
 
@@ -65,7 +65,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     /// Returns a handle for signing data.
     ///
     /// Signer access in default (L1) trait method implementations.
-    fn signers(&self) -> &SignersForRpc<Self::Provider, Self::NetworkTypes>;
+    fn signers(&self) -> &SignersForRpc<Self::Provider>;
 
     /// Returns a list of addresses owned by provider.
     fn accounts(&self) -> Vec<Address> {
@@ -123,7 +123,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         tx: Bytes,
         timeout_ms: Option<u64>,
-    ) -> impl Future<Output = Result<RpcReceipt<Self::NetworkTypes>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<BaseTransactionReceipt, Self::Error>> + Send
     where
         Self: LoadReceipt + 'static,
     {
@@ -186,7 +186,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     }
 
     /// Returns all transactions from the local pending pool.
-    fn pending_transactions(&self) -> Result<Vec<RpcTransaction<Self::NetworkTypes>>, Self::Error> {
+    fn pending_transactions(&self) -> Result<Vec<base_common_rpc_types::Transaction>, Self::Error> {
         self.pool()
             .pending_transactions()
             .into_iter()
@@ -266,7 +266,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     fn transaction_receipt(
         &self,
         hash: B256,
-    ) -> impl Future<Output = Result<Option<RpcReceipt<Self::NetworkTypes>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<BaseTransactionReceipt>, Self::Error>> + Send
     where
         Self: LoadReceipt + 'static,
     {
@@ -357,7 +357,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         block_id: BlockId,
         index: usize,
-    ) -> impl Future<Output = Result<Option<RpcTransaction<Self::NetworkTypes>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<base_common_rpc_types::Transaction>, Self::Error>> + Send
     where
         Self: LoadBlock,
     {
@@ -393,7 +393,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         sender: Address,
         nonce: u64,
         include_pending: bool,
-    ) -> impl Future<Output = Result<Option<RpcTransaction<Self::NetworkTypes>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<base_common_rpc_types::Transaction>, Self::Error>> + Send
     where
         Self: LoadBlock + LoadState,
     {
@@ -486,7 +486,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     /// Returns the hash of the signed transaction.
     fn send_transaction_request(
         &self,
-        mut request: RpcTxReq<Self::NetworkTypes>,
+        mut request: BaseTransactionRequest,
     ) -> impl Future<Output = Result<B256, Self::Error>> + Send
     where
         Self: EthApiSpec + LoadBlock + EstimateCall,
@@ -540,7 +540,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     /// Fills the defaults on a given unsigned transaction.
     fn fill_transaction(
         &self,
-        mut request: RpcTxReq<Self::NetworkTypes>,
+        mut request: BaseTransactionRequest,
     ) -> impl Future<Output = Result<FillTransaction<BaseTxEnvelope>, Self::Error>> + Send
     where
         Self: EthApiSpec + LoadBlock + EstimateCall + LoadFee,
@@ -614,7 +614,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     fn sign_request(
         &self,
         from: &Address,
-        txn: RpcTxReq<Self::NetworkTypes>,
+        txn: BaseTransactionRequest,
     ) -> impl Future<Output = Result<ProviderTx<Self::Provider>, Self::Error>> + Send {
         async move {
             self.find_signer(from)?
@@ -645,7 +645,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
     /// Returns the EIP-2718 encoded signed transaction.
     fn sign_transaction(
         &self,
-        request: RpcTxReq<Self::NetworkTypes>,
+        request: BaseTransactionRequest,
     ) -> impl Future<Output = Result<Bytes, Self::Error>> + Send {
         async move {
             let from = match request.as_ref().from() {
@@ -673,7 +673,7 @@ pub trait EthTransactions: LoadTransaction<Provider: BlockReaderIdExt> {
         &self,
         account: &Address,
     ) -> Result<
-        Box<dyn EthSigner<ProviderTx<Self::Provider>, RpcTxReq<Self::NetworkTypes>> + 'static>,
+        Box<dyn EthSigner<ProviderTx<Self::Provider>, BaseTransactionRequest> + 'static>,
         Self::Error,
     > {
         self.signers()

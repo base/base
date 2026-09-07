@@ -4,6 +4,7 @@ use alloy_evm::overrides::{apply_block_overrides, apply_state_overrides};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types_eth::{BlockId, state::EvmOverrides};
+use base_common_rpc_types::BaseTransactionRequest;
 use futures::Future;
 use reth_chainspec::MIN_TRANSACTION_GAS;
 use reth_errors::ProviderError;
@@ -15,7 +16,6 @@ use reth_revm::{
     database::{EvmStateProvider, StateProviderDatabase},
     db::{State, bal::EvmDatabaseError},
 };
-use reth_rpc_convert::{RpcConvert, RpcTxReq};
 use reth_rpc_eth_types::{
     EthApiError, RpcInvalidTransactionError,
     error::{
@@ -51,7 +51,7 @@ pub trait EstimateCall: Call {
     fn estimate_gas_with<S>(
         &self,
         mut evm_env: EvmEnvFor<Self::Evm>,
-        mut request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        mut request: BaseTransactionRequest,
         state: S,
         overrides: EvmOverrides,
     ) -> Result<U256, Self::Error>
@@ -307,7 +307,7 @@ pub trait EstimateCall: Call {
     /// Estimate gas needed for execution of the `request` at the [`BlockId`].
     fn estimate_gas_at(
         &self,
-        request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        request: BaseTransactionRequest,
         at: BlockId,
         overrides: EvmOverrides,
     ) -> impl Future<Output = Result<U256, Self::Error>> + Send

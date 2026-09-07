@@ -14,6 +14,7 @@ use alloy_rpc_types_eth::{
     simulate::{SimBlock, SimulatePayload, SimulatedBlock},
     state::{EvmOverrides, StateOverride},
 };
+use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
 use futures::Future;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_errors::{ProviderError, RethError};
@@ -27,7 +28,7 @@ use reth_revm::{
     database::StateProviderDatabase,
     db::{State, bal::EvmDatabaseError},
 };
-use reth_rpc_convert::{RpcConvert, RpcTxReq};
+use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_types::{
     EthApiError, StateCacheDb,
     cache::db::StateProviderTraitObjWrapper,
@@ -44,12 +45,10 @@ use revm_inspectors::{access_list::AccessListInspector, transfer::TransferInspec
 use tracing::{trace, warn};
 
 use super::{LoadBlock, LoadPendingBlock, LoadState, LoadTransaction, SpawnBlocking, Trace};
-use crate::{
-    FromEvmError, FullEthApiTypes, RpcBlock, RpcNodeCore, helpers::estimate::EstimateCall,
-};
+use crate::{FromEvmError, FullEthApiTypes, RpcNodeCore, helpers::estimate::EstimateCall};
 
 /// Result type for `eth_simulateV1` RPC method.
-pub type SimulatedBlocksResult<N, E> = Result<Vec<SimulatedBlock<RpcBlock<N>>>, E>;
+pub type SimulatedBlocksResult<E> = Result<Vec<SimulatedBlock<BaseBlockResponse>>, E>;
 
 /// Execution related functions for the [`EthApiServer`](crate::EthApiServer) trait in
 /// the `eth_` namespace.
@@ -57,7 +56,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
     /// Estimate gas needed for execution of the `request` at the [`BlockId`].
     fn estimate_gas_at(
         &self,
-        request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        request: BaseTransactionRequest,
         at: BlockId,
         overrides: EvmOverrides,
     ) -> impl Future<Output = Result<U256, Self::Error>> + Send {
@@ -70,9 +69,9 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
     /// See also: <https://github.com/ethereum/go-ethereum/pull/27720>
     fn simulate_v1(
         &self,
-        payload: SimulatePayload<RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>>,
+        payload: SimulatePayload<BaseTransactionRequest>,
         block: Option<BlockId>,
-    ) -> impl Future<Output = SimulatedBlocksResult<Self::NetworkTypes, Self::Error>> + Send {
+    ) -> impl Future<Output = SimulatedBlocksResult<Self::Error>> + Send {
         async move {
             if payload.block_state_calls.len() > self.max_simulate_blocks() as usize {
                 return Err(EthApiError::other(EthSimulateError::TooManyBlocks).into());
@@ -121,7 +120,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                     max_simulate_blocks,
                 )?;
 
-                let mut blocks: Vec<SimulatedBlock<RpcBlock<Self::NetworkTypes>>> =
+                let mut blocks: Vec<SimulatedBlock<BaseBlockResponse>> =
                     Vec::with_capacity(block_state_calls.len());
 
                 let call_gas_limit = this.call_gas_limit();
@@ -279,7 +278,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
     /// Executes the call request (`eth_call`) and returns the output
     fn call(
         &self,
-        request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         overrides: EvmOverrides,
     ) -> impl Future<Output = Result<Bytes, Self::Error>> + Send {
@@ -296,7 +295,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
     /// optionality of state overrides
     fn call_many(
         &self,
-        bundles: Vec<Bundle<RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>>>,
+        bundles: Vec<Bundle<BaseTransactionRequest>>,
         state_context: Option<StateContext>,
         mut state_override: Option<StateOverride>,
     ) -> impl Future<Output = Result<Vec<Vec<EthCallResponse>>, Self::Error>> + Send
@@ -428,7 +427,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
     /// [`BlockId`], or latest block.
     fn create_access_list_at(
         &self,
-        request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        request: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_override: Option<StateOverride>,
     ) -> impl Future<Output = Result<AccessListResult, Self::Error>> + Send
@@ -452,7 +451,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
         &self,
         evm_env: EvmEnvFor<Self::Evm>,
         at: BlockId,
-        request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        request: BaseTransactionRequest,
         state_override: Option<StateOverride>,
     ) -> impl Future<Output = Result<AccessListResult, Self::Error>> + Send
     where
@@ -573,7 +572,7 @@ pub trait Call:
     /// early client-side).
     fn transact_call_at(
         &self,
-        request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        request: BaseTransactionRequest,
         at: BlockId,
         overrides: EvmOverrides,
     ) -> impl Future<Output = Result<ResultAndState<HaltReasonFor<Self::Evm>>, Self::Error>> + Send
@@ -636,7 +635,7 @@ pub trait Call:
     /// instead, where blocking IO is less problematic.
     fn spawn_with_call_at<F, R>(
         &self,
-        request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        request: BaseTransactionRequest,
         at: BlockId,
         overrides: EvmOverrides,
         f: F,
@@ -766,7 +765,7 @@ pub trait Call:
     fn create_txn_env(
         &self,
         evm_env: &EvmEnvFor<Self::Evm>,
-        mut request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        mut request: BaseTransactionRequest,
         mut db: impl Database<Error: Into<EthApiError>>,
     ) -> Result<TxEnvFor<Self::Evm>, Self::Error> {
         if request.as_ref().nonce().is_none() {
@@ -798,7 +797,7 @@ pub trait Call:
     fn prepare_call_env<DB>(
         &self,
         mut evm_env: EvmEnvFor<Self::Evm>,
-        mut request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        mut request: BaseTransactionRequest,
         db: &mut DB,
         overrides: EvmOverrides,
     ) -> Result<(EvmEnvFor<Self::Evm>, TxEnvFor<Self::Evm>), Self::Error>

@@ -1,12 +1,10 @@
 //! L1 `eth` API types.
 
-use alloy_network::Ethereum;
 use reth_rpc_convert::RpcConverter;
 use reth_rpc_eth_types::receipt::EthReceiptConverter;
 
 /// An [`RpcConverter`] for Ethereum-compatible RPC with an explicit EVM configuration.
-pub type EthRpcConverter<ChainSpec, Evm> =
-    RpcConverter<Ethereum, Evm, EthReceiptConverter<ChainSpec>>;
+pub type EthRpcConverter<ChainSpec, Evm> = RpcConverter<Evm, EthReceiptConverter<ChainSpec>>;
 
 //tests for simulate
 #[cfg(test)]

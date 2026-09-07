@@ -26,9 +26,12 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_network::{Ethereum, IntoWallet};
+use alloy_network::IntoWallet;
 use alloy_provider::{Provider, ProviderBuilder, fillers::RecommendedFillers};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_rpc_types::{
+    BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BaseTransactionRequest,
+};
 pub use cors::CorsDomainError;
 use error::{ConflictingModules, RpcError, ServerKind};
 use http::{HeaderMap, header::AUTHORIZATION};
@@ -57,15 +60,14 @@ use reth_rpc::{
 use reth_rpc_api::servers::*;
 use reth_rpc_engine_api::RethEngineApi;
 use reth_rpc_eth_api::{
-    EthApiServer, EthApiTypes, FullEthApiServer, FullEthApiTypes, RpcBlock, RpcConvert,
-    RpcConverter, RpcHeader, RpcNodeCore, RpcReceipt, RpcTransaction, RpcTxReq,
+    EthApiServer, EthApiTypes, FullEthApiServer, FullEthApiTypes, RpcConvert, RpcNodeCore,
     helpers::{
         Call, EthApiSpec, EthTransactions, LoadPendingBlock, TraceExt,
         pending_block::PendingEnvBuilder,
     },
     node::RpcNodeCoreAdapter,
 };
-use reth_rpc_eth_types::{EthConfig, EthSubscriptionIdProvider, receipt::EthReceiptConverter};
+use reth_rpc_eth_types::{EthConfig, EthSubscriptionIdProvider};
 use reth_rpc_layer::{AuthLayer, Claims, CompressionLayer, JwtAuthValidator, JwtSecret};
 pub use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, constants};
 use reth_storage_api::{BlockReader, ChangeSetReader, FullRpcProvider, StateProviderFactory};
@@ -237,19 +239,15 @@ impl<Provider, Pool, Network, EvmConfig, Consensus>
 
     /// Instantiates a new [`EthApiBuilder`] from the configured components.
     #[expect(clippy::type_complexity)]
-    pub fn eth_api_builder<ChainSpec>(
+    pub fn eth_api_builder(
         &self,
-    ) -> EthApiBuilder<
-        RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>,
-        RpcConverter<Ethereum, EvmConfig, EthReceiptConverter<ChainSpec>>,
-    >
+    ) -> EthApiBuilder<RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>, ()>
     where
         Provider: Clone,
         Pool: Clone,
         Network: Clone,
         EvmConfig: Clone,
-        RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>:
-            RpcNodeCore<Provider: ChainSpecProvider<ChainSpec = ChainSpec>, Evm = EvmConfig>,
+        RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>: RpcNodeCore<Evm = EvmConfig>,
     {
         EthApiBuilder::new(
             self.provider.clone(),
@@ -265,23 +263,20 @@ impl<Provider, Pool, Network, EvmConfig, Consensus>
     ///
     /// See also [`EthApiBuilder`].
     #[expect(clippy::type_complexity)]
-    pub fn bootstrap_eth_api<ChainSpec>(
+    pub fn bootstrap_eth_api<Rpc>(
         &self,
-    ) -> EthApi<
-        RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>,
-        RpcConverter<Ethereum, EvmConfig, EthReceiptConverter<ChainSpec>>,
-    >
+        converter: Rpc,
+    ) -> EthApi<RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>, Rpc>
     where
         Provider: Clone,
         Pool: Clone,
         Network: Clone,
         EvmConfig: ConfigureEvm + Clone,
-        RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>:
-            RpcNodeCore<Provider: ChainSpecProvider<ChainSpec = ChainSpec>, Evm = EvmConfig>,
-        RpcConverter<Ethereum, EvmConfig, EthReceiptConverter<ChainSpec>>: RpcConvert,
+        RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>: RpcNodeCore<Evm = EvmConfig>,
+        Rpc: RpcConvert<Evm = EvmConfig>,
         (): PendingEnvBuilder<EvmConfig>,
     {
-        self.eth_api_builder().build()
+        self.eth_api_builder().with_rpc_converter(converter).build()
     }
 }
 
@@ -630,11 +625,11 @@ where
         + PersistedBlockSubscriptions,
     Network: NetworkInfo + Peers + Clone + 'static,
     EthApi: EthApiServer<
-            RpcTxReq<EthApi::NetworkTypes>,
-            RpcTransaction<EthApi::NetworkTypes>,
-            RpcBlock<EthApi::NetworkTypes>,
-            RpcReceipt<EthApi::NetworkTypes>,
-            RpcHeader<EthApi::NetworkTypes>,
+            BaseTransactionRequest,
+            base_common_rpc_types::Transaction,
+            BaseBlockResponse,
+            BaseTransactionReceipt,
+            BaseHeaderResponse,
             BaseTxEnvelope,
         > + EthApiTypes,
     EvmConfig: ConfigureEvm + 'static,

@@ -18,6 +18,7 @@ use alloy_rpc_types_eth::{
 };
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_rpc_types::BaseLogResponse;
 use futures::{
     Future,
     future::TryFutureExt,
@@ -29,7 +30,7 @@ use reth_errors::ProviderError;
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_eth_api::{
     EngineEthFilter, EthApiTypes, EthFilterApiServer, FullEthApiTypes, QueryLimits, RpcConvert,
-    RpcLog, RpcNodeCoreExt, RpcTransaction,
+    RpcNodeCoreExt,
     helpers::{EthBlocks, LoadReceipt},
 };
 use reth_rpc_eth_types::{
@@ -49,7 +50,7 @@ use tokio::{
 };
 use tracing::{debug, error, trace};
 
-impl<Eth> EngineEthFilter<RpcLog<Eth::NetworkTypes>> for EthFilter<Eth>
+impl<Eth> EngineEthFilter<BaseLogResponse> for EthFilter<Eth>
 where
     Eth: FullEthApiTypes
         + RpcNodeCoreExt<Provider: BlockIdReader>
@@ -62,7 +63,7 @@ where
         &self,
         filter: Filter,
         limits: QueryLimits,
-    ) -> impl Future<Output = RpcResult<Vec<RpcLog<Eth::NetworkTypes>>>> + Send {
+    ) -> impl Future<Output = RpcResult<Vec<BaseLogResponse>>> + Send {
         trace!(target: "rpc::eth", "Serving eth_getLogs");
         self.logs_for_filter(filter, limits).map_err(|e| e.into())
     }
@@ -164,7 +165,7 @@ where
     }
 
     /// Returns all currently active filters
-    pub fn active_filters(&self) -> &ActiveFilters<RpcTransaction<Eth::NetworkTypes>> {
+    pub fn active_filters(&self) -> &ActiveFilters<base_common_rpc_types::Transaction> {
         &self.inner.active_filters
     }
 
@@ -222,10 +223,8 @@ where
     pub async fn filter_changes(
         &self,
         id: FilterId,
-    ) -> Result<
-        FilterChanges<RpcTransaction<Eth::NetworkTypes>, RpcLog<Eth::NetworkTypes>>,
-        EthFilterError,
-    > {
+    ) -> Result<FilterChanges<base_common_rpc_types::Transaction, BaseLogResponse>, EthFilterError>
+    {
         let info = self.provider().chain_info()?;
         let best_number = info.best_number;
 
@@ -313,10 +312,7 @@ where
     /// Returns an error if no matching log filter exists.
     ///
     /// Handler for `eth_getFilterLogs`
-    pub async fn filter_logs(
-        &self,
-        id: FilterId,
-    ) -> Result<Vec<RpcLog<Eth::NetworkTypes>>, EthFilterError> {
+    pub async fn filter_logs(&self, id: FilterId) -> Result<Vec<BaseLogResponse>, EthFilterError> {
         let filter = {
             let mut filters = self.inner.active_filters.inner.lock().await;
             let filter =
@@ -338,14 +334,13 @@ where
         &self,
         filter: Filter,
         limits: QueryLimits,
-    ) -> Result<Vec<RpcLog<Eth::NetworkTypes>>, EthFilterError> {
+    ) -> Result<Vec<BaseLogResponse>, EthFilterError> {
         self.inner.clone().logs_for_filter(filter, limits).await
     }
 }
 
 #[async_trait]
-impl<Eth> EthFilterApiServer<RpcTransaction<Eth::NetworkTypes>, RpcLog<Eth::NetworkTypes>>
-    for EthFilter<Eth>
+impl<Eth> EthFilterApiServer<base_common_rpc_types::Transaction, BaseLogResponse> for EthFilter<Eth>
 where
     Eth: FullEthApiTypes + RpcNodeCoreExt + LoadReceipt + EthBlocks + 'static,
 {
@@ -353,14 +348,14 @@ where
     async fn new_filter(&self, filter: Filter) -> RpcResult<FilterId> {
         trace!(target: "rpc::eth", "Serving eth_newFilter");
         self.inner
-            .install_filter(FilterKind::<RpcTransaction<Eth::NetworkTypes>>::Log(Box::new(filter)))
+            .install_filter(FilterKind::<base_common_rpc_types::Transaction>::Log(Box::new(filter)))
             .await
     }
 
     /// Handler for `eth_newBlockFilter`
     async fn new_block_filter(&self) -> RpcResult<FilterId> {
         trace!(target: "rpc::eth", "Serving eth_newBlockFilter");
-        self.inner.install_filter(FilterKind::<RpcTransaction<Eth::NetworkTypes>>::Block).await
+        self.inner.install_filter(FilterKind::<base_common_rpc_types::Transaction>::Block).await
     }
 
     /// Handler for `eth_newPendingTransactionFilter`
@@ -396,8 +391,7 @@ where
     async fn filter_changes(
         &self,
         id: FilterId,
-    ) -> RpcResult<FilterChanges<RpcTransaction<Eth::NetworkTypes>, RpcLog<Eth::NetworkTypes>>>
-    {
+    ) -> RpcResult<FilterChanges<base_common_rpc_types::Transaction, BaseLogResponse>> {
         trace!(target: "rpc::eth", "Serving eth_getFilterChanges");
         Ok(Self::filter_changes(self, id).await?)
     }
@@ -407,7 +401,7 @@ where
     /// Returns an error if no matching log filter exists.
     ///
     /// Handler for `eth_getFilterLogs`
-    async fn filter_logs(&self, id: FilterId) -> RpcResult<Vec<RpcLog<Eth::NetworkTypes>>> {
+    async fn filter_logs(&self, id: FilterId) -> RpcResult<Vec<BaseLogResponse>> {
         trace!(target: "rpc::eth", "Serving eth_getFilterLogs");
         Ok(Self::filter_logs(self, id).await?)
     }
@@ -427,7 +421,7 @@ where
     /// Returns logs matching given filter object.
     ///
     /// Handler for `eth_getLogs`
-    async fn logs(&self, filter: Filter) -> RpcResult<Vec<RpcLog<Eth::NetworkTypes>>> {
+    async fn logs(&self, filter: Filter) -> RpcResult<Vec<BaseLogResponse>> {
         trace!(target: "rpc::eth", "Serving eth_getLogs");
         Ok(self.logs_for_filter(filter, self.inner.query_limits).await?)
     }
@@ -448,7 +442,7 @@ struct EthFilterInner<Eth: EthApiTypes> {
     /// Inner `eth` API implementation.
     eth_api: Eth,
     /// All currently installed filters.
-    active_filters: ActiveFilters<RpcTransaction<Eth::NetworkTypes>>,
+    active_filters: ActiveFilters<base_common_rpc_types::Transaction>,
     /// Provides ids to identify filters
     id_provider: Arc<dyn IdProvider>,
     /// limits for logs queries
@@ -464,7 +458,7 @@ struct EthFilterInner<Eth: EthApiTypes> {
 impl<Eth> EthFilterInner<Eth>
 where
     Eth: RpcNodeCoreExt<Provider: BlockIdReader, Pool: TransactionPool>
-        + EthApiTypes<NetworkTypes: reth_rpc_eth_api::types::RpcTypes>
+        + EthApiTypes
         + LoadReceipt
         + EthBlocks
         + 'static,
@@ -484,7 +478,7 @@ where
         self: Arc<Self>,
         filter: Filter,
         limits: QueryLimits,
-    ) -> Result<Vec<RpcLog<Eth::NetworkTypes>>, EthFilterError> {
+    ) -> Result<Vec<BaseLogResponse>, EthFilterError> {
         match filter.block_option {
             FilterBlockOption::AtBlockHash(block_hash) => {
                 // First try to get cached block and receipts, as it's likely they're already cached
@@ -614,7 +608,7 @@ where
     /// Installs a new filter and returns the new identifier.
     async fn install_filter(
         &self,
-        kind: FilterKind<RpcTransaction<Eth::NetworkTypes>>,
+        kind: FilterKind<base_common_rpc_types::Transaction>,
     ) -> RpcResult<FilterId> {
         let last_poll_block_number = self.provider().best_block_number().to_rpc_result()?;
         let subscription_id = self.id_provider.next_id();
@@ -646,7 +640,7 @@ where
         from_block: u64,
         to_block: u64,
         limits: QueryLimits,
-    ) -> Result<Vec<RpcLog<Eth::NetworkTypes>>, EthFilterError> {
+    ) -> Result<Vec<BaseLogResponse>, EthFilterError> {
         trace!(target: "rpc::eth::filter", from=from_block, to=to_block, ?filter, "finding logs in range");
 
         // perform boundary checks first
@@ -685,7 +679,7 @@ where
         from_block: u64,
         to_block: u64,
         limits: QueryLimits,
-    ) -> Result<Vec<RpcLog<Eth::NetworkTypes>>, EthFilterError> {
+    ) -> Result<Vec<BaseLogResponse>, EthFilterError> {
         let mut all_logs = Vec::new();
         let mut matching_headers = Vec::new();
 
@@ -866,7 +860,7 @@ where
     }
 
     /// Returns all new pending transactions received since the last poll.
-    async fn drain(&self) -> FilterChanges<RpcTransaction<TxCompat::Network>> {
+    async fn drain(&self) -> FilterChanges<base_common_rpc_types::Transaction> {
         let mut pending_txs = Vec::new();
         let mut prepared_stream = self.txs_stream.lock().await;
 
@@ -892,13 +886,13 @@ trait FullTransactionsFilter<T>: fmt::Debug + Send + Sync + Unpin + 'static {
 }
 
 #[async_trait]
-impl<T, TxCompat> FullTransactionsFilter<RpcTransaction<TxCompat::Network>>
+impl<T, TxCompat> FullTransactionsFilter<base_common_rpc_types::Transaction>
     for FullTransactionsReceiver<T, TxCompat>
 where
     T: PoolTransaction<Consensus = BaseTxEnvelope> + 'static,
     TxCompat: RpcConvert + 'static,
 {
-    async fn drain(&self) -> FilterChanges<RpcTransaction<TxCompat::Network>> {
+    async fn drain(&self) -> FilterChanges<base_common_rpc_types::Transaction> {
         Self::drain(self).await
     }
 }

@@ -2,12 +2,12 @@
 
 use alloy_primitives::{U64, U256};
 use alloy_rpc_types_eth::{Stage, SyncInfo, SyncStatus};
+use base_common_rpc_types::BaseTransactionRequest;
 use futures::Future;
 use reth_chainspec::ChainInfo;
 use reth_errors::{RethError, RethResult};
 use reth_network_api::NetworkInfo;
 use reth_prune_types::{PruneMode, PruneSegment};
-use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_types::{EthCapabilities, EthCapabilitiesHead, EthCapabilitiesResource};
 use reth_storage_api::{
     BlockNumReader, PruneCheckpointReader, StageCheckpointReader, TransactionsProvider,
@@ -180,10 +180,11 @@ fn effective_resource(
     })
 }
 
-/// A handle to [`EthSigner`]s with its generics set from [`TransactionsProvider`] and
-/// [`reth_rpc_convert::RpcTypes`].
-pub type SignersForRpc<Provider, Rpc> = parking_lot::RwLock<
-    Vec<Box<dyn EthSigner<<Provider as TransactionsProvider>::Transaction, RpcTxReq<Rpc>>>>,
+/// Signers for Base requests and the provider's transactions.
+pub type SignersForRpc<Provider> = parking_lot::RwLock<
+    Vec<
+        Box<dyn EthSigner<<Provider as TransactionsProvider>::Transaction, BaseTransactionRequest>>,
+    >,
 >;
 
 #[cfg(test)]

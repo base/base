@@ -19,3 +19,5 @@ pub use header::FromConsensusHeader;
 
 mod transaction;
 pub use transaction::{FromConsensusTx, TryIntoSimTx, TxInfoMapper};
+
+mod base;

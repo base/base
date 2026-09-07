@@ -16,6 +16,7 @@ use alloy_rpc_types_trace::geth::{
 };
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
+use base_common_rpc_types::BaseTransactionRequest;
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
@@ -26,7 +27,6 @@ use reth_evm::{ConfigureEvm, EvmEnvFor, block::BlockExecutor, execute::Executor}
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
 use reth_revm::{db::State, witness::ExecutionWitnessRecord};
 use reth_rpc_api::DebugApiServer;
-use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_api::{
     FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore,
     helpers::{EthTransactions, TraceExt},
@@ -281,7 +281,7 @@ where
     ///  - `debug_traceCall` executes with __enabled__ basefee check, `eth_call` does not: <https://github.com/paradigmxyz/reth/issues/6240>
     pub async fn debug_trace_call(
         &self,
-        call: RpcTxReq<Eth::NetworkTypes>,
+        call: BaseTransactionRequest,
         block_id: Option<BlockId>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, Eth::Error> {
@@ -325,7 +325,7 @@ where
     /// state.
     async fn debug_trace_call_at_tx_index(
         &self,
-        call: RpcTxReq<Eth::NetworkTypes>,
+        call: BaseTransactionRequest,
         block_id: BlockId,
         tx_index: usize,
         tracing_options: GethDebugTracingOptions,
@@ -377,7 +377,7 @@ where
     /// Each following bundle increments block number by 1 and block timestamp by 12 seconds
     pub async fn debug_trace_call_many(
         &self,
-        bundles: Vec<Bundle<RpcTxReq<Eth::NetworkTypes>>>,
+        bundles: Vec<Bundle<BaseTransactionRequest>>,
         state_context: Option<StateContext>,
         opts: Option<GethDebugTracingCallOptions>,
     ) -> Result<Vec<Vec<GethTrace>>, Eth::Error> {
@@ -740,7 +740,7 @@ where
 }
 
 #[async_trait]
-impl<Eth> DebugApiServer<RpcTxReq<Eth::NetworkTypes>> for DebugApi<Eth>
+impl<Eth> DebugApiServer<BaseTransactionRequest> for DebugApi<Eth>
 where
     Eth: EthTransactions + TraceExt,
 {
@@ -921,7 +921,7 @@ where
     /// Handler for `debug_traceCall`
     async fn debug_trace_call(
         &self,
-        request: RpcTxReq<Eth::NetworkTypes>,
+        request: BaseTransactionRequest,
         block_id: Option<BlockId>,
         opts: Option<GethDebugTracingCallOptions>,
     ) -> RpcResult<GethTrace> {
@@ -933,7 +933,7 @@ where
 
     async fn debug_trace_call_many(
         &self,
-        bundles: Vec<Bundle<RpcTxReq<Eth::NetworkTypes>>>,
+        bundles: Vec<Bundle<BaseTransactionRequest>>,
         state_context: Option<StateContext>,
         opts: Option<GethDebugTracingCallOptions>,
     ) -> RpcResult<Vec<Vec<GethTrace>>> {

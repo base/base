@@ -6,21 +6,19 @@ use alloy_consensus::{TxReceipt, transaction::TxHashRef};
 use alloy_eips::BlockId;
 use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::{Block, BlockTransactions, Index};
+use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt};
 use futures::Future;
 use reth_node_api::BlockBody;
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock, SealedHeader, TransactionMeta};
-use reth_rpc_convert::{RpcConvert, RpcHeader, transaction::ConvertReceiptInput};
+use reth_rpc_convert::{RpcConvert, transaction::ConvertReceiptInput};
 use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader, ProviderReceipt, ProviderTx};
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 use super::{LoadPendingBlock, LoadReceipt, SpawnBlocking};
-use crate::{
-    EthApiTypes, FromEthApiError, FullEthApiTypes, RpcBlock, RpcNodeCore, RpcReceipt,
-    node::RpcNodeCoreExt,
-};
+use crate::{EthApiTypes, FromEthApiError, FullEthApiTypes, RpcNodeCore, node::RpcNodeCoreExt};
 
 /// Result type of the fetched block receipts.
-pub type BlockReceiptsResult<N, E> = Result<Option<Vec<RpcReceipt<N>>>, E>;
+pub type BlockReceiptsResult<E> = Result<Option<Vec<BaseTransactionReceipt>>, E>;
 /// Result type of the fetched block and its receipts.
 pub type BlockAndReceiptsResult<Eth> = Result<
     Option<(
@@ -37,7 +35,7 @@ pub trait EthBlocks: LoadBlock<RpcConvert: RpcConvert> {
     fn rpc_block_header(
         &self,
         block_id: BlockId,
-    ) -> impl Future<Output = Result<Option<RpcHeader<Self::NetworkTypes>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<BaseHeaderResponse>, Self::Error>> + Send
     where
         Self: FullEthApiTypes,
     {
@@ -57,7 +55,7 @@ pub trait EthBlocks: LoadBlock<RpcConvert: RpcConvert> {
         &self,
         block_id: BlockId,
         full: bool,
-    ) -> impl Future<Output = Result<Option<RpcBlock<Self::NetworkTypes>>, Self::Error>> + Send
+    ) -> impl Future<Output = Result<Option<BaseBlockResponse>, Self::Error>> + Send
     where
         Self: FullEthApiTypes,
     {
@@ -89,7 +87,7 @@ pub trait EthBlocks: LoadBlock<RpcConvert: RpcConvert> {
     fn block_receipts(
         &self,
         block_id: BlockId,
-    ) -> impl Future<Output = BlockReceiptsResult<Self::NetworkTypes, Self::Error>> + Send
+    ) -> impl Future<Output = BlockReceiptsResult<Self::Error>> + Send
     where
         Self: LoadReceipt,
     {
@@ -218,8 +216,7 @@ pub trait EthBlocks: LoadBlock<RpcConvert: RpcConvert> {
         &self,
         block_id: BlockId,
         index: Index,
-    ) -> impl Future<Output = Result<Option<RpcBlock<Self::NetworkTypes>>, Self::Error>> + Send
-    {
+    ) -> impl Future<Output = Result<Option<BaseBlockResponse>, Self::Error>> + Send {
         async move {
             let uncles = self
                 .recovered_block(block_id)

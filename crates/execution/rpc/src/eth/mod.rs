@@ -14,12 +14,10 @@ mod pubsub;
 
 use std::{
     fmt::{self, Formatter},
-    marker::PhantomData,
     sync::Arc,
 };
 
 use alloy_primitives::U256;
-use base_common_rpc_types::BaseRpcTypes;
 use eyre::WrapErr;
 pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
 use reth_chainspec::{EthereumHardforks, Hardforks};
@@ -29,7 +27,7 @@ use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
     EthApiTypes, FromEvmError, FullEthApiServer, RpcConvert, RpcConverter, RpcNodeCore,
-    RpcNodeCoreExt, RpcTypes,
+    RpcNodeCoreExt,
     helpers::{
         EthApiSpec, EthFees, EthState, GetBlockAccessList, LoadFee, LoadPendingBlock, LoadState,
         SpawnBlocking, Trace, pending_block::BuildPendingEnv,
@@ -89,7 +87,7 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
     }
 
     /// Build a [`BaseEthApi`] using [`BaseEthApiBuilder`].
-    pub const fn builder() -> BaseEthApiBuilder<Rpc> {
+    pub const fn builder() -> BaseEthApiBuilder {
         BaseEthApiBuilder::new()
     }
 
@@ -114,7 +112,7 @@ where
     Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     type Error = BaseEthApiError;
-    type NetworkTypes = Rpc::Network;
+
     type RpcConvert = Rpc;
 
     fn converter(&self) -> &Self::RpcConvert {
@@ -311,8 +309,7 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApiInner<N, Rpc> {
 }
 
 /// Converter for Base RPC types.
-pub type BaseRpcConvert<N, NetworkT> = RpcConverter<
-    NetworkT,
+pub type BaseRpcConvert<N> = RpcConverter<
     <N as FullNodeComponents>::Evm,
     BaseReceiptConverter<<N as FullNodeTypes>::Provider>,
     (),
@@ -321,7 +318,7 @@ pub type BaseRpcConvert<N, NetworkT> = RpcConverter<
 
 /// Builds [`BaseEthApi`] for Base.
 #[derive(Debug)]
-pub struct BaseEthApiBuilder<NetworkT = BaseRpcTypes> {
+pub struct BaseEthApiBuilder {
     /// Sequencer client, configured to forward submitted transactions to sequencer of the given
     /// Base network.
     sequencer_url: Option<String>,
@@ -329,29 +326,25 @@ pub struct BaseEthApiBuilder<NetworkT = BaseRpcTypes> {
     sequencer_headers: Vec<String>,
     /// Minimum suggested priority fee (tip)
     min_suggested_priority_fee: u64,
-    /// Marker for network types.
-    _nt: PhantomData<NetworkT>,
 }
 
-impl<NetworkT> Default for BaseEthApiBuilder<NetworkT> {
+impl Default for BaseEthApiBuilder {
     fn default() -> Self {
         Self {
             sequencer_url: None,
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,
-            _nt: PhantomData,
         }
     }
 }
 
-impl<NetworkT> BaseEthApiBuilder<NetworkT> {
+impl BaseEthApiBuilder {
     /// Creates a [`BaseEthApiBuilder`] instance from core components.
     pub const fn new() -> Self {
         Self {
             sequencer_url: None,
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,
-            _nt: PhantomData,
         }
     }
 
@@ -374,18 +367,16 @@ impl<NetworkT> BaseEthApiBuilder<NetworkT> {
     }
 }
 
-impl<N, NetworkT> EthApiBuilder<N> for BaseEthApiBuilder<NetworkT>
+impl<N> EthApiBuilder<N> for BaseEthApiBuilder
 where
     N: FullNodeComponents<
             Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<alloy_consensus::Header>>,
             Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>,
         >,
-    NetworkT: RpcTypes,
-    BaseRpcConvert<N, NetworkT>: RpcConvert<Network = NetworkT>,
-    BaseEthApi<N, BaseRpcConvert<N, NetworkT>>:
-        FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
+    BaseRpcConvert<N>: RpcConvert,
+    BaseEthApi<N, BaseRpcConvert<N>>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
-    type EthApi = BaseEthApi<N, BaseRpcConvert<N, NetworkT>>;
+    type EthApi = BaseEthApi<N, BaseRpcConvert<N>>;
 
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;

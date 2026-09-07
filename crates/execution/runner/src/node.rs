@@ -11,7 +11,6 @@ use base_node_core::{
 };
 use reth_node_builder::node::{FullNodeTypes, NodeTypes};
 use reth_provider::providers::ProviderFactoryBuilder;
-use reth_rpc_api::eth::RpcTypes;
 
 use crate::BaseAddOnsBuilder;
 
@@ -105,7 +104,7 @@ impl BaseNode {
     }
 
     /// Returns [`BaseAddOnsBuilder`] with configured arguments.
-    pub fn add_ons_builder<NetworkT: RpcTypes>(&self) -> BaseAddOnsBuilder<NetworkT> {
+    pub fn add_ons_builder(&self) -> BaseAddOnsBuilder {
         BaseAddOnsBuilder::default()
             .with_sequencer(self.args.sequencer.clone())
             .with_sequencer_headers(self.args.sequencer_headers.clone())

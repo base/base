@@ -48,6 +48,7 @@ reth-tasks = { workspace = true, features = ["rayon"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-metrics = { workspace = true, features = ["common"] }
+base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 tower-http = { workspace = true, features = ["default", "full"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }

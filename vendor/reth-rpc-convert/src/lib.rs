@@ -10,7 +10,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-mod rpc;
 pub mod transaction;
 
 pub use alloy_evm::rpc::{CallFees, CallFeesError, EthTxEnvError, TryIntoTxEnv};
@@ -19,5 +18,4 @@ pub use reth_rpc_traits::{
     FromConsensusHeader, FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx,
     TxInfoMapper,
 };
-pub use rpc::*;
 pub use transaction::{RpcConvert, RpcConverter, TransactionConversionError};

@@ -9,16 +9,15 @@ use alloy_rpc_types_eth::{
         Params, PubSubSyncStatus, SubscriptionKind, SyncStatusMetadata, TransactionReceiptsParams,
     },
 };
+use base_common_rpc_types::{BaseHeaderResponse, BaseLogResponse};
 use futures::StreamExt;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink, server::SubscriptionMessage, types::ErrorObject,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_network_api::NetworkInfo;
-use reth_rpc_convert::RpcHeader;
 use reth_rpc_eth_api::{
-    RpcConvert, RpcLog, RpcNodeCore, RpcTransaction, helpers::EthSubscriptions,
-    pubsub::EthPubSubApiServer,
+    RpcConvert, RpcNodeCore, helpers::EthSubscriptions, pubsub::EthPubSubApiServer,
 };
 use reth_rpc_server_types::result::{internal_rpc_err, invalid_params_rpc_err};
 use reth_storage_api::BlockNumReader;
@@ -72,12 +71,12 @@ where
     }
 
     /// Returns a stream that yields new block headers.
-    pub fn new_headers_stream(&self) -> impl Stream<Item = RpcHeader<Eth::NetworkTypes>> {
+    pub fn new_headers_stream(&self) -> impl Stream<Item = BaseHeaderResponse> {
         self.inner.eth_api.header_stream()
     }
 
     /// Returns a stream that yields matching logs.
-    pub fn log_stream(&self, filter: Filter) -> impl Stream<Item = RpcLog<Eth::NetworkTypes>> {
+    pub fn log_stream(&self, filter: Filter) -> impl Stream<Item = BaseLogResponse> {
         self.inner.eth_api.log_stream(filter)
     }
 
@@ -210,7 +209,7 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Eth> EthPubSubApiServer<RpcTransaction<Eth::NetworkTypes>> for EthPubSub<Eth>
+impl<Eth> EthPubSubApiServer<base_common_rpc_types::Transaction> for EthPubSub<Eth>
 where
     Eth: EthSubscriptions,
 {

@@ -8,7 +8,7 @@ pub mod helpers;
 pub mod pubsub;
 pub mod sim_bundle;
 
-pub use core::{EthApi, EthApiFor};
+pub use core::EthApi;
 
 /// Implementation of `eth` namespace API.
 pub use builder::EthApiBuilder;

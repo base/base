@@ -8,12 +8,13 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, BlockHash, TxHash};
 use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_rpc_types::BaseTransactionReceipt;
 use derive_more::Constructor;
 use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_ethereum_primitives::Receipt;
 use reth_evm::{ConfigureEvm, EvmEnvFor};
 use reth_primitives_traits::{Block, IndexedTx, RecoveredBlock, SealedHeader};
-use reth_rpc_convert::{RpcConvert, RpcTypes};
+use reth_rpc_convert::RpcConvert;
 
 use crate::block::BlockAndReceipts;
 
@@ -149,7 +150,7 @@ impl PendingBlock {
         &self,
         tx_hash: TxHash,
         converter: &C,
-    ) -> Option<Result<<C::Network as RpcTypes>::Receipt, C::Error>>
+    ) -> Option<Result<BaseTransactionReceipt, C::Error>>
     where
         C: RpcConvert,
     {

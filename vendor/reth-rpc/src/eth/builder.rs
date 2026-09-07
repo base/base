@@ -2,17 +2,15 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_network::Ethereum;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_chainspec::ChainSpecProvider;
-use reth_rpc_convert::{RpcConvert, RpcConverter};
+use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
     RpcNodeCore, helpers::pending_block::PendingEnvBuilder, node::RpcNodeCoreAdapter,
 };
 use reth_rpc_eth_types::{
     EthStateCache, EthStateCacheConfig, FeeHistoryCache, FeeHistoryCacheConfig, ForwardConfig,
     GasCap, GasPriceOracle, GasPriceOracleConfig, builder::config::PendingBlockKind,
-    fee_history::fee_history_cache_new_blocks_task, receipt::EthReceiptConverter,
+    fee_history::fee_history_cache_new_blocks_task,
 };
 use reth_rpc_server_types::constants::{
     DEFAULT_ETH_PROOF_WINDOW, DEFAULT_MAX_BLOCKING_IO_REQUEST, DEFAULT_MAX_SIMULATE_BLOCKS,
@@ -52,14 +50,10 @@ pub struct EthApiBuilder<N: RpcNodeCore, Rpc, NextEnv = ()> {
     force_blob_sidecar_upcasting: bool,
 }
 
-impl<Provider, Pool, Network, EvmConfig, ChainSpec>
-    EthApiBuilder<
-        RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>,
-        RpcConverter<Ethereum, EvmConfig, EthReceiptConverter<ChainSpec>>,
-    >
+impl<Provider, Pool, Network, EvmConfig>
+    EthApiBuilder<RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>, ()>
 where
-    RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>:
-        RpcNodeCore<Provider: ChainSpecProvider<ChainSpec = ChainSpec>, Evm = EvmConfig>,
+    RpcNodeCoreAdapter<Provider, Pool, Network, EvmConfig>: RpcNodeCore<Evm = EvmConfig>,
 {
     /// Creates a new `EthApiBuilder` instance.
     pub fn new(provider: Provider, pool: Pool, network: Network, evm_config: EvmConfig) -> Self {
@@ -132,17 +126,16 @@ impl<N: RpcNodeCore, Rpc, NextEnv> EthApiBuilder<N, Rpc, NextEnv> {
     }
 }
 
-impl<N, ChainSpec> EthApiBuilder<N, RpcConverter<Ethereum, N::Evm, EthReceiptConverter<ChainSpec>>>
+impl<N> EthApiBuilder<N, ()>
 where
-    N: RpcNodeCore<Provider: ChainSpecProvider<ChainSpec = ChainSpec>>,
+    N: RpcNodeCore,
 {
-    /// Creates a new `EthApiBuilder` instance with the provided components.
+    /// Creates a builder with the provided components.
+    /// Attach a Base RPC converter with `with_rpc_converter` before building.
     pub fn new_with_components(components: N) -> Self {
-        let rpc_converter =
-            RpcConverter::new(EthReceiptConverter::new(components.provider().chain_spec()));
         Self {
             components,
-            rpc_converter,
+            rpc_converter: (),
             eth_cache: None,
             gas_oracle: None,
             gas_cap: GasCap::default(),

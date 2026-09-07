@@ -1,53 +1,15 @@
 //! Reth compatibility implementations for RPC types.
 
-use core::convert::Infallible;
-
-use alloy_consensus::{SignableTransaction, error::ValueError};
 use alloy_evm::{
     EvmEnv,
     env::BlockEnvironment,
     rpc::{EthTxEnvError, TryIntoTxEnv},
 };
-use alloy_network::TxSigner;
-use alloy_primitives::{Address, Bytes};
-use alloy_signer::Signature;
-use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope};
+use alloy_primitives::Bytes;
 use base_common_evm::BaseTransaction as BaseRevm;
-use reth_rpc_convert::{FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx};
 use revm::context::TxEnv;
 
-use crate::{
-    BaseHeaderResponse, BaseLogResponse, BaseTransactionReceipt, BaseTransactionRequest,
-    Transaction,
-};
-
-/// Base response types used by Reth's `eth_` RPC implementation.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct BaseRpcTypes;
-
-impl reth_rpc_convert::RpcTypes for BaseRpcTypes {
-    type Header = BaseHeaderResponse;
-    type Receipt = BaseTransactionReceipt;
-    type Log = BaseLogResponse;
-    type TransactionResponse = Transaction;
-    type TransactionRequest = BaseTransactionRequest;
-}
-
-impl FromConsensusTx<BaseTxEnvelope> for Transaction {
-    type TxInfo = BaseTransactionInfo;
-    type Err = Infallible;
-
-    fn from_consensus_tx(
-        tx: BaseTxEnvelope,
-        signer: Address,
-        tx_info: BaseTransactionInfo,
-    ) -> Result<Self, Infallible> {
-        Ok(Self::from_transaction(
-            alloy_consensus::transaction::Recovered::new_unchecked(tx, signer),
-            tx_info,
-        ))
-    }
-}
+use crate::BaseTransactionRequest;
 
 impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
     for BaseTransactionRequest
@@ -64,41 +26,9 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
     }
 }
 
-impl TryIntoSimTx<BaseTxEnvelope> for BaseTransactionRequest {
-    fn try_into_sim_tx(self) -> Result<BaseTxEnvelope, ValueError<Self>> {
-        let tx = self
-            .build_typed_tx()
-            .map_err(|request| ValueError::new(request, "Required fields missing"))?;
-
-        // Create an empty signature for the transaction.
-        let signature = Signature::new(Default::default(), Default::default(), false);
-
-        Ok(tx.into_signed(signature).into())
-    }
-}
-
-impl SignableTxRequest<BaseTxEnvelope> for BaseTransactionRequest {
-    async fn try_build_and_sign(
-        self,
-        signer: impl TxSigner<Signature> + Send,
-    ) -> Result<BaseTxEnvelope, SignTxRequestError> {
-        let mut tx =
-            self.build_typed_tx().map_err(|_| SignTxRequestError::InvalidTransactionRequest)?;
-
-        // sanity check: deposit transactions must not be signed by the user
-        if tx.is_deposit() {
-            return Err(SignTxRequestError::InvalidTransactionRequest);
-        }
-
-        let signature = signer.sign_transaction(&mut tx).await?;
-
-        Ok(tx.into_signed(signature).into())
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::address;
+    use alloy_primitives::{Address, address};
     use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Eip8130Signed};
     use base_common_evm::Eip8130ExecutionMode;
     use serde_json::json;

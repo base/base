@@ -12,11 +12,13 @@ use alloy_rpc_types_trace::{
 };
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_rpc_types::{
+    BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BaseTransactionRequest,
+};
 use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
 use reth_rpc_api::{EthApiServer, OtterscanServer};
-use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_api::{
-    FullEthApiTypes, RpcBlock, RpcHeader, RpcReceipt, RpcTransaction,
+    FullEthApiTypes,
     helpers::{EthTransactions, TraceExt},
 };
 use reth_rpc_eth_types::{EthApiError, utils::binary_search};
@@ -49,9 +51,9 @@ where
     /// Constructs a `BlockDetails` from a block and its receipts.
     fn block_details(
         &self,
-        block: RpcBlock<Eth::NetworkTypes>,
-        receipts: Vec<RpcReceipt<Eth::NetworkTypes>>,
-    ) -> RpcResult<BlockDetails<RpcHeader<Eth::NetworkTypes>>> {
+        block: BaseBlockResponse,
+        receipts: Vec<BaseTransactionReceipt>,
+    ) -> RpcResult<BlockDetails<BaseHeaderResponse>> {
         // blob fee is burnt, so we don't need to calculate it
         let total_fees = receipts
             .iter()
@@ -65,15 +67,15 @@ where
 }
 
 #[async_trait]
-impl<Eth> OtterscanServer<RpcTransaction<Eth::NetworkTypes>, RpcHeader<Eth::NetworkTypes>>
+impl<Eth> OtterscanServer<base_common_rpc_types::Transaction, BaseHeaderResponse>
     for OtterscanApi<Eth>
 where
     Eth: EthApiServer<
-            RpcTxReq<Eth::NetworkTypes>,
-            RpcTransaction<Eth::NetworkTypes>,
-            RpcBlock<Eth::NetworkTypes>,
-            RpcReceipt<Eth::NetworkTypes>,
-            RpcHeader<Eth::NetworkTypes>,
+            BaseTransactionRequest,
+            base_common_rpc_types::Transaction,
+            BaseBlockResponse,
+            BaseTransactionReceipt,
+            BaseHeaderResponse,
             BaseTxEnvelope,
         > + EthTransactions
         + TraceExt
@@ -83,7 +85,7 @@ where
     async fn get_header_by_number(
         &self,
         block_number: LenientBlockNumberOrTag,
-    ) -> RpcResult<Option<RpcHeader<Eth::NetworkTypes>>> {
+    ) -> RpcResult<Option<BaseHeaderResponse>> {
         self.eth.header_by_number(block_number.into()).await
     }
 
@@ -178,7 +180,7 @@ where
     async fn get_block_details(
         &self,
         block_number: LenientBlockNumberOrTag,
-    ) -> RpcResult<BlockDetails<RpcHeader<Eth::NetworkTypes>>> {
+    ) -> RpcResult<BlockDetails<BaseHeaderResponse>> {
         let block_number = block_number.into_inner();
         let block = self.eth.block_by_number(block_number, true);
         let block_id = block_number.into();
@@ -194,7 +196,7 @@ where
     async fn get_block_details_by_hash(
         &self,
         block_hash: B256,
-    ) -> RpcResult<BlockDetails<RpcHeader<Eth::NetworkTypes>>> {
+    ) -> RpcResult<BlockDetails<BaseHeaderResponse>> {
         let block = self.eth.block_by_hash(block_hash, true);
         let block_id = block_hash.into();
         let receipts = self.eth.block_receipts(block_id);
@@ -211,9 +213,8 @@ where
         block_number: LenientBlockNumberOrTag,
         page_number: usize,
         page_size: usize,
-    ) -> RpcResult<
-        OtsBlockTransactions<RpcTransaction<Eth::NetworkTypes>, RpcHeader<Eth::NetworkTypes>>,
-    > {
+    ) -> RpcResult<OtsBlockTransactions<base_common_rpc_types::Transaction, BaseHeaderResponse>>
+    {
         let block_number = block_number.into_inner();
         // retrieve full block and its receipts
         let block = self.eth.block_by_number(block_number, true);

@@ -29,7 +29,9 @@ alloy-signer = { workspace = true }
 alloy-network = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
+base-common-rpc-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [lints]
 workspace = true
@@ -37,6 +39,8 @@ workspace = true
 [features]
 default = ["std"]
 std = [
+    "base-common-consensus/std",
+    "base-common-rpc-types/std",
     "alloy-primitives/std",
     "alloy-consensus/std",
     "alloy-rpc-types-eth/std",

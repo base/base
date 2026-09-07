@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use alloy_consensus::{TxReceipt, transaction::TransactionMeta};
+use base_common_rpc_types::BaseTransactionReceipt;
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock};
 use reth_rpc_convert::{RpcConvert, transaction::ConvertReceiptInput};
@@ -12,7 +13,7 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{ProviderBlock, ProviderReceipt, ProviderTx};
 
-use crate::{EthApiTypes, RpcNodeCoreExt, RpcReceipt};
+use crate::{EthApiTypes, RpcNodeCoreExt};
 
 /// Assembles transaction receipt data w.r.t to network.
 ///
@@ -28,7 +29,7 @@ pub trait LoadReceipt: EthApiTypes<RpcConvert: RpcConvert> + RpcNodeCoreExt + Se
         receipt: ProviderReceipt<Self::Provider>,
         all_receipts: Option<Arc<Vec<ProviderReceipt<Self::Provider>>>>,
         block: Option<Arc<RecoveredBlock<ProviderBlock<Self::Provider>>>>,
-    ) -> impl Future<Output = Result<RpcReceipt<Self::NetworkTypes>, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<BaseTransactionReceipt, Self::Error>> + Send {
         async move {
             let hash = meta.block_hash;
             let (block, all_receipts) = match (block, all_receipts) {

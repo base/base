@@ -6,15 +6,15 @@ use alloy_consensus::{error::ValueError, transaction::Recovered};
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Log, TransactionInfo};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_rpc_types::{
+    BaseHeaderResponse, BaseLogResponse, BaseTransactionReceipt, BaseTransactionRequest,
+};
 use dyn_clone::DynClone;
 use reth_evm::{BlockEnvFor, ConfigureEvm, EvmEnvFor, SpecFor, TxEnvFor};
 use reth_primitives_traits::{SealedBlock, SealedHeader, TransactionMeta};
 use reth_rpc_traits::{FromConsensusHeader, FromConsensusTx, TryIntoSimTx, TxInfoMapper};
 
-use crate::{
-    RpcHeader, RpcLog, RpcReceipt, RpcTransaction, RpcTxReq, RpcTypes, SignableTxRequest,
-    TryIntoTxEnv,
-};
+use crate::TryIntoTxEnv;
 
 /// Input for [`RpcConvert::convert_receipts`].
 #[derive(Debug, Clone)]
@@ -125,10 +125,6 @@ pub trait RpcConvert: Send + Sync + Unpin + Debug + DynClone + 'static {
     /// The EVM configuration.
     type Evm: ConfigureEvm;
 
-    /// Associated upper layer JSON-RPC API network requests and responses to convert from and into
-    /// Base consensus types.
-    type Network: RpcTypes<TransactionRequest: SignableTxRequest<BaseTxEnvelope>>;
-
     /// An associated RPC conversion error.
     type Error: error::Error + Into<jsonrpsee_types::ErrorObject<'static>>;
 
@@ -138,7 +134,7 @@ pub trait RpcConvert: Send + Sync + Unpin + Debug + DynClone + 'static {
     fn fill_pending(
         &self,
         tx: Recovered<BaseTxEnvelope>,
-    ) -> Result<RpcTransaction<Self::Network>, Self::Error> {
+    ) -> Result<base_common_rpc_types::Transaction, Self::Error> {
         self.fill(tx, TransactionInfo::default())
     }
 
@@ -151,20 +147,20 @@ pub trait RpcConvert: Send + Sync + Unpin + Debug + DynClone + 'static {
         &self,
         tx: Recovered<BaseTxEnvelope>,
         tx_info: TransactionInfo,
-    ) -> Result<RpcTransaction<Self::Network>, Self::Error>;
+    ) -> Result<base_common_rpc_types::Transaction, Self::Error>;
 
     /// Builds a fake transaction from a transaction request for inclusion into block built in
     /// `eth_simulateV1`.
     fn build_simulate_v1_transaction(
         &self,
-        request: RpcTxReq<Self::Network>,
+        request: BaseTransactionRequest,
     ) -> Result<BaseTxEnvelope, Self::Error>;
 
     /// Creates a transaction environment for execution based on `request` with corresponding
     /// `cfg_env` and `block_env`.
     fn tx_env(
         &self,
-        request: RpcTxReq<Self::Network>,
+        request: BaseTransactionRequest,
         evm_env: &EvmEnvFor<Self::Evm>,
     ) -> Result<TxEnvFor<Self::Evm>, Self::Error>;
 
@@ -174,33 +170,33 @@ pub trait RpcConvert: Send + Sync + Unpin + Debug + DynClone + 'static {
         log: Log,
         receipt: &BaseReceipt,
         header: &reth_primitives_traits::SealedHeader,
-    ) -> Result<RpcLog<Self::Network>, Self::Error>;
+    ) -> Result<BaseLogResponse, Self::Error>;
 
     /// Converts a set of primitive receipts to RPC representations. It is guaranteed that all
     /// receipts are from the same block.
     fn convert_receipts(
         &self,
         receipts: Vec<ConvertReceiptInput<'_>>,
-    ) -> Result<Vec<RpcReceipt<Self::Network>>, Self::Error>;
+    ) -> Result<Vec<BaseTransactionReceipt>, Self::Error>;
 
     /// Converts primitive receipts from `block` to RPC representations.
     fn convert_receipts_with_block(
         &self,
         receipts: Vec<ConvertReceiptInput<'_>>,
         block: &SealedBlock<BaseBlock>,
-    ) -> Result<Vec<RpcReceipt<Self::Network>>, Self::Error>;
+    ) -> Result<Vec<BaseTransactionReceipt>, Self::Error>;
 
     /// Converts a primitive header to an RPC header.
     fn convert_header(
         &self,
         header: reth_primitives_traits::SealedHeader,
         block_size: usize,
-    ) -> Result<RpcHeader<Self::Network>, Self::Error>;
+    ) -> Result<BaseHeaderResponse, Self::Error>;
 }
 
 dyn_clone::clone_trait_object!(
-    <Network, Error, Evm>
-    RpcConvert<Network = Network, Error = Error, Evm = Evm>
+    <Error, Evm>
+    RpcConvert<Error = Error, Evm = Evm>
 );
 
 /// Converts `Tx` into `RpcTx`
@@ -406,17 +402,7 @@ pub enum TransactionConversionError {
 ///   implemented for a dedicated struct that is assigned to `Map`. If [`FromConsensusTx::TxInfo`]
 ///   is [`TransactionInfo`] then `()` can be used as `Map` which trivially passes over the input
 ///   object.
-pub struct RpcConverter<
-    Network,
-    Evm,
-    Receipt,
-    Header = (),
-    Map = (),
-    SimTx = (),
-    RpcTx = (),
-    TxEnv = (),
-> {
-    network: PhantomData<Network>,
+pub struct RpcConverter<Evm, Receipt, Header = (), Map = (), SimTx = (), RpcTx = (), TxEnv = ()> {
     evm: PhantomData<Evm>,
     receipt_converter: Receipt,
     header_converter: Header,
@@ -426,19 +412,18 @@ pub struct RpcConverter<
     rpc_tx_converter: RpcTx,
 }
 
-impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv> fmt::Debug
-    for RpcConverter<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
+impl<Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv> fmt::Debug
+    for RpcConverter<Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RpcConverter").finish_non_exhaustive()
     }
 }
 
-impl<Network, Evm, Receipt> RpcConverter<Network, Evm, Receipt> {
+impl<Evm, Receipt> RpcConverter<Evm, Receipt> {
     /// Creates a new [`RpcConverter`] with `receipt_converter` and `mapper`.
     pub const fn new(receipt_converter: Receipt) -> Self {
         Self {
-            network: PhantomData,
             evm: PhantomData,
             receipt_converter,
             header_converter: (),
@@ -450,45 +435,18 @@ impl<Network, Evm, Receipt> RpcConverter<Network, Evm, Receipt> {
     }
 }
 
-impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
-    RpcConverter<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
+impl<Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
+    RpcConverter<Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
 {
-    /// Converts the network type
-    pub fn with_network<N>(
-        self,
-    ) -> RpcConverter<N, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv> {
-        let Self {
-            receipt_converter,
-            header_converter,
-            mapper,
-            evm,
-            sim_tx_converter,
-            rpc_tx_converter,
-            tx_env_converter,
-            ..
-        } = self;
-        RpcConverter {
-            receipt_converter,
-            header_converter,
-            mapper,
-            network: Default::default(),
-            evm,
-            sim_tx_converter,
-            rpc_tx_converter,
-            tx_env_converter,
-        }
-    }
-
     /// Converts the transaction environment type.
     pub fn with_tx_env_converter<TxEnvNew>(
         self,
         tx_env_converter: TxEnvNew,
-    ) -> RpcConverter<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnvNew> {
+    ) -> RpcConverter<Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnvNew> {
         let Self {
             receipt_converter,
             header_converter,
             mapper,
-            network,
             evm,
             sim_tx_converter,
             rpc_tx_converter,
@@ -498,7 +456,6 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
             receipt_converter,
             header_converter,
             mapper,
-            network,
             evm,
             sim_tx_converter,
             rpc_tx_converter,
@@ -510,12 +467,11 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
     pub fn with_header_converter<HeaderNew>(
         self,
         header_converter: HeaderNew,
-    ) -> RpcConverter<Network, Evm, Receipt, HeaderNew, Map, SimTx, RpcTx, TxEnv> {
+    ) -> RpcConverter<Evm, Receipt, HeaderNew, Map, SimTx, RpcTx, TxEnv> {
         let Self {
             receipt_converter,
             header_converter: _,
             mapper,
-            network,
             evm,
             sim_tx_converter,
             rpc_tx_converter,
@@ -525,7 +481,6 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
             receipt_converter,
             header_converter,
             mapper,
-            network,
             evm,
             sim_tx_converter,
             rpc_tx_converter,
@@ -537,12 +492,11 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
     pub fn with_mapper<MapNew>(
         self,
         mapper: MapNew,
-    ) -> RpcConverter<Network, Evm, Receipt, Header, MapNew, SimTx, RpcTx, TxEnv> {
+    ) -> RpcConverter<Evm, Receipt, Header, MapNew, SimTx, RpcTx, TxEnv> {
         let Self {
             receipt_converter,
             header_converter,
             mapper: _,
-            network,
             evm,
             sim_tx_converter,
             rpc_tx_converter,
@@ -552,7 +506,6 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
             receipt_converter,
             header_converter,
             mapper,
-            network,
             evm,
             sim_tx_converter,
             rpc_tx_converter,
@@ -564,12 +517,11 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
     pub fn with_sim_tx_converter<SimTxNew>(
         self,
         sim_tx_converter: SimTxNew,
-    ) -> RpcConverter<Network, Evm, Receipt, Header, Map, SimTxNew, RpcTx, TxEnv> {
+    ) -> RpcConverter<Evm, Receipt, Header, Map, SimTxNew, RpcTx, TxEnv> {
         let Self {
             receipt_converter,
             header_converter,
             mapper,
-            network,
             evm,
             rpc_tx_converter,
             tx_env_converter,
@@ -579,7 +531,6 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
             receipt_converter,
             header_converter,
             mapper,
-            network,
             evm,
             sim_tx_converter,
             rpc_tx_converter,
@@ -591,12 +542,11 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
     pub fn with_rpc_tx_converter<RpcTxNew>(
         self,
         rpc_tx_converter: RpcTxNew,
-    ) -> RpcConverter<Network, Evm, Receipt, Header, Map, SimTx, RpcTxNew, TxEnv> {
+    ) -> RpcConverter<Evm, Receipt, Header, Map, SimTx, RpcTxNew, TxEnv> {
         let Self {
             receipt_converter,
             header_converter,
             mapper,
-            network,
             evm,
             sim_tx_converter,
             tx_env_converter,
@@ -606,7 +556,6 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
             receipt_converter,
             header_converter,
             mapper,
-            network,
             evm,
             sim_tx_converter,
             rpc_tx_converter,
@@ -617,13 +566,7 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
     /// Converts `self` into a boxed converter.
     pub fn erased(
         self,
-    ) -> Box<
-        dyn RpcConvert<
-                Network = <Self as RpcConvert>::Network,
-                Error = <Self as RpcConvert>::Error,
-                Evm = <Self as RpcConvert>::Evm,
-            >,
-    >
+    ) -> Box<dyn RpcConvert<Error = <Self as RpcConvert>::Error, Evm = <Self as RpcConvert>::Evm>>
     where
         Self: RpcConvert,
     {
@@ -631,8 +574,8 @@ impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
     }
 }
 
-impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv> Default
-    for RpcConverter<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
+impl<Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv> Default
+    for RpcConverter<Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
 where
     Receipt: Default,
     Header: Default,
@@ -643,7 +586,6 @@ where
 {
     fn default() -> Self {
         Self {
-            network: Default::default(),
             evm: Default::default(),
             receipt_converter: Default::default(),
             header_converter: Default::default(),
@@ -655,20 +597,11 @@ where
     }
 }
 
-impl<
-    Network,
-    Evm,
-    Receipt: Clone,
-    Header: Clone,
-    Map: Clone,
-    SimTx: Clone,
-    RpcTx: Clone,
-    TxEnv: Clone,
-> Clone for RpcConverter<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
+impl<Evm, Receipt: Clone, Header: Clone, Map: Clone, SimTx: Clone, RpcTx: Clone, TxEnv: Clone> Clone
+    for RpcConverter<Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
 {
     fn clone(&self) -> Self {
         Self {
-            network: Default::default(),
             evm: Default::default(),
             receipt_converter: self.receipt_converter.clone(),
             header_converter: self.header_converter.clone(),
@@ -680,14 +613,13 @@ impl<
     }
 }
 
-impl<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv> RpcConvert
-    for RpcConverter<Network, Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
+impl<Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv> RpcConvert
+    for RpcConverter<Evm, Receipt, Header, Map, SimTx, RpcTx, TxEnv>
 where
-    Network: RpcTypes<TransactionRequest: SignableTxRequest<BaseTxEnvelope>>,
     Evm: ConfigureEvm + 'static,
     Receipt: ReceiptConverter<
-            RpcReceipt = RpcReceipt<Network>,
-            RpcLog = RpcLog<Network>,
+            RpcReceipt = BaseTransactionReceipt,
+            RpcLog = BaseLogResponse,
             Error: From<TransactionConversionError>
                        + From<TxEnv::Error>
                        + From<<Map as TxInfoMapper<BaseTxEnvelope>>::Err>
@@ -703,25 +635,25 @@ where
         + Unpin
         + Clone
         + Debug,
-    Header: HeaderConverter<alloy_consensus::Header, RpcHeader<Network>>,
+    Header: HeaderConverter<alloy_consensus::Header, BaseHeaderResponse>,
     Map: TxInfoMapper<BaseTxEnvelope> + Clone + Debug + Unpin + Send + Sync + 'static,
-    SimTx: SimTxConverter<RpcTxReq<Network>, BaseTxEnvelope>,
+    SimTx: SimTxConverter<BaseTransactionRequest, BaseTxEnvelope>,
     RpcTx: RpcTxConverter<
             BaseTxEnvelope,
-            Network::TransactionResponse,
+            base_common_rpc_types::Transaction,
             <Map as TxInfoMapper<BaseTxEnvelope>>::Out,
         >,
-    TxEnv: TxEnvConverter<RpcTxReq<Network>, Evm>,
+    TxEnv: TxEnvConverter<BaseTransactionRequest, Evm>,
 {
     type Evm = Evm;
-    type Network = Network;
+
     type Error = Receipt::Error;
 
     fn fill(
         &self,
         tx: Recovered<BaseTxEnvelope>,
         tx_info: TransactionInfo,
-    ) -> Result<Network::TransactionResponse, Self::Error> {
+    ) -> Result<base_common_rpc_types::Transaction, Self::Error> {
         let (tx, signer) = tx.into_parts();
         let tx_info = self.mapper.try_map(&tx, tx_info)?;
 
@@ -730,7 +662,7 @@ where
 
     fn build_simulate_v1_transaction(
         &self,
-        request: RpcTxReq<Network>,
+        request: BaseTransactionRequest,
     ) -> Result<BaseTxEnvelope, Self::Error> {
         Ok(self
             .sim_tx_converter
@@ -740,7 +672,7 @@ where
 
     fn tx_env(
         &self,
-        request: RpcTxReq<Network>,
+        request: BaseTransactionRequest,
         evm_env: &EvmEnvFor<Evm>,
     ) -> Result<TxEnvFor<Evm>, Self::Error> {
         self.tx_env_converter.convert_tx_env(request, evm_env).map_err(Into::into)
@@ -751,14 +683,14 @@ where
         log: Log,
         receipt: &BaseReceipt,
         header: &reth_primitives_traits::SealedHeader,
-    ) -> Result<RpcLog<Self::Network>, Self::Error> {
+    ) -> Result<BaseLogResponse, Self::Error> {
         self.receipt_converter.convert_log(log, receipt, header)
     }
 
     fn convert_receipts(
         &self,
         receipts: Vec<ConvertReceiptInput<'_>>,
-    ) -> Result<Vec<RpcReceipt<Self::Network>>, Self::Error> {
+    ) -> Result<Vec<BaseTransactionReceipt>, Self::Error> {
         self.receipt_converter.convert_receipts(receipts)
     }
 
@@ -766,7 +698,7 @@ where
         &self,
         receipts: Vec<ConvertReceiptInput<'_>>,
         block: &SealedBlock<BaseBlock>,
-    ) -> Result<Vec<RpcReceipt<Self::Network>>, Self::Error> {
+    ) -> Result<Vec<BaseTransactionReceipt>, Self::Error> {
         self.receipt_converter.convert_receipts_with_block(receipts, block)
     }
 
@@ -774,7 +706,7 @@ where
         &self,
         header: reth_primitives_traits::SealedHeader,
         block_size: usize,
-    ) -> Result<RpcHeader<Self::Network>, Self::Error> {
+    ) -> Result<BaseHeaderResponse, Self::Error> {
         Ok(self.header_converter.convert_header(header, block_size)?)
     }
 }

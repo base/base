@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes,
@@ -76,20 +74,20 @@ where
     }
 }
 
-impl<N, NetworkT, RpcMiddleware>
+impl<N, RpcMiddleware>
     BaseAddOns<
         N,
-        BaseEthApiBuilder<NetworkT>,
+        BaseEthApiBuilder,
         BasePayloadValidatorBuilder,
         BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
         RpcMiddleware,
     >
 where
     N: FullNodeComponents<Types: BaseNodeTypes>,
-    BaseEthApiBuilder<NetworkT>: EthApiBuilder<N>,
+    BaseEthApiBuilder: EthApiBuilder<N>,
 {
     /// Build a [`BaseAddOns`] using [`BaseAddOnsBuilder`].
-    pub fn builder() -> BaseAddOnsBuilder<NetworkT> {
+    pub fn builder() -> BaseAddOnsBuilder {
         BaseAddOnsBuilder::default()
     }
 }
@@ -299,7 +297,7 @@ where
 /// A regular Base EVM and executor builder.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
+pub struct BaseAddOnsBuilder<RpcMiddleware = Identity> {
     /// Sequencer client, configured to forward submitted transactions to sequencer of the given
     /// Base network.
     sequencer_url: Option<String>,
@@ -309,8 +307,6 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     da_config: Option<BaseDAConfig>,
     /// Gas limit configuration for the payload builder.
     gas_limit_config: Option<GasLimitConfig>,
-    /// Marker for network types.
-    _nt: PhantomData<NetworkT>,
     /// Minimum suggested priority fee (tip)
     min_suggested_priority_fee: u64,
     /// RPC middleware to use
@@ -319,7 +315,7 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     tokio_runtime: Option<tokio::runtime::Handle>,
 }
 
-impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
+impl Default for BaseAddOnsBuilder {
     fn default() -> Self {
         Self {
             sequencer_url: None,
@@ -327,14 +323,13 @@ impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
             da_config: None,
             gas_limit_config: None,
             min_suggested_priority_fee: 1_000_000,
-            _nt: PhantomData,
             rpc_middleware: Identity::new(),
             tokio_runtime: None,
         }
     }
 }
 
-impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
+impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
     /// With a [`SequencerClient`].
     pub fn with_sequencer(mut self, sequencer_client: Option<String>) -> Self {
         self.sequencer_url = sequencer_client;
@@ -374,7 +369,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
     }
 
     /// Configure the RPC middleware to use
-    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOnsBuilder<NetworkT, T> {
+    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOnsBuilder<T> {
         let Self {
             sequencer_url,
             sequencer_headers,
@@ -382,7 +377,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             gas_limit_config,
             min_suggested_priority_fee,
             tokio_runtime,
-            _nt,
             ..
         } = self;
         BaseAddOnsBuilder {
@@ -391,21 +385,20 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             da_config,
             gas_limit_config,
             min_suggested_priority_fee,
-            _nt,
             rpc_middleware,
             tokio_runtime,
         }
     }
 }
 
-impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
+impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
     /// Builds an instance of [`BaseAddOns`].
     pub fn build<N, PVB, EB, EVB>(
         self,
-    ) -> BaseAddOns<N, BaseEthApiBuilder<NetworkT>, PVB, EB, EVB, RpcMiddleware>
+    ) -> BaseAddOns<N, BaseEthApiBuilder, PVB, EB, EVB, RpcMiddleware>
     where
         N: FullNodeComponents<Types: NodeTypes>,
-        BaseEthApiBuilder<NetworkT>: EthApiBuilder<N>,
+        BaseEthApiBuilder: EthApiBuilder<N>,
         PVB: PayloadValidatorBuilder<N> + Default,
         EB: Default,
         EVB: Default,

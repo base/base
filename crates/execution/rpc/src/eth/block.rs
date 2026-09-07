@@ -1,10 +1,10 @@
 //! Loads and formats Base block RPC response.
 
 use alloy_eips::BlockId;
-use base_common_rpc_types::BaseHeaderResponse;
+use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse};
 use reth_primitives_traits::AlloyBlockHeader;
 use reth_rpc_eth_api::{
-    EthApiTypes, FromEvmError, FullEthApiTypes, RpcBlock, RpcConvert, RpcHeader, RpcTypes,
+    EthApiTypes, FromEvmError, FullEthApiTypes, RpcConvert,
     helpers::{EthBlocks, LoadBlock},
 };
 
@@ -15,12 +15,11 @@ where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Error = BaseEthApiError>,
-    <Self as EthApiTypes>::NetworkTypes: RpcTypes<Header = BaseHeaderResponse>,
 {
     async fn rpc_block_header(
         &self,
         block_id: BlockId,
-    ) -> Result<Option<RpcHeader<Self::NetworkTypes>>, Self::Error>
+    ) -> Result<Option<BaseHeaderResponse>, Self::Error>
     where
         Self: FullEthApiTypes,
     {
@@ -41,7 +40,7 @@ where
         &self,
         block_id: BlockId,
         full: bool,
-    ) -> Result<Option<RpcBlock<Self::NetworkTypes>>, Self::Error>
+    ) -> Result<Option<BaseBlockResponse>, Self::Error>
     where
         Self: FullEthApiTypes,
     {

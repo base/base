@@ -44,4 +44,4 @@ pub use reth_rpc_eth_types::error::{
     AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError,
 };
 use reth_trie_common as _;
-pub use types::{EthApiTypes, FullEthApiTypes, RpcBlock, RpcHeader, RpcReceipt, RpcTransaction};
+pub use types::{EthApiTypes, FullEthApiTypes};

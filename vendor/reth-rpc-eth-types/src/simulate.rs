@@ -11,13 +11,14 @@ use alloy_rpc_types_eth::{
     state::StateOverride,
 };
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
 use reth_evm::{
     Evm, HaltReasonFor,
     execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutor},
 };
 use reth_primitives_traits::{BlockBody as _, Recovered, RecoveredBlock, SealedHeader};
-use reth_rpc_convert::{RpcBlock, RpcConvert, RpcTxReq};
+use reth_rpc_convert::RpcConvert;
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
 use reth_storage_api::{StateProvider, noop::NoopProvider};
 use revm::{
@@ -302,7 +303,7 @@ pub fn apply_precompile_overrides(
 pub fn execute_transactions<S, T>(
     mut builder: S,
     state_provider: impl StateProvider,
-    calls: Vec<RpcTxReq<T::Network>>,
+    calls: Vec<BaseTransactionRequest>,
     remaining_call_gas_limit: &mut Option<u64>,
     chain_id: u64,
     compute_state_root: bool,
@@ -413,7 +414,7 @@ where
 ///
 /// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
 pub fn resolve_transaction<DB: Database, T>(
-    mut tx: RpcTxReq<T::Network>,
+    mut tx: BaseTransactionRequest,
     default_gas_limit: u64,
     block_base_fee_per_gas: u64,
     chain_id: u64,
@@ -492,7 +493,7 @@ pub fn build_simulated_block<Err, T>(
     results: Vec<ExecutionResult<HaltReasonFor<T::Evm>>>,
     txs_kind: BlockTransactionsKind,
     converter: &T,
-) -> Result<SimulatedBlock<RpcBlock<T::Network>>, Err>
+) -> Result<SimulatedBlock<BaseBlockResponse>, Err>
 where
     Err: std::error::Error
         + FromEthApiError

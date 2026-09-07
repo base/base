@@ -13,6 +13,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
 };
+use base_common_rpc_types::BaseTransactionReceipt;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -21,8 +22,7 @@ use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::ChainSpecProvider;
 use reth_primitives_traits::{SignedTransaction, SignerRecoverable, WithEncoded};
 use reth_rpc_eth_api::{
-    EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, RpcReceipt,
-    TxInfoMapper,
+    EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, TxInfoMapper,
     helpers::{EthTransactions, LoadReceipt, LoadTransaction, SpawnBlocking, spec::SignersForRpc},
 };
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
@@ -44,7 +44,7 @@ where
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Error = BaseEthApiError>,
 {
-    fn signers(&self) -> &SignersForRpc<Self::Provider, Self::NetworkTypes> {
+    fn signers(&self) -> &SignersForRpc<Self::Provider> {
         self.inner.eth_api.signers()
     }
 
@@ -116,7 +116,7 @@ where
         &self,
         tx: Bytes,
         timeout_ms: Option<u64>,
-    ) -> impl Future<Output = Result<RpcReceipt<Self::NetworkTypes>, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<BaseTransactionReceipt, Self::Error>> + Send {
         let this = self.clone();
         let configured_timeout = self.send_raw_transaction_sync_timeout();
         // A positive per-request timeout may shorten, but never extend, the configured maximum.
@@ -168,8 +168,7 @@ where
     fn transaction_receipt(
         &self,
         hash: B256,
-    ) -> impl Future<Output = Result<Option<RpcReceipt<Self::NetworkTypes>>, Self::Error>> + Send
-    {
+    ) -> impl Future<Output = Result<Option<BaseTransactionReceipt>, Self::Error>> + Send {
         let this = self.clone();
         async move {
             let Some((tx, meta, receipt, all_receipts, block)) =
