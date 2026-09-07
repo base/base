@@ -59,7 +59,6 @@ alloy-rpc-types-engine = { workspace = true }
 reth-payload-primitives = { workspace = true }
 base-execution-chainspec = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
-reth-basic-payload-builder = { workspace = true }
 reth-consensus-debug-client = { workspace = true }
 reth-db = { workspace = true, features = ["mdbx"] }
 eyre = { workspace = true, features = ["default"] }
