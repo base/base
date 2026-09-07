@@ -129,10 +129,7 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
                 for block in block_state_calls {
                     let SimBlock { block_overrides, state_overrides, calls } = block;
 
-                    let attributes = this
-                        .pending_env_builder()
-                        .pending_env_attributes(&parent, block_overrides.as_ref())
-                        .map_err(BaseEthApiError::from_eth_err)?;
+                    let attributes = crate::BasePendingEnv::attributes(&parent);
 
                     let mut evm_env = this
                         .evm_config()

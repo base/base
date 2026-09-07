@@ -9,7 +9,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{B256, U256};
-use alloy_rpc_types_eth::{BlockNumberOrTag, BlockOverrides};
+use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_execution_chainspec::ChainSpecProvider;
 use futures::Future;
 use reth_chain_state::{BlockState, ExecutedBlock};
@@ -51,9 +51,6 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
     /// Data access in default (L1) trait method implementations.
     fn pending_block(&self) -> &Mutex<Option<PendingBlock>>;
 
-    /// Returns a [`PendingEnvBuilder`] for the pending block.
-    fn pending_env_builder(&self) -> &dyn PendingEnvBuilder;
-
     /// Returns the pending block kind
     fn pending_block_kind(&self) -> PendingBlockKind;
 
@@ -89,19 +86,11 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
 
         let evm_env = self
             .evm_config()
-            .next_evm_env(&latest, &self.next_env_attributes(&latest)?)
+            .next_evm_env(&latest, &crate::BasePendingEnv::attributes(&latest))
             .map_err(RethError::other)
             .map_err(BaseEthApiError::from_eth_err)?;
 
         Ok(PendingBlockEnv::new(evm_env, PendingBlockEnvOrigin::DerivedFromLatest(latest)))
-    }
-
-    /// Returns [`BaseNextBlockEnvAttributes`] for building a local pending block.
-    fn next_env_attributes(
-        &self,
-        parent: &SealedHeader<ProviderHeader<Self::Provider>>,
-    ) -> Result<BaseNextBlockEnvAttributes, BaseEthApiError> {
-        Ok(self.pending_env_builder().pending_env_attributes(parent, None)?)
     }
 
     /// Returns a [`StateProviderBox`] on a mem-pool built pending block overlaying latest.
@@ -255,7 +244,7 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
 
         let mut builder = self
             .evm_config()
-            .builder_for_next_block(&mut db, parent, self.next_env_attributes(parent)?)
+            .builder_for_next_block(&mut db, parent, crate::BasePendingEnv::attributes(parent))
             .map_err(RethError::other)
             .map_err(BaseEthApiError::from_eth_err)?;
 
@@ -441,20 +430,6 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
     }
 }
 
-/// A type that knows how to build a [`BaseNextBlockEnvAttributes`] for a pending block.
-pub trait PendingEnvBuilder: Send + Sync + Unpin + 'static {
-    /// Builds a [`BaseNextBlockEnvAttributes`] for a pending block.
-    ///
-    /// `block_overrides` can be used for values that need to be part of the next block context
-    /// before the EVM environment is constructed. Other block overrides are applied directly to the
-    /// EVM environment after construction.
-    fn pending_env_attributes(
-        &self,
-        parent: &SealedHeader<alloy_consensus::Header>,
-        block_overrides: Option<&BlockOverrides>,
-    ) -> Result<BaseNextBlockEnvAttributes, EthApiError>;
-}
-
 /// Constructs the pending block environment used by Base RPC handlers.
 #[derive(Debug)]
 pub struct BasePendingEnv;
@@ -472,16 +447,6 @@ impl BasePendingEnv {
             parent_beacon_block_root: parent.parent_beacon_block_root(),
             extra_data: parent.extra_data().clone(),
         }
-    }
-}
-
-impl PendingEnvBuilder for () {
-    fn pending_env_attributes(
-        &self,
-        parent: &SealedHeader<alloy_consensus::Header>,
-        _block_overrides: Option<&BlockOverrides>,
-    ) -> Result<BaseNextBlockEnvAttributes, EthApiError> {
-        Ok(BasePendingEnv::attributes(parent))
     }
 }
 

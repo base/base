@@ -4,10 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use reth_chain_state::CanonStateSubscriptions;
 use reth_evm::BaseEvmConfig;
-use reth_rpc_eth_api::{
-    BaseRpcConverter, RpcNodeCore, helpers::pending_block::PendingEnvBuilder,
-    node::RpcNodeCoreAdapter,
-};
+use reth_rpc_eth_api::{BaseRpcConverter, RpcNodeCore, node::RpcNodeCoreAdapter};
 use reth_rpc_eth_types::{
     EthStateCache, EthStateCacheConfig, FeeHistoryCache, FeeHistoryCacheConfig, ForwardConfig,
     GasCap, GasPriceOracle, GasPriceOracleConfig, builder::config::PendingBlockKind,
@@ -26,7 +23,7 @@ use crate::{EthApi, eth::core::EthApiInner};
 /// This builder type contains all settings to create an [`EthApiInner`] or an [`EthApi`] instance
 /// directly.
 #[derive(Debug)]
-pub struct EthApiBuilder<N: RpcNodeCore, NextEnv = ()> {
+pub struct EthApiBuilder<N: RpcNodeCore> {
     components: N,
     rpc_converter: BaseRpcConverter<N::Provider>,
     gas_cap: GasCap,
@@ -41,7 +38,6 @@ pub struct EthApiBuilder<N: RpcNodeCore, NextEnv = ()> {
     gas_oracle: Option<GasPriceOracle<N::Provider>>,
     blocking_task_pool: Option<BlockingTaskPool>,
     task_spawner: Runtime,
-    next_env: NextEnv,
     max_batch_size: usize,
     max_blocking_io_requests: usize,
     pending_block_kind: PendingBlockKind,
@@ -66,7 +62,7 @@ where
     }
 }
 
-impl<N: RpcNodeCore, NextEnv> EthApiBuilder<N, NextEnv> {
+impl<N: RpcNodeCore> EthApiBuilder<N> {
     /// Apply a function to the builder
     pub fn apply<F>(self, f: F) -> Self
     where
@@ -97,7 +93,6 @@ where
             task_spawner: Runtime::test(),
             gas_oracle_config: Default::default(),
             eth_state_cache_config: Default::default(),
-            next_env: Default::default(),
             max_batch_size: 1,
             max_blocking_io_requests: DEFAULT_MAX_BLOCKING_IO_REQUEST,
             pending_block_kind: PendingBlockKind::Full,
@@ -109,7 +104,7 @@ where
     }
 }
 
-impl<N, NextEnv> EthApiBuilder<N, NextEnv>
+impl<N> EthApiBuilder<N>
 where
     N: RpcNodeCore,
 {
@@ -123,61 +118,6 @@ where
     pub fn task_spawner(mut self, spawner: Runtime) -> Self {
         self.task_spawner = spawner;
         self
-    }
-
-    /// Changes the configured pending environment builder.
-    pub fn with_pending_env_builder<NextEnvNew>(
-        self,
-        next_env: NextEnvNew,
-    ) -> EthApiBuilder<N, NextEnvNew> {
-        let Self {
-            components,
-            rpc_converter,
-            gas_cap,
-            max_simulate_blocks,
-            compute_state_root_for_eth_simulate,
-            eth_proof_window,
-            fee_history_cache_config,
-            proof_permits,
-            eth_state_cache_config,
-            eth_cache,
-            gas_oracle,
-            blocking_task_pool,
-            task_spawner,
-            gas_oracle_config,
-            next_env: _,
-            max_batch_size,
-            max_blocking_io_requests,
-            pending_block_kind,
-            raw_tx_forwarder,
-            send_raw_transaction_sync_timeout,
-            evm_memory_limit,
-            force_blob_sidecar_upcasting,
-        } = self;
-        EthApiBuilder {
-            components,
-            rpc_converter,
-            gas_cap,
-            max_simulate_blocks,
-            compute_state_root_for_eth_simulate,
-            eth_proof_window,
-            fee_history_cache_config,
-            proof_permits,
-            eth_state_cache_config,
-            eth_cache,
-            gas_oracle,
-            blocking_task_pool,
-            task_spawner,
-            gas_oracle_config,
-            next_env,
-            max_batch_size,
-            max_blocking_io_requests,
-            pending_block_kind,
-            raw_tx_forwarder,
-            send_raw_transaction_sync_timeout,
-            evm_memory_limit,
-            force_blob_sidecar_upcasting,
-        }
     }
 
     /// Sets `eth_cache` config for the cache that will be used if no [`EthStateCache`] is
@@ -397,10 +337,7 @@ where
     ///
     /// This function panics if the blocking task pool cannot be built.
     /// This will panic if called outside the context of a Tokio runtime.
-    pub fn build_inner(self) -> EthApiInner<N>
-    where
-        NextEnv: PendingEnvBuilder,
-    {
+    pub fn build_inner(self) -> EthApiInner<N> {
         let Self {
             components,
             rpc_converter,
@@ -416,7 +353,6 @@ where
             fee_history_cache_config,
             proof_permits,
             task_spawner,
-            next_env,
             max_batch_size,
             max_blocking_io_requests,
             pending_block_kind,
@@ -469,7 +405,6 @@ where
             task_spawner,
             proof_permits,
             rpc_converter,
-            next_env,
             max_batch_size,
             max_blocking_io_requests,
             pending_block_kind,
@@ -488,10 +423,7 @@ where
     ///
     /// This function panics if the blocking task pool cannot be built.
     /// This will panic if called outside the context of a Tokio runtime.
-    pub fn build(self) -> EthApi<N>
-    where
-        NextEnv: PendingEnvBuilder,
-    {
+    pub fn build(self) -> EthApi<N> {
         EthApi { inner: Arc::new(self.build_inner()) }
     }
 

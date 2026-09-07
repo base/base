@@ -11,7 +11,7 @@ use derive_more::Deref;
 use reth_evm::BaseEvmConfig;
 use reth_rpc_eth_api::{
     BaseRpcConverter, EthApiTypes, RpcNodeCore,
-    helpers::{SpawnBlocking, pending_block::PendingEnvBuilder, spec::SignersForRpc},
+    helpers::{SpawnBlocking, spec::SignersForRpc},
     node::RpcNodeCoreExt,
 };
 use reth_rpc_eth_types::{
@@ -186,7 +186,6 @@ pub struct EthApiInner<N: RpcNodeCore> {
     converter: BaseRpcConverter<N::Provider>,
 
     /// Builder for pending block environment.
-    next_env_builder: Box<dyn PendingEnvBuilder>,
 
     /// Transaction batch sender for batching tx insertions
     tx_batch_sender:
@@ -227,7 +226,7 @@ where
         task_spawner: Runtime,
         proof_permits: usize,
         converter: BaseRpcConverter<N::Provider>,
-        next_env: impl PendingEnvBuilder,
+
         max_batch_size: usize,
         max_blocking_io_requests: usize,
         pending_block_kind: PendingBlockKind,
@@ -274,7 +273,7 @@ where
             raw_tx_sender,
             raw_tx_forwarder,
             converter,
-            next_env_builder: Box::new(next_env),
+
             tx_batch_sender,
             pending_block_kind,
             send_raw_transaction_sync_timeout,
@@ -311,13 +310,6 @@ where
     #[inline]
     pub const fn pending_block(&self) -> &Mutex<Option<PendingBlock>> {
         &self.pending_block
-    }
-
-    /// Returns a type that knows how to build a [`reth_evm::BaseNextBlockEnvAttributes`] for a
-    /// pending block.
-    #[inline]
-    pub const fn pending_env_builder(&self) -> &dyn PendingEnvBuilder {
-        &*self.next_env_builder
     }
 
     /// Returns a handle to the task spawner.

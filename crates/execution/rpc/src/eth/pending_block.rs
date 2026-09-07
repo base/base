@@ -3,7 +3,7 @@
 use alloy_eips::BlockNumberOrTag;
 use reth_rpc_eth_api::{
     FromEvmError, RpcNodeCore, RpcNodeCoreExt,
-    helpers::{LoadPendingBlock, SpawnBlocking, pending_block::PendingEnvBuilder},
+    helpers::{LoadPendingBlock, SpawnBlocking},
 };
 use reth_rpc_eth_types::{
     EthApiError, PendingBlock, block::BlockAndReceipts, builder::config::PendingBlockKind,
@@ -21,11 +21,6 @@ where
     #[inline]
     fn pending_block(&self) -> &tokio::sync::Mutex<Option<PendingBlock>> {
         self.inner.eth_api.pending_block()
-    }
-
-    #[inline]
-    fn pending_env_builder(&self) -> &dyn PendingEnvBuilder {
-        self.inner.eth_api.pending_env_builder()
     }
 
     #[inline]
