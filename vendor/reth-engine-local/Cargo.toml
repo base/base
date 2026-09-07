@@ -14,15 +14,12 @@ categories.workspace = true
 [dependencies]
 tokio = { workspace = true }
 futures-util = { workspace = true }
-reth-chainspec = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-payload-builder = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
-reth-ethereum-engine-primitives = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }

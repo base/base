@@ -32,7 +32,8 @@
 //! use alloy_primitives::B256;
 //! use reth_payload_builder::PayloadId;
 //! use alloy_primitives::U256;
-//! use reth_payload_builder::{EthBuiltPayload, PayloadBuilderError, KeepPayloadJobAlive, PayloadJob, PayloadJobGenerator, PayloadKind};
+//! use reth_engine_primitives::TestBuiltPayload;
+//! use reth_payload_builder::{PayloadBuilderError, KeepPayloadJobAlive, PayloadJob, PayloadJobGenerator, PayloadKind};
 //! use reth_primitives_traits::{RecoveredBlock, SealedBlock};
 //! use alloy_rpc_types::engine::PayloadAttributes;
 //! use reth_payload_builder::BuildNewPayload;
@@ -58,10 +59,10 @@
 //!
 //! impl PayloadJob for EmptyBlockPayloadJob {
 //!    type PayloadAttributes = PayloadAttributes;
-//!    type ResolvePayloadFuture = futures_util::future::Ready<Result<EthBuiltPayload, PayloadBuilderError>>;
-//!    type BuiltPayload = EthBuiltPayload;
+//!    type ResolvePayloadFuture = futures_util::future::Ready<Result<TestBuiltPayload, PayloadBuilderError>>;
+//!    type BuiltPayload = TestBuiltPayload;
 //!
-//! fn best_payload(&self) -> Result<EthBuiltPayload, PayloadBuilderError> {
+//! fn best_payload(&self) -> Result<TestBuiltPayload, PayloadBuilderError> {
 //!     // NOTE: some fields are omitted here for brevity
 //!     let block = Block {
 //!         header: Header {
@@ -73,7 +74,7 @@
 //!         ..Default::default()
 //!     };
 //!     let block = RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), vec![]);
-//!     let payload = EthBuiltPayload::new(Arc::new(block), U256::ZERO, None, None);
+//!     let payload = TestBuiltPayload::new(Arc::new(block), U256::ZERO, None, None);
 //!     Ok(payload)
 //! }
 //!
@@ -125,7 +126,6 @@ pub mod test_utils;
 pub use alloy_rpc_types::engine::PayloadId;
 // re-export the Ethereum engine primitives for convenience
 #[doc(inline)]
-pub use reth_ethereum_engine_primitives::{BlobSidecars, EthBuiltPayload};
 pub use reth_payload_builder_primitives::PayloadBuilderError;
 pub use reth_payload_primitives::PayloadKind;
 pub use service::{

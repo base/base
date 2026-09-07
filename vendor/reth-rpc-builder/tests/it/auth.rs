@@ -17,7 +17,7 @@ use jsonrpsee::{
     core::client::{ClientT, SubscriptionClientT},
     server::{HttpRequest, HttpResponse},
 };
-use reth_ethereum_engine_primitives::EthEngineTypes;
+use reth_engine_primitives::TestEngineTypes;
 use reth_ethereum_primitives::{Block, TransactionSigned};
 use reth_primitives_traits::block::Block as _;
 use reth_rpc_api::clients::EngineApiClient;
@@ -91,7 +91,7 @@ where
 #[expect(unused_must_use)]
 async fn test_basic_engine_calls<C>(client: &C)
 where
-    C: ClientT + SubscriptionClientT + Sync + EngineApiClient<EthEngineTypes>,
+    C: ClientT + SubscriptionClientT + Sync + EngineApiClient<TestEngineTypes>,
 {
     let block = Block::default().seal_slow();
     EngineApiClient::new_payload_v1(

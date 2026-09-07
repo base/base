@@ -75,7 +75,6 @@ reth-testing-utils = { workspace = true }
 reth-e2e-test-utils = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
-reth-ethereum-engine-primitives = { workspace = true }
 rand_08 = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 proptest = { workspace = true, features = ["default"] }
@@ -88,6 +87,7 @@ reth-exex-types = { workspace = true, features = ["default"] }
 reth-chain-state = { workspace = true, features = ["test-utils"] }
 reth-evm-ethereum = { workspace = true, features = ["test-utils"] }
 reth-consensus-common = { workspace = true, features = ["test-utils"] }
+reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 
 [features]

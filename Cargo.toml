@@ -444,7 +444,6 @@ reth-invalid-block-hooks = { path = "vendor/reth-invalid-block-hooks", default-f
 reth-basic-payload-builder = { path = "vendor/reth-basic-payload-builder", default-features = false }
 reth-consensus-debug-client = { path = "vendor/reth-consensus-debug-client", default-features = false }
 reth-payload-builder-primitives = { path = "vendor/reth-payload-builder-primitives", default-features = false }
-reth-ethereum-engine-primitives = { path = "vendor/reth-ethereum-engine-primitives", default-features = false }
 
 # tokio
 tokio = { version = "1.53.1", default-features = false }

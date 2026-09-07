@@ -9,15 +9,16 @@ use std::{
 
 use alloy_consensus::Block;
 use alloy_primitives::U256;
+use alloy_rpc_types::engine::PayloadAttributes as EthPayloadAttributes;
 use alloy_rpc_types::engine::PayloadId;
 use reth_chain_state::CanonStateNotification;
-use reth_ethereum_engine_primitives::EthPayloadAttributes;
+use reth_engine_primitives::TestBuiltPayload;
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{PayloadKind, PayloadTypes};
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 
 use crate::{
-    EthBuiltPayload, PayloadBuilderHandle, PayloadBuilderService, PayloadJob, PayloadJobGenerator,
+    PayloadBuilderHandle, PayloadBuilderService, PayloadJob, PayloadJobGenerator,
     service::BuildNewPayload, traits::KeepPayloadJobAlive,
 };
 
@@ -31,7 +32,7 @@ pub fn test_payload_service<T>() -> (
     PayloadBuilderHandle<T>,
 )
 where
-    T: PayloadTypes<PayloadAttributes = EthPayloadAttributes, BuiltPayload = EthBuiltPayload>
+    T: PayloadTypes<PayloadAttributes = EthPayloadAttributes, BuiltPayload = TestBuiltPayload>
         + 'static,
 {
     PayloadBuilderService::new(Default::default(), futures_util::stream::empty())
@@ -40,7 +41,7 @@ where
 /// Creates a new [`PayloadBuilderService`] for testing purposes and spawns it in the background.
 pub fn spawn_test_payload_service<T>() -> PayloadBuilderHandle<T>
 where
-    T: PayloadTypes<PayloadAttributes = EthPayloadAttributes, BuiltPayload = EthBuiltPayload>
+    T: PayloadTypes<PayloadAttributes = EthPayloadAttributes, BuiltPayload = TestBuiltPayload>
         + 'static,
 {
     let (service, handle) = test_payload_service();
@@ -82,11 +83,11 @@ impl Future for TestPayloadJob {
 impl PayloadJob for TestPayloadJob {
     type PayloadAttributes = EthPayloadAttributes;
     type ResolvePayloadFuture =
-        futures_util::future::Ready<Result<EthBuiltPayload, PayloadBuilderError>>;
-    type BuiltPayload = EthBuiltPayload;
+        futures_util::future::Ready<Result<TestBuiltPayload, PayloadBuilderError>>;
+    type BuiltPayload = TestBuiltPayload;
 
-    fn best_payload(&self) -> Result<EthBuiltPayload, PayloadBuilderError> {
-        Ok(EthBuiltPayload::new(
+    fn best_payload(&self) -> Result<TestBuiltPayload, PayloadBuilderError> {
+        Ok(TestBuiltPayload::new(
             Arc::new(RecoveredBlock::new_sealed(Block::<_>::default().seal_slow(), vec![])),
             U256::ZERO,
             Some(Default::default()),

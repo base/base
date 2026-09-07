@@ -266,3 +266,8 @@ pub trait PayloadValidator<Types: PayloadTypes>: Send + Sync + Unpin + 'static {
 pub mod test_utils;
 #[cfg(feature = "test-utils")]
 pub use test_utils::TestEngineValidator;
+
+#[cfg(feature = "test-utils")]
+mod test_payload;
+#[cfg(feature = "test-utils")]
+pub use test_payload::{TestBuiltPayload, TestEngineTypes};

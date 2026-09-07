@@ -1624,9 +1624,9 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use reth_chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
+    use reth_engine_primitives::TestEngineTypes;
     use reth_engine_primitives::test_utils::TestEngineValidator;
     use reth_engine_primitives::{BeaconEngineMessage, OnForkChoiceUpdated};
-    use reth_ethereum_engine_primitives::EthEngineTypes;
     use reth_ethereum_primitives::Block;
     use reth_network_api::{
         EthProtocolInfo, NetworkError, NetworkInfo, NetworkStatus, noop::NoopNetwork,
@@ -1643,7 +1643,7 @@ mod tests {
         EngineApiTestHandle,
         EngineApi<
             Arc<MockEthProvider>,
-            EthEngineTypes,
+            TestEngineTypes,
             NoopTransactionPool,
             TestEngineValidator,
             ChainSpec,
@@ -1724,7 +1724,7 @@ mod tests {
             commit: "defa64b2".to_string(),
         };
         let chain_spec: Arc<ChainSpec> = MAINNET.clone();
-        let payload_store = spawn_test_payload_service::<EthEngineTypes>();
+        let payload_store = spawn_test_payload_service::<TestEngineTypes>();
         let (to_engine, _engine_rx) = unbounded_channel();
         let api = EngineApi::new(
             provider.clone(),
@@ -1779,7 +1779,7 @@ mod tests {
             commit: "defa64b2".to_string(),
         };
         let chain_spec: Arc<ChainSpec> = MAINNET.clone();
-        let payload_store = spawn_test_payload_service::<EthEngineTypes>();
+        let payload_store = spawn_test_payload_service::<TestEngineTypes>();
         let (to_engine, _engine_rx) = unbounded_channel();
         let api = EngineApi::new(
             provider.clone(),
@@ -1820,7 +1820,7 @@ mod tests {
         #[allow(dead_code)]
         chain_spec: Arc<ChainSpec>,
         provider: Arc<MockEthProvider>,
-        from_api: UnboundedReceiver<BeaconEngineMessage<EthEngineTypes>>,
+        from_api: UnboundedReceiver<BeaconEngineMessage<TestEngineTypes>>,
     }
 
     #[tokio::test]
@@ -1843,7 +1843,7 @@ mod tests {
     async fn new_payload_v5_accepts_amsterdam_payloads() {
         let chain_spec = Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build());
         let provider = Arc::new(MockEthProvider::default());
-        let payload_store = spawn_test_payload_service::<EthEngineTypes>();
+        let payload_store = spawn_test_payload_service::<TestEngineTypes>();
         let (to_engine, mut engine_rx) = unbounded_channel();
 
         let api = EngineApi::new(
@@ -1945,8 +1945,8 @@ mod tests {
         let chain_spec: Arc<ChainSpec> =
             Arc::new(ChainSpecBuilder::mainnet().osaka_activated().build());
         let provider = Arc::new(MockEthProvider::default());
-        let payload_store = spawn_test_payload_service::<EthEngineTypes>();
-        let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage<EthEngineTypes>>();
+        let payload_store = spawn_test_payload_service::<TestEngineTypes>();
+        let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage<TestEngineTypes>>();
 
         let api = EngineApi::new(
             provider,
@@ -1976,8 +1976,8 @@ mod tests {
         let chain_spec: Arc<ChainSpec> =
             Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build());
         let provider = Arc::new(MockEthProvider::default());
-        let payload_store = spawn_test_payload_service::<EthEngineTypes>();
-        let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage<EthEngineTypes>>();
+        let payload_store = spawn_test_payload_service::<TestEngineTypes>();
+        let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage<TestEngineTypes>>();
 
         let api = EngineApi::new(
             provider,
@@ -2007,7 +2007,7 @@ mod tests {
         let chain_spec: Arc<ChainSpec> =
             Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build());
         let provider = Arc::new(MockEthProvider::default());
-        let payload_store = spawn_test_payload_service::<EthEngineTypes>();
+        let payload_store = spawn_test_payload_service::<TestEngineTypes>();
         let (to_engine, mut engine_rx) = unbounded_channel();
         let network = NoopNetwork::default();
         let cell_custody = network.cell_custody().clone();
@@ -2073,7 +2073,7 @@ mod tests {
         let chain_spec: Arc<ChainSpec> =
             Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build());
         let provider = Arc::new(MockEthProvider::default());
-        let payload_store = spawn_test_payload_service::<EthEngineTypes>();
+        let payload_store = spawn_test_payload_service::<TestEngineTypes>();
         let (to_engine, mut engine_rx) = unbounded_channel();
         let network = NoopNetwork::default();
         let cell_custody = network.cell_custody().clone();

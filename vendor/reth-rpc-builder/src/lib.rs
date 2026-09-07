@@ -1031,9 +1031,7 @@ where
                         // these are implementation specific and need to be handled during
                         // initialization and should be registered via extend_rpc_modules in the
                         // nodebuilder rpc addon stack
-                        RethRpcModule::Flashbots
-                        | RethRpcModule::Testing
-                        | RethRpcModule::Other(_) => Default::default(),
+                        RethRpcModule::Flashbots | RethRpcModule::Other(_) => Default::default(),
                     })
                     .clone()
             })

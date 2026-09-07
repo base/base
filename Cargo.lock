@@ -15821,14 +15821,11 @@ dependencies = [
 name = "reth-engine-local"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "eyre",
  "futures-util",
- "reth-chainspec",
  "reth-engine-primitives",
- "reth-ethereum-engine-primitives",
  "reth-payload-builder",
  "reth-payload-primitives",
  "reth-primitives-traits",
@@ -15900,7 +15897,6 @@ dependencies = [
  "reth-e2e-test-utils",
  "reth-engine-primitives",
  "reth-errors",
- "reth-ethereum-engine-primitives",
  "reth-ethereum-primitives",
  "reth-evm",
  "reth-evm-ethereum",
@@ -16037,22 +16033,6 @@ dependencies = [
  "reth-primitives-traits",
  "serde",
  "test-case",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "reth-ethereum-engine-primitives"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-rpc-types-engine",
- "reth-engine-primitives",
- "reth-ethereum-primitives",
- "reth-payload-primitives",
- "reth-primitives-traits",
- "serde",
- "serde_json",
  "thiserror 2.0.19",
 ]
 
@@ -16256,7 +16236,7 @@ dependencies = [
  "reth-consensus",
  "reth-db",
  "reth-db-common",
- "reth-ethereum-engine-primitives",
+ "reth-engine-primitives",
  "reth-ethereum-primitives",
  "reth-evm-ethereum",
  "reth-execution-types",
@@ -16633,7 +16613,6 @@ dependencies = [
  "reth-engine-primitives",
  "reth-engine-tree",
  "reth-engine-util",
- "reth-ethereum-engine-primitives",
  "reth-ethereum-primitives",
  "reth-evm",
  "reth-evm-ethereum",
@@ -16825,7 +16804,7 @@ dependencies = [
  "futures-util",
  "metrics",
  "reth-chain-state",
- "reth-ethereum-engine-primitives",
+ "reth-engine-primitives",
  "reth-execution-cache",
  "reth-metrics",
  "reth-payload-builder-primitives",
@@ -16948,8 +16927,8 @@ dependencies = [
  "reth-codecs",
  "reth-db",
  "reth-db-api",
+ "reth-engine-primitives",
  "reth-errors",
- "reth-ethereum-engine-primitives",
  "reth-ethereum-primitives",
  "reth-execution-types",
  "reth-fs-util",
@@ -17089,7 +17068,6 @@ dependencies = [
  "reth-db-api",
  "reth-engine-primitives",
  "reth-errors",
- "reth-ethereum-engine-primitives",
  "reth-ethereum-primitives",
  "reth-evm",
  "reth-evm-ethereum",
@@ -17099,7 +17077,6 @@ dependencies = [
  "reth-network-peers",
  "reth-network-types",
  "reth-node-api",
- "reth-payload-primitives",
  "reth-primitives-traits",
  "reth-provider",
  "reth-revm",
@@ -17178,7 +17155,6 @@ dependencies = [
  "reth-chainspec",
  "reth-consensus",
  "reth-engine-primitives",
- "reth-ethereum-engine-primitives",
  "reth-ethereum-primitives",
  "reth-evm",
  "reth-evm-ethereum",
@@ -17248,7 +17224,6 @@ dependencies = [
  "metrics",
  "reth-chainspec",
  "reth-engine-primitives",
- "reth-ethereum-engine-primitives",
  "reth-ethereum-primitives",
  "reth-metrics",
  "reth-network-api",

@@ -4,8 +4,8 @@ use alloy_rpc_types_engine::{ClientCode, ClientVersionV1};
 use reth_chainspec::MAINNET;
 use reth_consensus::noop::NoopConsensus;
 use reth_engine_primitives::ConsensusEngineHandle;
+use reth_engine_primitives::TestEngineTypes;
 use reth_engine_primitives::test_utils::TestEngineValidator;
-use reth_ethereum_engine_primitives::EthEngineTypes;
 use reth_ethereum_primitives::EthPrimitives;
 use reth_evm_ethereum::EthEvmConfig;
 use reth_network_api::noop::NoopNetwork;
@@ -47,7 +47,7 @@ where
     HttpMiddleware: RethAuthHttpMiddleware<RpcMiddleware>,
 {
     let (tx, _rx) = unbounded_channel();
-    let beacon_engine_handle = ConsensusEngineHandle::<EthEngineTypes>::new(tx);
+    let beacon_engine_handle = ConsensusEngineHandle::<TestEngineTypes>::new(tx);
     let client = ClientVersionV1 {
         code: ClientCode::RH,
         name: "Reth".to_string(),

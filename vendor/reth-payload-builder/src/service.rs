@@ -669,7 +669,8 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use alloy_primitives::Address;
-    use reth_ethereum_engine_primitives::{EthEngineTypes, EthPayloadAttributes};
+    use alloy_rpc_types::engine::PayloadAttributes as EthPayloadAttributes;
+    use reth_engine_primitives::TestEngineTypes;
 
     use super::*;
     use crate::test_utils::test_payload_service;
@@ -685,7 +686,7 @@ mod tests {
     #[test]
     fn payload_builder_lease_is_held_until_resolve_finishes() {
         tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
-            let (service, handle) = test_payload_service::<EthEngineTypes>();
+            let (service, handle) = test_payload_service::<TestEngineTypes>();
             let service = tokio::spawn(service);
             let dropped = Arc::new(AtomicBool::new(false));
             let lease = PayloadBuilderLease::new(DropProbe(Arc::clone(&dropped)));

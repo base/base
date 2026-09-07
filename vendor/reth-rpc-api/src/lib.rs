@@ -26,7 +26,6 @@ mod otterscan;
 mod reth;
 mod reth_engine;
 mod rpc;
-mod testing;
 mod trace;
 mod txpool;
 mod validation;
@@ -35,7 +34,6 @@ mod web3;
 pub use reth::RethJitAction;
 /// re-export of all server traits
 pub use servers::*;
-pub use testing::{TESTING_BUILD_BLOCK_V1, TESTING_COMMIT_BLOCK_V1, TestingBuildBlockRequestV1};
 
 /// Aggregates all server traits.
 pub mod servers {
@@ -57,7 +55,6 @@ pub mod servers {
         reth::RethApiServer,
         reth_engine::{RethEngineApiServer, RethNewPayloadInput, RethPayloadStatus},
         rpc::RpcApiServer,
-        testing::TestingApiServer,
         trace::TraceApiServer,
         txpool::TxPoolApiServer,
         validation::BlockSubmissionValidationApiServer,
@@ -90,7 +87,6 @@ pub mod clients {
         reth::RethApiClient,
         reth_engine::RethEngineApiClient,
         rpc::RpcApiClient,
-        testing::TestingApiClient,
         trace::TraceApiClient,
         txpool::TxPoolApiClient,
         validation::BlockSubmissionValidationApiClient,

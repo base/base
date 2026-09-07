@@ -79,11 +79,11 @@ secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"]
 tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thread"] }
 [dev-dependencies]
 reth-ethereum-primitives = { workspace = true }
-reth-ethereum-engine-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-evm-ethereum = { workspace = true, features = ["test-utils"] }
 reth-payload-builder = { workspace = true, features = ["test-utils"] }
+reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 [features]
 default = []
 js-tracer = [

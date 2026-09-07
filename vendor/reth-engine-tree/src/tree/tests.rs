@@ -14,6 +14,7 @@ use alloy_primitives::{
     map::{B256Map, B256Set},
 };
 use alloy_rlp::Decodable;
+use alloy_rpc_types_engine::PayloadAttributes as EthPayloadAttributes;
 use alloy_rpc_types_engine::{
     ExecutionData, ExecutionPayloadSidecar, ExecutionPayloadV1, ForkchoiceState,
     ForkchoiceUpdateError,
@@ -22,8 +23,8 @@ use assert_matches::assert_matches;
 use reth_chain_state::{BlockState, test_utils::TestBlockBuilder};
 use reth_chainspec::{ChainSpec, HOLESKY, MAINNET};
 use reth_consensus_common::test_utils::TestConsensus;
+use reth_engine_primitives::TestEngineTypes;
 use reth_engine_primitives::{EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook};
-use reth_ethereum_engine_primitives::{EthEngineTypes, EthPayloadAttributes};
 use reth_ethereum_primitives::{Block, EthPrimitives};
 use reth_evm_ethereum::MockEvmConfig;
 use reth_payload_builder::PayloadServiceCommand;
@@ -48,7 +49,7 @@ use crate::{
 #[derive(Debug, Clone)]
 struct MockEngineValidator;
 
-impl reth_engine_primitives::PayloadValidator<EthEngineTypes> for MockEngineValidator {
+impl reth_engine_primitives::PayloadValidator<TestEngineTypes> for MockEngineValidator {
     type Block = Block;
 
     fn convert_payload_to_block(
@@ -65,7 +66,7 @@ impl reth_engine_primitives::PayloadValidator<EthEngineTypes> for MockEngineVali
     }
 }
 
-impl EngineApiValidator<EthEngineTypes> for MockEngineValidator {
+impl EngineApiValidator<TestEngineTypes> for MockEngineValidator {
     fn validate_version_specific_fields(
         &self,
         _version: reth_payload_primitives::EngineApiMessageVersion,
@@ -147,15 +148,15 @@ struct TestHarness {
     tree: EngineApiTreeHandler<
         EthPrimitives,
         MockEthProvider,
-        EthEngineTypes,
+        TestEngineTypes,
         BasicEngineValidator<MockEthProvider, MockEvmConfig, MockEngineValidator>,
         MockEvmConfig,
     >,
     to_tree_tx: crossbeam_channel::Sender<
-        FromEngine<EngineApiRequest<EthEngineTypes, EthPrimitives>, Block>,
+        FromEngine<EngineApiRequest<TestEngineTypes, EthPrimitives>, Block>,
     >,
     from_tree_rx: UnboundedReceiver<EngineApiEvent>,
-    payload_command_rx: UnboundedReceiver<PayloadServiceCommand<EthEngineTypes>>,
+    payload_command_rx: UnboundedReceiver<PayloadServiceCommand<TestEngineTypes>>,
     blocks: Vec<ExecutedBlock>,
     action_rx: Receiver<PersistenceAction>,
     block_builder: TestBlockBuilder,

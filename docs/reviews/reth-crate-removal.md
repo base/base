@@ -36,15 +36,11 @@ Base supplies `BaseExecutorProvider`, but shared crates still reference `EthEvmC
 
 Remove the Ethereum conveniences, make shared APIs accept their EVM explicitly, and migrate fixtures. The **generic transaction validator and RPC internals must survive**. `BaseTransactionValidator` wraps `EthTransactionValidator`, and Base RPC uses `reth_rpc::eth::core::EthApiInner`.
 
-### `reth-ethereum-engine-primitives`
+### `reth-ethereum-engine-primitives` (completed)
 
-Remaining production edges include:
+Deleted the crate and its production payload-builder re-exports. Shared provider, engine, and payload scheduling tests use feature-gated `TestEngineTypes` and `TestBuiltPayload` fixtures in `reth-engine-primitives`.
 
-- `reth-payload-builder/src/lib.rs`: re-exports of `BlobSidecars` and `EthBuiltPayload`.
-- `reth-engine-local/src/payload.rs`: Ethereum local payload attributes builder. Base already supplies `BaseLocalPayloadAttributesBuilder`.
-- `reth-rpc/src/testing.rs`: Ethereum payload construction and default engine types. Wiring for this testing API lives in the Ethereum node implementation.
-
-Remove unused exports and Ethereum-specific builders/testing RPC code, then replace the provider/payload/engine/RPC test defaults. Keep `reth-engine-primitives` and `reth-payload-primitives`: their generic handles, validation, payload contracts, and engine messages are active Base infrastructure.
+Removed the unused Ethereum local payload-attribute builder and the Ethereum-only testing RPC implementation, API definitions, namespace variant, flags, and E2E helper. Base keeps its local payload-attribute builder and engine payload types.
 
 ## Capabilities that are not obsolete just because Base is the only network
 
@@ -122,7 +118,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-eth-wire](../../vendor/reth-eth-wire/Cargo.toml) | Retain shared infrastructure |
 | [reth-eth-wire-types](../../vendor/reth-eth-wire-types/Cargo.toml) | Retain shared infrastructure |
 | `reth-ethereum-consensus` | Deleted after fixture migration |
-| [reth-ethereum-engine-primitives](../../vendor/reth-ethereum-engine-primitives/Cargo.toml) | Remove after Ethereum implementation cleanup |
+| `reth-ethereum-engine-primitives` | Deleted; test payload fixtures retained behind test-utils |
 | [reth-ethereum-forks](../../vendor/reth-ethereum-forks/Cargo.toml) | Consolidate; retain required code |
 | `reth-ethereum-payload-builder` | Deleted after fixture migration |
 | [reth-ethereum-primitives](../../vendor/reth-ethereum-primitives/Cargo.toml) | Consolidate; retain required code |

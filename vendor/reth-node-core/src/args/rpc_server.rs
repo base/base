@@ -670,21 +670,6 @@ pub struct RpcServerArgs {
     )]
     pub rpc_send_raw_transaction_sync_timeout: Duration,
 
-    /// Skip invalid transactions in `testing_buildBlockV1` instead of failing.
-    ///
-    /// When enabled, transactions that fail execution will be skipped, and all subsequent
-    /// transactions from the same sender will also be skipped.
-    #[arg(long = "testing.skip-invalid-transactions", default_value_t = false)]
-    pub testing_skip_invalid_transactions: bool,
-
-    /// Override the gas limit used by `testing_buildBlockV1`.
-    ///
-    /// When set, `testing_buildBlockV1` will use this exact value instead of moving toward the
-    /// payload builder's configured gas limit. Accepts short notation: K for thousand, M for
-    /// million, G for billion (e.g., 1G = 1 billion).
-    #[arg(long = "testing.gas-limit", value_name = "GAS_LIMIT", hide = true)]
-    pub testing_gas_limit: Option<u64>,
-
     /// Force upcasting EIP-4844 blob sidecars to EIP-7594 format when Osaka is active.
     ///
     /// When enabled, blob transactions submitted via `eth_sendRawTransaction` with EIP-4844
@@ -926,8 +911,6 @@ impl Default for RpcServerArgs {
             rpc_state_cache,
             gas_price_oracle,
             rpc_send_raw_transaction_sync_timeout,
-            testing_skip_invalid_transactions: false,
-            testing_gas_limit: None,
             rpc_force_blob_sidecar_upcasting: false,
         }
     }
@@ -1118,8 +1101,6 @@ mod tests {
                 default_suggested_fee: None,
             },
             rpc_send_raw_transaction_sync_timeout: std::time::Duration::from_secs(30),
-            testing_skip_invalid_transactions: true,
-            testing_gas_limit: None,
             rpc_force_blob_sidecar_upcasting: false,
         };
 
@@ -1211,7 +1192,6 @@ mod tests {
             "60",
             "--rpc.send-raw-transaction-sync-timeout",
             "30s",
-            "--testing.skip-invalid-transactions",
         ])
         .args;
 

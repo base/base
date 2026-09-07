@@ -9,7 +9,5 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod miner;
-pub mod payload;
 
 pub use miner::{DEFAULT_FINALITY_DEPTH, LocalMiner, MiningMode};
-pub use payload::LocalPayloadAttributesBuilder;

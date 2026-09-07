@@ -323,7 +323,7 @@ mod test {
     use reth_chainspec::ChainSpec;
     use reth_consensus::noop::NoopConsensus;
     use reth_db_api::mock::DatabaseMock;
-    use reth_ethereum_engine_primitives::EthEngineTypes;
+    use reth_engine_primitives::TestEngineTypes;
     use reth_ethereum_primitives::EthPrimitives;
     use reth_evm::noop::NoopEvmConfig;
     use reth_evm_ethereum::MockEvmConfig;
@@ -344,7 +344,7 @@ mod test {
     fn test_noop_components() {
         let components = Components::<
             FullNodeTypesAdapter<
-                AnyNodeTypes<EthPrimitives, ChainSpec, EthStorage, EthEngineTypes>,
+                AnyNodeTypes<EthPrimitives, ChainSpec, EthStorage, TestEngineTypes>,
                 DatabaseMock,
                 NoopProvider,
             >,
@@ -357,7 +357,7 @@ mod test {
             evm_config: NoopEvmConfig::default(),
             consensus: NoopConsensus::default(),
             network: NoopNetwork::default(),
-            payload_builder_handle: PayloadBuilderHandle::<EthEngineTypes>::noop(),
+            payload_builder_handle: PayloadBuilderHandle::<TestEngineTypes>::noop(),
         };
 
         let task_executor = Runtime::test();

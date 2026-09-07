@@ -44,7 +44,6 @@ reth-payload-primitives = { workspace = true, features = ["default"] }
 assert_matches = { workspace = true }
 reth-testing-utils = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
-reth-ethereum-engine-primitives = { workspace = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 reth-tasks = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }

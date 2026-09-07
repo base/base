@@ -26,7 +26,7 @@ use reth_db::{
     },
 };
 use reth_db_common::init::init_genesis;
-use reth_ethereum_engine_primitives::EthEngineTypes;
+use reth_engine_primitives::TestEngineTypes;
 use reth_ethereum_primitives::EthPrimitives;
 use reth_evm_ethereum::MockEvmConfig;
 use reth_execution_types::Chain;
@@ -55,7 +55,7 @@ impl NodeTypes for TestNode {
     type Primitives = EthPrimitives;
     type ChainSpec = ChainSpec;
     type Storage = EthStorage;
-    type Payload = EthEngineTypes;
+    type Payload = TestEngineTypes;
 }
 
 /// A shared [`TempDatabase`] used for testing
@@ -181,7 +181,7 @@ pub async fn test_exex_context_with_chain_spec(
     let task_executor = runtime.clone();
     runtime.spawn_task(network_manager);
 
-    let (_, payload_builder_handle) = NoopPayloadBuilderService::<EthEngineTypes>::new();
+    let (_, payload_builder_handle) = NoopPayloadBuilderService::<TestEngineTypes>::new();
 
     let components = NodeAdapter::<FullNodeTypesAdapter<_, _, _>, _> {
         components: Components {
