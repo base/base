@@ -1,6 +1,6 @@
 //! Traits for configuring a node.
 
-use std::{fmt::Debug, future::Future, marker::PhantomData};
+use std::{fmt::Debug, future::Future};
 
 use alloy_rpc_types_engine::JwtSecret;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
@@ -12,29 +12,6 @@ use reth_provider::FullProvider;
 use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
 
-/// Database and state provider backends used by the node.
-///
-/// Its types are configured by node internally and are not intended to be user configurable.
-pub trait FullNodeTypes: Clone + Debug + Send + Sync + Unpin + 'static {
-    /// Underlying database type used by the node to store and retrieve data.
-    type DB: Database + DatabaseMetrics + Clone + Unpin + 'static;
-    /// The provider type used to interact with the node.
-    type Provider: FullProvider<Self::DB>;
-}
-
-/// An adapter type that adds the builtin provider type to the user configured node types.
-#[derive(Clone, Debug)]
-pub struct FullNodeTypesAdapter<DB, Provider>(PhantomData<(DB, Provider)>);
-
-impl<DB, Provider> FullNodeTypes for FullNodeTypesAdapter<DB, Provider>
-where
-    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    Provider: FullProvider<DB>,
-{
-    type DB = DB;
-    type Provider = Provider;
-}
-
 /// Base's transaction pool with its production disk blob store.
 pub type BaseNodePool<Provider> = base_execution_txpool::BaseTransactionPool<
     Provider,
@@ -42,7 +19,12 @@ pub type BaseNodePool<Provider> = base_execution_txpool::BaseTransactionPool<
 >;
 
 /// Encapsulates all types and components of the node.
-pub trait FullNodeComponents: FullNodeTypes + Clone + 'static {
+pub trait FullNodeComponents: Clone + Debug + Send + Sync + Unpin + 'static {
+    /// Underlying database used by the node.
+    type DB: Database + DatabaseMetrics + Clone + Unpin + 'static;
+    /// State access interface exposed by the node.
+    type Provider: FullProvider<Self::DB>;
+
     /// Returns the transaction pool of the node.
     fn pool(&self) -> &BaseNodePool<Self::Provider>;
 

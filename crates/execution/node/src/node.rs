@@ -31,6 +31,7 @@ use base_execution_txpool::{
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::BaseFeeParams;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
 use reth_network_peers::NodeRecord;
@@ -38,7 +39,6 @@ use reth_node_api::{FullNodeComponents, NodeAddOns, PayloadAttributesBuilder};
 use reth_node_builder::{
     BuilderContext, DebugNodeConfig, NodeAdapter,
     components::{PoolBuilderConfigOverrides, spawn_maintenance_tasks},
-    node::FullNodeTypes,
     rpc::{
         Identity, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext,
         RpcHandle,
@@ -46,7 +46,7 @@ use reth_node_builder::{
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::SealedHeader;
-use reth_provider::providers::ProviderFactoryBuilder;
+use reth_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_eth_api::FullEthApiServer;
 use reth_rpc_server_types::RethRpcModule;
@@ -186,9 +186,9 @@ impl BaseNode {
     }
 
     /// Returns the components for the given [`RollupArgs`].
-    pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
+    pub fn components<DB>(&self) -> BaseNodeComponentBuilder<DB>
     where
-        Node: FullNodeTypes,
+        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     {
         let RollupArgs {
             discovery_v4,
@@ -729,13 +729,15 @@ where
     T: EthPoolTransaction<Consensus = BaseTxEnvelope> + BasePooledTx + TimestampedTransaction,
 {
     /// Builds the Base pool and starts its maintenance and invalidation tasks.
-    pub async fn build_pool<Node>(
+    pub async fn build_pool<DB>(
         self,
-        ctx: &BuilderContext<Node>,
+        ctx: &BuilderContext<DB>,
         evm_config: BaseEvmConfig,
-    ) -> eyre::Result<BaseTransactionPool<Node::Provider, DiskFileBlobStore, T, BaseOrdering<T>>>
+    ) -> eyre::Result<
+        BaseTransactionPool<BlockchainProvider<DB>, DiskFileBlobStore, T, BaseOrdering<T>>,
+    >
     where
-        Node: FullNodeTypes,
+        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     {
         let Self {
             pool_config_overrides,
@@ -1043,12 +1045,12 @@ impl BaseNetworkBuilder {
     /// Returns the [`NetworkConfig`] that contains the settings to launch the p2p network.
     ///
     /// This applies the configured [`BaseNetworkBuilder`] settings.
-    pub fn network_config<Node>(
+    pub fn network_config<DB>(
         &self,
-        ctx: &BuilderContext<Node>,
-    ) -> eyre::Result<NetworkConfig<Node::Provider>>
+        ctx: &BuilderContext<DB>,
+    ) -> eyre::Result<NetworkConfig<BlockchainProvider<DB>>>
     where
-        Node: FullNodeTypes,
+        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     {
         let discovery_config = BaseDiscoveryConfig::new(self.disable_discovery_v4);
         let args = &ctx.config().network;
@@ -1083,13 +1085,13 @@ impl BaseNetworkBuilder {
 
 impl BaseNetworkBuilder {
     /// Starts the Base network and its transaction-pool services.
-    pub async fn build_network<Node>(
+    pub async fn build_network<DB>(
         self,
-        ctx: &BuilderContext<Node>,
-        pool: crate::BaseNodePool<Node>,
+        ctx: &BuilderContext<DB>,
+        pool: crate::BaseNodePool<DB>,
     ) -> eyre::Result<NetworkHandle>
     where
-        Node: FullNodeTypes,
+        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     {
         let network_config = self.network_config(ctx)?;
         let network = NetworkManager::builder(network_config).await?;

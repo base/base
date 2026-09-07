@@ -5,13 +5,14 @@
 //! The node builder process is essentially a state machine that transitions through various states
 //! before the node can be launched.
 
-use std::{fmt, fmt::Debug, future::Future};
+use std::{fmt::Debug, future::Future};
 
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_evm::BaseEvmConfig;
 use reth_exex::ExExContext;
-use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeAddOns};
+use reth_node_api::{FullNodeComponents, NodeAddOns};
 use reth_node_core::node_config::NodeConfig;
-use reth_provider::providers::RocksDBProvider;
+use reth_provider::providers::{BlockchainProvider, RocksDBProvider};
 use reth_tasks::TaskExecutor;
 
 use crate::{
@@ -23,35 +24,35 @@ use crate::{
 };
 
 /// A node builder that also has the configured types.
-pub struct NodeBuilderWithProvider<T: FullNodeTypes> {
+pub struct NodeBuilderWithProvider<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
     /// All settings for how the node should be configured.
     config: NodeConfig,
     /// The configured database for the node.
-    adapter: NodeTypesAdapter<T>,
+    database: DB,
     /// An optional [`RocksDBProvider`] to use instead of creating one during launch.
     rocksdb_provider: Option<RocksDBProvider>,
 }
 
-impl<T: FullNodeTypes> NodeBuilderWithProvider<T> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> NodeBuilderWithProvider<DB> {
     /// Creates a new instance of the node builder with the given configuration and types.
     pub const fn new(
         config: NodeConfig,
-        database: T::DB,
+        database: DB,
         rocksdb_provider: Option<RocksDBProvider>,
     ) -> Self {
-        Self { config, adapter: NodeTypesAdapter::new(database), rocksdb_provider }
+        Self { config, database, rocksdb_provider }
     }
 
     /// Advances the state of the node builder to the next state where all components are configured
     pub fn with_components(
         self,
-        components_builder: ComponentBuilder<T>,
-    ) -> NodeBuilderWithComponents<T, ()> {
-        let Self { config, adapter, rocksdb_provider } = self;
+        components_builder: ComponentBuilder<DB>,
+    ) -> NodeBuilderWithComponents<DB, ()> {
+        let Self { config, database, rocksdb_provider } = self;
 
         NodeBuilderWithComponents {
             config,
-            adapter,
+            database,
             rocksdb_provider,
             components_builder,
             add_ons: AddOns { hooks: NodeHooks::default(), exexs: Vec::new(), add_ons: () },
@@ -59,43 +60,23 @@ impl<T: FullNodeTypes> NodeBuilderWithProvider<T> {
     }
 }
 
-/// Container for the node's types and the database the node uses.
-pub struct NodeTypesAdapter<T: FullNodeTypes> {
-    /// The database type used by the node.
-    pub database: T::DB,
-}
-
-impl<T: FullNodeTypes> NodeTypesAdapter<T> {
-    /// Create a new adapter from the given node types.
-    pub(crate) const fn new(database: T::DB) -> Self {
-        Self { database }
-    }
-}
-
-impl<T: FullNodeTypes> fmt::Debug for NodeTypesAdapter<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NodeTypesAdapter").field("db", &"...").field("types", &"...").finish()
-    }
-}
-
 /// Container for the node's types and the components and other internals that can be used by
 /// addons of the node.
 #[derive(Debug)]
-pub struct NodeAdapter<T: FullNodeTypes> {
+pub struct NodeAdapter<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
     /// The components of the node.
-    pub components: Components<T>,
+    pub components: Components<DB>,
     /// The task executor for the node.
     pub task_executor: TaskExecutor,
     /// The provider of the node.
-    pub provider: T::Provider,
+    pub provider: BlockchainProvider<DB>,
 }
 
-impl<T: FullNodeTypes> FullNodeTypes for NodeAdapter<T> {
-    type DB = T::DB;
-    type Provider = T::Provider;
-}
-
-impl<T: FullNodeTypes> FullNodeComponents for NodeAdapter<T> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> FullNodeComponents
+    for NodeAdapter<DB>
+{
+    type DB = DB;
+    type Provider = BlockchainProvider<DB>;
     fn pool(&self) -> &reth_node_api::BaseNodePool<Self::Provider> {
         &self.components.transaction_pool
     }
@@ -125,7 +106,7 @@ impl<T: FullNodeTypes> FullNodeComponents for NodeAdapter<T> {
     }
 }
 
-impl<T: FullNodeTypes> Clone for NodeAdapter<T> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Clone for NodeAdapter<DB> {
     fn clone(&self) -> Self {
         Self {
             components: self.components.clone(),
@@ -138,38 +119,38 @@ impl<T: FullNodeTypes> Clone for NodeAdapter<T> {
 /// A fully type configured node builder.
 ///
 /// Supports adding additional addons to the node.
-pub struct NodeBuilderWithComponents<T, AO>
+pub struct NodeBuilderWithComponents<DB, AO>
 where
-    T: FullNodeTypes,
-    AO: NodeAddOns<NodeAdapter<T>>,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
+    AO: NodeAddOns<NodeAdapter<DB>>,
 {
     /// All settings for how the node should be configured.
     pub config: NodeConfig,
     /// Adapter for the underlying node types and database
-    pub adapter: NodeTypesAdapter<T>,
+    pub database: DB,
     /// An optional [`RocksDBProvider`] to use instead of creating one during launch.
     pub rocksdb_provider: Option<RocksDBProvider>,
     /// container for type specific components
-    pub components_builder: ComponentBuilder<T>,
+    pub components_builder: ComponentBuilder<DB>,
     /// Additional node extensions.
-    pub add_ons: AddOns<NodeAdapter<T>, AO>,
+    pub add_ons: AddOns<NodeAdapter<DB>, AO>,
 }
 
-impl<T> NodeBuilderWithComponents<T, ()>
+impl<DB> NodeBuilderWithComponents<DB, ()>
 where
-    T: FullNodeTypes,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     /// Advances the state of the node builder to the next state where all customizable
     /// [`NodeAddOns`] types are configured.
-    pub fn with_add_ons<AO>(self, add_ons: AO) -> NodeBuilderWithComponents<T, AO>
+    pub fn with_add_ons<AO>(self, add_ons: AO) -> NodeBuilderWithComponents<DB, AO>
     where
-        AO: NodeAddOns<NodeAdapter<T>>,
+        AO: NodeAddOns<NodeAdapter<DB>>,
     {
-        let Self { config, adapter, rocksdb_provider, components_builder, .. } = self;
+        let Self { config, database, rocksdb_provider, components_builder, .. } = self;
 
         NodeBuilderWithComponents {
             config,
-            adapter,
+            database,
             rocksdb_provider,
             components_builder,
             add_ons: AddOns { hooks: NodeHooks::default(), exexs: Vec::new(), add_ons },
@@ -177,15 +158,15 @@ where
     }
 }
 
-impl<T, AO> NodeBuilderWithComponents<T, AO>
+impl<DB, AO> NodeBuilderWithComponents<DB, AO>
 where
-    T: FullNodeTypes,
-    AO: NodeAddOns<NodeAdapter<T>>,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
+    AO: NodeAddOns<NodeAdapter<DB>>,
 {
     /// Sets the hook that is run once the node's components are initialized.
     pub fn on_component_initialized<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(NodeAdapter<T>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(NodeAdapter<DB>) -> eyre::Result<()> + Send + 'static,
     {
         self.add_ons.hooks.set_on_component_initialized(hook);
         self
@@ -194,7 +175,7 @@ where
     /// Sets the hook that is run once the node has started.
     pub fn on_node_started<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(FullNode<NodeAdapter<T>, AO>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(FullNode<NodeAdapter<DB>, AO>) -> eyre::Result<()> + Send + 'static,
     {
         self.add_ons.hooks.set_on_node_started(hook);
         self
@@ -207,7 +188,7 @@ where
     /// The `ExEx` ID must be unique.
     pub fn install_exex<F, R, E>(mut self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<NodeAdapter<T>>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<NodeAdapter<DB>>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send,
     {
@@ -261,10 +242,10 @@ where
     }
 }
 
-impl<T, AO> NodeBuilderWithComponents<T, AO>
+impl<DB, AO> NodeBuilderWithComponents<DB, AO>
 where
-    T: FullNodeTypes,
-    AO: RethRpcAddOns<NodeAdapter<T>>,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
+    AO: RethRpcAddOns<NodeAdapter<DB>>,
 {
     /// Launches the node with the given launcher.
     pub fn launch_with<L>(self, launcher: L) -> L::Future
@@ -278,7 +259,7 @@ where
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, NodeAdapter<T>, AO::EthApi>,
+                RpcContext<'_, NodeAdapter<DB>, AO::EthApi>,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -293,7 +274,7 @@ where
     /// Sets the hook that is run to configure the rpc modules.
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
-        F: FnOnce(RpcContext<'_, NodeAdapter<T>, AO::EthApi>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(RpcContext<'_, NodeAdapter<DB>, AO::EthApi>) -> eyre::Result<()> + Send + 'static,
     {
         self.map_add_ons(|mut add_ons| {
             add_ons.hooks_mut().set_extend_rpc_modules(hook);

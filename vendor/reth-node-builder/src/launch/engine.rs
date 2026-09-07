@@ -16,7 +16,7 @@ use reth_engine_util::EngineMessageStreamExt;
 use reth_exex::ExExManagerHandle;
 use reth_network::{NetworkSyncUpdater, SyncState, types::BlockRangeUpdate};
 use reth_network_api::BlockDownloaderProvider;
-use reth_node_api::{BuiltPayload, ConsensusEngineHandle, FullNodeComponents, FullNodeTypes};
+use reth_node_api::{BuiltPayload, ConsensusEngineHandle, FullNodeComponents};
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
@@ -34,7 +34,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
     AddOns, AddOnsContext, FullNode, LaunchContext, LaunchNode, NodeAdapter,
-    NodeBuilderWithComponents, NodeHandle, NodeTypesAdapter,
+    NodeBuilderWithComponents, NodeHandle,
     common::{Attached, LaunchContextWith, WithConfigs},
     hooks::NodeHooks,
     rpc::{BasicEngineValidatorBuilder, EngineShutdown, RethRpcAddOns, RpcHandle},
@@ -62,18 +62,17 @@ impl EngineNodeLauncher {
         Self { ctx: LaunchContext::new(task_executor, data_dir), engine_tree_config }
     }
 
-    async fn launch_node<DB, T, AO>(
+    async fn launch_node<DB, AO>(
         self,
-        target: NodeBuilderWithComponents<T, AO>,
-    ) -> eyre::Result<NodeHandle<NodeAdapter<T>, AO>>
+        target: NodeBuilderWithComponents<DB, AO>,
+    ) -> eyre::Result<NodeHandle<NodeAdapter<DB>, AO>>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-        T: FullNodeTypes<Provider = BlockchainProvider<DB>, DB = DB>,
-        AO: RethRpcAddOns<NodeAdapter<T>>,
+        AO: RethRpcAddOns<NodeAdapter<DB>>,
     {
         let Self { ctx, engine_tree_config } = self;
         let NodeBuilderWithComponents {
-            adapter: NodeTypesAdapter { database },
+            database,
             rocksdb_provider,
             components_builder,
             add_ons: AddOns { hooks, exexs: installed_exex, add_ons },
@@ -120,9 +119,8 @@ impl EngineNodeLauncher {
                 info!(target: "reth::cli", ?settings, ?pruning_mode, "Loaded storage settings");
             })
             .with_metrics_task()
-            // passing FullNodeTypes as type parameter here so that we can build
             // later the components.
-            .with_blockchain_db::<T, _>(move |provider_factory| {
+            .with_blockchain_db(move |provider_factory| {
                 Ok(BlockchainProvider::new(provider_factory)?)
             })?
             .with_components(components_builder, on_component_initialized).await?;
@@ -427,16 +425,15 @@ impl EngineNodeLauncher {
     }
 }
 
-impl<DB, T, AO> LaunchNode<NodeBuilderWithComponents<T, AO>> for EngineNodeLauncher
+impl<DB, AO> LaunchNode<NodeBuilderWithComponents<DB, AO>> for EngineNodeLauncher
 where
-    T: FullNodeTypes<DB = DB, Provider = BlockchainProvider<DB>>,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    AO: RethRpcAddOns<NodeAdapter<T>> + 'static,
+    AO: RethRpcAddOns<NodeAdapter<DB>> + 'static,
 {
-    type Node = NodeHandle<NodeAdapter<T>, AO>;
+    type Node = NodeHandle<NodeAdapter<DB>, AO>;
     type Future = Pin<Box<dyn Future<Output = eyre::Result<Self::Node>> + Send>>;
 
-    fn launch_node(self, target: NodeBuilderWithComponents<T, AO>) -> Self::Future {
+    fn launch_node(self, target: NodeBuilderWithComponents<DB, AO>) -> Self::Future {
         Box::pin(self.launch_node(target))
     }
 }

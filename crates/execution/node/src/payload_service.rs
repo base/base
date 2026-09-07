@@ -6,7 +6,8 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{builder::BasePayloadTransactions, config::BaseBuilderConfig};
 use reth_basic_payload_builder::{BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig};
 use reth_chain_state::CanonStateSubscriptions;
-use reth_node_builder::{BuilderContext, FullNodeTypes};
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
+use reth_node_builder::BuilderContext;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 
 use crate::{BaseNodePool, BasePayloadBuilder};
@@ -74,15 +75,15 @@ impl BasePayloadServiceBuilder {
 
 impl<Txs> BasePayloadServiceBuilder<BasePayloadBuilder<Txs>> {
     /// Starts the Base payload service with the selected scheduling mode.
-    pub async fn spawn_payload_builder_service<Node>(
+    pub async fn spawn_payload_builder_service<DB>(
         self,
-        ctx: &BuilderContext<Node>,
-        pool: BaseNodePool<Node>,
+        ctx: &BuilderContext<DB>,
+        pool: BaseNodePool<DB>,
         evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle>
     where
-        Node: FullNodeTypes,
-        Txs: BasePayloadTransactions<BaseNodePool<Node>>,
+        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
+        Txs: BasePayloadTransactions<BaseNodePool<DB>>,
     {
         let payload_builder =
             base_execution_payload_builder::BasePayloadBuilder::with_builder_config(

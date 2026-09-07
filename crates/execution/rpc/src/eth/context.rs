@@ -1,11 +1,11 @@
 //! Inputs used to construct the Base eth API.
 
-use reth_node_api::{ConsensusEngineHandle, FullNodeComponents, FullNodeTypes};
+use reth_node_api::{ConsensusEngineHandle, FullNodeComponents};
 use reth_rpc_eth_types::{EthConfig, EthStateCache};
 
 /// Node components and RPC settings used to construct the Base eth API.
 #[derive(Debug)]
-pub struct EthApiCtx<'a, N: FullNodeTypes> {
+pub struct EthApiCtx<'a, N: FullNodeComponents> {
     /// Reference to the node components
     pub components: &'a N,
     /// Eth API configuration

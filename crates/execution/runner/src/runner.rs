@@ -6,7 +6,6 @@ use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_node_core::{BasePayloadServiceBuilder, args::RollupArgs};
 use eyre::Result;
 use reth_node_builder::NodeHandle;
-use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
 use crate::{
@@ -151,7 +150,7 @@ impl BaseNodeRunner {
         };
 
         let builder = builder
-            .with_custom_provider::<BlockchainProvider<_>>()
+            .with_provider()
             .with_components(components.into_builder())
             .with_add_ons(base_node.add_ons_builder().build())
             .on_component_initialized(move |_ctx| Ok(()));

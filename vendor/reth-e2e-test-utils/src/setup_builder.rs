@@ -15,7 +15,6 @@ use reth_node_builder::{
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_primitives_traits::AlloyBlockHeader;
-use reth_provider::providers::BlockchainProvider;
 use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
 use tracing::{Instrument, Level, span};
@@ -143,7 +142,7 @@ where
                 let (components_builder, add_ons) = node_factory();
                 let NodeHandle { node, node_exit_future: _ } = NodeBuilder::new(node_config)
                     .testing_node(runtime.clone())
-                    .with_custom_provider::<BlockchainProvider<_>>()
+                    .with_provider()
                     .with_components(components_builder)
                     .with_add_ons(add_ons)
                     .launch_with_fn(|builder| {

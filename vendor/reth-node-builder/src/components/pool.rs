@@ -3,13 +3,14 @@
 use alloy_primitives::map::AddressSet;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use reth_chain_state::CanonStateSubscriptions;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_transaction_pool::{
     BlobStore, CoinbaseTipOrdering, PoolConfig, PoolTransaction, SubPoolLimit, TransactionOrdering,
     TransactionPool, TransactionValidationTaskExecutor, TransactionValidator,
     blobstore::DiskFileBlobStore,
 };
 
-use crate::{BuilderContext, FullNodeTypes};
+use crate::BuilderContext;
 
 /// Convenience type to override cli or default pool configuration during build.
 #[derive(Debug, Clone, Default)]
@@ -74,28 +75,28 @@ impl PoolBuilderConfigOverrides {
 ///
 /// This builder provides a fluent API for setting up transaction pools with various
 /// configurations like blob stores, validators, and maintenance tasks.
-pub struct TxPoolBuilder<'a, Node: FullNodeTypes, V = ()> {
-    ctx: &'a BuilderContext<Node>,
+pub struct TxPoolBuilder<'a, DB: Database + DatabaseMetrics + Clone + Unpin + 'static, V = ()> {
+    ctx: &'a BuilderContext<DB>,
     validator: V,
 }
 
-impl<'a, Node: FullNodeTypes> TxPoolBuilder<'a, Node> {
+impl<'a, DB: Database + DatabaseMetrics + Clone + Unpin + 'static> TxPoolBuilder<'a, DB> {
     /// Creates a new `TxPoolBuilder` with the given context.
-    pub const fn new(ctx: &'a BuilderContext<Node>) -> Self {
+    pub const fn new(ctx: &'a BuilderContext<DB>) -> Self {
         Self { ctx, validator: () }
     }
 }
 
-impl<'a, Node: FullNodeTypes, V> TxPoolBuilder<'a, Node, V> {
+impl<'a, DB: Database + DatabaseMetrics + Clone + Unpin + 'static, V> TxPoolBuilder<'a, DB, V> {
     /// Configure the validator for the transaction pool.
-    pub fn with_validator<NewV>(self, validator: NewV) -> TxPoolBuilder<'a, Node, NewV> {
+    pub fn with_validator<NewV>(self, validator: NewV) -> TxPoolBuilder<'a, DB, NewV> {
         TxPoolBuilder { ctx: self.ctx, validator }
     }
 }
 
-impl<'a, Node, V> TxPoolBuilder<'a, Node, TransactionValidationTaskExecutor<V>>
+impl<'a, DB, V> TxPoolBuilder<'a, DB, TransactionValidationTaskExecutor<V>>
 where
-    Node: FullNodeTypes,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     V: TransactionValidator<Block = BaseBlock> + 'static,
     V::Transaction:
         PoolTransaction<Consensus = BaseTxEnvelope> + reth_transaction_pool::EthPoolTransaction,
@@ -170,8 +171,8 @@ where
 }
 
 /// Create blob store with default configuration.
-pub fn create_blob_store<Node: FullNodeTypes>(
-    ctx: &BuilderContext<Node>,
+pub fn create_blob_store<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    ctx: &BuilderContext<DB>,
 ) -> eyre::Result<DiskFileBlobStore> {
     let cache_size = Some(ctx.config().txpool.max_cached_entries);
     create_blob_store_with_cache(ctx, cache_size)
@@ -179,8 +180,8 @@ pub fn create_blob_store<Node: FullNodeTypes>(
 
 /// Create blob store with custom cache size configuration for how many blobs should be cached in
 /// memory.
-pub fn create_blob_store_with_cache<Node: FullNodeTypes>(
-    ctx: &BuilderContext<Node>,
+pub fn create_blob_store_with_cache<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    ctx: &BuilderContext<DB>,
     cache_size: Option<u32>,
 ) -> eyre::Result<DiskFileBlobStore> {
     let data_dir = ctx.config().datadir();
@@ -195,9 +196,9 @@ pub fn create_blob_store_with_cache<Node: FullNodeTypes>(
 }
 
 /// Spawn local transaction backup task if enabled.
-fn spawn_local_backup_task<Node, Pool>(ctx: &BuilderContext<Node>, pool: Pool) -> eyre::Result<()>
+fn spawn_local_backup_task<DB, Pool>(ctx: &BuilderContext<DB>, pool: Pool) -> eyre::Result<()>
 where
-    Node: FullNodeTypes,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     Pool: TransactionPool + Clone + 'static,
 {
     if !ctx.config().txpool.disable_transactions_backup {
@@ -229,13 +230,13 @@ where
 }
 
 /// Spawn the main maintenance task for transaction pool.
-fn spawn_pool_maintenance_task<Node, Pool>(
-    ctx: &BuilderContext<Node>,
+fn spawn_pool_maintenance_task<DB, Pool>(
+    ctx: &BuilderContext<DB>,
     pool: Pool,
     pool_config: &PoolConfig,
 ) -> eyre::Result<()>
 where
-    Node: FullNodeTypes,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     Pool: reth_transaction_pool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
     Pool::Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
 {
@@ -261,13 +262,13 @@ where
 }
 
 /// Spawn all maintenance tasks for a transaction pool (backup + main maintenance).
-pub fn spawn_maintenance_tasks<Node, Pool>(
-    ctx: &BuilderContext<Node>,
+pub fn spawn_maintenance_tasks<DB, Pool>(
+    ctx: &BuilderContext<DB>,
     pool: Pool,
     pool_config: &PoolConfig,
 ) -> eyre::Result<()>
 where
-    Node: FullNodeTypes,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     Pool: reth_transaction_pool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
     Pool::Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
 {
@@ -276,7 +277,9 @@ where
     Ok(())
 }
 
-impl<Node: FullNodeTypes, V: std::fmt::Debug> std::fmt::Debug for TxPoolBuilder<'_, Node, V> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static, V: std::fmt::Debug> std::fmt::Debug
+    for TxPoolBuilder<'_, DB, V>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TxPoolBuilder").field("validator", &self.validator).finish()
     }

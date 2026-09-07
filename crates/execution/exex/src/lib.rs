@@ -23,7 +23,9 @@ use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 use reth_node_api::FullNodeComponents;
-use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
+use reth_provider::{
+    BlockNumReader, BlockReader, TransactionVariant, providers::BlockchainProvider,
+};
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
 use tracing::{debug, error, info};
@@ -135,7 +137,7 @@ where
 /// use base_execution_exex::BaseProofsExEx;
 /// use base_node_core::{BaseNode, args::RollupArgs};
 /// use base_execution_trie::{InMemoryProofsStorage, BaseProofsStorage, RocksdbProofsStorage};
-/// use reth_provider::providers::BlockchainProvider;
+/// use BlockchainProvider;
 /// use std::{sync::Arc, time::Duration};
 ///
 /// let config = NodeConfig::new(Arc::new(BaseChainSpec::mainnet()));
@@ -166,7 +168,7 @@ where
 /// // Set this based on your configuration or CLI args
 /// let _builder = NodeBuilder::new(config)
 ///     .with_database(db)
-///     .with_custom_provider::<BlockchainProvider<_>>()
+///     .with_provider()
 ///     .with_components(base_node.components().into_builder())
 ///     .install_exex("proofs-history", move |exex_context| async move {
 ///         Ok(BaseProofsExEx::builder(exex_context, storage_exec)

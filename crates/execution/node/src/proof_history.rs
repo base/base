@@ -2,6 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
+use reth_db_api::database_metrics::DatabaseMetrics;
 use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
@@ -13,9 +14,8 @@ use base_execution_trie::{
 use eyre::ErrReport;
 use futures::FutureExt;
 use reth_db::DatabaseEnv;
-use reth_db_api::database_metrics::DatabaseMetrics;
 use reth_node_builder::{
-    FullNodeComponents, NodeBuilder, NodeBuilderWithComponents, RethFullAdapter, WithLaunchContext,
+    FullNodeComponents, NodeBuilder, NodeBuilderWithComponents, WithLaunchContext,
 };
 use reth_tasks::TaskExecutor;
 use tokio::time::sleep;
@@ -26,7 +26,7 @@ use crate::{
     args::{DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, RollupArgs},
 };
 
-type ProofHistoryNodeTypes = RethFullAdapter<Arc<DatabaseEnv>>;
+type ProofHistoryNodeTypes = Arc<DatabaseEnv>;
 type ProofHistoryNodeBuilder = WithLaunchContext<
     NodeBuilderWithComponents<ProofHistoryNodeTypes, BaseNodeAddOns<ProofHistoryNodeTypes>>,
 >;

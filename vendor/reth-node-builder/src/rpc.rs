@@ -18,7 +18,7 @@ pub use jsonrpsee::{
 use parking_lot::Mutex;
 use reth_chain_state::CanonStateSubscriptions;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
-use reth_node_api::{AddOnsContext, FullNodeComponents, FullNodeTypes, NodeAddOns, TreeConfig};
+use reth_node_api::{AddOnsContext, FullNodeComponents, NodeAddOns, TreeConfig};
 use reth_node_core::{cli::config::RethTransactionPoolConfig, node_config::NodeConfig};
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_rpc::{
@@ -999,7 +999,6 @@ impl<N, RpcMiddleware, AuthHttpMiddleware> NodeAddOns<N>
     for RpcAddOns<N, RpcMiddleware, AuthHttpMiddleware>
 where
     N: FullNodeComponents,
-    <N as FullNodeTypes>::Provider: ChainSpecProvider,
     RpcMiddleware: RethRpcMiddleware,
     AuthHttpMiddleware: RethAuthHttpMiddleware<Identity>,
 {

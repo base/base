@@ -26,7 +26,6 @@ use reth_node_core::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     exit::NodeExitFuture,
 };
-use reth_provider::providers::BlockchainProvider;
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use tokio::sync::oneshot;
@@ -223,7 +222,7 @@ impl LocalInstance {
         let builder = NodeBuilder::<_>::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
-            .with_custom_provider::<BlockchainProvider<_>>()
+            .with_provider()
             .with_components(components.into_builder())
             .with_add_ons(base_node.add_ons_builder().build())
             .on_component_initialized(move |_ctx| Ok(()));

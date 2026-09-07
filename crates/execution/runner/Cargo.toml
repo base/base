@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+reth-db-api = { workspace = true }
 reth-exex = { workspace = true }
 reth-rpc-api = { workspace = true }
 reth-provider = { workspace = true }

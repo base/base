@@ -7,7 +7,7 @@ use base_node_core::{
     args::RollupArgs,
     node::{BasePayloadBuilder, BasePoolBuilder},
 };
-use reth_node_builder::node::FullNodeTypes;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_provider::providers::ProviderFactoryBuilder;
 
 use crate::BaseAddOnsBuilder;
@@ -70,9 +70,9 @@ impl BaseNode {
     }
 
     /// Returns the components for the given [`RollupArgs`].
-    pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
+    pub fn components<DB>(&self) -> BaseNodeComponentBuilder<DB>
     where
-        Node: FullNodeTypes,
+        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     {
         let RollupArgs {
             discovery_v4,

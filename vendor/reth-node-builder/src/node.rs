@@ -8,7 +8,6 @@ use base_execution_chainspec::BaseChainSpec;
 use reth_evm::BaseEvmConfig;
 use reth_node_api::FullNodeComponents;
 // re-export the node api types
-pub use reth_node_api::FullNodeTypes;
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     node_config::NodeConfig,

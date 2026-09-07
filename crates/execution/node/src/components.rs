@@ -6,14 +6,15 @@ use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::builder::BasePayloadTransactions;
 use base_execution_txpool::BaseTransactionPool;
-use reth_node_builder::{BuilderContext, ComponentBuilder, FullNodeTypes, components::Components};
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
+use reth_node_builder::{BuilderContext, ComponentBuilder, components::Components};
+use reth_provider::providers::BlockchainProvider;
 use reth_transaction_pool::blobstore::DiskFileBlobStore;
 
 use crate::{BaseNetworkBuilder, BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder};
 
 /// The concrete transaction pool used by Base nodes.
-pub type BaseNodePool<Node> =
-    BaseTransactionPool<<Node as FullNodeTypes>::Provider, DiskFileBlobStore>;
+pub type BaseNodePool<Node> = BaseTransactionPool<BlockchainProvider<Node>, DiskFileBlobStore>;
 
 /// Base node components, with only the provider supplied by the launch adapter.
 pub type BaseNodeComponents<Node> = Components<Node>;
@@ -55,21 +56,21 @@ impl<Node, Payload> BaseComponentsBuilder<Node, Payload> {
     }
 }
 
-impl<Node, Txs> BaseComponentsBuilder<Node, BasePayloadBuilder<Txs>>
+impl<DB, Txs> BaseComponentsBuilder<DB, BasePayloadBuilder<Txs>>
 where
-    Node: FullNodeTypes,
-    Txs: BasePayloadTransactions<BaseNodePool<Node>>,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
+    Txs: BasePayloadTransactions<BaseNodePool<DB>>,
 {
     /// Converts Base component construction into a single launch callback.
-    pub fn into_builder(self) -> ComponentBuilder<Node> {
+    pub fn into_builder(self) -> ComponentBuilder<DB> {
         ComponentBuilder { build: Box::new(move |ctx| Box::pin(self.build_components(ctx))) }
     }
 
     /// Constructs the Base pool, network, payload service, and consensus validator.
     pub async fn build_components(
         self,
-        ctx: &BuilderContext<Node>,
-    ) -> eyre::Result<BaseNodeComponents<Node>> {
+        ctx: &BuilderContext<DB>,
+    ) -> eyre::Result<BaseNodeComponents<DB>> {
         let evm_config = BaseEvmConfig::new(ctx.chain_spec());
         let pool = self.pool_builder.build_pool(ctx, evm_config.clone()).await?;
         let network = self.network_builder.build_network(ctx, pool.clone()).await?;

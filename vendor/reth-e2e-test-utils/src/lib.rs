@@ -2,13 +2,13 @@
 
 use std::sync::Arc;
 
+use reth_provider::providers::BlockchainProvider;
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use node::NodeTestContext;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
-use reth_node_builder::{ComponentBuilder, FullNodeTypesAdapter, NodeAdapter, rpc::RethRpcAddOns};
+use reth_node_builder::{ComponentBuilder, NodeAdapter, rpc::RethRpcAddOns};
 use reth_payload_primitives::BasePayloadBuilderAttributes;
-use reth_provider::providers::BlockchainProvider;
 use wallet::Wallet;
 
 /// Wrapper type to create test nodes
@@ -123,10 +123,10 @@ pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
 pub type TestProvider = BlockchainProvider<TmpDB>;
 
 /// Provider adapter used by test nodes.
-pub type TmpNodeAdapter<Provider = TestProvider> = FullNodeTypesAdapter<TmpDB, Provider>;
+pub type TmpNodeAdapter = TmpDB;
 
 /// Adapter for a concrete set of test components.
-pub type Adapter<Provider = TestProvider> = NodeAdapter<TmpNodeAdapter<Provider>>;
+pub type Adapter = NodeAdapter<TmpNodeAdapter>;
 
 /// Context for a test node with explicit components and add-ons.
-pub type NodeHelperType<AO, Provider = TestProvider> = NodeTestContext<Adapter<Provider>, AO>;
+pub type NodeHelperType<AO> = NodeTestContext<Adapter, AO>;

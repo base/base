@@ -52,7 +52,7 @@ use reth_evm::BaseEvmConfig;
 use reth_exex::ExExManagerHandle;
 use reth_fs_util as fs;
 use reth_network_p2p::headers::client::HeadersClient;
-use reth_node_api::{FullNodeComponents, FullNodeTypes};
+use reth_node_api::FullNodeComponents;
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
@@ -75,7 +75,7 @@ use reth_provider::{
     DatabaseProviderFactory, InMemoryBalStore, MetadataProvider, MetadataWriter, ProviderError,
     ProviderFactory, ProviderResult, RocksDBProviderFactory, StageCheckpointReader,
     StaticFileProviderBuilder, StaticFileProviderFactory, StorageSettingsCache,
-    providers::{RocksDBProvider, StaticFileProvider},
+    providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
 use reth_prune::{PruneMode, PruneModes, PrunerBuilder};
 use reth_rpc_builder::config::RethRpcServerConfig;
@@ -801,13 +801,12 @@ where
 
     /// Creates a `BlockchainProvider` and attaches it to the launch context.
     #[expect(clippy::complexity)]
-    pub fn with_blockchain_db<T, F>(
+    pub fn with_blockchain_db<F>(
         self,
         create_blockchain_provider: F,
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<T>>>>
+    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<DB>>>>
     where
-        T: FullNodeTypes<DB = DB>,
-        F: FnOnce(ProviderFactory<DB>) -> eyre::Result<T::Provider>,
+        F: FnOnce(ProviderFactory<DB>) -> eyre::Result<BlockchainProvider<DB>>,
     {
         let blockchain_db = create_blockchain_provider(self.provider_factory().clone())?;
 
@@ -828,17 +827,17 @@ where
     }
 }
 
-impl<T> LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<T>>>
+impl<DB> LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<DB>>>
 where
-    T: FullNodeTypes,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     /// Returns access to the underlying database.
-    pub const fn database(&self) -> &T::DB {
+    pub const fn database(&self) -> &DB {
         self.provider_factory().db_ref()
     }
 
     /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(&self) -> &ProviderFactory<T::DB> {
+    pub const fn provider_factory(&self) -> &ProviderFactory<DB> {
         &self.right().db_provider_container.provider_factory
     }
 
@@ -857,16 +856,16 @@ where
     }
 
     /// Returns a reference to the blockchain provider.
-    pub const fn blockchain_db(&self) -> &T::Provider {
+    pub const fn blockchain_db(&self) -> &BlockchainProvider<DB> {
         &self.right().blockchain_db
     }
 
     /// Creates a `NodeAdapter` and attaches it to the launch context.
     pub async fn with_components(
         self,
-        components_builder: ComponentBuilder<T>,
-        on_component_initialized: Box<dyn OnComponentInitializedHook<NodeAdapter<T>>>,
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents<T>>>> {
+        components_builder: ComponentBuilder<DB>,
+        on_component_initialized: Box<dyn OnComponentInitializedHook<NodeAdapter<DB>>>,
+    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents<DB>>>> {
         // fetch the head block from the database
         let head = self.lookup_head()?;
 
@@ -909,12 +908,12 @@ where
     }
 }
 
-impl<T> LaunchContextWith<Attached<WithConfigs, WithComponents<T>>>
+impl<DB> LaunchContextWith<Attached<WithConfigs, WithComponents<DB>>>
 where
-    T: FullNodeTypes,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(&self) -> &ProviderFactory<T::DB> {
+    pub const fn provider_factory(&self) -> &ProviderFactory<DB> {
         &self.right().db_provider_container.provider_factory
     }
 
@@ -933,7 +932,7 @@ where
     }
 
     /// Creates a new [`StaticFileProducer`] with the attached database.
-    pub fn static_file_producer(&self) -> StaticFileProducer<ProviderFactory<T::DB>> {
+    pub fn static_file_producer(&self) -> StaticFileProducer<ProviderFactory<DB>> {
         StaticFileProducer::new(self.provider_factory().clone(), self.prune_modes())
     }
 
@@ -943,17 +942,17 @@ where
     }
 
     /// Returns the configured `NodeAdapter`.
-    pub const fn node_adapter(&self) -> &NodeAdapter<T> {
+    pub const fn node_adapter(&self) -> &NodeAdapter<DB> {
         &self.right().node_adapter
     }
 
     /// Returns mutable reference to the configured `NodeAdapter`.
-    pub const fn node_adapter_mut(&mut self) -> &mut NodeAdapter<T> {
+    pub const fn node_adapter_mut(&mut self) -> &mut NodeAdapter<DB> {
         &mut self.right_mut().node_adapter
     }
 
     /// Returns a reference to the blockchain provider.
-    pub const fn blockchain_db(&self) -> &T::Provider {
+    pub const fn blockchain_db(&self) -> &BlockchainProvider<DB> {
         &self.node_adapter().provider
     }
 
@@ -1076,7 +1075,7 @@ where
     }
 
     /// Returns the node adapter components.
-    pub const fn components(&self) -> &crate::components::Components<T> {
+    pub const fn components(&self) -> &crate::components::Components<DB> {
         &self.node_adapter().components
     }
 
@@ -1084,7 +1083,7 @@ where
     #[expect(clippy::type_complexity)]
     pub async fn launch_exex(
         &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T>>>)>,
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<DB>>>)>,
     ) -> eyre::Result<Option<ExExManagerHandle>> {
         self.exex_launcher(installed_exex).launch().await
     }
@@ -1103,8 +1102,8 @@ where
     #[expect(clippy::type_complexity)]
     pub fn exex_launcher(
         &self,
-        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T>>>)>,
-    ) -> ExExLauncher<NodeAdapter<T>> {
+        installed_exex: Vec<(String, Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<DB>>>)>,
+    ) -> ExExLauncher<NodeAdapter<DB>> {
         ExExLauncher::new(
             self.head(),
             self.node_adapter().clone(),
@@ -1122,7 +1121,7 @@ where
     /// Otherwise returns an empty stream.
     pub fn consensus_layer_events(&self) -> impl Stream<Item = NodeEvent> + 'static
     where
-        T::Provider: reth_provider::CanonChainTracker,
+        BlockchainProvider<DB>: reth_provider::CanonChainTracker,
     {
         if self.node_config().debug.tip.is_none() && !self.is_dev() {
             Either::Left(
@@ -1262,25 +1261,25 @@ pub struct WithMeteredProvider<DB: Database + DatabaseMetrics + Clone + Unpin + 
     metrics_sender: UnboundedSender<MetricEvent>,
 }
 
-/// Helper container to bundle the [`ProviderFactory`], [`FullNodeTypes::Provider`]
+/// Helper container to bundle the [`ProviderFactory`], the Base blockchain provider
 /// and a metrics sender.
 #[expect(missing_debug_implementations)]
-pub struct WithMeteredProviders<T>
+pub struct WithMeteredProviders<DB>
 where
-    T: FullNodeTypes,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
-    db_provider_container: WithMeteredProvider<T::DB>,
-    blockchain_db: T::Provider,
+    db_provider_container: WithMeteredProvider<DB>,
+    blockchain_db: BlockchainProvider<DB>,
 }
 
 /// Helper container to bundle the metered providers container and [`NodeAdapter`].
 #[expect(missing_debug_implementations)]
-pub struct WithComponents<T>
+pub struct WithComponents<DB>
 where
-    T: FullNodeTypes,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
-    db_provider_container: WithMeteredProvider<T::DB>,
-    node_adapter: NodeAdapter<T>,
+    db_provider_container: WithMeteredProvider<DB>,
+    node_adapter: NodeAdapter<DB>,
     head: Head,
 }
 

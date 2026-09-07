@@ -15,9 +15,7 @@ use reth_e2e_test_utils::{
 };
 use reth_node_builder::{EngineNodeLauncher, NodeBuilder, NodeConfig};
 use reth_node_core::args::DatadirArgs;
-use reth_provider::{
-    BlockReaderIdExt, HeaderProvider, StageCheckpointReader, providers::BlockchainProvider,
-};
+use reth_provider::{BlockReaderIdExt, HeaderProvider, StageCheckpointReader};
 use reth_stages_types::StageId;
 use tokio::sync::Mutex;
 
@@ -54,7 +52,7 @@ async fn test_base_node_custom_genesis_number() {
     let add_ons: base_node_core::BaseNodeAddOns<_> = BaseNode::default().add_ons_builder().build();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
-        .with_custom_provider::<BlockchainProvider<_>>()
+        .with_provider()
         .with_components(BaseNode::default().components().into_builder())
         .with_add_ons(add_ons)
         .launch_with_fn(|builder| {
