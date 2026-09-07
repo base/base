@@ -6,7 +6,6 @@ use base_alloy_consensus::OpPrimitives;
 use base_execution_chainspec::{BaseChainSpec, OpChainSpec};
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_commands::common::CliNodeTypes;
 
 /// Migrate storage from v1 (MDBX-only) to v2 (MDBX + `RocksDB` + static files).
 #[derive(Debug, Parser)]
@@ -17,8 +16,8 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Executes the migration command.
-    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
-        self.inner.execute::<N>(runtime).await
+    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
+        self.inner.execute(runtime).await
     }
 }
 

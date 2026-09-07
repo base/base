@@ -14,7 +14,7 @@ pub mod chainspec;
 /// Base CLI commands.
 pub mod commands;
 mod types;
-pub use types::{BaseCliComponents, BaseCliTypes};
+pub use types::BaseCliComponents;
 
 mod node;
 pub use node::{

@@ -25,7 +25,7 @@ use tokio::sync::watch;
 use tracing::info;
 
 use crate::{
-    common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs},
+    common::{AccessRights, Environment, EnvironmentArgs},
     stage::CliNodeComponents,
 };
 
@@ -46,16 +46,12 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `db stage unwind` command
-    pub async fn execute<N: CliNodeTypes, F>(
-        self,
-        components: F,
-        runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<()>
+    pub async fn execute<F>(self, components: F, runtime: reth_tasks::Runtime) -> eyre::Result<()>
     where
-        F: FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents<N>,
+        F: FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents,
     {
         let Environment { provider_factory, config, data_dir: _ } =
-            self.env.init::<N>(AccessRights::RW, runtime)?;
+            self.env.init(AccessRights::RW, runtime)?;
 
         let target = self.command.unwind_target(provider_factory.clone())?;
 

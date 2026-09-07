@@ -13,7 +13,7 @@ use base_node_core::{
 };
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
+use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_node_core::version::version_metadata;
 use tracing::info;
 
@@ -75,7 +75,7 @@ pub struct PruneCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> PruneCommand<C> {
     /// Execute [`PruneCommand`].
-    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
         let Self {
             env,
             storage_path,
@@ -95,7 +95,7 @@ impl<C: ChainSpecParser> PruneCommand<C> {
         proofs_history_db.ensure_storage_path_matches(&storage_path)?;
 
         // Initialize the environment with read-only access
-        let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RO, runtime)?;
+        let Environment { provider_factory, .. } = env.init(AccessRights::RO, runtime)?;
 
         match proofs_history_db {
             ProofsHistoryDbBackend::Rocksdb => {

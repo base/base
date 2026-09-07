@@ -25,7 +25,7 @@ use reth_prune::PruneSegment;
 use reth_stages::StageId;
 use reth_static_file_types::StaticFileSegment;
 
-use crate::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
+use crate::common::{AccessRights, Environment, EnvironmentArgs};
 
 /// `reth drop-stage` command
 #[derive(Debug, Parser)]
@@ -38,11 +38,11 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `db` command
-    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()>
+    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()>
     where
         C: ChainSpecParser,
     {
-        let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RW, runtime)?;
+        let Environment { provider_factory, .. } = self.env.init(AccessRights::RW, runtime)?;
 
         let tool = DbTool::new(provider_factory)?;
 

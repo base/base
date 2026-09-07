@@ -11,7 +11,7 @@ use base_node_core::args::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use reth_chainspec::ChainInfo;
 use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
+use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_node_core::version::version_metadata;
 use reth_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
 use tracing::info;
@@ -53,7 +53,7 @@ pub struct InitCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> InitCommand<C> {
     /// Execute the `proofs init` command.
-    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
         let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
@@ -66,7 +66,7 @@ impl<C: ChainSpecParser> InitCommand<C> {
         proofs_history_db.ensure_storage_path_matches(&storage_path)?;
 
         // Initialize the environment with read-only access
-        let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RO, runtime)?;
+        let Environment { provider_factory, .. } = env.init(AccessRights::RO, runtime)?;
 
         match proofs_history_db {
             ProofsHistoryDbBackend::Rocksdb => {

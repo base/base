@@ -43,7 +43,7 @@ pub struct BaseDownloadCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> BaseDownloadCommand<C> {
     /// Executes the download command.
-    pub async fn execute<N>(self) -> Result<()> {
+    pub async fn execute(self) -> Result<()> {
         let Self { inner, proofs } = self;
 
         let (data_dir, chain_id) = if proofs {
@@ -59,7 +59,7 @@ impl<C: ChainSpecParser> BaseDownloadCommand<C> {
             (None, None)
         };
 
-        inner.execute::<N>().await?;
+        inner.execute().await?;
 
         if let (Some(data_dir), Some(chain_id)) = (data_dir, chain_id) {
             let target_dir = data_dir.data_dir().to_path_buf();

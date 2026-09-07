@@ -10,7 +10,7 @@ use reth_cli_runner::CliContext;
 use reth_db::version::{DB_VERSION, DatabaseVersionError, get_db_version};
 use reth_db_common::DbTool;
 
-use crate::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
+use crate::common::{AccessRights, Environment, EnvironmentArgs};
 mod account_storage;
 mod checksum;
 mod clear;
@@ -83,13 +83,13 @@ pub enum Subcommands {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `db` command
-    pub async fn execute<N: CliNodeTypes>(self, ctx: CliContext) -> eyre::Result<()> {
+    pub async fn execute(self, ctx: CliContext) -> eyre::Result<()> {
         /// Initializes a provider factory with specified access rights, and then executes the
         /// provided command.
         macro_rules! db_exec {
-            ($env:expr, $tool:ident, $N:ident, $access_rights:expr, $command:block) => {
+            ($env:expr, $tool:ident, $access_rights:expr, $command:block) => {
                 let Environment { provider_factory, .. } =
-                    $env.init::<$N>($access_rights, ctx.task_executor.clone())?;
+                    $env.init($access_rights, ctx.task_executor.clone())?;
 
                 let $tool = DbTool::new(provider_factory)?;
                 $command;
@@ -119,32 +119,32 @@ impl<C: ChainSpecParser> Command<C> {
                 } else {
                     AccessRights::RO
                 };
-                db_exec!(self.env, tool, N, access_rights, {
+                db_exec!(self.env, tool, access_rights, {
                     command.execute(data_dir, &tool)?;
                 });
             }
             Subcommands::List(command) => {
-                db_exec!(self.env, tool, N, AccessRights::RO, {
+                db_exec!(self.env, tool, AccessRights::RO, {
                     command.execute(&tool)?;
                 });
             }
             Subcommands::Checksum(command) => {
-                db_exec!(self.env, tool, N, AccessRights::RO, {
+                db_exec!(self.env, tool, AccessRights::RO, {
                     command.execute(&tool)?;
                 });
             }
             Subcommands::Copy(command) => {
-                db_exec!(self.env, tool, N, AccessRights::RO, {
+                db_exec!(self.env, tool, AccessRights::RO, {
                     command.execute(tool.provider_factory.db_ref())?;
                 });
             }
             Subcommands::Diff(command) => {
-                db_exec!(self.env, tool, N, AccessRights::RO, {
+                db_exec!(self.env, tool, AccessRights::RO, {
                     command.execute(&tool)?;
                 });
             }
             Subcommands::Get(command) => {
-                db_exec!(self.env, tool, N, AccessRights::RO, {
+                db_exec!(self.env, tool, AccessRights::RO, {
                     command.execute(&tool)?;
                 });
             }
@@ -166,24 +166,24 @@ impl<C: ChainSpecParser> Command<C> {
                     }
                 }
 
-                db_exec!(self.env, tool, N, AccessRights::RW, {
+                db_exec!(self.env, tool, AccessRights::RW, {
                     tool.drop(db_path, static_files_path, exex_wal_path)?;
                 });
             }
             Subcommands::Clear(command) => {
-                db_exec!(self.env, tool, N, AccessRights::RW, {
+                db_exec!(self.env, tool, AccessRights::RW, {
                     command.execute(&tool)?;
                 });
             }
             Subcommands::RepairTrie(command) => {
                 let access_rights =
                     if command.dry_run { AccessRights::RO } else { AccessRights::RW };
-                db_exec!(self.env, tool, N, access_rights, {
+                db_exec!(self.env, tool, access_rights, {
                     command.execute(&tool, ctx.task_executor, &data_dir)?;
                 });
             }
             Subcommands::StaticFileHeader(command) => {
-                db_exec!(self.env, tool, N, AccessRights::RoInconsistent, {
+                db_exec!(self.env, tool, AccessRights::RoInconsistent, {
                     command.execute(&tool)?;
                 });
             }
@@ -206,27 +206,27 @@ impl<C: ChainSpecParser> Command<C> {
                 println!("{}", db_path.display());
             }
             Subcommands::Settings(command) => {
-                db_exec!(self.env, tool, N, command.access_rights(), {
+                db_exec!(self.env, tool, command.access_rights(), {
                     command.execute(&tool)?;
                 });
             }
             Subcommands::PruneCheckpoints(command) => {
-                db_exec!(self.env, tool, N, command.access_rights(), {
+                db_exec!(self.env, tool, command.access_rights(), {
                     command.execute(&tool)?;
                 });
             }
             Subcommands::StageCheckpoints(command) => {
-                db_exec!(self.env, tool, N, command.access_rights(), {
+                db_exec!(self.env, tool, command.access_rights(), {
                     command.execute(&tool)?;
                 });
             }
             Subcommands::AccountStorage(command) => {
-                db_exec!(self.env, tool, N, AccessRights::RO, {
+                db_exec!(self.env, tool, AccessRights::RO, {
                     command.execute(&tool)?;
                 });
             }
             Subcommands::State(command) => {
-                db_exec!(self.env, tool, N, AccessRights::RO, {
+                db_exec!(self.env, tool, AccessRights::RO, {
                     command.execute(&tool)?;
                 });
             }

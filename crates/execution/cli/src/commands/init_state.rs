@@ -5,7 +5,6 @@ use std::sync::Arc;
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_commands::common::CliNodeTypes;
 
 /// Initializes the database with the genesis block.
 #[derive(Debug, Parser)]
@@ -16,8 +15,8 @@ pub struct BaseInitStateCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> BaseInitStateCommand<C> {
     /// Execute the `init` command
-    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
-        self.init_state.execute::<N>(runtime).await
+    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
+        self.init_state.execute(runtime).await
     }
 }
 

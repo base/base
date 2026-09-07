@@ -7,7 +7,7 @@ use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_config::{Config, config::EtlConfig};
-use reth_consensus::{FullConsensus, noop::NoopConsensus};
+use reth_consensus::noop::NoopConsensus;
 use reth_db::{DatabaseEnv, init_db, open_db_read_only};
 use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
@@ -84,7 +84,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
     /// [`Environment`].
     ///
     /// The provided `runtime` is used for parallel storage I/O.
-    pub fn init<N: CliNodeTypes>(
+    pub fn init(
         &self,
         access: AccessRights,
         runtime: reth_tasks::Runtime,
@@ -160,7 +160,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         };
 
         let provider_factory =
-            self.create_provider_factory::<N>(&config, db, sfp, rocksdb_provider, access, runtime)?;
+            self.create_provider_factory(&config, db, sfp, rocksdb_provider, access, runtime)?;
         if access.is_read_write() {
             debug!(target: "reth::cli", chain=%self.chain.chain(), genesis=?self.chain.genesis_hash(), "Initializing genesis");
             init_genesis_with_settings(&provider_factory, self.storage_settings())?;
@@ -174,7 +174,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
     ///
     /// Checked read-write access heals inconsistencies (including a pipeline unwind), while checked
     /// read-only access warns that the node must be restarted to heal.
-    fn create_provider_factory<N: CliNodeTypes>(
+    fn create_provider_factory(
         &self,
         config: &Config,
         db: DatabaseEnv,
@@ -288,12 +288,6 @@ impl AccessRights {
     pub const fn skips_consistency_check(&self) -> bool {
         matches!(self, Self::RwInconsistent | Self::RoInconsistent)
     }
-}
-
-/// Execution and consensus components used by offline commands.
-pub trait CliNodeTypes {
-    /// Consensus used by offline validation commands.
-    type Consensus: FullConsensus + Clone + Unpin + 'static;
 }
 
 #[cfg(test)]

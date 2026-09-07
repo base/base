@@ -85,6 +85,7 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 reth-static-file-types = { workspace = true, features = ["clap"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
+base-execution-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
@@ -93,6 +94,7 @@ reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 backon = { workspace = true, features = ["std-blocking-sleep", "tokio-sleep"] }
 toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default", "display"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
+
 [dev-dependencies]
 tempfile = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }

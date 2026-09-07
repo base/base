@@ -12,7 +12,7 @@ use reth_rpc_server_types::RpcModuleValidator;
 use reth_tracing::{Layers, TracingGuards};
 use tracing::{info, warn};
 
-use crate::{BaseCliComponents, BaseCliTypes, Cli, Commands};
+use crate::{BaseCliComponents, Cli, Commands};
 
 /// A wrapper around a parsed CLI that handles command execution.
 #[derive(Debug)]
@@ -91,40 +91,37 @@ where
             }
             Commands::Init(command) => {
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>(runtime))
+                runner.run_blocking_until_ctrl_c(command.execute(runtime))
             }
             Commands::InitState(command) => {
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>(runtime))
+                runner.run_blocking_until_ctrl_c(command.execute(runtime))
             }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Db(command) => {
-                runner.run_blocking_command_until_exit(|ctx| command.execute::<BaseCliTypes>(ctx))
+                runner.run_blocking_command_until_exit(|ctx| command.execute(ctx))
             }
-            Commands::Stage(command) => runner
-                .run_command_until_exit(|ctx| command.execute::<BaseCliTypes>(ctx, components)),
-            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<BaseCliTypes>()),
+            Commands::Stage(command) => {
+                runner.run_command_until_exit(|ctx| command.execute(ctx, components))
+            }
+            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
-            Commands::Prune(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<BaseCliTypes>(ctx))
-            }
+            Commands::Prune(command) => runner.run_command_until_exit(|ctx| command.execute(ctx)),
             #[cfg(feature = "dev")]
             Commands::TestVectors(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::ReExecute(command) => {
                 let runtime = runner.runtime();
-                runner.run_until_ctrl_c(command.execute::<BaseCliTypes>(components, runtime))
+                runner.run_until_ctrl_c(command.execute(components, runtime))
             }
             Commands::BaseProofs(command) => {
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>(runtime))
+                runner.run_blocking_until_ctrl_c(command.execute(runtime))
             }
             Commands::SnapshotManifest(command) => {
                 command.execute()?;
                 Ok(())
             }
-            Commands::Download(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>())
-            }
+            Commands::Download(command) => runner.run_blocking_until_ctrl_c(command.execute()),
         }
     }
 

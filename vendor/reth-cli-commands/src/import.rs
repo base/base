@@ -9,7 +9,7 @@ use tracing::info;
 
 pub use crate::import_core::build_import_pipeline_impl as build_import_pipeline;
 use crate::{
-    common::{AccessRights, CliNodeComponents, CliNodeTypes, Environment, EnvironmentArgs},
+    common::{AccessRights, CliNodeComponents, Environment, EnvironmentArgs},
     import_core::{ImportConfig, import_blocks_from_file},
 };
 
@@ -45,18 +45,15 @@ pub struct ImportCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> ImportCommand<C> {
     /// Execute `import` command
-    pub async fn execute<N>(
+    pub async fn execute(
         self,
-        components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents<N>,
+        components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents,
         runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<()>
-    where
-        N: CliNodeTypes,
-    {
+    ) -> eyre::Result<()> {
         info!(target: "reth::cli", "reth {} starting", version_metadata().short_version);
 
         let Environment { provider_factory, config, .. } =
-            self.env.init::<N>(AccessRights::RW, runtime.clone())?;
+            self.env.init(AccessRights::RW, runtime.clone())?;
 
         let components = components(provider_factory.chain_spec());
 

@@ -44,7 +44,7 @@ use reth_stages::{
 use tokio::sync::watch;
 use tracing::*;
 
-use crate::common::{AccessRights, CliNodeComponents, CliNodeTypes, Environment, EnvironmentArgs};
+use crate::common::{AccessRights, CliNodeComponents, Environment, EnvironmentArgs};
 
 /// `reth stage` command
 #[derive(Debug, Parser)]
@@ -103,10 +103,9 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `stage` command
-    pub async fn execute<N, F>(self, ctx: CliContext, components: F) -> eyre::Result<()>
+    pub async fn execute<F>(self, ctx: CliContext, components: F) -> eyre::Result<()>
     where
-        N: CliNodeTypes,
-        F: FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents<N>,
+        F: FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents,
     {
         // Quit early if the stage requires a commit and `--commit` is not provided.
         if self.requires_commit() && !self.commit {
@@ -122,7 +121,7 @@ impl<C: ChainSpecParser> Command<C> {
 
         let runtime = ctx.task_executor.clone();
         let Environment { provider_factory, config, data_dir } =
-            self.env.init::<N>(AccessRights::RW, ctx.task_executor.clone())?;
+            self.env.init(AccessRights::RW, ctx.task_executor.clone())?;
 
         let mut provider_rw = provider_factory.database_provider_rw()?;
         let components = components(provider_factory.chain_spec());

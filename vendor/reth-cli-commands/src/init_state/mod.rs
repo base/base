@@ -15,7 +15,7 @@ use reth_provider::{
 };
 use tracing::info;
 
-use crate::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
+use crate::common::{AccessRights, Environment, EnvironmentArgs};
 
 pub mod without_evm;
 
@@ -66,14 +66,11 @@ pub struct InitStateCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> InitStateCommand<C> {
     /// Execute the `init` command
-    pub async fn execute<N>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()>
-    where
-        N: CliNodeTypes,
-    {
+    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
         info!(target: "reth::cli", "Reth init-state starting");
 
         let Environment { config, provider_factory, .. } =
-            self.env.init::<N>(AccessRights::RW, runtime)?;
+            self.env.init(AccessRights::RW, runtime)?;
 
         let static_file_provider = provider_factory.static_file_provider();
 

@@ -17,8 +17,6 @@ use reth_node_core::{
 };
 use reth_tasks::Runtime;
 
-use crate::common::CliNodeTypes;
-
 pub mod bootnode;
 pub mod enode;
 pub mod rlpx;
@@ -32,10 +30,10 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `p2p` command
-    pub async fn execute<N: CliNodeTypes>(self) -> eyre::Result<()> {
+    pub async fn execute(self) -> eyre::Result<()> {
         match self.command {
             Subcommands::Header { args, id } => {
-                let handle = args.launch_network::<N>().await?;
+                let handle = args.launch_network().await?;
                 let fetch_client = handle.fetch_client().await?;
                 let backoff = args.backoff();
 
@@ -47,7 +45,7 @@ impl<C: ChainSpecParser> Command<C> {
             }
 
             Subcommands::Body { args, id } => {
-                let handle = args.launch_network::<N>().await?;
+                let handle = args.launch_network().await?;
                 let fetch_client = handle.fetch_client().await?;
                 let backoff = args.backoff();
 
@@ -174,10 +172,7 @@ pub struct DownloadArgs<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> DownloadArgs<C> {
     /// Creates and spawns the network and returns the handle.
-    pub async fn launch_network<N>(&self) -> eyre::Result<reth_network::NetworkHandle>
-    where
-        N: CliNodeTypes,
-    {
+    pub async fn launch_network(&self) -> eyre::Result<reth_network::NetworkHandle> {
         let data_dir = self.datadir.clone().resolve_datadir(self.chain.chain());
         let config_path = self.config.clone().unwrap_or_else(|| data_dir.config());
 

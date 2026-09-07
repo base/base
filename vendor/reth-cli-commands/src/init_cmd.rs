@@ -9,7 +9,7 @@ use reth_cli::chainspec::ChainSpecParser;
 use reth_provider::BlockHashReader;
 use tracing::info;
 
-use crate::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
+use crate::common::{AccessRights, Environment, EnvironmentArgs};
 
 /// Initializes the database with the genesis block.
 #[derive(Debug, Parser)]
@@ -20,10 +20,10 @@ pub struct InitCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> InitCommand<C> {
     /// Execute the `init` command
-    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
         info!(target: "reth::cli", "reth init starting");
 
-        let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RW, runtime)?;
+        let Environment { provider_factory, .. } = self.env.init(AccessRights::RW, runtime)?;
 
         let genesis_block_number = provider_factory.chain_spec().genesis_header().number();
         let hash = provider_factory

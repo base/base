@@ -5,7 +5,6 @@ use std::sync::Arc;
 use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
 use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_commands::common::CliNodeTypes;
 
 pub mod init;
 pub mod prune;
@@ -20,11 +19,11 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `base-proofs` command
-    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
         match self.command {
-            Subcommands::Init(cmd) => cmd.execute::<N>(runtime.clone()).await,
-            Subcommands::Prune(cmd) => cmd.execute::<N>(runtime.clone()).await,
-            Subcommands::Unwind(cmd) => cmd.execute::<N>(runtime).await,
+            Subcommands::Init(cmd) => cmd.execute(runtime.clone()).await,
+            Subcommands::Prune(cmd) => cmd.execute(runtime.clone()).await,
+            Subcommands::Unwind(cmd) => cmd.execute(runtime).await,
         }
     }
 }

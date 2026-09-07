@@ -36,7 +36,7 @@ use reth_storage_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::*;
 
-use crate::common::{AccessRights, CliNodeComponents, CliNodeTypes, Environment, EnvironmentArgs};
+use crate::common::{AccessRights, CliNodeComponents, Environment, EnvironmentArgs};
 
 /// `reth re-execute` command
 ///
@@ -79,20 +79,17 @@ impl<C: ChainSpecParser> Command<C> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `re-execute` command
-    pub async fn execute<N>(
+    pub async fn execute(
         mut self,
-        components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents<N> + Send + Sync + 'static,
+        components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents + Send + Sync + 'static,
         runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<()>
-    where
-        N: CliNodeTypes,
-    {
+    ) -> eyre::Result<()> {
         // Default to 4GB RocksDB block cache for re-execute unless explicitly set.
         if self.env.db.rocksdb_block_cache_size.is_none() {
             self.env.db.rocksdb_block_cache_size = Some(4 << 30);
         }
 
-        let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RO, runtime)?;
+        let Environment { provider_factory, .. } = self.env.init(AccessRights::RO, runtime)?;
 
         let components = components(provider_factory.chain_spec());
 

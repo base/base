@@ -458,7 +458,7 @@ pub struct DownloadCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> DownloadCommand<C> {
     /// Runs the download command in single-archive or manifest mode.
-    pub async fn execute<N>(self) -> Result<()> {
+    pub async fn execute(self) -> Result<()> {
         let chain = self.env.chain.chain();
         let chain_id = chain.id();
 

@@ -18,7 +18,7 @@ use reth_prune::PrunerBuilder;
 use reth_static_file::StaticFileProducer;
 use tracing::info;
 
-use crate::common::{AccessRights, CliNodeTypes, EnvironmentArgs};
+use crate::common::{AccessRights, EnvironmentArgs};
 
 /// Prunes according to the configuration
 #[derive(Debug, Parser)]
@@ -33,8 +33,8 @@ pub struct PruneCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> PruneCommand<C> {
     /// Execute the `prune` command
-    pub async fn execute<N: CliNodeTypes>(self, ctx: CliContext) -> eyre::Result<()> {
-        let env = self.env.init::<N>(AccessRights::RW, ctx.task_executor.clone())?;
+    pub async fn execute(self, ctx: CliContext) -> eyre::Result<()> {
+        let env = self.env.init(AccessRights::RW, ctx.task_executor.clone())?;
         let provider_factory = env.provider_factory;
         let config = env.config.prune;
         let data_dir = env.data_dir;

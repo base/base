@@ -15287,6 +15287,7 @@ dependencies = [
  "backon",
  "base-common-consensus",
  "base-execution-chainspec",
+ "base-execution-consensus",
  "blake3",
  "clap",
  "comfy-table",

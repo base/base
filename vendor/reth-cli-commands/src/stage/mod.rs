@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_runner::CliContext;
 
-use crate::common::{CliNodeComponents, CliNodeTypes};
+use crate::common::CliNodeComponents;
 
 pub mod drop;
 pub mod dump;
@@ -41,20 +41,17 @@ pub enum Subcommands<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Execute `stage` command
-    pub async fn execute<N>(
+    pub async fn execute(
         self,
         ctx: CliContext,
-        components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents<N>,
-    ) -> eyre::Result<()>
-    where
-        N: CliNodeTypes,
-    {
+        components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents,
+    ) -> eyre::Result<()> {
         let executor = ctx.task_executor.clone();
         match self.command {
-            Subcommands::Run(command) => command.execute::<N, _>(ctx, components).await,
-            Subcommands::Drop(command) => command.execute::<N>(executor).await,
-            Subcommands::Dump(command) => command.execute::<N, _>(components, executor).await,
-            Subcommands::Unwind(command) => command.execute::<N, _>(components, executor).await,
+            Subcommands::Run(command) => command.execute::<_>(ctx, components).await,
+            Subcommands::Drop(command) => command.execute(executor).await,
+            Subcommands::Dump(command) => command.execute::<_>(components, executor).await,
+            Subcommands::Unwind(command) => command.execute::<_>(components, executor).await,
         }
     }
 }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
-    BaseCliComponents, BaseCliTypes,
+    BaseCliComponents,
     chainspec::BaseChainSpecParser,
     commands::{GenesisOutputRootCommand, init_state, p2p},
 };
@@ -69,17 +69,17 @@ impl RethSubcommand {
         match self {
             Self::Db(command) => {
                 let runner = CliRunner::try_default_runtime()?;
-                runner.run_blocking_command_until_exit(|ctx| command.execute::<BaseCliTypes>(ctx))
+                runner.run_blocking_command_until_exit(|ctx| command.execute(ctx))
             }
             Self::Init(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>(runtime))
+                runner.run_blocking_until_ctrl_c(command.execute(runtime))
             }
             Self::InitState(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseCliTypes>(runtime))
+                runner.run_blocking_until_ctrl_c(command.execute(runtime))
             }
             Self::DumpGenesis(command) => {
                 let runner = CliRunner::try_default_runtime()?;
@@ -91,13 +91,11 @@ impl RethSubcommand {
             }
             Self::Stage(command) => {
                 let runner = CliRunner::try_default_runtime()?;
-                runner.run_command_until_exit(|ctx| {
-                    command.execute::<BaseCliTypes>(ctx, Self::base_components)
-                })
+                runner.run_command_until_exit(|ctx| command.execute(ctx, Self::base_components))
             }
             Self::P2P(command) => {
                 let runner = CliRunner::try_default_runtime()?;
-                runner.run_until_ctrl_c(command.execute::<BaseCliTypes>())
+                runner.run_until_ctrl_c(command.execute())
             }
             Self::Config(command) => {
                 let runner = CliRunner::try_default_runtime()?;
@@ -105,14 +103,12 @@ impl RethSubcommand {
             }
             Self::Prune(command) => {
                 let runner = CliRunner::try_default_runtime()?;
-                runner.run_command_until_exit(|ctx| command.execute::<BaseCliTypes>(ctx))
+                runner.run_command_until_exit(|ctx| command.execute(ctx))
             }
             Self::ReExecute(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 let runtime = runner.runtime();
-                runner.run_until_ctrl_c(
-                    command.execute::<BaseCliTypes>(Self::base_components, runtime),
-                )
+                runner.run_until_ctrl_c(command.execute(Self::base_components, runtime))
             }
         }
     }
