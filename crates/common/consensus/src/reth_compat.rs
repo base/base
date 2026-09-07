@@ -449,7 +449,7 @@ impl Compact for BaseReceipt {
 // Compress / Decompress (reth-db-api)
 // ---------------------------------------------------------------------------
 
-impl reth_db_api::table::Compress for BaseTxEnvelope {
+impl reth_codecs::Compress for BaseTxEnvelope {
     type Compressed = Vec<u8>;
 
     fn compress_to_buf<B: BufMut + AsMut<[u8]>>(&self, buf: &mut B) {
@@ -457,14 +457,14 @@ impl reth_db_api::table::Compress for BaseTxEnvelope {
     }
 }
 
-impl reth_db_api::table::Decompress for BaseTxEnvelope {
+impl reth_codecs::Decompress for BaseTxEnvelope {
     fn decompress(value: &[u8]) -> Result<Self, DecompressError> {
         let (obj, _) = Compact::from_compact(value, value.len());
         Ok(obj)
     }
 }
 
-impl reth_db_api::table::Compress for BaseReceipt {
+impl reth_codecs::Compress for BaseReceipt {
     type Compressed = Vec<u8>;
 
     fn compress_to_buf<B: BufMut + AsMut<[u8]>>(&self, buf: &mut B) {
@@ -472,7 +472,7 @@ impl reth_db_api::table::Compress for BaseReceipt {
     }
 }
 
-impl reth_db_api::table::Decompress for BaseReceipt {
+impl reth_codecs::Decompress for BaseReceipt {
     fn decompress(value: &[u8]) -> Result<Self, DecompressError> {
         let (obj, _) = Compact::from_compact(value, value.len());
         Ok(obj)

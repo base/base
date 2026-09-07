@@ -22,13 +22,11 @@ alloy-sol-types = { workspace = true }
 revm = { workspace = true, optional = true }
 alloy-evm = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
-reth-db-api = { workspace = true, optional = true }
 alloy-network = { workspace = true, optional = true }
 modular-bitfield = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["rlp"] }
 alloy-rpc-types-eth = { workspace = true, optional = true }
 reth-zstd-compressors = { workspace = true, optional = true }
-reth-primitives-traits = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 bytes = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
@@ -55,7 +53,6 @@ std = [
 	"alloy-serde?/std",
 	"alloy-sol-types/std",
 	"reth-codecs?/std",
-	"reth-primitives-traits?/std",
 	"reth-zstd-compressors?/std",
 	"revm?/std",
 	"serde?/std",
@@ -73,8 +70,6 @@ arbitrary = [
 	"alloy-serde?/arbitrary",
 	"dep:arbitrary",
 	"reth-codecs?/arbitrary",
-	"reth-db-api?/arbitrary",
-	"reth-primitives-traits?/arbitrary",
 	"revm?/arbitrary",
 	"std",
 ]
@@ -87,7 +82,6 @@ serde = [
 	"dep:alloy-serde",
 	"dep:serde",
 	"reth-codecs?/serde",
-	"reth-primitives-traits?/serde",
 	"revm?/serde",
 ]
 serde-bincode-compat = [ "alloy-consensus/serde-bincode-compat", "serde_with" ]
@@ -96,8 +90,6 @@ reth = [
 	"dep:bytes",
 	"dep:modular-bitfield",
 	"dep:reth-codecs",
-	"dep:reth-db-api",
-	"dep:reth-primitives-traits",
 	"dep:reth-zstd-compressors",
 	"k256",
 	"serde",

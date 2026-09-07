@@ -22,8 +22,6 @@ use alloy_primitives::{Address, B256, Bytes, ChainId, TxKind, U256, bytes::BufMu
 use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
 #[cfg(feature = "reth")]
 use reth_codecs::Compact;
-#[cfg(feature = "reth")]
-use reth_primitives_traits::transaction::error::InvalidTransactionError;
 
 use crate::transaction::eip8130::{constants::Eip8130Constants, tx::TxEip8130};
 
@@ -130,7 +128,7 @@ pub enum Eip8130StaticError {
 /// [`Self::NonceFreeMalformed`] is the exception: it reports a nonce-free
 /// *structural* precondition (`nonce_sequence`/`valid_before` field constraints)
 /// that does not depend on `now`. It lives here — rather than in
-/// [`Eip8130Signed::validate_static`] — only because those preconditions gate
+/// [`Eip8130Signed::validate_admission_static`] — only because those preconditions gate
 /// the very nonce-free window checks that follow it, so validating them in the
 /// same pass keeps the nonce-free rules in one place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -213,24 +211,6 @@ impl Eip8130Signed {
             return Err(Eip8130StaticError::ZeroGasOrFee);
         }
         Ok(())
-    }
-
-    /// Validates static admission rules using Reth's transaction error type.
-    #[cfg(feature = "reth")]
-    pub const fn validate_static(
-        &self,
-        local_chain_id: u64,
-    ) -> Result<(), InvalidTransactionError> {
-        match self.validate_admission_static(local_chain_id) {
-            Ok(()) => Ok(()),
-            Err(Eip8130StaticError::ChainIdMismatch) => {
-                Err(InvalidTransactionError::ChainIdMismatch)
-            }
-            Err(Eip8130StaticError::TipAboveFeeCap) => Err(InvalidTransactionError::TipAboveFeeCap),
-            Err(Eip8130StaticError::ZeroGasOrFee) => {
-                Err(InvalidTransactionError::TxTypeNotSupported)
-            }
-        }
     }
 
     /// Validates the validity-window admission rules for nonce-bearing and

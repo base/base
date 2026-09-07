@@ -3211,8 +3211,6 @@ dependencies = [
  "modular-bitfield",
  "rand 0.9.5",
  "reth-codecs",
- "reth-db-api",
- "reth-primitives-traits",
  "reth-zstd-compressors",
  "revm",
  "rstest",

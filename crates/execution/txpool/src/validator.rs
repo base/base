@@ -1696,7 +1696,20 @@ where
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
-        signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
+        signed.validate_admission_static(local_chain_id).map_err(|error| {
+            let error = match error {
+                base_common_consensus::Eip8130StaticError::ChainIdMismatch => {
+                    InvalidTransactionError::ChainIdMismatch
+                }
+                base_common_consensus::Eip8130StaticError::TipAboveFeeCap => {
+                    InvalidTransactionError::TipAboveFeeCap
+                }
+                base_common_consensus::Eip8130StaticError::ZeroGasOrFee => {
+                    InvalidTransactionError::TxTypeNotSupported
+                }
+            };
+            InvalidPoolTransactionError::from(error)
+        })?;
         // The validity window is evaluated in milliseconds against
         // `block.timestamp * 1000`; the fork gate above uses seconds.
         let now_ms = now.saturating_mul(1_000);
