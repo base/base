@@ -8,7 +8,7 @@ use reth_node_builder::rpc::RpcRegistry;
 use reth_provider::BlockReader;
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_eth_api::{
-    EthApiTypes,
+    BaseEthApiError, EthApiTypes,
     helpers::{EthApiSpec, EthTransactions, TraceExt},
 };
 
@@ -23,7 +23,7 @@ where
     EthApi: EthApiSpec<Provider: BlockReader<Block = BaseBlock>> + EthTransactions + TraceExt,
 {
     /// Injects a raw transaction into the node tx pool via RPC server
-    pub async fn inject_tx(&self, raw_tx: Bytes) -> Result<B256, EthApi::Error> {
+    pub async fn inject_tx(&self, raw_tx: Bytes) -> Result<B256, BaseEthApiError> {
         let eth_api = self.inner.eth_api();
         eth_api.send_raw_transaction(raw_tx).await
     }

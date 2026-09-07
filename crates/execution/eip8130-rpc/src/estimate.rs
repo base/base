@@ -10,12 +10,15 @@ use alloy_rpc_types::state::EvmOverrides;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_evm::{EvmFactoryFor, HaltReasonFor, TxEnvFor};
+use reth_evm::{EvmFactoryFor, TxEnvFor};
 use reth_rpc_eth_api::{
     FromEthApiError,
     helpers::{FullEthApi, LoadPendingBlock},
 };
-use reth_rpc_eth_types::error::api::{FromEvmHalt, FromRevert};
+use reth_rpc_eth_types::{
+    BaseEthApiError,
+    error::api::{FromEvmHalt, FromRevert},
+};
 use revm::context::{Block, BlockEnv, TxEnv, result::ExecutionResult};
 
 /// Estimates gas for an EIP-8130 `eth_estimateGas` request by running a single
@@ -71,15 +74,10 @@ impl Eip8130GasEstimator {
     ) -> Result<U256, ErrorObjectOwned>
     where
         Eth: FullEthApi + LoadPendingBlock + Clone + Send + Sync + 'static,
-        Eth::Error: FromEthApiError,
         TxEnvFor: From<BaseRevm<TxEnv>>,
         // Pin the block env to revm's concrete type so block overrides can be
         // applied directly (Base's `EvmFactory::BlockEnv` is `revm::BlockEnv`).
         EvmFactoryFor: EvmFactory<BlockEnv = BlockEnv>,
-        // Surface phase reverts/halts as execution errors, like the standard
-        // estimator (`FullEthApi` already guarantees these on `Eth::Error`).
-        Eth::Error: FromRevert + FromEvmHalt<HaltReasonFor>,
-        ErrorObjectOwned: From<Eth::Error>,
     {
         let (evm_env, at) = eth_api.evm_env_at(block_id).await?;
         let chain_id = evm_env.cfg_env.chain_id;
@@ -108,7 +106,7 @@ impl Eip8130GasEstimator {
                     apply_block_overrides(*block, &mut db, &mut evm_env.block_env);
                 }
                 if let Some(state) = state {
-                    apply_state_overrides(state, &mut db).map_err(Eth::Error::from_eth_err)?;
+                    apply_state_overrides(state, &mut db).map_err(BaseEthApiError::from_eth_err)?;
                 }
                 this.transact(db, evm_env, sim_tx.into())
             })
@@ -123,10 +121,11 @@ impl Eip8130GasEstimator {
         match result.result {
             ExecutionResult::Success { .. } => Ok(U256::from(gas_used)),
             ExecutionResult::Revert { output, .. } => {
-                Err(<Eth::Error as FromRevert>::from_revert(output).into())
+                Err(<BaseEthApiError as FromRevert>::from_revert(output).into())
             }
             ExecutionResult::Halt { reason, gas, .. } => {
-                Err(<Eth::Error as FromEvmHalt<_>>::from_evm_halt(reason, gas.tx_gas_used()).into())
+                Err(<BaseEthApiError as FromEvmHalt<_>>::from_evm_halt(reason, gas.tx_gas_used())
+                    .into())
             }
         }
     }

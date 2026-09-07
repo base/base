@@ -46,7 +46,6 @@ impl ChannelNonceReader {
     ) -> Result<U256, ErrorObjectOwned>
     where
         Eth: FullEthApi + Send + Sync + 'static,
-        ErrorObjectOwned: From<Eth::Error>,
     {
         // Protocol nonce. Lives in account state, not the precompile.
         // Delegate to the standard `eth_getTransactionCount` resolution path.
@@ -82,10 +81,10 @@ impl ChannelNonceReader {
             return Ok(Self::decode_channel_nonce(value));
         }
 
-        let state = eth_api.state_at_block_id(block_id).await.map_err(Into::into)?;
+        let state = eth_api.state_at_block_id(block_id).await?;
         let word = state
             .storage(NonceManagerStorage::ADDRESS, slot_b256)
-            .map_err(|err| EthApiError::from(err).into())?
+            .map_err(EthApiError::from)?
             .unwrap_or_default();
         Ok(Self::decode_channel_nonce(word))
     }

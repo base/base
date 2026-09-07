@@ -14,7 +14,7 @@ use jsonrpsee::{
 };
 use reth_evm::{EvmFactoryFor, TxEnvFor};
 use reth_rpc_eth_api::{
-    EthApiTypes, FromEthApiError, RpcNodeCore,
+    EthApiTypes, RpcNodeCore,
     helpers::{EthCall, EthState, FullEthApi, LoadPendingBlock},
 };
 use reth_storage_api::BlockReaderIdExt;
@@ -82,11 +82,9 @@ impl<Eth: EthApiTypes> Eip8130EthApiExt<Eth> {
 impl<Eth> Eip8130EthApiOverrideServer for Eip8130EthApiExt<Eth>
 where
     Eth: FullEthApi + LoadPendingBlock + Clone + Send + Sync + 'static,
-    Eth::Error: FromEthApiError,
     <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
     TxEnvFor: From<BaseRevm<TxEnv>>,
     EvmFactoryFor: EvmFactory<BlockEnv = BlockEnv>,
-    jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
     async fn get_transaction_count(
         &self,

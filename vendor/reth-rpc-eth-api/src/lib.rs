@@ -41,8 +41,8 @@ pub use node::{RpcNodeCore, RpcNodeCoreExt};
 pub use pubsub::EthPubSubApiServer;
 pub use reth_rpc_convert::*;
 pub use reth_rpc_eth_types::{
-    BaseReceiptBuilder, BaseReceiptConverter, BaseRpcConverter, BaseTimeCache, BaseTxInfoMapper,
-    ReceiptFieldsBuilder,
+    BaseEthApiError, BaseReceiptBuilder, BaseReceiptConverter, BaseRpcConverter, BaseTimeCache,
+    BaseTxInfoMapper, ReceiptFieldsBuilder,
     error::{AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError},
 };
 use reth_trie_common as _;

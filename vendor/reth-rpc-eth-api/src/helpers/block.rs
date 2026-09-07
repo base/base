@@ -16,7 +16,7 @@ use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader, ProviderTx};
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 use super::{LoadPendingBlock, LoadReceipt, SpawnBlocking};
-use crate::{EthApiTypes, FromEthApiError, FullEthApiTypes, RpcNodeCore, node::RpcNodeCoreExt};
+use crate::{FromEthApiError, FullEthApiTypes, node::RpcNodeCoreExt};
 
 /// Result type of the fetched block receipts.
 pub type BlockReceiptsResult<E> = Result<Option<Vec<BaseTransactionReceipt>>, E>;
