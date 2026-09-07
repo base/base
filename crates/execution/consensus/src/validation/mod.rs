@@ -10,7 +10,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseTxEnvelope, DepositReceiptExt};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
@@ -107,10 +107,10 @@ where
 ///
 /// If `receipt_root_bloom` is provided, the pre-computed receipt root and logs bloom are used
 /// instead of computing them from the receipts.
-pub fn validate_block_post_execution<R: DepositReceiptExt>(
+pub fn validate_block_post_execution(
     header: impl BlockHeader,
     chain_spec: impl Upgrades,
-    result: &BlockExecutionResult<R>,
+    result: &BlockExecutionResult<BaseReceipt>,
     receipt_root_bloom: Option<(B256, Bloom)>,
 ) -> Result<(), ConsensusError> {
     let timestamp = header.timestamp();
@@ -191,10 +191,10 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
 }
 
 /// Verify the calculated receipts root against the expected receipts root.
-fn verify_receipts<R: DepositReceiptExt>(
+fn verify_receipts(
     expected_receipts_root: B256,
     expected_logs_bloom: Bloom,
-    receipts: &[R],
+    receipts: &[BaseReceipt],
     chain_spec: impl Upgrades,
     timestamp: u64,
 ) -> Result<(), ConsensusError> {

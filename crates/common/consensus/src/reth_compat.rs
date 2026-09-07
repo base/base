@@ -479,35 +479,6 @@ impl reth_db_api::table::Decompress for BaseReceipt {
     }
 }
 
-// ---------------------------------------------------------------------------
-// DepositReceiptExt trait
-// ---------------------------------------------------------------------------
-
-/// Trait for accessing deposit receipt fields on a [`reth_primitives_traits::Receipt`].
-pub trait DepositReceiptExt: reth_primitives_traits::Receipt {
-    /// Returns a mutable reference to the inner deposit receipt, if this is a deposit.
-    fn as_deposit_receipt_mut(&mut self) -> Option<&mut DepositReceipt>;
-
-    /// Returns a reference to the inner deposit receipt, if this is a deposit.
-    fn as_deposit_receipt(&self) -> Option<&DepositReceipt>;
-}
-
-impl DepositReceiptExt for BaseReceipt {
-    fn as_deposit_receipt_mut(&mut self) -> Option<&mut DepositReceipt> {
-        match self {
-            Self::Deposit(receipt) => Some(receipt),
-            _ => None,
-        }
-    }
-
-    fn as_deposit_receipt(&self) -> Option<&DepositReceipt> {
-        match self {
-            Self::Deposit(receipt) => Some(receipt),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Receipt;

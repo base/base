@@ -8,13 +8,13 @@ use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutorFactory;
 use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
-use base_common_consensus::DepositReceiptExt;
+use base_common_consensus::BaseReceipt;
 use base_common_evm::BaseBlockExecutionCtx;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
-use reth_primitives_traits::{Receipt, SignedTransaction};
+use reth_primitives_traits::SignedTransaction;
 use revm::context::Block as _;
 
 use crate::execute::{BlockAssembler, BlockAssemblerInput};
@@ -38,7 +38,7 @@ impl BaseBlockAssembler {
         F: for<'a> BlockExecutorFactory<
                 ExecutionCtx<'a>: Into<BaseBlockExecutionCtx>,
                 Transaction: SignedTransaction,
-                Receipt: Receipt + DepositReceiptExt,
+                Receipt = BaseReceipt,
             >,
         H,
     >(
@@ -142,7 +142,7 @@ where
     F: for<'a> BlockExecutorFactory<
             ExecutionCtx<'a> = BaseBlockExecutionCtx,
             Transaction: SignedTransaction,
-            Receipt: Receipt + DepositReceiptExt,
+            Receipt = BaseReceipt,
         >,
 {
     type Block = Block<F::Transaction>;

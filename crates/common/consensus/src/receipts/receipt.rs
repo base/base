@@ -44,6 +44,24 @@ pub enum BaseReceipt<T = Log> {
     Eip8130(Eip8130Receipt<T>),
 }
 
+impl BaseReceipt {
+    /// Returns the deposit receipt, if this receipt records a deposit transaction.
+    pub const fn as_deposit_receipt(&self) -> Option<&DepositReceipt> {
+        match self {
+            Self::Deposit(receipt) => Some(receipt),
+            _ => None,
+        }
+    }
+
+    /// Returns the deposit receipt for updates to its nonce or receipt version.
+    pub const fn as_deposit_receipt_mut(&mut self) -> Option<&mut DepositReceipt> {
+        match self {
+            Self::Deposit(receipt) => Some(receipt),
+            _ => None,
+        }
+    }
+}
+
 impl<T> BaseReceipt<T> {
     /// Returns [`OpTxType`] of the receipt.
     pub const fn tx_type(&self) -> OpTxType {

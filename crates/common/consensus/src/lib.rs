@@ -16,7 +16,7 @@ use revm as _;
 #[cfg(feature = "reth")]
 mod reth_compat;
 #[cfg(feature = "reth")]
-pub use reth_compat::{CompactTxDeposit, DepositReceiptExt};
+pub use reth_compat::CompactTxDeposit;
 
 mod receipts;
 pub use receipts::{

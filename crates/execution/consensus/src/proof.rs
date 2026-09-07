@@ -2,16 +2,16 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::ReceiptWithBloom;
+use alloy_consensus::{ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use alloy_trie::root::ordered_trie_root_with_encoder;
 use base_common_chains::Upgrades;
-use base_common_consensus::DepositReceiptExt;
+use base_common_consensus::BaseReceipt;
 
 /// Calculates the receipt root for a header.
-pub fn calculate_receipt_root<R: DepositReceiptExt>(
-    receipts: &[ReceiptWithBloom<&R>],
+pub fn calculate_receipt_root(
+    receipts: &[ReceiptWithBloom<&BaseReceipt>],
     chain_spec: impl Upgrades,
     timestamp: u64,
 ) -> B256 {
@@ -43,8 +43,8 @@ pub fn calculate_receipt_root<R: DepositReceiptExt>(
 /// Calculates the receipt root for a header for the reference type of a Base receipt.
 ///
 /// NOTE: Prefer [`calculate_receipt_root`] if you have log blooms memoized.
-pub fn calculate_receipt_root_no_memo<R: DepositReceiptExt>(
-    receipts: &[R],
+pub fn calculate_receipt_root_no_memo(
+    receipts: &[BaseReceipt],
     chain_spec: impl Upgrades,
     timestamp: u64,
 ) -> B256 {

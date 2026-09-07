@@ -3,7 +3,7 @@
 use std::fmt::{Debug, Formatter};
 
 use alloy_rpc_types_eth::TransactionInfo;
-use base_common_consensus::{BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt};
+use base_common_consensus::{BaseReceipt, BaseTransaction, BaseTransactionInfo, DepositInfo};
 use reth_primitives_traits::SignedTransaction;
 use reth_rpc_convert::TxInfoMapper;
 use reth_storage_api::{ReceiptProvider, TransactionsProvider, errors::ProviderError};
@@ -41,7 +41,7 @@ impl<Provider> BaseTxInfoMapper<Provider> {
 impl<T, Provider> TxInfoMapper<T> for BaseTxInfoMapper<Provider>
 where
     T: BaseTransaction + SignedTransaction,
-    Provider: TransactionsProvider<Transaction = T> + ReceiptProvider<Receipt: DepositReceiptExt>,
+    Provider: TransactionsProvider<Transaction = T> + ReceiptProvider<Receipt = BaseReceipt>,
 {
     type Out = BaseTransactionInfo;
     type Err = ProviderError;
