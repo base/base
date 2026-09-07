@@ -16,7 +16,7 @@ use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_chainspec::EthereumHardforks;
 use reth_errors::{BlockExecutionError, BlockValidationError, ProviderError, RethError};
 use reth_evm::{
-    BaseNextBlockEnvAttributes, Evm, EvmEnvFor, NextBlockEnvAttributes,
+    BaseNextBlockEnvAttributes, Evm, EvmEnvFor,
     block::TxResult,
     execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput},
 };
@@ -455,39 +455,16 @@ pub trait PendingEnvBuilder: Send + Sync + Unpin + 'static {
     ) -> Result<BaseNextBlockEnvAttributes, EthApiError>;
 }
 
-/// Trait that should be implemented on [`BaseNextBlockEnvAttributes`] to provide a way for it to
-/// build an environment for pending block.
-///
-/// This assumes that next environment building doesn't require any additional context, for more
-/// complex implementations one should implement [`PendingEnvBuilder`] on their custom type.
-pub trait BuildPendingEnv<Header> {
-    /// Builds a [`BaseNextBlockEnvAttributes`] for a pending block.
-    ///
-    /// `block_overrides` can be used for values that need to be part of the next block context
-    /// before the EVM environment is constructed. Other block overrides are applied directly to the
-    /// EVM environment after construction.
-    fn build_pending_env(
-        parent: &SealedHeader<Header>,
-        block_overrides: Option<&BlockOverrides>,
-    ) -> Self;
-}
+/// Constructs the pending block environment used by Base RPC handlers.
+#[derive(Debug)]
+pub struct BasePendingEnv;
 
-impl PendingEnvBuilder for () {
-    fn pending_env_attributes(
-        &self,
+impl BasePendingEnv {
+    /// Derives pending block attributes from the parent header.
+    pub fn attributes(
         parent: &SealedHeader<alloy_consensus::Header>,
-        block_overrides: Option<&BlockOverrides>,
-    ) -> Result<BaseNextBlockEnvAttributes, EthApiError> {
-        Ok(BaseNextBlockEnvAttributes::build_pending_env(parent, block_overrides))
-    }
-}
-
-impl<H: alloy_consensus::BlockHeader> BuildPendingEnv<H> for BaseNextBlockEnvAttributes {
-    fn build_pending_env(
-        parent: &SealedHeader<H>,
-        _block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,
-    ) -> Self {
-        Self {
+    ) -> BaseNextBlockEnvAttributes {
+        BaseNextBlockEnvAttributes {
             timestamp: parent.timestamp().saturating_add(12),
             suggested_fee_recipient: parent.beneficiary(),
             prev_randao: B256::random(),
@@ -498,84 +475,33 @@ impl<H: alloy_consensus::BlockHeader> BuildPendingEnv<H> for BaseNextBlockEnvAtt
     }
 }
 
-impl<H: BlockHeader> BuildPendingEnv<H> for NextBlockEnvAttributes {
-    fn build_pending_env(
-        parent: &SealedHeader<H>,
-        block_overrides: Option<&BlockOverrides>,
-    ) -> Self {
-        let mut attributes = Self {
-            timestamp: parent.timestamp().saturating_add(12),
-            suggested_fee_recipient: parent.beneficiary(),
-            prev_randao: B256::random(),
-            gas_limit: parent.gas_limit(),
-            parent_beacon_block_root: parent.parent_beacon_block_root().map(|_| B256::ZERO),
-            withdrawals: parent.withdrawals_root().map(|_| Default::default()),
-            extra_data: parent.extra_data().clone(),
-            slot_number: parent.slot_number().map(|slot| slot.saturating_add(1)),
-        };
-
-        if attributes.parent_beacon_block_root.is_some()
-            && let Some(beacon_root) = block_overrides.and_then(|overrides| overrides.beacon_root)
-        {
-            attributes.parent_beacon_block_root = Some(beacon_root);
-        }
-
-        attributes
+impl PendingEnvBuilder for () {
+    fn pending_env_attributes(
+        &self,
+        parent: &SealedHeader<alloy_consensus::Header>,
+        _block_overrides: Option<&BlockOverrides>,
+    ) -> Result<BaseNextBlockEnvAttributes, EthApiError> {
+        Ok(BasePendingEnv::attributes(parent))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Header;
-    use alloy_primitives::B256;
-    use reth_primitives_traits::SealedHeader;
-
     use super::*;
 
     #[test]
-    fn pending_env_defaults_parent_beacon_root() {
-        let mut header = Header::default();
+    fn pending_env_preserves_base_parent_beacon_root() {
         let beacon_root = B256::repeat_byte(0x42);
-        header.parent_beacon_block_root = Some(beacon_root);
-        let sealed = SealedHeader::new(header, B256::ZERO);
-
-        let attrs = NextBlockEnvAttributes::build_pending_env(&sealed, None);
-
-        assert_eq!(attrs.parent_beacon_block_root, Some(B256::ZERO));
-    }
-
-    #[test]
-    fn pending_env_applies_parent_beacon_root_override() {
-        let header = Header { parent_beacon_block_root: Some(B256::ZERO), ..Default::default() };
-        let sealed = SealedHeader::new(header, B256::ZERO);
-        let beacon_root = B256::repeat_byte(0x42);
-        let block_overrides =
-            BlockOverrides { beacon_root: Some(beacon_root), ..Default::default() };
-
-        let attrs = NextBlockEnvAttributes::build_pending_env(&sealed, Some(&block_overrides));
-
-        assert_eq!(attrs.parent_beacon_block_root, Some(beacon_root));
-    }
-
-    #[test]
-    fn pending_env_ignores_parent_beacon_root_override_before_fork() {
-        let sealed = SealedHeader::new(Header::default(), B256::ZERO);
-        let beacon_root = B256::repeat_byte(0x42);
-        let block_overrides =
-            BlockOverrides { beacon_root: Some(beacon_root), ..Default::default() };
-
-        let attrs = NextBlockEnvAttributes::build_pending_env(&sealed, Some(&block_overrides));
-
-        assert_eq!(attrs.parent_beacon_block_root, None);
-    }
-
-    #[test]
-    fn pending_env_increments_parent_slot_number() {
-        let header = Header { slot_number: Some(7), ..Default::default() };
-        let sealed = SealedHeader::new(header, B256::ZERO);
-
-        let attrs = NextBlockEnvAttributes::build_pending_env(&sealed, None);
-
-        assert_eq!(attrs.slot_number, Some(8));
+        let header = alloy_consensus::Header {
+            parent_beacon_block_root: Some(beacon_root),
+            timestamp: 100,
+            gas_limit: 30_000_000,
+            ..Default::default()
+        };
+        let parent = SealedHeader::new(header, B256::ZERO);
+        let attributes = BasePendingEnv::attributes(&parent);
+        assert_eq!(attributes.parent_beacon_block_root, Some(beacon_root));
+        assert_eq!(attributes.timestamp, 112);
+        assert_eq!(attributes.gas_limit, 30_000_000);
     }
 }

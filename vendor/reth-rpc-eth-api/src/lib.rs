@@ -36,7 +36,7 @@ pub use filter::EthFilterApiClient;
 pub use filter::{EngineEthFilter, EthFilterApiServer, QueryLimits};
 #[cfg(feature = "client")]
 pub use helpers::config::EthConfigApiClient;
-pub use helpers::config::EthConfigApiServer;
+pub use helpers::{config::EthConfigApiServer, pending_block::BasePendingEnv};
 pub use node::{RpcNodeCore, RpcNodeCoreExt};
 pub use pubsub::EthPubSubApiServer;
 pub use reth_rpc_convert::*;
