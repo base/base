@@ -4,14 +4,8 @@ use alloy_consensus::Header;
 use base_common_consensus::BaseTransactionSigned;
 use base_execution_payload_builder::ParkablePayloadTransactions;
 use base_execution_txpool::{BasePooledTx, StateDiffInvalidation, TimestampedTransaction};
-use reth_node_api::FullNodeTypes;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
-
-/// Composite trait bound for a full node type compatible with the Base builder.
-pub trait NodeBounds: FullNodeTypes {}
-
-impl<T> NodeBounds for T where T: FullNodeTypes {}
 
 /// Composite trait bound for a transaction pool compatible with the Base builder.
 pub trait PoolBounds:

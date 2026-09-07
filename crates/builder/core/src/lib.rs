@@ -14,7 +14,7 @@ pub use base_execution_payload_builder::{
 pub use config::BuilderConfig;
 
 mod traits;
-pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
+pub use traits::{ClientBounds, PayloadTxsBounds, PoolBounds};
 
 mod metrics;
 pub use metrics::BuilderMetrics;
