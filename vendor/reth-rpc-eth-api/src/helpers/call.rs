@@ -498,10 +498,8 @@ pub trait EthCall: EstimateCall + Call + LoadPendingBlock + LoadBlock + FullEthA
 
 /// Executes code on state.
 pub trait Call:
-    LoadState<
-        RpcConvert: RpcConvert,
-        Error: FromEvmError + From<<Self::RpcConvert as RpcConvert>::Error> + From<ProviderError>,
-    > + SpawnBlocking
+    LoadState<Error: FromEvmError + From<reth_rpc_eth_types::BaseEthApiError> + From<ProviderError>>
+    + SpawnBlocking
 {
     /// Returns default gas limit to use for `eth_call` and tracing RPC methods.
     ///

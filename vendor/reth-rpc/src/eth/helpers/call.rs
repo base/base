@@ -1,6 +1,5 @@
 //! Contains RPC handler implementations specific to endpoints that call/execute within evm.
 
-use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
     FromEvmError, RpcNodeCore,
     helpers::{Call, EthCall, estimate::EstimateCall},
@@ -9,19 +8,17 @@ use reth_rpc_eth_types::EthApiError;
 
 use crate::EthApi;
 
-impl<N, Rpc> EthCall for EthApi<N, Rpc>
+impl<N> EthCall for EthApi<N>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = EthApiError>,
 {
 }
 
-impl<N, Rpc> Call for EthApi<N, Rpc>
+impl<N> Call for EthApi<N>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = EthApiError>,
 {
     #[inline]
     fn call_gas_limit(&self) -> u64 {
@@ -44,10 +41,9 @@ where
     }
 }
 
-impl<N, Rpc> EstimateCall for EthApi<N, Rpc>
+impl<N> EstimateCall for EthApi<N>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = EthApiError>,
 {
 }

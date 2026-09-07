@@ -2,7 +2,7 @@
 
 use alloy_eips::BlockNumberOrTag;
 use reth_rpc_eth_api::{
-    FromEvmError, RpcConvert, RpcNodeCore, RpcNodeCoreExt,
+    FromEvmError, RpcNodeCore, RpcNodeCoreExt,
     helpers::{LoadPendingBlock, SpawnBlocking, pending_block::PendingEnvBuilder},
 };
 use reth_rpc_eth_types::{
@@ -13,11 +13,10 @@ use reth_storage_api::{BlockReaderIdExt, StateProviderBox};
 
 use crate::{BaseEthApi, BaseEthApiError};
 
-impl<N, Rpc> LoadPendingBlock for BaseEthApi<N, Rpc>
+impl<N> LoadPendingBlock for BaseEthApi<N>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     #[inline]
     fn pending_block(&self) -> &tokio::sync::Mutex<Option<PendingBlock>> {

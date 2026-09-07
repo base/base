@@ -69,10 +69,7 @@ where
 /// Launches a new server with http only with the given modules
 pub async fn launch_http(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
     let builder = test_rpc_builder();
-    let eth_api = builder
-        .eth_api_builder()
-        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
-        .build();
+    let eth_api = builder.eth_api_builder().build();
     let server =
         builder.build(TransportRpcModuleConfig::set_http(modules), eth_api, EventSender::new(1));
     RpcServerConfig::http(Default::default())
@@ -85,10 +82,7 @@ pub async fn launch_http(modules: impl Into<RpcModuleSelection>) -> RpcServerHan
 /// Launches a new server with ws only with the given modules
 pub async fn launch_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
     let builder = test_rpc_builder();
-    let eth_api = builder
-        .eth_api_builder()
-        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
-        .build();
+    let eth_api = builder.eth_api_builder().build();
     let server =
         builder.build(TransportRpcModuleConfig::set_ws(modules), eth_api, EventSender::new(1));
     RpcServerConfig::ws(Default::default())
@@ -101,10 +95,7 @@ pub async fn launch_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandl
 /// Launches a new server with http and ws and with the given modules
 pub async fn launch_http_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
     let builder = test_rpc_builder();
-    let eth_api = builder
-        .eth_api_builder()
-        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
-        .build();
+    let eth_api = builder.eth_api_builder().build();
     let modules = modules.into();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(modules.clone()).with_http(modules),
@@ -125,10 +116,7 @@ pub async fn launch_http_ws(modules: impl Into<RpcModuleSelection>) -> RpcServer
 pub async fn launch_http_ws_same_port(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
     let builder = test_rpc_builder();
     let modules = modules.into();
-    let eth_api = builder
-        .eth_api_builder()
-        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
-        .build();
+    let eth_api = builder.eth_api_builder().build();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(modules.clone()).with_http(modules),
         eth_api,

@@ -30,7 +30,7 @@ pub type BlockAndReceiptsResult<Eth> = Result<
 
 /// Block related functions for the [`EthApiServer`](crate::EthApiServer) trait in the
 /// `eth_` namespace.
-pub trait EthBlocks: LoadBlock<RpcConvert: RpcConvert> {
+pub trait EthBlocks: LoadBlock {
     /// Returns the block header for the given block id.
     fn rpc_block_header(
         &self,

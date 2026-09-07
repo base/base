@@ -10,11 +10,10 @@ use reth_rpc_eth_api::{
 
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
-impl<N, Rpc> EthBlocks for BaseEthApi<N, Rpc>
+impl<N> EthBlocks for BaseEthApi<N>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     async fn rpc_block_header(
         &self,
@@ -61,10 +60,9 @@ where
     }
 }
 
-impl<N, Rpc> LoadBlock for BaseEthApi<N, Rpc>
+impl<N> LoadBlock for BaseEthApi<N>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }

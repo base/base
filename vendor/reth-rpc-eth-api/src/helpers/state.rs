@@ -14,7 +14,6 @@ use futures::Future;
 use reth_errors::RethError;
 use reth_evm::EvmEnvFor;
 use reth_primitives_traits::RecoveredBlock;
-use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_types::{
     EthApiError, PendingBlockEnv, RpcInvalidTransactionError, SignError,
     error::{FromEvmError, IntoEthApiError},
@@ -309,9 +308,7 @@ pub trait EthState: LoadState + SpawnBlocking {
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` state RPC methods.
 pub trait LoadState:
-    LoadPendingBlock
-    + EthApiTypes<Error: FromEvmError + FromEthApiError, RpcConvert: RpcConvert>
-    + RpcNodeCoreExt
+    LoadPendingBlock + EthApiTypes<Error: FromEvmError + FromEthApiError> + RpcNodeCoreExt
 {
     /// Returns the state at the given block number
     fn state_at_hash(&self, block_hash: B256) -> Result<StateProviderBox, Self::Error> {

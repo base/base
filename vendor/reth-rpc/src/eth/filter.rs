@@ -1394,10 +1394,7 @@ mod tests {
     #[expect(clippy::type_complexity)]
     fn build_test_eth_api(
         provider: MockEthProvider,
-    ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>,
-        crate::test_utils::TestRpcConverter,
-    > {
+    ) -> EthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>> {
         crate::test_utils::RpcTestUtils::api_builder(
             provider.clone(),
             crate::test_utils::RpcTestUtils::pool(),

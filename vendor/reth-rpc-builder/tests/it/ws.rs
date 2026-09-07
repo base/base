@@ -135,10 +135,7 @@ async fn test_eth_subscribe_not_available_over_http() {
     reth_tracing::init_test_tracing();
 
     let builder = test_rpc_builder();
-    let eth_api = builder
-        .eth_api_builder()
-        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
-        .build();
+    let eth_api = builder.eth_api_builder().build();
     let modules = RpcModuleSelection::Standard;
     let server =
         builder.build(TransportRpcModuleConfig::set_http(modules), eth_api, EventSender::new(1));
@@ -173,10 +170,7 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
         .with_evm_config(BaseEvmConfig::default())
         .with_consensus(NoopConsensus::default());
 
-    let eth_api = builder
-        .eth_api_builder()
-        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
-        .build();
+    let eth_api = builder.eth_api_builder().build();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(RpcModuleSelection::Standard),
         eth_api,

@@ -8,7 +8,6 @@ use alloy_primitives::{B256, hex};
 use base_execution_chainspec::ChainSpecProvider;
 use reth_chainspec::EthereumHardforks;
 use reth_primitives_traits::{AlloyBlockHeader, WithEncoded};
-use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
     FromEvmError, RpcNodeCore,
     helpers::{EthTransactions, LoadTransaction, spec::SignersForRpc},
@@ -22,11 +21,10 @@ use reth_transaction_pool::{
 
 use crate::EthApi;
 
-impl<N, Rpc> EthTransactions for EthApi<N, Rpc>
+impl<N> EthTransactions for EthApi<N>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = EthApiError>,
 {
     #[inline]
     fn signers(&self) -> &SignersForRpc<Self::Provider> {
@@ -51,7 +49,8 @@ where
             let EthBlobTransactionSidecar::Present(sidecar) = pool_transaction.take_blob() else {
                 return Err(EthApiError::PoolError(RpcPoolError::Eip4844(
                     Eip4844PoolTransactionError::MissingEip4844BlobSidecar,
-                )));
+                ))
+                .into());
             };
             let sidecar = sidecar.into_sidecar();
 
@@ -123,11 +122,10 @@ where
     }
 }
 
-impl<N, Rpc> LoadTransaction for EthApi<N, Rpc>
+impl<N> LoadTransaction for EthApi<N>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = EthApiError>,
 {
 }
 
@@ -150,20 +148,14 @@ mod tests {
 
     fn mock_eth_api(
         accounts: AddressMap<ExtendedAccount>,
-    ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>,
-        crate::test_utils::TestRpcConverter,
-    > {
+    ) -> EthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>> {
         mock_eth_api_with_sync_timeout(accounts, Duration::from_secs(30))
     }
 
     fn mock_eth_api_with_sync_timeout(
         accounts: AddressMap<ExtendedAccount>,
         send_raw_transaction_sync_timeout: Duration,
-    ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>,
-        crate::test_utils::TestRpcConverter,
-    > {
+    ) -> EthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>> {
         let mock_provider = MockEthProvider::default()
             .with_chain_spec(ChainSpecBuilder::mainnet().cancun_activated().build());
         mock_provider.extend_accounts(accounts);
@@ -243,7 +235,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            EthApiError::TransactionConfirmationTimeout { duration, .. }
+            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
         assert_eq!(eth_api.pool().len(), 1);
@@ -257,7 +249,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            EthApiError::TransactionConfirmationTimeout { duration, .. }
+            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
         assert_eq!(eth_api.pool().len(), 1);
@@ -271,7 +263,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            EthApiError::TransactionConfirmationTimeout { duration, .. }
+            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
         assert_eq!(eth_api.pool().len(), 1);
@@ -285,7 +277,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            EthApiError::TransactionConfirmationTimeout { duration, .. }
+            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
         assert_eq!(eth_api.pool().len(), 1);

@@ -1,6 +1,5 @@
 //! Contains RPC handler implementations for fee history.
 
-use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
     FromEvmError, RpcNodeCore,
     helpers::{EthFees, LoadFee},
@@ -10,19 +9,17 @@ use reth_storage_api::ProviderHeader;
 
 use crate::EthApi;
 
-impl<N, Rpc> EthFees for EthApi<N, Rpc>
+impl<N> EthFees for EthApi<N>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = EthApiError>,
 {
 }
 
-impl<N, Rpc> LoadFee for EthApi<N, Rpc>
+impl<N> LoadFee for EthApi<N>
 where
     N: RpcNodeCore,
     EthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = EthApiError>,
 {
     #[inline]
     fn gas_oracle(&self) -> &GasPriceOracle<Self::Provider> {

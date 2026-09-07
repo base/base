@@ -22,10 +22,16 @@ use reth_storage_api::BlockReader;
 use crate::BaseTimeCache;
 
 /// Converter for Base receipts.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BaseReceiptConverter<Provider> {
     provider: Provider,
     base_time: BaseTimeCache,
+}
+
+impl<Provider> std::fmt::Debug for BaseReceiptConverter<Provider> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BaseReceiptConverter").finish_non_exhaustive()
+    }
 }
 
 impl<Provider> BaseReceiptConverter<Provider> {
@@ -37,10 +43,8 @@ impl<Provider> BaseReceiptConverter<Provider> {
 
 impl<Provider> ReceiptConverter for BaseReceiptConverter<Provider>
 where
-    Provider: BlockReader<Block = BaseBlock, Transaction = BaseTxEnvelope>
-        + ChainSpecProvider
-        + Debug
-        + 'static,
+    Provider:
+        BlockReader<Block = BaseBlock, Transaction = BaseTxEnvelope> + ChainSpecProvider + 'static,
 {
     type RpcReceipt = BaseTransactionReceipt;
     type RpcLog = BaseLogResponse;

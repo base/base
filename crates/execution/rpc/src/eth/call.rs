@@ -1,31 +1,28 @@
 use reth_rpc_eth_api::{
-    FromEvmError, RpcConvert,
+    FromEvmError,
     helpers::{Call, EthCall, estimate::EstimateCall},
 };
 
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
-impl<N, Rpc> EthCall for BaseEthApi<N, Rpc>
+impl<N> EthCall for BaseEthApi<N>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }
 
-impl<N, Rpc> EstimateCall for BaseEthApi<N, Rpc>
+impl<N> EstimateCall for BaseEthApi<N>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
 }
 
-impl<N, Rpc> Call for BaseEthApi<N, Rpc>
+impl<N> Call for BaseEthApi<N>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     #[inline]
     fn call_gas_limit(&self) -> u64 {

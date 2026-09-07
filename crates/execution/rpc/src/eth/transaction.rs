@@ -15,7 +15,7 @@ use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::{SignerRecoverable, WithEncoded};
 use reth_rpc_eth_api::{
-    EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore,
+    EthApiTypes as _, FromEthApiError, FromEvmError, RpcNodeCore,
     helpers::{EthTransactions, LoadReceipt, LoadTransaction, SpawnBlocking, spec::SignersForRpc},
 };
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
@@ -27,12 +27,11 @@ use tracing::{debug, instrument, warn};
 
 use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerClient};
 
-impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
+impl<N> EthTransactions for BaseEthApi<N>
 where
     N: RpcNodeCore,
     N::Provider: BlockReaderIdExt + ChainSpecProvider,
     BaseEthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     fn signers(&self) -> &SignersForRpc<Self::Provider> {
         self.inner.eth_api.signers()
@@ -171,11 +170,10 @@ where
     }
 }
 
-impl<N, Rpc> LoadTransaction for BaseEthApi<N, Rpc>
+impl<N> LoadTransaction for BaseEthApi<N>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError,
-    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     async fn transaction_by_hash(
         &self,
@@ -213,10 +211,9 @@ where
     }
 }
 
-impl<N, Rpc> BaseEthApi<N, Rpc>
+impl<N> BaseEthApi<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert,
 {
     /// Returns the [`SequencerClient`] if one is set.
     pub fn raw_tx_forwarder(&self) -> Option<SequencerClient> {
@@ -224,11 +221,10 @@ where
     }
 }
 
-impl<N, Rpc> BaseEthApi<N, Rpc>
+impl<N> BaseEthApi<N>
 where
     N: RpcNodeCore,
     N::Provider: BlockReaderIdExt + ChainSpecProvider,
-    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     fn is_cobalt_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
         let Some(header) = self.provider().latest_header()? else {

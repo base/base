@@ -18,7 +18,7 @@ pub struct EthApiCtx<'a, N: FullNodeTypes> {
 
 impl<'a, N: FullNodeComponents> EthApiCtx<'a, N> {
     /// Provides a [`reth_rpc::EthApiBuilder`] with preconfigured config and components.
-    pub fn eth_api_builder(self) -> reth_rpc::EthApiBuilder<N, ()> {
+    pub fn eth_api_builder(self) -> reth_rpc::EthApiBuilder<N> {
         reth_rpc::EthApiBuilder::new_with_components(self.components.clone())
             .eth_cache(self.cache)
             .task_spawner(self.components.task_executor().clone())
@@ -37,4 +37,3 @@ impl<'a, N: FullNodeComponents> EthApiCtx<'a, N> {
             .force_blob_sidecar_upcasting(self.config.force_blob_sidecar_upcasting)
     }
 }
-

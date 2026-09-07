@@ -1,14 +1,11 @@
 use alloy_primitives::U256;
-use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{RpcNodeCore, helpers::EthApiSpec};
-use reth_rpc_eth_types::EthApiError;
 
 use crate::EthApi;
 
-impl<N, Rpc> EthApiSpec for EthApi<N, Rpc>
+impl<N> EthApiSpec for EthApi<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Error = EthApiError>,
 {
     fn starting_block(&self) -> U256 {
         self.inner.starting_block()

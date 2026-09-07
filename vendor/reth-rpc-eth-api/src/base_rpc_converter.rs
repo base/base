@@ -20,12 +20,18 @@ use reth_storage_api::BlockReader;
 use crate::{BaseReceiptConverter, BaseTimeCache, BaseTxInfoMapper};
 
 /// Converts Base RPC data using the provider and shared BaseTime cache.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BaseRpcConverter<Provider> {
     /// Receipt and L1 fee conversion.
     pub receipt_converter: BaseReceiptConverter<Provider>,
     /// Deposit and block timestamp metadata.
     pub mapper: BaseTxInfoMapper<Provider>,
+}
+
+impl<Provider> std::fmt::Debug for BaseRpcConverter<Provider> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BaseRpcConverter").finish_non_exhaustive()
+    }
 }
 
 impl<Provider: Clone> BaseRpcConverter<Provider> {
@@ -42,7 +48,6 @@ impl<Provider> RpcConvert for BaseRpcConverter<Provider>
 where
     Provider: BlockReader<Block = BaseBlock, Transaction = BaseTxEnvelope, Receipt = BaseReceipt>
         + ChainSpecProvider
-        + std::fmt::Debug
         + Clone
         + Send
         + Sync

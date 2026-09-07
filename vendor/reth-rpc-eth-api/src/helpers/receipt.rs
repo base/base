@@ -18,7 +18,7 @@ use crate::{EthApiTypes, RpcNodeCoreExt};
 /// Assembles transaction receipt data w.r.t to network.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` receipts RPC methods.
-pub trait LoadReceipt: EthApiTypes<RpcConvert: RpcConvert> + RpcNodeCoreExt + Send + Sync {
+pub trait LoadReceipt: EthApiTypes + RpcNodeCoreExt + Send + Sync {
     /// Helper method for `eth_getBlockReceipts` and `eth_getTransactionReceipt`.
     ///
     /// If a value is `Some`, skips the corresponding cache lookup entirely.

@@ -54,17 +54,14 @@ pub use reth_ipc::server::{
 };
 use reth_network_api::{NetworkInfo, Peers, noop::NoopNetwork};
 use reth_rpc::{
-    AdminApi, DebugApi, EngineEthApi, EthApi, EthApiBuilder, EthBundle, MinerApi, NetApi,
-    OtterscanApi, RPCApi, RethApi, TraceApi, TxPoolApi, Web3Api,
+    AdminApi, DebugApi, EngineEthApi, EthApiBuilder, EthBundle, MinerApi, NetApi, OtterscanApi,
+    RPCApi, RethApi, TraceApi, TxPoolApi, Web3Api,
 };
 use reth_rpc_api::servers::*;
 use reth_rpc_engine_api::RethEngineApi;
 use reth_rpc_eth_api::{
-    EthApiServer, EthApiTypes, FullEthApiServer, FullEthApiTypes, RpcConvert, RpcNodeCore,
-    helpers::{
-        Call, EthApiSpec, EthTransactions, LoadPendingBlock, TraceExt,
-        pending_block::PendingEnvBuilder,
-    },
+    EthApiServer, EthApiTypes, FullEthApiServer, FullEthApiTypes, RpcNodeCore,
+    helpers::{Call, EthApiSpec, EthTransactions, LoadPendingBlock, TraceExt},
     node::RpcNodeCoreAdapter,
 };
 use reth_rpc_eth_types::{EthConfig, EthSubscriptionIdProvider};
@@ -223,7 +220,7 @@ impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Networ
 
     /// Instantiates a new [`EthApiBuilder`] from the configured components.
     #[expect(clippy::type_complexity)]
-    pub fn eth_api_builder(&self) -> EthApiBuilder<RpcNodeCoreAdapter<Provider, Pool, Network>, ()>
+    pub fn eth_api_builder(&self) -> EthApiBuilder<RpcNodeCoreAdapter<Provider, Pool, Network>>
     where
         Provider: Clone,
         Pool: Clone,
@@ -236,27 +233,6 @@ impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Networ
             self.network.clone(),
             self.evm_config.clone(),
         )
-    }
-
-    /// Initializes a new [`EthApiServer`] with the configured components and default settings.
-    ///
-    /// Note: This spawns all necessary tasks.
-    ///
-    /// See also [`EthApiBuilder`].
-    #[expect(clippy::type_complexity)]
-    pub fn bootstrap_eth_api<Rpc>(
-        &self,
-        converter: Rpc,
-    ) -> EthApi<RpcNodeCoreAdapter<Provider, Pool, Network>, Rpc>
-    where
-        Provider: Clone,
-        Pool: Clone,
-        Network: Clone,
-        RpcNodeCoreAdapter<Provider, Pool, Network>: RpcNodeCore,
-        Rpc: RpcConvert,
-        (): PendingEnvBuilder,
-    {
-        self.eth_api_builder().with_rpc_converter(converter).build()
     }
 }
 

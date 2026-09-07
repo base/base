@@ -4,9 +4,9 @@ use std::{sync::Arc, time::Duration};
 
 use reth_chain_state::CanonStateSubscriptions;
 use reth_evm::BaseEvmConfig;
-use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
-    RpcNodeCore, helpers::pending_block::PendingEnvBuilder, node::RpcNodeCoreAdapter,
+    BaseRpcConverter, RpcNodeCore, helpers::pending_block::PendingEnvBuilder,
+    node::RpcNodeCoreAdapter,
 };
 use reth_rpc_eth_types::{
     EthStateCache, EthStateCacheConfig, FeeHistoryCache, FeeHistoryCacheConfig, ForwardConfig,
@@ -26,9 +26,9 @@ use crate::{EthApi, eth::core::EthApiInner};
 /// This builder type contains all settings to create an [`EthApiInner`] or an [`EthApi`] instance
 /// directly.
 #[derive(Debug)]
-pub struct EthApiBuilder<N: RpcNodeCore, Rpc, NextEnv = ()> {
+pub struct EthApiBuilder<N: RpcNodeCore, NextEnv = ()> {
     components: N,
-    rpc_converter: Rpc,
+    rpc_converter: BaseRpcConverter<N::Provider>,
     gas_cap: GasCap,
     max_simulate_blocks: u64,
     compute_state_root_for_eth_simulate: bool,
@@ -51,7 +51,7 @@ pub struct EthApiBuilder<N: RpcNodeCore, Rpc, NextEnv = ()> {
     force_blob_sidecar_upcasting: bool,
 }
 
-impl<Provider, Pool, Network> EthApiBuilder<RpcNodeCoreAdapter<Provider, Pool, Network>, ()>
+impl<Provider, Pool, Network> EthApiBuilder<RpcNodeCoreAdapter<Provider, Pool, Network>>
 where
     RpcNodeCoreAdapter<Provider, Pool, Network>: RpcNodeCore,
 {
@@ -66,7 +66,7 @@ where
     }
 }
 
-impl<N: RpcNodeCore, Rpc, NextEnv> EthApiBuilder<N, Rpc, NextEnv> {
+impl<N: RpcNodeCore, NextEnv> EthApiBuilder<N, NextEnv> {
     /// Apply a function to the builder
     pub fn apply<F>(self, f: F) -> Self
     where
@@ -74,73 +74,17 @@ impl<N: RpcNodeCore, Rpc, NextEnv> EthApiBuilder<N, Rpc, NextEnv> {
     {
         f(self)
     }
-
-    /// Converts the RPC converter type of this builder
-    pub fn map_converter<F, R>(self, f: F) -> EthApiBuilder<N, R, NextEnv>
-    where
-        F: FnOnce(Rpc) -> R,
-    {
-        let Self {
-            components,
-            rpc_converter,
-            gas_cap,
-            max_simulate_blocks,
-            compute_state_root_for_eth_simulate,
-            eth_proof_window,
-            fee_history_cache_config,
-            proof_permits,
-            eth_state_cache_config,
-            eth_cache,
-            gas_oracle_config,
-            gas_oracle,
-            blocking_task_pool,
-            task_spawner,
-            next_env,
-            max_batch_size,
-            max_blocking_io_requests,
-            pending_block_kind,
-            raw_tx_forwarder,
-            send_raw_transaction_sync_timeout,
-            evm_memory_limit,
-            force_blob_sidecar_upcasting,
-        } = self;
-        EthApiBuilder {
-            components,
-            rpc_converter: f(rpc_converter),
-            gas_cap,
-            max_simulate_blocks,
-            compute_state_root_for_eth_simulate,
-            eth_proof_window,
-            fee_history_cache_config,
-            proof_permits,
-            eth_state_cache_config,
-            eth_cache,
-            gas_oracle_config,
-            gas_oracle,
-            blocking_task_pool,
-            task_spawner,
-            next_env,
-            max_batch_size,
-            max_blocking_io_requests,
-            pending_block_kind,
-            raw_tx_forwarder,
-            send_raw_transaction_sync_timeout,
-            evm_memory_limit,
-            force_blob_sidecar_upcasting,
-        }
-    }
 }
 
-impl<N> EthApiBuilder<N, ()>
+impl<N> EthApiBuilder<N>
 where
     N: RpcNodeCore,
 {
     /// Creates a builder with the provided components.
-    /// Attach a Base RPC converter with `with_rpc_converter` before building.
     pub fn new_with_components(components: N) -> Self {
         Self {
+            rpc_converter: BaseRpcConverter::new(components.provider().clone(), Default::default()),
             components,
-            rpc_converter: (),
             eth_cache: None,
             gas_oracle: None,
             gas_cap: GasCap::default(),
@@ -165,76 +109,27 @@ where
     }
 }
 
-impl<N, Rpc, NextEnv> EthApiBuilder<N, Rpc, NextEnv>
+impl<N, NextEnv> EthApiBuilder<N, NextEnv>
 where
     N: RpcNodeCore,
 {
+    /// Shares validated BaseTime timestamps with the outer Base RPC handlers.
+    pub fn base_time_cache(mut self, cache: reth_rpc_eth_api::BaseTimeCache) -> Self {
+        self.rpc_converter = BaseRpcConverter::new(self.components.provider().clone(), cache);
+        self
+    }
+
     /// Configures the task spawner used to spawn additional tasks.
     pub fn task_spawner(mut self, spawner: Runtime) -> Self {
         self.task_spawner = spawner;
         self
     }
 
-    /// Changes the configured converter.
-    pub fn with_rpc_converter<RpcNew>(
-        self,
-        rpc_converter: RpcNew,
-    ) -> EthApiBuilder<N, RpcNew, NextEnv> {
-        let Self {
-            components,
-            rpc_converter: _,
-            gas_cap,
-            max_simulate_blocks,
-            compute_state_root_for_eth_simulate,
-            eth_proof_window,
-            fee_history_cache_config,
-            proof_permits,
-            eth_state_cache_config,
-            eth_cache,
-            gas_oracle,
-            blocking_task_pool,
-            task_spawner,
-            gas_oracle_config,
-            next_env,
-            max_batch_size,
-            max_blocking_io_requests,
-            pending_block_kind,
-            raw_tx_forwarder,
-            send_raw_transaction_sync_timeout,
-            evm_memory_limit,
-            force_blob_sidecar_upcasting,
-        } = self;
-        EthApiBuilder {
-            components,
-            rpc_converter,
-            gas_cap,
-            max_simulate_blocks,
-            compute_state_root_for_eth_simulate,
-            eth_proof_window,
-            fee_history_cache_config,
-            proof_permits,
-            eth_state_cache_config,
-            eth_cache,
-            gas_oracle,
-            blocking_task_pool,
-            task_spawner,
-            gas_oracle_config,
-            next_env,
-            max_batch_size,
-            max_blocking_io_requests,
-            pending_block_kind,
-            raw_tx_forwarder,
-            send_raw_transaction_sync_timeout,
-            evm_memory_limit,
-            force_blob_sidecar_upcasting,
-        }
-    }
-
     /// Changes the configured pending environment builder.
     pub fn with_pending_env_builder<NextEnvNew>(
         self,
         next_env: NextEnvNew,
-    ) -> EthApiBuilder<N, Rpc, NextEnvNew> {
+    ) -> EthApiBuilder<N, NextEnvNew> {
         let Self {
             components,
             rpc_converter,
@@ -502,9 +397,8 @@ where
     ///
     /// This function panics if the blocking task pool cannot be built.
     /// This will panic if called outside the context of a Tokio runtime.
-    pub fn build_inner(self) -> EthApiInner<N, Rpc>
+    pub fn build_inner(self) -> EthApiInner<N>
     where
-        Rpc: RpcConvert,
         NextEnv: PendingEnvBuilder,
     {
         let Self {
@@ -594,9 +488,8 @@ where
     ///
     /// This function panics if the blocking task pool cannot be built.
     /// This will panic if called outside the context of a Tokio runtime.
-    pub fn build(self) -> EthApi<N, Rpc>
+    pub fn build(self) -> EthApi<N>
     where
-        Rpc: RpcConvert,
         NextEnv: PendingEnvBuilder,
     {
         EthApi { inner: Arc::new(self.build_inner()) }

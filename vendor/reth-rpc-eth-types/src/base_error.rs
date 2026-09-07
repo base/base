@@ -211,3 +211,9 @@ impl From<Infallible> for BaseEthApiError {
         match value {}
     }
 }
+
+impl From<crate::error::RpcPoolError> for BaseEthApiError {
+    fn from(error: crate::error::RpcPoolError) -> Self {
+        Self::Eth(EthApiError::PoolError(error))
+    }
+}

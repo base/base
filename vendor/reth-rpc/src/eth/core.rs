@@ -9,9 +9,8 @@ use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
 use derive_more::Deref;
 use reth_evm::BaseEvmConfig;
-use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
-    EthApiTypes, RpcNodeCore,
+    BaseRpcConverter, EthApiTypes, RpcNodeCore,
     helpers::{SpawnBlocking, pending_block::PendingEnvBuilder, spec::SignersForRpc},
     node::RpcNodeCoreExt,
 };
@@ -47,40 +46,35 @@ const DEFAULT_BROADCAST_CAPACITY: usize = 2000;
 /// While this type requires various unrestricted generic components, trait bounds are enforced when
 /// additional traits are implemented for this type.
 #[derive(Deref)]
-pub struct EthApi<N: RpcNodeCore, Rpc: RpcConvert> {
+pub struct EthApi<N: RpcNodeCore> {
     /// All nested fields bundled together.
     #[deref]
-    pub(super) inner: Arc<EthApiInner<N, Rpc>>,
+    pub(super) inner: Arc<EthApiInner<N>>,
 }
 
-impl<N, Rpc> Clone for EthApi<N, Rpc>
+impl<N> Clone for EthApi<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert,
 {
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone() }
     }
 }
 
-impl<N, Rpc> EthApiTypes for EthApi<N, Rpc>
+impl<N> EthApiTypes for EthApi<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Error = EthApiError>,
 {
-    type Error = EthApiError;
+    type Error = reth_rpc_eth_types::BaseEthApiError;
 
-    type RpcConvert = Rpc;
-
-    fn converter(&self) -> &Self::RpcConvert {
+    fn converter(&self) -> &BaseRpcConverter<Self::Provider> {
         &self.converter
     }
 }
 
-impl<N, Rpc> RpcNodeCore for EthApi<N, Rpc>
+impl<N> RpcNodeCore for EthApi<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert,
 {
     type Provider = N::Provider;
     type Pool = N::Pool;
@@ -104,10 +98,9 @@ where
     }
 }
 
-impl<N, Rpc> RpcNodeCoreExt for EthApi<N, Rpc>
+impl<N> RpcNodeCoreExt for EthApi<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert,
 {
     #[inline]
     fn cache(&self) -> &EthStateCache {
@@ -115,20 +108,18 @@ where
     }
 }
 
-impl<N, Rpc> std::fmt::Debug for EthApi<N, Rpc>
+impl<N> std::fmt::Debug for EthApi<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EthApi").finish_non_exhaustive()
     }
 }
 
-impl<N, Rpc> SpawnBlocking for EthApi<N, Rpc>
+impl<N> SpawnBlocking for EthApi<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Error = EthApiError>,
 {
     #[inline]
     fn io_task_spawner(&self) -> &Runtime {
@@ -153,7 +144,7 @@ where
 
 /// Container type `EthApi`
 #[expect(missing_debug_implementations)]
-pub struct EthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
+pub struct EthApiInner<N: RpcNodeCore> {
     /// The components of the node.
     components: N,
     /// All configured Signers
@@ -194,7 +185,7 @@ pub struct EthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     raw_tx_forwarder: Option<RpcClient>,
 
     /// Converter for RPC types.
-    converter: Rpc,
+    converter: BaseRpcConverter<N::Provider>,
 
     /// Builder for pending block environment.
     next_env_builder: Box<dyn PendingEnvBuilder>,
@@ -219,10 +210,9 @@ pub struct EthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     force_blob_sidecar_upcasting: bool,
 }
 
-impl<N, Rpc> EthApiInner<N, Rpc>
+impl<N> EthApiInner<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert,
 {
     /// Creates a new, shareable instance using the default tokio task spawner.
     #[expect(clippy::too_many_arguments)]
@@ -238,7 +228,7 @@ where
         fee_history_cache: FeeHistoryCache<ProviderHeader<N::Provider>>,
         task_spawner: Runtime,
         proof_permits: usize,
-        converter: Rpc,
+        converter: BaseRpcConverter<N::Provider>,
         next_env: impl PendingEnvBuilder,
         max_batch_size: usize,
         max_blocking_io_requests: usize,
@@ -297,10 +287,9 @@ where
     }
 }
 
-impl<N, Rpc> EthApiInner<N, Rpc>
+impl<N> EthApiInner<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert,
 {
     /// Returns a handle to data on disk.
     #[inline]
@@ -310,7 +299,7 @@ where
 
     /// Returns a handle to the transaction response builder.
     #[inline]
-    pub const fn converter(&self) -> &Rpc {
+    pub const fn converter(&self) -> &BaseRpcConverter<N::Provider> {
         &self.converter
     }
 
@@ -525,10 +514,8 @@ mod tests {
 
     use crate::EthApi;
 
-    type FakeEthApi<P = MockEthProvider> = EthApi<
-        RpcNodeCoreAdapter<P, crate::test_utils::TestPool, NoopNetwork>,
-        crate::test_utils::TestRpcConverter,
-    >;
+    type FakeEthApi<P = MockEthProvider> =
+        EthApi<RpcNodeCoreAdapter<P, crate::test_utils::TestPool, NoopNetwork>>;
 
     fn build_test_eth_api<
         P: BlockReaderIdExt<
@@ -650,7 +637,7 @@ mod tests {
     /// Invalid block range
     #[tokio::test]
     async fn test_fee_history_empty() {
-        let response = <EthApi<_, _> as EthApiServer<_, _, _, _, _, _>>::fee_history(
+        let response = <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
             &build_test_eth_api(NoopProvider::default()),
             U64::from(1),
             BlockNumberOrTag::Latest,
@@ -672,7 +659,7 @@ mod tests {
         let (eth_api, _, _) =
             prepare_eth_api(newest_block, oldest_block, block_count, MockEthProvider::default());
 
-        let response = <EthApi<_, _> as EthApiServer<_, _, _, _, _, _>>::fee_history(
+        let response = <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
             &eth_api,
             U64::from(newest_block + 1),
             newest_block.into(),
@@ -695,7 +682,7 @@ mod tests {
         let (eth_api, _, _) =
             prepare_eth_api(newest_block, oldest_block, block_count, MockEthProvider::default());
 
-        let response = <EthApi<_, _> as EthApiServer<_, _, _, _, _, _>>::fee_history(
+        let response = <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
             &eth_api,
             U64::from(1),
             (newest_block + 1000).into(),
@@ -716,10 +703,9 @@ mod tests {
             block_override: None,
         }];
 
-        let response = <EthApi<_, _> as EthApiServer<_, _, _, _, _, _>>::call_many(
-            &eth_api, bundles, None, None,
-        )
-        .await;
+        let response =
+            <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::call_many(&eth_api, bundles, None, None)
+                .await;
 
         let err = response.expect_err("call_many should fail when latest block lookup errors");
         let message = err.message().to_ascii_lowercase();
@@ -741,10 +727,9 @@ mod tests {
             block_override: None,
         }];
 
-        let response = <EthApi<_, _> as EthApiServer<_, _, _, _, _, _>>::call_many(
-            &eth_api, bundles, None, None,
-        )
-        .await;
+        let response =
+            <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::call_many(&eth_api, bundles, None, None)
+                .await;
 
         let err =
             response.expect_err("call_many should fail when latest block hash is unavailable");
@@ -765,7 +750,7 @@ mod tests {
         let (eth_api, _, _) =
             prepare_eth_api(newest_block, oldest_block, block_count, MockEthProvider::default());
 
-        let response = <EthApi<_, _> as EthApiServer<_, _, _, _, _, _>>::fee_history(
+        let response = <EthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
             &eth_api,
             U64::from(0),
             newest_block.into(),

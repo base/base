@@ -1,18 +1,15 @@
 //! Contains RPC handler implementations specific to state.
 
-use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
     RpcNodeCore,
     helpers::{EthState, LoadPendingBlock, LoadState},
 };
-use reth_rpc_eth_types::EthApiError;
 
 use crate::EthApi;
 
-impl<N, Rpc> EthState for EthApi<N, Rpc>
+impl<N> EthState for EthApi<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Error = EthApiError>,
     Self: LoadPendingBlock,
 {
     fn max_proof_window(&self) -> u64 {
@@ -20,10 +17,9 @@ where
     }
 }
 
-impl<N, Rpc> LoadState for EthApi<N, Rpc>
+impl<N> LoadState for EthApi<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert,
     Self: LoadPendingBlock,
 {
 }
@@ -44,10 +40,8 @@ mod tests {
 
     use super::*;
 
-    fn noop_eth_api() -> EthApi<
-        RpcNodeCoreAdapter<NoopProvider, crate::test_utils::TestPool, NoopNetwork>,
-        crate::test_utils::TestRpcConverter,
-    > {
+    fn noop_eth_api()
+    -> EthApi<RpcNodeCoreAdapter<NoopProvider, crate::test_utils::TestPool, NoopNetwork>> {
         let provider = NoopProvider::default();
         let pool = crate::test_utils::RpcTestUtils::pool();
         let evm_config = BaseEvmConfig::default();
@@ -63,10 +57,7 @@ mod tests {
 
     fn mock_eth_api(
         accounts: AddressMap<ExtendedAccount>,
-    ) -> EthApi<
-        RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>,
-        crate::test_utils::TestRpcConverter,
-    > {
+    ) -> EthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>> {
         let pool = crate::test_utils::RpcTestUtils::pool();
         let mock_provider = MockEthProvider::default();
 

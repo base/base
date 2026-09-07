@@ -22,7 +22,6 @@ use reth_evm::{
 };
 use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
 use reth_revm::{database::StateProviderDatabase, db::State};
-use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_types::{
     EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin, block::BlockAndReceipts,
     builder::config::PendingBlockKind,
@@ -46,9 +45,7 @@ use crate::{EthApiTypes, FromEthApiError, FromEvmError, RpcNodeCore};
 /// Loads a pending block from database.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` blocks RPC methods.
-pub trait LoadPendingBlock:
-    EthApiTypes<Error: FromEvmError, RpcConvert: RpcConvert> + RpcNodeCore
-{
+pub trait LoadPendingBlock: EthApiTypes<Error: FromEvmError> + RpcNodeCore {
     /// Returns a handle to the pending block.
     ///
     /// Data access in default (L1) trait method implementations.

@@ -7,12 +7,10 @@ use reth_rpc_eth_api::{RpcConvert, RpcNodeCore, helpers::EthSubscriptions};
 use tracing::error;
 
 use super::BaseEthApi;
-use crate::BaseEthApiError;
 
-impl<N, Rpc> EthSubscriptions for BaseEthApi<N, Rpc>
+impl<N> EthSubscriptions for BaseEthApi<N>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     fn header_stream(&self) -> impl futures::Stream<Item = BaseHeaderResponse> + Send + Unpin {
         let converter = self.eth_api().converter();
