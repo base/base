@@ -17,6 +17,7 @@ futures = { workspace = true }
 crossterm = { workspace = true }
 serde_yaml = { workspace = true }
 alloy-contract = { workspace = true }
+base-proof-submission.workspace = true
 alloy-transport = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-rpc-client = { workspace = true }
@@ -51,7 +52,6 @@ base-common-consensus = { workspace = true, features = ["k256"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 alloy-consensus = { workspace = true, features = ["std", "k256"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
-base-proof-submission = { workspace = true, features = ["snark-receipt"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 alloy-provider = { workspace = true, features = ["admin-api", "net-api", "pubsub", "txpool-api", "ws"] }
 
@@ -60,5 +60,4 @@ tempfile = { workspace = true }
 jsonrpsee = { workspace = true, features = ["server"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-base-proof-submission = { workspace = true, features = ["test-utils"] }
 base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }

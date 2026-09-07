@@ -18,16 +18,8 @@ mod load-test 'crates/infra/load-tests'
 mod check 'etc/just/check.just'
 # Cargo build targets and contract compilation
 mod build 'etc/just/build.just'
-# SP1 / succinct ELF builds and proving helpers
-mod succinct 'etc/just/succinct.just'
-# Standalone user-funded prover stack (user RPCs + Succinct Network key)
-mod prover 'etc/just/prover.just'
 # Local Nitro proof stack for the single-Anvil L1 devnet
 mod anvil-nitro-local 'etc/just/anvil-nitro-local.just'
-# Prover-service JSON-RPC request helpers
-mod zk-prover 'etc/just/zk-prover.just'
-# Challenge / dispute helpers
-mod challenge 'etc/just/challenge.just'
 
 alias t := test
 alias f := fix
@@ -96,11 +88,11 @@ install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest --locked
 
 # Runs tests across workspace with all features enabled (excludes system tests)
-test: install-nextest build::contracts build::elfs
+test: install-nextest build::contracts
     cargo nextest run --workspace --all-features --exclude base-system-tests --no-fail-fast
 
 # Runs tests only for crates affected by changes vs main (excludes system tests)
-test-affected base="main": install-nextest build::contracts build::elfs
+test-affected base="main": install-nextest build::contracts
     #!/usr/bin/env bash
     set -euo pipefail
     pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude base-system-tests --cargo-args)"
@@ -165,12 +157,12 @@ reth-prepare-release *args:
 
 # Fixes any formatting issues
 format-fix:
-    BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace
+    cargo fix --allow-dirty --allow-staged --workspace
     cargo +nightly fmt --all
 
 # Fixes any clippy issues
 clippy-fix:
-    BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
+    cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
 
 # Cleans the workspace
 clean:
@@ -184,7 +176,7 @@ watch-test: build::contracts
 watch-check:
     cargo watch -x "fmt --all -- --check" -x "clippy --all-features --all-targets -- -D warnings" -x test
 
-# Runs all benchmarks (excludes b20_zk_proving, which requires a live local L2/rollup/prover-service stack)
+# Runs all benchmarks
 benches:
     @just bench-proof-mpt
     @just bench-protocol
@@ -221,10 +213,6 @@ bench-execution-trie-witness-reads:
 # Runs execution trie deep history read benchmarks
 bench-execution-trie-deep-history-reads:
     cargo bench -p base-execution-trie --bench deep_history_reads
-
-# Runs the B-20 ZK proving system benchmark (requires a live local L2/rollup/prover-service stack)
-bench-b20-zk-proving:
-    cargo bench -p base-system-tests --bench b20_zk_proving
 
 # Run basectl TUI dashboard
 basectl:

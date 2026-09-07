@@ -12,7 +12,8 @@ existing dispute game:
 - Classifying known non-retryable revert selectors into structured errors.
 
 Proof byte encoding lives in `base-proof-primitives::ProofEncoder` so callers can
-prepare either TEE or ZK proof bytes before using this crate's submission path.
+prepare TEE proof bytes before using this crate's submission path. SP1 receipt
+decoding has been removed; see [CAVEATS.md](../../../CAVEATS.md).
 
 It intentionally does not own proposer or challenger policy. Callers remain
 responsible for deciding which game to target, whether a proof should be

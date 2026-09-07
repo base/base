@@ -34,7 +34,6 @@ jobs:
         with:
           native-deps: "true"
           foundry: "true"
-          sp1: "true"
       - name: Build CI cache
         run: just build::ci
   warm-test-cache:
@@ -53,7 +52,6 @@ jobs:
         with:
           native-deps: "true"
           foundry: "true"
-          sp1: "true"
           tools: cargo-nextest
       - name: Build CI test cache
         run: |

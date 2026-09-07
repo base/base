@@ -3,7 +3,8 @@ use base_prover_service_db::{
     canonical_session_id,
 };
 use base_prover_service_protocol::{
-    ProofRequestIdCollisionMessage, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    ProofRequestIdCollisionMessage, ProofRequestKind, ProveBlockRangeRequest,
+    ProveBlockRangeResponse,
 };
 use jsonrpsee::core::RpcResult;
 use tracing::{info, warn};
@@ -30,6 +31,11 @@ impl ProverServiceServer {
         &self,
         request: ProveBlockRangeRequest,
     ) -> RpcResult<ProveBlockRangeResponse> {
+        if !matches!(request.proof.request, ProofRequestKind::Tee(_)) {
+            return Err(failed_precondition(
+                "SP1 proving has been removed; only TEE proofs are supported; see CAVEATS.md",
+            ));
+        }
         let retry_failed = request.retry_failed;
         let mut proof_request = request.proof;
         let session_id = parse_session_id(&proof_request.session_id)?;
@@ -161,11 +167,58 @@ fn validate_intermediate_root_interval(
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_db::{ApiProofType, ProofType};
+    use base_prover_service_db::{ApiProofType, ProofRequestRepo, ProofType};
+    use base_prover_service_protocol::{
+        ProofRequest, ProofRequestKind, ProveBlockRangeRequest, SnarkPlonkProofRequest, ZkBackend,
+        ZkProofRequest, ZkVm,
+    };
+    use sqlx::postgres::PgPoolOptions;
     use uuid::Uuid;
 
     use super::{parse_session_id, validate_intermediate_root_interval};
-    use crate::metrics;
+    use crate::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig, metrics};
+
+    #[tokio::test]
+    async fn rejects_zk_requests_before_accessing_the_database() {
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
+            .unwrap();
+        let server = ProverServiceServer::new(
+            ProofRequestRepo::new(pool),
+            ServerConfig {
+                max_proof_retries: 3,
+                worker: WorkerApiConfig::default(),
+                worker_queue: WorkerQueueConfig::default(),
+            },
+        );
+        let proof = ZkProofRequest {
+            start_block_number: 0,
+            number_of_blocks_to_prove: 1,
+            sequence_window: None,
+            l1_head: None,
+            intermediate_root_interval: None,
+            schedule_l2_block_number: None,
+            zk_vm: ZkVm::Sp1,
+            zk_backend: ZkBackend::Cluster,
+        };
+        for request in [
+            ProofRequestKind::Compressed(proof.clone()),
+            ProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
+                proof,
+                prover_address: Default::default(),
+            }),
+        ] {
+            let error = server
+                .prove_block_range_impl(ProveBlockRangeRequest {
+                    proof: ProofRequest { session_id: Uuid::new_v4().to_string(), request },
+                    retry_failed: true,
+                })
+                .await
+                .expect_err("ZK proving must be rejected");
+            assert_eq!(error.code(), -32017);
+            assert!(error.message().contains("SP1 proving has been removed"));
+        }
+    }
 
     #[test]
     fn test_proof_type_label_compressed() {

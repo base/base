@@ -5,7 +5,7 @@ use std::{env, fmt, fs, path::Path, sync::Arc, time::Duration};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
-use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError, SnarkReceiptEncoder};
+use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
 use base_prover_service_protocol::{GetProofResponse, ProofResult, ProofStatus};
 use base_tx_manager::{
     NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig, TxManagerError,
@@ -79,17 +79,12 @@ impl SubmitterKey {
     }
 }
 
-/// Decodes submittable PLONK proof bytes from a completed prover-service
-/// session.
+/// Validates legacy proof responses and reports that SP1 submission is unavailable.
 #[derive(Debug)]
 pub struct SnarkPlonkProofBytes;
 
 impl SnarkPlonkProofBytes {
-    /// Extracts submittable PLONK proof bytes from a `getProof` response.
-    ///
-    /// Requires the session to have succeeded with a non-empty
-    /// [`ProofResult::SnarkPlonk`] payload; every other shape maps to a
-    /// specific [`ProofsCommandError`] explaining what to do next.
+    /// Reports session errors or rejects SP1 receipts, whose decoder has been removed.
     pub fn from_response(
         session_id: &str,
         response: &GetProofResponse,
@@ -116,20 +111,16 @@ impl SnarkPlonkProofBytes {
         let result = response.result.as_ref().ok_or_else(|| {
             ProofsCommandError::ProofResultMissing { session_id: session_id.to_string() }
         })?;
-        let plonk = match result {
-            ProofResult::SnarkPlonk(plonk) => plonk,
-            ProofResult::Compressed(_) | ProofResult::Tee(_) => {
-                return Err(ProofsCommandError::NotAProposalProof {
-                    session_id: session_id.to_string(),
-                });
-            }
-        };
-        SnarkReceiptEncoder::encode_onchain_zk_proof(&plonk.proof.proof).map_err(|error| {
-            ProofsCommandError::InvalidProposalProof {
+        match result {
+            ProofResult::SnarkPlonk(_) => Err(ProofsCommandError::InvalidProposalProof {
                 session_id: session_id.to_string(),
-                message: error.to_string(),
+                message: "SP1 proving and receipt submission have been removed; see CAVEATS.md"
+                    .to_string(),
+            }),
+            ProofResult::Compressed(_) | ProofResult::Tee(_) => {
+                Err(ProofsCommandError::NotAProposalProof { session_id: session_id.to_string() })
             }
-        })
+        }
     }
 }
 
@@ -240,7 +231,6 @@ impl ProposalProofSubmitter {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, address};
-    use base_proof_submission::test_utils::SnarkReceiptFixture;
     use base_prover_service_protocol::{SnarkPlonkProofResult, ZkProofResult, ZkVm};
 
     use super::*;
@@ -255,10 +245,6 @@ mod tests {
         ProofResult::SnarkPlonk(SnarkPlonkProofResult {
             proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof, execution_stats: None },
         })
-    }
-
-    fn encoded_plonk_receipt() -> Bytes {
-        Bytes::from(SnarkReceiptFixture::plonk_receipt_bytes([0x5a, 0x09, 0x3a, 0x2f], "abcd"))
     }
 
     #[test]
@@ -320,14 +306,6 @@ mod tests {
     }
 
     #[test]
-    fn from_response_extracts_plonk_bytes() {
-        let response = succeeded_response(Some(plonk_result(encoded_plonk_receipt())));
-        let extracted =
-            SnarkPlonkProofBytes::from_response("session", &response).expect("proof extracts");
-        assert_eq!(extracted.as_ref(), &[1, 0x5a, 0x09, 0x3a, 0x2f, 0xab, 0xcd]);
-    }
-
-    #[test]
     fn from_response_rejects_incomplete_sessions() {
         for (status, label) in [(ProofStatus::Queued, "queued"), (ProofStatus::Running, "running")]
         {
@@ -380,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn from_response_rejects_invalid_plonk_receipt() {
+    fn from_response_rejects_sp1_receipt_submission() {
         let response =
             succeeded_response(Some(plonk_result(Bytes::from_static(b"not-an-sp1-receipt"))));
         let error = SnarkPlonkProofBytes::from_response("session", &response)

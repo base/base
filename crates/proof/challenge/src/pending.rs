@@ -287,7 +287,9 @@ impl PendingProofs {
                 };
                 let proof_bytes = match &pending.kind {
                     ProofKind::Zk { .. } => {
-                        ChallengerProofAdapter::snark_plonk_dispute_proof_bytes(result)?
+                        eyre::bail!(
+                            "SP1 proving and receipt submission have been removed; see CAVEATS.md"
+                        )
                     }
                     ProofKind::Tee { .. } => {
                         match ChallengerProofAdapter::tee_dispute_proof_bytes(
@@ -411,6 +413,27 @@ mod tests {
                 assert!(matches!(entry.phase, ProofPhase::AwaitingProof { .. }));
             }
         }
+    }
+
+    #[tokio::test]
+    async fn completed_sp1_proof_is_not_made_ready_for_submission() {
+        let prover = MockZkProofProvider {
+            state: Mutex::new(MockZkProofState {
+                proof_status: ProofStatus::Succeeded,
+                proof: b"legacy SP1 receipt".to_vec(),
+                ..Default::default()
+            }),
+        };
+        let mut proofs = PendingProofs::new();
+        proofs.insert(addr(0), awaiting_proof("session"));
+
+        let error = proofs
+            .poll(addr(0), &prover, Duration::from_secs(3600))
+            .await
+            .expect_err("SP1 receipt submission must be rejected");
+
+        assert!(error.to_string().contains("SP1 proving and receipt submission have been removed"));
+        assert!(matches!(proofs.get(&addr(0)).unwrap().phase, ProofPhase::AwaitingProof { .. }));
     }
 
     #[cfg(feature = "metrics")]

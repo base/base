@@ -7,7 +7,7 @@ release:
     cargo build --workspace --release
 
 # Builds all targets in debug mode
-all-targets: contracts elfs
+all-targets: contracts
     cargo build --workspace --all-targets
 
 # Builds all targets with ci profile
@@ -29,9 +29,6 @@ affected-ci base="main": contracts
     fi
     echo "Building affected crates:${pkg_args[*]}"
     cargo build --locked --all-targets --profile ci "${pkg_args[@]}"
-
-elfs:
-    just succinct build-elfs
 
 # Builds the base node binary
 node:

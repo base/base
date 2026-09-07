@@ -58,7 +58,7 @@ just test
 ```
 
 This runs `cargo nextest run --workspace --all-features --exclude base-system-tests --no-fail-fast`
-after building test contracts and SP1 ELFs. To scope to only the crates affected by your branch:
+after building test contracts. To scope to only the crates affected by your branch:
 
 ```sh
 just test-affected

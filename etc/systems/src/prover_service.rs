@@ -14,7 +14,7 @@ use url::Url;
 
 /// Production default shared with the prover-service binary.
 const MAX_PROOF_RETRIES: i32 = 3;
-/// Dry-run SP1 execute can outlive the production 300s default lock.
+/// System-test proof execution can outlive the production 300s default lock.
 const DEFAULT_LOCK_DURATION_SECONDS: u32 = 1800;
 const MAX_LOCK_DURATION_SECONDS: u32 = 3600;
 

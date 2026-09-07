@@ -151,15 +151,7 @@ ingress-logs *containers:
 build-image target='base' profile='dev':
     #!/usr/bin/env bash
     set -euo pipefail
-    elf_require=1
-    case "{{ profile }}" in
-      dev|profiling)
-        case "{{ target }}" in
-          zk-host|devnet) elf_require=0 ;;
-        esac
-        ;;
-    esac
-    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
+    PROFILE="{{ profile }}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
 
 # Prepares Docker images needed for system tests
 pull-images:
@@ -184,7 +176,6 @@ bench name:
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{ name }}" in
-      b20-zk-proving) cargo bench -p base-system-tests --bench b20_zk_proving ;;
       *) echo "unknown system test bench: {{ name }}" >&2; exit 1 ;;
     esac
 
@@ -200,15 +191,7 @@ _build-setup-image:
 _build-rust-images group profile='dev':
     #!/usr/bin/env bash
     set -euo pipefail
-    elf_require=1
-    case "{{ profile }}" in
-      dev|profiling)
-        case "{{ group }}" in
-          devnet|ingress) elf_require=0 ;;
-        esac
-        ;;
-    esac
-    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
+    PROFILE="{{ profile }}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
 _build-nitro-images profile='dev':

@@ -34,8 +34,8 @@ base_metrics::define_metrics! {
     #[describe("Number of preimages captured in the last witness build")]
     preimage_count: gauge,
 
-    #[describe("Canonical estimate of range witness data bytes (Nitro: preimage values; SP1: stdin buffer lengths)")]
-    #[label(name = "prover", default = ["sp1", "nitro"])]
+    #[describe("Canonical estimate of range witness data bytes (Nitro preimage values)")]
+    #[label(name = "prover", default = ["nitro"])]
     witness_size_bytes: histogram,
 
     #[describe("Latency in seconds for debug_executePayload RPC calls to the L2 proof node")]
@@ -45,7 +45,7 @@ base_metrics::define_metrics! {
     proof_duration_seconds: histogram,
 
     #[describe("Range witness build duration")]
-    #[label(name = "prover", default = ["sp1", "nitro"])]
+    #[label(name = "prover", default = ["nitro"])]
     witness_build_duration_seconds: histogram,
 
     #[describe("Backend prover duration")]
@@ -74,9 +74,6 @@ impl Metrics {
 
     /// Future was cancelled (dropped) before completion.
     pub const OUTCOME_DROPPED: &str = "dropped";
-
-    /// SP1 prover label for witness metrics.
-    pub const PROVER_SP1: &str = "sp1";
 
     /// Nitro TEE prover label for witness metrics.
     pub const PROVER_NITRO: &str = "nitro";

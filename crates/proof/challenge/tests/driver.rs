@@ -8,8 +8,8 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
-    AnchorUpdater, ChallengeSubmitter, ChallengerProofAdapter, DisputeIntent, DisputeProofManager,
-    Driver, DriverComponents, GameScanner, OutputValidator, PendingProof, ProofKind, ProofPhase,
+    AnchorUpdater, ChallengeSubmitter, DisputeIntent, DisputeProofManager, Driver,
+    DriverComponents, GameScanner, OutputValidator, PendingProof, ProofKind, ProofPhase,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockDisputeGameFactory,
         MockGameState, MockL1, MockL2Provider, MockTxManager, MockZkProofProvider,
@@ -20,7 +20,6 @@ use base_challenger::{
 use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
 use base_proof_primitives::Proposal;
 use base_proof_rpc::L1Provider;
-use base_proof_submission::test_utils::SnarkReceiptFixture;
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::{
     ProofRequestKind, ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind,
@@ -31,7 +30,6 @@ use tokio_util::sync::CancellationToken;
 
 const STORAGE_HASH: B256 = B256::repeat_byte(0xBB);
 const ZK_PROVER_ADDR: Address = Address::new([0xCC; 20]);
-const DEFAULT_TX_HASH: B256 = B256::repeat_byte(0xDD);
 const BOGUS_ROOT: B256 = B256::repeat_byte(0xFF);
 const BOGUS_CLAIM: B256 = B256::repeat_byte(0x01);
 
@@ -168,21 +166,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
     )
 }
 
-/// Bincode SNARK receipt fixture (matches prover-service download payloads).
-fn snark_receipt_bytes() -> Vec<u8> {
-    SnarkReceiptFixture::plonk_receipt_bytes([0x5a, 0x09, 0x3a, 0x2f], "dead")
-}
-
-fn succeeded_zk_prover() -> Arc<MockZkProofProvider> {
-    Arc::new(MockZkProofProvider {
-        state: Mutex::new(MockZkProofState {
-            proof_status: ProofStatus::Succeeded,
-            proof: snark_receipt_bytes(),
-            ..Default::default()
-        }),
-    })
-}
-
+/// Successful TEE result returned by the prover service.
 fn succeeded_tee_prover(aggregate_proposal: Proposal) -> Arc<MockZkProofProvider> {
     Arc::new(MockZkProofProvider {
         state: Mutex::new(MockZkProofState {
@@ -298,83 +282,6 @@ async fn test_step_validation_error_blocks_not_available() {
 }
 
 #[tokio::test]
-async fn test_step_invalid_game_proof_succeeded() {
-    let (l2, factory, verifier) = invalid_game_mocks();
-
-    let zk = succeeded_zk_prover();
-
-    let tx_manager = default_tx_manager();
-
-    let mut driver = test_driver(factory, Arc::clone(&verifier), l2, zk, tx_manager);
-
-    // Step 1: proof initiated, not yet polled.
-    driver.step().await.unwrap();
-    assert!(
-        driver.proof_manager.pending_proofs().contains_key(&addr(0)),
-        "proof should be pending after initiation"
-    );
-
-    // Simulate the onchain effect of a successful challenge: game is resolved.
-    verifier.update_game(
-        addr(0),
-        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
-    );
-
-    // Step 2: proof polled → Succeeded → nullification submitted → entry removed.
-    driver.step().await.unwrap();
-    assert!(
-        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
-        "entry should be removed after successful nullification"
-    );
-}
-
-#[tokio::test]
-async fn test_step_nullification_failure_preserves_proof() {
-    let (l2, factory, verifier) = invalid_game_mocks();
-
-    let zk = succeeded_zk_prover();
-
-    // First tx call fails (NonceTooLow), second succeeds.
-    let tx_manager = MockTxManager::with_responses(vec![
-        Err(TxManagerError::NonceTooLow),
-        Ok(receipt_with_status(true, DEFAULT_TX_HASH)),
-    ]);
-
-    let mut driver = test_driver(factory, Arc::clone(&verifier), l2, zk, tx_manager);
-
-    // Step 1: proof initiated but not yet polled.
-    driver.step().await.unwrap();
-    assert!(
-        driver.proof_manager.pending_proofs().contains_key(&addr(0)),
-        "proof should be pending after initiation"
-    );
-
-    // Step 2: proof polled → Succeeded → ReadyToSubmit → dispute tx fails.
-    driver.step().await.unwrap();
-
-    // Entry must still be in pending_proofs as ReadyToSubmit.
-    let entry =
-        driver.proof_manager.pending_proofs().get(&addr(0)).expect("proof should be preserved");
-    assert!(
-        matches!(entry.phase, ProofPhase::ReadyToSubmit { .. }),
-        "phase should be ReadyToSubmit after tx failure"
-    );
-
-    // Simulate the onchain effect of a successful challenge: game is resolved.
-    verifier.update_game(
-        addr(0),
-        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
-    );
-
-    // Step 3: poll_pending_proofs re-submits the challenge tx, now it succeeds.
-    driver.step().await.unwrap();
-    assert!(
-        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
-        "entry should be removed after successful submission"
-    );
-}
-
-#[tokio::test]
 async fn test_poll_or_submit_drops_stale_challenge_proofs() {
     for game_state in [
         mock_state(GameStatus::ChallengerWins, Address::ZERO, 20),
@@ -407,79 +314,6 @@ async fn test_run_cancellation() {
 // `session_id` so the service-side fix in `create_with_outbox` can requeue
 // the row. Independent of the DB layer; fails on a challenger-side regression
 // such as dropping the retry call or losing proof-session determinism.
-#[tokio::test]
-async fn test_step_proof_retry_reuses_deterministic_session_id() {
-    let (l2, factory, verifier) = invalid_game_mocks();
-
-    let zk = Arc::new(MockZkProofProvider {
-        state: Mutex::new(MockZkProofState {
-            proof_status: ProofStatus::Failed,
-            error_message: Some("transient backend error".into()),
-            ..Default::default()
-        }),
-    });
-
-    let tx_manager = default_tx_manager();
-    let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
-
-    let expected_session_id = ChallengerProofAdapter::snark_plonk_session_id(addr(0), 1);
-
-    // Step 1: initial proveBlockRange call from initiate_zk_proof.
-    driver.step().await.unwrap();
-    {
-        let log = &zk.state.lock().unwrap().prove_block_range_log;
-        assert_eq!(log.len(), 1, "exactly one prove_block_range call on initiation");
-        assert_eq!(
-            log[0].proof.session_id.as_str(),
-            expected_session_id.as_str(),
-            "challenger must use game-address/invalid-index session_id on initiation",
-        );
-    }
-
-    // Step 2: poll observes Failed → NeedsRetry → handle_proof_retry must
-    // invoke proveBlockRange again, reusing the same deterministic session_id.
-    driver.step().await.unwrap();
-    {
-        let log = &zk.state.lock().unwrap().prove_block_range_log;
-        assert_eq!(log.len(), 2, "retry must invoke prove_block_range a second time");
-        assert_eq!(
-            log[1].proof.session_id.as_str(),
-            expected_session_id.as_str(),
-            "retry must reuse the deterministic session_id so the service can requeue",
-        );
-    }
-
-    let entry = driver
-        .proof_manager
-        .pending_proofs()
-        .get(&addr(0))
-        .expect("entry should be retained after retry");
-    assert!(
-        matches!(entry.phase, ProofPhase::AwaitingProof { ref session_id, .. } if session_id == &expected_session_id),
-        "post-retry phase must be AwaitingProof with the deterministic session_id",
-    );
-    assert_eq!(entry.retry_count, 1);
-
-    // Simulate the service requeuing on the second prove_block and the proof
-    // eventually succeeding on the retry session.
-    {
-        let mut state = zk.state.lock().unwrap();
-        state.proof_status = ProofStatus::Succeeded;
-        state.proof = snark_receipt_bytes();
-        state.error_message = None;
-    }
-    verifier.update_game(
-        addr(0),
-        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
-    );
-
-    driver.step().await.unwrap();
-    assert!(
-        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
-        "entry should be removed after successful retry submission",
-    );
-}
-
 #[tokio::test]
 async fn test_step_proof_exceeds_max_retries() {
     let (l2, factory, verifier) = invalid_game_mocks();
@@ -535,49 +369,6 @@ async fn test_step_proof_exceeds_max_retries() {
 // ── TEE-first proof sourcing tests ─────────────────────────────────────────
 
 #[tokio::test]
-async fn test_step_invalid_game_tee_fails_zk_succeeds() {
-    let (l2, factory, verifier) = invalid_game_mocks();
-
-    let zk = succeeded_zk_prover();
-    let tx_manager = default_tx_manager();
-    let l1_provider = Arc::new(MockL1::failure("dummy"));
-
-    let mut driver = test_driver_with_l1_provider(
-        factory,
-        Arc::clone(&verifier),
-        l2,
-        zk,
-        tx_manager,
-        Arc::clone(&l1_provider) as Arc<dyn L1Provider>,
-    );
-
-    // Step 1: TEE path is attempted (fails building request), falls back
-    // to ZK, proof session initiated (polled on next tick).
-    driver.step().await.unwrap();
-    let entry = driver
-        .proof_manager
-        .pending_proofs()
-        .get(&addr(0))
-        .expect("ZK proof should be pending after TEE fallback");
-    assert!(matches!(entry.phase, ProofPhase::AwaitingProof { .. }));
-    assert!(matches!(entry.kind, ProofKind::Zk { .. }));
-    assert_eq!(*l1_provider.header_by_hash_requests.lock().unwrap(), vec![DEFAULT_L1_HEAD]);
-
-    // Simulate the onchain effect of a successful challenge: game is resolved.
-    verifier.update_game(
-        addr(0),
-        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
-    );
-
-    // Step 2: proof polled → Succeeded → challenge tx submitted → entry removed.
-    driver.step().await.unwrap();
-    assert!(
-        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
-        "entry should be removed after successful ZK challenge submission"
-    );
-}
-
-#[tokio::test]
 async fn test_step_invalid_game_tee_proof_succeeds() {
     // TEE proof succeeds → submitted directly without ZK.
     let (l2, factory, root_15, root_20) = base_game_mocks();
@@ -630,88 +421,6 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
     assert!(
         !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "no pending proof should remain after TEE nullification is observed"
-    );
-}
-
-#[tokio::test]
-async fn test_step_tee_contract_revert_falls_back_to_zk() {
-    // TEE proof succeeds but the onchain nullify() call reverts.
-    // Contract-level failures are proof-specific enough to fall back to ZK.
-    let (l2, factory, root_15, root_20) = base_game_mocks();
-
-    let verifier = single_game_verifier(MockGameState {
-        tee_prover: DEFAULT_TEE_PROVER,
-        // root_15 is correct, index 1 is bogus — invalid_index == 1
-        intermediate_output_roots: vec![root_15, BOGUS_ROOT],
-        ..game_state(20)
-    });
-
-    let l1_head = Arc::new(MockL1::success(DEFAULT_L1_HEAD, 100));
-
-    let aggregate_proposal = tee_proposal(root_20, root_15);
-    let zk = succeeded_tee_prover(aggregate_proposal);
-
-    // TEE nullify() tx reverts, ZK challenge() tx succeeds.
-    let tx_manager = MockTxManager::with_responses(vec![
-        Err(TxManagerError::ExecutionReverted {
-            reason: Some("unexpected contract revert".to_string()),
-            data: None,
-        }),
-        Ok(receipt_with_status(true, DEFAULT_TX_HASH)),
-    ]);
-
-    let mut driver = test_driver_with_l1_provider(
-        Arc::<MockDisputeGameFactory>::clone(&factory),
-        Arc::clone(&verifier),
-        l2,
-        Arc::clone(&zk),
-        tx_manager,
-        l1_head,
-    );
-
-    // Step 1: TEE proof job is initiated.
-    driver.step().await.unwrap();
-
-    // Step 2: TEE proof is polled, nullify() tx fails, falls back to ZK.
-    driver.step().await.unwrap();
-
-    // The entry should now be a ZK proof in AwaitingProof phase (ZK fallback).
-    let entry = driver
-        .proof_manager
-        .pending_proofs()
-        .get(&addr(0))
-        .expect("ZK fallback proof should be pending after TEE tx failure");
-    assert!(
-        matches!(entry.phase, ProofPhase::AwaitingProof { .. }),
-        "phase should be AwaitingProof (ZK fallback) after TEE tx failure"
-    );
-    assert_eq!(
-        entry.intent,
-        DisputeIntent::Challenge,
-        "ZK fallback should use Challenge intent for Path 1"
-    );
-    assert!(
-        matches!(entry.kind, base_challenger::ProofKind::Zk { .. }),
-        "kind should have transitioned from Tee to Zk after fallback"
-    );
-
-    {
-        let mut state = zk.state.lock().unwrap();
-        state.result = None;
-        state.proof = snark_receipt_bytes();
-        state.proof_status = ProofStatus::Succeeded;
-    }
-
-    // Keep the game in-progress so the pending fallback proof reaches
-    // submit_dispute(), but remove it from the scan batch so the same tick
-    // cannot re-discover it after the successful fallback submission.
-    factory.games.lock().unwrap().clear();
-
-    // Step 3: ZK proof polled → Succeeded → challenge tx submitted → entry cleaned up.
-    driver.step().await.unwrap();
-    assert!(
-        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
-        "entry should be removed after ZK fallback completes"
     );
 }
 

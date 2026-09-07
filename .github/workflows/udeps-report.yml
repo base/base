@@ -52,7 +52,7 @@ jobs:
           ISSUE_BODY: ${{ runner.temp }}/udeps-issue.md
         run: |
           set +e
-          BASE_SUCCINCT_ELF_STUB=1 cargo +nightly udeps --locked --workspace --all-features --all-targets --output json >"$UDEPS_JSON" 2>"$UDEPS_STDERR"
+          cargo +nightly udeps --locked --workspace --all-features --all-targets --output json >"$UDEPS_JSON" 2>"$UDEPS_STDERR"
           status=$?
           set -e
           python3 etc/scripts/ci/udeps-report.py render \

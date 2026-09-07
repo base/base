@@ -205,7 +205,7 @@ skip = [
     "half",
     "memoffset",
 
-    # SP1 and other upstream transitive dependency mismatches
+    # Upstream transitive dependency mismatches
     "opentelemetry",
     "opentelemetry-appender-tracing",
     "opentelemetry-http",

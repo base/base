@@ -117,7 +117,6 @@ jobs:
         with:
           native-deps: "true"
           foundry: "true"
-          sp1: "true"
       - name: Run build
         run: ${{ inputs.build_command }}
   clippy:
@@ -157,7 +156,6 @@ jobs:
         with:
           native-deps: "true"
           foundry: "true"
-          sp1: "true"
           tools: cargo-nextest
       - name: Clear prior JUnit report
         run: rm -f target/nextest/ci/test-results.xml
@@ -258,7 +256,6 @@ jobs:
         with:
           native-deps: "true"
           foundry: "true"
-          sp1: "true"
           tools: cargo-nextest
       - name: Clear prior JUnit report
         run: rm -f target/nextest/ci/test-results.xml

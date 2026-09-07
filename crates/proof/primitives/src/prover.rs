@@ -24,7 +24,7 @@ pub trait ProverBackend: Send + Sync {
     /// Create a fresh oracle instance for a single proof's witness generation.
     fn create_oracle(&self) -> Self::Oracle;
 
-    /// Metric label for the prover backend (`nitro`, `sp1`, …).
+    /// Metric label for the prover backend (`nitro`).
     fn prover_label(&self) -> &'static str;
 
     /// Execute the proof using the populated witness oracle.

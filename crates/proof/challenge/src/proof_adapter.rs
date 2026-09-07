@@ -2,7 +2,6 @@
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofEncoder, ProofRequest as PrimitiveProofRequest};
-use base_proof_submission::SnarkReceiptEncoder;
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
     SnarkPlonkProofRequest, TeeKind, TeeProofRequest,
@@ -69,22 +68,6 @@ impl ChallengerProofAdapter {
         }
     }
 
-    /// Converts a prover-service SNARK result into bytes accepted by `submit_dispute`.
-    pub fn snark_plonk_dispute_proof_bytes(result: ProofResult) -> Result<Bytes> {
-        let receipt_bytes = match result {
-            ProofResult::SnarkPlonk(result) => result.proof.proof,
-            ProofResult::Compressed(_) => {
-                bail!("expected SNARK_PLONK proof result, got Compressed")
-            }
-            ProofResult::Tee(_) => {
-                bail!("expected SNARK_PLONK proof result, got Tee")
-            }
-        };
-
-        SnarkReceiptEncoder::encode_onchain_zk_proof(&receipt_bytes)
-            .wrap_err("failed to encode SP1 PLONK receipt into dispute proof bytes")
-    }
-
     /// Converts a prover-service TEE result into bytes accepted by `submit_dispute`.
     pub fn tee_dispute_proof_bytes(result: ProofResult, expected_root: B256) -> Result<Bytes> {
         let aggregate_proposal = match result {
@@ -112,11 +95,10 @@ impl ChallengerProofAdapter {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes};
-    use base_proof_primitives::{PROOF_TYPE_TEE, PROOF_TYPE_ZK, ProofRequest, Proposal};
-    use base_proof_submission::test_utils::SnarkReceiptFixture;
+    use base_proof_primitives::{PROOF_TYPE_TEE, ProofRequest, Proposal};
     use base_prover_service_protocol::{
-        ProofRequestKind, ProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult, TeeKind,
-        TeeProofRequest, TeeProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
+        ProofRequestKind, ProofResult, SnarkPlonkProofRequest, TeeKind, TeeProofRequest,
+        TeeProofResult, ZkBackend, ZkProofRequest, ZkVm,
     };
 
     use super::ChallengerProofAdapter;
@@ -224,21 +206,6 @@ mod tests {
             wrapped.proof.request,
             ProofRequestKind::Tee(TeeProofRequest { proof: request, tee_kind: TeeKind::AwsNitro })
         );
-    }
-
-    #[test]
-    fn snark_plonk_dispute_proof_bytes_decodes_receipt_to_onchain_seal() {
-        let encoded = SnarkReceiptFixture::plonk_receipt_bytes([0x5a, 0x09, 0x3a, 0x2f], "abcd");
-        let result = ProofResult::SnarkPlonk(SnarkPlonkProofResult {
-            proof: ZkProofResult {
-                zk_vm: ZkVm::Sp1,
-                proof: Bytes::from(encoded),
-                execution_stats: None,
-            },
-        });
-
-        let proof_bytes = ChallengerProofAdapter::snark_plonk_dispute_proof_bytes(result).unwrap();
-        assert_eq!(proof_bytes.as_ref(), &[PROOF_TYPE_ZK, 0x5a, 0x09, 0x3a, 0x2f, 0xab, 0xcd]);
     }
 
     #[test]

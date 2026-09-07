@@ -32,7 +32,7 @@ base-balance-monitor.workspace = true
 base-proof-rpc.workspace = true
 base-proof-contracts.workspace = true
 base-proof-primitives.workspace = true
-base-proof-submission = { workspace = true, features = ["snark-receipt"] }
+base-proof-submission.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
 
@@ -85,7 +85,6 @@ rstest.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 base-challenger = { path = ".", features = ["test-utils"] }
 metrics-util = { workspace = true, features = ["debugging"] }
-base-proof-submission = { workspace = true, features = ["test-utils"] }
 
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
@@ -93,7 +92,6 @@ test-utils = [
 	"alloy-consensus",
 	"alloy-rpc-types-eth",
 	"async-trait",
-	"base-proof-submission/test-utils",
 	"base-protocol/test-utils",
 	"base-runtime/test-utils",
 	"serde_json",

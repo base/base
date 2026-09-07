@@ -75,11 +75,8 @@ base-common-rpc-types.workspace = true
 base-common-precompiles.workspace = true
 
 # proof
-base-proof-zk-host.workspace = true
 base-prover-service.workspace = true
-base-proof-zk-backend.workspace = true
 base-prover-service-db.workspace = true
-base-prover-service-client.workspace = true
 base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
 
 # tokio
@@ -144,12 +141,7 @@ base-load-tests.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
 futures.workspace = true
-indicatif.workspace = true
 tokio-tungstenite.workspace = true
-
-[[bench]]
-name = "b20_zk_proving"
-harness = false
 
 [features]
 default = [ "upgrade-signal" ]

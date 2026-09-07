@@ -6,14 +6,6 @@ variable "RUST_VERSION" {
   default = "1.96.0"
 }
 
-variable "BASE_SUCCINCT_ELF_REQUIRE" {
-  default = "1"
-}
-
-variable "ZK_HOST_PROFILE" {
-  default = "release"
-}
-
 variable "DEVNET_TARGETS" {
   default = ["base", "batcher"]
 }
@@ -38,7 +30,6 @@ group "rust-services" {
     "batcher",
     "sidecrush",
     "prover-service",
-    "zk-host",
   ]
 }
 
@@ -171,15 +162,4 @@ target "nitro-host-local" {
     CARGO_FEATURES = "--features local"
   }
   tags = ["base-prover-nitro-host:local"]
-}
-
-target "zk-host" {
-  inherits = ["_rust-service-common"]
-  target = "zk-host"
-  args = {
-    PROFILE                   = "${ZK_HOST_PROFILE}"
-    BASE_SUCCINCT_ELF_REQUIRE = "${BASE_SUCCINCT_ELF_REQUIRE}"
-    SCCACHE_CACHE_ID          = "rust-services-zk-host-sccache"
-  }
-  tags = ["base-prover-zk-host:local"]
 }

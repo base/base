@@ -29,12 +29,7 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.
 
-`docker-compose.prover.yml` is a separate standalone stack that runs the prover
-trio (Postgres, `base-prover-service`, `base-prover-zk-host`) against
-user-provided RPC endpoints — including a running devnet's. Run it as
-`just prover up <network>` so jobs and Postgres data stay isolated per network;
-see the `just prover` recipes and
-[docs/guides/STANDALONE_PROVING.md](../../docs/guides/STANDALONE_PROVING.md).
+The SP1 standalone prover stack has been removed; see [CAVEATS.md](../../CAVEATS.md).
 
 ## Usage
 

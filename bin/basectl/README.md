@@ -348,6 +348,12 @@ detection fails or the chain is unsupported. The external CL check also needs
 
 ### `basectl proofs`
 
+**Prototype limitation:** SP1 proving and receipt submission have been removed.
+`finalize`, `propose`, and `submit` cannot complete ZK workflows against this
+prototype. Status, list, and game inspection remain available. The workflow
+reference below describes the retained legacy interface; see
+[CAVEATS.md](../../CAVEATS.md).
+
 Submits and inspects ZK proof requests on the internal prover service, used to
 speed up finality for a block range when required.
 

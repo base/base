@@ -15,35 +15,6 @@ ENV SCCACHE_DIR=/sccache
 ENV CARGO_INCREMENTAL=0
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 
-FROM rust-builder-base AS zk-builder-base
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends unzip && \
-    rm -rf /var/lib/apt/lists/*
-RUN set -eux; \
-    GO_VERSION=1.23.3; \
-    case "$(uname -m)" in \
-      x86_64) GO_ARCH=amd64; GO_SHA256=a0afb9744c00648bafb1b90b4aba5bdb86f424f02f9275399ce0c20b93a2c3a8 ;; \
-      aarch64|arm64) GO_ARCH=arm64; GO_SHA256=1f7cbd7f668ea32a107ecd41b6488aaee1f5d77a66efd885b175494439d4e1ce ;; \
-      *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" -o /tmp/go.tar.gz; \
-    echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c -; \
-    tar -C /usr/local -xzf /tmp/go.tar.gz; \
-    rm /tmp/go.tar.gz
-ENV PATH="/usr/local/go/bin:${PATH}"
-RUN set -eux; \
-    PROTOC_VERSION=33.4; \
-    case "$(uname -m)" in \
-      x86_64) PROTOC_ARCH=x86_64; PROTOC_SHA256=c0040ea9aef08fdeb2c74ca609b18d5fdbfc44ea0042fcfbfb38860d35f7dd66 ;; \
-      aarch64|arm64) PROTOC_ARCH=aarch_64; PROTOC_SHA256=15aa988f4a6090636525ec236a8e4b3aab41eef402751bd5bb2df6afd9b7b5a5 ;; \
-      *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
-    esac; \
-    PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip"; \
-    curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}" -o /tmp/protoc.zip; \
-    echo "${PROTOC_SHA256}  /tmp/protoc.zip" | sha256sum -c -; \
-    unzip /tmp/protoc.zip -d /usr/local; \
-    rm /tmp/protoc.zip
-
 FROM rust-builder-base AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
@@ -156,19 +127,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package base-prover-service-bin --bin base-prover-service && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-service /app/base-prover-service
 
-FROM zk-builder-base AS zk-source
-COPY . .
-
-FROM zk-source AS zk-host-builder
-ARG PROFILE=release
-ARG BASE_SUCCINCT_ELF_REQUIRE=1
-ARG SCCACHE_CACHE_ID=rust-services-sccache
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
-    cargo build --profile $PROFILE --package base-prover-zk-host --bin base-prover-zk-host && \
-    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-zk-host /app/base-prover-zk-host
-
 FROM public.ecr.aws/docker/library/debian:trixie-slim AS runtime-base
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
@@ -220,7 +178,3 @@ FROM runtime-base AS prover-service
 COPY --from=prover-service-builder /app/base-prover-service ./base-prover-service
 EXPOSE 9000 9001
 ENTRYPOINT ["./base-prover-service"]
-
-FROM runtime-base AS zk-host
-COPY --from=zk-host-builder /app/base-prover-zk-host ./base-prover-zk-host
-ENTRYPOINT ["./base-prover-zk-host"]

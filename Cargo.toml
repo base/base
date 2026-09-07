@@ -9,7 +9,7 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
-exclude = ["actions/fixtures", "crates/proof/zk/programs"]
+exclude = ["actions/fixtures"]
 members = [
   "actions/*",
   "bin/[a-o]*",
@@ -28,9 +28,6 @@ members = [
   "crates/proof/[u-y]*",
   "crates/proof/prover-service/[a-r]*",
   "crates/proof/tee/*",
-  "crates/proof/zk/backend/elfs",
-  "crates/proof/zk/backend/scripts",
-  "crates/proof/zk/*",
   "crates/utilities/*",
   "etc/tools/*",
   "etc/systems",
@@ -216,28 +213,20 @@ basectl-cli = { path = "crates/infra/basectl" }
 base-roxy = { path = "crates/infra/roxy" }
 base-sidecrush = { path = "crates/infra/sidecrush" }
 audit-archiver-lib = { path = "crates/infra/audit" }
-base-snark-e2e = { path = "crates/infra/snark-e2e" }
 base-load-tests = { path = "crates/infra/load-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 base-snapshotter = { path = "crates/infra/snapshotter" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
 base-telemetry-service = { path = "crates/infra/telemetry" }
 base-shadow-metrics = { path = "crates/infra/shadow-metrics" }
-base-challenger-e2e = { path = "crates/infra/challenger-e2e" }
-base-zk-benchmarks = { path = "crates/infra/zk-benchmarks" }
-base-zk-fork-dispute = { path = "crates/infra/zk-fork-dispute" }
 
 # Proof
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
 base-proof-worker = { path = "crates/proof/worker" }
 base-challenger = { path = "crates/proof/challenge" }
-base-proof-zk-host = { path = "crates/proof/zk/host" }
-base-proof-zk-utils = { path = "crates/proof/zk/utils" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-submission = { path = "crates/proof/submission" }
-base-proof-zk-backend = { path = "crates/proof/zk/backend", default-features = false }
-base-proof-zk-witness = { path = "crates/proof/zk/witness" }
 base-prover-service = { path = "crates/proof/prover-service" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-prover-service-db = { path = "crates/proof/prover-service/db" }
@@ -254,9 +243,6 @@ base-prover-service-protocol = { path = "crates/proof/prover-service/protocol" }
 base-proof-executor = { path = "crates/proof/executor", default-features = false }
 base-proof-preimage = { path = "crates/proof/preimage", default-features = false }
 base-proof-primitives = { path = "crates/proof/primitives", default-features = false }
-
-# Succinct (OP Succinct / SP1 proving)
-base-proof-succinct-elfs = { path = "crates/proof/zk/backend/elfs" }
 
 # Batcher
 base-blobs = { path = "crates/batcher/blobs" }
@@ -455,13 +441,6 @@ aws-sdk-s3 = { version = "1.106.0", default-features = false }
 aws-sdk-ec2 = { version = "1.217.0", default-features = false }
 aws-credential-types = { version = "1.1.7", default-features = false }
 aws-sdk-elasticloadbalancingv2 = { version = "1.109.0", default-features = false }
-
-# SP1 v6.4.0 (Hypercube) — used by crates/proof/zk
-sp1-prover-types = "=6.4.0"
-sp1-sdk = { version = "=6.4.0" }
-sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.7.2" }
-sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.7.2" }
-sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.7.2" }
 
 # crypto
 sha3 = "0.10"

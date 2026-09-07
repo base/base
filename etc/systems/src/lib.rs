@@ -95,6 +95,3 @@ pub use upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 
 mod urls;
 pub use urls::SystemTestUrls;
-
-mod zk_host;
-pub use zk_host::InProcessZkHost;
