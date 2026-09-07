@@ -18,13 +18,14 @@ use tokio::{
 use crate::{Executor, ProtocolIdentity};
 
 mod filter;
+pub use filter::{
+    ENFORCED_SIZE_TIME, Filter, LimitKind, Limiter, Quota, RateLimitedErr, ReceivedPacketCache,
+};
 mod recv;
+pub use recv::RecvHandlerConfig;
 mod send;
 
-pub use filter::{
-    FilterConfig,
-    rate_limiter::{RateLimiter, RateLimiterBuilder},
-};
+pub use filter::{FilterConfig, RateLimiter, RateLimiterBuilder};
 pub use recv::InboundPacket;
 pub use send::OutboundPacket;
 
@@ -57,6 +58,7 @@ pub struct SocketConfig {
 }
 
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
+#[derive(Debug)]
 pub struct Socket {
     pub send: mpsc::Sender<OutboundPacket>,
     pub recv: mpsc::Receiver<InboundPacket>,
@@ -222,5 +224,15 @@ impl Drop for Socket {
     fn drop(&mut self) {
         let _ = self.sender_exit.take().expect("Exit always exists").send(());
         let _ = self.recv_exit.take().expect("Exit always exists").send(());
+    }
+}
+
+impl core::fmt::Debug for SocketConfig {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SocketConfig")
+            .field("listen_config", &self.listen_config)
+            .field("ban_duration", &self.ban_duration)
+            .field("local_node_id", &self.local_node_id)
+            .finish_non_exhaustive()
     }
 }

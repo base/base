@@ -5,7 +5,7 @@
 use ssz::{Decode, Encode};
 use ssz_derive::{Decode, Encode};
 
-#[derive(Clone, Copy, Encode, Decode)]
+#[derive(Clone, Copy, Debug, Encode, Decode)]
 pub struct FixedLen {
     a: u64,
     b: u64,

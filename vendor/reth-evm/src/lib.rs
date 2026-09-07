@@ -46,6 +46,8 @@ pub use aliases::*;
 #[cfg(feature = "std")]
 mod engine;
 #[cfg(feature = "std")]
+pub use engine::EitherIter;
+#[cfg(feature = "std")]
 pub use engine::{ConvertTx, ExecutableTxIterator, ExecutableTxTuple};
 mod sender_recovery;
 pub use sender_recovery::SenderRecoveryCache;

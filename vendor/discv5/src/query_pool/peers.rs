@@ -41,8 +41,10 @@
 //!
 //! [`Finished`]: QueryState::Finished
 
-pub mod closest;
-pub mod predicate;
+mod closest;
+pub use closest::{FindNodeQuery, FindNodeQueryConfig, QueryPeer as ClosestQueryPeer};
+mod predicate;
+pub use predicate::{PredicateQuery, PredicateQueryConfig, QueryPeer as PredicateQueryPeer};
 
 /// The state of the query reported by [`closest::FindNodeQuery::next`] or
 /// [`predicate::PredicateQuery::next`].
@@ -66,3 +68,6 @@ pub enum QueryState<TNodeId> {
     /// The query finished.
     Finished,
 }
+
+pub use closest::QueryPeerState as ClosestQueryPeerState;
+pub use predicate::QueryPeerState as PredicateQueryPeerState;

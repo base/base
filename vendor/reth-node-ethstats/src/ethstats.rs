@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::{BlockHeader, Sealable};
+use alloy_consensus::BlockHeader;
 use alloy_primitives::U256;
 use chrono::Local;
 use reth_chain_state::{CanonStateNotification, CanonStateSubscriptions};

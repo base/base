@@ -1,6 +1,7 @@
 use super::*;
 
 mod impls;
+pub use impls::{sequence_ssz_append, sequence_ssz_bytes_len};
 
 /// Provides SSZ encoding (serialization) via the `as_ssz_bytes(&self)` method.
 ///
@@ -84,6 +85,7 @@ pub trait Encode {
 /// }
 ///
 /// ```
+#[derive(Debug)]
 pub struct SszEncoder<'a> {
     offset: usize,
     buf: &'a mut Vec<u8>,

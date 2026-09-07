@@ -19,7 +19,6 @@ workspace = true
 alloy-eips = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-execution-types = { workspace = true }
-reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde_with = { workspace = true, features = ["macros"], optional = true }

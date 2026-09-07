@@ -5,7 +5,7 @@ use core::{fmt::Display, str::FromStr};
 
 #[cfg(any(feature = "k256", feature = "secp256k1"))]
 use crate::Address;
-use crate::{B256, U256, hex, normalize_v, signature::SignatureError, uint};
+use crate::{B256, U256, normalize_v, signature::SignatureError, uint};
 
 /// The order of the [Secp256k1](https://en.bitcoin.it/wiki/Secp256k1) curve.
 const SECP256K1N_ORDER: U256 =
@@ -576,6 +576,7 @@ mod tests {
     use alloy_rlp::{Decodable, Encodable};
 
     use super::*;
+    use crate::hex;
 
     #[test]
     #[cfg(feature = "k256")]

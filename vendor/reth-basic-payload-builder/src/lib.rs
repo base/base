@@ -46,9 +46,8 @@ use crate::metrics::PayloadBuilderMetrics;
 mod better_payload_emitter;
 mod metrics;
 mod stack;
-
 pub use better_payload_emitter::BetterPayloadEmitter;
-pub use stack::PayloadBuilderStack;
+pub use stack::{Either, PayloadBuilderStack};
 
 const PAYLOAD_BUILDER_THREAD_NAME: &str = "payload-builder";
 

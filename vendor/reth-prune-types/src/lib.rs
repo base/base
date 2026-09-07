@@ -17,7 +17,6 @@ mod mode;
 mod pruner;
 mod segment;
 mod target;
-
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::Deref;
 
@@ -31,7 +30,8 @@ pub use pruner::{
 };
 pub use segment::{PrunePurpose, PruneSegment, PruneSegmentError};
 pub use target::{
-    MINIMUM_DISTANCE, MINIMUM_UNWIND_SAFE_DISTANCE, PruneModes, UnwindTargetPrunedError,
+    HistoryType, MINIMUM_DISTANCE, MINIMUM_UNWIND_SAFE_DISTANCE, PruneModes,
+    UnwindTargetPrunedError,
 };
 
 /// Configuration for pruning receipts not associated with logs emitted by the specified contracts.

@@ -11,6 +11,7 @@ use serde::{
 
 const BYTES_LEN: usize = 8;
 
+#[derive(Debug)]
 pub struct QuantityVisitor;
 impl<'de> Visitor<'de> for QuantityVisitor {
     type Value = Vec<u8>;

@@ -32,6 +32,7 @@ use crate::{
 };
 
 mod ecdh;
+pub use ecdh::ecdh as shared_secret;
 
 const NODE_ID_LENGTH: usize = 32;
 const INFO_LENGTH: usize = 26 + 2 * NODE_ID_LENGTH;

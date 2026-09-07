@@ -9,11 +9,14 @@
 mod combined;
 #[cfg(feature = "ed25519")]
 mod ed25519;
+#[cfg(feature = "ed25519")]
+pub use ed25519::ENR_KEY as ED25519_ENR_KEY;
 #[cfg(feature = "k256")]
 mod k256_key;
+#[cfg(feature = "k256")]
+pub use k256_key::ENR_KEY as K256_ENR_KEY;
 #[cfg(feature = "rust-secp256k1")]
 mod rust_secp256k1;
-
 use std::{
     collections::BTreeMap,
     error::Error,
@@ -28,6 +31,8 @@ pub use combined::{CombinedKey, CombinedPublicKey};
 pub use ed25519_dalek;
 #[cfg(feature = "k256")]
 pub use k256;
+#[cfg(feature = "rust-secp256k1")]
+pub use rust_secp256k1::ENR_KEY as SECP256K1_ENR_KEY;
 #[cfg(feature = "rust-secp256k1")]
 pub use secp256k1;
 

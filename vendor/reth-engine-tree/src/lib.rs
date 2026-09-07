@@ -108,7 +108,11 @@ pub mod metrics;
 pub mod persistence;
 /// Support for interacting with the blockchain tree.
 pub mod tree;
+pub use tree::{BlockValidationMetrics, EngineMetrics, ReorgMetrics, TreeMetrics};
 
 /// Test utilities.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
+
+#[cfg(test)]
+pub use tree::payload_processor::bal::execute::L1InfoDeposit;

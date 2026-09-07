@@ -22,6 +22,7 @@ pub fn decode(s: &str) -> Result<Vec<u8>, String> {
     }
 }
 
+#[derive(Debug)]
 pub struct PrefixedHexVisitor;
 
 impl<'de> Visitor<'de> for PrefixedHexVisitor {
@@ -39,6 +40,7 @@ impl<'de> Visitor<'de> for PrefixedHexVisitor {
     }
 }
 
+#[derive(Debug)]
 pub struct HexVisitor;
 
 impl<'de> Visitor<'de> for HexVisitor {

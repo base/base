@@ -22,14 +22,15 @@ alloy-consensus = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-chainspec = { workspace = true }
 reth-execution-types = { workspace = true, optional = true }
-base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-common-consensus = { optional = true, workspace = true, features = ["reth"] }
 [dev-dependencies]
 reth-ethereum-primitives = { workspace = true }
 rand = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 [features]
-test-utils = ["std", "dep:reth-execution-types"]
+test-utils = ["dep:base-common-consensus", "std", "dep:reth-execution-types"]
 default = ["std"]
 std = [
     "alloy-consensus/std",

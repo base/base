@@ -385,7 +385,7 @@ enum QueryProgress {
 
 /// Representation of a peer in the context of a query.
 #[derive(Debug, Clone)]
-struct QueryPeer<TNodeId> {
+pub struct QueryPeer<TNodeId> {
     /// The `KBucket` key used to identify the peer.
     key: Key<TNodeId>,
 
@@ -404,7 +404,7 @@ impl<TNodeId> QueryPeer<TNodeId> {
 
 /// The state of `QueryPeer` in the context of a query.
 #[derive(Debug, Copy, Clone)]
-enum QueryPeerState {
+pub enum QueryPeerState {
     /// The peer has not yet been contacted.
     ///
     /// This is the starting state for every peer known to, or discovered by, a query.

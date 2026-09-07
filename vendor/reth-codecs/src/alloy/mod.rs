@@ -25,6 +25,7 @@ cond_mod!(
     withdrawal
 );
 
+pub use receipt::ReceiptFlags;
 pub mod transaction;
 
 #[cfg(test)]

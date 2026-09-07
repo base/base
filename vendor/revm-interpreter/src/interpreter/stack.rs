@@ -158,7 +158,8 @@ impl Stack {
     #[cfg_attr(debug_assertions, track_caller)]
     pub unsafe fn pop_unchecked(&mut self) -> U256 {
         assume!(!self.is_empty());
-        self.data.pop().unwrap_unchecked()
+        // SAFETY: the caller guarantees that the stack is nonempty.
+        unsafe { self.data.pop().unwrap_unchecked() }
     }
 
     /// Peeks the top of the stack.
@@ -176,7 +177,8 @@ impl Stack {
     #[cfg_attr(debug_assertions, track_caller)]
     pub unsafe fn top_unchecked(&mut self) -> &mut U256 {
         assume!(!self.is_empty());
-        self.data.last_mut().unwrap_unchecked()
+        // SAFETY: the caller guarantees that the stack is nonempty.
+        unsafe { self.data.last_mut().unwrap_unchecked() }
     }
 
     /// Pops `N` values from the stack.

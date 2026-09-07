@@ -206,7 +206,7 @@ async fn main() {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SocketKind {
     Ip4,
     Ip6,

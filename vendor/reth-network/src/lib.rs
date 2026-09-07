@@ -144,6 +144,7 @@ mod metrics;
 mod network;
 mod required_block_filter;
 mod session;
+pub use session::BlockRangeInfo;
 mod state;
 mod swarm;
 mod trusted_peers_resolver;

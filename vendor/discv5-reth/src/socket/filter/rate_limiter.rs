@@ -45,7 +45,7 @@ type Nanosecs = u64;
 /// n*`replenish_all_every`/`max_tokens` units of time since their last request.
 ///
 /// To produce hard limits, set `max_tokens` to 1.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Quota {
     /// How often are `max_tokens` fully replenished.
     replenish_all_every: Duration,
@@ -71,6 +71,7 @@ pub struct RateLimiter {
 }
 
 /// Error type for non conformant requests
+#[derive(Debug)]
 pub enum RateLimitedErr {
     /// Required tokens for this request exceed the maximum
     TooLarge,
@@ -78,6 +79,7 @@ pub enum RateLimitedErr {
     TooSoon(Duration),
 }
 
+#[derive(Debug)]
 pub enum LimitKind {
     /// Request counts towards the total limit.
     Total,
@@ -95,7 +97,7 @@ pub enum LimitKind {
 ///
 /// Quotas can be set via the X_one_every() functions to set hard limits as described above. Using
 /// the `X_n_every()` functions allow for bursts.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct RateLimiterBuilder {
     /// Quota for total received RPCs.
     total_quota: Option<Quota>,

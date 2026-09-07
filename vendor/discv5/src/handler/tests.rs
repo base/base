@@ -9,7 +9,6 @@ use std::{
     time::Duration,
 };
 
-use active_requests::ActiveRequests;
 use tokio::time::sleep;
 
 use super::*;

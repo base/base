@@ -8,7 +8,7 @@ use reth_static_file_types::{
 };
 
 mod cursor;
-pub use cursor::StaticFileCursor;
+pub use cursor::{KeyOrNumber, StaticFileCursor};
 
 mod mask;
 pub use mask::*;

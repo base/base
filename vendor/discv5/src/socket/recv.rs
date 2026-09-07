@@ -15,6 +15,7 @@ use super::filter::{Filter, FilterConfig};
 use crate::{Executor, metrics::METRICS, node_info::NodeAddress, packet::*};
 
 /// The object sent back by the Recv handler.
+#[derive(Debug)]
 pub struct InboundPacket {
     /// The originating socket addr.
     pub src_address: SocketAddr,
@@ -220,5 +221,15 @@ impl RecvHandler {
             .send(inbound)
             .await
             .unwrap_or_else(|e| warn!(error = %e,"Could not send packet to handler"));
+    }
+}
+
+impl core::fmt::Debug for RecvHandlerConfig {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RecvHandlerConfig")
+            .field("ban_duration", &self.ban_duration)
+            .field("local_node_id", &self.local_node_id)
+            .field("protocol_identity", &self.protocol_identity)
+            .finish_non_exhaustive()
     }
 }

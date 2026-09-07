@@ -78,6 +78,7 @@ pub enum Event {
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
+#[derive(Debug)]
 pub struct Discv5 {
     config: Config,
     /// The channel to make requests from the main service.

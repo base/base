@@ -18,11 +18,10 @@ use crate::{
 mod constants;
 mod eth;
 mod task;
-
 /// Validation constants.
 pub use constants::{DEFAULT_MAX_TX_INPUT_BYTES, TX_SLOT_BYTE_SIZE};
 pub use eth::*;
-pub use task::{TransactionValidationTaskExecutor, ValidationTask};
+pub use task::{TransactionValidationTaskExecutor, ValidationJobSender, ValidationTask};
 
 /// A Result type returned after checking a transaction's validity.
 #[derive(Debug)]

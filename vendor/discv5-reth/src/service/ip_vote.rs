@@ -34,7 +34,8 @@ use tracing::debug;
 const CLEAR_MAJORITY_PERCENTAGE: f64 = 0.3;
 
 /// A collection of IP:Ports for our node reported from external peers.
-pub(crate) struct IpVote {
+#[derive(Debug)]
+pub struct IpVote {
     /// The current collection of IP:Port votes for ipv4.
     ipv4_votes: HashMap<NodeId, (SocketAddrV4, Instant)>,
     /// The current collection of IP:Port votes for ipv6.

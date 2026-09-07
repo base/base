@@ -196,7 +196,8 @@ fn get_next_byte(buf: &[u8]) -> Result<u8> {
 #[inline(always)]
 unsafe fn advance_unchecked<'a>(buf: &mut &'a [u8], cnt: usize) -> &'a [u8] {
     if buf.remaining() < cnt {
-        unreachable_unchecked()
+        // SAFETY: the caller guarantees that cnt does not exceed the remaining length.
+        unsafe { unreachable_unchecked() }
     }
     let bytes = &buf[..cnt];
     buf.advance(cnt);

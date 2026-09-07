@@ -51,6 +51,7 @@ alloy-primitives = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 context_deserialize = { workspace = true, optional = true, features = ["default"] }
 [dev-dependencies]
+ethereum_ssz_derive = { workspace = true }
 serde_json = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["default", "getrandom"] }
 [lints]

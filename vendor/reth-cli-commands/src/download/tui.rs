@@ -24,6 +24,7 @@ use crate::download::{
 };
 
 /// Result of the interactive component selector.
+#[derive(Debug)]
 pub struct SelectorOutput {
     /// User-confirmed selections with per-component ranges.
     pub selections: BTreeMap<SnapshotComponentType, ComponentSelection>,

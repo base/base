@@ -9,6 +9,7 @@ use tracing::{debug, error, trace, warn};
 
 use crate::{Executor, metrics::METRICS, node_info::NodeAddress, packet::*};
 
+#[derive(Debug)]
 pub struct OutboundPacket {
     /// The destination node address
     pub node_address: NodeAddress,

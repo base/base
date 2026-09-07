@@ -1,13 +1,13 @@
 use super::HandlerReqId;
-pub use crate::node_info::NodeContact;
 use crate::{
+    node_info::NodeContact,
     packet::Packet,
     rpc::{Request, RequestBody},
 };
 
 /// A request to a node that we are waiting for a response.
 #[derive(Debug)]
-pub(super) struct RequestCall {
+pub struct RequestCall {
     contact: NodeContact,
     /// The raw discv5 packet sent.
     packet: Packet,

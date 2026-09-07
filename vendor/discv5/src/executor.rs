@@ -25,7 +25,7 @@ impl Clone for Box<dyn Executor + Send + Sync> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TokioExecutor;
 
 impl Executor for TokioExecutor {

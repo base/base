@@ -9,11 +9,13 @@ use serde_derive::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
+#[derive(Debug)]
 pub struct QuotedIntWrapper {
     #[serde(with = "crate::quoted_u64")]
     pub int: u64,
 }
 
+#[derive(Debug)]
 pub struct QuotedIntVecVisitor;
 impl<'a> serde::de::Visitor<'a> for QuotedIntVecVisitor {
     type Value = Vec<u64>;

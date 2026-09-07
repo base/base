@@ -17,7 +17,10 @@ use alloy_primitives::Bytes;
 use reth_chainspec::EthereumHardforks;
 
 mod base;
-pub use base::{BaseBuiltPayload, BasePayloadBuilderAttributes, EthPayloadBuilderAttributes};
+pub use base::{
+    BaseBuiltPayload, BasePayloadAttributes, BasePayloadBuilderAttributes,
+    EthPayloadBuilderAttributes,
+};
 
 mod base_compat;
 

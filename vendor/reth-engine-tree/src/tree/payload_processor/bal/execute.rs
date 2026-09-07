@@ -291,6 +291,9 @@ impl BlockGasTracker {
 }
 
 #[cfg(test)]
+pub use tests::L1InfoDeposit;
+
+#[cfg(test)]
 mod tests {
     use std::convert::Infallible;
 

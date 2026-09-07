@@ -29,6 +29,7 @@ mod private {
     impl Sealed for RO {}
     impl Sealed for RW {}
 }
+pub use private::Sealed;
 
 pub trait TransactionKind: private::Sealed + Send + Sync + Debug + 'static {
     #[doc(hidden)]

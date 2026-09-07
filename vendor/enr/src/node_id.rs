@@ -130,6 +130,10 @@ mod serde_hex_prfx {
         hex::FromHex::from_hex(src).map_err(serde::de::Error::custom)
     }
 }
+#[cfg(feature = "serde")]
+pub use serde_hex_prfx::deserialize;
+#[cfg(feature = "serde")]
+pub use serde_hex_prfx::serialize;
 
 #[cfg(test)]
 mod tests {

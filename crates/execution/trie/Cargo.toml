@@ -18,7 +18,6 @@ thiserror = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
-reth-db-api = { workspace = true }
 derive_more = { workspace = true }
 base-metrics = { workspace = true }
 reth-trie-db = { workspace = true }
@@ -37,7 +36,6 @@ parking_lot = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync"] }
 reth-db = { workspace = true, features = ["default", "mdbx"] }
 bincode = { workspace = true, features = ["default", "serde"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
 reth-revm = { workspace = true, features = ["default", "witness"] }
 reth-execution-errors = { workspace = true, features = ["default"] }
 eyre = { workspace = true, optional = true, features = ["default"] }
@@ -61,6 +59,7 @@ reth-trie = { workspace = true, features = ["test-utils"] }
 reth-chainspec = { workspace = true, features = ["default"] }
 reth-db-api = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 reth-codecs = { workspace = true, features = ["alloy", "test-utils"] }
 reth-ethereum-primitives = { workspace = true, features = ["default"] }

@@ -5,7 +5,8 @@ pub use database::*;
 
 mod static_file;
 pub use static_file::{
-    StaticFileAccess, StaticFileJarProvider, StaticFileProvider, StaticFileProviderBuilder,
+    LoadedJar, StaticFileAccess, StaticFileJarProvider, StaticFileProvider,
+    StaticFileProviderBuilder, StaticFileProviderInner, StaticFileProviderMetrics,
     StaticFileProviderRW, StaticFileProviderRWRefMut, StaticFileWriteCtx, StaticFileWriter,
 };
 
@@ -25,8 +26,7 @@ mod consistent;
 pub use consistent::ConsistentProvider;
 
 pub(crate) mod rocksdb;
-
 pub use rocksdb::{
     PruneShardOutcome, PrunedIndices, RocksDBBatch, RocksDBBuilder, RocksDBIter, RocksDBProvider,
-    RocksDBRawIter, RocksDBStats, RocksDBTableStats, RocksReadSnapshot, RocksTx,
+    RocksDBRawIter, RocksDBStats, RocksDBTableStats, RocksReadSnapshot, RocksTx, RocksTxIter,
 };

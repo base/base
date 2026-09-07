@@ -35,6 +35,7 @@ mod otterscan;
 mod reth;
 mod rpc;
 mod trace;
+pub use trace::{BlockStorageAccess, TransactionStorageAccess};
 mod txpool;
 mod validation;
 mod web3;

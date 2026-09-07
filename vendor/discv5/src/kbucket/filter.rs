@@ -37,7 +37,7 @@ const MAX_NODES_PER_SUBNET_TABLE: usize = 10;
 /// The number of nodes permitted in the same /24 subnet per bucket.
 const MAX_NODES_PER_SUBNET_BUCKET: usize = 2;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IpTableFilter;
 
 impl Filter<Enr> for IpTableFilter {
@@ -50,7 +50,7 @@ impl Filter<Enr> for IpTableFilter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IpBucketFilter;
 
 impl Filter<Enr> for IpBucketFilter {

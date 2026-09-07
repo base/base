@@ -1,11 +1,13 @@
 //! Compact implementation for [`AlloyEthereumReceipt`]
 
-use crate::Compact;
 use alloc::vec::Vec;
+
 use alloy_consensus::EthereumReceipt as AlloyEthereumReceipt;
 use alloy_primitives::Log;
 use bytes::Buf;
 use modular_bitfield::prelude::*;
+
+use crate::Compact;
 
 #[allow(non_snake_case)]
 mod flags {
@@ -32,7 +34,7 @@ mod flags {
     }
 }
 
-pub(crate) use flags::ReceiptFlags;
+pub use flags::ReceiptFlags;
 
 impl<T: Compact> Compact for AlloyEthereumReceipt<T> {
     fn to_compact<B>(&self, buf: &mut B) -> usize
@@ -105,10 +107,11 @@ impl<T: Compact> Compact for AlloyEthereumReceipt<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_consensus::TxType;
     use proptest::proptest;
     use proptest_arbitrary_interop::arb;
+
+    use super::*;
 
     proptest! {
         #[test]

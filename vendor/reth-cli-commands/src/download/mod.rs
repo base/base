@@ -89,6 +89,7 @@ mod progress;
 mod session;
 mod source;
 mod tui;
+pub use tui::{SelectorOutput, run_selector};
 mod verify;
 
 use std::{
@@ -120,7 +121,6 @@ use source::{
     print_snapshot_listing, resolve_manifest_base_url,
 };
 use tracing::info;
-use tui::{SelectorOutput, run_selector};
 
 use crate::common::EnvironmentArgs;
 
@@ -135,7 +135,7 @@ const MAX_CONCURRENT_DOWNLOADS: usize = 8;
 
 /// Built-in component presets for snapshot selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SelectionPreset {
+pub enum SelectionPreset {
     /// Minimal node data needed to start from a snapshot.
     Minimal,
     /// Full-node data matching the default full prune settings.

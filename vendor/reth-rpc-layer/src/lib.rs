@@ -14,6 +14,7 @@ use jsonrpsee_http_client::HttpResponse;
 mod auth_client_layer;
 mod auth_layer;
 mod compression_layer;
+pub use compression_layer::CompressionService;
 mod jwt_validator;
 
 // Export alloy JWT types

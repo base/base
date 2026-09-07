@@ -209,7 +209,7 @@ fn next_even_number(n: usize) -> usize {
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use super::*;
     use crate::ZERO_HASHES_MAX_INDEX;
 

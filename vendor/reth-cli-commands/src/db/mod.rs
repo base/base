@@ -12,19 +12,37 @@ use reth_db_common::DbTool;
 
 use crate::common::{AccessRights, Environment, EnvironmentArgs};
 mod account_storage;
+pub use account_storage::Command as AccountStorageCommand;
 mod checksum;
+pub use checksum::{ChecksumRocksDbTable, Command as ChecksumCommand, checksum_rocksdb};
 mod clear;
+pub use clear::Command as ClearCommand;
 mod copy;
+pub use copy::Command as CopyCommand;
 mod diff;
+pub use diff::Command as DiffCommand;
 mod get;
+pub use get::{Command as GetCommand, RocksDbTable as GetRocksDbTable};
 mod list;
+pub use list::Command as ListCommand;
 mod prune_checkpoints;
+pub use prune_checkpoints::{
+    Command as PruneCheckpointsCommand, PruneModeArg, SegmentArg, SetArgs as PruneCheckpointSetArgs,
+};
 mod repair_trie;
+pub use repair_trie::Command as RepairTrieCommand;
 mod settings;
+pub use settings::Command as SettingsCommand;
 mod stage_checkpoints;
+pub use stage_checkpoints::{
+    Command as StageCheckpointsCommand, SetArgs as StageCheckpointSetArgs, StageArg,
+};
 mod state;
+pub use state::{Command as StateCommand, OutputFormat};
 mod static_file_header;
+pub use static_file_header::Command as StaticFileHeaderCommand;
 mod stats;
+pub use stats::Command as StatsCommand;
 /// DB List TUI
 mod tui;
 

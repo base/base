@@ -64,6 +64,7 @@ pub mod error;
 pub mod instrumented_state;
 mod invalid_headers;
 mod metrics;
+pub use metrics::{BlockValidationMetrics, EngineMetrics, ReorgMetrics, TreeMetrics};
 pub mod payload_processor;
 pub mod payload_validator;
 mod persistence_state;

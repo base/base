@@ -16,7 +16,6 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-reth-network = { workspace = true }
 tokio = { workspace = true }
 metrics = { workspace = true }
 reth-evm = { workspace = true }
@@ -25,13 +24,12 @@ thiserror = { workspace = true }
 rmp-serde = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
-reth-db-api = { workspace = true }
 reth-config = { workspace = true }
+reth-network = { workspace = true }
 reth-fs-util = { workspace = true }
 reth-metrics = { workspace = true }
 reth-node-api = { workspace = true }
 reth-provider = { workspace = true }
-reth-chainspec = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-stages-api = { workspace = true }
@@ -50,7 +48,9 @@ tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-exex-types = { workspace = true, features = ["default", "serde", "serde-bincode-compat"] }
 [dev-dependencies]
+reth-db-api = { workspace = true }
 alloy-genesis = { workspace = true }
+reth-chainspec = { workspace = true }
 reth-db-common = { workspace = true }
 reth-testing-utils = { workspace = true }
 rand = { workspace = true, features = ["default"] }

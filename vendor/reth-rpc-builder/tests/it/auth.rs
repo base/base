@@ -12,12 +12,12 @@ use alloy_primitives::U64;
 use alloy_rpc_types_engine::{
     ExecutionPayloadInputV2, ExecutionPayloadV1, ForkchoiceState, PayloadId,
 };
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
 use jsonrpsee::{
     core::client::{ClientT, SubscriptionClientT},
     server::{HttpRequest, HttpResponse},
 };
-use reth_ethereum_primitives::{Block, TransactionSigned};
 use reth_primitives_traits::block::Block as _;
 use reth_rpc_api::clients::EngineApiClient;
 use reth_rpc_builder::auth::AuthServerConfig;
@@ -92,7 +92,7 @@ async fn test_basic_engine_calls<C>(client: &C)
 where
     C: ClientT + SubscriptionClientT + Sync + EngineApiClient,
 {
-    let block = Block::default().seal_slow();
+    let block = BaseBlock::default().seal_slow();
     EngineApiClient::new_payload_v1(
         client,
         ExecutionPayloadV1::from_block_unchecked(block.hash(), &block.clone().into_block()),
@@ -101,7 +101,7 @@ where
     EngineApiClient::new_payload_v2(
         client,
         ExecutionPayloadInputV2 {
-            execution_payload: ExecutionPayloadV1::from_block_slow::<TransactionSigned, _>(
+            execution_payload: ExecutionPayloadV1::from_block_slow::<BaseTxEnvelope, _>(
                 &block.into_block(),
             ),
             withdrawals: None,

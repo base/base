@@ -8,7 +8,6 @@ use std::{fmt::Debug, sync::Arc};
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use futures_util::future::TryJoinAll;
-use reth_node_api::FullNodeComponents;
 use reth_node_builder::{
     ComponentBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle, rpc::RethRpcAddOns,
 };

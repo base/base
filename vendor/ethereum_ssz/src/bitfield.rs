@@ -9,7 +9,8 @@ use smallvec::{SmallVec, ToSmallVec, smallvec};
 use typenum::Unsigned;
 
 use crate::{Decode, DecodeError, Encode};
-pub mod bitvector_dynamic;
+mod bitvector_dynamic;
+pub use bitvector_dynamic::{BitVectorDynamic, Dynamic};
 
 /// Returned when an item encounters an error.
 #[derive(PartialEq, Debug, Clone)]
@@ -569,6 +570,7 @@ fn bytes_for_bit_len(bit_len: usize) -> usize {
 }
 
 /// An iterator over the bits in a `Bitfield`.
+#[derive(Debug)]
 pub struct BitIter<'a, T> {
     bitfield: &'a Bitfield<T>,
     i: usize,
@@ -730,7 +732,7 @@ impl<N: 'static + Unsigned> arbitrary::Arbitrary<'_> for Bitfield<Variable<N>> {
 }
 
 #[cfg(test)]
-mod bitvector {
+pub mod bitvector {
     use super::*;
     use crate::BitVector;
 
@@ -1003,7 +1005,7 @@ mod bitvector {
 
 #[cfg(test)]
 #[allow(clippy::cognitive_complexity)]
-mod bitlist {
+pub mod bitlist {
     use super::*;
     use crate::BitList;
 

@@ -14,7 +14,15 @@ pub use components::CliNodeComponents;
 pub mod common;
 pub mod config_cmd;
 pub mod db;
+pub use db::{
+    AccountStorageCommand, ChecksumCommand, ChecksumRocksDbTable, ClearCommand, CopyCommand,
+    DiffCommand, GetCommand, GetRocksDbTable, ListCommand, OutputFormat, PruneCheckpointSetArgs,
+    PruneCheckpointsCommand, PruneModeArg, RepairTrieCommand, SegmentArg, SettingsCommand,
+    StageArg, StageCheckpointSetArgs, StageCheckpointsCommand, StateCommand,
+    StaticFileHeaderCommand, StatsCommand, checksum_rocksdb,
+};
 pub mod download;
+pub use download::{SelectionPreset, SelectorOutput, run_selector};
 pub mod dump_genesis;
 pub mod import;
 pub mod import_core;

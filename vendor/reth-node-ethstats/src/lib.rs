@@ -22,6 +22,7 @@ mod connection;
 mod credentials;
 
 mod error;
+pub use error::{ConnectionError, EthStatsError};
 
 mod ethstats;
 pub use ethstats::*;

@@ -18,7 +18,7 @@ use reth_network::{
         config::{AnnouncementFilteringPolicy, StrictEthAnnouncementFilter},
     },
 };
-use reth_node_api::{FullNodeComponents, NodeAddOns};
+use reth_node_api::NodeAddOns;
 use reth_node_core::{
     cli::config::{PayloadBuilderConfig, RethTransactionPoolConfig},
     dirs::{ChainPath, DataDirPath},

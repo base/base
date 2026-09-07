@@ -20,6 +20,7 @@ pub mod lockfile;
 #[cfg(feature = "mdbx")]
 mod metrics;
 pub mod static_file;
+pub use static_file::KeyOrNumber;
 #[cfg(feature = "mdbx")]
 mod utils;
 pub mod version;

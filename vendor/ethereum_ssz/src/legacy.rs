@@ -27,7 +27,7 @@ use crate::*;
 macro_rules! four_byte_option_impl {
     ($mod_name: ident, $type: ty) => {
         #[allow(dead_code)]
-        mod $mod_name {
+        pub mod $mod_name {
             use super::*;
 
             pub mod encode {
@@ -126,7 +126,7 @@ pub fn read_four_byte_union_selector(bytes: &[u8]) -> Result<usize, DecodeError>
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use ssz_derive::{Decode, Encode};
 
     use super::*;

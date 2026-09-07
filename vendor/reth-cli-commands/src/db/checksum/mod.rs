@@ -19,6 +19,7 @@ use tracing::{info, warn};
 use crate::db::get::{maybe_json_value_parser, table_key};
 
 mod rocksdb;
+pub use rocksdb::{RocksDbTable as ChecksumRocksDbTable, checksum_rocksdb};
 
 /// Interval for logging progress during checksum computation.
 const PROGRESS_LOG_INTERVAL: usize = 100_000;

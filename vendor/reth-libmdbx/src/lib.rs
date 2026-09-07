@@ -28,11 +28,14 @@ pub use crate::{
 
 mod codec;
 mod cursor;
+pub use cursor::IntoIter as CursorIntoIter;
 mod database;
 mod environment;
+pub use environment::{GeometryInfo, PageOps};
 mod error;
 mod flags;
 mod transaction;
+pub use transaction::Sealed;
 mod txn_manager;
 mod txn_pool;
 

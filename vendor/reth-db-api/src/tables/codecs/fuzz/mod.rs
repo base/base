@@ -1,6 +1,7 @@
 //! Implements fuzzing targets to be used by test-fuzz
 
 mod inputs;
+pub use inputs::IntegerListInput;
 
 /// Fuzzer generates a random instance of the object and proceeds to encode and decode it. It then
 /// makes sure that it matches the original object.

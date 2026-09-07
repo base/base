@@ -42,6 +42,7 @@ const NUMBER_OF_INCOMING_CONNECTIONS_REQUIRED_TO_BE_VALID: usize = 2;
 
 /// The error returned from polling the ConnectivityState indicating whether IPv4 or IPv6 has
 /// failed a connectivity check.
+#[derive(Debug)]
 pub enum TimerFailure {
     /// IPv4 Timer failure
     V4,
@@ -49,7 +50,8 @@ pub enum TimerFailure {
     V6,
 }
 
-pub(crate) struct ConnectivityState {
+#[derive(Debug)]
+pub struct ConnectivityState {
     /// The duration we will wait for incoming connections before deciding if we are contactable or
     /// not. If this is None, we consider ourselves always contactable.
     duration_for_incoming_connections: Option<Duration>,

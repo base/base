@@ -10,3 +10,5 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+
+mod debug;

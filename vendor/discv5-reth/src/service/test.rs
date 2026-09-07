@@ -9,7 +9,6 @@ use std::{
 
 use enr::CombinedKey;
 use parking_lot::RwLock;
-use rand_08 as rand;
 use tokio::sync::{
     mpsc,
     mpsc::{Sender, UnboundedReceiver},

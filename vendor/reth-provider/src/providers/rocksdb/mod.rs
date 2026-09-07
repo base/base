@@ -3,9 +3,8 @@
 mod invariants;
 mod metrics;
 mod provider;
-
 pub(crate) use provider::{PendingRocksDBBatches, RocksDBWriteCtx};
 pub use provider::{
     PruneShardOutcome, PrunedIndices, RocksDBBatch, RocksDBBuilder, RocksDBIter, RocksDBProvider,
-    RocksDBRawIter, RocksDBStats, RocksDBTableStats, RocksReadSnapshot, RocksTx,
+    RocksDBRawIter, RocksDBStats, RocksDBTableStats, RocksReadSnapshot, RocksTx, RocksTxIter,
 };

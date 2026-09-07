@@ -10,6 +10,7 @@ where
     num.serialize(serializer)
 }
 
+#[derive(Debug)]
 pub struct U256Visitor;
 
 impl<'de> Visitor<'de> for U256Visitor {

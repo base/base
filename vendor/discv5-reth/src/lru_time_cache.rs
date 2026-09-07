@@ -5,6 +5,7 @@ use std::{
 
 use hashlink::LinkedHashMap;
 
+#[derive(Debug)]
 pub struct LruTimeCache<K, V> {
     map: LinkedHashMap<K, (V, Instant)>,
     /// The time elements remain in the cache.

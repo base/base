@@ -40,6 +40,12 @@ struct HalfNode {
     id: usize,
 }
 
+impl core::fmt::Debug for HalfNode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("HalfNode").field("id", &self.id).finish_non_exhaustive()
+    }
+}
+
 impl HalfNode {
     /// Create a new half-node from the given `left` value.
     fn new(id: usize, left: Preimage<'_>) -> Self {
@@ -122,6 +128,7 @@ impl HalfNode {
 ///       L  L L  L
 /// ```
 ///
+#[derive(Debug)]
 pub struct MerkleHasher {
     /// Stores the nodes that are half-complete and awaiting a right node.
     ///

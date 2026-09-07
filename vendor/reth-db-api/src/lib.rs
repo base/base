@@ -79,7 +79,7 @@ pub mod mock;
 pub mod table;
 
 pub mod tables;
-pub use tables::*;
+pub use tables::{IntegerListInput, *};
 
 /// Transaction database traits.
 pub mod transaction;

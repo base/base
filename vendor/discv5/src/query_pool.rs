@@ -26,10 +26,8 @@ mod peers;
 use std::time::{Duration, Instant};
 
 use fnv::FnvHashMap;
-pub use peers::QueryState;
-pub(crate) use peers::{
-    closest::{FindNodeQuery, FindNodeQueryConfig},
-    predicate::{PredicateQuery, PredicateQueryConfig},
+pub use peers::{
+    FindNodeQuery, FindNodeQueryConfig, PredicateQuery, PredicateQueryConfig, QueryState,
 };
 
 use crate::kbucket::{Key, PredicateKey};
@@ -43,6 +41,7 @@ pub trait TargetKey<TNodeId> {
 /// Internally, a `Query` is in turn driven by an underlying `QueryPeerIter`
 /// that determines the peer selection strategy, i.e. the order in which the
 /// peers involved in the query should be contacted.
+#[derive(Debug)]
 pub struct QueryPool<TTarget, TNodeId, TResult> {
     next_id: usize,
     query_timeout: Duration,
@@ -51,6 +50,7 @@ pub struct QueryPool<TTarget, TNodeId, TResult> {
 
 /// The observable states emitted by [`QueryPool::poll`].
 #[allow(clippy::type_complexity)]
+#[derive(Debug)]
 pub enum QueryPoolState<'a, TTarget, TNodeId, TResult> {
     /// The pool is idle, i.e. there are no queries to process.
     Idle,
@@ -184,6 +184,7 @@ impl std::ops::Deref for QueryId {
 }
 
 /// A query in a `QueryPool`.
+#[derive(Debug)]
 pub struct Query<TTarget, TNodeId, TResult> {
     /// The unique ID of the query.
     id: QueryId,
@@ -197,6 +198,7 @@ pub struct Query<TTarget, TNodeId, TResult> {
 }
 
 /// The peer selection strategies that can be used by queries.
+#[derive(Debug)]
 enum QueryPeerIter<TNodeId, TResult> {
     FindNode(FindNodeQuery<TNodeId>),
     Predicate(PredicateQuery<TNodeId, TResult>),
@@ -270,9 +272,14 @@ where
 }
 
 /// The result of a `Query`.
+#[derive(Debug)]
 pub struct QueryResult<TTarget, TClosest> {
     /// The target of the query.
     pub target: TTarget,
     /// The closest peers to the target found by the query.
     pub closest_peers: TClosest,
 }
+
+pub use peers::{
+    ClosestQueryPeer, ClosestQueryPeerState, PredicateQueryPeer, PredicateQueryPeerState,
+};

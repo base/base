@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Zeroize, PartialEq)]
-pub(crate) struct Keys {
+pub struct Keys {
     /// The encryption key.
     encryption_key: [u8; 16],
     /// The decryption key.
@@ -18,7 +18,8 @@ pub(crate) struct Keys {
 
 /// A Session containing the encryption/decryption keys. These are kept individually for a given
 /// node.
-pub(crate) struct Session {
+#[derive(Debug)]
+pub struct Session {
     /// The current keys used to encrypt/decrypt messages.
     keys: Keys,
     /// If a new handshake is being established, the older keys are maintained as race
@@ -249,5 +250,11 @@ impl Session {
         let session = Session::new(keys);
 
         Ok((packet, session))
+    }
+}
+
+impl core::fmt::Debug for Keys {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Keys").finish_non_exhaustive()
     }
 }

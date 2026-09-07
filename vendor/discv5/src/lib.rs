@@ -97,19 +97,38 @@
 mod config;
 mod discv5;
 mod error;
+pub use error::PacketError;
 mod executor;
+pub use executor::ExecutorClone;
 pub mod handler;
+pub use handler::{ActiveRequests, RequestCall, Session, shared_secret};
 mod ipmode;
+pub use ipmode::to_ipv4_mapped;
 pub mod kbucket;
+pub use kbucket::{FilterClone, KBucket, PendingNode, Position};
 mod lru_time_cache;
+pub use lru_time_cache::LruTimeCache;
 pub mod metrics;
 mod node_info;
+pub use node_info::NonContactable;
 pub mod packet;
 pub mod permit_ban;
 mod query_pool;
+pub use query_pool::{
+    FindNodeQuery, FindNodeQueryConfig, PredicateQuery, Query, QueryId, QueryPool, QueryPoolState,
+    QueryResult, QueryState, TargetKey,
+};
 pub mod rpc;
 pub mod service;
+pub use service::{
+    ConnectivityState, DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT, IpVote, QueryInfo, QueryType,
+    TimerFailure,
+};
 pub mod socket;
+pub use socket::{
+    ENFORCED_SIZE_TIME, Filter, LimitKind, Limiter, Quota, RateLimitedErr, ReceivedPacketCache,
+    RecvHandlerConfig,
+};
 
 #[macro_use]
 extern crate lazy_static;
@@ -121,7 +140,10 @@ pub use config::{Config, ConfigBuilder};
 pub use enr;
 pub use error::{Error, QueryError, RequestError, ResponseError};
 pub use executor::{Executor, TokioExecutor};
+pub use handler::{HandlerReqId, Keys};
 pub use ipmode::IpMode;
+#[cfg(test)]
+pub use kbucket::bucket_tests;
 pub use kbucket::{ConnectionDirection, ConnectionState, Key};
 // Re-export libp2p-identity and multiaddr
 #[cfg(feature = "libp2p")]
@@ -130,7 +152,13 @@ pub use libp2p_identity;
 pub use multiaddr;
 pub use packet::ProtocolIdentity;
 pub use permit_ban::PermitBanList;
+pub use query_pool::{
+    ClosestQueryPeer, ClosestQueryPeerState, PredicateQueryConfig, PredicateQueryPeer,
+    PredicateQueryPeerState,
+};
 pub use service::TalkRequest;
+#[cfg(test)]
+pub use service::test as service_tests;
 pub use socket::{ListenConfig, RateLimiter, RateLimiterBuilder};
 
 pub use crate::discv5::{Discv5, Event};

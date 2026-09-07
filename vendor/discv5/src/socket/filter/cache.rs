@@ -22,6 +22,7 @@ use std::{
 /// cache's `time_window`.
 pub const ENFORCED_SIZE_TIME: u64 = 1;
 
+#[derive(Debug)]
 pub struct ReceivedPacketCache {
     /// The target number of entries per ENFORCED_SIZE_TIME before inserting new elements reports
     /// failure. The maximum size of the cache is target*time_window

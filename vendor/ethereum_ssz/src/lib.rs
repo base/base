@@ -35,21 +35,23 @@
 //! See `examples/` for manual implementations of the `Encode` and `Decode` traits.
 
 mod bitfield;
+pub use bitfield::{BitIter, BitfieldBehaviour, SMALLVEC_LEN};
 mod decode;
+pub use decode::{Offset, TryCollect, sanitize_offset};
 mod encode;
+pub use encode::{sequence_ssz_append, sequence_ssz_bytes_len};
 pub mod legacy;
 mod union_selector;
 
 #[cfg(feature = "context_deserialize")]
 mod context_deserialize;
 
-pub use bitfield::bitvector_dynamic::{BitVectorDynamic, Dynamic};
 #[doc(hidden)]
 pub use bitfield::{BitList, BitVector, Bitfield, Error as BitfieldError, Fixed, Variable};
+pub use bitfield::{BitVectorDynamic, Dynamic};
 pub use decode::{
-    Decode, DecodeError, SszDecoder, SszDecoderBuilder,
-    impls::decode_list_of_variable_length_items, read_offset, split_union_bytes,
-    try_from_iter::TryFromIter,
+    Decode, DecodeError, SszDecoder, SszDecoderBuilder, TryFromIter,
+    decode_list_of_variable_length_items, read_offset, split_union_bytes,
 };
 pub use encode::{Encode, SszEncoder, encode_length};
 pub use union_selector::UnionSelector;
@@ -77,3 +79,6 @@ where
 {
     val.as_ssz_bytes()
 }
+
+#[cfg(test)]
+pub use bitfield::{bitlist, bitvector};

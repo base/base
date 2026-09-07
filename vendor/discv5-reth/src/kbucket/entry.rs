@@ -24,14 +24,14 @@
 //! The `Entry` API for querying and modifying the entries of a `KBucketsTable`
 //! representing the nodes participating in the Kademlia DHT.
 
-use super::*;
+use super::{bucket::InsertResult, *};
 pub use super::{
-    ConnectionDirection,
-    bucket::{AppliedPending, ConnectionState, InsertResult, Node, NodeStatus},
+    bucket::{AppliedPending, Node, NodeStatus},
     key::*,
 };
 
 /// An immutable by-reference view of a bucket entry.
+#[derive(Debug)]
 pub struct EntryRefView<'a, TPeerId, TVal: Eq> {
     /// The node represented by the entry.
     pub node: NodeRefView<'a, TPeerId, TVal>,
@@ -40,6 +40,7 @@ pub struct EntryRefView<'a, TPeerId, TVal: Eq> {
 }
 
 /// An immutable by-reference view of a `Node`.
+#[derive(Debug)]
 pub struct NodeRefView<'a, TPeerId, TVal: Eq> {
     pub key: &'a Key<TPeerId>,
     pub value: &'a TVal,

@@ -7,7 +7,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cache::ReceivedPacketCache;
 use enr::NodeId;
 use hashlink::LruCache;
 use tracing::{debug, warn};
@@ -15,10 +14,13 @@ use tracing::{debug, warn};
 use crate::{discv5::PERMIT_BAN_LIST, metrics::METRICS, node_info::NodeAddress, packet::Packet};
 
 mod cache;
+pub use cache::{ENFORCED_SIZE_TIME, ReceivedPacketCache};
 mod config;
-pub mod rate_limiter;
+mod rate_limiter;
 pub use config::FilterConfig;
-use rate_limiter::{LimitKind, RateLimiter};
+pub use rate_limiter::{
+    LimitKind, Limiter, Quota, RateLimitedErr, RateLimiter, RateLimiterBuilder,
+};
 
 /// The maximum number of IPs to retain when calculating the number of nodes per IP.
 const KNOWN_ADDRS_SIZE: usize = 500;
@@ -30,7 +32,8 @@ const BANNED_NODES_SIZE: usize = 50;
 const DEFAULT_PACKETS_PER_SECOND: usize = 20;
 
 /// The packet filter which decides whether we accept or reject incoming packets.
-pub(crate) struct Filter {
+#[derive(Debug)]
+pub struct Filter {
     /// Whether the filter is enabled or not.
     enabled: bool,
     /// An optional rate limiter for incoming packets.

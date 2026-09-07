@@ -1,7 +1,7 @@
 mod manager;
 pub use manager::{
-    StaticFileAccess, StaticFileProvider, StaticFileProviderBuilder, StaticFileWriteCtx,
-    StaticFileWriter,
+    StaticFileAccess, StaticFileProvider, StaticFileProviderBuilder, StaticFileProviderInner,
+    StaticFileWriteCtx, StaticFileWriter,
 };
 
 mod jar;
@@ -11,6 +11,7 @@ mod writer;
 pub use writer::{StaticFileProviderRW, StaticFileProviderRWRefMut};
 
 mod metrics;
+pub use metrics::StaticFileProviderMetrics;
 
 #[cfg(test)]
 mod writer_tests;

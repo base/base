@@ -13,6 +13,7 @@ use crate::{
 };
 
 /// The base builder for generating ENR records with arbitrary signing algorithms.
+#[derive(Debug)]
 pub struct Builder<K: EnrKey> {
     /// The identity scheme used to build the ENR record.
     id: String,

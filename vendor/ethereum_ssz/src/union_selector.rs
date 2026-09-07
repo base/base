@@ -3,7 +3,7 @@ use crate::*;
 /// Provides the one-byte "selector" from the SSZ union specification:
 ///
 /// <https://github.com/ethereum/consensus-specs/blob/v1.1.0-beta.3/ssz/simple-serialize.md#union>
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct UnionSelector(u8);
 
 impl From<UnionSelector> for u8 {

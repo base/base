@@ -9,6 +9,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod args;
+pub use args::ByteSize;
 pub mod cli;
 pub mod dirs;
 pub mod exit;

@@ -11,7 +11,7 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockHashOrNumber;
-use alloy_primitives::{B256, BlockNumber, Sealable};
+use alloy_primitives::{B256, BlockNumber};
 use futures::{FutureExt, stream::Stream};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use rayon::prelude::*;

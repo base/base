@@ -35,6 +35,7 @@ ethereum_ssz = { workspace = true }
 alloy-primitives = { workspace = true, features = ["default"] }
 ethereum_hashing = { workspace = true, features = ["zero_hash_cache"] }
 [dev-dependencies]
+tree_hash_derive = { workspace = true }
 ethereum_ssz_derive = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 [lints]

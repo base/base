@@ -5,6 +5,7 @@ lazy_static! {
 }
 
 /// A collection of metrics used throughout the server.
+#[derive(Debug)]
 pub struct InternalMetrics {
     /// The number of active UDP sessions that are currently established.
     pub active_sessions: AtomicUsize,

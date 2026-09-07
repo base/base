@@ -5,7 +5,8 @@ use more_asserts::debug_unreachable;
 
 use super::*;
 
-pub(super) struct ActiveRequests {
+#[derive(Debug)]
+pub struct ActiveRequests {
     /// A list of raw messages we are awaiting a response from the remote.
     active_requests_mapping: HashMap<NodeAddress, Vec<RequestCall>>,
     // WHOAREYOU messages do not include the source node id. We therefore maintain another

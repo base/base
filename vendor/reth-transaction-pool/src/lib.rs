@@ -314,7 +314,9 @@ pub mod maintain;
 pub mod metrics;
 pub mod noop;
 pub mod pool;
+pub use pool::UpdateOutcome;
 pub mod validate;
+pub use validate::ValidationJobSender;
 
 pub mod batcher;
 pub mod blobstore;

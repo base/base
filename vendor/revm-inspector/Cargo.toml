@@ -56,7 +56,7 @@ workspace = true
 
 [features]
 default = ["std"]
-serde = ["dep:serde", "revm-context/serde", "revm-database/serde", "revm-database-interface/serde", "revm-handler/serde", "revm-interpreter/serde", "revm-primitives/serde", "revm-state/serde", "either/serde"]
+serde = ["revm-context/serde", "revm-database/serde", "revm-database-interface/serde", "revm-handler/serde", "revm-interpreter/serde", "revm-primitives/serde", "revm-state/serde", "either/serde"]
 serde-json = ["tracer"]
 std = ["serde?/std", "serde_json?/std", "serde_json?/preserve_order", "revm-context/std", "revm-database/std", "revm-database-interface/std", "revm-handler/std", "revm-interpreter/std", "revm-primitives/std", "revm-state/std", "either/std"]
-tracer = ["std", "serde", "dep:serde_json"]
+tracer = ["std", "serde", "dep:serde", "dep:serde_json"]

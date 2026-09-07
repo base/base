@@ -15,6 +15,7 @@ macro_rules! define_mod {
         /// Serde support for deserializing quoted integers.
         ///
         /// Configurable so that quotes are either required or optional.
+        #[derive(Debug)]
         pub struct QuotedIntVisitor<T> {
             require_quotes: bool,
             _phantom: PhantomData<T>,

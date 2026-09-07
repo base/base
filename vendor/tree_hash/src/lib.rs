@@ -198,3 +198,6 @@ mod test {
         );
     }
 }
+
+#[cfg(test)]
+pub use merkleize_padded::test as merkleize_padded_tests;

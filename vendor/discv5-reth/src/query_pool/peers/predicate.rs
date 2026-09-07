@@ -9,7 +9,7 @@ use crate::{
     kbucket::{Distance, Key, MAX_NODES_PER_BUCKET, PredicateKey},
 };
 
-pub(crate) struct PredicateQuery<TNodeId, TResult> {
+pub struct PredicateQuery<TNodeId, TResult> {
     /// The target key we are looking for
     target_key: Key<TNodeId>,
 
@@ -31,7 +31,7 @@ pub(crate) struct PredicateQuery<TNodeId, TResult> {
 
 /// Configuration for a `Query`.
 #[derive(Debug, Clone)]
-pub(crate) struct PredicateQueryConfig {
+pub struct PredicateQueryConfig {
     /// Allowed level of parallelism.
     ///
     /// The `α` parameter in the Kademlia paper. The maximum number of peers that a query
@@ -381,7 +381,7 @@ enum QueryProgress {
 
 /// Representation of a peer in the context of a query.
 #[derive(Debug, Clone)]
-struct QueryPeer<TNodeId> {
+pub struct QueryPeer<TNodeId> {
     /// The `KBucket` key used to identify the peer.
     key: Key<TNodeId>,
 
@@ -403,7 +403,7 @@ impl<TNodeId> QueryPeer<TNodeId> {
 
 /// The state of `QueryPeer` in the context of a query.
 #[derive(Debug, Copy, Clone)]
-enum QueryPeerState {
+pub enum QueryPeerState {
     /// The peer has not yet been contacted.
     ///
     /// This is the starting state for every peer known to, or discovered by, a query.
@@ -427,4 +427,14 @@ enum QueryPeerState {
     ///
     /// This is a final state, reached as a result of a call to `on_success`.
     Succeeded,
+}
+
+impl<TNodeId, TResult> core::fmt::Debug for PredicateQuery<TNodeId, TResult> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PredicateQuery")
+            .field("num_waiting", &self.num_waiting)
+            .field("closest_peer_count", &self.closest_peers.len())
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
 }

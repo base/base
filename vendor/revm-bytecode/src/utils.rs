@@ -7,7 +7,8 @@
 /// The pointer must point to at least 2 bytes.
 #[inline]
 pub const unsafe fn read_i16(ptr: *const u8) -> i16 {
-    read_u16(ptr) as i16
+    // SAFETY: the caller guarantees that ptr points to at least two readable bytes.
+    unsafe { read_u16(ptr) as i16 }
 }
 
 /// Reads a big-endian `u16` from a `u8` pointer.

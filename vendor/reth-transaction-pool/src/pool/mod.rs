@@ -101,7 +101,6 @@ use crate::{
         },
         state::SubPool,
         txpool::{SenderInfo, TxPool},
-        update::UpdateOutcome,
     },
     traits::{
         AllPoolTransactions, BestTransactionsAttributes, BlockInfo, GetPooledTransactionLimit,
@@ -128,6 +127,7 @@ pub mod size;
 pub(crate) mod state;
 pub mod txpool;
 mod update;
+pub use update::UpdateOutcome;
 
 /// Bound on number of pending transactions from `reth_network::TransactionsManager` to buffer.
 pub const PENDING_TX_LISTENER_BUFFER_SIZE: usize = 2048;

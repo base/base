@@ -11,11 +11,12 @@ extern crate syn_solidity as ast;
 /// Tools for working with `#[...]` attributes.
 mod attr;
 pub use attr::{
-    CasingStyle, ContainsSolAttrs, SolAttrs, derives_mapped, docs_str, mk_doc, parse_derives,
+    CasingStyle, ContainsSolAttrs, SolAttrs, derives, derives_mapped, docs, docs_str, is_derive,
+    is_doc, mk_doc, parse_derives,
 };
 
 mod input;
-pub use input::{SolInput, SolInputKind};
+pub use input::{SolInput, SolInputKind, SolInputParseConfig};
 
 mod expander;
 pub use expander::SolInputExpander;

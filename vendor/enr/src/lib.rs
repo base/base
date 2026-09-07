@@ -183,6 +183,13 @@
 mod builder;
 mod error;
 mod keys;
+#[cfg(feature = "ed25519")]
+pub use keys::ED25519_ENR_KEY;
+#[cfg(feature = "k256")]
+pub use keys::K256_ENR_KEY;
+#[cfg(feature = "rust-secp256k1")]
+pub use keys::SECP256K1_ENR_KEY;
+pub use keys::SigningError;
 mod node_id;
 use std::{
     collections::BTreeMap,
@@ -205,6 +212,10 @@ pub use keys::secp256k1;
 pub use keys::{CombinedKey, CombinedPublicKey, ed25519_dalek};
 pub use keys::{EnrKey, EnrKeyUnambiguous, EnrPublicKey};
 pub use node_id::NodeId;
+#[cfg(feature = "serde")]
+pub use node_id::deserialize;
+#[cfg(feature = "serde")]
+pub use node_id::serialize;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use sha3::{Digest, Keccak256};
@@ -1170,6 +1181,7 @@ impl<K: EnrKey> Decodable for Enr<K> {
 }
 
 /// Owning iterator over all key/value pairs in the ENR.
+#[derive(Debug)]
 pub struct EnrIntoIter {
     inner: <BTreeMap<Key, Bytes> as IntoIterator>::IntoIter,
 }

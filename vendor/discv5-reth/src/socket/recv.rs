@@ -243,3 +243,13 @@ impl RecvHandler {
             .unwrap_or_else(|e| warn!(error = %e,"Could not send packet to handler"));
     }
 }
+
+impl core::fmt::Debug for RecvHandlerConfig {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RecvHandlerConfig")
+            .field("ban_duration", &self.ban_duration)
+            .field("local_node_id", &self.local_node_id)
+            .field("protocol_identity", &self.protocol_identity)
+            .finish_non_exhaustive()
+    }
+}

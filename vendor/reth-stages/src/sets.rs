@@ -41,7 +41,6 @@ use reth_config::config::StageConfig;
 use reth_consensus::FullConsensus;
 use reth_evm::BaseEvmConfig;
 use reth_network_p2p::{bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader};
-use reth_primitives_traits::Block;
 use reth_provider::HeaderSyncGapProvider;
 use reth_prune_types::{PruneMode, PruneModes};
 use reth_stages_api::Stage;

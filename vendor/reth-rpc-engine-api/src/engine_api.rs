@@ -9,7 +9,7 @@ use alloy_eips::{
     eip4895::Withdrawals,
     eip7685::RequestsOrHash,
 };
-use alloy_primitives::{B128, B256, BlockHash, BlockNumber, Bytes, Sealable, U64};
+use alloy_primitives::{B128, B256, BlockHash, BlockNumber, Bytes, U64};
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadBodiesV2,
     ExecutionPayloadBodyV1, ExecutionPayloadBodyV2, ExecutionPayloadEnvelopeV2,

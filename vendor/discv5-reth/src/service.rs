@@ -22,9 +22,6 @@ use std::{
     time::Instant,
 };
 
-use connectivity_state::{
-    ConnectivityState, DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT, TimerFailure,
-};
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
@@ -35,10 +32,6 @@ use rpc::*;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
-use self::{
-    ip_vote::IpVote,
-    query_info::{QueryInfo, QueryType},
-};
 use crate::{
     Config, Enr, Event, IpMode,
     error::{RequestError, ResponseError},
@@ -56,9 +49,15 @@ use crate::{
 };
 
 mod connectivity_state;
+pub use connectivity_state::{
+    ConnectivityState, DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT, TimerFailure,
+};
 mod ip_vote;
+pub use ip_vote::IpVote;
 mod query_info;
-mod test;
+pub use query_info::{QueryInfo, QueryType};
+#[cfg(test)]
+pub mod test;
 
 /// The number of distances (buckets) we simultaneously request from each peer.
 /// NOTE: This must not be larger than 127.
@@ -136,6 +135,7 @@ impl TalkRequest {
 }
 
 /// The types of requests to send to the Discv5 service.
+#[derive(Debug)]
 pub enum ServiceRequest {
     /// A request to start a query. There are two types of queries:
     /// - A FindNode Query - Searches for peers using a random target.
@@ -156,6 +156,7 @@ pub enum ServiceRequest {
 
 use crate::discv5::PERMIT_BAN_LIST;
 
+#[derive(Debug)]
 pub struct Service {
     /// Configuration parameters.
     config: Config,
@@ -197,6 +198,7 @@ pub struct Service {
 }
 
 /// Active RPC request awaiting a response from the handler.
+#[derive(Debug)]
 struct ActiveRequest {
     /// The address the request was sent to.
     pub contact: NodeContact,
@@ -219,6 +221,7 @@ pub struct Pong {
 }
 
 /// The kinds of responses we can send back to the discv5 layer.
+#[derive(Debug)]
 pub enum CallbackResponse {
     /// A response to a requested Nodes.
     Nodes(oneshot::Sender<Result<Vec<Enr>, RequestError>>),
@@ -230,6 +233,7 @@ pub enum CallbackResponse {
 
 /// For multiple responses to a FindNodes request, this keeps track of the request count
 /// and the nodes that have been received.
+#[derive(Debug)]
 struct NodesResponse {
     /// The response count.
     count: usize,
@@ -1608,6 +1612,20 @@ pub enum QueryKind {
     },
 }
 
+impl core::fmt::Debug for QueryKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::FindNode { target_node } => {
+                f.debug_struct("FindNode").field("target_node", target_node).finish()
+            }
+            Self::Predicate { target_node, target_peer_no, .. } => f
+                .debug_struct("Predicate")
+                .field("target_node", target_node)
+                .field("target_peer_no", target_peer_no)
+                .finish_non_exhaustive(),
+        }
+    }
+}
 /// Reporting the connection status of a node.
 enum ConnectionStatus {
     /// A node has started a new connection with us.

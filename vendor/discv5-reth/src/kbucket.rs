@@ -68,8 +68,10 @@
 // [0]: https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf
 
 mod bucket;
+pub use bucket::{KBucket, PendingNode, Position};
 mod entry;
 mod filter;
+pub use filter::FilterClone;
 mod key;
 
 use std::{
@@ -78,7 +80,6 @@ use std::{
 };
 
 use arrayvec::{self, ArrayVec};
-use bucket::KBucket;
 pub use bucket::{
     ConnectionState, FailureReason, InsertResult as BucketInsertResult, MAX_NODES_PER_BUCKET,
     UpdateResult,
@@ -92,6 +93,7 @@ pub use crate::handler::ConnectionDirection;
 const NUM_BUCKETS: usize = 256;
 
 /// Closest Iterator Output Value
+#[derive(Debug)]
 pub struct ClosestValue<TNodeId, TVal> {
     pub key: Key<TNodeId>,
     pub value: TVal,
@@ -105,6 +107,7 @@ impl<TNodeId, TVal> AsRef<Key<TNodeId>> for ClosestValue<TNodeId, TVal> {
 
 /// A key that can be returned from the `closest_keys` function, which indicates if the key matches the
 /// predicate or not.
+#[derive(Debug)]
 pub struct PredicateKey<TNodeId> {
     pub key: Key<TNodeId>,
     pub predicate_match: bool,
@@ -117,6 +120,7 @@ impl<TNodeId> From<PredicateKey<TNodeId>> for Key<TNodeId> {
 }
 
 /// A value being returned from a predicate closest iterator.
+#[derive(Debug)]
 pub struct PredicateValue<TNodeId, TVal> {
     pub key: Key<TNodeId>,
     pub predicate_match: bool,
@@ -149,6 +153,16 @@ pub struct KBucketsTable<TNodeId, TVal: Eq> {
     applied_pending: VecDeque<AppliedPending<TNodeId, TVal>>,
     /// Filter to be applied at the table level when adding/updating a node.
     table_filter: Option<Box<dyn Filter<TVal>>>,
+}
+
+impl<TNodeId, TVal: Eq> core::fmt::Debug for KBucketsTable<TNodeId, TVal> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("KBucketsTable")
+            .field("bucket_count", &self.buckets.len())
+            .field("applied_pending_count", &self.applied_pending.len())
+            .field("has_table_filter", &self.table_filter.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 #[must_use]
@@ -997,3 +1011,6 @@ mod tests {
         assert_eq!(None, table.take_applied_pending());
     }
 }
+
+#[cfg(test)]
+pub use bucket::tests as bucket_tests;

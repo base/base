@@ -6,8 +6,10 @@ use super::*;
 
 type SmallVec8<T> = SmallVec<[T; 8]>;
 
-pub mod impls;
-pub mod try_from_iter;
+mod impls;
+pub use impls::decode_list_of_variable_length_items;
+mod try_from_iter;
+pub use try_from_iter::{TryCollect, TryFromIter};
 
 /// Returned when SSZ decoding fails.
 #[derive(Debug, PartialEq, Clone)]
@@ -133,6 +135,7 @@ pub struct Offset {
 /// then converted into a `SszDecoder` which decodes those values into object instances.
 ///
 /// See [`SszDecoder`](struct.SszDecoder.html) for usage examples.
+#[derive(Debug)]
 pub struct SszDecoderBuilder<'a> {
     bytes: &'a [u8],
     items: SmallVec8<&'a [u8]>,
@@ -299,6 +302,7 @@ impl<'a> SszDecoderBuilder<'a> {
 /// }
 ///
 /// ```
+#[derive(Debug)]
 pub struct SszDecoder<'a> {
     items: SmallVec8<&'a [u8]>,
 }

@@ -14,6 +14,7 @@ use crate::Key;
 
 /// A standard implementation of the `EnrKey` trait used to sign and modify ENR records. The variants here represent the currently
 /// supported in-built signing schemes.
+#[derive(Debug)]
 pub enum CombinedKey {
     /// An `secp256k1` keypair.
     Secp256k1(k256::ecdsa::SigningKey),

@@ -8,6 +8,7 @@ use serde::{Deserializer, Serializer, de, ser::SerializeSeq};
 
 use crate::hex;
 
+#[derive(Debug)]
 pub struct ListOfBytesListVisitor;
 impl<'a> serde::de::Visitor<'a> for ListOfBytesListVisitor {
     type Value = Vec<Vec<u8>>;

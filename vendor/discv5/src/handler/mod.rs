@@ -58,14 +58,14 @@ use crate::{
 };
 
 mod active_requests;
+pub use active_requests::ActiveRequests;
 mod crypto;
+pub use crypto::shared_secret;
 mod request_call;
+pub use request_call::RequestCall;
 mod session;
+pub use session::{Keys, Session};
 mod tests;
-
-use active_requests::ActiveRequests;
-use request_call::RequestCall;
-use session::Session;
 
 pub use crate::node_info::{NodeAddress, NodeContact};
 use crate::{lru_time_cache::LruTimeCache, metrics::METRICS, socket::ListenConfig};
@@ -164,7 +164,7 @@ pub struct Challenge {
 
 /// Request ID from the handler's perspective.
 #[derive(Debug, Clone)]
-enum HandlerReqId {
+pub enum HandlerReqId {
     /// Requests made by the handler.
     Internal(RequestId),
     /// Requests made from outside the handler.
@@ -172,6 +172,7 @@ enum HandlerReqId {
 }
 
 /// A request queued for sending.
+#[derive(Debug)]
 struct PendingRequest {
     contact: NodeContact,
     request_id: HandlerReqId,
@@ -188,6 +189,7 @@ impl From<&HandlerReqId> for RequestId {
 }
 
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
+#[derive(Debug)]
 pub struct Handler {
     /// Configuration for the discv5 service.
     request_retries: u8,

@@ -8,6 +8,8 @@
 mod count_inspector;
 #[cfg(feature = "tracer")]
 mod eip3155;
+#[cfg(feature = "tracer")]
+pub use eip3155::CloneStack;
 mod either;
 mod gas;
 /// Handler implementations for inspector integration.

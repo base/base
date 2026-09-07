@@ -8844,6 +8844,7 @@ dependencies = [
  "arbitrary",
  "context_deserialize",
  "ethereum_serde_utils",
+ "ethereum_ssz_derive",
  "itertools 0.14.0",
  "serde",
  "serde_derive",
@@ -21303,6 +21304,7 @@ dependencies = [
  "ethereum_ssz_derive",
  "rand 0.9.5",
  "smallvec",
+ "tree_hash_derive",
  "typenum",
 ]
 

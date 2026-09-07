@@ -12,6 +12,7 @@
 //! TODO(onbjerg): Find appropriate format for this...
 
 pub mod codecs;
+pub use codecs::IntegerListInput;
 
 mod raw;
 use std::fmt;
