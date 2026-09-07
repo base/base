@@ -14,10 +14,7 @@ use reth_trie_db::DatabaseStateRoot;
 
 use crate::{
     ChainSpecProvider, HashingWriter, ProviderFactory, TrieWriter,
-    providers::{
-        NodeTypesForProvider, ProviderNodeTypes, RocksDBBuilder, StaticFileProvider,
-        StaticFileProviderBuilder,
-    },
+    providers::{ProviderNodeTypes, RocksDBBuilder, StaticFileProvider, StaticFileProviderBuilder},
 };
 
 type DbStateRoot<'a, TX, A> = StateRoot<
@@ -67,13 +64,13 @@ pub fn create_test_provider_factory_with_genesis_block_number(
 }
 
 /// Creates test provider factory with provided chain spec.
-pub fn create_test_provider_factory_with_node_types<N: NodeTypesForProvider>(
+pub fn create_test_provider_factory_with_node_types<N: reth_node_types::NodeTypes>(
     chain_spec: Arc<BaseChainSpec>,
 ) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {
     create_test_provider_factory_with_node_types_and_genesis(chain_spec, 0)
 }
 
-fn create_test_provider_factory_with_node_types_and_genesis<N: NodeTypesForProvider>(
+fn create_test_provider_factory_with_node_types_and_genesis<N: reth_node_types::NodeTypes>(
     chain_spec: Arc<BaseChainSpec>,
     genesis_block_number: u64,
 ) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {

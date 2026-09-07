@@ -29,7 +29,7 @@ use reth_node_core::{
 };
 use reth_provider::{
     ChainSpecProvider, FullProvider,
-    providers::{BlockchainProvider, NodeTypesForProvider, RocksDBProvider},
+    providers::{BlockchainProvider, RocksDBProvider},
 };
 use reth_tasks::TaskExecutor;
 use reth_transaction_pool::{PoolConfig, PoolTransaction, TransactionPool};
@@ -284,7 +284,7 @@ where
     /// Configures the types of the node.
     pub fn with_types<T>(self) -> NodeBuilderWithTypes<RethFullAdapter<DB, T>>
     where
-        T: NodeTypesForProvider,
+        T: reth_node_api::NodeTypes,
     {
         self.with_types_and_provider()
     }
@@ -294,7 +294,7 @@ where
         self,
     ) -> NodeBuilderWithTypes<FullNodeTypesAdapter<T, DB, P>>
     where
-        T: NodeTypesForProvider,
+        T: reth_node_api::NodeTypes,
         P: FullProvider<NodeTypesWithDBAdapter<T, DB>>,
     {
         NodeBuilderWithTypes::new(self.config, self.database, self.rocksdb_provider)
@@ -308,7 +308,7 @@ where
         node: N,
     ) -> NodeBuilderWithComponents<RethFullAdapter<DB, N>, N::ComponentsBuilder, N::AddOns>
     where
-        N: Node<RethFullAdapter<DB, N>> + NodeTypesForProvider,
+        N: Node<RethFullAdapter<DB, N>> + reth_node_api::NodeTypes,
     {
         self.with_types().with_components(node.components_builder()).with_add_ons(node.add_ons())
     }
@@ -355,7 +355,7 @@ where
     /// Configures the types of the node.
     pub fn with_types<T>(self) -> WithLaunchContext<NodeBuilderWithTypes<RethFullAdapter<DB, T>>>
     where
-        T: NodeTypesForProvider,
+        T: reth_node_api::NodeTypes,
     {
         WithLaunchContext { builder: self.builder.with_types(), task_executor: self.task_executor }
     }
@@ -365,7 +365,7 @@ where
         self,
     ) -> WithLaunchContext<NodeBuilderWithTypes<FullNodeTypesAdapter<T, DB, P>>>
     where
-        T: NodeTypesForProvider,
+        T: reth_node_api::NodeTypes,
         P: FullProvider<NodeTypesWithDBAdapter<T, DB>>,
     {
         WithLaunchContext {
@@ -384,7 +384,7 @@ where
         NodeBuilderWithComponents<RethFullAdapter<DB, N>, N::ComponentsBuilder, N::AddOns>,
     >
     where
-        N: Node<RethFullAdapter<DB, N>> + NodeTypesForProvider,
+        N: Node<RethFullAdapter<DB, N>> + reth_node_api::NodeTypes,
     {
         self.with_types().with_components(node.components_builder()).with_add_ons(node.add_ons())
     }
@@ -403,7 +403,7 @@ where
         >>::Node,
     >
     where
-        N: Node<RethFullAdapter<DB, N>> + NodeTypesForProvider,
+        N: Node<RethFullAdapter<DB, N>> + reth_node_api::NodeTypes,
         N::AddOns: RethRpcAddOns<
             NodeAdapter<
                 RethFullAdapter<DB, N>,

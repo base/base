@@ -41,7 +41,7 @@ use crate::{
     StageCheckpointReader, StateProviderBox, StaticFileProviderFactory, StaticFileWriter,
     TransactionVariant, TransactionsProvider,
     providers::{
-        NodeTypesForProvider, RocksDBProvider, StaticFileProvider, StaticFileProviderRWRefMut,
+        RocksDBProvider, StaticFileProvider, StaticFileProviderRWRefMut,
         state::latest::LatestStateProvider,
     },
     to_range,
@@ -103,7 +103,7 @@ pub struct ProviderFactory<N: NodeTypesWithDB> {
     read_only_sync: Option<Arc<ReadOnlySyncState>>,
 }
 
-impl<N: NodeTypesForProvider> ProviderFactory<NodeTypesWithDBAdapter<N, DatabaseEnv>> {
+impl<N: reth_node_types::NodeTypes> ProviderFactory<NodeTypesWithDBAdapter<N, DatabaseEnv>> {
     /// Instantiates the builder for this type
     pub fn builder() -> ProviderFactoryBuilder<N> {
         ProviderFactoryBuilder::default()

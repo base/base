@@ -17,7 +17,7 @@ use reth_db::{
 use reth_node_builder::NodeTypesWithDBAdapter;
 use reth_provider::{
     ProviderFactory,
-    providers::{NodeTypesForProvider, RocksDBBuilder, StaticFileProvider},
+    providers::{RocksDBBuilder, StaticFileProvider},
 };
 
 use crate::test_utils::TEST_ACCOUNT_BALANCE_ETH;
@@ -42,7 +42,7 @@ pub fn load_chain_spec() -> Arc<BaseChainSpec> {
 }
 
 /// Creates a provider factory for tests with the given chain spec.
-pub fn create_provider_factory<N: NodeTypesForProvider>(
+pub fn create_provider_factory<N: reth_node_builder::NodeTypes>(
     chain_spec: Arc<BaseChainSpec>,
     runtime: reth_tasks::Runtime,
 ) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {

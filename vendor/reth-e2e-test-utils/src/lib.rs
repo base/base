@@ -13,7 +13,7 @@ use reth_node_builder::{
     rpc::{EngineValidatorAddOn, RethRpcAddOns},
 };
 use reth_payload_primitives::BasePayloadBuilderAttributes;
-use reth_provider::providers::{BlockchainProvider, NodeTypesForProvider};
+use reth_provider::providers::BlockchainProvider;
 use wallet::Wallet;
 
 /// Wrapper type to create test nodes
@@ -146,7 +146,7 @@ pub type NodeHelperType<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<
 pub trait NodeBuilderHelper
 where
     Self: Default
-        + NodeTypesForProvider
+        + reth_node_builder::NodeTypes
         + Node<
             TmpNodeAdapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
             ComponentsBuilder: NodeComponentsBuilder<
@@ -167,7 +167,7 @@ where
 
 impl<T> NodeBuilderHelper for T where
     Self: Default
-        + NodeTypesForProvider
+        + reth_node_builder::NodeTypes
         + Node<
             TmpNodeAdapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
             ComponentsBuilder: NodeComponentsBuilder<

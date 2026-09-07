@@ -25,8 +25,7 @@ use reth_provider::{
     BalConfig, BalStoreHandle, InMemoryBalStore, ProviderFactory, StaticFileProviderFactory,
     StorageSettings,
     providers::{
-        BlockchainProvider, NodeTypesForProvider, RocksDBProvider, StaticFileProvider,
-        StaticFileProviderBuilder,
+        BlockchainProvider, RocksDBProvider, StaticFileProvider, StaticFileProviderBuilder,
     },
 };
 use reth_stages::{Pipeline, PipelineTarget, sets::DefaultStages};
@@ -305,7 +304,7 @@ type FullTypesAdapter<T> = FullNodeTypesAdapter<
 
 /// Helper trait with a common set of requirements for the
 /// [`NodeTypes`] in CLI.
-pub trait CliNodeTypes: NodeTypesForProvider {
+pub trait CliNodeTypes: reth_node_builder::NodeTypes {
     /// EVM used by offline execution commands.
     type Evm: ConfigureEvm + 'static;
     /// Consensus used by offline validation commands.
@@ -314,7 +313,7 @@ pub trait CliNodeTypes: NodeTypesForProvider {
 
 impl<N> CliNodeTypes for N
 where
-    N: Node<FullTypesAdapter<Self>> + NodeTypesForProvider,
+    N: Node<FullTypesAdapter<Self>> + reth_node_builder::NodeTypes,
 {
     type Evm = <<N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter<Self>>>::Components as NodeComponents<FullTypesAdapter<Self>>>::Evm;
     type Consensus = <<N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter<Self>>>::Components as NodeComponents<FullTypesAdapter<Self>>>::Consensus;

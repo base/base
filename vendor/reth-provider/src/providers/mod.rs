@@ -1,6 +1,6 @@
 //! Contains the main provider types and traits for interacting with the blockchain's storage.
 
-use reth_node_types::{NodeTypes, NodeTypesWithDB};
+use reth_node_types::NodeTypesWithDB;
 
 mod database;
 pub use database::*;
@@ -33,20 +33,10 @@ pub use rocksdb::{
     RocksDBRawIter, RocksDBStats, RocksDBTableStats, RocksReadSnapshot, RocksTx,
 };
 
-/// Helper trait to bound [`NodeTypes`] so that combined with database they satisfy
-/// [`ProviderNodeTypes`].
-pub trait NodeTypesForProvider
-where
-    Self: NodeTypes,
-{
-}
-
-impl<T> NodeTypesForProvider for T where T: NodeTypes {}
-
 /// Helper trait keeping common requirements of providers for [`NodeTypesWithDB`].
 pub trait ProviderNodeTypes
 where
-    Self: NodeTypesForProvider + NodeTypesWithDB,
+    Self: reth_node_types::NodeTypes + NodeTypesWithDB,
 {
 }
-impl<T> ProviderNodeTypes for T where T: NodeTypesForProvider + NodeTypesWithDB {}
+impl<T> ProviderNodeTypes for T where T: reth_node_types::NodeTypes + NodeTypesWithDB {}

@@ -75,7 +75,7 @@ use reth_provider::{
     DatabaseProviderFactory, InMemoryBalStore, MetadataProvider, MetadataWriter, ProviderError,
     ProviderFactory, ProviderResult, RocksDBProviderFactory, StageCheckpointReader,
     StaticFileProviderBuilder, StaticFileProviderFactory, StorageSettingsCache,
-    providers::{NodeTypesForProvider, ProviderNodeTypes, RocksDBProvider, StaticFileProvider},
+    providers::{ProviderNodeTypes, RocksDBProvider, StaticFileProvider},
 };
 use reth_prune::{PruneMode, PruneModes, PrunerBuilder};
 use reth_rpc_builder::config::RethRpcServerConfig;
@@ -835,7 +835,7 @@ where
 
 impl<T> LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<T>>>
 where
-    T: FullNodeTypes<Types: NodeTypesForProvider>,
+    T: FullNodeTypes<Types: reth_node_api::NodeTypes>,
 {
     /// Returns access to the underlying database.
     pub const fn database(&self) -> &T::DB {
@@ -923,7 +923,7 @@ where
 
 impl<T, CB> LaunchContextWith<Attached<WithConfigs, WithComponents<T, CB>>>
 where
-    T: FullNodeTypes<Types: NodeTypesForProvider>,
+    T: FullNodeTypes<Types: reth_node_api::NodeTypes>,
     CB: NodeComponentsBuilder<T>,
 {
     /// Returns the configured `ProviderFactory`.

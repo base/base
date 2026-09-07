@@ -16,7 +16,7 @@ use reth_node_types::NodeTypesWithDBAdapter;
 
 use crate::{
     ProviderFactory,
-    providers::{NodeTypesForProvider, RocksDBProvider, StaticFileProvider},
+    providers::{RocksDBProvider, StaticFileProvider},
 };
 
 /// Helper type to create a [`ProviderFactory`].
@@ -41,9 +41,9 @@ impl<N> ProviderFactoryBuilder<N> {
     ///
     /// ```no_run
     /// use reth_chainspec::MAINNET;
-    /// use reth_provider::providers::{NodeTypesForProvider, ProviderFactoryBuilder};
+    /// use reth_provider::providers::{ProviderFactoryBuilder};
     ///
-    /// fn demo<N: NodeTypesForProvider>(
+    /// fn demo<N: reth_node_types::NodeTypes>(
     ///     runtime: reth_tasks::Runtime,
     /// ) {
     ///     let provider_factory = ProviderFactoryBuilder::<N>::default()
@@ -58,9 +58,9 @@ impl<N> ProviderFactoryBuilder<N> {
     ///
     /// ```no_run
     /// use reth_chainspec::MAINNET;
-    /// use reth_provider::providers::{NodeTypesForProvider, ProviderFactoryBuilder, ReadOnlyConfig};
+    /// use reth_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
     ///
-    /// fn demo<N: NodeTypesForProvider>(
+    /// fn demo<N: reth_node_types::NodeTypes>(
     ///     runtime: reth_tasks::Runtime,
     /// ) {
     ///     let provider_factory = ProviderFactoryBuilder::<N>::default()
@@ -82,9 +82,9 @@ impl<N> ProviderFactoryBuilder<N> {
     ///
     /// ```no_run
     /// use reth_chainspec::MAINNET;
-    /// use reth_provider::providers::{NodeTypesForProvider, ProviderFactoryBuilder, ReadOnlyConfig};
+    /// use reth_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
     ///
-    /// fn demo<N: NodeTypesForProvider>(
+    /// fn demo<N: reth_node_types::NodeTypes>(
     ///     runtime: reth_tasks::Runtime,
     /// ) {
     ///     let provider_factory = ProviderFactoryBuilder::<N>::default()
@@ -103,7 +103,7 @@ impl<N> ProviderFactoryBuilder<N> {
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<ProviderFactory<NodeTypesWithDBAdapter<N, DatabaseEnv>>>
     where
-        N: NodeTypesForProvider,
+        N: reth_node_types::NodeTypes,
     {
         let ReadOnlyConfig { db_dir, db_args, static_files_dir, rocksdb_dir, watch } =
             config.into();

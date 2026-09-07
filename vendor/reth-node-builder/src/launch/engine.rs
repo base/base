@@ -24,10 +24,7 @@ use reth_node_core::{
     primitives::Head,
 };
 use reth_node_events::node;
-use reth_provider::{
-    BlockNumReader, StorageSettingsCache,
-    providers::{BlockchainProvider, NodeTypesForProvider},
-};
+use reth_provider::{BlockNumReader, StorageSettingsCache, providers::BlockchainProvider};
 use reth_storage_overlay::OverlayManager;
 use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
@@ -70,7 +67,7 @@ impl EngineNodeLauncher {
         target: NodeBuilderWithComponents<T, CB, AO>,
     ) -> eyre::Result<NodeHandle<NodeAdapter<T, CB::Components>, AO>>
     where
-        N: NodeTypesForProvider,
+        N: reth_node_api::NodeTypes,
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
         T: FullNodeTypes<
                 Types = N,
@@ -444,7 +441,7 @@ where
             DB = DB,
             Provider = BlockchainProvider<NodeTypesWithDBAdapter<N, DB>>,
         >,
-    N: NodeTypesForProvider,
+    N: reth_node_api::NodeTypes,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     CB: NodeComponentsBuilder<T> + 'static,
     AO: RethRpcAddOns<NodeAdapter<T, CB::Components>>
