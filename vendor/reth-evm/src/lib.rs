@@ -31,7 +31,6 @@ pub use base_receipts::BaseRethReceiptBuilder;
 
 mod base_payload_env;
 
-use alloc::string::String;
 use core::fmt::Debug;
 
 use alloy_eips::eip4895::Withdrawals;
@@ -61,21 +60,6 @@ pub use alloy_evm::{
     block::{OnStateHook, state_changes, system_calls},
     *,
 };
-
-/// JIT backend controls exposed by an EVM configuration.
-pub trait JitBackend: Send + Sync {
-    /// Enables or disables JIT compilation.
-    fn set_enabled(&self, enabled: bool) -> Result<(), String>;
-
-    /// Pauses JIT helper execution while keeping queueing and resident compiled code available.
-    fn pause(&self);
-
-    /// Resumes background JIT work.
-    fn resume(&self);
-
-    /// Clears JIT runtime state.
-    fn clear(&self);
-}
 
 /// Represents additional attributes required to configure the next block.
 ///

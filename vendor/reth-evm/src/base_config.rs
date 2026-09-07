@@ -37,7 +37,7 @@ use revm::{
 use crate::ExecutableTxIterator;
 use crate::{
     BaseBlockAssembler, BaseEvmEnvBuilder, BaseRethReceiptBuilder, BlockExecutorForEvm, EvmEnv,
-    EvmEnvFor, EvmFactoryFor, EvmFor, InspectorFor, JitBackend, TxEnvFor,
+    EvmEnvFor, EvmFactoryFor, EvmFor, InspectorFor, TxEnvFor,
     execute::{BasicBlockBuilder, BasicBlockExecutor, BlockBuilder, Executor},
 };
 
@@ -194,32 +194,6 @@ impl BaseEvmConfig {
     /// Provides a reference to [`EvmFactory`] implementation.
     pub fn evm_factory(&self) -> &EvmFactoryFor {
         self.block_executor_factory().evm_factory()
-    }
-
-    /// Returns a config with JIT support enabled for subsequently created EVMs, if supported.
-    ///
-    /// This is one of three gates required before an EVM can execute JIT-compiled code: the binary
-    /// must be built with the `jit` feature, runtime compilation must be enabled by `--jit` or the
-    /// `reth_jit` RPC method, and this local support flag must be enabled for the config that
-    /// creates the EVM.
-    pub fn with_jit_support_enabled(self, _enabled: bool) -> Self
-    where
-        Self: Sized,
-    {
-        self
-    }
-
-    /// Returns a config with local JIT support enabled for subsequently created EVMs, if supported.
-    pub fn with_jit_support(self) -> Self
-    where
-        Self: Sized,
-    {
-        self.with_jit_support_enabled(true)
-    }
-
-    /// Returns the JIT backend, if supported.
-    pub fn jit_backend(&self) -> Option<&dyn JitBackend> {
-        None
     }
 
     /// Returns a new EVM with the given database configured with the given environment settings,

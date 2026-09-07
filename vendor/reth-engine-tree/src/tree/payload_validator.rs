@@ -227,30 +227,6 @@ impl<'a> TreeCtx<'a> {
     }
 }
 
-/// Pauses JIT helper execution while validating imported payloads.
-///
-/// Validation still queues JIT work and can use resident compiled code, but helper execution is
-/// paused during validation to minimize latency. Queued work resumes when validation exits, so JIT
-/// compilation is biased toward idle periods instead of competing with payload validation.
-struct JitPauseGuard(BaseEvmConfig);
-
-impl JitPauseGuard {
-    fn new(evm_config: &BaseEvmConfig) -> Self {
-        if let Some(jit_backend) = evm_config.jit_backend() {
-            jit_backend.pause();
-        }
-        Self(evm_config.clone())
-    }
-}
-
-impl Drop for JitPauseGuard {
-    fn drop(&mut self) {
-        if let Some(jit_backend) = self.0.jit_backend() {
-            jit_backend.resume();
-        }
-    }
-}
-
 /// A helper type that provides reusable payload validation logic for network-specific validators.
 ///
 /// This type satisfies [`EngineValidator`] and is responsible for executing blocks/payloads.
@@ -467,7 +443,6 @@ where
         let _txpool_pause = self.txpool_prewarm.as_ref().map(txpool_prewarm::Handle::pause);
         let txpool_snapshot =
             self.txpool_prewarm.as_ref().and_then(|prewarmer| prewarmer.snapshot(parent_hash));
-        let _jit_pause = JitPauseGuard::new(&self.evm_config);
 
         // Fetch parent block. This goes to memory most of the time unless the parent block is
         // beyond the in-memory buffer.
@@ -1004,7 +979,7 @@ where
         let (spec_id, mut executor) = {
             let _span = debug_span!(target: "engine::tree", "create_evm").entered();
             let spec_id = *env.evm_env.spec_id();
-            let evm_config = self.evm_config.clone().with_jit_support();
+            let evm_config = self.evm_config.clone();
             let evm = evm_config.evm_with_env(&mut db, env.evm_env);
             let ctx = self
                 .execution_ctx_for(input)
@@ -1885,8 +1860,7 @@ where
             .then(|| self.payload_processor.cache_for(parent_hash));
         let state_root_handle =
             self.payload_state_root_handle_for(parent_hash, parent_header, timestamp, state);
-        let mut resources = PayloadBuilderResources::new(execution_cache, state_root_handle)
-            .with_lease(PayloadBuilderLease::new(JitPauseGuard::new(&self.evm_config)));
+        let mut resources = PayloadBuilderResources::new(execution_cache, state_root_handle);
         // If the txpool prewarming is enabled then we should disable it for the duration
         // of the payload builder job. This is done by obtaining a lease that will release
         // the txpool prewarm when dropped.

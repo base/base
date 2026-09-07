@@ -18,7 +18,6 @@ use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_util::cancellation::CancellationToken;
 use reth_consensus::FullConsensus;
 use reth_evm::execute::Executor;
-use reth_node_core::args::JitArgs;
 use reth_primitives_traits::{Account, GotExpected, format_gas_throughput};
 use reth_provider::{
     BlockNumReader, BlockReader, ChainSpecProvider, DatabaseProviderFactory, ReceiptProvider,
@@ -65,9 +64,6 @@ pub struct Command<C: ChainSpecParser> {
     /// Continues with execution when an invalid block is encountered and collects these blocks.
     #[arg(long)]
     skip_invalid_blocks: bool,
-
-    #[command(flatten)]
-    pub jit: JitArgs,
 }
 
 impl<C: ChainSpecParser> Command<C> {
@@ -142,7 +138,6 @@ impl<C: ChainSpecParser> Command<C> {
             let cancellation = cancellation.clone();
             let next_block = Arc::clone(&next_block);
             tasks.spawn_blocking(move || {
-                let evm_config = evm_config.with_jit_support();
                 let executor_lifetime = Duration::from_secs(600);
                 let provider = provider_factory.database_provider_ro()?.disable_long_read_transaction_safety();
 

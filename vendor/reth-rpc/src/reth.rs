@@ -11,7 +11,7 @@ use reth_chain_state::{
     CanonStateNotification, CanonStateSubscriptions, ForkChoiceSubscriptions,
     PersistedBlockSubscriptions,
 };
-use reth_errors::{RethError, RethResult};
+use reth_errors::RethResult;
 use reth_evm::{BaseEvmConfig, execute::Executor};
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::SealedHeader;
@@ -221,24 +221,8 @@ where
         }
     }
 
-    /// Handler for `reth_jit`
-    async fn reth_jit(&self, action: RethJitAction) -> RpcResult<()> {
-        let Some(jit_backend) = self.evm_config().jit_backend() else {
-            return Ok(());
-        };
-
-        match action {
-            RethJitAction::Enable => jit_backend
-                .set_enabled(true)
-                .map_err(|err| EthApiError::Internal(RethError::msg(err)))?,
-            RethJitAction::Disable => jit_backend
-                .set_enabled(false)
-                .map_err(|err| EthApiError::Internal(RethError::msg(err)))?,
-            RethJitAction::Pause => jit_backend.pause(),
-            RethJitAction::Unpause => jit_backend.resume(),
-            RethJitAction::Clear => jit_backend.clear(),
-        }
-
+    /// Compatibility no-op: Base does not configure a JIT backend.
+    async fn reth_jit(&self, _action: RethJitAction) -> RpcResult<()> {
         Ok(())
     }
 

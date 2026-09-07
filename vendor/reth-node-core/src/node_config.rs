@@ -32,9 +32,8 @@ use tracing::*;
 
 use crate::{
     args::{
-        DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, JitArgs, MetricArgs,
-        NetworkArgs, PayloadBuilderArgs, PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs,
-        TxPoolArgs,
+        DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, MetricArgs, NetworkArgs,
+        PayloadBuilderArgs, PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs, TxPoolArgs,
     },
     dirs::{ChainPath, DataDirPath},
     utils::get_single_header,
@@ -153,9 +152,6 @@ pub struct NodeConfig {
 
     /// All storage related arguments with --storage prefix
     pub storage: StorageArgs,
-
-    /// All JIT related arguments with --jit prefix
-    pub jit: JitArgs,
 }
 
 impl NodeConfig {
@@ -187,7 +183,6 @@ impl NodeConfig {
             engine: EngineArgs::default(),
             static_files: StaticFilesArgs::default(),
             storage: StorageArgs::default(),
-            jit: JitArgs::default(),
         }
     }
 
@@ -543,7 +538,6 @@ impl Clone for NodeConfig {
             engine: self.engine.clone(),
             static_files: self.static_files,
             storage: self.storage,
-            jit: self.jit.clone(),
         }
     }
 }

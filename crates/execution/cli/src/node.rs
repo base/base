@@ -135,7 +135,6 @@ impl ExecutionNodeConfigArgs {
             engine,
             static_files,
             storage,
-            jit: Default::default(),
         };
 
         if node_config.network.max_inbound_peers.is_none() {
