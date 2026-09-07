@@ -1,11 +1,8 @@
 //! Pool component for the node builder.
 
-use std::future::Future;
-
 use alloy_primitives::map::AddressSet;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use reth_chain_state::CanonStateSubscriptions;
-use reth_evm::BaseEvmConfig;
 use reth_transaction_pool::{
     BlobStore, CoinbaseTipOrdering, PoolConfig, PoolTransaction, SubPoolLimit, TransactionOrdering,
     TransactionPool, TransactionValidationTaskExecutor, TransactionValidator,
@@ -13,40 +10,6 @@ use reth_transaction_pool::{
 };
 
 use crate::{BuilderContext, FullNodeTypes};
-
-/// A type that knows how to build the transaction pool.
-pub trait PoolBuilder<Node: FullNodeTypes>: Send {
-    /// The transaction pool to build.
-    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>
-        + Unpin
-        + 'static;
-
-    /// Creates the transaction pool.
-    fn build_pool(
-        self,
-        ctx: &BuilderContext<Node>,
-        evm_config: BaseEvmConfig,
-    ) -> impl Future<Output = eyre::Result<Self::Pool>> + Send;
-}
-
-impl<Node, F, Fut, Pool> PoolBuilder<Node> for F
-where
-    Node: FullNodeTypes,
-    Pool:
-        TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
-    F: FnOnce(&BuilderContext<Node>, BaseEvmConfig) -> Fut + Send,
-    Fut: Future<Output = eyre::Result<Pool>> + Send,
-{
-    type Pool = Pool;
-
-    fn build_pool(
-        self,
-        ctx: &BuilderContext<Node>,
-        evm_config: BaseEvmConfig,
-    ) -> impl Future<Output = eyre::Result<Self::Pool>> {
-        self(ctx, evm_config)
-    }
-}
 
 /// Convenience type to override cli or default pool configuration during build.
 #[derive(Debug, Clone, Default)]

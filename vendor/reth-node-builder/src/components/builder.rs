@@ -1,22 +1,18 @@
 //! A generic [`NodeComponentsBuilder`]
 
-use std::{future::Future, marker::PhantomData};
+use std::future::Future;
 
 use base_common_consensus::BaseTxEnvelope;
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_evm::BaseEvmConfig;
 use reth_network_api::{FullNetwork, noop::NoopNetwork};
 use reth_payload_builder::PayloadBuilderHandle;
-use reth_transaction_pool::{
-    EthPoolTransaction, EthPooledTransaction, PoolTransaction, TransactionPool,
-    noop::NoopTransactionPool,
-};
+use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 use crate::{
     BuilderContext, FullNodeTypes,
     components::{
         Components, ConsensusBuilder, NetworkBuilder, NodeComponents, PayloadServiceBuilder,
-        PoolBuilder,
     },
 };
 
@@ -52,32 +48,6 @@ where
         ctx: &BuilderContext<Node>,
     ) -> impl Future<Output = eyre::Result<Self::Components>> + Send {
         self(ctx)
-    }
-}
-
-/// Builds [`NoopTransactionPool`].
-#[derive(Debug, Clone)]
-pub struct NoopTransactionPoolBuilder<Tx = EthPooledTransaction>(PhantomData<Tx>);
-
-impl<N, Tx> PoolBuilder<N> for NoopTransactionPoolBuilder<Tx>
-where
-    N: FullNodeTypes,
-    Tx: EthPoolTransaction<Consensus = BaseTxEnvelope> + Unpin,
-{
-    type Pool = NoopTransactionPool<Tx>;
-
-    async fn build_pool(
-        self,
-        _ctx: &BuilderContext<N>,
-        _evm_config: BaseEvmConfig,
-    ) -> eyre::Result<Self::Pool> {
-        Ok(NoopTransactionPool::<Tx>::new())
-    }
-}
-
-impl<Tx> Default for NoopTransactionPoolBuilder<Tx> {
-    fn default() -> Self {
-        Self(PhantomData)
     }
 }
 
