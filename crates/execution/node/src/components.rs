@@ -6,7 +6,6 @@ use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::builder::BasePayloadTransactions;
 use base_execution_txpool::BaseTransactionPool;
-use reth_network::NetworkHandle;
 use reth_node_builder::{BuilderContext, ComponentBuilder, FullNodeTypes, components::Components};
 use reth_transaction_pool::blobstore::DiskFileBlobStore;
 
@@ -17,8 +16,7 @@ pub type BaseNodePool<Node> =
     BaseTransactionPool<<Node as FullNodeTypes>::Provider, DiskFileBlobStore>;
 
 /// Base node components, with only the provider supplied by the launch adapter.
-pub type BaseNodeComponents<Node> =
-    Components<NetworkHandle, BaseNodePool<Node>, Arc<BaseBeaconConsensus>>;
+pub type BaseNodeComponents<Node> = Components<Node>;
 
 /// Constructs Base components while allowing the payload service to vary.
 #[derive(Debug)]

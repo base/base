@@ -55,10 +55,12 @@ reth-rpc-eth-types = { workspace = true }
 reth-node-ethstats = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
 reth-payload-builder = { workspace = true }
+base-execution-txpool = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-payload-primitives = { workspace = true }
+base-execution-consensus = { workspace = true }
 base-execution-chainspec = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
 reth-consensus-debug-client = { workspace = true }
@@ -84,7 +86,6 @@ alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thread"] }
 [dev-dependencies]
-base-execution-txpool = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-evm = { workspace = true, features = ["test-utils"] }

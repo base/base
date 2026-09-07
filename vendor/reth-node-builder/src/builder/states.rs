@@ -7,16 +7,12 @@
 
 use std::{fmt, fmt::Debug, future::Future};
 
-use base_common_consensus::BaseTxEnvelope;
-use reth_consensus::FullConsensus;
 use reth_evm::BaseEvmConfig;
 use reth_exex::ExExContext;
-use reth_network_api::FullNetwork;
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeAddOns};
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::providers::RocksDBProvider;
 use reth_tasks::TaskExecutor;
-use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 use crate::{
     AddOns, FullNode,
@@ -105,19 +101,13 @@ impl<T: FullNodeTypes, C: Clone + Debug + Send + Sync + Unpin + 'static> FullNod
     type Provider = T::Provider;
 }
 
-impl<T, Network, Pool, Consensus> FullNodeComponents
-    for NodeAdapter<T, Components<Network, Pool, Consensus>>
-where
-    T: FullNodeTypes,
-    Network: FullNetwork,
-    Pool:
-        TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
-    Consensus: FullConsensus + Clone + Unpin + 'static,
-{
-    type Pool = Pool;
-
-    type Consensus = Consensus;
-    type Network = Network;
+impl<T: FullNodeTypes> FullNodeComponents for NodeAdapter<T, Components<T>> {
+    type Pool = base_execution_txpool::BaseTransactionPool<
+        T::Provider,
+        reth_transaction_pool::blobstore::DiskFileBlobStore,
+    >;
+    type Consensus = std::sync::Arc<base_execution_consensus::BaseBeaconConsensus>;
+    type Network = reth_network::NetworkHandle;
 
     fn pool(&self) -> &Self::Pool {
         &self.components.transaction_pool
@@ -332,41 +322,5 @@ where
             add_ons.hooks_mut().set_extend_rpc_modules(hook);
             add_ons
         })
-    }
-}
-
-#[cfg(test)]
-mod test {
-
-    use reth_consensus::noop::NoopConsensus;
-    use reth_db_api::mock::DatabaseMock;
-    use reth_network_api::noop::NoopNetwork;
-    use reth_node_api::FullNodeTypesAdapter;
-    use reth_payload_builder::PayloadBuilderHandle;
-    use reth_provider::noop::NoopProvider;
-    use reth_tasks::Runtime;
-    use reth_transaction_pool::noop::NoopTransactionPool;
-
-    use super::*;
-    use crate::components::Components;
-
-    #[test]
-    fn test_noop_components() {
-        let components = Components::<NoopNetwork, _, _> {
-            transaction_pool:
-                NoopTransactionPool::<base_execution_txpool::BasePooledTransaction>::new(),
-            evm_config: BaseEvmConfig::default(),
-            consensus: NoopConsensus::default(),
-            network: NoopNetwork::new(),
-            payload_builder_handle: PayloadBuilderHandle::noop(),
-        };
-
-        let task_executor = Runtime::test();
-
-        let node: NodeAdapter<FullNodeTypesAdapter<DatabaseMock, NoopProvider>, _> =
-            NodeAdapter { components, task_executor, provider: NoopProvider::default() };
-
-        // test that node implements `FullNodeComponents``
-        <NodeAdapter<_, _> as FullNodeComponents>::pool(&node);
     }
 }

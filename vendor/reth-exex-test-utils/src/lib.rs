@@ -17,10 +17,9 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use base_common_consensus::BaseBlock;
-use base_execution_txpool::BasePooledTransaction;
+use base_execution_chainspec::ChainSpecProvider;
 use futures_util::FutureExt;
 use reth_chainspec::{ChainSpec, MAINNET};
-use reth_consensus::test_utils::TestConsensus;
 use reth_db::{
     DatabaseEnv,
     test_utils::{
@@ -31,7 +30,7 @@ use reth_db_common::init::init_genesis;
 use reth_evm::BaseEvmConfig;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
-use reth_network::{NetworkConfigBuilder, NetworkHandle, NetworkManager, config::rng_secret_key};
+use reth_network::{NetworkConfigBuilder, NetworkManager, config::rng_secret_key};
 use reth_node_api::FullNodeTypesAdapter;
 use reth_node_builder::{NodeAdapter, components::Components};
 use reth_node_core::node_config::NodeConfig;
@@ -42,9 +41,7 @@ use reth_provider::{
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
 use reth_tasks::Runtime;
-use reth_transaction_pool::{
-    CoinbaseTipOrdering, Pool, blobstore::InMemoryBlobStore, noop::MockTransactionValidator,
-};
+use reth_transaction_pool::Pool;
 use tempfile::TempDir;
 use thiserror::Error;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
@@ -55,18 +52,7 @@ pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
 /// boot the testing environment
 pub type TestFullNodeTypes = FullNodeTypesAdapter<TmpDB, BlockchainProvider<TmpDB>>;
 /// Components needed by an execution extension, without a node launcher or RPC addons.
-pub type Adapter = NodeAdapter<
-    TestFullNodeTypes,
-    Components<
-        NetworkHandle,
-        Pool<
-            MockTransactionValidator<BasePooledTransaction>,
-            CoinbaseTipOrdering<BasePooledTransaction>,
-            InMemoryBlobStore,
-        >,
-        Arc<TestConsensus>,
-    >,
->;
+pub type Adapter = NodeAdapter<TestFullNodeTypes, Components<TestFullNodeTypes>>;
 /// An [`ExExContext`] using the [`Adapter`] type.
 pub type TestExExContext = ExExContext<Adapter>;
 
@@ -85,6 +71,8 @@ pub struct TestExExHandle {
     pub runtime: Runtime,
     /// WAL temp directory handle
     _wal_directory: TempDir,
+    /// Keeps the pool blob store alive for the test.
+    pub blob_directory: TempDir,
 }
 
 impl TestExExHandle {
@@ -146,15 +134,6 @@ impl TestExExHandle {
 pub async fn test_exex_context_with_chain_spec(
     chain_spec: Arc<ChainSpec>,
 ) -> eyre::Result<(ExExContext<Adapter>, TestExExHandle)> {
-    let transaction_pool = Pool::new(
-        MockTransactionValidator::default(),
-        CoinbaseTipOrdering::default(),
-        InMemoryBlobStore::default(),
-        Default::default(),
-    );
-    let evm_config = BaseEvmConfig::default();
-    let consensus = Arc::new(TestConsensus::default());
-
     let (static_dir, _) = create_test_static_files_dir();
     let (rocksdb_dir, _) = create_test_rocksdb_dir();
     let db = create_test_rw_db();
@@ -169,7 +148,28 @@ pub async fn test_exex_context_with_chain_spec(
     let genesis_hash = init_genesis(&provider_factory)?;
     let provider = BlockchainProvider::new(provider_factory.clone())?;
 
+    let evm_config = BaseEvmConfig::new(provider_factory.chain_spec());
+    let consensus =
+        Arc::new(base_execution_consensus::BaseBeaconConsensus::new(provider_factory.chain_spec()));
+    let blob_dir = tempfile::tempdir()?;
+    let blob_store = reth_transaction_pool::blobstore::DiskFileBlobStore::open(
+        blob_dir.path(),
+        Default::default(),
+    )?;
     let runtime = Runtime::test();
+    let validator = reth_transaction_pool::TransactionValidationTaskExecutor::eth_builder(
+        provider.clone(),
+        evm_config.clone(),
+    )
+    .no_eip4844()
+    .build_with_tasks(runtime.clone(), blob_store.clone())
+    .map(base_execution_txpool::BaseTransactionValidator::new);
+    let ordering = base_execution_txpool::BaseOrdering::default();
+    let transaction_pool = base_execution_txpool::BaseTransactionPool::new(
+        Pool::new(validator, ordering.clone(), blob_store, Default::default()),
+        ordering,
+    );
+
     let network_manager = NetworkManager::new(
         NetworkConfigBuilder::new(rng_secret_key(), runtime.clone())
             .with_unused_discovery_port()
@@ -234,6 +234,7 @@ pub async fn test_exex_context_with_chain_spec(
             notifications_tx,
             runtime,
             _wal_directory: wal_directory,
+            blob_directory: blob_dir,
         },
     ))
 }

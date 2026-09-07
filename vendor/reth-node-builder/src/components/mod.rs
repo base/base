@@ -1,17 +1,14 @@
-//! Support for configuring the components of a node.
-//!
-//! Customizable components of the node include:
-//!  - The transaction pool.
-//!  - The network implementation.
-//!  - The payload builder service.
-//!
-//! Components depend on a fully type configured node: [`crate::FullNodeTypes`].
+//! Base pool, consensus, networking, and payload-service components.
 
-use std::fmt::Debug;
+use std::sync::Arc;
 
+use base_execution_consensus::BaseBeaconConsensus;
+use base_execution_txpool::BaseTransactionPool;
 use reth_evm::BaseEvmConfig;
+use reth_network::NetworkHandle;
+use reth_node_api::FullNodeTypes;
 use reth_payload_builder::PayloadBuilderHandle;
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::blobstore::DiskFileBlobStore;
 
 mod builder;
 pub use builder::ComponentBuilder;
@@ -23,25 +20,20 @@ pub use pool::*;
 ///
 /// This provides access to all the components of the node.
 #[derive(Debug)]
-pub struct Components<Network, Pool, Consensus> {
+pub struct Components<Node: FullNodeTypes> {
     /// The transaction pool of the node.
-    pub transaction_pool: Pool,
+    pub transaction_pool: BaseTransactionPool<Node::Provider, DiskFileBlobStore>,
     /// The node's EVM configuration, defining settings for the Ethereum Virtual Machine.
     pub evm_config: BaseEvmConfig,
     /// The consensus implementation of the node.
-    pub consensus: Consensus,
+    pub consensus: Arc<BaseBeaconConsensus>,
     /// The network implementation of the node.
-    pub network: Network,
+    pub network: NetworkHandle,
     /// The handle to the payload builder service.
     pub payload_builder_handle: PayloadBuilderHandle,
 }
 
-impl<N, Pool, Cons> Clone for Components<N, Pool, Cons>
-where
-    N: Clone,
-    Pool: TransactionPool,
-    Cons: Clone,
-{
+impl<Node: FullNodeTypes> Clone for Components<Node> {
     fn clone(&self) -> Self {
         Self {
             transaction_pool: self.transaction_pool.clone(),

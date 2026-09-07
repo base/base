@@ -22,7 +22,6 @@ serde_json = { workspace = true }
 derive_more = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
-reth-node-api = { workspace = true }
 reth-provider = { workspace = true }
 alloy-consensus = { workspace = true }
 base-common-flz = { workspace = true }
