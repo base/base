@@ -1,18 +1,18 @@
 //! Compatibility functions for rpc `Transaction` type.
 use core::error;
-use std::{convert::Infallible, error::Error, fmt::Debug};
+use std::{error::Error, fmt::Debug};
 
 use alloy_consensus::{error::ValueError, transaction::Recovered};
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::Log;
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_evm::{BlockEnvFor, EvmEnvFor, SpecFor, TxEnvFor};
-use reth_primitives_traits::{SealedBlock, SealedHeader, TransactionMeta};
-use reth_rpc_traits::{FromConsensusHeader, FromConsensusTx, TryIntoSimTx};
+use reth_primitives_traits::{SealedBlock, TransactionMeta};
+use reth_rpc_traits::{FromConsensusTx, TryIntoSimTx};
 
 use crate::TryIntoTxEnv;
 
-/// Input for [`RpcConvert::convert_receipts`].
+/// Primitive receipt and transaction context used to construct a Base RPC receipt.
 #[derive(Debug, Clone)]
 pub struct ConvertReceiptInput<'a> {
     /// Primitive receipt.
@@ -63,51 +63,6 @@ pub trait ReceiptConverter: Debug + 'static {
     }
 }
 
-/// A type that knows how to convert a consensus header into an RPC header.
-pub trait HeaderConverter<Consensus, Rpc>: Send + Sync + Unpin + Clone + 'static {
-    /// An associated RPC conversion error.
-    type Err: error::Error;
-
-    /// Converts a consensus header into an RPC header.
-    fn convert_header(
-        &self,
-        header: SealedHeader<Consensus>,
-        block_size: usize,
-    ) -> Result<Rpc, Self::Err>;
-}
-
-/// Default implementation of [`HeaderConverter`] that uses [`FromConsensusHeader`] to convert
-/// headers.
-impl<Consensus, Rpc> HeaderConverter<Consensus, Rpc> for ()
-where
-    Rpc: FromConsensusHeader<Consensus>,
-{
-    type Err = Infallible;
-
-    fn convert_header(
-        &self,
-        header: SealedHeader<Consensus>,
-        block_size: usize,
-    ) -> Result<Rpc, Self::Err> {
-        Ok(Rpc::from_consensus_header(header, block_size))
-    }
-}
-
-impl<Consensus, Rpc, F> HeaderConverter<Consensus, Rpc> for F
-where
-    F: Fn(SealedHeader<Consensus>, usize) -> Rpc + Send + Sync + Unpin + Clone + 'static,
-{
-    type Err = Infallible;
-
-    fn convert_header(
-        &self,
-        header: SealedHeader<Consensus>,
-        block_size: usize,
-    ) -> Result<Rpc, Self::Err> {
-        Ok(self(header, block_size))
-    }
-}
-
 /// Converts `Tx` into `RpcTx`
 ///
 /// Where:
@@ -119,9 +74,9 @@ where
 ///
 /// The `RpcTxConverter` has two blanket implementations:
 /// * `()` assuming `RpcTx` implements [`FromConsensusTx`] and is used as default for
-///   [`RpcConverter`].
+///   `BaseRpcConverter`.
 /// * `Fn(Tx, Address, TxInfo) -> RpcTx` and can be applied using
-///   [`RpcConverter::with_rpc_tx_converter`].
+///   a custom transaction conversion function.
 ///
 /// One should prefer to implement [`FromConsensusTx`] for `RpcTx` to get the `RpcTxConverter`
 /// implementation for free, thanks to the blanket implementation, unless the conversion requires
@@ -171,9 +126,9 @@ where
 /// * `SimTx` is the corresponding consensus layer transaction for execution simulation
 ///
 /// The `SimTxConverter` has two blanket implementations:
-/// * `()` assuming `TxReq` implements [`TryIntoSimTx`] and is used as default for [`RpcConverter`].
+/// * `()` assuming `TxReq` implements [`TryIntoSimTx`] and is used as default for `BaseRpcConverter`.
 /// * `Fn(TxReq) -> Result<SimTx, ValueError<TxReq>>` and can be applied using
-///   [`RpcConverter::with_sim_tx_converter`].
+///   a custom simulation conversion function.
 ///
 /// One should prefer to implement [`TryIntoSimTx`] for `TxReq` to get the `SimTxConverter`
 /// implementation for free, thanks to the blanket implementation, unless the conversion requires
@@ -220,9 +175,9 @@ where
 /// * `TxEnv` is the corresponding transaction environment for execution
 ///
 /// The `TxEnvConverter` has two blanket implementations:
-/// * `()` assuming `TxReq` implements [`TryIntoTxEnv`] and is used as default for [`RpcConverter`].
+/// * `()` assuming `TxReq` implements [`TryIntoTxEnv`] and is used as default for `BaseRpcConverter`.
 /// * `Fn(TxReq, &CfgEnv<Spec>, &BlockEnv) -> Result<TxEnv, E>` and can be applied using
-///   [`RpcConverter::with_tx_env_converter`].
+///   a custom transaction environment conversion function.
 ///
 /// One should prefer to implement [`TryIntoTxEnv`] for `TxReq` to get the `TxEnvConverter`
 /// implementation for free, thanks to the blanket implementation, unless the conversion requires
