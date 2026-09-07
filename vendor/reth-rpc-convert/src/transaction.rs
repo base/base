@@ -1,13 +1,12 @@
 //! Compatibility functions for rpc `Transaction` type.
 use core::error;
-use std::{error::Error, fmt::Debug};
+use std::fmt::Debug;
 
-use alloy_consensus::{error::ValueError, transaction::Recovered};
+use alloy_consensus::transaction::Recovered;
 use alloy_rpc_types_eth::Log;
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_evm::{BlockEnvFor, EvmEnvFor, SpecFor, TxEnvFor};
 use reth_primitives_traits::{SealedBlock, TransactionMeta};
-use reth_rpc_traits::TryIntoSimTx;
 
 use crate::TryIntoTxEnv;
 
@@ -59,55 +58,6 @@ pub trait ReceiptConverter: Debug + 'static {
         _block: &SealedBlock<BaseBlock>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
         self.convert_receipts(receipts)
-    }
-}
-
-/// Converts `TxReq` into `SimTx`.
-///
-/// Where:
-/// * `TxReq` is a transaction request received from an RPC API
-/// * `SimTx` is the corresponding consensus layer transaction for execution simulation
-///
-/// The `SimTxConverter` has two blanket implementations:
-/// * `()` assuming `TxReq` implements [`TryIntoSimTx`] and is used as default for `BaseRpcConverter`.
-/// * `Fn(TxReq) -> Result<SimTx, ValueError<TxReq>>` and can be applied using
-///   a custom simulation conversion function.
-///
-/// One should prefer to implement [`TryIntoSimTx`] for `TxReq` to get the `SimTxConverter`
-/// implementation for free, thanks to the blanket implementation, unless the conversion requires
-/// more context. For example, some configuration parameters or access handles to database, network,
-/// etc.
-pub trait SimTxConverter<TxReq, SimTx>: Clone + Unpin + Send + Sync + 'static {
-    /// An associated error that can occur during the conversion.
-    type Err: Error;
-
-    /// Performs the conversion from `tx_req` into `SimTx`.
-    ///
-    /// See [`SimTxConverter`] for more information.
-    fn convert_sim_tx(&self, tx_req: TxReq) -> Result<SimTx, Self::Err>;
-}
-
-impl<TxReq, SimTx> SimTxConverter<TxReq, SimTx> for ()
-where
-    TxReq: TryIntoSimTx<SimTx> + Debug,
-{
-    type Err = ValueError<TxReq>;
-
-    fn convert_sim_tx(&self, tx_req: TxReq) -> Result<SimTx, Self::Err> {
-        tx_req.try_into_sim_tx()
-    }
-}
-
-impl<TxReq, SimTx, F, E> SimTxConverter<TxReq, SimTx> for F
-where
-    TxReq: Debug,
-    E: Error,
-    F: Fn(TxReq) -> Result<SimTx, E> + Clone + Unpin + Send + Sync + 'static,
-{
-    type Err = E;
-
-    fn convert_sim_tx(&self, tx_req: TxReq) -> Result<SimTx, Self::Err> {
-        self(tx_req)
     }
 }
 
