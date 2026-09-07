@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use alloy_consensus::BlockHeader;
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use clap::Parser;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_provider::BlockHashReader;
 use tracing::info;
@@ -18,12 +18,9 @@ pub struct InitCommand<C: ChainSpecParser> {
     env: EnvironmentArgs<C>,
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> InitCommand<C> {
+impl<C: ChainSpecParser> InitCommand<C> {
     /// Execute the `init` command
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>>(
-        self,
-        runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<()> {
+    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
         info!(target: "reth::cli", "reth init starting");
 
         let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RW, runtime)?;
@@ -40,7 +37,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> InitComman
 
 impl<C: ChainSpecParser> InitCommand<C> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 }

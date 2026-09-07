@@ -31,7 +31,6 @@ base-execution-eip8130 = { workspace = true, optional = true }
 base-precompile-storage = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["evm"] }
 base-common-chains = { workspace = true, features = ["default"] }
-reth-evm = { workspace = true, optional = true, features = ["default"] }
 [dev-dependencies]
 sha2 = { workspace = true }
 alloy-sol-types = { workspace = true }
@@ -71,12 +70,11 @@ serde = [
 	"dep:serde",
 	"revm/serde",
 ]
-reth = [ "dep:reth-evm", "std" ]
+reth = [ "std" ]
 metrics = [
 	"base-metrics/metrics",
 	"dep:base-metrics",
 	"dep:metrics",
-	"reth-evm?/metrics",
 	"std",
 ]
 bn = [ "base-common-precompiles/bn", "revm/bn" ]

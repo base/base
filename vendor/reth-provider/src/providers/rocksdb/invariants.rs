@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use alloy_primitives::BlockNumber;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec};
+use base_execution_chainspec::ChainSpecProvider;
 use reth_db::models::{ShardedKey, storage_sharded_key::StorageShardedKey};
 use reth_db_api::tables;
 use reth_stages_types::StageId;

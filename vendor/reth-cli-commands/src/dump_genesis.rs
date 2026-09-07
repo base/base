@@ -1,13 +1,16 @@
 //! Command that dumps genesis block JSON configuration to stdout
 use std::sync::Arc;
 
+use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
-use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 
 /// Dumps genesis block JSON configuration to stdout
 #[derive(Debug, Parser)]
 pub struct DumpGenesisCommand<C: ChainSpecParser> {
+    /// Parser used for built-in chain names and genesis files.
+    #[arg(skip)]
+    pub parser: core::marker::PhantomData<C>,
     /// The chain this node is running.
     ///
     /// Possible values are either a built-in chain or the path to a chain specification file.
@@ -18,10 +21,10 @@ pub struct DumpGenesisCommand<C: ChainSpecParser> {
         default_value = C::default_value(),
         value_parser = C::parser()
     )]
-    chain: Arc<C::ChainSpec>,
+    chain: Arc<BaseChainSpec>,
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec>> DumpGenesisCommand<C> {
+impl<C: ChainSpecParser> DumpGenesisCommand<C> {
     /// Execute the `dump-genesis` command
     pub async fn execute(self) -> eyre::Result<()> {
         println!("{}", serde_json::to_string_pretty(self.chain.genesis())?);
@@ -31,7 +34,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec>> DumpGenesisCommand<C> {
 
 impl<C: ChainSpecParser> DumpGenesisCommand<C> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.chain)
     }
 }

@@ -2,8 +2,8 @@
 
 use std::{ffi::OsString, fmt, path::PathBuf, sync::Arc};
 
+use base_execution_chainspec::BaseChainSpec;
 use clap::{Args, Parser, value_parser};
-use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_runner::CliContext;
 use reth_db::init_db;
@@ -23,6 +23,9 @@ use crate::launcher::Launcher;
 /// Start the node
 #[derive(Debug, Parser)]
 pub struct NodeCommand<C: ChainSpecParser, Ext: clap::Args + fmt::Debug = NoArgs> {
+    /// Parser used for built-in chain names and genesis files.
+    #[arg(skip)]
+    pub parser: core::marker::PhantomData<C>,
     /// The path to the configuration file to use.
     #[arg(long, value_name = "FILE", verbatim_doc_comment)]
     pub config: Option<PathBuf>,
@@ -39,7 +42,7 @@ pub struct NodeCommand<C: ChainSpecParser, Ext: clap::Args + fmt::Debug = NoArgs
         value_parser = C::parser(),
         required = false,
     )]
-    pub chain: Arc<C::ChainSpec>,
+    pub chain: Arc<BaseChainSpec>,
 
     /// Prometheus metrics configuration.
     #[command(flatten)]
@@ -145,7 +148,6 @@ impl<C: ChainSpecParser> NodeCommand<C> {
 impl<C, Ext> NodeCommand<C, Ext>
 where
     C: ChainSpecParser,
-    C::ChainSpec: EthChainSpec + EthereumHardforks,
     Ext: clap::Args + fmt::Debug,
 {
     /// Launches the node
@@ -178,6 +180,7 @@ where
             storage,
             jit,
             ext,
+            ..
         } = self;
 
         engine.validate()?;
@@ -224,7 +227,7 @@ where
 
 impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> NodeCommand<C, Ext> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.chain)
     }
 }
@@ -232,7 +235,6 @@ impl<C: ChainSpecParser, Ext: clap::Args + fmt::Debug> NodeCommand<C, Ext> {
 impl<C, Ext> NodeCommand<C, Ext>
 where
     C: ChainSpecParser,
-    C::ChainSpec: EthChainSpec,
     Ext: clap::Args + fmt::Debug,
 {
     /// Loads (or generates) the p2p secret key from the datadir of the configured chain.

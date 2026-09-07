@@ -21,3 +21,6 @@ pub use upgrades::ChainUpgradesExt;
 
 mod spec;
 pub use spec::{BaseChainSpec, BaseChainSpecError, GenesisInfo};
+
+mod provider;
+pub use provider::ChainSpecProvider;

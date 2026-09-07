@@ -25,7 +25,6 @@ dyn-clone = { workspace = true }
 pin-project = { workspace = true }
 reth-rpc-api = { workspace = true }
 alloy-network = { workspace = true }
-reth-chainspec = { workspace = true }
 reth-consensus = { workspace = true }
 reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
@@ -41,6 +40,7 @@ reth-rpc-server-types = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-engine-primitives = { workspace = true }
+base-execution-chainspec = { workspace = true }
 tower = { workspace = true, features = ["full"] }
 serde = { workspace = true, features = ["derive"] }
 http = { workspace = true, features = ["default"] }
@@ -56,6 +56,7 @@ tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws", "ipc"] }
 [dev-dependencies]
 alloy-eips = { workspace = true }
+reth-chainspec = { workspace = true }
 reth-network-peers = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }

@@ -9,15 +9,15 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockNumber, U256};
+use base_execution_chainspec::BaseChainSpec;
 use eyre::eyre;
-use reth_chainspec::{ChainSpec, EthChainSpec, MAINNET};
 use reth_config::config::PruneConfig;
 use reth_engine_local::MiningMode;
 use reth_engine_primitives::TreeConfig;
 pub use reth_engine_primitives::{
     DEFAULT_MEMORY_BLOCK_BUFFER_TARGET, DEFAULT_PERSISTENCE_THRESHOLD, DEFAULT_RESERVED_CPU_CORES,
 };
-use reth_ethereum_forks::{EthereumHardforks, Head};
+use reth_ethereum_forks::Head;
 use reth_network_p2p::headers::client::HeadersClient;
 use reth_primitives_traits::SealedHeader;
 use reth_stages_types::StageId;
@@ -89,7 +89,7 @@ pub const DEFAULT_CROSS_BLOCK_CACHE_SIZE_MB: usize = 4 * 1024;
 /// }
 /// ```
 #[derive(Debug)]
-pub struct NodeConfig<ChainSpec> {
+pub struct NodeConfig {
     /// All data directory related arguments
     pub datadir: DatadirArgs,
 
@@ -99,7 +99,7 @@ pub struct NodeConfig<ChainSpec> {
     /// The chain this node is running.
     ///
     /// Possible values are either a built-in chain or the path to a chain specification file.
-    pub chain: Arc<ChainSpec>,
+    pub chain: Arc<BaseChainSpec>,
 
     /// Enable to configure metrics export to endpoints
     pub metrics: MetricArgs,
@@ -158,7 +158,7 @@ pub struct NodeConfig<ChainSpec> {
     pub jit: JitArgs,
 }
 
-impl NodeConfig<ChainSpec> {
+impl NodeConfig {
     /// Creates a testing [`NodeConfig`], causing the database to be launched ephemerally.
     pub fn test() -> Self {
         Self::default()
@@ -167,9 +167,9 @@ impl NodeConfig<ChainSpec> {
     }
 }
 
-impl<ChainSpec> NodeConfig<ChainSpec> {
+impl NodeConfig {
     /// Creates a new config with given chain spec, setting all fields to default values.
-    pub fn new(chain: Arc<ChainSpec>) -> Self {
+    pub fn new(chain: Arc<BaseChainSpec>) -> Self {
         Self {
             config: None,
             chain,
@@ -240,51 +240,9 @@ impl<ChainSpec> NodeConfig<ChainSpec> {
     }
 
     /// Set the [`ChainSpec`] for the node
-    pub fn with_chain(mut self, chain: impl Into<Arc<ChainSpec>>) -> Self {
+    pub fn with_chain(mut self, chain: impl Into<Arc<BaseChainSpec>>) -> Self {
         self.chain = chain.into();
         self
-    }
-
-    /// Set the [`ChainSpec`] for the node and converts the type to that chainid.
-    pub fn map_chain<C>(self, chain: impl Into<Arc<C>>) -> NodeConfig<C> {
-        let Self {
-            datadir,
-            config,
-            metrics,
-            instance,
-            network,
-            rpc,
-            txpool,
-            builder,
-            debug,
-            db,
-            dev,
-            pruning,
-            engine,
-            static_files,
-            storage,
-            jit,
-            ..
-        } = self;
-        NodeConfig {
-            datadir,
-            config,
-            chain: chain.into(),
-            metrics,
-            instance,
-            network,
-            rpc,
-            txpool,
-            builder,
-            debug,
-            db,
-            dev,
-            pruning,
-            engine,
-            static_files,
-            storage,
-            jit,
-        }
     }
 
     /// Set the metrics address for the node
@@ -367,10 +325,7 @@ impl<ChainSpec> NodeConfig<ChainSpec> {
     }
 
     /// Returns pruning configuration.
-    pub fn prune_config(&self) -> Option<PruneConfig>
-    where
-        ChainSpec: EthereumHardforks,
-    {
+    pub fn prune_config(&self) -> Option<PruneConfig> {
         self.pruning.prune_config(&self.chain)
     }
 
@@ -520,10 +475,7 @@ impl<ChainSpec> NodeConfig<ChainSpec> {
     }
 
     /// Resolve the final datadir path.
-    pub fn datadir(&self) -> ChainPath<DataDirPath>
-    where
-        ChainSpec: EthChainSpec,
-    {
+    pub fn datadir(&self) -> ChainPath<DataDirPath> {
         self.datadir.clone().resolve_datadir(self.chain.chain())
     }
 
@@ -553,33 +505,6 @@ impl<ChainSpec> NodeConfig<ChainSpec> {
         }
     }
 
-    /// Modifies the [`ChainSpec`] generic of the config using the provided closure.
-    pub fn map_chainspec<F, C>(self, f: F) -> NodeConfig<C>
-    where
-        F: FnOnce(Arc<ChainSpec>) -> C,
-    {
-        let chain = Arc::new(f(self.chain));
-        NodeConfig {
-            chain,
-            datadir: self.datadir,
-            config: self.config,
-            metrics: self.metrics,
-            instance: self.instance,
-            network: self.network,
-            rpc: self.rpc,
-            txpool: self.txpool,
-            builder: self.builder,
-            debug: self.debug,
-            db: self.db,
-            dev: self.dev,
-            pruning: self.pruning,
-            engine: self.engine,
-            static_files: self.static_files,
-            storage: self.storage,
-            jit: self.jit,
-        }
-    }
-
     /// Returns the [`MiningMode`] intended for --dev mode.
     pub fn dev_mining_mode<Pool>(&self, pool: Pool) -> MiningMode<Pool>
     where
@@ -593,13 +518,13 @@ impl<ChainSpec> NodeConfig<ChainSpec> {
     }
 }
 
-impl Default for NodeConfig<ChainSpec> {
+impl Default for NodeConfig {
     fn default() -> Self {
-        Self::new(MAINNET.clone())
+        Self::new(Arc::new(BaseChainSpec::mainnet()))
     }
 }
 
-impl<ChainSpec> Clone for NodeConfig<ChainSpec> {
+impl Clone for NodeConfig {
     fn clone(&self) -> Self {
         Self {
             chain: self.chain.clone(),

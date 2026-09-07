@@ -14,12 +14,12 @@ use base_common_consensus::{
     BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
 };
 use base_common_rpc_types::BaseTransactionReceipt;
+use base_execution_chainspec::ChainSpecProvider;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_chainspec::ChainSpecProvider;
 use reth_primitives_traits::{SignedTransaction, SignerRecoverable, WithEncoded};
 use reth_rpc_eth_api::{
     EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, TxInfoMapper,
@@ -40,7 +40,7 @@ use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerC
 impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
+    N::Provider: BlockReaderIdExt + ChainSpecProvider,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Error = BaseEthApiError>,
 {
@@ -237,7 +237,7 @@ where
 impl<N, Rpc> BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
+    N::Provider: BlockReaderIdExt + ChainSpecProvider,
     Rpc: RpcConvert<Error = BaseEthApiError>,
 {
     fn is_cobalt_active_at_latest(&self) -> Result<bool, BaseEthApiError> {

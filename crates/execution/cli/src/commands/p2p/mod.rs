@@ -28,7 +28,7 @@ impl Command {
     /// Execute the p2p command.
     pub async fn execute<N>(self) -> eyre::Result<()>
     where
-        N: CliNodeTypes<ChainSpec = BaseChainSpec>,
+        N: CliNodeTypes,
         NetworkHandle: BlockDownloaderProvider,
     {
         match self.command {

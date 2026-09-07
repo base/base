@@ -33,10 +33,11 @@ use std::{num::NonZeroUsize, sync::Arc, thread::available_parallelism, time::Dur
 
 use alloy_eips::eip2124::Head;
 use alloy_primitives::{B256, BlockNumber};
+use base_execution_chainspec::BaseChainSpec;
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
-use reth_chainspec::{Chain, EthChainSpec, EthereumHardforks};
+use reth_chainspec::Chain;
 use reth_config::{PruneConfig, config::EtlConfig};
 use reth_consensus::noop::NoopConsensus;
 use reth_db_api::{
@@ -143,13 +144,10 @@ impl LaunchContext {
     /// `config`.
     ///
     /// Attaches both the `NodeConfig` and the loaded `reth.toml` config to the launch context.
-    pub fn with_loaded_toml_config<ChainSpec>(
+    pub fn with_loaded_toml_config(
         self,
-        config: NodeConfig<ChainSpec>,
-    ) -> eyre::Result<LaunchContextWith<WithConfigs<ChainSpec>>>
-    where
-        ChainSpec: EthChainSpec + reth_chainspec::EthereumHardforks,
-    {
+        config: NodeConfig,
+    ) -> eyre::Result<LaunchContextWith<WithConfigs>> {
         let toml_config = self.load_toml_config(&config)?;
         Ok(self.with(WithConfigs { config, toml_config }))
     }
@@ -158,13 +156,7 @@ impl LaunchContext {
     /// `config`.
     ///
     /// This is async because the trusted peers may have to be resolved.
-    pub fn load_toml_config<ChainSpec>(
-        &self,
-        config: &NodeConfig<ChainSpec>,
-    ) -> eyre::Result<reth_config::Config>
-    where
-        ChainSpec: EthChainSpec + reth_chainspec::EthereumHardforks,
-    {
+    pub fn load_toml_config(&self, config: &NodeConfig) -> eyre::Result<reth_config::Config> {
         let config_path = config.config.clone().unwrap_or_else(|| self.data_dir.config());
 
         let mut toml_config = reth_config::Config::from_path(&config_path)
@@ -187,14 +179,11 @@ impl LaunchContext {
 
     /// Save prune config to the toml file if node is a full node or has custom pruning CLI
     /// arguments. Also migrates deprecated prune config values to new defaults.
-    fn save_pruning_config<ChainSpec>(
+    fn save_pruning_config(
         reth_config: &mut reth_config::Config,
-        config: &NodeConfig<ChainSpec>,
+        config: &NodeConfig,
         config_path: impl AsRef<std::path::Path>,
-    ) -> eyre::Result<()>
-    where
-        ChainSpec: EthChainSpec + reth_chainspec::EthereumHardforks,
-    {
+    ) -> eyre::Result<()> {
         let mut should_save = reth_config.prune.segments.migrate();
 
         if let Some(prune_config) = config.prune_config() {
@@ -306,7 +295,7 @@ impl<T> LaunchContextWith<T> {
     }
 }
 
-impl<ChainSpec> LaunchContextWith<WithConfigs<ChainSpec>> {
+impl LaunchContextWith<WithConfigs> {
     /// Resolves the trusted peers and adds them to the toml config.
     pub fn with_resolved_peers(mut self) -> eyre::Result<Self> {
         if !self.attachment.config.network.trusted_peers.is_empty() {
@@ -343,7 +332,7 @@ impl<L, R> LaunchContextWith<Attached<L, R>> {
         &mut self.attachment.right
     }
 }
-impl<R, ChainSpec: EthChainSpec> LaunchContextWith<Attached<WithConfigs<ChainSpec>, R>> {
+impl<R> LaunchContextWith<Attached<WithConfigs, R>> {
     /// Adjust certain settings in the config to make sure they are set correctly
     ///
     /// This includes:
@@ -376,17 +365,17 @@ impl<R, ChainSpec: EthChainSpec> LaunchContextWith<Attached<WithConfigs<ChainSpe
     }
 
     /// Returns the container for all config types
-    pub const fn configs(&self) -> &WithConfigs<ChainSpec> {
+    pub const fn configs(&self) -> &WithConfigs {
         self.attachment.left()
     }
 
     /// Returns the attached [`NodeConfig`].
-    pub const fn node_config(&self) -> &NodeConfig<ChainSpec> {
+    pub const fn node_config(&self) -> &NodeConfig {
         &self.left().config
     }
 
     /// Returns the attached [`NodeConfig`].
-    pub const fn node_config_mut(&mut self) -> &mut NodeConfig<ChainSpec> {
+    pub const fn node_config_mut(&mut self) -> &mut NodeConfig {
         &mut self.left_mut().config
     }
 
@@ -401,7 +390,7 @@ impl<R, ChainSpec: EthChainSpec> LaunchContextWith<Attached<WithConfigs<ChainSpe
     }
 
     /// Returns the configured chain spec.
-    pub fn chain_spec(&self) -> Arc<ChainSpec> {
+    pub fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.node_config().chain.clone()
     }
 
@@ -423,10 +412,7 @@ impl<R, ChainSpec: EthChainSpec> LaunchContextWith<Attached<WithConfigs<ChainSpe
     /// Returns the configured [`PruneConfig`]
     ///
     /// Any configuration set in CLI will take precedence over those set in toml
-    pub fn prune_config(&self) -> PruneConfig
-    where
-        ChainSpec: reth_chainspec::EthereumHardforks,
-    {
+    pub fn prune_config(&self) -> PruneConfig {
         let Some(mut node_prune_config) = self.node_config().prune_config() else {
             // No CLI config is set, use the toml config.
             return self.toml_config().prune.clone();
@@ -438,18 +424,12 @@ impl<R, ChainSpec: EthChainSpec> LaunchContextWith<Attached<WithConfigs<ChainSpe
     }
 
     /// Returns the configured [`PruneModes`], returning the default if no config was available.
-    pub fn prune_modes(&self) -> PruneModes
-    where
-        ChainSpec: reth_chainspec::EthereumHardforks,
-    {
+    pub fn prune_modes(&self) -> PruneModes {
         self.prune_config().segments
     }
 
     /// Returns an initialized [`PrunerBuilder`] based on the configured [`PruneConfig`]
-    pub fn pruner_builder(&self) -> PrunerBuilder
-    where
-        ChainSpec: reth_chainspec::EthereumHardforks,
-    {
+    pub fn pruner_builder(&self) -> PrunerBuilder {
         PrunerBuilder::new(self.prune_config())
     }
 
@@ -469,10 +449,9 @@ impl<R, ChainSpec: EthChainSpec> LaunchContextWith<Attached<WithConfigs<ChainSpe
     }
 }
 
-impl<DB, ChainSpec> LaunchContextWith<Attached<WithConfigs<ChainSpec>, DB>>
+impl<DB> LaunchContextWith<Attached<WithConfigs, DB>>
 where
     DB: Database + Clone + 'static,
-    ChainSpec: EthChainSpec + EthereumHardforks + 'static,
 {
     /// Returns the [`ProviderFactory`] for the attached storage after executing a consistent check
     /// between the database and static files. **It may execute a pipeline unwind if it fails this
@@ -484,7 +463,7 @@ where
         disabled_stages: &[StageId],
     ) -> eyre::Result<ProviderFactory<N>>
     where
-        N: ProviderNodeTypes<DB = DB, ChainSpec = ChainSpec>,
+        N: ProviderNodeTypes<DB = DB>,
         Evm: ConfigureEvm + 'static,
     {
         // Validate static files configuration
@@ -674,9 +653,9 @@ where
         overlay_manager: OverlayManager,
         rocksdb_provider: Option<RocksDBProvider>,
         disabled_stages: &[StageId],
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs<ChainSpec>, ProviderFactory<N>>>>
+    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, ProviderFactory<N>>>>
     where
-        N: ProviderNodeTypes<DB = DB, ChainSpec = ChainSpec>,
+        N: ProviderNodeTypes<DB = DB>,
         Evm: ConfigureEvm + 'static,
     {
         let factory = self
@@ -691,7 +670,7 @@ where
     }
 }
 
-impl<T> LaunchContextWith<Attached<WithConfigs<T::ChainSpec>, ProviderFactory<T>>>
+impl<T> LaunchContextWith<Attached<WithConfigs, ProviderFactory<T>>>
 where
     T: ProviderNodeTypes,
 {
@@ -713,19 +692,13 @@ where
     /// This launches the prometheus endpoint.
     ///
     /// Convenience function to [`Self::start_prometheus_endpoint`]
-    pub async fn with_prometheus_server(self) -> eyre::Result<Self>
-    where
-        T::ChainSpec: EthereumHardforks,
-    {
+    pub async fn with_prometheus_server(self) -> eyre::Result<Self> {
         self.start_prometheus_endpoint().await?;
         Ok(self)
     }
 
     /// Starts the prometheus endpoint.
-    pub async fn start_prometheus_endpoint(&self) -> eyre::Result<()>
-    where
-        T::ChainSpec: EthereumHardforks,
-    {
+    pub async fn start_prometheus_endpoint(&self) -> eyre::Result<()> {
         // ensure recorder runs upkeep periodically
         install_prometheus_recorder().spawn_upkeep();
 
@@ -797,7 +770,7 @@ where
     /// prometheus.
     pub fn with_metrics_task(
         self,
-    ) -> LaunchContextWith<Attached<WithConfigs<T::ChainSpec>, WithMeteredProvider<T>>> {
+    ) -> LaunchContextWith<Attached<WithConfigs, WithMeteredProvider<T>>> {
         let (metrics_sender, metrics_receiver) = unbounded_channel();
 
         let with_metrics =
@@ -816,9 +789,7 @@ where
 }
 
 impl<N, DB>
-    LaunchContextWith<
-        Attached<WithConfigs<N::ChainSpec>, WithMeteredProvider<NodeTypesWithDBAdapter<N, DB>>>,
-    >
+    LaunchContextWith<Attached<WithConfigs, WithMeteredProvider<NodeTypesWithDBAdapter<N, DB>>>>
 where
     N: NodeTypes,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
@@ -838,7 +809,7 @@ where
     pub fn with_blockchain_db<T, F>(
         self,
         create_blockchain_provider: F,
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs<N::ChainSpec>, WithMeteredProviders<T>>>>
+    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<T>>>>
     where
         T: FullNodeTypes<Types = N, DB = DB>,
         F: FnOnce(ProviderFactory<NodeTypesWithDBAdapter<N, DB>>) -> eyre::Result<T::Provider>,
@@ -862,10 +833,7 @@ where
     }
 }
 
-impl<T>
-    LaunchContextWith<
-        Attached<WithConfigs<<T::Types as NodeTypes>::ChainSpec>, WithMeteredProviders<T>>,
-    >
+impl<T> LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<T>>>
 where
     T: FullNodeTypes<Types: NodeTypesForProvider>,
 {
@@ -907,11 +875,7 @@ where
         on_component_initialized: Box<
             dyn OnComponentInitializedHook<NodeAdapter<T, CB::Components>>,
         >,
-    ) -> eyre::Result<
-        LaunchContextWith<
-            Attached<WithConfigs<<T::Types as NodeTypes>::ChainSpec>, WithComponents<T, CB>>,
-        >,
-    >
+    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents<T, CB>>>>
     where
         CB: NodeComponentsBuilder<T>,
     {
@@ -957,10 +921,7 @@ where
     }
 }
 
-impl<T, CB>
-    LaunchContextWith<
-        Attached<WithConfigs<<T::Types as NodeTypes>::ChainSpec>, WithComponents<T, CB>>,
-    >
+impl<T, CB> LaunchContextWith<Attached<WithConfigs, WithComponents<T, CB>>>
 where
     T: FullNodeTypes<Types: NodeTypesForProvider>,
     CB: NodeComponentsBuilder<T>,
@@ -1303,14 +1264,14 @@ impl<L, R> Attached<L, R> {
 /// Helper container type to bundle the initial [`NodeConfig`] and the loaded settings from the
 /// reth.toml config
 #[derive(Debug)]
-pub struct WithConfigs<ChainSpec> {
+pub struct WithConfigs {
     /// The configured, usually derived from the CLI.
-    pub config: NodeConfig<ChainSpec>,
+    pub config: NodeConfig,
     /// The loaded reth.toml config.
     pub toml_config: reth_config::Config,
 }
 
-impl<ChainSpec> Clone for WithConfigs<ChainSpec> {
+impl Clone for WithConfigs {
     fn clone(&self) -> Self {
         Self { config: self.config.clone(), toml_config: self.toml_config.clone() }
     }

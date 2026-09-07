@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt::Debug, path::Path};
+use std::{collections::BTreeMap, fmt::Debug, path::Path, sync::Arc};
 
 use alloy_primitives::{Address, B256, BlockNumber, TxHash, TxNumber, keccak256};
 use base_common_consensus::{BaseBlock as Block, BaseReceipt as Receipt, BaseTxEnvelope};
@@ -52,7 +52,7 @@ impl Default for TestStageDB {
             temp_rocksdb_dir: rocksdb_dir,
             factory: ProviderFactory::new(
                 create_test_rw_db(),
-                MAINNET.clone(),
+                Arc::new(MAINNET.as_ref().clone().into()),
                 StaticFileProvider::read_write(static_dir_path).unwrap(),
                 RocksDBProvider::builder(rocksdb_dir_path).with_default_tables().build().unwrap(),
                 reth_tasks::Runtime::test(),
@@ -72,7 +72,7 @@ impl TestStageDB {
             temp_rocksdb_dir: rocksdb_dir,
             factory: ProviderFactory::new(
                 create_test_rw_db_with_path(path),
-                MAINNET.clone(),
+                Arc::new(MAINNET.as_ref().clone().into()),
                 StaticFileProvider::read_write(static_dir_path).unwrap(),
                 RocksDBProvider::builder(rocksdb_dir_path).with_default_tables().build().unwrap(),
                 reth_tasks::Runtime::test(),

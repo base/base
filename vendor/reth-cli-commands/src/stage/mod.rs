@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
-use reth_chainspec::{EthChainSpec, EthereumHardforks, Hardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_runner::CliContext;
 
@@ -39,15 +39,15 @@ pub enum Subcommands<C: ChainSpecParser> {
     Unwind(unwind::Command<C>),
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>> Command<C> {
+impl<C: ChainSpecParser> Command<C> {
     /// Execute `stage` command
     pub async fn execute<N>(
         self,
         ctx: CliContext,
-        components: impl FnOnce(Arc<C::ChainSpec>) -> CliNodeComponents<N>,
+        components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents<N>,
     ) -> eyre::Result<()>
     where
-        N: CliNodeTypes<ChainSpec = C::ChainSpec>,
+        N: CliNodeTypes,
     {
         let executor = ctx.task_executor.clone();
         match self.command {
@@ -61,7 +61,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
 
 impl<C: ChainSpecParser> Command<C> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         match self.command {
             Subcommands::Run(ref command) => command.chain_spec(),
             Subcommands::Drop(ref command) => command.chain_spec(),

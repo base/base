@@ -3,8 +3,8 @@ use std::{
     sync::Arc,
 };
 
+use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
-use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_runner::CliContext;
 use reth_db::version::{DB_VERSION, DatabaseVersionError, get_db_version};
@@ -81,12 +81,9 @@ pub enum Subcommands {
     State(state::Command),
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C> {
+impl<C: ChainSpecParser> Command<C> {
     /// Execute `db` command
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>>(
-        self,
-        ctx: CliContext,
-    ) -> eyre::Result<()> {
+    pub async fn execute<N: CliNodeTypes>(self, ctx: CliContext) -> eyre::Result<()> {
         /// Initializes a provider factory with specified access rights, and then executes the
         /// provided command.
         macro_rules! db_exec {
@@ -241,7 +238,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C>
 
 impl<C: ChainSpecParser> Command<C> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 }

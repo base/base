@@ -18,7 +18,7 @@ use base_common_consensus::{
     BaseBlock as Block, BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType,
 };
 use base_common_rpc_types_engine::ExecutionData;
-use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks, MAINNET};
+use reth_chainspec::{ChainSpec, EthereumHardforks, MAINNET};
 use reth_primitives_traits::{
     SealedBlock, SealedHeader, SignedTransaction, constants::MAX_TX_GAS_LIMIT_OSAKA,
 };

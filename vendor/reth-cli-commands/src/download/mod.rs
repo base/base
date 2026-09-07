@@ -77,6 +77,7 @@
 //! writing the derived node configuration and updating prune or index-stage checkpoints. A
 //! successful command leaves a data directory that matches the snapshot shape that was selected.
 
+use base_execution_chainspec::BaseChainSpec;
 mod archive;
 pub mod config_gen;
 mod extract;
@@ -106,7 +107,7 @@ use manifest::{ComponentSelection, SnapshotComponentType, SnapshotManifest};
 pub use planning::{DownloadPlan, DownloadPlanArchive};
 use planning::{PlannedDownloads, collect_planned_archives, summarize_download_startup};
 use progress::{DownloadProgress, DownloadRequestLimiter};
-use reth_chainspec::{EthChainSpec, EthereumHardfork, EthereumHardforks, MAINNET};
+use reth_chainspec::{EthereumHardfork, EthereumHardforks, MAINNET};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_util::cancellation::CancellationToken;
 use reth_db::{Database, init_db};
@@ -455,7 +456,7 @@ pub struct DownloadCommand<C: ChainSpecParser> {
     print_plan_json: bool,
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> DownloadCommand<C> {
+impl<C: ChainSpecParser> DownloadCommand<C> {
     /// Runs the download command in single-archive or manifest mode.
     pub async fn execute<N>(self) -> Result<()> {
         let chain = self.env.chain.chain();
@@ -950,18 +951,16 @@ fn should_reset_index_stage_checkpoints(
     !matches!(selections.get(&SnapshotComponentType::RocksdbIndices), Some(ComponentSelection::All))
 }
 
-fn startup_node_command<C>(chain_spec: &C::ChainSpec) -> String
+fn startup_node_command<C>(chain_spec: &BaseChainSpec) -> String
 where
     C: ChainSpecParser,
-    C::ChainSpec: EthChainSpec,
 {
     startup_node_command_for_binary::<C>(&current_binary_name(), chain_spec)
 }
 
-fn startup_node_command_for_binary<C>(binary_name: &str, chain_spec: &C::ChainSpec) -> String
+fn startup_node_command_for_binary<C>(binary_name: &str, chain_spec: &BaseChainSpec) -> String
 where
     C: ChainSpecParser,
-    C::ChainSpec: EthChainSpec,
 {
     let mut command = format!("{binary_name} node");
 
@@ -991,10 +990,9 @@ fn download_command_for_binary(binary_name: &str) -> String {
     format!("{binary_name} download")
 }
 
-fn startup_chain_arg<C>(chain_spec: &C::ChainSpec) -> Option<String>
+fn startup_chain_arg<C>(chain_spec: &BaseChainSpec) -> Option<String>
 where
     C: ChainSpecParser,
-    C::ChainSpec: EthChainSpec,
 {
     let current_chain = chain_spec.chain();
     let current_genesis_hash = chain_spec.genesis_hash();
@@ -1025,7 +1023,7 @@ impl<C: ChainSpecParser> DownloadCommand<C> {
     }
 
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 
@@ -1047,6 +1045,7 @@ const RETRY_BACKOFF_SECS: u64 = 5;
 
 #[cfg(test)]
 mod tests {
+    use base_execution_chainspec::BaseChainSpec;
     use clap::{Args, Parser};
     use extract::CompressionFormat;
     use manifest::{ComponentManifest, SingleArchive};
@@ -1367,24 +1366,30 @@ mod tests {
 
     #[test]
     fn startup_node_command_omits_default_chain_arg() {
-        let command =
-            startup_node_command_for_binary::<EthereumChainSpecParser>("reth", MAINNET.as_ref());
+        let command = startup_node_command_for_binary::<EthereumChainSpecParser>(
+            "reth",
+            &BaseChainSpec::from(MAINNET.as_ref().clone()),
+        );
 
         assert_eq!(command, "reth node");
     }
 
     #[test]
     fn startup_node_command_includes_non_default_chain_arg() {
-        let command =
-            startup_node_command_for_binary::<EthereumChainSpecParser>("reth", HOLESKY.as_ref());
+        let command = startup_node_command_for_binary::<EthereumChainSpecParser>(
+            "reth",
+            &BaseChainSpec::from(HOLESKY.as_ref().clone()),
+        );
 
         assert_eq!(command, "reth node --chain holesky");
     }
 
     #[test]
     fn startup_node_command_uses_running_binary_name() {
-        let command =
-            startup_node_command_for_binary::<EthereumChainSpecParser>("tempo", HOLESKY.as_ref());
+        let command = startup_node_command_for_binary::<EthereumChainSpecParser>(
+            "tempo",
+            &BaseChainSpec::from(HOLESKY.as_ref().clone()),
+        );
 
         assert_eq!(command, "tempo node --chain holesky");
     }

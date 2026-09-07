@@ -11,11 +11,11 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
+use base_execution_chainspec::BaseChainSpec;
 use clap::{
     Args,
     builder::{OsStr, Resettable},
 };
-use reth_chainspec::EthChainSpec;
 use reth_cli_util::{get_secret_key, load_secret_key::SecretKeyError};
 use reth_config::Config;
 use reth_discv4::{DEFAULT_DISCOVERY_ADDR, DEFAULT_DISCOVERY_PORT, NodeRecord};
@@ -535,7 +535,7 @@ impl NetworkArgs {
         }
     }
 
-    /// Build a [`NetworkConfigBuilder`] from a [`Config`] and a [`EthChainSpec`], in addition to
+    /// Build a [`NetworkConfigBuilder`] from a [`Config`] and a [`BaseChainSpec`], in addition to
     /// the values in this option struct.
     ///
     /// The `default_peers_file` will be used as the default location to store the persistent peers
@@ -550,7 +550,7 @@ impl NetworkArgs {
     pub fn network_config(
         &self,
         config: &Config,
-        chain_spec: impl EthChainSpec,
+        chain_spec: &BaseChainSpec,
         secret_key: SecretKey,
         default_peers_file: PathBuf,
         executor: Runtime,
@@ -1169,8 +1169,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use base_execution_chainspec::BaseChainSpec;
     use clap::Parser;
-    use reth_chainspec::MAINNET;
     use reth_config::Config;
     use reth_network_peers::NodeRecord;
     use secp256k1::SecretKey;
@@ -1623,13 +1623,14 @@ mod tests {
         let secret_key = SecretKey::from_byte_array(&[1u8; 32]).unwrap();
         let builder = args.network_config(
             &Config::default(),
-            MAINNET.clone(),
+            &BaseChainSpec::mainnet(),
             secret_key,
             peers_file.clone(),
             Runtime::test(),
         );
 
-        let net_cfg = builder.build_with_noop_provider(MAINNET.clone());
+        let net_cfg =
+            builder.build_with_noop_provider(std::sync::Arc::new(BaseChainSpec::mainnet()));
 
         // Assert persisted_peers contains our node (legacy format is auto-converted)
         let node: NodeRecord = enode.parse().unwrap();
@@ -1649,7 +1650,7 @@ mod tests {
         let boot_nodes = |args: &NetworkArgs| {
             args.network_config(
                 &config,
-                MAINNET.clone(),
+                &BaseChainSpec::mainnet(),
                 secret_key,
                 PathBuf::from("peers.json"),
                 Runtime::test(),

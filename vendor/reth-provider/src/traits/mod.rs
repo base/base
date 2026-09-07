@@ -1,7 +1,7 @@
 //! Collection of common provider traits.
 
 // Re-export all the traits
-pub use reth_chainspec::ChainSpecProvider;
+pub use base_execution_chainspec::ChainSpecProvider;
 pub use reth_storage_api::*;
 
 mod static_file_provider;

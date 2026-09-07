@@ -193,7 +193,7 @@ impl ExecutionNodeArgs {
 #[derive(Debug, Clone)]
 pub struct ExecutionNodeRuntimeConfig {
     /// Reth node configuration.
-    pub node_config: NodeConfig<BaseChainSpec>,
+    pub node_config: NodeConfig,
     /// Whether all ports should be assigned by the OS.
     pub with_unused_ports: bool,
     /// Whether this launch should perform its own upgrade-signal startup read.
@@ -202,12 +202,12 @@ pub struct ExecutionNodeRuntimeConfig {
 
 impl ExecutionNodeRuntimeConfig {
     /// Enables authenticated Engine API over IPC on the supplied node config.
-    pub const fn enable_auth_ipc(node_config: &mut NodeConfig<BaseChainSpec>) {
+    pub const fn enable_auth_ipc(node_config: &mut NodeConfig) {
         node_config.rpc.auth_ipc = true;
     }
 
     /// Configures the embedded execution node auth endpoint used by unified Base binaries.
-    pub fn configure_unified_auth_endpoint(node_config: &mut NodeConfig<BaseChainSpec>) {
+    pub fn configure_unified_auth_endpoint(node_config: &mut NodeConfig) {
         let auth_ipc_path = if node_config.rpc.auth_ipc_path == DEFAULT_ENGINE_API_IPC_ENDPOINT {
             Some(node_config.datadir().data_dir().join(DEFAULT_UNIFIED_AUTH_IPC_FILENAME))
         } else {
@@ -224,7 +224,7 @@ impl ExecutionNodeRuntimeConfig {
     }
 
     /// Returns the configured authenticated Engine API IPC path from the supplied node config.
-    pub const fn auth_ipc_path_for(node_config: &NodeConfig<BaseChainSpec>) -> &str {
+    pub const fn auth_ipc_path_for(node_config: &NodeConfig) -> &str {
         node_config.rpc.auth_ipc_path.as_str()
     }
 
@@ -296,7 +296,7 @@ impl ExecutionNodeRuntimeConfig {
 #[derive(Debug, Clone)]
 pub struct ExecutionNodeLaunchConfig {
     /// Reth node configuration.
-    pub node_config: NodeConfig<BaseChainSpec>,
+    pub node_config: NodeConfig,
     /// Standard Base execution-node extension arguments.
     pub standard: StandardNodeArgs,
     /// Whether all ports should be assigned by the OS.

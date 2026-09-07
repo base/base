@@ -13,9 +13,8 @@ use base_common_consensus::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseTxEnvelope as TransactionSigned,
     BaseTypedTransaction as Transaction,
 };
-use reth_chainspec::{
-    ChainSpecBuilder, ChainSpecProvider, EthereumHardfork, ForkCondition, MAINNET,
-};
+use base_execution_chainspec::ChainSpecProvider;
+use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition, MAINNET};
 use reth_config::config::StageConfig;
 use reth_consensus::noop::NoopConsensus;
 use reth_db::tables;
@@ -1294,7 +1293,8 @@ where
 {
     let consensus = NoopConsensus::arc();
     let stages_config = StageConfig::default();
-    let evm_config = TestEvmConfig::new(provider_factory.chain_spec());
+    let evm_config =
+        TestEvmConfig::new(std::sync::Arc::new(provider_factory.chain_spec().runtime_chain_spec()));
 
     let (tip_tx, tip_rx) = watch::channel(B256::ZERO);
     let static_file_producer =
@@ -1317,7 +1317,7 @@ where
     .add_set(HashingStages::default())
     .add_stage(FinishStage::default());
 
-    let pipeline = Pipeline::builder()
+    let pipeline = Pipeline::<reth_provider::test_utils::MockNodeTypesWithDB>::builder()
         .with_tip_sender(tip_tx)
         .with_max_block(max_block)
         .with_fail_on_unwind(true)

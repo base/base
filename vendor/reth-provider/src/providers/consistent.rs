@@ -7,6 +7,7 @@ use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag, HashOrNumber};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_execution_chainspec::BaseChainSpec;
 use reth_chain_state::{BlockState, CanonicalInMemoryState};
 use reth_chainspec::ChainInfo;
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
@@ -117,7 +118,7 @@ impl<N: ProviderNodeTypes> ConsistentProvider<N> {
     ) -> ProviderResult<Vec<T>>
     where
         F: FnOnce(
-            &DatabaseProviderRO<N::DB, N>,
+            &DatabaseProviderRO<N::DB>,
             RangeInclusive<BlockNumber>,
             &mut P,
         ) -> ProviderResult<Vec<T>>,
@@ -222,10 +223,7 @@ impl<N: ProviderNodeTypes> ConsistentProvider<N> {
         fetch_from_block_state: M,
     ) -> ProviderResult<Vec<R>>
     where
-        S: FnOnce(
-            &DatabaseProviderRO<N::DB, N>,
-            RangeInclusive<TxNumber>,
-        ) -> ProviderResult<Vec<R>>,
+        S: FnOnce(&DatabaseProviderRO<N::DB>, RangeInclusive<TxNumber>) -> ProviderResult<Vec<R>>,
         M: Fn(RangeInclusive<usize>, &BlockState) -> ProviderResult<Vec<R>>,
     {
         let in_mem_chain = self.head_block.iter().flat_map(|b| b.chain()).collect::<Vec<_>>();
@@ -322,7 +320,7 @@ impl<N: ProviderNodeTypes> ConsistentProvider<N> {
         fetch_from_block_state: M,
     ) -> ProviderResult<Option<R>>
     where
-        S: FnOnce(&DatabaseProviderRO<N::DB, N>) -> ProviderResult<Option<R>>,
+        S: FnOnce(&DatabaseProviderRO<N::DB>) -> ProviderResult<Option<R>>,
         M: Fn(usize, TxNumber, &BlockState) -> ProviderResult<Option<R>>,
     {
         let in_mem_chain = self.head_block.iter().flat_map(|b| b.chain()).collect::<Vec<_>>();
@@ -389,7 +387,7 @@ impl<N: ProviderNodeTypes> ConsistentProvider<N> {
         fetch_from_block_state: M,
     ) -> ProviderResult<R>
     where
-        S: FnOnce(&DatabaseProviderRO<N::DB, N>) -> ProviderResult<R>,
+        S: FnOnce(&DatabaseProviderRO<N::DB>) -> ProviderResult<R>,
         M: Fn(&BlockState) -> ProviderResult<R>,
     {
         if let Some(Some(block_state)) = self.head_block.as_ref().map(|b| b.block_on_chain(id)) {
@@ -1049,9 +1047,7 @@ impl<N: ProviderNodeTypes> PruneCheckpointReader for ConsistentProvider<N> {
 }
 
 impl<N: ProviderNodeTypes> ChainSpecProvider for ConsistentProvider<N> {
-    type ChainSpec = N::ChainSpec;
-
-    fn chain_spec(&self) -> Arc<N::ChainSpec> {
+    fn chain_spec(&self) -> Arc<BaseChainSpec> {
         ChainSpecProvider::chain_spec(&self.storage_provider)
     }
 }

@@ -1,8 +1,8 @@
 //! Command that runs pruning.
 use std::sync::Arc;
 
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use clap::Parser;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_runner::CliContext;
 use reth_cli_util::cancellation::CancellationToken;
@@ -31,12 +31,9 @@ pub struct PruneCommand<C: ChainSpecParser> {
     metrics: MetricArgs,
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> PruneCommand<C> {
+impl<C: ChainSpecParser> PruneCommand<C> {
     /// Execute the `prune` command
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>>(
-        self,
-        ctx: CliContext,
-    ) -> eyre::Result<()> {
+    pub async fn execute<N: CliNodeTypes>(self, ctx: CliContext) -> eyre::Result<()> {
         let env = self.env.init::<N>(AccessRights::RW, ctx.task_executor.clone())?;
         let provider_factory = env.provider_factory;
         let config = env.config.prune;
@@ -135,7 +132,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> PruneComma
 
 impl<C: ChainSpecParser> PruneCommand<C> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 }

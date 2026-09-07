@@ -9,6 +9,7 @@ use std::{
 
 use alloy_rpc_types::engine::ClientVersionV1;
 use base_common_consensus::BaseBlock;
+use base_execution_chainspec::ChainSpecProvider;
 use jsonrpsee::RpcModule;
 pub use jsonrpsee::{
     core::middleware::layer::Either,
@@ -16,7 +17,6 @@ pub use jsonrpsee::{
 };
 use parking_lot::Mutex;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardforks};
 use reth_engine_tree::tree::WaitForCaches;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_api::{
@@ -274,7 +274,7 @@ pub struct RpcContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
     pub(crate) node: Node,
 
     /// Gives access to the node configuration.
-    pub(crate) config: &'a NodeConfig<<Node::Types as NodeTypes>::ChainSpec>,
+    pub(crate) config: &'a NodeConfig,
 
     /// A Helper type the holds instances of the configured modules.
     ///
@@ -297,7 +297,7 @@ where
     EthApi: EthApiTypes,
 {
     /// Returns the config of the node.
-    pub const fn config(&self) -> &NodeConfig<<Node::Types as NodeTypes>::ChainSpec> {
+    pub const fn config(&self) -> &NodeConfig {
         self.config
     }
 
@@ -403,12 +403,7 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcHandle<Node, EthApi> {
     }
 
     /// Returns an instance of the [`AdminApi`] for the rpc server.
-    pub fn admin_api(
-        &self,
-    ) -> AdminApi<Node::Network, <Node::Types as NodeTypes>::ChainSpec, Node::Pool>
-    where
-        <Node::Types as NodeTypes>::ChainSpec: EthereumHardforks,
-    {
+    pub fn admin_api(&self) -> AdminApi<Node::Network, Node::Pool> {
         self.rpc_registry.registry.admin_api()
     }
 }
@@ -483,7 +478,7 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> AuthServerOnlyHandle<Node, E
 /// Internal context struct for RPC setup shared between different launch methods
 struct RpcSetupContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
     node: Node,
-    config: &'a NodeConfig<<Node::Types as NodeTypes>::ChainSpec>,
+    config: &'a NodeConfig,
     modules: TransportRpcModules,
     auth_module: AuthRpcModule,
     auth_config: reth_rpc_builder::auth::AuthServerConfig,
@@ -923,7 +918,7 @@ impl<N, EthB, PVB, EB, EVB, RpcMiddleware, AuthHttpMiddleware>
     RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware, AuthHttpMiddleware>
 where
     N: FullNodeComponents,
-    N::Provider: ChainSpecProvider<ChainSpec: EthereumHardforks>,
+    N::Provider: ChainSpecProvider,
     EthB: EthApiBuilder<N>,
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
@@ -1213,7 +1208,7 @@ where
         modules: &mut TransportRpcModules,
         auth_module: &mut AuthRpcModule,
         node: &N,
-        config: &NodeConfig<<N::Types as NodeTypes>::ChainSpec>,
+        config: &NodeConfig,
         on_rpc_started: Box<dyn OnRpcStarted<N, EthB::EthApi>>,
         handles: RethRpcServerHandles,
     ) -> eyre::Result<()> {
@@ -1228,7 +1223,7 @@ impl<N, EthB, PVB, EB, EVB, RpcMiddleware, AuthHttpMiddleware> NodeAddOns<N>
     for RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware, AuthHttpMiddleware>
 where
     N: FullNodeComponents,
-    <N as FullNodeTypes>::Provider: ChainSpecProvider<ChainSpec: EthereumHardforks>,
+    <N as FullNodeTypes>::Provider: ChainSpecProvider,
     EthB: EthApiBuilder<N>,
     PVB: PayloadValidatorBuilder<N>,
     EB: EngineApiBuilder<N>,
@@ -1282,9 +1277,7 @@ pub struct EthApiCtx<'a, N: FullNodeTypes> {
     pub engine_handle: ConsensusEngineHandle,
 }
 
-impl<'a, N: FullNodeComponents<Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>>>
-    EthApiCtx<'a, N>
-{
+impl<'a, N: FullNodeComponents<Types: NodeTypes>> EthApiCtx<'a, N> {
     /// Provides a [`EthApiBuilder`] with preconfigured config and components.
     pub fn eth_api_builder(self) -> reth_rpc::EthApiBuilder<N, ()> {
         reth_rpc::EthApiBuilder::new_with_components(self.components.clone())
@@ -1483,12 +1476,11 @@ pub struct BasicEngineApiBuilder<PVB> {
 
 impl<N, PVB> EngineApiBuilder<N> for BasicEngineApiBuilder<PVB>
 where
-    N: FullNodeComponents<Types: NodeTypes<ChainSpec: EthereumHardforks>>,
+    N: FullNodeComponents<Types: NodeTypes>,
     PVB: PayloadValidatorBuilder<N>,
     PVB::Validator: EngineApiValidator,
 {
-    type EngineApi =
-        EngineApi<N::Provider, N::Pool, PVB::Validator, <N::Types as NodeTypes>::ChainSpec>;
+    type EngineApi = EngineApi<N::Provider, N::Pool, PVB::Validator>;
 
     async fn build_engine_api(self, ctx: &AddOnsContext<'_, N>) -> eyre::Result<Self::EngineApi> {
         let Self { payload_validator_builder } = self;

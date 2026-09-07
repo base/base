@@ -15,8 +15,9 @@ use alloy_rpc_types_eth::{
     state::{EvmOverrides, StateOverride},
 };
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
+use base_execution_chainspec::ChainSpecProvider;
 use futures::Future;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
+use reth_chainspec::EthereumHardforks;
 use reth_errors::{ProviderError, RethError};
 use reth_evm::{
     ConfigureEvm, Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor, TransactionEnvMut, TxEnvFor,

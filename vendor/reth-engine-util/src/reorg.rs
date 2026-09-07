@@ -11,9 +11,9 @@ use alloy_consensus::{BlockHeader, Transaction};
 use alloy_primitives::Bytes;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadStatus};
 use base_common_consensus::BaseBlock;
+use base_execution_chainspec::ChainSpecProvider;
 use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Either;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_engine_primitives::{BeaconEngineMessage, BeaconOnNewPayloadError, OnForkChoiceUpdated};
 use reth_engine_tree::tree::EngineValidator;
 use reth_errors::{BlockExecutionError, BlockValidationError, RethError, RethResult};
@@ -231,7 +231,7 @@ fn create_reorg_head<Provider, Evm, Validator>(
 where
     Provider: BlockReader<Header = alloy_consensus::Header, Block = BaseBlock>
         + StateProviderFactory
-        + ChainSpecProvider<ChainSpec: EthChainSpec>,
+        + ChainSpecProvider,
     Evm: ConfigureEvm,
     Validator: EngineValidator,
 {

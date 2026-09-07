@@ -39,6 +39,7 @@ reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-storage-overlay = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
+base-execution-chainspec = { workspace = true }
 reth-db = { workspace = true, features = ["mdbx"] }
 eyre = { workspace = true, features = ["default"] }
 rocksdb = { workspace = true, features = ["default"] }

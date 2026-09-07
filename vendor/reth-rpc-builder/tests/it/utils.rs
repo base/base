@@ -49,16 +49,16 @@ where
         commit: "defa64b2".to_string(),
     };
 
-    let engine_api = EngineApi::<_, _, _, _>::new(
+    let engine_api = EngineApi::<_, _, _>::new(
         NoopProvider::default(),
-        MAINNET.clone(),
+        std::sync::Arc::new(MAINNET.as_ref().clone().into()),
         beacon_engine_handle,
         spawn_test_payload_service().into(),
         NoopTransactionPool::default(),
         Runtime::test(),
         client,
         EngineCapabilities::default(),
-        TestEngineValidator::new(MAINNET.clone()),
+        TestEngineValidator::new(std::sync::Arc::new(MAINNET.as_ref().clone().into())),
         false,
         NoopNetwork::default(),
     );
@@ -71,9 +71,7 @@ pub async fn launch_http(modules: impl Into<RpcModuleSelection>) -> RpcServerHan
     let builder = test_rpc_builder();
     let eth_api = builder
         .eth_api_builder()
-        .map_converter(|_| {
-            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
-        })
+        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
         .build();
     let server =
         builder.build(TransportRpcModuleConfig::set_http(modules), eth_api, EventSender::new(1));
@@ -89,9 +87,7 @@ pub async fn launch_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandl
     let builder = test_rpc_builder();
     let eth_api = builder
         .eth_api_builder()
-        .map_converter(|_| {
-            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
-        })
+        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
         .build();
     let server =
         builder.build(TransportRpcModuleConfig::set_ws(modules), eth_api, EventSender::new(1));
@@ -107,9 +103,7 @@ pub async fn launch_http_ws(modules: impl Into<RpcModuleSelection>) -> RpcServer
     let builder = test_rpc_builder();
     let eth_api = builder
         .eth_api_builder()
-        .map_converter(|_| {
-            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
-        })
+        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
         .build();
     let modules = modules.into();
     let server = builder.build(
@@ -133,9 +127,7 @@ pub async fn launch_http_ws_same_port(modules: impl Into<RpcModuleSelection>) ->
     let modules = modules.into();
     let eth_api = builder
         .eth_api_builder()
-        .map_converter(|_| {
-            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
-        })
+        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
         .build();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(modules.clone()).with_http(modules),

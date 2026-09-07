@@ -4,8 +4,8 @@ use std::{io::BufReader, path::PathBuf, sync::Arc};
 
 use alloy_consensus::BlockHeader as AlloyBlockHeader;
 use alloy_primitives::B256;
+use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
-use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_db_common::init::init_from_state_dump;
 use reth_primitives_traits::{SealedHeader, header::HeaderMut};
@@ -64,11 +64,11 @@ pub struct InitStateCommand<C: ChainSpecParser> {
     pub header_hash: Option<B256>,
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> InitStateCommand<C> {
+impl<C: ChainSpecParser> InitStateCommand<C> {
     /// Execute the `init` command
     pub async fn execute<N>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()>
     where
-        N: CliNodeTypes<ChainSpec = C::ChainSpec>,
+        N: CliNodeTypes,
     {
         info!(target: "reth::cli", "Reth init-state starting");
 
@@ -126,7 +126,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> InitStateC
 
 impl<C: ChainSpecParser> InitStateCommand<C> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 }

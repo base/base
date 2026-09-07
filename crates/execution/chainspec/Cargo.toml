@@ -12,6 +12,7 @@ description = "EVM chain spec implementation for Base."
 workspace = true
 
 [dependencies]
+auto_impl = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }

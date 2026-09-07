@@ -47,6 +47,7 @@ reth-rpc-server-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 reth-payload-primitives = { workspace = true }
+base-execution-chainspec = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 reth-basic-payload-builder = { workspace = true }
@@ -72,9 +73,9 @@ base-common-chains = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
-base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 base-common-rpc-types = { workspace = true, features = ["default", "reth"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 [dev-dependencies]
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }

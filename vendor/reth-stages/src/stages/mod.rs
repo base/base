@@ -157,7 +157,7 @@ mod tests {
                     ChainSpecBuilder::mainnet().berlin_activated().build(),
                 )),
                 Arc::new(TestConsensus::new(Arc::new(
-                    ChainSpecBuilder::mainnet().berlin_activated().build(),
+                    ChainSpecBuilder::mainnet().berlin_activated().build().into(),
                 ))),
                 ExecutionStageThresholds {
                     max_blocks: Some(100),

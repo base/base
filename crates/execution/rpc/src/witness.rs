@@ -4,14 +4,13 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
-use base_common_chains::Upgrades;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_payload_builder::{BasePayloadBuilder, BasePayloadBuilderAttributes};
 use base_execution_txpool::BasePooledTx;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
-use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
 use reth_node_api::BuildNextEnv;
 use reth_primitives_traits::SealedHeader;
@@ -79,14 +78,14 @@ where
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + 'static,
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + StateProviderFactory
-        + ChainSpecProvider<ChainSpec: Upgrades>
+        + ChainSpecProvider
         + Clone
         + 'static,
     EvmConfig: ConfigureEvm<
             NextBlockEnvCtx: BuildNextEnv<
                 BasePayloadBuilderAttributes<BaseTxEnvelope>,
                 Provider::Header,
-                Provider::ChainSpec,
+                BaseChainSpec,
             >,
         > + 'static,
 {

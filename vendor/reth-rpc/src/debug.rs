@@ -17,10 +17,11 @@ use alloy_rpc_types_trace::geth::{
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_execution_chainspec::ChainSpecProvider;
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
+use reth_chainspec::EthereumHardforks;
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_errors::RethError;
 use reth_evm::{ConfigureEvm, EvmEnvFor, block::BlockExecutor, execute::Executor};

@@ -6,7 +6,6 @@ use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use base_common_consensus::{BaseTypedTransaction, TxDeposit};
 use base_common_rpc_types::Transaction;
-use base_execution_chainspec::BaseChainSpec;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
@@ -180,7 +179,7 @@ impl AsTxs for Vec<TxHash> {
 }
 
 /// Creates a temporary MDBX database suitable for tests.
-pub fn create_test_db(config: NodeConfig<BaseChainSpec>) -> Arc<TempDatabase<DatabaseEnv>> {
+pub fn create_test_db(config: NodeConfig) -> Arc<TempDatabase<DatabaseEnv>> {
     let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(
         reth_db::test_utils::tempdir_path(),
     );
@@ -206,9 +205,7 @@ pub fn create_test_db(config: NodeConfig<BaseChainSpec>) -> Arc<TempDatabase<Dat
 /// builder's type bounds. This is required when applying node extensions whose hooks are typed
 /// against the concrete node types. The returned [`PathBuf`] is the temporary directory backing the
 /// database; the caller is responsible for removing it once the database has been dropped.
-pub fn create_test_db_env(
-    config: NodeConfig<BaseChainSpec>,
-) -> eyre::Result<(DatabaseEnv, PathBuf)> {
+pub fn create_test_db_env(config: NodeConfig) -> eyre::Result<(DatabaseEnv, PathBuf)> {
     let root = reth_db::test_utils::tempdir_path();
     let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(root.clone());
     let db_config =

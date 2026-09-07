@@ -6,6 +6,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_chainspec::BaseChainSpec;
 use eyre::{Result, eyre};
 use reth_chainspec::ChainSpec;
 use reth_ethereum_primitives::Block;
@@ -161,9 +162,9 @@ impl Setup {
                 .map_or_else(|| attributes.clone().into(), |convert| convert(attributes.clone()))
         };
 
-        let builder = E2ETestSetupBuilder::<N, _>::new(
+        let builder = E2ETestSetupBuilder::new(
             node_count,
-            Arc::<N::ChainSpec>::new((*chain_spec).clone().into()),
+            Arc::<BaseChainSpec>::new((*chain_spec).clone().into()),
             attributes_generator,
         )
         .with_tree_config_modifier(move |base| {
@@ -172,7 +173,7 @@ impl Setup {
         .with_node_config_modifier(move |config| config.set_dev(is_dev))
         .with_connect_nodes(self.network.connect_nodes);
 
-        let result = builder.build().await;
+        let result = builder.build::<N>().await;
 
         let mut node_clients = Vec::new();
         match result {

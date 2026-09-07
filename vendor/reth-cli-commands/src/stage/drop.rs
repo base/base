@@ -2,8 +2,8 @@
 use std::sync::Arc;
 
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
-use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_db::{DatabaseError, mdbx::tx::Tx};
 use reth_db_api::{
@@ -40,7 +40,7 @@ impl<C: ChainSpecParser> Command<C> {
     /// Execute `db` command
     pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()>
     where
-        C: ChainSpecParser<ChainSpec = N::ChainSpec>,
+        C: ChainSpecParser,
     {
         let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RW, runtime)?;
 
@@ -223,7 +223,7 @@ impl<C: ChainSpecParser> Command<C> {
         Ok(())
     }
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 }

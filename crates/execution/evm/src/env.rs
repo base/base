@@ -5,7 +5,7 @@ use base_common_chains::Upgrades;
 use base_common_evm::BaseSpecId;
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;
-use reth_chainspec::EthChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
 use revm::{
     context::{BlockEnv, CfgEnv},
@@ -25,7 +25,7 @@ impl BaseEvmEnvBuilder {
     pub fn cfg_env(
         spec: BaseSpecId,
         timestamp: u64,
-        chain_spec: &(impl Upgrades + EthChainSpec),
+        chain_spec: &BaseChainSpec,
     ) -> CfgEnv<BaseSpecId> {
         let mut cfg_env = CfgEnv::new()
             .with_chain_id(chain_spec.chain().id())
@@ -39,10 +39,7 @@ impl BaseEvmEnvBuilder {
     }
 
     /// Builds an [`EvmEnv`] for a block header using Base spec resolution.
-    pub fn evm_env(
-        header: &Header,
-        chain_spec: &(impl Upgrades + EthChainSpec),
-    ) -> EvmEnv<BaseSpecId> {
+    pub fn evm_env(header: &Header, chain_spec: &BaseChainSpec) -> EvmEnv<BaseSpecId> {
         let spec = BaseSpecId::from_header(chain_spec, header);
         let cfg_env = Self::cfg_env(spec, header.timestamp, chain_spec);
         let blob_excess_gas_and_price = Self::blob_excess_gas_and_price(spec);
@@ -68,7 +65,7 @@ impl BaseEvmEnvBuilder {
         parent: &Header,
         attributes: &BaseNextBlockEnvAttributes,
         base_fee_per_gas: u64,
-        chain_spec: &(impl Upgrades + EthChainSpec),
+        chain_spec: &BaseChainSpec,
     ) -> EvmEnv<BaseSpecId> {
         let spec = BaseSpecId::from_timestamp(chain_spec, attributes.timestamp);
         let cfg_env = Self::cfg_env(spec, attributes.timestamp, chain_spec);
@@ -94,7 +91,7 @@ impl BaseEvmEnvBuilder {
     #[cfg(feature = "std")]
     pub fn payload_evm_env(
         payload: &ExecutionData,
-        chain_spec: &(impl Upgrades + EthChainSpec),
+        chain_spec: &BaseChainSpec,
     ) -> EvmEnv<BaseSpecId> {
         let timestamp = payload.payload.timestamp();
         let block_number = payload.payload.block_number();

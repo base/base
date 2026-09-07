@@ -110,7 +110,7 @@ pub struct AddOnsContext<'a, N: FullNodeComponents> {
     /// Node with all configured components.
     pub node: N,
     /// Node configuration.
-    pub config: &'a NodeConfig<<N::Types as NodeTypes>::ChainSpec>,
+    pub config: &'a NodeConfig,
     /// Handle to the beacon consensus engine.
     pub beacon_engine_handle: ConsensusEngineHandle,
     /// Notification channel for engine API events

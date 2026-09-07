@@ -12,8 +12,8 @@ use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{
     BaseLogResponse, BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields,
 };
+use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::RethL1BlockInfo;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_eth_api::{
     RpcConvert,
@@ -50,7 +50,7 @@ impl<Provider> BaseReceiptConverter<Provider> {
 impl<Provider> ReceiptConverter for BaseReceiptConverter<Provider>
 where
     Provider: BlockReader<Block = BaseBlock, Transaction = BaseTxEnvelope>
-        + ChainSpecProvider<ChainSpec: Upgrades>
+        + ChainSpecProvider
         + Debug
         + 'static,
 {

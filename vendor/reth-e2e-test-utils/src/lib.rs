@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_chainspec::BaseChainSpec;
 use node::NodeTestContext;
-use reth_chainspec::ChainSpec;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_builder::{
@@ -47,7 +47,7 @@ pub use setup_builder::E2ETestSetupBuilder;
 /// Creates the initial setup with `num_nodes` started and interconnected.
 pub async fn setup<N>(
     num_nodes: usize,
-    chain_spec: Arc<N::ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
     attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
     + Send
@@ -60,14 +60,14 @@ where
 {
     E2ETestSetupBuilder::new(num_nodes, chain_spec, attributes_generator)
         .with_node_config_modifier(move |config| config.set_dev(is_dev))
-        .build()
+        .build::<N>()
         .await
 }
 
 /// Creates the initial setup with `num_nodes` started and interconnected.
 pub async fn setup_engine<N>(
     num_nodes: usize,
-    chain_spec: Arc<N::ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
     tree_config: reth_node_api::TreeConfig,
     attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
@@ -96,7 +96,7 @@ where
 /// Creates the initial setup with `num_nodes` started and optionally interconnected.
 pub async fn setup_engine_with_connection<N>(
     num_nodes: usize,
-    chain_spec: Arc<N::ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
     tree_config: reth_node_api::TreeConfig,
     attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
@@ -119,7 +119,7 @@ where
         })
         .with_node_config_modifier(move |config| config.set_dev(is_dev))
         .with_connect_nodes(connect_nodes)
-        .build()
+        .build::<N>()
         .await
 }
 
@@ -161,7 +161,6 @@ where
             > + EngineValidatorAddOn<
                 Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
             >,
-            ChainSpec: From<ChainSpec> + Clone,
         >,
 {
 }
@@ -183,7 +182,6 @@ impl<T> NodeBuilderHelper for T where
             > + EngineValidatorAddOn<
                 Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
             >,
-            ChainSpec: From<ChainSpec> + Clone,
         >
 {
 }

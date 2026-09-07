@@ -4,11 +4,11 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use base_common_chains::Upgrades;
 use base_common_rpc_types::EIP8130_PRE_COBALT_RPC_ERROR;
+use base_execution_chainspec::ChainSpecProvider;
 use jsonrpsee_types::{
     ErrorObjectOwned,
     error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
 };
-use reth_chainspec::ChainSpecProvider;
 use reth_rpc_eth_api::{RpcNodeCore, helpers::FullEthApi};
 use reth_storage_api::BlockReaderIdExt;
 use tracing::warn;
@@ -36,7 +36,6 @@ impl Eip8130CobaltGate {
     where
         Eth: FullEthApi,
         <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
-        <<Eth as RpcNodeCore>::Provider as ChainSpecProvider>::ChainSpec: Upgrades,
     {
         let provider = eth_api.provider();
         let timestamp = Self::resolve_timestamp(provider, block_id)?;

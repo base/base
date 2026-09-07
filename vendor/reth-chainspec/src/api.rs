@@ -1,93 +1,15 @@
-use alloc::{boxed::Box, vec::Vec};
-use core::fmt::{Debug, Display};
+//! Inherent chain specification accessors.
 
-use alloy_chains::Chain;
-use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
-use alloy_genesis::Genesis;
-use alloy_primitives::{B256, U256};
+use alloy_eips::{calc_next_block_base_fee, eip7840::BlobParams};
+use alloy_primitives::U256;
 use reth_ethereum_forks::EthereumHardforks;
-use reth_network_peers::NodeRecord;
-use reth_primitives_traits::{AlloyBlockHeader, BlockHeader};
+use reth_primitives_traits::BlockHeader;
 
 use crate::{ChainSpec, DepositContract};
 
-/// Trait representing type configuring a chain spec.
-#[auto_impl::auto_impl(&, Arc)]
-pub trait EthChainSpec: Send + Sync + Unpin + Debug {
-    /// The header type of the network.
-    type Header: BlockHeader;
-
-    /// Returns the [`Chain`] object this spec targets.
-    fn chain(&self) -> Chain;
-
-    /// Returns the chain id number
-    fn chain_id(&self) -> u64 {
-        self.chain().id()
-    }
-
-    /// Get the [`BaseFeeParams`] for the chain at the given timestamp.
-    fn base_fee_params_at_timestamp(&self, timestamp: u64) -> BaseFeeParams;
-
+impl<H: BlockHeader> ChainSpec<H> {
     /// Get the [`BlobParams`] for the given timestamp
-    fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams>;
-
-    /// Returns the deposit contract data for the chain, if it's present
-    fn deposit_contract(&self) -> Option<&DepositContract>;
-
-    /// The genesis hash.
-    fn genesis_hash(&self) -> B256;
-
-    /// The delete limit for pruner, per run.
-    fn prune_delete_limit(&self) -> usize;
-
-    /// Returns a string representation of the hardforks.
-    fn display_hardforks(&self) -> Box<dyn Display>;
-
-    /// The genesis header.
-    fn genesis_header(&self) -> &Self::Header;
-
-    /// The genesis block specification.
-    fn genesis(&self) -> &Genesis;
-
-    /// The bootnodes for the chain, if any.
-    fn bootnodes(&self) -> Option<Vec<NodeRecord>>;
-
-    /// Returns `true` if this chain contains Optimism configuration.
-    fn is_optimism(&self) -> bool {
-        self.chain().is_optimism()
-    }
-
-    /// Returns `true` if this chain contains Ethereum configuration.
-    fn is_ethereum(&self) -> bool {
-        self.chain().is_ethereum()
-    }
-
-    /// Returns the final total difficulty if the Paris hardfork is known.
-    fn final_paris_total_difficulty(&self) -> Option<U256>;
-
-    /// See [`calc_next_block_base_fee`].
-    fn next_block_base_fee(&self, parent: &Self::Header, target_timestamp: u64) -> Option<u64> {
-        Some(calc_next_block_base_fee(
-            parent.gas_used(),
-            parent.gas_limit(),
-            parent.base_fee_per_gas()?,
-            self.base_fee_params_at_timestamp(target_timestamp),
-        ))
-    }
-}
-
-impl<H: BlockHeader> EthChainSpec for ChainSpec<H> {
-    type Header = H;
-
-    fn chain(&self) -> Chain {
-        self.chain
-    }
-
-    fn base_fee_params_at_timestamp(&self, timestamp: u64) -> BaseFeeParams {
-        self.base_fee_params_at_timestamp(timestamp)
-    }
-
-    fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
+    pub fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
         if let Some(blob_param) = self.blob_params.active_scheduled_params_at_timestamp(timestamp) {
             Some(*blob_param)
         } else if self.is_osaka_active_at_timestamp(timestamp) {
@@ -101,39 +23,38 @@ impl<H: BlockHeader> EthChainSpec for ChainSpec<H> {
         }
     }
 
-    fn deposit_contract(&self) -> Option<&DepositContract> {
+    /// Returns the deposit contract data for the chain, if it's present
+    pub fn deposit_contract(&self) -> Option<&DepositContract> {
         self.deposit_contract.as_ref()
     }
 
-    fn genesis_hash(&self) -> B256 {
-        self.genesis_hash()
-    }
-
-    fn prune_delete_limit(&self) -> usize {
+    /// The delete limit for pruner, per run.
+    pub fn prune_delete_limit(&self) -> usize {
         self.prune_delete_limit
     }
 
-    fn display_hardforks(&self) -> Box<dyn Display> {
-        Box::new(Self::display_hardforks(self))
-    }
-
-    fn genesis_header(&self) -> &Self::Header {
-        self.genesis_header()
-    }
-
-    fn genesis(&self) -> &Genesis {
-        self.genesis()
-    }
-
-    fn bootnodes(&self) -> Option<Vec<NodeRecord>> {
-        self.bootnodes()
-    }
-
-    fn is_optimism(&self) -> bool {
+    /// Returns `true` if this chain contains Optimism configuration.
+    pub fn is_optimism(&self) -> bool {
         false
     }
 
-    fn final_paris_total_difficulty(&self) -> Option<U256> {
+    /// Returns the final total difficulty if the Paris hardfork is known.
+    pub fn final_paris_total_difficulty(&self) -> Option<U256> {
         self.get_final_paris_total_difficulty()
+    }
+
+    /// Returns the chain id number
+    pub fn chain_id(&self) -> u64 {
+        self.chain().id()
+    }
+
+    /// See [`calc_next_block_base_fee`].
+    pub fn next_block_base_fee(&self, parent: &H, target_timestamp: u64) -> Option<u64> {
+        Some(calc_next_block_base_fee(
+            parent.gas_used(),
+            parent.gas_limit(),
+            parent.base_fee_per_gas()?,
+            self.base_fee_params_at_timestamp(target_timestamp),
+        ))
     }
 }

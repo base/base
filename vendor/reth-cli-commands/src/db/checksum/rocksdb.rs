@@ -3,7 +3,6 @@
 use std::hash::Hasher;
 
 use clap::ValueEnum;
-use reth_chainspec::EthereumHardforks;
 use reth_db::{DatabaseEnv, tables};
 use reth_db_api::table::Table;
 use reth_db_common::DbTool;
@@ -38,7 +37,7 @@ impl RocksDbTable {
 }
 
 /// Computes a checksum for a RocksDB table.
-pub fn checksum_rocksdb<N: CliNodeTypes<ChainSpec: EthereumHardforks>>(
+pub fn checksum_rocksdb<N: CliNodeTypes>(
     tool: &DbTool<NodeTypesWithDBAdapter<N, DatabaseEnv>>,
     table: RocksDbTable,
     limit: Option<usize>,

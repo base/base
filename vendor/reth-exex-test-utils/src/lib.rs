@@ -53,9 +53,7 @@ use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TestNode;
 
-impl NodeTypes for TestNode {
-    type ChainSpec = ChainSpec;
-}
+impl NodeTypes for TestNode {}
 
 /// A shared [`TempDatabase`] used for testing
 pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
@@ -173,7 +171,7 @@ pub async fn test_exex_context_with_chain_spec(
     let db = create_test_rw_db();
     let provider_factory = ProviderFactory::<NodeTypesWithDBAdapter<TestNode, _>>::new(
         db,
-        chain_spec.clone(),
+        Arc::new(chain_spec.as_ref().clone().into()),
         StaticFileProvider::read_write(static_dir.keep()).expect("static file provider"),
         RocksDBProvider::builder(rocksdb_dir.keep()).with_default_tables().build().unwrap(),
         reth_tasks::Runtime::test(),

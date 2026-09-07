@@ -120,10 +120,9 @@ async fn test_rocksdb_node_startup() -> Result<()> {
 
     let chain_spec = test_chain_spec();
 
-    let (nodes, _wallet) =
-        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec, test_attributes_generator)
-            .build()
-            .await?;
+    let (nodes, _wallet) = E2ETestSetupBuilder::new(1, chain_spec, test_attributes_generator)
+        .build::<BaseNode>()
+        .await?;
 
     assert_eq!(nodes.len(), 1);
 
@@ -147,10 +146,9 @@ async fn test_rocksdb_block_mining() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _wallet) =
-        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec, test_attributes_generator)
-            .build()
-            .await?;
+    let (mut nodes, _wallet) = E2ETestSetupBuilder::new(1, chain_spec, test_attributes_generator)
+        .build::<BaseNode>()
+        .await?;
 
     assert_eq!(nodes.len(), 1);
 
@@ -200,13 +198,12 @@ async fn test_rocksdb_transaction_queries() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) =
-        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
-            .with_tree_config_modifier(|config| {
-                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-            })
-            .build()
-            .await?;
+    let (mut nodes, _) = E2ETestSetupBuilder::new(1, chain_spec.clone(), test_attributes_generator)
+        .with_tree_config_modifier(|config| {
+            config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+        })
+        .build::<BaseNode>()
+        .await?;
 
     assert_eq!(nodes.len(), 1);
 
@@ -265,13 +262,12 @@ async fn test_rocksdb_multi_tx_same_block() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) =
-        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
-            .with_tree_config_modifier(|config| {
-                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-            })
-            .build()
-            .await?;
+    let (mut nodes, _) = E2ETestSetupBuilder::new(1, chain_spec.clone(), test_attributes_generator)
+        .with_tree_config_modifier(|config| {
+            config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+        })
+        .build::<BaseNode>()
+        .await?;
 
     // Create 3 txs from the same wallet with sequential nonces
     let wallets = wallet::Wallet::new(1).with_chain_id(chain_id).wallet_gen();
@@ -331,13 +327,12 @@ async fn test_rocksdb_txs_across_blocks() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) =
-        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
-            .with_tree_config_modifier(|config| {
-                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-            })
-            .build()
-            .await?;
+    let (mut nodes, _) = E2ETestSetupBuilder::new(1, chain_spec.clone(), test_attributes_generator)
+        .with_tree_config_modifier(|config| {
+            config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+        })
+        .build::<BaseNode>()
+        .await?;
 
     let wallets = wallet::Wallet::new(1).with_chain_id(chain_id).wallet_gen();
     let signer = wallets[0].clone();
@@ -414,13 +409,12 @@ async fn test_rocksdb_pending_tx_not_in_storage() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) =
-        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
-            .with_tree_config_modifier(|config| {
-                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-            })
-            .build()
-            .await?;
+    let (mut nodes, _) = E2ETestSetupBuilder::new(1, chain_spec.clone(), test_attributes_generator)
+        .with_tree_config_modifier(|config| {
+            config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+        })
+        .build::<BaseNode>()
+        .await?;
 
     let wallets = wallet::Wallet::new(1).with_chain_id(chain_id).wallet_gen();
     let signer = wallets[0].clone();
@@ -471,13 +465,12 @@ async fn test_rocksdb_reorg_unwind() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) =
-        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
-            .with_tree_config_modifier(|config| {
-                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-            })
-            .build()
-            .await?;
+    let (mut nodes, _) = E2ETestSetupBuilder::new(1, chain_spec.clone(), test_attributes_generator)
+        .with_tree_config_modifier(|config| {
+            config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+        })
+        .build::<BaseNode>()
+        .await?;
 
     assert_eq!(nodes.len(), 1);
 
@@ -592,13 +585,12 @@ async fn test_rocksdb_historical_account_queries() -> Result<()> {
     let chain_spec = test_chain_spec();
     let chain_id = chain_spec.chain().id();
 
-    let (mut nodes, _) =
-        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
-            .with_tree_config_modifier(|config| {
-                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-            })
-            .build()
-            .await?;
+    let (mut nodes, _) = E2ETestSetupBuilder::new(1, chain_spec.clone(), test_attributes_generator)
+        .with_tree_config_modifier(|config| {
+            config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+        })
+        .build::<BaseNode>()
+        .await?;
 
     assert_eq!(nodes.len(), 1);
 
@@ -737,19 +729,18 @@ async fn test_rocksdb_account_history_pruning() -> Result<()> {
     const PRUNE_DISTANCE: u64 = 5;
     const TOTAL_BLOCKS: u64 = 20;
 
-    let (mut nodes, _) =
-        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
-            .with_tree_config_modifier(|config| {
-                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-            })
-            .with_node_config_modifier(|mut config| {
-                config.pruning.account_history_distance = Some(PRUNE_DISTANCE);
-                config.pruning.minimum_distance = Some(PRUNE_DISTANCE);
-                config.pruning.block_interval = Some(1);
-                config
-            })
-            .build()
-            .await?;
+    let (mut nodes, _) = E2ETestSetupBuilder::new(1, chain_spec.clone(), test_attributes_generator)
+        .with_tree_config_modifier(|config| {
+            config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+        })
+        .with_node_config_modifier(|mut config| {
+            config.pruning.account_history_distance = Some(PRUNE_DISTANCE);
+            config.pruning.minimum_distance = Some(PRUNE_DISTANCE);
+            config.pruning.block_interval = Some(1);
+            config
+        })
+        .build::<BaseNode>()
+        .await?;
 
     assert_eq!(nodes.len(), 1);
 
@@ -832,19 +823,18 @@ async fn test_rocksdb_storage_history_pruning() -> Result<()> {
     const PRUNE_DISTANCE: u64 = 5;
     const TOTAL_BLOCKS: u64 = 20;
 
-    let (mut nodes, _) =
-        E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec.clone(), test_attributes_generator)
-            .with_tree_config_modifier(|config| {
-                config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
-            })
-            .with_node_config_modifier(|mut config| {
-                config.pruning.storage_history_distance = Some(PRUNE_DISTANCE);
-                config.pruning.minimum_distance = Some(PRUNE_DISTANCE);
-                config.pruning.block_interval = Some(1);
-                config
-            })
-            .build()
-            .await?;
+    let (mut nodes, _) = E2ETestSetupBuilder::new(1, chain_spec.clone(), test_attributes_generator)
+        .with_tree_config_modifier(|config| {
+            config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
+        })
+        .with_node_config_modifier(|mut config| {
+            config.pruning.storage_history_distance = Some(PRUNE_DISTANCE);
+            config.pruning.minimum_distance = Some(PRUNE_DISTANCE);
+            config.pruning.block_interval = Some(1);
+            config
+        })
+        .build::<BaseNode>()
+        .await?;
 
     assert_eq!(nodes.len(), 1);
 

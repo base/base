@@ -8,7 +8,6 @@ use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use base_common_consensus::BaseBlock;
 use base_common_evm::L1BlockInfo;
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::extract_l1_info_from_tx;
 use jsonrpsee::core::{RpcResult, async_trait};
 use reth_provider::{
@@ -40,7 +39,7 @@ impl<Provider> std::fmt::Debug for MeteringApiImpl<Provider> {
 impl<Provider> MeteringApiImpl<Provider>
 where
     Provider: StateProviderFactory
-        + ChainSpecProvider<ChainSpec = BaseChainSpec>
+        + ChainSpecProvider
         + BlockReaderIdExt<Header = Header>
         + BlockReader<Block = BaseBlock>
         + HeaderProvider<Header = Header>
@@ -56,7 +55,7 @@ where
 impl<Provider> MeteringApiServer for MeteringApiImpl<Provider>
 where
     Provider: StateProviderFactory
-        + ChainSpecProvider<ChainSpec = BaseChainSpec>
+        + ChainSpecProvider
         + BlockReaderIdExt<Header = Header>
         + BlockReader<Block = BaseBlock>
         + HeaderProvider<Header = Header>
@@ -246,7 +245,7 @@ where
 impl<Provider> MeteringApiImpl<Provider>
 where
     Provider: StateProviderFactory
-        + ChainSpecProvider<ChainSpec = BaseChainSpec>
+        + ChainSpecProvider
         + BlockReaderIdExt<Header = Header>
         + BlockReader<Block = BaseBlock>
         + HeaderProvider<Header = Header>

@@ -14,19 +14,16 @@ pub struct BaseInitStateCommand<C: ChainSpecParser> {
     init_state: reth_cli_commands::init_state::InitStateCommand<C>,
 }
 
-impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseInitStateCommand<C> {
+impl<C: ChainSpecParser> BaseInitStateCommand<C> {
     /// Execute the `init` command
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>>(
-        self,
-        runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<()> {
+    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
         self.init_state.execute::<N>(runtime).await
     }
 }
 
 impl<C: ChainSpecParser> BaseInitStateCommand<C> {
     /// Returns the underlying chain being used to run this command.
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         self.init_state.chain_spec()
     }
 }

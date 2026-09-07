@@ -33,6 +33,7 @@ reth-transaction-pool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
+base-execution-chainspec = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 reth-payload-builder-primitives = { workspace = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }

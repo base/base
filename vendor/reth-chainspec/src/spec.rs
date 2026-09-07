@@ -34,7 +34,6 @@ use reth_network_peers::{NodeRecord, holesky_nodes, hoodi_nodes, mainnet_nodes, 
 use reth_primitives_traits::{BlockHeader, SealedHeader, sync::LazyLock};
 
 use crate::{
-    EthChainSpec,
     constants::{MAINNET_DEPOSIT_CONTRACT, MAINNET_PRUNE_DELETE_LIMIT},
     ethereum::SEPOLIA_PARIS_TTD,
     holesky, hoodi, mainnet,
@@ -586,7 +585,7 @@ impl<H: BlockHeader> ChainSpec<H> {
                 ForkCondition::Timestamp(timestamp) => {
                     // Try to get blob params for this timestamp
                     // This automatically handles all hardforks with blob support
-                    EthChainSpec::blob_params_at_timestamp(self, timestamp).map(|params| {
+                    self.blob_params_at_timestamp(timestamp).map(|params| {
                         format!(
                             "blob: (target: {}, max: {}, fraction: {})",
                             params.target_blob_count, params.max_blob_count, params.update_fraction
@@ -974,16 +973,6 @@ impl<H: BlockHeader> EthereumHardforks for ChainSpec<H> {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
         self.fork(fork)
     }
-}
-
-/// A trait for reading the current chainspec.
-#[auto_impl::auto_impl(&, Arc)]
-pub trait ChainSpecProvider: Debug + Send {
-    /// The chain spec type.
-    type ChainSpec: EthChainSpec + 'static;
-
-    /// Get an [`Arc`] to the chainspec.
-    fn chain_spec(&self) -> Arc<Self::ChainSpec>;
 }
 
 /// A helper to build custom chain specs

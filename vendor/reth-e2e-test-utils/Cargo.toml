@@ -44,6 +44,7 @@ reth-rpc-server-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
+base-execution-chainspec = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 reth-payload-builder-primitives = { workspace = true }

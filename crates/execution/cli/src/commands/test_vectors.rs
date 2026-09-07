@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use base_common_consensus::TxDeposit;
+use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
 use proptest::test_runner::TestRunner;
-use reth_chainspec::ChainSpec;
 use reth_cli_commands::{
     compact_types,
     test_vectors::{
@@ -73,7 +73,7 @@ impl Command {
         Ok(())
     }
     /// Returns the underlying chain being used to run this command
-    pub const fn chain_spec(&self) -> Option<&Arc<ChainSpec>> {
+    pub const fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         None
     }
 }

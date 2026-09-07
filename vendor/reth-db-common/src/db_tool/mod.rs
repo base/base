@@ -2,6 +2,7 @@
 
 use std::{path::Path, rc::Rc, sync::Arc};
 
+use base_execution_chainspec::BaseChainSpec;
 use boyer_moore_magiclen::BMByte;
 use eyre::Result;
 use reth_db_api::{
@@ -25,7 +26,7 @@ pub struct DbTool<N: NodeTypesWithDB> {
 
 impl<N: NodeTypesWithDB> DbTool<N> {
     /// Get an [`Arc`] to the underlying chainspec.
-    pub fn chain(&self) -> Arc<N::ChainSpec> {
+    pub fn chain(&self) -> Arc<BaseChainSpec> {
         self.provider_factory.chain_spec()
     }
 

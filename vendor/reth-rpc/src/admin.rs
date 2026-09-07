@@ -7,8 +7,9 @@ use alloy_rpc_types_admin::{
     Ports, ProtocolInfo,
 };
 use async_trait::async_trait;
+use base_execution_chainspec::BaseChainSpec;
 use jsonrpsee::core::RpcResult;
-use reth_chainspec::{EthChainSpec, EthereumHardfork, EthereumHardforks, ForkCondition};
+use reth_chainspec::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use reth_network_api::{NetworkInfo, Peers};
 use reth_network_peers::{AnyNode, NodeRecord};
 use reth_network_types::PeerKind;
@@ -19,27 +20,26 @@ use reth_transaction_pool::TransactionPool;
 /// `admin` API implementation.
 ///
 /// This type provides the functionality for handling `admin` related requests.
-pub struct AdminApi<N, ChainSpec, Pool> {
+pub struct AdminApi<N, Pool> {
     /// An interface to interact with the network
     network: N,
     /// The specification of the blockchain's configuration.
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     /// The transaction pool
     pool: Pool,
 }
 
-impl<N, ChainSpec, Pool> AdminApi<N, ChainSpec, Pool> {
+impl<N, Pool> AdminApi<N, Pool> {
     /// Creates a new instance of `AdminApi`.
-    pub const fn new(network: N, chain_spec: Arc<ChainSpec>, pool: Pool) -> Self {
+    pub const fn new(network: N, chain_spec: Arc<BaseChainSpec>, pool: Pool) -> Self {
         Self { network, chain_spec, pool }
     }
 }
 
 #[async_trait]
-impl<N, ChainSpec, Pool> AdminApiServer for AdminApi<N, ChainSpec, Pool>
+impl<N, Pool> AdminApiServer for AdminApi<N, Pool>
 where
     N: NetworkInfo + Peers + 'static,
-    ChainSpec: EthChainSpec + EthereumHardforks + Send + Sync + 'static,
     Pool: TransactionPool + 'static,
 {
     /// Handler for `admin_addPeer`
@@ -213,7 +213,7 @@ where
     }
 }
 
-impl<N, ChainSpec, Pool> std::fmt::Debug for AdminApi<N, ChainSpec, Pool> {
+impl<N, Pool> std::fmt::Debug for AdminApi<N, Pool> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AdminApi").finish_non_exhaustive()
     }

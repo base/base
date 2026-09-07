@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use clap::{Parser, Subcommand};
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_config::Config;
 use reth_consensus::noop::NoopConsensus;
@@ -43,15 +43,15 @@ pub struct Command<C: ChainSpecParser> {
     offline: bool,
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C> {
+impl<C: ChainSpecParser> Command<C> {
     /// Execute `db stage unwind` command
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>, F>(
+    pub async fn execute<N: CliNodeTypes, F>(
         self,
         components: F,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()>
     where
-        F: FnOnce(Arc<C::ChainSpec>) -> CliNodeComponents<N>,
+        F: FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents<N>,
     {
         let Environment { provider_factory, config, data_dir: _ } =
             self.env.init::<N>(AccessRights::RW, runtime)?;
@@ -78,7 +78,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C>
         Ok(())
     }
 
-    fn build_pipeline<N: ProviderNodeTypes<ChainSpec = C::ChainSpec>>(
+    fn build_pipeline<N: ProviderNodeTypes>(
         self,
         config: Config,
         provider_factory: ProviderFactory<N>,
@@ -137,7 +137,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C>
 
 impl<C: ChainSpecParser> Command<C> {
     /// Return the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 }

@@ -3,8 +3,8 @@
 use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::B256;
+use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
-use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_config::{Config, config::EtlConfig};
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
@@ -39,6 +39,9 @@ pub use crate::CliNodeComponents;
 /// Struct to hold config and datadir paths
 #[derive(Debug, Parser)]
 pub struct EnvironmentArgs<C: ChainSpecParser> {
+    /// Parser used for built-in chain names and genesis files.
+    #[arg(skip)]
+    pub parser: core::marker::PhantomData<C>,
     /// Parameters for datadir configuration
     #[command(flatten)]
     pub datadir: DatadirArgs,
@@ -58,7 +61,7 @@ pub struct EnvironmentArgs<C: ChainSpecParser> {
         value_parser = C::parser(),
         global = true
     )]
-    pub chain: Arc<C::ChainSpec>,
+    pub chain: Arc<BaseChainSpec>,
 
     /// All database related arguments
     #[command(flatten)]
@@ -93,7 +96,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<Environment<N>>
     where
-        C: ChainSpecParser<ChainSpec = N::ChainSpec>,
+        C: ChainSpecParser,
     {
         let data_dir = self.datadir.clone().resolve_datadir(self.chain.chain());
         let db_path = data_dir.db();
@@ -187,7 +190,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<ProviderFactory<NodeTypesWithDBAdapter<N, DatabaseEnv>>>
     where
-        C: ChainSpecParser<ChainSpec = N::ChainSpec>,
+        C: ChainSpecParser,
     {
         let balstore_cache_size =
             self.db.balstore_cache_size.unwrap_or(BalConfig::DEFAULT_IN_MEMORY_RETENTION_DISTANCE);

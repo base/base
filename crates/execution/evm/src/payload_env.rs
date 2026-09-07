@@ -2,23 +2,22 @@
 
 use alloy_consensus::BlockHeader;
 use base_common_chains::Upgrades;
-use reth_chainspec::EthChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use reth_payload_primitives::{BasePayloadBuilderAttributes, BuildNextEnv, PayloadBuilderError};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 
 use crate::BaseNextBlockEnvAttributes;
 
-impl<H, T, ChainSpec> BuildNextEnv<BasePayloadBuilderAttributes<T>, H, ChainSpec>
+impl<H, T> BuildNextEnv<BasePayloadBuilderAttributes<T>, H, BaseChainSpec>
     for BaseNextBlockEnvAttributes
 where
     H: BlockHeader,
     T: SignedTransaction,
-    ChainSpec: EthChainSpec + Upgrades,
 {
     fn build_next_env(
         attributes: &BasePayloadBuilderAttributes<T>,
         parent: &SealedHeader<H>,
-        chain_spec: &ChainSpec,
+        chain_spec: &BaseChainSpec,
     ) -> Result<Self, PayloadBuilderError> {
         let extra_data =
             if chain_spec.is_jovian_active_at_timestamp(attributes.payload_attributes.timestamp) {

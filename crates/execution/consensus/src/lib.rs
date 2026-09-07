@@ -292,7 +292,7 @@ mod tests {
     };
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
+    use reth_chainspec::{BaseFeeParams, ForkCondition};
     use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
     use reth_provider::BlockExecutionResult;

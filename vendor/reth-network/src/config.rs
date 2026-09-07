@@ -4,7 +4,8 @@ use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use base_common_consensus::{BaseBlock, BaseReceipt};
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, Hardforks};
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
+use reth_chainspec::Hardforks;
 use reth_discv4::{DEFAULT_DISCOVERY_ADDRESS, Discv4Config, Discv4ConfigBuilder, NatResolver};
 use reth_discv5::NetworkStackId;
 use reth_dns_discovery::DnsDiscoveryConfig;
@@ -566,13 +567,10 @@ impl NetworkConfigBuilder {
 
     /// Convenience function for creating a [`NetworkConfig`] with a noop provider that does
     /// nothing.
-    pub fn build_with_noop_provider<ChainSpec>(
+    pub fn build_with_noop_provider(
         self,
-        chain_spec: Arc<ChainSpec>,
-    ) -> NetworkConfig<NoopProvider<ChainSpec>>
-    where
-        ChainSpec: EthChainSpec + Hardforks + 'static,
-    {
+        chain_spec: Arc<BaseChainSpec>,
+    ) -> NetworkConfig<NoopProvider> {
         self.build(NoopProvider::eth(chain_spec))
     }
 
@@ -619,7 +617,7 @@ impl NetworkConfigBuilder {
     /// establishing a connection.
     pub fn build<C>(self, client: C) -> NetworkConfig<C>
     where
-        C: ChainSpecProvider<ChainSpec: Hardforks>,
+        C: ChainSpecProvider,
     {
         let peer_id = self.get_peer_id();
         let chain_spec = client.chain_spec();
@@ -665,13 +663,7 @@ impl NetworkConfigBuilder {
 
         discovery_v5_builder = discovery_v5_builder.map(|mut builder| {
             let fork_id = chain_spec.fork_id(&head);
-            if let Some(network_stack_id) = NetworkStackId::id(&chain_spec) {
-                builder = builder.fork(network_stack_id, fork_id)
-            } else {
-                // Custom Ethereum chains are not recognized by `NetworkStackId::id`, but still
-                // use the `eth` key for fork-aware discovery. Preserve any explicit override.
-                builder = builder.fork_if_unset(NetworkStackId::ETH, fork_id)
-            }
+            builder = builder.fork(NetworkStackId::OPEL, fork_id);
 
             if let Some(ip) = advertised_ip {
                 builder = builder.advertised_ip(ip);
@@ -771,7 +763,6 @@ mod tests {
         Chain, ChainSpecBuilder, EthereumHardfork, ForkCondition, ForkId, MAINNET,
     };
     use reth_discv5::build_local_enr;
-    use reth_dns_discovery::tree::LinkEntry;
     use reth_storage_api::noop::NoopProvider;
 
     use super::*;
@@ -815,10 +806,8 @@ mod tests {
 
         let dns = config.dns_discovery_config.unwrap();
         let bootstrap_nodes = dns.bootstrap_dns_networks.unwrap();
-        let mainnet_dns: LinkEntry =
-            Chain::mainnet().public_dns_network_protocol().unwrap().parse().unwrap();
-        assert!(bootstrap_nodes.contains(&mainnet_dns));
-        assert_eq!(bootstrap_nodes.len(), 1);
+        assert_eq!(config.chain_id, 8453);
+        assert!(bootstrap_nodes.is_empty(), "Base has no built-in Ethereum DNS discovery tree");
     }
 
     #[test]
@@ -832,7 +821,7 @@ mod tests {
         let genesis_fork_hash = ForkHash::from(chain_spec.genesis_hash());
 
         // enforce that the fork_id set in the status is consistent with the generated fork filter
-        let config = builder().build_with_noop_provider(chain_spec);
+        let config = builder().build_with_noop_provider(Arc::new((*chain_spec).clone().into()));
 
         let status = config.status;
         let fork_filter = config.fork_filter;
@@ -881,24 +870,20 @@ mod tests {
         assert_ne!(fork_id, chain_spec.latest_fork_id());
 
         // enforce that the fork_id set in local enr
-        let fork_key = b"odyssey";
+        let fork_key = NetworkStackId::OPEL;
         let config = builder()
-            .discovery_v5(
-                reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 30303).into())
-                    .fork(fork_key, fork_id),
-            )
-            .build_with_noop_provider(Arc::new(chain_spec));
+            .discovery_v5(reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 30303).into()))
+            .build_with_noop_provider(Arc::new(chain_spec.into()));
 
         let (local_enr, _, _, _) = build_local_enr(
             &config.secret_key,
             &config.discovery_v5_config.expect("should build config"),
         );
 
-        // peers on the odyssey network will check discovered enrs for the 'odyssey' key and
-        // decide based on this if they attempt and rlpx connection to the peer or not
+        // Base peers read the opel fork ID before attempting an RLPx connection.
         let advertised_fork_id = *local_enr
             .get_decodable::<Vec<ForkId>>(fork_key)
-            .expect("should read 'odyssey'")
+            .expect("should read 'opel'")
             .expect("should decode fork id list")
             .first()
             .expect("should be non-empty");
@@ -907,7 +892,7 @@ mod tests {
     }
 
     #[test]
-    fn test_discv5_fork_id_custom_chain_id_fallback() {
+    fn test_discv5_custom_base_chain_uses_opel_fork_id() {
         const GENESIS_TIME: u64 = 151_515;
 
         let genesis = Genesis::default().with_timestamp(GENESIS_TIME);
@@ -928,7 +913,7 @@ mod tests {
 
         let config = builder()
             .discovery_v5(reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 30303).into()))
-            .build_with_noop_provider(Arc::new(chain_spec));
+            .build_with_noop_provider(Arc::new(chain_spec.into()));
 
         let (local_enr, _, _, _) = build_local_enr(
             &config.secret_key,
@@ -936,8 +921,8 @@ mod tests {
         );
 
         let advertised_fork_id = *local_enr
-            .get_decodable::<Vec<ForkId>>(NetworkStackId::ETH)
-            .expect("should read 'eth'")
+            .get_decodable::<Vec<ForkId>>(NetworkStackId::OPEL)
+            .expect("should read 'opel'")
             .expect("should decode fork id list")
             .first()
             .expect("should be non-empty");

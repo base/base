@@ -214,13 +214,13 @@ async fn test_setup_builder_with_custom_tree_config() -> Result<()> {
             .build(),
     );
 
-    let (nodes, _wallet) = E2ETestSetupBuilder::<BaseNode, _>::new(1, chain_spec, |_| {
+    let (nodes, _wallet) = E2ETestSetupBuilder::new(1, chain_spec, |_| {
         BaseTestPayload::attributes(PayloadAttributes::default())
     })
     .with_tree_config_modifier(|config| {
         config.with_persistence_threshold(0).with_memory_block_buffer_target(5)
     })
-    .build()
+    .build::<BaseNode>()
     .await?;
 
     assert_eq!(nodes.len(), 1);

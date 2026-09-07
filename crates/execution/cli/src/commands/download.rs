@@ -14,7 +14,6 @@ use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
 use eyre::Result;
 use futures::StreamExt;
-use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::download::{DownloadCommand, DownloadDefaults};
 use reth_node_core::args::DatadirArgs;
@@ -42,7 +41,7 @@ pub struct BaseDownloadCommand<C: ChainSpecParser> {
     proofs: bool,
 }
 
-impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
+impl<C: ChainSpecParser> BaseDownloadCommand<C> {
     /// Executes the download command.
     pub async fn execute<N>(self) -> Result<()> {
         let Self { inner, proofs } = self;
@@ -97,7 +96,7 @@ fn resolve_datadir_args(args: impl IntoIterator<Item = OsString>) -> DatadirArgs
 
 impl<C: ChainSpecParser> BaseDownloadCommand<C> {
     /// Returns the underlying chain spec.
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         self.inner.chain_spec()
     }
 }

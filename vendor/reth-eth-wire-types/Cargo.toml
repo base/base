@@ -26,6 +26,7 @@ alloy-hardforks = { workspace = true }
 reth-codecs-derive = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
+base-execution-chainspec = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 alloy-chains = { workspace = true, features = ["rlp"] }
 derive_more = { workspace = true, features = ["full"] }

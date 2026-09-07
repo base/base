@@ -57,7 +57,6 @@ base-node-core = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "mdbx"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 reth-node-builder = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
 reth-network-peers = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
@@ -71,6 +70,7 @@ proptest = { workspace = true, optional = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json", "stream"] }
 base-upgrade-signal = { workspace = true, features = ["default", "metrics"] }
 tokio = { workspace = true, features = ["default", "macros", "time", "sync"] }
+base-common-consensus = { workspace = true, features = ["reth"], optional = true }
 [dev-dependencies]
 alloy-primitives = { workspace = true }
 base-common-genesis = { workspace = true }
@@ -102,6 +102,7 @@ jemalloc-symbols = [ "jemalloc-prof", "reth-node-metrics/jemalloc-symbols" ]
 tracy = [ "reth-node-core/tracy", "reth-tracing/tracy" ]
 
 dev = [
+	"dep:base-common-consensus",
 	"base-common-consensus/arbitrary",
 	"dep:proptest",
 	"reth-cli-commands/arbitrary",
@@ -110,7 +111,7 @@ dev = [
 serde = [
 	"alloy-eips/serde",
 	"base-common-chains/serde",
-	"base-common-consensus/serde",
+	"base-common-consensus?/serde",
 	"base-execution-chainspec/serde",
 	"reth-network/serde",
 	"secp256k1/serde",

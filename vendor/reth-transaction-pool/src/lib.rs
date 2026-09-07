@@ -199,7 +199,7 @@
 //! use reth_chainspec::MAINNET;
 //! use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 //! use reth_tasks::Runtime;
-//! use reth_chainspec::ChainSpecProvider;
+//! use base_execution_chainspec::ChainSpecProvider;
 //! use reth_transaction_pool::{TransactionValidationTaskExecutor, Pool, TransactionPool};
 //! use reth_transaction_pool::blobstore::InMemoryBlobStore;
 //! use reth_chainspec::EthereumHardforks;
@@ -207,7 +207,7 @@
 //! use alloy_consensus::Header;
 //! async fn t<C, Evm>(client: C, evm_config: Evm)
 //! where
-//!     C: ChainSpecProvider<ChainSpec: EthereumHardforks> + StateProviderFactory + BlockReaderIdExt<Header = Header> + Clone + 'static,
+//!     C: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt<Header = Header> + Clone + 'static,
 //!     Evm: ConfigureEvm + 'static,
 //! {
 //!     let blob_store = InMemoryBlobStore::default();
@@ -244,7 +244,7 @@
 //! use alloy_consensus::Header;
 //!
 //!  async fn t<C, St, Evm>(client: C, stream: St, evm_config: Evm)
-//!    where C: StateProviderFactory + BlockReaderIdExt<Header = Header> + ChainSpecProvider<ChainSpec = ChainSpec> + Clone + 'static,
+//!    where C: StateProviderFactory + BlockReaderIdExt<Header = Header> + ChainSpecProvider + Clone + 'static,
 //!     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
 //!     Evm: ConfigureEvm + 'static,
 //!     {
@@ -283,8 +283,8 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
 use aquamarine as _;
+use base_execution_chainspec::ChainSpecProvider;
 pub use imbl::OrdMap;
-use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
 use reth_eth_wire_types::HandleMempoolData;
 use reth_evm::ConfigureEvm;
 use reth_execution_types::ChangedAccount;
@@ -411,7 +411,7 @@ where
 
 impl<Client, S, Evm> EthTransactionPool<Client, S, Evm>
 where
-    Client: ChainSpecProvider<ChainSpec: EthereumHardforks>
+    Client: ChainSpecProvider
         + StateProviderFactory
         + Clone
         + BlockReaderIdExt<Header = alloy_consensus::Header>
@@ -428,7 +428,7 @@ where
     /// use reth_chainspec::MAINNET;
     /// use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
     /// use reth_tasks::Runtime;
-    /// use reth_chainspec::ChainSpecProvider;
+    /// use base_execution_chainspec::ChainSpecProvider;
     /// use reth_transaction_pool::{
     ///     blobstore::InMemoryBlobStore, Pool, TransactionValidationTaskExecutor,
     /// };
@@ -437,7 +437,7 @@ where
     /// use alloy_consensus::Header;
     /// # fn t<C, Evm>(client: C, evm_config: Evm, runtime: Runtime)
     /// # where
-    /// #     C: ChainSpecProvider<ChainSpec: EthereumHardforks> + StateProviderFactory + BlockReaderIdExt<Header = Header> + Clone + 'static,
+    /// #     C: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt<Header = Header> + Clone + 'static,
     /// #     Evm: ConfigureEvm + 'static,
     /// # {
     /// let blob_store = InMemoryBlobStore::default();

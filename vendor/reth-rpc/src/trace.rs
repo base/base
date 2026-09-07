@@ -19,9 +19,10 @@ use alloy_rpc_types_trace::{
 };
 use async_trait::async_trait;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_execution_chainspec::ChainSpecProvider;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
-use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
+use reth_chainspec::EthereumHardforks;
 use reth_primitives_traits::{BlockBody, BlockHeader};
 use reth_rpc_api::TraceApiServer;
 use reth_rpc_eth_api::{

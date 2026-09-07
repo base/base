@@ -14,6 +14,7 @@ use alloy_consensus::transaction::TransactionMeta;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_execution_chainspec::BaseChainSpec;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use reth_chainspec::ChainInfo;
@@ -75,7 +76,7 @@ pub struct ProviderFactory<N: NodeTypesWithDB> {
     /// Database instance
     db: N::DB,
     /// Chain spec
-    chain_spec: Arc<N::ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     /// Static File Provider
     static_file_provider: StaticFileProvider,
     /// Optional pruning configuration
@@ -119,7 +120,7 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
     /// inner database to the minimum of the two targets to ensure consistency.
     pub fn new(
         db: N::DB,
-        chain_spec: Arc<N::ChainSpec>,
+        chain_spec: Arc<BaseChainSpec>,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
         runtime: reth_tasks::Runtime,
@@ -131,7 +132,7 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
         let default_settings = StorageSettings::v2();
         let database_provider_metrics = Arc::new(DatabaseProviderMetrics::default());
         let overlay_manager = OverlayManager::default();
-        let storage_settings = DatabaseProvider::<_, N>::new(
+        let storage_settings = DatabaseProvider::<_>::new(
             db.tx()?,
             chain_spec.clone(),
             static_file_provider.clone(),
@@ -178,7 +179,7 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
     /// encountered during consistency checks.
     pub fn new_checked(
         db: N::DB,
-        chain_spec: Arc<N::ChainSpec>,
+        chain_spec: Arc<BaseChainSpec>,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
         runtime: reth_tasks::Runtime,
@@ -362,7 +363,7 @@ impl<N: ProviderNodeTypes<DB = DatabaseEnv>> ProviderFactory<N> {
     /// instance.
     pub fn new_with_database_path<P: AsRef<Path>>(
         path: P,
-        chain_spec: Arc<N::ChainSpec>,
+        chain_spec: Arc<BaseChainSpec>,
         args: DatabaseArguments,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
@@ -387,7 +388,7 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
     /// This sets the [`PruneModes`] to [`None`], because they should only be relevant for writing
     /// data.
     #[track_caller]
-    pub fn provider(&self) -> ProviderResult<DatabaseProviderRO<N::DB, N>> {
+    pub fn provider(&self) -> ProviderResult<DatabaseProviderRO<N::DB>> {
         let db_tx = self.db.tx()?;
 
         // Sync providers after opening the database transaction to make
@@ -417,7 +418,7 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
     /// [`BlockHashReader`].  This may fail if the inner read/write database transaction fails to
     /// open.
     #[track_caller]
-    pub fn provider_rw(&self) -> ProviderResult<DatabaseProviderRW<N::DB, N>> {
+    pub fn provider_rw(&self) -> ProviderResult<DatabaseProviderRW<N::DB>> {
         Ok(DatabaseProviderRW(
             DatabaseProvider::new_rw(
                 self.db.tx_mut()?,
@@ -445,7 +446,7 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
     #[track_caller]
     pub fn unwind_provider_rw(
         &self,
-    ) -> ProviderResult<DatabaseProvider<<N::DB as Database>::TXMut, N>> {
+    ) -> ProviderResult<DatabaseProvider<<N::DB as Database>::TXMut>> {
         Ok(DatabaseProvider::new_unwind_rw(
             self.db.tx_mut()?,
             self.chain_spec.clone(),
@@ -557,7 +558,7 @@ impl<N: ProviderNodeTypes> ProviderFactory<N> {
     /// header, resets it to the highest header.
     fn heal_chain_state_block_numbers(
         &self,
-        provider_ro: &DatabaseProvider<<N::DB as Database>::TX, N>,
+        provider_ro: &DatabaseProvider<<N::DB as Database>::TX>,
     ) -> ProviderResult<()> {
         let highest_header = self.last_block_number()?;
 
@@ -612,8 +613,8 @@ impl<N: ProviderNodeTypes> BalProvider for ProviderFactory<N> {
 
 impl<N: ProviderNodeTypes> DatabaseProviderFactory for ProviderFactory<N> {
     type DB = N::DB;
-    type Provider = DatabaseProvider<<N::DB as Database>::TX, N>;
-    type ProviderRW = DatabaseProvider<<N::DB as Database>::TXMut, N>;
+    type Provider = DatabaseProvider<<N::DB as Database>::TX>;
+    type ProviderRW = DatabaseProvider<<N::DB as Database>::TXMut>;
 
     fn database_provider_ro(&self) -> ProviderResult<Self::Provider> {
         self.provider()
@@ -928,9 +929,7 @@ impl<N: ProviderNodeTypes> StageCheckpointReader for ProviderFactory<N> {
 }
 
 impl<N: NodeTypesWithDB> ChainSpecProvider for ProviderFactory<N> {
-    type ChainSpec = N::ChainSpec;
-
-    fn chain_spec(&self) -> Arc<N::ChainSpec> {
+    fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.chain_spec.clone()
     }
 }
@@ -956,7 +955,7 @@ impl<N: ProviderNodeTypes> MetadataProvider for ProviderFactory<N> {
 
 impl<N> fmt::Debug for ProviderFactory<N>
 where
-    N: NodeTypesWithDB<DB: fmt::Debug, ChainSpec: fmt::Debug>,
+    N: NodeTypesWithDB<DB: fmt::Debug>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
@@ -1032,8 +1031,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        BlockHashReader, BlockNumReader, BlockWriter, HeaderSyncGapProvider,
-        MetadataWriter, TransactionsProvider,
+        BlockHashReader, BlockNumReader, BlockWriter, HeaderSyncGapProvider, MetadataWriter,
+        TransactionsProvider,
         providers::{StaticFileProvider, StaticFileWriter},
         test_utils::{MockNodeTypesWithDB, blocks::TEST_BLOCK, create_test_provider_factory},
     };
@@ -1109,7 +1108,7 @@ mod tests {
         let _db_tempdir = tempfile::TempDir::new().expect(ERROR_TEMPDIR);
         let factory = ProviderFactory::<MockNodeTypesWithDB<DatabaseEnv>>::new_with_database_path(
             _db_tempdir.path(),
-            Arc::new(chain_spec),
+            Arc::new(chain_spec.into()),
             DatabaseArguments::new(Default::default()),
             StaticFileProvider::read_write(static_dir_path).unwrap(),
             RocksDBProvider::builder(&rocksdb_path).build().unwrap(),

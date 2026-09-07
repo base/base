@@ -9,6 +9,7 @@ use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, Bytes, TxHash, TxNumber};
 use alloy_rpc_types_engine::ForkchoiceState;
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_execution_chainspec::BaseChainSpec;
 use reth_chain_state::{
     BlockState, CanonicalInMemoryState, ForkChoiceNotifications, ForkChoiceSubscriptions,
     MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
@@ -260,7 +261,7 @@ impl<N: ProviderNodeTypes> StateRangeProviderFactory for BlockchainProvider<N> {
             None => self.historical_state_range_provider(state_root)?,
         };
         Ok(provider
-            .map(|provider| Box::new(HistoricalStateRangeView { provider }) as StateRangeView))
+            .map(|provider| Box::new(HistoricalStateRangeView::<N> { provider }) as StateRangeView))
     }
 }
 
@@ -737,9 +738,7 @@ impl<N: ProviderNodeTypes> PruneCheckpointReader for BlockchainProvider<N> {
 }
 
 impl<N: NodeTypesWithDB> ChainSpecProvider for BlockchainProvider<N> {
-    type ChainSpec = N::ChainSpec;
-
-    fn chain_spec(&self) -> Arc<N::ChainSpec> {
+    fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.database.chain_spec()
     }
 }

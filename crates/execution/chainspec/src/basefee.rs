@@ -4,12 +4,11 @@ use core::cmp::max;
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::calc_next_block_base_fee;
-use base_common_chains::Upgrades;
 use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
-use reth_chainspec::{BaseFeeParams, EthChainSpec};
+use reth_chainspec::BaseFeeParams;
 
 fn base_fee_params_from_extra_data(
-    chain_spec: impl EthChainSpec,
+    chain_spec: &crate::BaseChainSpec,
     timestamp: u64,
     elasticity: u32,
     denominator: u32,
@@ -29,7 +28,7 @@ fn base_fee_params_from_extra_data(
 ///
 /// See also [Base fee computation](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/holocene/exec-engine.md#base-fee-computation)
 pub fn decode_holocene_base_fee<H>(
-    chain_spec: impl EthChainSpec + Upgrades,
+    chain_spec: &crate::BaseChainSpec,
     parent: &H,
     timestamp: u64,
 ) -> Result<u64, EIP1559ParamError>
@@ -53,7 +52,7 @@ where
 /// See also [Base fee computation](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#base-fee-computation)
 /// and [Minimum base fee in block header](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#minimum-base-fee-in-block-header)
 pub fn compute_jovian_base_fee<H>(
-    chain_spec: impl EthChainSpec + Upgrades,
+    chain_spec: &crate::BaseChainSpec,
     parent: &H,
     timestamp: u64,
 ) -> Result<u64, EIP1559ParamError>
@@ -136,7 +135,7 @@ mod tests {
         );
         assert_eq!(
             expected_base_fee,
-            compute_jovian_base_fee(chain_spec, &parent, timestamp).unwrap()
+            compute_jovian_base_fee(&chain_spec, &parent, timestamp).unwrap()
         );
         assert_ne!(
             expected_base_fee,
@@ -175,7 +174,7 @@ mod tests {
         );
         assert_eq!(
             expected_base_fee,
-            compute_jovian_base_fee(chain_spec, &parent, timestamp).unwrap()
+            compute_jovian_base_fee(&chain_spec, &parent, timestamp).unwrap()
         );
     }
 
@@ -200,7 +199,7 @@ mod tests {
         let expected_base_fee = MIN_BASE_FEE;
         assert_eq!(
             expected_base_fee,
-            compute_jovian_base_fee(chain_spec, &parent, timestamp).unwrap()
+            compute_jovian_base_fee(&chain_spec, &parent, timestamp).unwrap()
         );
     }
 
@@ -214,7 +213,7 @@ mod tests {
 
         assert_eq!(
             EIP1559ParamError::InvalidParams,
-            compute_jovian_base_fee(chain_spec, &parent, JOVIAN_TIMESTAMP).unwrap_err()
+            compute_jovian_base_fee(&chain_spec, &parent, JOVIAN_TIMESTAMP).unwrap_err()
         );
     }
 
@@ -228,7 +227,7 @@ mod tests {
 
         assert_eq!(
             EIP1559ParamError::InvalidParams,
-            compute_jovian_base_fee(chain_spec, &parent, JOVIAN_TIMESTAMP).unwrap_err()
+            compute_jovian_base_fee(&chain_spec, &parent, JOVIAN_TIMESTAMP).unwrap_err()
         );
     }
 }

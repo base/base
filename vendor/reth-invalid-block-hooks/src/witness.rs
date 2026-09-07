@@ -417,7 +417,6 @@ where
 mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Address, B256, Bytes, U256, map::HashMap};
-    use reth_chainspec::ChainSpec;
     use reth_evm::TestEvmConfig;
     use reth_provider::test_utils::MockEthProvider;
     use reth_revm::{
@@ -599,11 +598,11 @@ mod tests {
 
     /// Creates test `InvalidBlockWitnessHook` with temporary directory
     fn create_test_hook()
-    -> (InvalidBlockWitnessHook<MockEthProvider<ChainSpec>, TestEvmConfig>, PathBuf, TempDir) {
+    -> (InvalidBlockWitnessHook<MockEthProvider, TestEvmConfig>, PathBuf, TempDir) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let output_directory = temp_dir.path().to_path_buf();
 
-        let provider = MockEthProvider::<ChainSpec>::default();
+        let provider = MockEthProvider::default();
         let evm_config = TestEvmConfig::default();
 
         let hook =

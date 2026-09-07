@@ -1,7 +1,6 @@
 use alloy_consensus::BlockHeader;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::Address;
-use reth_chainspec::EthChainSpec;
 use reth_db::{
     BlockNumberList,
     models::{ShardedKey, storage_sharded_key::StorageShardedKey},

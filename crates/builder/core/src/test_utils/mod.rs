@@ -12,7 +12,6 @@ use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 pub use apis::*;
 use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction};
-use base_execution_chainspec::BaseChainSpec;
 pub use driver::*;
 pub use external::*;
 pub use instance::*;
@@ -63,7 +62,7 @@ pub async fn setup_test_instance_with_builder_config(
 /// Sets up a test instance with custom `BuilderConfig` and `NodeConfig`.
 pub async fn setup_test_instance_with_node_config(
     builder_config: BuilderConfig,
-    node_config: NodeConfig<BaseChainSpec>,
+    node_config: NodeConfig,
 ) -> eyre::Result<LocalInstance> {
     clear_otel_env_vars();
     LocalInstance::new_with_node_config(builder_config, node_config).await

@@ -3,6 +3,7 @@
 use std::{collections::BTreeMap, ops::Not, sync::OnceLock};
 
 use alloy_primitives::{Address, BlockNumber};
+use base_execution_chainspec::BaseChainSpec;
 use clap::{Args, builder::RangedU64ValueParser};
 use reth_chainspec::EthereumHardforks;
 use reth_config::config::PruneConfig;
@@ -118,10 +119,7 @@ impl PruneConfigKind {
     }
 
     /// Classifies an effective pruning configuration.
-    pub fn from_config<ChainSpec>(config: &PruneConfig, chain_spec: &ChainSpec) -> Self
-    where
-        ChainSpec: EthereumHardforks,
-    {
+    pub fn from_config(config: &PruneConfig, chain_spec: &BaseChainSpec) -> Self {
         if config.is_default() {
             return Self::Archive;
         }
@@ -258,10 +256,7 @@ impl PruningArgs {
     ///
     /// Returns [`None`] if no parameters are specified and default pruning configuration should be
     /// used.
-    pub fn prune_config<ChainSpec>(&self, chain_spec: &ChainSpec) -> Option<PruneConfig>
-    where
-        ChainSpec: EthereumHardforks,
-    {
+    pub fn prune_config(&self, chain_spec: &BaseChainSpec) -> Option<PruneConfig> {
         // Initialize with a default prune configuration.
         let mut config = PruneConfig::default();
 
@@ -328,10 +323,7 @@ impl PruningArgs {
         config.is_default().not().then_some(config)
     }
 
-    fn bodies_prune_mode<ChainSpec>(&self, chain_spec: &ChainSpec) -> Option<PruneMode>
-    where
-        ChainSpec: EthereumHardforks,
-    {
+    fn bodies_prune_mode(&self, chain_spec: &BaseChainSpec) -> Option<PruneMode> {
         if self.bodies_pre_merge {
             chain_spec
                 .ethereum_fork_activation(EthereumHardfork::Paris)
@@ -368,10 +360,7 @@ impl PruningArgs {
         }
     }
 
-    fn receipts_prune_mode<ChainSpec>(&self, chain_spec: &ChainSpec) -> Option<PruneMode>
-    where
-        ChainSpec: EthereumHardforks,
-    {
+    fn receipts_prune_mode(&self, chain_spec: &BaseChainSpec) -> Option<PruneMode> {
         if self.receipts_pre_merge {
             chain_spec
                 .ethereum_fork_activation(EthereumHardfork::Paris)
@@ -457,8 +446,8 @@ pub(crate) fn parse_receipts_log_filter(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
+    use base_execution_chainspec::BaseChainSpec;
     use clap::Parser;
-    use reth_chainspec::MAINNET;
 
     use super::*;
 
@@ -487,7 +476,7 @@ mod tests {
 
     #[test]
     fn pruning_config_kind_classifies_presets() {
-        let chain_spec = MAINNET.as_ref();
+        let chain_spec = &BaseChainSpec::mainnet();
 
         assert_eq!(
             PruneConfigKind::from_config(&PruneConfig::default(), chain_spec),

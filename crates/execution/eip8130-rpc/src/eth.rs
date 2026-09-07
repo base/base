@@ -5,14 +5,13 @@ use alloy_eips::BlockId;
 use alloy_evm::EvmFactory;
 use alloy_primitives::{Address, U256};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride};
-use base_common_chains::Upgrades;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_execution_chainspec::ChainSpecProvider;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use reth_chainspec::ChainSpecProvider;
 use reth_evm::{EvmFactoryFor, TxEnvFor};
 use reth_rpc_eth_api::{
     EthApiTypes, FromEthApiError, RpcNodeCore,
@@ -85,7 +84,6 @@ where
     Eth: FullEthApi + LoadPendingBlock + Clone + Send + Sync + 'static,
     Eth::Error: FromEthApiError,
     <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
-    <<Eth as RpcNodeCore>::Provider as ChainSpecProvider>::ChainSpec: Upgrades,
     TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
     EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,

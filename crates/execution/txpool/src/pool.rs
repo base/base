@@ -1806,7 +1806,7 @@ mod tests {
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope,
         Eip8130Constants, Eip8130Signed, TxEip8130,
     };
-    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_evm::BaseEvmConfig;
     use futures::{StreamExt, future::join_all};
     use reth_primitives_traits::SealedBlock;
@@ -2023,13 +2023,13 @@ mod tests {
         assert!(nonce_pool.get(&replacement_hash).is_some());
     }
 
-    type IntegrationPool =
-        BaseTransactionPool<MockEthProvider<Arc<BaseChainSpec>>, InMemoryBlobStore, BaseEvmConfig>;
+    type IntegrationPool = BaseTransactionPool<MockEthProvider, InMemoryBlobStore, BaseEvmConfig>;
 
-    fn build_integration_pool() -> (IntegrationPool, MockEthProvider<Arc<BaseChainSpec>>) {
+    fn build_integration_pool() -> (IntegrationPool, MockEthProvider) {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
-        let client =
-            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
+        let client = MockEthProvider::new()
+            .with_chain_spec(chain_spec.as_ref().clone())
+            .with_genesis_block();
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let blob_store = InMemoryBlobStore::default();
         let validator = EthTransactionValidatorBuilder::new(client.clone(), evm_config)
@@ -2045,7 +2045,7 @@ mod tests {
         (BaseTransactionPool::new(pool, ordering).with_guard_limits(GuardLimits::default()), client)
     }
 
-    fn fund(client: &MockEthProvider<Arc<BaseChainSpec>>, account: Address) {
+    fn fund(client: &MockEthProvider, account: Address) {
         client.add_account(
             account,
             ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),

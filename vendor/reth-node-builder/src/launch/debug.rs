@@ -7,13 +7,13 @@ use std::{
 use alloy_consensus::transaction::Either;
 use alloy_provider::network::AnyNetwork;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_execution_chainspec::BaseChainSpec;
 use jsonrpsee::core::{DeserializeOwned, Serialize};
-use reth_chainspec::EthChainSpec;
 use reth_consensus_debug_client::{
     DebugConsensusClient, EtherscanBlockProvider, PayloadProvider, RpcBlockProvider,
 };
 use reth_engine_local::{LocalMiner, MiningMode};
-use reth_node_api::{FullNodeComponents, NodeTypes, PayloadAttributesBuilder};
+use reth_node_api::{FullNodeComponents, PayloadAttributesBuilder};
 use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use reth_primitives_traits::SealedBlock;
 use tracing::info;
@@ -23,12 +23,12 @@ use crate::{NodeHandle, rpc::RethRpcAddOns};
 
 /// Concrete conversions used by the debug launcher.
 #[derive(Debug)]
-pub struct DebugNodeConfig<T: NodeTypes, R> {
+pub struct DebugNodeConfig<R> {
     /// Converts an RPC response to the node's primitive block.
     pub rpc_to_primitive_block: fn(R) -> BaseBlock,
     /// Creates the default local-mining payload attributes builder.
     pub local_payload_attributes_builder: fn(
-        &T::ChainSpec,
+        &BaseChainSpec,
     ) -> Box<
         dyn PayloadAttributesBuilder<
                 BasePayloadBuilderAttributes<BaseTxEnvelope>,
@@ -37,9 +37,9 @@ pub struct DebugNodeConfig<T: NodeTypes, R> {
     >,
 }
 
-impl<T: NodeTypes, R> Copy for DebugNodeConfig<T, R> {}
+impl<R> Copy for DebugNodeConfig<R> {}
 
-impl<T: NodeTypes, R> Clone for DebugNodeConfig<T, R> {
+impl<R> Clone for DebugNodeConfig<R> {
     fn clone(&self) -> Self {
         *self
     }
@@ -67,14 +67,14 @@ impl<T: NodeTypes, R> Clone for DebugNodeConfig<T, R> {
 /// - Requires `ETHERSCAN_API_KEY` environment variable
 /// - Falls back to default Etherscan URL for the chain if URL not provided
 #[derive(Debug, Clone)]
-pub struct DebugNodeLauncher<L, T: NodeTypes, R> {
+pub struct DebugNodeLauncher<L, R> {
     inner: L,
-    config: DebugNodeConfig<T, R>,
+    config: DebugNodeConfig<R>,
 }
 
-impl<L, T: NodeTypes, R> DebugNodeLauncher<L, T, R> {
+impl<L, R> DebugNodeLauncher<L, R> {
     /// Creates a new instance of the [`DebugNodeLauncher`].
-    pub const fn new(inner: L, config: DebugNodeConfig<T, R>) -> Self {
+    pub const fn new(inner: L, config: DebugNodeConfig<R>) -> Self {
         Self { inner, config }
     }
 }
@@ -92,7 +92,7 @@ where
 {
     inner: L,
     target: Target,
-    config: DebugNodeConfig<N::Types, R>,
+    config: DebugNodeConfig<R>,
     local_payload_attributes_builder: Option<
         Box<
             dyn PayloadAttributesBuilder<
@@ -359,7 +359,7 @@ where
     }
 }
 
-impl<L, Target, N, AddOns, R> LaunchNode<Target> for DebugNodeLauncher<L, N::Types, R>
+impl<L, Target, N, AddOns, R> LaunchNode<Target> for DebugNodeLauncher<L, R>
 where
     Target: Send + 'static,
     N: FullNodeComponents,

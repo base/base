@@ -15,12 +15,13 @@ use alloy_primitives::{
 };
 use alloy_rlp::Encodable;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_execution_chainspec::ChainSpecProvider;
 use futures_util::{
     FutureExt, Stream, StreamExt,
     future::{BoxFuture, Fuse, FusedFuture},
 };
 use reth_chain_state::CanonStateNotification;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
+use reth_chainspec::EthereumHardforks;
 use reth_execution_types::ChangedAccount;
 use reth_fs_util::FsPathError;
 use reth_primitives_traits::{SealedHeader, transaction::signed::SignedTransaction};
@@ -106,9 +107,8 @@ pub fn maintain_transaction_pool_future<Client, P, St>(
 where
     Client: StateProviderFactory
         + BlockReaderIdExt<Header = alloy_consensus::Header>
-        + ChainSpecProvider<
-            ChainSpec: EthChainSpec<Header = alloy_consensus::Header> + EthereumHardforks,
-        > + Clone
+        + ChainSpecProvider
+        + Clone
         + 'static,
     P: TransactionPoolExt<
             Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
@@ -134,9 +134,8 @@ pub async fn maintain_transaction_pool<Client, P, St>(
 ) where
     Client: StateProviderFactory
         + BlockReaderIdExt<Header = alloy_consensus::Header>
-        + ChainSpecProvider<
-            ChainSpec: EthChainSpec<Header = alloy_consensus::Header> + EthereumHardforks,
-        > + Clone
+        + ChainSpecProvider
+        + Clone
         + 'static,
     P: TransactionPoolExt<
             Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,

@@ -73,12 +73,9 @@ pub struct PruneCommand<C: ChainSpecParser> {
     pub proofs_history_prune_batch_size: u64,
 }
 
-impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
+impl<C: ChainSpecParser> PruneCommand<C> {
     /// Execute [`PruneCommand`].
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>>(
-        self,
-        runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<()> {
+    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
         let Self {
             env,
             storage_path,
@@ -166,7 +163,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
 
 impl<C: ChainSpecParser> PruneCommand<C> {
     /// Returns the underlying chain being used to run this command
-    pub const fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub const fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 }

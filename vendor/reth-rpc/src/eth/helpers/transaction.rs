@@ -5,7 +5,8 @@ use std::time::Duration;
 use alloy_consensus::BlobTransactionValidationError;
 use alloy_eips::{BlockId, Typed2718, eip7594::BlobTransactionSidecarVariant};
 use alloy_primitives::{B256, hex};
-use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
+use base_execution_chainspec::ChainSpecProvider;
+use reth_chainspec::EthereumHardforks;
 use reth_primitives_traits::{AlloyBlockHeader, WithEncoded};
 use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
@@ -177,7 +178,9 @@ mod tests {
             .with_chain_spec(ChainSpecBuilder::mainnet().cancun_activated().build());
         mock_provider.extend_accounts(accounts);
 
-        let evm_config = TestEvmConfig::new(mock_provider.chain_spec());
+        let evm_config = TestEvmConfig::new(std::sync::Arc::new(
+            mock_provider.chain_spec().runtime_chain_spec(),
+        ));
         let pool = crate::test_utils::RpcTestUtils::pool();
 
         let genesis_header = Header {

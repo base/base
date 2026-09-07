@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use base_common_consensus::{BaseBlock as Block, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadError, ExecutionData};
-use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks};
+use base_execution_chainspec::BaseChainSpec;
 use reth_payload_primitives::{
     BasePayloadBuilderAttributes as PayloadAttributes, EngineApiMessageVersion,
     EngineObjectValidationError, NewPayloadError, PayloadOrAttributes, validate_execution_requests,
@@ -17,22 +17,19 @@ use crate::{EngineApiValidator, PayloadValidator};
 
 /// Validator for tests of the shared Engine API transport and version handling.
 #[derive(Debug, Clone)]
-pub struct TestEngineValidator<C = ChainSpec> {
+pub struct TestEngineValidator {
     /// Fork schedule used by the shared version checks.
-    pub chain_spec: Arc<C>,
+    pub chain_spec: Arc<BaseChainSpec>,
 }
 
-impl<C> TestEngineValidator<C> {
+impl TestEngineValidator {
     /// Creates a validator for the supplied test fork schedule.
-    pub const fn new(chain_spec: Arc<C>) -> Self {
+    pub const fn new(chain_spec: Arc<BaseChainSpec>) -> Self {
         Self { chain_spec }
     }
 }
 
-impl<C> PayloadValidator for TestEngineValidator<C>
-where
-    C: EthChainSpec + EthereumHardforks + 'static,
-{
+impl PayloadValidator for TestEngineValidator {
     type Block = Block;
 
     fn convert_payload_to_block(
@@ -50,10 +47,7 @@ where
     }
 }
 
-impl<C> EngineApiValidator for TestEngineValidator<C>
-where
-    C: EthChainSpec + EthereumHardforks + 'static,
-{
+impl EngineApiValidator for TestEngineValidator {
     fn validate_version_specific_fields(
         &self,
         version: EngineApiMessageVersion,

@@ -11,7 +11,7 @@ use base_upgrade_signal::{
     UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
-use reth_chainspec::{EthChainSpec, ForkFilter, ForkId, Head};
+use reth_chainspec::{ForkFilter, ForkId, Head};
 use reth_discv5::NetworkStackId;
 use reth_ethereum_forks::EnrForkIdEntry;
 use reth_network::NetworkHandle;
@@ -860,7 +860,7 @@ mod tests {
     ///
     /// [`RecordingNetwork`] only proves the routing; it cannot show that the real
     /// [`RuntimeForkFilterNetwork`] impl updates the discovery ENR fork-id entry Base advertises
-    /// under. reth's own runtime path refreshes only the `eth` entry, so this stands up a live
+    /// under. This stands up a live
     /// discv5-backed [`NetworkHandle`] whose startup ENR advertises an `opel` fork id, calls the
     /// production [`RuntimeForkFilterNetwork::install_fork_filter`], and asserts the advertised
     /// `opel` entry is refreshed to the new fork id. The read-back is synchronous: the discv5 handle
@@ -871,26 +871,19 @@ mod tests {
 
         use reth_chainspec::ChainSpecBuilder;
         use reth_discv5::discv5::{ConfigBuilder as Discv5ConfigBuilder, ListenConfig};
-        use reth_ethereum_forks::ForkHash;
         use reth_network::{NetworkConfigBuilder, NetworkManager};
         use reth_tasks::Runtime;
 
-        // An unnamed chain id makes `NetworkStackId::id` return `None`, so reth's own fork keying
-        // leaves the `opel` entry we seed below untouched. On a real Base node the chain is
-        // optimism, so reth keys `opel` itself; seeding it explicitly here reproduces that startup
-        // ENR shape without constructing a full optimism spec. The impl under test writes `opel`
-        // unconditionally, so this still exercises the real production path.
-        let chain_spec = std::sync::Arc::new(
+        // Use a scheduled fork so startup and the later runtime update advertise different IDs.
+        // Concrete Base specs always use the opel discovery entry, including custom chain IDs.
+        let chain_spec = std::sync::Arc::new(BaseChainSpec::from(
             ChainSpecBuilder::default()
                 .chain(reth_chainspec::Chain::from_id(9_100_200))
                 .genesis(Default::default())
-                .with_fork(EthereumHardfork::Shanghai, ForkCondition::Timestamp(0))
+                .with_fork(EthereumHardfork::Shanghai, ForkCondition::Timestamp(10))
                 .build(),
-        );
-
-        // A distinct startup `opel` fork id, so the genesis-derived fork id installed below differs
-        // from it and the refresh is observable.
-        let startup_fork_id = ForkId { hash: ForkHash([0xff, 0xff, 0xff, 0xff]), next: u64::MAX };
+        ));
+        let startup_fork_id = chain_spec.fork_filter(Head::default()).current();
 
         // Only discv5 is enabled, on ephemeral 127.0.0.1 ports so parallel/repeated runs never
         // collide. discv4/dns are disabled, so the discv4 branch of `install_fork_filter` is skipped.
@@ -899,15 +892,13 @@ mod tests {
             .disable_discv4_discovery()
             .disable_dns_discovery()
             .discovery_v5(
-                reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 0).into())
-                    .discv5_config(
-                        Discv5ConfigBuilder::new(ListenConfig::Ipv4 {
-                            ip: Ipv4Addr::LOCALHOST,
-                            port: 0,
-                        })
-                        .build(),
-                    )
-                    .fork(NetworkStackId::OPEL, startup_fork_id),
+                reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 0).into()).discv5_config(
+                    Discv5ConfigBuilder::new(ListenConfig::Ipv4 {
+                        ip: Ipv4Addr::LOCALHOST,
+                        port: 0,
+                    })
+                    .build(),
+                ),
             )
             .build_with_noop_provider(std::sync::Arc::clone(&chain_spec));
 
@@ -919,13 +910,13 @@ mod tests {
         let discv5 = handle.discv5().expect("discv5 must be enabled");
 
         // The read path Base discovery actually uses: `get_fork_id` decodes the `opel` entry
-        // (falling back to `eth` only if absent). Sanity: startup advertises the seeded fork id.
+        // (falling back to `eth` only if absent). Sanity: startup advertises the pre-fork ID.
         let advertised_at_startup =
             discv5.get_fork_id(&discv5.local_enr()).expect("opel fork id present at startup");
         assert_eq!(advertised_at_startup, startup_fork_id);
 
-        // Install a different (genesis-derived) fork filter through the production trait impl.
-        let head = Head { timestamp: 1, ..Default::default() };
+        // Advance past the scheduled fork through the production trait implementation.
+        let head = Head { timestamp: 10, ..Default::default() };
         let new_filter = chain_spec.fork_filter(head);
         let new_fork_id = new_filter.current();
         assert_ne!(new_fork_id, startup_fork_id, "test requires an observable fork-id change");

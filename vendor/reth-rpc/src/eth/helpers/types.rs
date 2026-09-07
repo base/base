@@ -4,20 +4,19 @@ use reth_rpc_convert::RpcConverter;
 use reth_rpc_eth_types::receipt::EthReceiptConverter;
 
 /// An [`RpcConverter`] for Ethereum-compatible RPC with an explicit EVM configuration.
-pub type EthRpcConverter<ChainSpec, Evm> = RpcConverter<Evm, EthReceiptConverter<ChainSpec>>;
+pub type EthRpcConverter<Evm> = RpcConverter<Evm, EthReceiptConverter>;
 
 //tests for simulate
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Transaction;
     use alloy_rpc_types_eth::TransactionRequest;
-    use reth_chainspec::MAINNET;
     use reth_rpc_eth_types::simulate::resolve_transaction;
     use revm::database::CacheDB;
 
     #[test]
     fn test_resolve_transaction_empty_request() {
-        let builder = crate::test_utils::RpcTestUtils::converter(MAINNET.clone());
+        let builder = crate::test_utils::RpcTestUtils::converter();
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
         let tx = TransactionRequest::default();
         let result = resolve_transaction(tx.into(), 21000, 0, 1, false, &mut db, &builder).unwrap();
@@ -32,7 +31,7 @@ mod tests {
     #[test]
     fn test_resolve_transaction_legacy() {
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
-        let builder = crate::test_utils::RpcTestUtils::converter(MAINNET.clone());
+        let builder = crate::test_utils::RpcTestUtils::converter();
 
         let tx = TransactionRequest { gas_price: Some(100), ..Default::default() };
 
@@ -48,7 +47,7 @@ mod tests {
     #[test]
     fn test_resolve_transaction_partial_eip1559() {
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
-        let rpc_converter = crate::test_utils::RpcTestUtils::converter(MAINNET.clone());
+        let rpc_converter = crate::test_utils::RpcTestUtils::converter();
 
         let tx = TransactionRequest {
             max_fee_per_gas: Some(200),
@@ -69,7 +68,7 @@ mod tests {
     #[test]
     fn test_resolve_transaction_wraps_max_nonce_when_nonce_check_disabled() {
         let mut db = CacheDB::<reth_revm::db::EmptyDBTyped<reth_errors::ProviderError>>::default();
-        let rpc_converter = crate::test_utils::RpcTestUtils::converter(MAINNET.clone());
+        let rpc_converter = crate::test_utils::RpcTestUtils::converter();
 
         let tx = TransactionRequest { nonce: Some(u64::MAX), ..Default::default() };
 

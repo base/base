@@ -20,9 +20,10 @@ use alloy_primitives::{
     map::{AddressMap, B256Map, HashMap},
 };
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_execution_chainspec::BaseChainSpec;
 use parking_lot::Mutex;
 use reth_chain_state::{CanonStateNotifications, CanonStateSubscriptions};
-use reth_chainspec::{ChainInfo, EthChainSpec};
+use reth_chainspec::ChainInfo;
 use reth_db::transaction::DbTx;
 use reth_db_api::{
     mock::{DatabaseMock, TxMock},
@@ -59,7 +60,7 @@ use crate::{
 
 /// A mock implementation for Provider interfaces.
 #[derive(Debug)]
-pub struct MockEthProvider<ChainSpec = reth_chainspec::ChainSpec> {
+pub struct MockEthProvider {
     ///local block store
     pub blocks: Arc<Mutex<B256Map<BaseBlock>>>,
     /// Local header store
@@ -69,7 +70,7 @@ pub struct MockEthProvider<ChainSpec = reth_chainspec::ChainSpec> {
     /// Local account store
     pub accounts: Arc<Mutex<AddressMap<ExtendedAccount>>>,
     /// Local chain spec
-    pub chain_spec: Arc<ChainSpec>,
+    pub chain_spec: Arc<BaseChainSpec>,
     /// Local state roots
     pub state_roots: Arc<Mutex<Vec<B256>>>,
     /// Local block body indices store
@@ -117,7 +118,7 @@ enum MockStorageRangeOutcome {
 /// Hashed address, origin, limit, and byte budget of a mock storage range request.
 type MockStorageRangeRequest = (B256, B256, B256, usize);
 
-impl<ChainSpec> Clone for MockEthProvider<ChainSpec> {
+impl Clone for MockEthProvider {
     fn clone(&self) -> Self {
         Self {
             blocks: self.blocks.clone(),
@@ -145,7 +146,7 @@ impl<ChainSpec> Clone for MockEthProvider<ChainSpec> {
     }
 }
 
-impl MockEthProvider<reth_chainspec::ChainSpec> {
+impl MockEthProvider {
     /// Create a new, empty instance
     pub fn new() -> Self {
         Self {
@@ -153,7 +154,7 @@ impl MockEthProvider<reth_chainspec::ChainSpec> {
             headers: Default::default(),
             receipts: Default::default(),
             accounts: Default::default(),
-            chain_spec: Arc::new(reth_chainspec::ChainSpecBuilder::mainnet().build()),
+            chain_spec: Arc::new(reth_chainspec::ChainSpecBuilder::mainnet().build().into()),
             state_roots: Default::default(),
             block_body_indices: Default::default(),
             stage_checkpoints: Default::default(),
@@ -174,7 +175,7 @@ impl MockEthProvider<reth_chainspec::ChainSpec> {
     }
 }
 
-impl<ChainSpec> MockEthProvider<ChainSpec> {
+impl MockEthProvider {
     /// Allows database provider creation to return this mock.
     pub fn enable_database_provider(&self) {
         self.database_provider_available.store(true, Ordering::Relaxed);
@@ -318,30 +319,9 @@ impl<ChainSpec> MockEthProvider<ChainSpec> {
     }
 
     /// Set chain spec.
-    pub fn with_chain_spec<C>(self, chain_spec: C) -> MockEthProvider<C> {
-        MockEthProvider {
-            blocks: self.blocks,
-            headers: self.headers,
-            receipts: self.receipts,
-            accounts: self.accounts,
-            chain_spec: Arc::new(chain_spec),
-            state_roots: self.state_roots,
-            block_body_indices: self.block_body_indices,
-            stage_checkpoints: self.stage_checkpoints,
-            bal_store: self.bal_store,
-            database_provider_available: self.database_provider_available,
-            snap_state_reads_fail: self.snap_state_reads_fail,
-            snap_state_range_available: self.snap_state_range_available,
-            snap_state_range_resolutions: self.snap_state_range_resolutions,
-            snap_account_range: self.snap_account_range,
-            snap_storage_roots: self.snap_storage_roots,
-            snap_storage_ranges: self.snap_storage_ranges,
-            snap_storage_range_requests: self.snap_storage_range_requests,
-            snap_account_proof: self.snap_account_proof,
-            snap_storage_proof: self.snap_storage_proof,
-            tx: self.tx,
-            prune_modes: self.prune_modes,
-        }
+    pub fn with_chain_spec(mut self, chain_spec: impl Into<BaseChainSpec>) -> Self {
+        self.chain_spec = Arc::new(chain_spec.into());
+        self
     }
 
     /// Adds the genesis block from the chain spec to the provider.
@@ -349,7 +329,6 @@ impl<ChainSpec> MockEthProvider<ChainSpec> {
     /// This is useful for tests that require a valid latest block (e.g., transaction validation).
     pub fn with_genesis_block(self) -> Self
     where
-        ChainSpec: EthChainSpec<Header = <BaseBlock as Block>::Header>,
         <BaseBlock as Block>::Body: Default,
     {
         let genesis_hash = self.chain_spec.genesis_hash();
@@ -366,16 +345,13 @@ impl Default for MockEthProvider {
     }
 }
 
-impl<ChainSpec> BalProvider for MockEthProvider<ChainSpec> {
+impl BalProvider for MockEthProvider {
     fn bal_store(&self) -> &BalStoreHandle {
         &self.bal_store
     }
 }
 
-impl<ChainSpec> StateRangeProviderFactory for MockEthProvider<ChainSpec>
-where
-    ChainSpec: Send + Sync + 'static,
-{
+impl StateRangeProviderFactory for MockEthProvider {
     fn state_range_provider(&self, _state_root: B256) -> ProviderResult<Option<StateRangeView>> {
         self.snap_state_range_resolutions.fetch_add(1, Ordering::Relaxed);
         self.ensure_snap_state_reads_succeed()?;
@@ -386,7 +362,7 @@ where
     }
 }
 
-impl<ChainSpec> StateRangeProvider for MockEthProvider<ChainSpec> {
+impl StateRangeProvider for MockEthProvider {
     fn account_range(
         &self,
         _start: B256,
@@ -483,9 +459,7 @@ impl ExtendedAccount {
     }
 }
 
-impl<ChainSpec: EthChainSpec + Clone + 'static> DatabaseProviderFactory
-    for MockEthProvider<ChainSpec>
-{
+impl DatabaseProviderFactory for MockEthProvider {
     type DB = DatabaseMock;
     type Provider = Self;
     type ProviderRW = Self;
@@ -507,7 +481,7 @@ impl<ChainSpec: EthChainSpec + Clone + 'static> DatabaseProviderFactory
     }
 }
 
-impl<ChainSpec: EthChainSpec + 'static> DbTxProvider for MockEthProvider<ChainSpec> {
+impl DbTxProvider for MockEthProvider {
     type Tx = TxMock;
 
     fn tx(&self) -> &Self::Tx {
@@ -515,7 +489,7 @@ impl<ChainSpec: EthChainSpec + 'static> DbTxProvider for MockEthProvider<ChainSp
     }
 }
 
-impl<ChainSpec: EthChainSpec + 'static> DBProvider for MockEthProvider<ChainSpec> {
+impl DBProvider for MockEthProvider {
     fn tx_mut(&mut self) -> &mut Self::Tx {
         &mut self.tx
     }
@@ -533,9 +507,7 @@ impl<ChainSpec: EthChainSpec + 'static> DBProvider for MockEthProvider<ChainSpec
     }
 }
 
-impl<ChainSpec: EthChainSpec + Send + Sync + 'static> HeaderProvider
-    for MockEthProvider<ChainSpec>
-{
+impl HeaderProvider for MockEthProvider {
     type Header = <BaseBlock as Block>::Header;
 
     fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
@@ -582,18 +554,13 @@ impl<ChainSpec: EthChainSpec + Send + Sync + 'static> HeaderProvider
     }
 }
 
-impl<ChainSpec> ChainSpecProvider for MockEthProvider<ChainSpec>
-where
-    ChainSpec: EthChainSpec + 'static + Debug + Send + Sync,
-{
-    type ChainSpec = ChainSpec;
-
-    fn chain_spec(&self) -> Arc<Self::ChainSpec> {
+impl ChainSpecProvider for MockEthProvider {
+    fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.chain_spec.clone()
     }
 }
 
-impl<ChainSpec: EthChainSpec + 'static> TransactionsProvider for MockEthProvider<ChainSpec> {
+impl TransactionsProvider for MockEthProvider {
     type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
@@ -720,10 +687,7 @@ impl<ChainSpec: EthChainSpec + 'static> TransactionsProvider for MockEthProvider
     }
 }
 
-impl<ChainSpec> ReceiptProvider for MockEthProvider<ChainSpec>
-where
-    ChainSpec: Send + Sync + 'static,
-{
+impl ReceiptProvider for MockEthProvider {
     type Receipt = BaseReceipt;
 
     fn receipt(&self, _id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
@@ -785,12 +749,9 @@ where
     }
 }
 
-impl<ChainSpec> ReceiptProviderIdExt for MockEthProvider<ChainSpec> where
-    Self: ReceiptProvider + BlockIdReader
-{
-}
+impl ReceiptProviderIdExt for MockEthProvider where Self: ReceiptProvider + BlockIdReader {}
 
-impl<ChainSpec: Send + Sync + 'static> BlockHashReader for MockEthProvider<ChainSpec> {
+impl BlockHashReader for MockEthProvider {
     fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
         let lock = self.headers.lock();
         let hash =
@@ -813,7 +774,7 @@ impl<ChainSpec: Send + Sync + 'static> BlockHashReader for MockEthProvider<Chain
     }
 }
 
-impl<ChainSpec: Send + Sync + 'static> BlockNumReader for MockEthProvider<ChainSpec> {
+impl BlockNumReader for MockEthProvider {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         let best_block_number = self.best_block_number()?;
         let lock = self.headers.lock();
@@ -843,7 +804,7 @@ impl<ChainSpec: Send + Sync + 'static> BlockNumReader for MockEthProvider<ChainS
     }
 }
 
-impl<ChainSpec: EthChainSpec + Send + Sync + 'static> BlockIdReader for MockEthProvider<ChainSpec> {
+impl BlockIdReader for MockEthProvider {
     fn pending_block_num_hash(&self) -> ProviderResult<Option<alloy_eips::BlockNumHash>> {
         Ok(None)
     }
@@ -858,7 +819,7 @@ impl<ChainSpec: EthChainSpec + Send + Sync + 'static> BlockIdReader for MockEthP
 }
 
 //look
-impl<ChainSpec: EthChainSpec + Send + Sync + 'static> BlockReader for MockEthProvider<ChainSpec> {
+impl BlockReader for MockEthProvider {
     type Block = BaseBlock;
 
     fn find_block_by_hash(
@@ -937,10 +898,7 @@ impl<ChainSpec: EthChainSpec + Send + Sync + 'static> BlockReader for MockEthPro
     }
 }
 
-impl<ChainSpec> BlockReaderIdExt for MockEthProvider<ChainSpec>
-where
-    ChainSpec: EthChainSpec + Send + Sync + 'static,
-{
+impl BlockReaderIdExt for MockEthProvider {
     fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<BaseBlock>> {
         match id {
             BlockId::Number(num) => self.block_by_number_or_tag(num),
@@ -963,13 +921,13 @@ where
     }
 }
 
-impl<ChainSpec: Send + Sync> AccountReader for MockEthProvider<ChainSpec> {
+impl AccountReader for MockEthProvider {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         Ok(self.accounts.lock().get(address).cloned().map(|a| a.account))
     }
 }
 
-impl<ChainSpec: Send + Sync> StageCheckpointReader for MockEthProvider<ChainSpec> {
+impl StageCheckpointReader for MockEthProvider {
     fn get_stage_checkpoint(&self, id: StageId) -> ProviderResult<Option<StageCheckpoint>> {
         Ok(self.stage_checkpoints.lock().get(&id).copied())
     }
@@ -988,7 +946,7 @@ impl<ChainSpec: Send + Sync> StageCheckpointReader for MockEthProvider<ChainSpec
     }
 }
 
-impl<ChainSpec: Send + Sync> PruneCheckpointReader for MockEthProvider<ChainSpec> {
+impl PruneCheckpointReader for MockEthProvider {
     fn get_prune_checkpoint(
         &self,
         _segment: PruneSegment,
@@ -1001,10 +959,7 @@ impl<ChainSpec: Send + Sync> PruneCheckpointReader for MockEthProvider<ChainSpec
     }
 }
 
-impl<ChainSpec> StateRootProvider for MockEthProvider<ChainSpec>
-where
-    ChainSpec: Send + Sync,
-{
+impl StateRootProvider for MockEthProvider {
     fn state_root(&self, _state: HashedPostState) -> ProviderResult<B256> {
         Ok(self.state_roots.lock().pop().unwrap_or_default())
     }
@@ -1030,10 +985,7 @@ where
     }
 }
 
-impl<ChainSpec> StorageRootProvider for MockEthProvider<ChainSpec>
-where
-    ChainSpec: Send + Sync,
-{
+impl StorageRootProvider for MockEthProvider {
     fn storage_root(
         &self,
         _address: Address,
@@ -1061,10 +1013,7 @@ where
     }
 }
 
-impl<ChainSpec> StateProofProvider for MockEthProvider<ChainSpec>
-where
-    ChainSpec: Send + Sync,
-{
+impl StateProofProvider for MockEthProvider {
     fn proof(
         &self,
         _input: TrieInput,
@@ -1092,7 +1041,7 @@ where
     }
 }
 
-impl<ChainSpec: EthChainSpec + 'static> HashedPostStateProvider for MockEthProvider<ChainSpec> {
+impl HashedPostStateProvider for MockEthProvider {
     fn hashed_post_state(
         &self,
         _bundle_state: &revm::database::BundleState,
@@ -1101,10 +1050,7 @@ impl<ChainSpec: EthChainSpec + 'static> HashedPostStateProvider for MockEthProvi
     }
 }
 
-impl<ChainSpec> StateProvider for MockEthProvider<ChainSpec>
-where
-    ChainSpec: EthChainSpec + Send + Sync + 'static,
-{
+impl StateProvider for MockEthProvider {
     fn storage(
         &self,
         account: Address,
@@ -1115,10 +1061,7 @@ where
     }
 }
 
-impl<ChainSpec> BytecodeReader for MockEthProvider<ChainSpec>
-where
-    ChainSpec: Send + Sync,
-{
+impl BytecodeReader for MockEthProvider {
     fn bytecode_by_hash(&self, code_hash: &B256) -> ProviderResult<Option<Bytecode>> {
         let lock = self.accounts.lock();
         Ok(lock.values().find_map(|account| {
@@ -1132,7 +1075,7 @@ where
     }
 }
 
-impl<ChainSpec: Send + Sync> StorageSettingsCache for MockEthProvider<ChainSpec> {
+impl StorageSettingsCache for MockEthProvider {
     fn cached_storage_settings(&self) -> StorageSettings {
         StorageSettings::default()
     }
@@ -1140,9 +1083,7 @@ impl<ChainSpec: Send + Sync> StorageSettingsCache for MockEthProvider<ChainSpec>
     fn set_storage_settings_cache(&self, _settings: StorageSettings) {}
 }
 
-impl<ChainSpec: EthChainSpec + Send + Sync + 'static> StateProviderFactory
-    for MockEthProvider<ChainSpec>
-{
+impl StateProviderFactory for MockEthProvider {
     fn latest(&self) -> ProviderResult<StateProviderBox> {
         self.ensure_snap_state_reads_succeed()?;
         Ok(Box::new(self.clone()))
@@ -1201,9 +1142,7 @@ impl<ChainSpec: EthChainSpec + Send + Sync + 'static> StateProviderFactory
     }
 }
 
-impl<ChainSpec: EthChainSpec + Send + Sync + 'static> TryIntoHistoricalStateProvider
-    for MockEthProvider<ChainSpec>
-{
+impl TryIntoHistoricalStateProvider for MockEthProvider {
     fn try_into_history_at_block(
         self,
         block_number: BlockNumber,
@@ -1212,7 +1151,7 @@ impl<ChainSpec: EthChainSpec + Send + Sync + 'static> TryIntoHistoricalStateProv
     }
 }
 
-impl<ChainSpec: Send + Sync> BlockBodyIndicesProvider for MockEthProvider<ChainSpec> {
+impl BlockBodyIndicesProvider for MockEthProvider {
     fn block_body_indices(&self, num: u64) -> ProviderResult<Option<StoredBlockBodyIndices>> {
         Ok(self.block_body_indices.lock().get(&num).copied())
     }
@@ -1224,7 +1163,7 @@ impl<ChainSpec: Send + Sync> BlockBodyIndicesProvider for MockEthProvider<ChainS
     }
 }
 
-impl<ChainSpec: Send + Sync> ChangeSetReader for MockEthProvider<ChainSpec> {
+impl ChangeSetReader for MockEthProvider {
     fn account_block_changeset(
         &self,
         _block_number: BlockNumber,
@@ -1248,7 +1187,7 @@ impl<ChainSpec: Send + Sync> ChangeSetReader for MockEthProvider<ChainSpec> {
     }
 }
 
-impl<ChainSpec: Send + Sync> StorageChangeSetReader for MockEthProvider<ChainSpec> {
+impl StorageChangeSetReader for MockEthProvider {
     fn storage_changeset(
         &self,
         _block_number: BlockNumber,
@@ -1273,7 +1212,7 @@ impl<ChainSpec: Send + Sync> StorageChangeSetReader for MockEthProvider<ChainSpe
     }
 }
 
-impl<ChainSpec: Send + Sync> StateReader for MockEthProvider<ChainSpec> {
+impl StateReader for MockEthProvider {
     type Receipt = BaseReceipt;
 
     fn get_state(
@@ -1284,7 +1223,7 @@ impl<ChainSpec: Send + Sync> StateReader for MockEthProvider<ChainSpec> {
     }
 }
 
-impl<ChainSpec: Send + Sync> CanonStateSubscriptions for MockEthProvider<ChainSpec> {
+impl CanonStateSubscriptions for MockEthProvider {
     fn subscribe_to_canonical_state(&self) -> CanonStateNotifications {
         broadcast::channel(1).1
     }

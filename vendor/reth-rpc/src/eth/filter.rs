@@ -1363,8 +1363,8 @@ mod tests {
 
     use alloy_primitives::FixedBytes;
     use base_common_consensus::{BaseBlock, BaseReceipt};
+    use base_execution_chainspec::ChainSpecProvider;
     use rand::Rng;
-    use reth_chainspec::ChainSpecProvider;
     use reth_evm::TestEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::test_utils::MockEthProvider;
@@ -1414,7 +1414,7 @@ mod tests {
             provider.clone(),
             crate::test_utils::RpcTestUtils::pool(),
             NoopNetwork::default(),
-            TestEvmConfig::new(provider.chain_spec()),
+            TestEvmConfig::new(std::sync::Arc::new(provider.chain_spec().runtime_chain_spec())),
         )
         .build()
     }

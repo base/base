@@ -1,5 +1,5 @@
 use reth_db::{Database, DatabaseEnv, test_utils::TempDatabase};
-use reth_provider::{DatabaseProvider, ProviderError, test_utils::MockNodeTypesWithDB};
+use reth_provider::{DatabaseProvider, ProviderError};
 use reth_stages_api::{
     ExecInput, ExecOutput, Stage, StageError, StageExt, UnwindInput, UnwindOutput,
 };
@@ -20,8 +20,7 @@ pub(crate) enum TestRunnerError {
 
 /// A generic test runner for stages.
 pub(crate) trait StageTestRunner {
-    type S: Stage<DatabaseProvider<<TempDatabase<DatabaseEnv> as Database>::TXMut, MockNodeTypesWithDB>>
-        + 'static;
+    type S: Stage<DatabaseProvider<<TempDatabase<DatabaseEnv> as Database>::TXMut>> + 'static;
 
     /// Return a reference to the database.
     fn db(&self) -> &TestStageDB;

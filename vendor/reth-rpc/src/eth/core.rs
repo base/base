@@ -8,7 +8,6 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
 use derive_more::Deref;
-use reth_node_api::FullNodeComponents;
 use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{
     EthApiTypes, RpcNodeCore,
@@ -509,10 +508,10 @@ mod tests {
     use base_common_consensus::{
         BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTxEnvelope as TransactionSigned,
     };
+    use base_execution_chainspec::ChainSpecProvider;
     use jsonrpsee_types::error::INVALID_PARAMS_CODE;
     use rand::Rng;
     use reth_chain_state::CanonStateSubscriptions;
-    use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
     use reth_evm::TestEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
@@ -537,7 +536,7 @@ mod tests {
                 Header = alloy_consensus::Header,
                 Transaction = BaseTxEnvelope,
             > + BlockReader
-            + ChainSpecProvider<ChainSpec = ChainSpec>
+            + ChainSpecProvider
             + StateProviderFactory
             + CanonStateSubscriptions
             + StageCheckpointReader
@@ -553,7 +552,7 @@ mod tests {
             provider.clone(),
             crate::test_utils::RpcTestUtils::pool(),
             NoopNetwork::default(),
-            TestEvmConfig::new(provider.chain_spec()),
+            TestEvmConfig::new(std::sync::Arc::new(provider.chain_spec().runtime_chain_spec())),
         )
         .build()
     }

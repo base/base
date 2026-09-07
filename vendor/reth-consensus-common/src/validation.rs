@@ -3,7 +3,8 @@
 use alloy_consensus::{BlockHeader as _, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip7840::BlobParams};
 use alloy_primitives::B256;
-use reth_chainspec::{EthChainSpec, EthereumHardfork, EthereumHardforks};
+use base_execution_chainspec::BaseChainSpec;
+use reth_chainspec::{EthereumHardfork, EthereumHardforks};
 use reth_consensus::ConsensusError;
 use reth_primitives_traits::{
     Block, BlockBody, BlockHeader, GotExpected, SealedBlock, SealedHeader,
@@ -35,9 +36,9 @@ pub fn validate_header_gas<H: BlockHeader>(header: &H) -> Result<(), ConsensusEr
 
 /// Ensure the EIP-1559 base fee is set if the London hardfork is active.
 #[inline]
-pub fn validate_header_base_fee<H: BlockHeader, ChainSpec: EthereumHardforks>(
+pub fn validate_header_base_fee<H: BlockHeader>(
     header: &H,
-    chain_spec: &ChainSpec,
+    chain_spec: &BaseChainSpec,
 ) -> Result<(), ConsensusError> {
     if chain_spec.is_london_active_at_block(header.number()) && header.base_fee_per_gas().is_none()
     {
@@ -138,13 +139,12 @@ where
 /// - Compares the ommer hash in the block header to the block body
 /// - Compares the transactions root in the block header to the block body
 /// - Pre-execution transaction validation
-pub fn validate_block_pre_execution<B, ChainSpec>(
+pub fn validate_block_pre_execution<B>(
     block: &SealedBlock<B>,
-    chain_spec: &ChainSpec,
+    chain_spec: &BaseChainSpec,
 ) -> Result<(), ConsensusError>
 where
     B: Block,
-    ChainSpec: EthChainSpec + EthereumHardforks,
 {
     validate_block_pre_execution_with_tx_root(block, chain_spec, None)
 }
@@ -158,14 +158,13 @@ where
 /// If `transaction_root` is provided, it is used instead of recomputing the transaction trie
 /// root from the block body. The caller must ensure this value was derived from
 /// `block.body().calculate_tx_root()`.
-pub fn validate_block_pre_execution_with_tx_root<B, ChainSpec>(
+pub fn validate_block_pre_execution_with_tx_root<B>(
     block: &SealedBlock<B>,
-    chain_spec: &ChainSpec,
+    chain_spec: &BaseChainSpec,
     transaction_root: Option<B256>,
 ) -> Result<(), ConsensusError>
 where
     B: Block,
-    ChainSpec: EthChainSpec + EthereumHardforks,
 {
     post_merge_hardfork_fields(block, chain_spec)?;
 
@@ -191,13 +190,12 @@ where
 /// * EIP-4844 blob gas validation, if cancun is active based on the given chainspec. See more
 ///   information about the specific checks in [`validate_cancun_gas`].
 /// * EIP-7934 block size limit validation, if osaka is active based on the given chainspec.
-pub fn post_merge_hardfork_fields<B, ChainSpec>(
+pub fn post_merge_hardfork_fields<B>(
     block: &SealedBlock<B>,
-    chain_spec: &ChainSpec,
+    chain_spec: &BaseChainSpec,
 ) -> Result<(), ConsensusError>
 where
     B: Block,
-    ChainSpec: EthereumHardforks,
 {
     // Check ommers hash
     let ommers_hash = block.body().calculate_ommers_root();
@@ -318,10 +316,10 @@ pub fn validate_against_parent_hash_number<H: BlockHeader>(
 
 /// Validates the base fee against the parent and EIP-1559 rules.
 #[inline]
-pub fn validate_against_parent_eip1559_base_fee<ChainSpec: EthChainSpec + EthereumHardforks>(
-    header: &ChainSpec::Header,
-    parent: &ChainSpec::Header,
-    chain_spec: &ChainSpec,
+pub fn validate_against_parent_eip1559_base_fee(
+    header: &alloy_consensus::Header,
+    parent: &alloy_consensus::Header,
+    chain_spec: &BaseChainSpec,
 ) -> Result<(), ConsensusError> {
     if chain_spec.is_london_active_at_block(header.number()) {
         let base_fee = header.base_fee_per_gas().ok_or(ConsensusError::BaseFeeMissing)?;
@@ -367,13 +365,10 @@ pub fn validate_against_parent_timestamp<H: BlockHeader>(
 /// The maximum allowable difference between self and parent gas limits is determined by the
 /// parent's gas limit divided by the [`GAS_LIMIT_BOUND_DIVISOR`].
 #[inline]
-pub fn validate_against_parent_gas_limit<
-    H: BlockHeader,
-    ChainSpec: EthChainSpec + EthereumHardforks,
->(
+pub fn validate_against_parent_gas_limit<H: BlockHeader>(
     header: &SealedHeader<H>,
     parent: &SealedHeader<H>,
-    chain_spec: &ChainSpec,
+    chain_spec: &BaseChainSpec,
 ) -> Result<(), ConsensusError> {
     // Determine the parent gas limit, considering elasticity multiplier on the London fork.
     let parent_gas_limit = if !chain_spec.is_london_active_at_block(parent.number())
@@ -455,6 +450,7 @@ mod tests {
     use alloy_consensus::{BlockBody, Header, TxEip4844};
     use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip4895::Withdrawals};
     use alloy_primitives::{Address, Bytes, Signature, U256};
+    use base_execution_chainspec::BaseChainSpec;
     use rand::Rng;
     use reth_chainspec::ChainSpecBuilder;
     use reth_ethereum_primitives::{Transaction, TransactionSigned};
@@ -487,7 +483,8 @@ mod tests {
 
     #[test]
     fn cancun_block_incorrect_blob_gas_used() {
-        let chain_spec = ChainSpecBuilder::mainnet().cancun_activated().build();
+        let chain_spec =
+            BaseChainSpec::from(ChainSpecBuilder::mainnet().cancun_activated().build());
 
         // create a tx with 10 blobs
         let transaction = mock_blob_tx(1, 10);
@@ -539,7 +536,8 @@ mod tests {
 
     #[test]
     fn precomputed_tx_root_correct_passes() {
-        let chain_spec = ChainSpecBuilder::mainnet().cancun_activated().build();
+        let chain_spec =
+            BaseChainSpec::from(ChainSpecBuilder::mainnet().cancun_activated().build());
 
         let transaction = mock_blob_tx(1, 1);
         let tx_root = proofs::calculate_transaction_root(std::slice::from_ref(&transaction));
@@ -569,7 +567,8 @@ mod tests {
 
     #[test]
     fn precomputed_tx_root_wrong_fails() {
-        let chain_spec = ChainSpecBuilder::mainnet().cancun_activated().build();
+        let chain_spec =
+            BaseChainSpec::from(ChainSpecBuilder::mainnet().cancun_activated().build());
 
         let transaction = mock_blob_tx(1, 1);
         let tx_root = proofs::calculate_transaction_root(std::slice::from_ref(&transaction));

@@ -17,7 +17,6 @@ use alloy_eips::NumHash;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_trie::{Nibbles, nodes::RlpNode, proof::verify_proof};
 use base_common_consensus::{BaseBlock, BaseReceipt};
-use reth_chainspec::Hardforks;
 use reth_eth_wire::{
     BlockAccessLists, EthVersion,
     protocol::Protocol,
@@ -67,7 +66,7 @@ trait SnapTestProvider:
     + BalProvider
     + StateProviderFactory
     + StateRangeProviderFactory
-    + ChainSpecProvider<ChainSpec: Hardforks>
+    + ChainSpecProvider
     + Clone
     + Unpin
     + 'static
@@ -80,7 +79,7 @@ impl<T> SnapTestProvider for T where
         + BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
-        + ChainSpecProvider<ChainSpec: Hardforks>
+        + ChainSpecProvider
         + Clone
         + Unpin
         + 'static

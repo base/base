@@ -13,9 +13,10 @@ use alloy_consensus::{
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber, b256};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_execution_chainspec::ChainSpecProvider;
 use parking_lot::RwLock;
 use reth_chain_state::ExecutedBlock;
-use reth_chainspec::{ChainInfo, ChainSpecProvider, EthChainSpec, NamedChain};
+use reth_chainspec::{ChainInfo, NamedChain};
 use reth_db::{
     lockfile::StorageLock,
     static_file::{
@@ -32,8 +33,7 @@ use reth_db_api::{
 };
 use reth_nippy_jar::{NippyJar, NippyJarChecker};
 use reth_primitives_traits::{
-    AlloyBlockHeader as _, BlockBody as _, RecoveredBlock, SealedHeader, StorageEntry,
-    dashmap::DashMap,
+    AlloyBlockHeader as _, RecoveredBlock, SealedHeader, StorageEntry, dashmap::DashMap,
 };
 use reth_prune_types::PruneSegment;
 use reth_stages_types::PipelineTarget;

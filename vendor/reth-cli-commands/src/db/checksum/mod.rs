@@ -6,7 +6,6 @@ use std::{
 use alloy_primitives::map::foldhash::fast::FixedState;
 use clap::Parser;
 use itertools::Itertools;
-use reth_chainspec::EthereumHardforks;
 use reth_db::{DatabaseEnv, static_file::iter_static_files};
 use reth_db_api::{
     RawKey, RawTable, RawValue, TableViewer, Tables, cursor::DbCursorRO, table::Table,
@@ -87,7 +86,7 @@ enum Subcommand {
 
 impl Command {
     /// Execute `db checksum` command
-    pub fn execute<N: CliNodeTypes<ChainSpec: EthereumHardforks>>(
+    pub fn execute<N: CliNodeTypes>(
         self,
         tool: &DbTool<NodeTypesWithDBAdapter<N, DatabaseEnv>>,
     ) -> eyre::Result<()> {
@@ -114,7 +113,7 @@ fn checksum_hasher() -> impl Hasher {
     FixedState::with_seed(u64::from_be_bytes(*b"RETHRETH")).build_hasher()
 }
 
-fn checksum_static_file<N: CliNodeTypes<ChainSpec: EthereumHardforks>>(
+fn checksum_static_file<N: CliNodeTypes>(
     tool: &DbTool<NodeTypesWithDBAdapter<N, DatabaseEnv>>,
     segment: StaticFileSegment,
     start_block: Option<u64>,

@@ -1,15 +1,14 @@
 //! Base fixtures for the shared RPC implementation.
 
 use core::convert::Infallible;
-use std::sync::Arc;
 
 use alloy_consensus::transaction::TransactionInfo;
 use alloy_evm::rpc::{EthTxEnvError, TryIntoTxEnv};
 use alloy_rpc_types_eth::Log;
 use base_common_consensus::{BaseReceipt, BaseTransactionInfo, BaseTxEnvelope};
 use base_common_rpc_types::{BaseLogResponse, BaseTransactionReceipt, BaseTransactionRequest};
+use base_execution_chainspec::ChainSpecProvider;
 use base_execution_txpool::BasePooledTransaction;
-use reth_chainspec::{ChainSpec, ChainSpecProvider};
 use reth_evm::{EvmEnvFor, TestEvmConfig};
 use reth_primitives_traits::SealedHeader;
 use reth_rpc_convert::{
@@ -133,7 +132,7 @@ impl RpcTestUtils {
     }
 
     /// Creates a converter preserving transaction types and receipt log metadata.
-    pub fn converter(_chain_spec: Arc<ChainSpec>) -> TestRpcConverter {
+    pub fn converter() -> TestRpcConverter {
         let tx_env: TestTxEnvBuilder =
             |request, evm_env| request.as_ref().clone().try_into_tx_env(evm_env);
         RpcConverter::new(TestReceiptConverter)
@@ -152,11 +151,11 @@ impl RpcTestUtils {
         TestRpcConverter,
     >
     where
-        Provider: ChainSpecProvider<ChainSpec = ChainSpec>,
+        Provider: ChainSpecProvider,
         RpcNodeCoreAdapter<Provider, TestPool, Network, TestEvmConfig>:
             RpcNodeCore<Provider = Provider, Evm = TestEvmConfig>,
     {
-        let converter = Self::converter(provider.chain_spec());
+        let converter = Self::converter();
         EthApiBuilder::new(provider, pool, network, evm).map_converter(|_| converter)
     }
 }

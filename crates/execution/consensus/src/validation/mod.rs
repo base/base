@@ -250,7 +250,7 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
     use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
-    use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
+    use reth_chainspec::{BaseFeeParams, ForkCondition};
 
     use super::*;
 
@@ -351,11 +351,7 @@ mod tests {
             gas_limit: 144000000,
             ..Default::default()
         };
-        let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &base_chain_spec,
-            &parent,
-            0,
-        );
+        let base_fee = BaseChainSpec::next_block_base_fee(&base_chain_spec, &parent, 0);
         assert_eq!(
             base_fee.unwrap(),
             base_chain_spec.next_block_base_fee(&parent, 0).unwrap_or_default()
@@ -373,11 +369,8 @@ mod tests {
             extra_data: Bytes::from_static(&[0, 0, 0, 0, 0, 0, 0, 0, 0]),
             ..Default::default()
         };
-        let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &base_chain_spec,
-            &parent,
-            HOLOCENE_TIMESTAMP + 5,
-        );
+        let base_fee =
+            BaseChainSpec::next_block_base_fee(&base_chain_spec, &parent, HOLOCENE_TIMESTAMP + 5);
         assert_eq!(
             base_fee.unwrap(),
             base_chain_spec.next_block_base_fee(&parent, 0).unwrap_or_default()
@@ -395,7 +388,7 @@ mod tests {
             ..Default::default()
         };
 
-        let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
+        let base_fee = BaseChainSpec::next_block_base_fee(
             &holocene_chainspec(),
             &parent,
             HOLOCENE_TIMESTAMP + 5,
@@ -420,12 +413,9 @@ mod tests {
             ..Default::default()
         };
 
-        let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &BaseChainSpec::sepolia(),
-            &parent,
-            1735315546,
-        )
-        .unwrap();
+        let base_fee =
+            BaseChainSpec::next_block_base_fee(&BaseChainSpec::sepolia(), &parent, 1735315546)
+                .unwrap();
         assert_eq!(base_fee, 507);
     }
 
@@ -449,11 +439,8 @@ mod tests {
             ..Default::default()
         };
 
-        let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &BaseChainSpec::sepolia(),
-            &parent,
-            1735315546,
-        );
+        let base_fee =
+            BaseChainSpec::next_block_base_fee(&BaseChainSpec::sepolia(), &parent, 1735315546);
         assert_eq!(base_fee, None);
     }
 
@@ -478,7 +465,7 @@ mod tests {
             extra_data,
             ..Default::default()
         };
-        let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
+        let base_fee = BaseChainSpec::next_block_base_fee(
             &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
@@ -509,7 +496,7 @@ mod tests {
             extra_data,
             ..Default::default()
         };
-        let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
+        let base_fee = BaseChainSpec::next_block_base_fee(
             &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
@@ -541,7 +528,7 @@ mod tests {
             extra_data: extra_data.clone(),
             ..Default::default()
         };
-        let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
+        let base_fee = BaseChainSpec::next_block_base_fee(
             &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
@@ -557,7 +544,7 @@ mod tests {
             extra_data,
             ..Default::default()
         };
-        let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
+        let base_fee = BaseChainSpec::next_block_base_fee(
             &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + 2 * BLOCK_TIME_SECONDS,
@@ -587,7 +574,7 @@ mod tests {
             extra_data,
             ..Default::default()
         };
-        let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
+        let base_fee = BaseChainSpec::next_block_base_fee(
             &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,

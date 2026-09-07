@@ -5,12 +5,11 @@ use std::{fmt, fmt::Debug};
 use alloy_eips::{BlockNumHash, eip2124::Head};
 use futures::future;
 use reth_chain_state::ForkChoiceSubscriptions;
-use reth_chainspec::EthChainSpec;
 use reth_exex::{
     DEFAULT_EXEX_MANAGER_CAPACITY, DEFAULT_WAL_BLOCKS_WARNING, ExExContext, ExExHandle,
     ExExManager, ExExManagerHandle, ExExNotificationSource, Wal,
 };
-use reth_node_api::{FullNodeComponents, NodeTypes};
+use reth_node_api::FullNodeComponents;
 use reth_provider::CanonStateSubscriptions;
 use reth_tracing::tracing::{debug, info};
 use tracing::Instrument;
@@ -22,7 +21,7 @@ pub struct ExExLauncher<Node: FullNodeComponents> {
     head: Head,
     extensions: Vec<(String, Box<dyn BoxedLaunchExEx<Node>>)>,
     components: Node,
-    config_container: WithConfigs<<Node::Types as NodeTypes>::ChainSpec>,
+    config_container: WithConfigs,
     /// The threshold for the number of blocks in the WAL before emitting a warning.
     wal_blocks_warning: usize,
     /// The max notification buffer capacity for the ExEx manager.
@@ -35,7 +34,7 @@ impl<Node: FullNodeComponents + Clone> ExExLauncher<Node> {
         head: Head,
         components: Node,
         extensions: Vec<(String, Box<dyn BoxedLaunchExEx<Node>>)>,
-        config_container: WithConfigs<<Node::Types as NodeTypes>::ChainSpec>,
+        config_container: WithConfigs,
     ) -> Self {
         Self {
             head,

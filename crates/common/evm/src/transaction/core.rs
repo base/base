@@ -237,8 +237,7 @@ where
     }
 }
 
-#[cfg(feature = "reth")]
-impl<T: reth_evm::TransactionEnvMut> reth_evm::TransactionEnvMut for BaseTransaction<T> {
+impl<T: alloy_evm::TransactionEnvMut> alloy_evm::TransactionEnvMut for BaseTransaction<T> {
     fn set_gas_limit(&mut self, gas_limit: u64) {
         self.base.set_gas_limit(gas_limit);
     }

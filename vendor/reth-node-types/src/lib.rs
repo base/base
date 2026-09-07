@@ -11,7 +11,6 @@
 
 use core::{fmt::Debug, marker::PhantomData};
 
-use reth_chainspec::EthChainSpec;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 pub use reth_primitives_traits::{Block, BlockBody, FullBlock, FullReceipt, FullSignedTx};
 
@@ -20,10 +19,7 @@ pub use reth_primitives_traits::{Block, BlockBody, FullBlock, FullReceipt, FullS
 /// This includes the primitive types of a node and chain specification.
 ///
 /// This trait is intended to be stateless and only define the types of the node.
-pub trait NodeTypes: Clone + Debug + Send + Sync + Unpin + 'static {
-    /// The type used for configuration of the EVM.
-    type ChainSpec: EthChainSpec<Header = alloy_consensus::Header>;
-}
+pub trait NodeTypes: Clone + Debug + Send + Sync + Unpin + 'static {}
 
 /// A helper trait that is downstream of the [`NodeTypes`] trait and adds database to the
 /// node.
@@ -53,7 +49,6 @@ where
     Types: NodeTypes,
     DB: Clone + Debug + Send + Sync + Unpin + 'static,
 {
-    type ChainSpec = Types::ChainSpec;
 }
 
 impl<Types, DB> NodeTypesWithDB for NodeTypesWithDBAdapter<Types, DB>
@@ -66,23 +61,6 @@ where
 
 /// A [`NodeTypes`] type builder.
 #[derive(Clone, Debug, Default)]
-pub struct AnyNodeTypes<C = ()>(PhantomData<C>);
+pub struct AnyNodeTypes;
 
-impl<C> AnyNodeTypes<C> {
-    /// Creates a new instance of [`AnyNodeTypes`].
-    pub const fn new() -> Self {
-        Self(PhantomData)
-    }
-
-    /// Sets the `ChainSpec` associated type.
-    pub const fn chain_spec<T>(self) -> AnyNodeTypes<T> {
-        AnyNodeTypes::new()
-    }
-}
-
-impl<C> NodeTypes for AnyNodeTypes<C>
-where
-    C: EthChainSpec<Header = alloy_consensus::Header> + Clone + 'static,
-{
-    type ChainSpec = C;
-}
+impl NodeTypes for AnyNodeTypes {}

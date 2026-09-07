@@ -10,13 +10,13 @@ use alloy_consensus::{BlockHeader, Header, Transaction, TxReceipt};
 use alloy_eips::eip7840::BlobParams;
 use alloy_rpc_types_eth::TxGasAndReward;
 use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use futures::{
     FutureExt, Stream, StreamExt,
     future::{Fuse, FusedFuture},
 };
 use metrics::atomics::AtomicU64;
 use reth_chain_state::CanonStateNotification;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives_traits::{Block, BlockBody, SealedBlock};
 use reth_rpc_server_types::constants::gas_oracle::MAX_HEADER_HISTORY;
 use reth_storage_api::BlockReaderIdExt;
@@ -75,12 +75,11 @@ where
     }
 
     /// Insert block data into the cache.
-    async fn insert_blocks<'a, I, B, R, C>(&self, blocks: I, chain_spec: &C)
+    async fn insert_blocks<'a, I, B, R>(&self, blocks: I, chain_spec: &BaseChainSpec)
     where
         B: Block<Header = H> + 'a,
         R: TxReceipt + 'a,
         I: IntoIterator<Item = (&'a SealedBlock<B>, &'a [R])>,
-        C: EthChainSpec,
     {
         let mut entries = self.inner.entries.write().await;
 

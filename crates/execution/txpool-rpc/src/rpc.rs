@@ -4,6 +4,7 @@ use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{Address, Bytes, TxHash};
 use base_common_chains::Upgrades;
 use base_common_consensus::EIP8130_TX_TYPE_ID;
+use base_execution_chainspec::ChainSpecProvider;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, ValidityPredicate,
 };
@@ -17,7 +18,6 @@ use jsonrpsee::{
     rpc_params,
     types::{ErrorCode, ErrorObjectOwned},
 };
-use reth_chainspec::ChainSpecProvider;
 use reth_rpc_eth_types::error::RpcPoolError;
 use reth_storage_api::BlockReaderIdExt;
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
@@ -127,7 +127,7 @@ impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
 
 impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider>
 where
-    Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
+    Provider: BlockReaderIdExt + ChainSpecProvider,
 {
     /// Returns whether the Cobalt hard fork is active at the latest block's timestamp.
     ///
@@ -203,7 +203,7 @@ impl<Pool, Provider> SendRawTransactionValidityApiServer
     for SendRawTransactionValidityApiImpl<Pool, Provider>
 where
     Pool: TransactionPool<Transaction = BasePooledTransaction> + 'static,
-    Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades> + 'static,
+    Provider: BlockReaderIdExt + ChainSpecProvider + 'static,
 {
     async fn send_raw_transaction_validity(
         &self,
@@ -295,7 +295,6 @@ impl<Pool: TransactionPool + 'static> AdminTxPoolApiServer for AdminTxPoolApiImp
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
@@ -323,19 +322,15 @@ mod tests {
     use super::*;
 
     /// Provider whose latest header sits after Cobalt activation, so the fork gate is open.
-    fn cobalt_provider() -> MockEthProvider<Arc<BaseChainSpec>> {
+    fn cobalt_provider() -> MockEthProvider {
         MockEthProvider::new()
-            .with_chain_spec(Arc::new(
-                BaseChainSpecBuilder::base_mainnet().cobalt_activated().build(),
-            ))
+            .with_chain_spec(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build())
             .with_genesis_block()
     }
 
     /// Provider whose latest header predates Cobalt activation, so the fork gate is closed.
-    fn pre_cobalt_provider() -> MockEthProvider<Arc<BaseChainSpec>> {
-        MockEthProvider::new()
-            .with_chain_spec(Arc::new(BaseChainSpec::mainnet()))
-            .with_genesis_block()
+    fn pre_cobalt_provider() -> MockEthProvider {
+        MockEthProvider::new().with_chain_spec(BaseChainSpec::mainnet()).with_genesis_block()
     }
 
     fn validity_pool() -> NoopTransactionPool<BasePooledTransaction> {

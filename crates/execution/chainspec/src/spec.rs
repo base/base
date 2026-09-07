@@ -1,6 +1,5 @@
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 
-use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, EMPTY_ROOT_HASH, Header, proofs::storage_root_unhashed};
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
@@ -14,8 +13,8 @@ use base_common_genesis::{
 use base_protocol::OutputRoot;
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
-    BaseFeeParams, BaseFeeParamsKind, ChainSpec, DepositContract, DisplayHardforks, EthChainSpec,
-    EthereumHardforks, ForkFilter, ForkId, Hardforks, Head,
+    BaseFeeParams, BaseFeeParamsKind, ChainSpec, DisplayHardforks, EthereumHardforks, ForkFilter,
+    ForkId, Hardforks, Head,
 };
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_network_peers::{NodeRecord, parse_nodes};
@@ -583,34 +582,19 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
     }
 }
 
-impl EthChainSpec for BaseChainSpec {
-    type Header = Header;
-
-    fn chain(&self) -> Chain {
-        self.inner.chain()
-    }
-
-    fn base_fee_params_at_timestamp(&self, timestamp: u64) -> BaseFeeParams {
+impl BaseChainSpec {
+    /// Get the [`BaseFeeParams`] for the chain at the given timestamp.
+    pub fn base_fee_params_at_timestamp(&self, timestamp: u64) -> BaseFeeParams {
         self.runtime_chain_spec().base_fee_params_at_timestamp(timestamp)
     }
 
-    fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
+    /// Get the [`BlobParams`] for the given timestamp
+    pub fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
         self.runtime_chain_spec().blob_params_at_timestamp(timestamp)
     }
 
-    fn deposit_contract(&self) -> Option<&DepositContract> {
-        self.inner.deposit_contract()
-    }
-
-    fn genesis_hash(&self) -> B256 {
-        self.inner.genesis_hash()
-    }
-
-    fn prune_delete_limit(&self) -> usize {
-        self.inner.prune_delete_limit()
-    }
-
-    fn display_hardforks(&self) -> Box<dyn core::fmt::Display> {
+    /// Returns a string representation of the hardforks.
+    pub fn display_hardforks(&self) -> Box<dyn core::fmt::Display> {
         let hardforks = self.runtime_hardforks();
         let base_forks = hardforks.forks_iter().filter(|(fork, _)| {
             !EthereumHardfork::VARIANTS.iter().any(|h| h.name() == (*fork).name())
@@ -619,27 +603,18 @@ impl EthChainSpec for BaseChainSpec {
         Box::new(DisplayHardforks::new(base_forks))
     }
 
-    fn genesis_header(&self) -> &Self::Header {
-        self.inner.genesis_header()
-    }
-
-    fn genesis(&self) -> &Genesis {
-        self.inner.genesis()
-    }
-
-    fn bootnodes(&self) -> Option<Vec<NodeRecord>> {
+    /// The bootnodes for the chain, if any.
+    pub fn bootnodes(&self) -> Option<Vec<NodeRecord>> {
         ChainConfig::by_chain_id(self.chain().id()).map(|cfg| parse_nodes(cfg.bootnodes.execution))
     }
 
-    fn is_optimism(&self) -> bool {
+    /// Returns `true` if this chain contains Optimism configuration.
+    pub fn is_optimism(&self) -> bool {
         true
     }
 
-    fn final_paris_total_difficulty(&self) -> Option<U256> {
-        self.inner.final_paris_total_difficulty()
-    }
-
-    fn next_block_base_fee(&self, parent: &Header, target_timestamp: u64) -> Option<u64> {
+    /// Computes the next block base fee using the active Base upgrade rules.
+    pub fn next_block_base_fee(&self, parent: &Header, target_timestamp: u64) -> Option<u64> {
         if Upgrades::is_jovian_active_at_timestamp(self, parent.timestamp()) {
             compute_jovian_base_fee(self, parent, target_timestamp).ok()
         } else if Upgrades::is_holocene_active_at_timestamp(self, parent.timestamp()) {
@@ -719,7 +694,7 @@ mod tests {
     use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
-        BaseFeeParams, BaseFeeParamsKind, ChainSpec, EthChainSpec, EthereumHardforks, test_fork_ids,
+        BaseFeeParams, BaseFeeParamsKind, ChainSpec, EthereumHardforks, test_fork_ids,
     };
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
 

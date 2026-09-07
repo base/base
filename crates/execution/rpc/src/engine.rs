@@ -14,7 +14,6 @@ use base_common_rpc_types_engine::{
 use derive_more::Constructor;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
-use reth_chainspec::EthereumHardforks;
 use reth_node_api::EngineApiValidator;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_api::IntoEngineApiRpcModule;
@@ -248,26 +247,22 @@ pub trait BaseEngineApi {
 /// The Engine API implementation that grants the Consensus layer access to data and
 /// functions in the Execution layer that are crucial for the consensus process.
 #[derive(Debug, Constructor)]
-pub struct BaseEngineApi<Provider, Pool, Validator, ChainSpec> {
-    inner: EngineApi<Provider, Pool, Validator, ChainSpec>,
+pub struct BaseEngineApi<Provider, Pool, Validator> {
+    inner: EngineApi<Provider, Pool, Validator>,
 }
 
-impl<Provider, Pool, Validator, ChainSpec> Clone
-    for BaseEngineApi<Provider, Pool, Validator, ChainSpec>
-{
+impl<Provider, Pool, Validator> Clone for BaseEngineApi<Provider, Pool, Validator> {
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone() }
     }
 }
 
 #[async_trait::async_trait]
-impl<Provider, Pool, Validator, ChainSpec> BaseEngineApiServer
-    for BaseEngineApi<Provider, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator> BaseEngineApiServer for BaseEngineApi<Provider, Pool, Validator>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator,
-    ChainSpec: EthereumHardforks + Send + Sync + 'static,
 {
     async fn new_payload_v2(&self, payload: ExecutionPayloadInputV2) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV2");
@@ -428,8 +423,7 @@ where
     }
 }
 
-impl<Provider, Pool, Validator, ChainSpec> IntoEngineApiRpcModule
-    for BaseEngineApi<Provider, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator> IntoEngineApiRpcModule for BaseEngineApi<Provider, Pool, Validator>
 where
     Self: BaseEngineApiServer,
 {

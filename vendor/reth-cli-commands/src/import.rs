@@ -1,8 +1,8 @@
 //! Command that initializes the node by importing a chain from a file.
 use std::{path::PathBuf, sync::Arc};
 
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use clap::Parser;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_node_core::version::version_metadata;
 use tracing::info;
@@ -43,15 +43,15 @@ pub struct ImportCommand<C: ChainSpecParser> {
     paths: Vec<PathBuf>,
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> ImportCommand<C> {
+impl<C: ChainSpecParser> ImportCommand<C> {
     /// Execute `import` command
     pub async fn execute<N>(
         self,
-        components: impl FnOnce(Arc<N::ChainSpec>) -> CliNodeComponents<N>,
+        components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents<N>,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()>
     where
-        N: CliNodeTypes<ChainSpec = C::ChainSpec>,
+        N: CliNodeTypes,
     {
         info!(target: "reth::cli", "reth {} starting", version_metadata().short_version);
 
@@ -135,7 +135,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> ImportComm
 
 impl<C: ChainSpecParser> ImportCommand<C> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 }

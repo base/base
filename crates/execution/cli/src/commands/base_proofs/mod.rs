@@ -18,12 +18,9 @@ pub struct Command<C: ChainSpecParser> {
     command: Subcommands<C>,
 }
 
-impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> Command<C> {
+impl<C: ChainSpecParser> Command<C> {
     /// Execute `base-proofs` command
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>>(
-        self,
-        runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<()> {
+    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
         match self.command {
             Subcommands::Init(cmd) => cmd.execute::<N>(runtime.clone()).await,
             Subcommands::Prune(cmd) => cmd.execute::<N>(runtime.clone()).await,
@@ -34,7 +31,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> Command<C> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Returns the underlying chain being used to run this command
-    pub const fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub const fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         match &self.command {
             Subcommands::Init(cmd) => cmd.chain_spec(),
             Subcommands::Prune(cmd) => cmd.chain_spec(),

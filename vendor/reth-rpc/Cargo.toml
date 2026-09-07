@@ -56,6 +56,7 @@ reth-rpc-server-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-engine-primitives = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
+base-execution-chainspec = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 alloy-eips = { workspace = true, features = ["kzg"] }
 futures = { workspace = true, features = ["default"] }

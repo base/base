@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::{ChainSpec, DEV, HOLESKY, HOODI, MAINNET, SEPOLIA};
 use reth_cli::chainspec::{ChainSpecParser, parse_genesis};
 
@@ -14,19 +15,18 @@ pub const SUPPORTED_CHAINS: &[&str] = &["mainnet", "sepolia", "holesky", "hoodi"
 pub struct EthereumChainSpecParser;
 
 impl ChainSpecParser for EthereumChainSpecParser {
-    type ChainSpec = ChainSpec;
-
     const SUPPORTED_CHAINS: &'static [&'static str] = SUPPORTED_CHAINS;
 
-    fn parse(s: &str) -> eyre::Result<Arc<ChainSpec>> {
-        Ok(match s {
+    fn parse(s: &str) -> eyre::Result<Arc<BaseChainSpec>> {
+        let spec: Arc<ChainSpec> = match s {
             "mainnet" => MAINNET.clone(),
             "sepolia" => SEPOLIA.clone(),
             "holesky" => HOLESKY.clone(),
             "hoodi" => HOODI.clone(),
             "dev" => DEV.clone(),
             _ => Arc::new(parse_genesis(s)?.into()),
-        })
+        };
+        Ok(Arc::new(spec.as_ref().clone().into()))
     }
 }
 

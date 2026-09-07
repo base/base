@@ -1,6 +1,5 @@
 //! Type aliases for the Base node builder.
 
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_rpc::eth::BaseEthApiBuilder;
 use base_node_core::BasePayloadValidatorBuilder;
 use reth_db::DatabaseEnv;
@@ -26,4 +25,4 @@ pub type BaseNodeHandle = NodeHandle<BaseNodeAdapter, BaseNodeAddOns>;
 pub type BaseProvider = BlockchainProvider<NodeTypesWithDBAdapter<BaseNode, DatabaseEnv>>;
 
 /// Convenience alias for the Base node builder type.
-pub type BaseNodeBuilder = WithLaunchContext<NodeBuilder<DatabaseEnv, BaseChainSpec>>;
+pub type BaseNodeBuilder = WithLaunchContext<NodeBuilder<DatabaseEnv>>;

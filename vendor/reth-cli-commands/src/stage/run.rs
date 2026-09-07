@@ -5,8 +5,8 @@
 use std::{any::Any, net::SocketAddr, sync::Arc};
 
 use alloy_eips::BlockHashOrNumber;
+use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
-use reth_chainspec::{EthChainSpec, EthereumHardforks, Hardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_runner::CliContext;
 use reth_cli_util::get_secret_key;
@@ -101,12 +101,12 @@ pub struct Command<C: ChainSpecParser> {
     network: NetworkArgs,
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>> Command<C> {
+impl<C: ChainSpecParser> Command<C> {
     /// Execute `stage` command
     pub async fn execute<N, F>(self, ctx: CliContext, components: F) -> eyre::Result<()>
     where
-        N: CliNodeTypes<ChainSpec = C::ChainSpec>,
-        F: FnOnce(Arc<C::ChainSpec>) -> CliNodeComponents<N>,
+        N: CliNodeTypes,
+        F: FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents<N>,
     {
         // Quit early if the stage requires a commit and `--commit` is not provided.
         if self.requires_commit() && !self.commit {
@@ -170,7 +170,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                         .network
                         .network_config(
                             &config,
-                            provider_factory.chain_spec(),
+                            &provider_factory.chain_spec(),
                             p2p_secret_key,
                             default_peers_path,
                             runtime.clone(),
@@ -226,7 +226,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                         .network
                         .network_config(
                             &config,
-                            provider_factory.chain_spec(),
+                            &provider_factory.chain_spec(),
                             p2p_secret_key,
                             default_peers_path,
                             runtime.clone(),
@@ -391,7 +391,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
 
 impl<C: ChainSpecParser> Command<C> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 

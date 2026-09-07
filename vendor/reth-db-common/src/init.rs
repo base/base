@@ -6,7 +6,7 @@ use alloy_primitives::{
     Address, B256, U256, keccak256,
     map::{AddressMap, B256Map, B256Set, HashMap},
 };
-use reth_chainspec::EthChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use reth_codecs::Compact;
 use reth_config::config::EtlConfig;
 use reth_db_api::{
@@ -124,7 +124,6 @@ where
         + StorageSettingsCache
         + RocksDBProviderFactory
         + AsRef<PF::ProviderRW>,
-    PF::ChainSpec: EthChainSpec<Header = alloy_consensus::Header>,
 {
     init_genesis_with_settings(factory, StorageSettings::base())
 }
@@ -154,7 +153,6 @@ where
         + StorageSettingsCache
         + RocksDBProviderFactory
         + AsRef<PF::ProviderRW>,
-    PF::ChainSpec: EthChainSpec<Header = alloy_consensus::Header>,
 {
     init_genesis_with_settings_and_validate(factory, genesis_storage_settings, true)
 }
@@ -186,7 +184,6 @@ where
         + StorageSettingsCache
         + RocksDBProviderFactory
         + AsRef<PF::ProviderRW>,
-    PF::ChainSpec: EthChainSpec<Header = alloy_consensus::Header>,
 {
     let chain = factory.chain_spec();
 
@@ -453,13 +450,12 @@ where
 }
 
 /// Inserts header for the genesis state.
-pub fn insert_genesis_header<Provider, Spec>(
+pub fn insert_genesis_header<Provider>(
     provider: &Provider,
-    chain: &Spec,
+    chain: &BaseChainSpec,
 ) -> ProviderResult<()>
 where
     Provider: StaticFileProviderFactory + DBProvider<Tx: DbTxMut>,
-    Spec: EthChainSpec<Header = alloy_consensus::Header>,
 {
     let (header, block_hash) = (chain.genesis_header(), chain.genesis_hash());
     let static_file_provider = provider.static_file_provider();
@@ -1359,7 +1355,7 @@ mod tests {
         let genesis_hash = init_genesis(
             &ProviderFactory::<MockNodeTypesWithDB>::new(
                 factory.into_db(),
-                MAINNET.clone(),
+                Arc::new(MAINNET.as_ref().clone().into()),
                 static_file_provider,
                 rocksdb_provider,
                 reth_tasks::Runtime::test(),
@@ -1386,7 +1382,7 @@ mod tests {
         let result = init_genesis_with_settings_and_validate(
             &ProviderFactory::<MockNodeTypesWithDB>::new(
                 factory.into_db(),
-                MAINNET.clone(),
+                Arc::new(MAINNET.as_ref().clone().into()),
                 static_file_provider,
                 rocksdb_provider,
                 reth_tasks::Runtime::test(),

@@ -23,15 +23,14 @@ mod spec;
 
 pub use alloy_chains::{Chain, ChainKind, NamedChain};
 pub use alloy_evm::EvmLimitParams;
-pub use api::EthChainSpec;
 pub use info::ChainInfo;
 /// Re-export for convenience
 pub use reth_ethereum_forks::*;
 #[cfg(any(test, feature = "test-utils"))]
 pub use spec::test_fork_ids;
 pub use spec::{
-    BaseFeeParams, BaseFeeParamsKind, ChainSpec, ChainSpecBuilder, ChainSpecProvider, DEV,
-    DepositContract, ForkBaseFeeParams, HOLESKY, HOODI, MAINNET, SEPOLIA, blob_params_to_schedule,
+    BaseFeeParams, BaseFeeParamsKind, ChainSpec, ChainSpecBuilder, DEV, DepositContract,
+    ForkBaseFeeParams, HOLESKY, HOODI, MAINNET, SEPOLIA, blob_params_to_schedule,
     create_chain_config, mainnet_chain_config, make_genesis_header,
 };
 
@@ -145,7 +144,7 @@ mod tests {
         use alloy_consensus::Header;
         use alloy_eips::eip1559::INITIAL_BASE_FEE;
 
-        use crate::{ChainSpec, EthChainSpec};
+        use crate::ChainSpec;
 
         fn parent_header() -> Header {
             Header {

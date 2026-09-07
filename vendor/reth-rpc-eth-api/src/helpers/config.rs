@@ -9,8 +9,9 @@ use alloy_eips::{
 };
 use alloy_evm::precompiles::Precompile;
 use alloy_primitives::Address;
+use base_execution_chainspec::ChainSpecProvider;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardforks, Head};
+use reth_chainspec::{EthereumHardforks, Hardforks, Head};
 use reth_errors::{ProviderError, RethError};
 use reth_evm::{ConfigureEvm, Evm, precompiles::PrecompilesMap};
 use reth_primitives_traits::header::HeaderMut;
@@ -38,9 +39,7 @@ pub struct EthConfigHandler<Provider, Evm> {
 
 impl<Provider, Evm> EthConfigHandler<Provider, Evm>
 where
-    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks>
-        + BlockReaderIdExt<Header = alloy_consensus::Header>
-        + 'static,
+    Provider: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header> + 'static,
     Evm: ConfigureEvm + 'static,
 {
     /// Creates a new [`EthConfigHandler`].
@@ -159,9 +158,7 @@ where
 
 impl<Provider, Evm> EthConfigApiServer for EthConfigHandler<Provider, Evm>
 where
-    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks>
-        + BlockReaderIdExt<Header = alloy_consensus::Header>
-        + 'static,
+    Provider: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header> + 'static,
     Evm: ConfigureEvm + 'static,
 {
     fn config(&self) -> RpcResult<EthConfig> {

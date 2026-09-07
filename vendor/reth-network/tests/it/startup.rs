@@ -1,6 +1,7 @@
 use std::{
     io,
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
+    sync::Arc,
 };
 
 use reth_chainspec::MAINNET;
@@ -134,7 +135,7 @@ async fn test_tcp_port_node_record_no_discovery() {
     let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .listener_port(0)
         .disable_discovery()
-        .build_with_noop_provider(MAINNET.clone());
+        .build_with_noop_provider(Arc::new((*MAINNET).as_ref().clone().into()));
     let network = NetworkManager::new(config).await.unwrap();
 
     let local_addr = network.local_addr();
@@ -153,7 +154,7 @@ async fn test_tcp_port_node_record_discovery() {
         .listener_port(0)
         .discovery_port(0)
         .disable_dns_discovery()
-        .build_with_noop_provider(MAINNET.clone());
+        .build_with_noop_provider(Arc::new((*MAINNET).as_ref().clone().into()));
     let network = NetworkManager::new(config).await.unwrap();
 
     let local_addr = network.local_addr();
@@ -173,7 +174,7 @@ async fn test_node_record_address_with_nat() {
         .disable_discv4_discovery()
         .disable_dns_discovery()
         .listener_port(0)
-        .build_with_noop_provider(MAINNET.clone());
+        .build_with_noop_provider(Arc::new((*MAINNET).as_ref().clone().into()));
 
     let network = NetworkManager::new(config).await.unwrap();
     let record = network.handle().local_node_record();
@@ -189,7 +190,7 @@ async fn test_node_record_address_with_nat_disable_discovery() {
         .disable_discovery()
         .disable_nat()
         .listener_port(0)
-        .build_with_noop_provider(MAINNET.clone());
+        .build_with_noop_provider(Arc::new((*MAINNET).as_ref().clone().into()));
 
     let network = NetworkManager::new(config).await.unwrap();
     let record = network.handle().local_node_record();

@@ -8,7 +8,7 @@ use std::{
 use alloy_consensus::EMPTY_ROOT_HASH;
 use alloy_primitives::{Address, B256, Bytes, U256, address, b256, keccak256};
 use alloy_rlp::EMPTY_STRING_CODE;
-use reth_chainspec::{Chain, ChainSpec, HOLESKY, MAINNET};
+use reth_chainspec::{Chain, ChainSpec};
 use reth_primitives_traits::Account;
 use reth_provider::test_utils::{create_test_provider_factory, insert_genesis};
 use reth_trie::{AccountProof, Nibbles, StorageProof, proof::Proof};
@@ -46,7 +46,7 @@ fn convert_to_proof<'a>(path: impl IntoIterator<Item = &'a str>) -> Vec<Bytes> {
 fn testspec_proofs() {
     // Create test database and insert genesis accounts.
     let factory = create_test_provider_factory();
-    let root = insert_genesis(&factory, TEST_SPEC.clone()).unwrap();
+    let root = insert_genesis(&factory).unwrap();
 
     let data = Vec::from([
         (
@@ -107,7 +107,7 @@ fn testspec_proofs() {
 fn testspec_empty_storage_proof() {
     // Create test database and insert genesis accounts.
     let factory = create_test_provider_factory();
-    let root = insert_genesis(&factory, TEST_SPEC.clone()).unwrap();
+    let root = insert_genesis(&factory).unwrap();
 
     let target = address!("0x1ed9b1dd266b607ee278726d324b855a093394a6");
     let slots = Vec::from([B256::with_last_byte(1), B256::with_last_byte(3)]);
@@ -165,7 +165,7 @@ fn empty_state_trie_account_proof() {
 fn mainnet_genesis_account_proof() {
     // Create test database and insert genesis accounts.
     let factory = create_test_provider_factory();
-    let root = insert_genesis(&factory, MAINNET.clone()).unwrap();
+    let root = insert_genesis(&factory).unwrap();
 
     // Address from mainnet genesis allocation.
     // keccak256 - `0xcf67b71c90b0d523dd5004cf206f325748da347685071b34812e21801f5270c4`
@@ -193,7 +193,7 @@ fn mainnet_genesis_account_proof() {
 fn mainnet_genesis_account_proof_nonexistent() {
     // Create test database and insert genesis accounts.
     let factory = create_test_provider_factory();
-    let root = insert_genesis(&factory, MAINNET.clone()).unwrap();
+    let root = insert_genesis(&factory).unwrap();
 
     // Address that does not exist in mainnet genesis allocation.
     // keccak256 - `0x18f415ffd7f66bb1924d90f0e82fb79ca8c6d8a3473cd9a95446a443b9db1761`
@@ -219,7 +219,7 @@ fn mainnet_genesis_account_proof_nonexistent() {
 fn holesky_deposit_contract_proof() {
     // Create test database and insert genesis accounts.
     let factory = create_test_provider_factory();
-    let root = insert_genesis(&factory, HOLESKY.clone()).unwrap();
+    let root = insert_genesis(&factory).unwrap();
 
     let target = address!("0x4242424242424242424242424242424242424242");
     // existent

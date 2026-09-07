@@ -18,6 +18,7 @@ workspace = true
 reth-db = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-cli-runner = { workspace = true }
+base-execution-chainspec = { workspace = true }
 clap = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }

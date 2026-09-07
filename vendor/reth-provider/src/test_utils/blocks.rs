@@ -20,7 +20,7 @@ use crate::{DBProvider, DatabaseProviderRW, ExecutionOutcome};
 
 /// Assert genesis block
 pub fn assert_genesis_block<DB: Database, N: NodeTypes>(
-    provider: &DatabaseProviderRW<DB, N>,
+    provider: &DatabaseProviderRW<DB>,
     g: SealedBlock<BaseBlock>,
 ) {
     let n = g.number;

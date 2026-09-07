@@ -8,13 +8,13 @@ use crate::{
     ForkChoiceSubscriptions, PersistedBlockNotifications, PersistedBlockSubscriptions,
 };
 
-impl<C: Send + Sync> CanonStateSubscriptions for NoopProvider<C> {
+impl CanonStateSubscriptions for NoopProvider {
     fn subscribe_to_canonical_state(&self) -> CanonStateNotifications {
         broadcast::channel(1).1
     }
 }
 
-impl<C: Send + Sync> ForkChoiceSubscriptions for NoopProvider<C> {
+impl ForkChoiceSubscriptions for NoopProvider {
     type Header = alloy_consensus::Header;
 
     fn subscribe_safe_block(&self) -> ForkChoiceNotifications<alloy_consensus::Header> {
@@ -28,7 +28,7 @@ impl<C: Send + Sync> ForkChoiceSubscriptions for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> PersistedBlockSubscriptions for NoopProvider<C> {
+impl PersistedBlockSubscriptions for NoopProvider {
     fn subscribe_persisted_block(&self) -> PersistedBlockNotifications {
         let (_, rx) = watch::channel(None);
         PersistedBlockNotifications(rx)

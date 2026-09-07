@@ -1,6 +1,6 @@
 //! Connection tests
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::map::HashSet;
 use futures::StreamExt;
@@ -650,7 +650,7 @@ async fn new_random_peer(max_in_bound: usize, trusted_nodes: Vec<TrustedPeer>) -
         .listener_port(0)
         .disable_discovery()
         .peer_config(peers_config)
-        .build_with_noop_provider(MAINNET.clone());
+        .build_with_noop_provider(Arc::new((*MAINNET).as_ref().clone().into()));
 
     NetworkManager::new(config).await.unwrap()
 }
@@ -722,7 +722,7 @@ async fn test_connect_peer_in_different_network_should_fail() {
         .listener_port(0)
         .disable_discovery()
         .peer_config(peers_config)
-        .build_with_noop_provider(SEPOLIA.clone());
+        .build_with_noop_provider(Arc::new(SEPOLIA.as_ref().clone().into()));
 
     let network = NetworkManager::new(config).await.unwrap();
     let handle = network.handle().clone();

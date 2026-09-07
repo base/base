@@ -3,7 +3,6 @@
 use alloy_consensus::TxEnvelope;
 use alloy_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
 use eyre::OptionExt;
-use reth_chainspec::EthChainSpec;
 use reth_engine_primitives::{InvalidBlockHook, InvalidBlockHooks, NoopInvalidBlockHook};
 use reth_invalid_block_hooks::InvalidBlockWitnessHook;
 use reth_node_core::{
@@ -32,7 +31,7 @@ impl InvalidBlockHookBuilder {
     /// * `evm_config` - The EVM configuration
     /// * `chain_id` - The chain ID for verification
     pub async fn build<P, E>(
-        config: &NodeConfig<P::ChainSpec>,
+        config: &NodeConfig,
         data_dir: &ChainPath<DataDirPath>,
         provider: P,
         evm_config: E,
@@ -79,13 +78,10 @@ impl InvalidBlockHookBuilder {
     }
 
     /// Returns an RPC client for the healthy node, if configured in the node config.
-    pub async fn healthy_node_client<C>(
-        config: &NodeConfig<C>,
+    pub async fn healthy_node_client(
+        config: &NodeConfig,
         chain_id: u64,
-    ) -> eyre::Result<Option<jsonrpsee::http_client::HttpClient>>
-    where
-        C: EthChainSpec,
-    {
+    ) -> eyre::Result<Option<jsonrpsee::http_client::HttpClient>> {
         let Some(url) = config.debug.healthy_node_rpc_url.as_ref() else {
             return Ok(None);
         };

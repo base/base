@@ -75,7 +75,9 @@ mod tests {
         let pool = crate::test_utils::RpcTestUtils::pool();
         let mock_provider = MockEthProvider::default();
 
-        let evm_config = TestEvmConfig::new(mock_provider.chain_spec());
+        let evm_config = TestEvmConfig::new(std::sync::Arc::new(
+            mock_provider.chain_spec().runtime_chain_spec(),
+        ));
         mock_provider.extend_accounts(accounts);
 
         crate::test_utils::RpcTestUtils::api_builder(

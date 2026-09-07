@@ -1,6 +1,5 @@
 //! Contains the main provider types and traits for interacting with the blockchain's storage.
 
-use reth_chainspec::EthereumHardforks;
 use reth_node_types::{NodeTypes, NodeTypesWithDB};
 
 mod database;
@@ -38,11 +37,11 @@ pub use rocksdb::{
 /// [`ProviderNodeTypes`].
 pub trait NodeTypesForProvider
 where
-    Self: NodeTypes<ChainSpec: EthereumHardforks>,
+    Self: NodeTypes,
 {
 }
 
-impl<T> NodeTypesForProvider for T where T: NodeTypes<ChainSpec: EthereumHardforks> {}
+impl<T> NodeTypesForProvider for T where T: NodeTypes {}
 
 /// Helper trait keeping common requirements of providers for [`NodeTypesWithDB`].
 pub trait ProviderNodeTypes

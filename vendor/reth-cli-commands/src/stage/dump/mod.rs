@@ -1,8 +1,8 @@
 //! Database debugging tool
 use std::{path::PathBuf, sync::Arc};
 
+use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
-use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_db::{DatabaseEnv, init_db, mdbx::DatabaseArguments};
 use reth_db_api::{
@@ -93,7 +93,7 @@ macro_rules! handle_stage {
     }};
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C> {
+impl<C: ChainSpecParser> Command<C> {
     /// Execute `dump-stage` command
     pub async fn execute<N, F>(
         self,
@@ -101,8 +101,8 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C>
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()>
     where
-        N: CliNodeTypes<ChainSpec = C::ChainSpec>,
-        F: FnOnce(Arc<C::ChainSpec>) -> CliNodeComponents<N>,
+        N: CliNodeTypes,
+        F: FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents<N>,
     {
         // `unwind_and_copy` opens a RW provider on the source datadir, so open RW here.
         let Environment { provider_factory, .. } =
@@ -140,7 +140,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + EthereumHardforks>> Command<C>
 
 impl<C: ChainSpecParser> Command<C> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 }

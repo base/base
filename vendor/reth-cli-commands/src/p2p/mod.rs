@@ -4,8 +4,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use alloy_eips::BlockHashOrNumber;
 use backon::{ConstantBuilder, Retryable};
+use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
-use reth_chainspec::{EthChainSpec, EthereumHardforks, Hardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_util::hash_or_num_value_parser;
 use reth_config::Config;
@@ -30,9 +30,9 @@ pub struct Command<C: ChainSpecParser> {
     command: Subcommands<C>,
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>> Command<C> {
+impl<C: ChainSpecParser> Command<C> {
     /// Execute `p2p` command
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>>(self) -> eyre::Result<()> {
+    pub async fn execute<N: CliNodeTypes>(self) -> eyre::Result<()> {
         match self.command {
             Subcommands::Header { args, id } => {
                 let handle = args.launch_network::<N>().await?;
@@ -99,7 +99,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
 
 impl<C: ChainSpecParser> Command<C> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         match &self.command {
             Subcommands::Header { args, .. } => Some(&args.chain),
             Subcommands::Body { args, .. } => Some(&args.chain),
@@ -142,6 +142,9 @@ pub enum Subcommands<C: ChainSpecParser> {
 /// Options for downloading headers and bodies from peers.
 #[derive(Debug, Clone, Parser)]
 pub struct DownloadArgs<C: ChainSpecParser> {
+    /// Parser used for built-in chain names and genesis files.
+    #[arg(skip)]
+    pub parser: core::marker::PhantomData<C>,
     /// The number of retries per request
     #[arg(long, default_value = "5")]
     retries: usize,
@@ -166,15 +169,14 @@ pub struct DownloadArgs<C: ChainSpecParser> {
         default_value = C::default_value(),
         value_parser = C::parser()
     )]
-    chain: Arc<C::ChainSpec>,
+    chain: Arc<BaseChainSpec>,
 }
 
 impl<C: ChainSpecParser> DownloadArgs<C> {
     /// Creates and spawns the network and returns the handle.
     pub async fn launch_network<N>(&self) -> eyre::Result<reth_network::NetworkHandle>
     where
-        C::ChainSpec: EthChainSpec + Hardforks + EthereumHardforks + Send + Sync + 'static,
-        N: CliNodeTypes<ChainSpec = C::ChainSpec>,
+        N: CliNodeTypes,
     {
         let data_dir = self.datadir.clone().resolve_datadir(self.chain.chain());
         let config_path = self.config.clone().unwrap_or_else(|| data_dir.config());

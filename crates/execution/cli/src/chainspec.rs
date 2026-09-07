@@ -10,11 +10,9 @@ use reth_cli::chainspec::{ChainSpecParser, parse_genesis};
 pub struct BaseChainSpecParser;
 
 impl ChainSpecParser for BaseChainSpecParser {
-    type ChainSpec = BaseChainSpec;
-
     const SUPPORTED_CHAINS: &'static [&'static str] = ChainConfig::SUPPORTED_NAMES;
 
-    fn parse(s: &str) -> eyre::Result<Arc<Self::ChainSpec>> {
+    fn parse(s: &str) -> eyre::Result<Arc<BaseChainSpec>> {
         chain_value_parser(s)
     }
 }

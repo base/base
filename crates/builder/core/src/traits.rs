@@ -2,7 +2,6 @@
 
 use alloy_consensus::Header;
 use base_common_consensus::BaseTransactionSigned;
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::ParkablePayloadTransactions;
 use base_execution_txpool::{BasePooledTx, StateDiffInvalidation, TimestampedTransaction};
 use reth_node_api::{FullNodeTypes, NodeTypes};
@@ -10,9 +9,9 @@ use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
 
 /// Composite trait bound for a full node type compatible with the Base builder.
-pub trait NodeBounds: FullNodeTypes<Types: NodeTypes<ChainSpec = BaseChainSpec>> {}
+pub trait NodeBounds: FullNodeTypes<Types: NodeTypes> {}
 
-impl<T> NodeBounds for T where T: FullNodeTypes<Types: NodeTypes<ChainSpec = BaseChainSpec>> {}
+impl<T> NodeBounds for T where T: FullNodeTypes<Types: NodeTypes> {}
 
 /// Composite trait bound for a transaction pool compatible with the Base builder.
 pub trait PoolBounds:
@@ -43,18 +42,12 @@ where
 
 /// Composite trait bound for state provider clients used by the Base builder.
 pub trait ClientBounds:
-    StateProviderFactory
-    + ChainSpecProvider<ChainSpec = BaseChainSpec>
-    + BlockReaderIdExt<Header = Header>
-    + Clone
+    StateProviderFactory + ChainSpecProvider + BlockReaderIdExt<Header = Header> + Clone
 {
 }
 
 impl<T> ClientBounds for T where
-    T: StateProviderFactory
-        + ChainSpecProvider<ChainSpec = BaseChainSpec>
-        + BlockReaderIdExt<Header = Header>
-        + Clone
+    T: StateProviderFactory + ChainSpecProvider + BlockReaderIdExt<Header = Header> + Clone
 {
 }
 

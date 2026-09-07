@@ -18,7 +18,7 @@ pub struct ExExContext<Node: FullNodeComponents> {
     /// The current head of the blockchain at launch.
     pub head: BlockNumHash,
     /// The config of the node
-    pub config: NodeConfig<<Node::Types as NodeTypes>::ChainSpec>,
+    pub config: NodeConfig,
     /// The loaded node config
     pub reth_config: reth_config::Config,
     /// Channel used to send [`ExExEvent`]s to the rest of the node.

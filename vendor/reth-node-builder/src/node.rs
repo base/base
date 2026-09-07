@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use base_execution_chainspec::BaseChainSpec;
 use reth_db::DatabaseEnv;
 use reth_node_api::FullNodeComponents;
 // re-export the node api types
@@ -74,7 +75,6 @@ where
     C: Clone + Debug + Send + Sync + Unpin + 'static,
     AO: Clone + Debug + Send + Sync + Unpin + 'static,
 {
-    type ChainSpec = <N::Types as NodeTypes>::ChainSpec;
 }
 
 impl<N, C, AO> Node<N> for AnyNode<N, C, AO>
@@ -113,7 +113,7 @@ pub struct FullNode<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> {
     /// Task executor for the node.
     pub task_executor: TaskExecutor,
     /// The initial node config.
-    pub config: NodeConfig<<Node::Types as NodeTypes>::ChainSpec>,
+    pub config: NodeConfig,
     /// The data dir of the node.
     pub data_dir: ChainPath<DataDirPath>,
     /// The handle to launched add-ons
@@ -142,7 +142,7 @@ where
     AddOns: NodeAddOns<Node>,
 {
     /// Returns the chain spec of the node.
-    pub fn chain_spec(&self) -> Arc<<Node::Types as NodeTypes>::ChainSpec> {
+    pub fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.provider.chain_spec()
     }
 }

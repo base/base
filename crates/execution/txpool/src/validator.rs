@@ -20,6 +20,7 @@ use base_common_consensus::{
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
     IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
@@ -30,7 +31,6 @@ use base_precompile_storage::{
 };
 use lru::LruCache;
 use parking_lot::RwLock;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{
     Block, BlockBody, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
@@ -687,7 +687,7 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
 
 impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
     /// Returns the configured chain spec
-    pub fn chain_spec(&self) -> Arc<Client::ChainSpec>
+    pub fn chain_spec(&self) -> Arc<BaseChainSpec>
     where
         Client: ChainSpecProvider,
     {
@@ -804,7 +804,7 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
 
 impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm>
 where
-    Client: ChainSpecProvider<ChainSpec: Upgrades> + StateProviderFactory + BlockReaderIdExt + Sync,
+    Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
     Tx: EthPoolTransaction + BasePooledTx,
     Evm: ConfigureEvm,
 {
@@ -2129,7 +2129,7 @@ where
 
 impl<Client, Tx, Evm> TransactionValidator for BaseTransactionValidator<Client, Tx, Evm>
 where
-    Client: ChainSpecProvider<ChainSpec: Upgrades> + StateProviderFactory + BlockReaderIdExt + Sync,
+    Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
     Tx: EthPoolTransaction + BasePooledTx,
     Evm: ConfigureEvm,
 {
@@ -2179,17 +2179,15 @@ mod tests {
     use super::*;
     use crate::BasePooledTransaction;
 
-    type TestValidator = BaseTransactionValidator<
-        MockEthProvider<Arc<BaseChainSpec>>,
-        BasePooledTransaction,
-        BaseEvmConfig,
-    >;
+    type TestValidator =
+        BaseTransactionValidator<MockEthProvider, BasePooledTransaction, BaseEvmConfig>;
 
     /// Builds a [`BaseTransactionValidator`] configured against the given chain spec with
     /// no accounts seeded.
     fn build_test_validator_with_spec(chain_spec: Arc<BaseChainSpec>) -> TestValidator {
-        let client =
-            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
+        let client = MockEthProvider::new()
+            .with_chain_spec(chain_spec.as_ref().clone())
+            .with_genesis_block();
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
@@ -2209,8 +2207,9 @@ mod tests {
     /// Builds a Cobalt-activated validator with a custom encoded transaction-size limit.
     fn build_test_validator_with_max_tx_input_bytes(max_tx_input_bytes: usize) -> TestValidator {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
-        let client =
-            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
+        let client = MockEthProvider::new()
+            .with_chain_spec(chain_spec.as_ref().clone())
+            .with_genesis_block();
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
@@ -2226,8 +2225,9 @@ mod tests {
         account: ExtendedAccount,
     ) -> TestValidator {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
-        let client =
-            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
+        let client = MockEthProvider::new()
+            .with_chain_spec(chain_spec.as_ref().clone())
+            .with_genesis_block();
         client.add_account(address, account);
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
@@ -3459,8 +3459,9 @@ mod tests {
             "balance must be insufficient once the operator fee is included"
         );
 
-        let client =
-            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
+        let client = MockEthProvider::new()
+            .with_chain_spec(chain_spec.as_ref().clone())
+            .with_genesis_block();
         client.add_account(sender, ExtendedAccount::new(0, balance));
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(client, evm_config)
@@ -3522,8 +3523,9 @@ mod tests {
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
 
-        let client =
-            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
+        let client = MockEthProvider::new()
+            .with_chain_spec(chain_spec.as_ref().clone())
+            .with_genesis_block();
         client
             .add_account(sender, ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)));
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
@@ -3589,8 +3591,9 @@ mod tests {
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
 
-        let client =
-            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
+        let client = MockEthProvider::new()
+            .with_chain_spec(chain_spec.as_ref().clone())
+            .with_genesis_block();
         client.add_account(
             signer.address(),
             ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),

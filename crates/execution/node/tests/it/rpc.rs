@@ -28,7 +28,7 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
     network_args.discovery.discv5_port = Some(0);
     network_args.discovery.discv5_port_ipv6 = Some(0);
     let node_config = NodeConfig::test()
-        .map_chain(Arc::new(BaseChainSpec::mainnet()))
+        .with_chain(Arc::new(BaseChainSpec::mainnet()))
         .with_network(network_args)
         .with_rpc(RpcServerArgs::default().with_unused_ports().with_http());
 

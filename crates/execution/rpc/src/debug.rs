@@ -7,9 +7,9 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
-use base_common_chains::Upgrades;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes,
     builder::{BasePayloadBuilderCtx, Builder},
@@ -171,12 +171,12 @@ where
             NextBlockEnvCtx: BuildNextEnv<
                 BasePayloadBuilderAttributes<BaseTxEnvelope>,
                 alloy_consensus::Header,
-                Provider::ChainSpec,
+                BaseChainSpec,
             >,
         > + 'static,
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + StateProviderFactory
-        + ChainSpecProvider<ChainSpec: Upgrades>
+        + ChainSpecProvider
         + HeaderProvider<Header = alloy_consensus::Header>
         + Clone
         + 'static,

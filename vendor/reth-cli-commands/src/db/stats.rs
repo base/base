@@ -5,7 +5,6 @@ use comfy_table::{Cell, Row, Table as ComfyTable};
 use eyre::WrapErr;
 use human_bytes::human_bytes;
 use itertools::Itertools;
-use reth_chainspec::EthereumHardforks;
 use reth_db::{DatabaseEnv, mdbx, static_file::iter_static_files};
 use reth_db_api::{TableViewer, Tables, database::Database};
 use reth_db_common::DbTool;
@@ -47,7 +46,7 @@ pub struct Command {
 
 impl Command {
     /// Execute `db stats` command
-    pub fn execute<N: CliNodeTypes<ChainSpec: EthereumHardforks>>(
+    pub fn execute<N: CliNodeTypes>(
         self,
         data_dir: ChainPath<DataDirPath>,
         tool: &DbTool<NodeTypesWithDBAdapter<N, DatabaseEnv>>,

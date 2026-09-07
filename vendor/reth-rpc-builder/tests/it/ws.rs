@@ -136,9 +136,7 @@ async fn test_eth_subscribe_not_available_over_http() {
     let builder = test_rpc_builder();
     let eth_api = builder
         .eth_api_builder()
-        .map_converter(|_| {
-            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
-        })
+        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
         .build();
     let modules = RpcModuleSelection::Standard;
     let server =
@@ -177,9 +175,7 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
 
     let eth_api = builder
         .eth_api_builder()
-        .map_converter(|_| {
-            reth_rpc::test_utils::RpcTestUtils::converter(reth_chainspec::MAINNET.clone())
-        })
+        .map_converter(|_| reth_rpc::test_utils::RpcTestUtils::converter())
         .build();
     let server = builder.build(
         TransportRpcModuleConfig::set_ws(RpcModuleSelection::Standard),

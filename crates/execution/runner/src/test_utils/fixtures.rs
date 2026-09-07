@@ -43,7 +43,7 @@ pub fn load_chain_spec() -> Arc<BaseChainSpec> {
 
 /// Creates a provider factory for tests with the given chain spec.
 pub fn create_provider_factory<N: NodeTypesForProvider>(
-    chain_spec: Arc<N::ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     runtime: reth_tasks::Runtime,
 ) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {
     let (static_dir, _) = create_test_static_files_dir();

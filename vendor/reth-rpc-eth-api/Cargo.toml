@@ -40,6 +40,7 @@ alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-mev = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-rpc-server-types = { workspace = true }
+base-execution-chainspec = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 reth-tasks = { workspace = true, features = ["rayon"] }

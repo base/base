@@ -16,7 +16,6 @@ workspace = true
 
 [dependencies]
 alloy-evm = { workspace = true }
-auto_impl = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-network-peers = { workspace = true }

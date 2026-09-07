@@ -37,6 +37,7 @@ reth-ethereum-forks = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-engine-primitives = { workspace = true }
+base-execution-chainspec = { workspace = true }
 reth-db = { workspace = true, features = ["mdbx"] }
 strum = { workspace = true, features = ["derive"] }
 eyre = { workspace = true, features = ["default"] }

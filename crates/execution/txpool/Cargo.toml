@@ -33,6 +33,7 @@ reth-primitives-traits = { workspace = true }
 base-execution-eip8130 = { workspace = true }
 base-precompile-storage = { workspace = true }
 base-common-precompiles = { workspace = true }
+base-execution-chainspec = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 lru = { workspace = true, features = ["default"] }

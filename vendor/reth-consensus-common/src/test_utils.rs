@@ -7,7 +7,8 @@ use std::sync::Arc;
 use alloy_consensus::{BlockHeader as _, TxReceipt, proofs::calculate_receipt_root};
 use alloy_primitives::{B256, Bloom};
 use base_common_consensus::{BaseBlock, BaseReceipt};
-use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks};
+use base_execution_chainspec::BaseChainSpec;
+use reth_chainspec::EthereumHardforks;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
@@ -23,22 +24,21 @@ use crate::validation::{
 
 /// Shared validation fixture used by storage and engine tests.
 #[derive(Debug, Clone)]
-pub struct TestConsensus<C = ChainSpec> {
+pub struct TestConsensus {
     /// Fork schedule for the test's execution rules.
-    pub chain_spec: Arc<C>,
+    pub chain_spec: Arc<BaseChainSpec>,
 }
 
-impl<C> TestConsensus<C> {
+impl TestConsensus {
     /// Creates a validation fixture.
-    pub const fn new(chain_spec: Arc<C>) -> Self {
+    pub const fn new(chain_spec: Arc<BaseChainSpec>) -> Self {
         Self { chain_spec }
     }
 }
 
-impl<H, C> HeaderValidator<H> for TestConsensus<C>
+impl<H> HeaderValidator<H> for TestConsensus
 where
     H: BlockHeader,
-    C: EthChainSpec<Header = H> + EthereumHardforks + core::fmt::Debug + Send + Sync,
 {
     fn validate_header(&self, header: &SealedHeader<H>) -> Result<(), ConsensusError> {
         validate_header_extra_data(header.header(), 32)?;
@@ -56,10 +56,9 @@ where
     }
 }
 
-impl<B, C> Consensus<B> for TestConsensus<C>
+impl<B> Consensus<B> for TestConsensus
 where
     B: Block,
-    C: EthChainSpec<Header = B::Header> + EthereumHardforks + core::fmt::Debug + Send + Sync,
 {
     fn validate_body_against_header(
         &self,
@@ -74,14 +73,7 @@ where
     }
 }
 
-impl<C> FullConsensus for TestConsensus<C>
-where
-    C: EthChainSpec<Header = alloy_consensus::Header>
-        + EthereumHardforks
-        + core::fmt::Debug
-        + Send
-        + Sync,
-{
+impl FullConsensus for TestConsensus {
     fn validate_block_post_execution(
         &self,
         block: &RecoveredBlock<BaseBlock>,

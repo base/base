@@ -11,7 +11,7 @@ use crate::{
     providers::{RocksDBProvider, StaticFileProvider, StaticFileProviderRWRefMut},
 };
 
-impl<C: Send + Sync> StaticFileProviderFactory for NoopProvider<C> {
+impl StaticFileProviderFactory for NoopProvider {
     fn static_file_provider(&self) -> StaticFileProvider {
         StaticFileProvider::read_only(PathBuf::default()).unwrap()
     }
@@ -25,7 +25,7 @@ impl<C: Send + Sync> StaticFileProviderFactory for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> RocksDBProviderFactory for NoopProvider<C> {
+impl RocksDBProviderFactory for NoopProvider {
     fn rocksdb_provider(&self) -> RocksDBProvider {
         RocksDBProvider::builder(PathBuf::default()).build().unwrap()
     }

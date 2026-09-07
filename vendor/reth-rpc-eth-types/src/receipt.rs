@@ -7,7 +7,7 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, TxKind};
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_common_consensus::BaseReceipt;
-use reth_chainspec::EthChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use reth_ethereum_primitives::Receipt;
 use reth_primitives_traits::TransactionMeta;
 use reth_rpc_convert::transaction::{ConvertReceiptInput, ReceiptConverter};
@@ -53,15 +53,14 @@ pub fn build_receipt<E>(
 /// Converter for Ethereum receipts.
 #[derive(derive_more::Debug)]
 pub struct EthReceiptConverter<
-    ChainSpec,
     Builder = fn(Receipt, usize, TransactionMeta) -> ReceiptEnvelope<Log>,
 > {
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     #[debug(skip)]
     build_rpc_receipt: Builder,
 }
 
-impl<ChainSpec, Builder> Clone for EthReceiptConverter<ChainSpec, Builder>
+impl<Builder> Clone for EthReceiptConverter<Builder>
 where
     Builder: Clone,
 {
@@ -73,9 +72,9 @@ where
     }
 }
 
-impl<ChainSpec> EthReceiptConverter<ChainSpec> {
+impl EthReceiptConverter {
     /// Creates a new converter with the given chain spec.
-    pub const fn new(chain_spec: Arc<ChainSpec>) -> Self {
+    pub const fn new(chain_spec: Arc<BaseChainSpec>) -> Self {
         Self {
             chain_spec,
             build_rpc_receipt: |receipt: Receipt, next_log_index, meta: TransactionMeta| {
@@ -101,17 +100,13 @@ impl<ChainSpec> EthReceiptConverter<ChainSpec> {
     }
 
     /// Sets new builder for the converter.
-    pub fn with_builder<Builder>(
-        self,
-        build_rpc_receipt: Builder,
-    ) -> EthReceiptConverter<ChainSpec, Builder> {
+    pub fn with_builder<Builder>(self, build_rpc_receipt: Builder) -> EthReceiptConverter<Builder> {
         EthReceiptConverter { chain_spec: self.chain_spec, build_rpc_receipt }
     }
 }
 
-impl<ChainSpec, Builder, Rpc> ReceiptConverter for EthReceiptConverter<ChainSpec, Builder>
+impl<Builder, Rpc> ReceiptConverter for EthReceiptConverter<Builder>
 where
-    ChainSpec: EthChainSpec + 'static,
     Builder: Fn(BaseReceipt, usize, TransactionMeta) -> Rpc + 'static,
 {
     type RpcReceipt = TransactionReceipt<Rpc>;

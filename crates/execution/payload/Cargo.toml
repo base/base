@@ -33,6 +33,7 @@ reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-eip8130 = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
+base-execution-chainspec = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 reth-basic-payload-builder = { workspace = true }

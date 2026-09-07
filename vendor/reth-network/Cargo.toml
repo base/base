@@ -45,6 +45,7 @@ reth-ethereum-forks = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
+base-execution-chainspec = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 socket2 = { workspace = true, features = ["all"] }
 rand = { workspace = true, features = ["default"] }

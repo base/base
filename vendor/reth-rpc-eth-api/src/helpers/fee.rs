@@ -4,8 +4,8 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::U256;
 use alloy_rpc_types_eth::{BlockNumberOrTag, FeeHistory};
+use base_execution_chainspec::ChainSpecProvider;
 use futures::{Future, StreamExt};
-use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_rpc_eth_types::{
     EthApiError, FeeHistoryCache, FeeHistoryEntry, GasPriceOracle, RpcInvalidTransactionError,
     fee_history::calculate_reward_percentiles_for_block, utils::checked_blob_gas_used_ratio,
@@ -20,11 +20,7 @@ use crate::FromEthApiError;
 
 /// Fee related functions for the [`EthApiServer`](crate::EthApiServer) trait in the
 /// `eth_` namespace.
-pub trait EthFees:
-    LoadFee<
-    Provider: ChainSpecProvider<ChainSpec: EthChainSpec<Header = ProviderHeader<Self::Provider>>>,
->
-{
+pub trait EthFees: LoadFee<Provider: ChainSpecProvider> {
     /// Returns a suggestion for a gas price for legacy transactions.
     ///
     /// See also: <https://github.com/ethereum/pm/issues/328#issuecomment-853234014>

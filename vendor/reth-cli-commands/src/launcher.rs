@@ -31,7 +31,7 @@ where
     /// * `builder_args` - Extension arguments for configuration
     fn entrypoint(
         self,
-        builder: WithLaunchContext<NodeBuilder<DatabaseEnv, C::ChainSpec>>,
+        builder: WithLaunchContext<NodeBuilder<DatabaseEnv>>,
         builder_args: Ext,
     ) -> impl Future<Output = eyre::Result<()>>;
 }
@@ -58,10 +58,7 @@ impl<F> FnLauncher<F> {
     pub fn new<C, Ext>(func: F) -> Self
     where
         C: ChainSpecParser,
-        F: AsyncFnOnce(
-            WithLaunchContext<NodeBuilder<DatabaseEnv, C::ChainSpec>>,
-            Ext,
-        ) -> eyre::Result<()>,
+        F: AsyncFnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv>>, Ext) -> eyre::Result<()>,
     {
         Self { func }
     }
@@ -77,14 +74,11 @@ impl<C, Ext, F> Launcher<C, Ext> for FnLauncher<F>
 where
     C: ChainSpecParser,
     Ext: clap::Args + fmt::Debug,
-    F: AsyncFnOnce(
-        WithLaunchContext<NodeBuilder<DatabaseEnv, C::ChainSpec>>,
-        Ext,
-    ) -> eyre::Result<()>,
+    F: AsyncFnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv>>, Ext) -> eyre::Result<()>,
 {
     fn entrypoint(
         self,
-        builder: WithLaunchContext<NodeBuilder<DatabaseEnv, C::ChainSpec>>,
+        builder: WithLaunchContext<NodeBuilder<DatabaseEnv>>,
         builder_args: Ext,
     ) -> impl Future<Output = eyre::Result<()>> {
         (self.func)(builder, builder_args)

@@ -18,9 +18,10 @@ use alloy_rpc_types_engine::{
 };
 use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_execution_chainspec::ChainSpecProvider;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
-use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
+use reth_chainspec::EthereumHardforks;
 use reth_consensus::{Consensus, FullConsensus};
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_engine_primitives::PayloadValidator;
@@ -106,7 +107,7 @@ where
 impl<Provider, E> ValidationApi<Provider, E>
 where
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
-        + ChainSpecProvider<ChainSpec: EthereumHardforks>
+        + ChainSpecProvider
         + StateProviderFactory
         + 'static,
     E: ConfigureEvm + 'static,
@@ -536,7 +537,7 @@ where
 impl<Provider, E> BlockSubmissionValidationApiServer for ValidationApi<Provider, E>
 where
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
-        + ChainSpecProvider<ChainSpec: EthereumHardforks>
+        + ChainSpecProvider
         + StateProviderFactory
         + Clone
         + 'static,

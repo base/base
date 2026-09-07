@@ -4,7 +4,8 @@ use alloy_chains::{Chain, NamedChain};
 use alloy_hardforks::{EthereumHardfork, ForkId, Head};
 use alloy_primitives::{B256, U256, hex};
 use alloy_rlp::{BufMut, Encodable, RlpDecodable, RlpEncodable};
-use reth_chainspec::{EthChainSpec, Hardforks, MAINNET};
+use base_execution_chainspec::BaseChainSpec;
+use reth_chainspec::MAINNET;
 use reth_codecs_derive::add_arbitrary_tests;
 
 use crate::{BlockRangeUpdate, EthVersion};
@@ -58,10 +59,7 @@ impl UnifiedStatus {
     }
 
     /// Build from chain‑spec + head.  Earliest/latest default to full history.
-    pub fn spec_builder<Spec>(spec: &Spec, head: &Head) -> Self
-    where
-        Spec: EthChainSpec + Hardforks,
-    {
+    pub fn spec_builder(spec: &BaseChainSpec, head: &Head) -> Self {
         Self::builder()
             .chain(spec.chain())
             .genesis(spec.genesis_hash())
@@ -491,6 +489,7 @@ mod tests {
     use alloy_hardforks::{EthereumHardfork, ForkHash, ForkId, Head};
     use alloy_primitives::{B256, U256, b256, hex};
     use alloy_rlp::{Decodable, Encodable};
+    use base_execution_chainspec::BaseChainSpec;
     use rand::Rng;
     use reth_chainspec::{Chain, ChainSpec, ForkCondition, NamedChain};
 
@@ -818,7 +817,7 @@ mod tests {
 
         let forkid = ForkId { hash: forkhash, next: 0 };
 
-        let status = UnifiedStatus::spec_builder(&spec, &head);
+        let status = UnifiedStatus::spec_builder(&BaseChainSpec::from(spec), &head);
 
         assert_eq!(status.chain, Chain::from_id(1337));
         assert_eq!(status.forkid, forkid);

@@ -11,9 +11,9 @@ use std::{
 
 use alloy_consensus::{BlockHeader, TxReceipt};
 use alloy_primitives::{Address, B256, U256};
+use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
 use eyre::WrapErr;
-use reth_chainspec::{EthChainSpec, EthereumHardforks, Hardforks};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_util::cancellation::CancellationToken;
 use reth_consensus::FullConsensus;
@@ -72,20 +72,20 @@ pub struct Command<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> Command<C> {
     /// Returns the underlying chain being used to run this command
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 }
 
-impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>> Command<C> {
+impl<C: ChainSpecParser> Command<C> {
     /// Execute `re-execute` command
     pub async fn execute<N>(
         mut self,
-        components: impl FnOnce(Arc<N::ChainSpec>) -> CliNodeComponents<N> + Send + Sync + 'static,
+        components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents<N> + Send + Sync + 'static,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()>
     where
-        N: CliNodeTypes<ChainSpec = C::ChainSpec>,
+        N: CliNodeTypes,
     {
         // Default to 4GB RocksDB block cache for re-execute unless explicitly set.
         if self.env.db.rocksdb_block_cache_size.is_none() {

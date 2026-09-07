@@ -40,7 +40,7 @@ pub trait FullProvider<N: NodeTypesWithDB>:
     + StateProviderFactory
     + StateRangeProviderFactory
     + StateReader
-    + ChainSpecProvider<ChainSpec = N::ChainSpec>
+    + ChainSpecProvider
     + ChangeSetReader
     + StorageChangeSetReader
     + CanonStateSubscriptions
@@ -77,7 +77,7 @@ impl<T, N: NodeTypesWithDB> FullProvider<N> for T where
         + StateProviderFactory
         + StateRangeProviderFactory
         + StateReader
-        + ChainSpecProvider<ChainSpec = N::ChainSpec>
+        + ChainSpecProvider
         + ChangeSetReader
         + StorageChangeSetReader
         + CanonStateSubscriptions

@@ -2,7 +2,6 @@
 
 use std::{sync::Arc, time::Duration};
 
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
@@ -40,7 +39,7 @@ type ProofHistoryNodeBuilder = WithLaunchContext<
 /// - in-mem proofs storage,
 /// - on-disk proofs storage.
 pub async fn launch_node_with_proof_history(
-    builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, BaseChainSpec>>,
+    builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>>>,
     args: RollupArgs,
 ) -> eyre::Result<(), ErrReport> {
     let RollupArgs {

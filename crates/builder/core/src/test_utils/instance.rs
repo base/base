@@ -61,7 +61,7 @@ pub fn clear_otel_env_vars() {
 /// This node uses IPC as the communication channel for the RPC server Engine API.
 #[derive(Debug)]
 pub struct LocalInstance {
-    node_config: NodeConfig<BaseChainSpec>,
+    node_config: NodeConfig,
     builder_config: BuilderConfig,
     runtime: Option<Runtime>,
     exit_future: NodeExitFuture,
@@ -117,7 +117,7 @@ where
 #[derive(derive_more::Debug)]
 pub struct LocalInstanceBuilder {
     builder_config: BuilderConfig,
-    node_config: NodeConfig<BaseChainSpec>,
+    node_config: NodeConfig,
     #[debug("{}", extensions.len())]
     extensions: Vec<Box<dyn BaseNodeExtension>>,
 }
@@ -133,7 +133,7 @@ impl LocalInstanceBuilder {
 impl LocalInstanceBuilder {
     /// Overrides the Reth node configuration.
     #[must_use]
-    pub fn with_node_config(mut self, node_config: NodeConfig<BaseChainSpec>) -> Self {
+    pub fn with_node_config(mut self, node_config: NodeConfig) -> Self {
         self.node_config = node_config;
         self
     }
@@ -180,7 +180,7 @@ impl LocalInstance {
     /// make sure that sender accounts are funded.
     pub async fn new_with_node_config(
         builder_config: BuilderConfig,
-        node_config: NodeConfig<BaseChainSpec>,
+        node_config: NodeConfig,
     ) -> eyre::Result<Self> {
         Box::pin(LocalInstanceBuilder::new(builder_config).with_node_config(node_config).build())
             .await
@@ -193,7 +193,7 @@ impl LocalInstance {
     /// plus an internal hook that captures the running node's transaction pool for tests.
     async fn launch(
         builder_config: BuilderConfig,
-        node_config: NodeConfig<BaseChainSpec>,
+        node_config: NodeConfig,
         extensions: Vec<Box<dyn BaseNodeExtension>>,
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
@@ -220,7 +220,7 @@ impl LocalInstance {
         // be a bare `DatabaseEnv` (not a `TempDatabase`) for the extension hook types to line up.
         let (db, db_dir) = create_test_db_env(node_config.clone())?;
 
-        let builder = NodeBuilder::<_, BaseChainSpec>::new(node_config.clone())
+        let builder = NodeBuilder::<_>::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
@@ -265,7 +265,7 @@ impl LocalInstance {
     }
 
     /// Returns the Reth node configuration.
-    pub const fn node_config(&self) -> &NodeConfig<BaseChainSpec> {
+    pub const fn node_config(&self) -> &NodeConfig {
         &self.node_config
     }
 
@@ -361,7 +361,7 @@ impl Future for LocalInstance {
 }
 
 /// Returns the default Reth node configuration used in tests.
-pub fn default_node_config() -> NodeConfig<BaseChainSpec> {
+pub fn default_node_config() -> NodeConfig {
     node_config_with_chain_spec(chain_spec())
 }
 
@@ -393,7 +393,7 @@ pub fn chain_spec_with_azul() -> Arc<BaseChainSpec> {
 
 /// Returns a node config using a chain spec with `BaseUpgrade::Azul` activated
 /// at genesis.
-pub fn default_node_config_with_azul() -> NodeConfig<BaseChainSpec> {
+pub fn default_node_config_with_azul() -> NodeConfig {
     node_config_with_chain_spec(chain_spec_with_azul())
 }
 
@@ -402,7 +402,7 @@ pub fn default_node_config_with_azul() -> NodeConfig<BaseChainSpec> {
 /// Uses the same IPC-only RPC setup, disabled discovery, unused ports, and temporary data
 /// directories as [`default_node_config`], but with a caller-supplied chain spec — so an in-process
 /// builder node can be launched against a custom genesis (e.g. one derived from a rollup config).
-pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChainSpec> {
+pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig {
     let tempdir = std::env::temp_dir();
     let random_id = nanoid!();
 
@@ -435,8 +435,5 @@ pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseC
         pprof_dumps_path: Some(pprof_dumps_path),
     };
 
-    NodeConfig::<BaseChainSpec>::new(spec)
-        .with_datadir_args(datadir)
-        .with_rpc(rpc)
-        .with_network(network)
+    NodeConfig::new(spec).with_datadir_args(datadir).with_rpc(rpc).with_network(network)
 }

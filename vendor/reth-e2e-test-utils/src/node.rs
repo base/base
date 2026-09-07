@@ -9,7 +9,6 @@ use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
-use reth_chainspec::EthereumHardforks;
 use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_api::{Block, FullNodeComponents};
 use reth_node_builder::{FullNode, NodeTypes, rpc::RethRpcAddOns};
@@ -48,7 +47,7 @@ where
 impl<Node, AddOns> NodeTestContext<Node, AddOns>
 where
     Node: FullNodeComponents,
-    Node::Types: NodeTypes<ChainSpec: EthereumHardforks>,
+    Node::Types: NodeTypes,
     Node::Network: PeersHandleProvider,
     AddOns: RethRpcAddOns<Node>,
 {

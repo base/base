@@ -1,12 +1,13 @@
 use std::{fs, path::PathBuf, sync::Arc};
 
+use base_execution_chainspec::BaseChainSpec;
 use clap::builder::TypedValueParser;
 
 #[derive(Debug, Clone)]
 struct Parser<C>(std::marker::PhantomData<C>);
 
 impl<C: ChainSpecParser> TypedValueParser for Parser<C> {
-    type Value = Arc<C::ChainSpec>;
+    type Value = Arc<BaseChainSpec>;
 
     fn parse_ref(
         &self,
@@ -33,9 +34,6 @@ impl<C: ChainSpecParser> TypedValueParser for Parser<C> {
 /// specifications. Implementers of this trait must provide a list of supported chains and a
 /// function to parse a given string into a chain spec.
 pub trait ChainSpecParser: Clone + Send + Sync + 'static {
-    /// The chain specification type.
-    type ChainSpec: std::fmt::Debug + Send + Sync;
-
     /// List of supported chains.
     const SUPPORTED_CHAINS: &'static [&'static str];
 
@@ -54,10 +52,10 @@ pub trait ChainSpecParser: Clone + Send + Sync + 'static {
     ///
     /// This function will return an error if the input string cannot be parsed into a valid
     /// chain spec.
-    fn parse(s: &str) -> eyre::Result<Arc<Self::ChainSpec>>;
+    fn parse(s: &str) -> eyre::Result<Arc<BaseChainSpec>>;
 
     /// Produces a [`TypedValueParser`] for this chain spec parser.
-    fn parser() -> impl TypedValueParser<Value = Arc<Self::ChainSpec>> {
+    fn parser() -> impl TypedValueParser<Value = Arc<BaseChainSpec>> {
         Parser(std::marker::PhantomData::<Self>)
     }
 

@@ -12,9 +12,9 @@ use base_common_consensus::{
     BaseBlock, BasePooledTransaction as PooledTransactionVariant, BaseReceipt,
     BaseTxEnvelope as TransactionSigned,
 };
+use base_execution_chainspec::ChainSpecProvider;
 use futures::{FutureExt, StreamExt};
 use pin_project::pin_project;
-use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_eth_wire::{DisconnectReason, HelloMessageWithProtocols, protocol::Protocol};
 use reth_evm::TestEvmConfig;
 use reth_metrics::common::mpsc::memory_bounded_channel;
@@ -65,7 +65,7 @@ pub struct Testnet<C, Pool> {
 
 impl<C> Testnet<C, TestPool>
 where
-    C: BlockReader + HeaderProvider + Clone + 'static + ChainSpecProvider<ChainSpec: Hardforks>,
+    C: BlockReader + HeaderProvider + Clone + 'static + ChainSpecProvider,
 {
     /// Same as [`Self::try_create_with`] but panics on error
     pub async fn create_with(num_peers: usize, provider: C) -> Self {
@@ -183,7 +183,7 @@ where
 
 impl<C, Pool> Testnet<C, Pool>
 where
-    C: ChainSpecProvider<ChainSpec: EthereumHardforks>
+    C: ChainSpecProvider
         + StateProviderFactory
         + BlockReaderIdExt
         + HeaderProvider<Header = alloy_consensus::Header>
@@ -704,7 +704,7 @@ where
     /// to any available IP and port.
     pub fn new(client: C) -> Self
     where
-        C: ChainSpecProvider<ChainSpec: Hardforks>,
+        C: ChainSpecProvider,
     {
         let secret_key = SecretKey::new(&mut rand_08::thread_rng());
         let config = Self::network_config_builder(secret_key).build(client.clone());
@@ -715,7 +715,7 @@ where
     /// available IP and port.
     pub fn with_secret_key(client: C, secret_key: SecretKey) -> Self
     where
-        C: ChainSpecProvider<ChainSpec: Hardforks>,
+        C: ChainSpecProvider,
     {
         let config = Self::network_config_builder(secret_key).build(client.clone());
         Self { config, client, secret_key }
@@ -724,7 +724,7 @@ where
     /// Initialize the network with a given capabilities.
     pub fn with_protocols(client: C, protocols: impl IntoIterator<Item = Protocol>) -> Self
     where
-        C: ChainSpecProvider<ChainSpec: Hardforks>,
+        C: ChainSpecProvider,
     {
         let secret_key = SecretKey::new(&mut rand_08::thread_rng());
         let protocols: Vec<Protocol> = protocols.into_iter().collect();

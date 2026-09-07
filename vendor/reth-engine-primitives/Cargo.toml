@@ -28,6 +28,7 @@ reth-execution-types = { workspace = true }
 reth-execution-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
+base-execution-chainspec = { workspace = true }
 reth-evm = { workspace = true, optional = true }
 reth-chainspec = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }

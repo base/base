@@ -4,7 +4,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_consensus::BlockHeader;
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
-use reth_chainspec::{EthChainSpec, EthereumHardforks};
+use reth_chainspec::EthereumHardforks;
 use reth_db::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_tree::{
     chain::{ChainEvent, FromOrchestrator},
@@ -16,9 +16,7 @@ use reth_engine_util::EngineMessageStreamExt;
 use reth_exex::ExExManagerHandle;
 use reth_network::{NetworkSyncUpdater, SyncState, types::BlockRangeUpdate};
 use reth_network_api::BlockDownloaderProvider;
-use reth_node_api::{
-    BuiltPayload, ConsensusEngineHandle, FullNodeTypes, NodeTypes, NodeTypesWithDBAdapter,
-};
+use reth_node_api::{BuiltPayload, ConsensusEngineHandle, FullNodeTypes, NodeTypesWithDBAdapter};
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
@@ -124,7 +122,7 @@ impl EngineNodeLauncher {
                 debug!(target: "reth::cli", chain=%this.chain_id(), genesis=?this.genesis_hash(), "Initializing genesis");
             })
             .with_genesis()?
-            .inspect(|this: &LaunchContextWith<Attached<WithConfigs<<T::Types as NodeTypes>::ChainSpec>, _>>| {
+            .inspect(|this: &LaunchContextWith<Attached<WithConfigs, _>>| {
                 info!(target: "reth::cli", "\n{}", this.chain_spec().display_hardforks());
                 let settings = this.provider_factory().cached_storage_settings();
                 let pruning_mode =

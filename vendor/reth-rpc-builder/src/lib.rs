@@ -32,6 +32,7 @@ use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_rpc_types::{
     BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt, BaseTransactionRequest,
 };
+use base_execution_chainspec::ChainSpecProvider;
 pub use cors::CorsDomainError;
 use error::{ConflictingModules, RpcError, ServerKind};
 use http::{HeaderMap, header::AUTHORIZATION};
@@ -45,7 +46,6 @@ use jsonrpsee::{
         middleware::rpc::RpcServiceBuilder,
     },
 };
-use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
 use reth_consensus::FullConsensus;
 use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
 use reth_evm::ConfigureEvm;
@@ -575,11 +575,11 @@ impl<Provider, Pool, Network, EthApi, EvmConfig, Consensus>
 where
     Network: NetworkInfo + Clone + 'static,
     EthApi: EthApiTypes,
-    Provider: BlockReader + ChainSpecProvider<ChainSpec: EthereumHardforks>,
+    Provider: BlockReader + ChainSpecProvider,
     EvmConfig: ConfigureEvm,
 {
     /// Instantiates `AdminApi`
-    pub fn admin_api(&self) -> AdminApi<Network, Provider::ChainSpec, Pool>
+    pub fn admin_api(&self) -> AdminApi<Network, Pool>
     where
         Network: Peers,
         Pool: TransactionPool + Clone + 'static,

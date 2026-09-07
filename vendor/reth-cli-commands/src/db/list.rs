@@ -3,7 +3,6 @@ use std::cell::RefCell;
 use alloy_primitives::hex;
 use clap::{Parser, builder::RangedU64ValueParser};
 use eyre::WrapErr;
-use reth_chainspec::EthereumHardforks;
 use reth_db::{DatabaseEnv, transaction::DbTx};
 use reth_db_api::{RawValue, TableViewer, Tables, database::Database, table::Table};
 use reth_db_common::{DbTool, ListFilter};
@@ -55,7 +54,7 @@ pub struct Command {
 
 impl Command {
     /// Execute `db list` command
-    pub fn execute<N: NodeTypes<ChainSpec: EthereumHardforks>>(
+    pub fn execute<N: NodeTypes>(
         self,
         tool: &DbTool<NodeTypesWithDBAdapter<N, DatabaseEnv>>,
     ) -> eyre::Result<()> {

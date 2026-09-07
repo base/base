@@ -18,7 +18,6 @@ use base_common_rpc_types_engine as _;
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
-use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
 use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnvMut, precompiles::PrecompilesMap};
@@ -74,21 +73,17 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
 
 /// Base EVM configuration.
 #[derive(Debug)]
-pub struct BaseEvmConfig<
-    ChainSpec = BaseChainSpec,
-    R = BaseRethReceiptBuilder,
-    EvmFactory = BaseEvmFactory,
-> {
+pub struct BaseEvmConfig<R = BaseRethReceiptBuilder, EvmFactory = BaseEvmFactory> {
     /// Inner [`BaseBlockExecutorFactory`].
-    pub executor_factory: BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmFactory>,
+    pub executor_factory: BaseBlockExecutorFactory<R, Arc<BaseChainSpec>, EvmFactory>,
     /// Base block assembler.
-    pub block_assembler: BaseBlockAssembler<ChainSpec>,
+    pub block_assembler: BaseBlockAssembler,
 }
 
 /// Helper type with backwards compatible methods to obtain executor providers.
 pub type BaseExecutorProvider = BaseEvmConfig;
 
-impl<ChainSpec, R: Clone, EvmFactory: Clone> Clone for BaseEvmConfig<ChainSpec, R, EvmFactory> {
+impl<R: Clone, EvmFactory: Clone> Clone for BaseEvmConfig<R, EvmFactory> {
     fn clone(&self) -> Self {
         Self {
             executor_factory: self.executor_factory.clone(),
@@ -97,16 +92,16 @@ impl<ChainSpec, R: Clone, EvmFactory: Clone> Clone for BaseEvmConfig<ChainSpec, 
     }
 }
 
-impl<ChainSpec: Upgrades> BaseEvmConfig<ChainSpec> {
+impl BaseEvmConfig {
     /// Creates a new [`BaseEvmConfig`] with the given chain spec for Base chains.
-    pub fn base(chain_spec: Arc<ChainSpec>) -> Self {
+    pub fn base(chain_spec: Arc<BaseChainSpec>) -> Self {
         Self::new(chain_spec, BaseRethReceiptBuilder)
     }
 }
 
-impl<ChainSpec: Upgrades, R> BaseEvmConfig<ChainSpec, R> {
+impl<R> BaseEvmConfig<R> {
     /// Creates a new [`BaseEvmConfig`] with the given chain spec.
-    pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
+    pub fn new(chain_spec: Arc<BaseChainSpec>, receipt_builder: R) -> Self {
         let activation_admin_address = chain_spec.as_ref().activation_admin_address();
         Self {
             block_assembler: BaseBlockAssembler::new(Arc::clone(&chain_spec)),
@@ -119,19 +114,15 @@ impl<ChainSpec: Upgrades, R> BaseEvmConfig<ChainSpec, R> {
     }
 }
 
-impl<ChainSpec, R, EvmFactory> BaseEvmConfig<ChainSpec, R, EvmFactory>
-where
-    ChainSpec: Upgrades,
-{
+impl<R, EvmFactory> BaseEvmConfig<R, EvmFactory> {
     /// Returns the chain spec associated with this configuration.
-    pub const fn chain_spec(&self) -> &Arc<ChainSpec> {
+    pub const fn chain_spec(&self) -> &Arc<BaseChainSpec> {
         self.executor_factory.spec()
     }
 }
 
-impl<ChainSpec, R, EvmF> ConfigureEvm for BaseEvmConfig<ChainSpec, R, EvmF>
+impl<R, EvmF> ConfigureEvm for BaseEvmConfig<R, EvmF>
 where
-    ChainSpec: EthChainSpec<Header = Header> + Upgrades,
     BaseTransaction<TxEnv>: FromRecoveredTx<BaseTxEnvelope> + FromTxWithEncoded<BaseTxEnvelope>,
     R: BaseReceiptBuilder<Receipt = BaseReceipt, Transaction = BaseTxEnvelope> + Clone,
     EvmF: EvmFactory<
@@ -147,8 +138,8 @@ where
 {
     type Error = EIP1559ParamError;
     type NextBlockEnvCtx = BaseNextBlockEnvAttributes;
-    type BlockExecutorFactory = BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmF>;
-    type BlockAssembler = BaseBlockAssembler<ChainSpec>;
+    type BlockExecutorFactory = BaseBlockExecutorFactory<R, Arc<BaseChainSpec>, EvmF>;
+    type BlockAssembler = BaseBlockAssembler;
 
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
         &self.executor_factory
@@ -198,9 +189,8 @@ where
 }
 
 #[cfg(feature = "std")]
-impl<ChainSpec, R> ConfigureEngineEvm<ExecutionData> for BaseEvmConfig<ChainSpec, R>
+impl<R> ConfigureEngineEvm<ExecutionData> for BaseEvmConfig<R>
 where
-    ChainSpec: EthChainSpec<Header = Header> + Upgrades,
     BaseTransaction<TxEnv>: FromRecoveredTx<BaseTxEnvelope> + FromTxWithEncoded<BaseTxEnvelope>,
     R: BaseReceiptBuilder<Receipt = BaseReceipt, Transaction = BaseTxEnvelope> + Clone,
     Self: Send + Sync + Unpin + Clone + 'static,

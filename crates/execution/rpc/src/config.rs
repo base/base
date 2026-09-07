@@ -8,8 +8,8 @@ use alloy_eips::{
     eip7910::{EthConfig, EthForkConfig, SystemContract},
 };
 use base_common_chains::Upgrades;
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_rpc_eth_api::helpers::config::{EthConfigApiServer, EthConfigHandler};
 use reth_storage_api::BlockReaderIdExt;
@@ -72,16 +72,14 @@ pub trait BaseEthConfigApi {
 /// Base-specific handler for the `eth_config` RPC endpoint.
 #[derive(Debug, Clone)]
 pub struct BaseEthConfigHandler<Provider: ChainSpecProvider, Evm> {
-    chain_spec: Arc<<Provider as ChainSpecProvider>::ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     eth_config: EthConfigHandler<Provider, Evm>,
 }
 
 impl<Provider, Evm> BaseEthConfigHandler<Provider, Evm>
 where
-    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + Upgrades>
-        + BlockReaderIdExt<Header = alloy_consensus::Header>
-        + Clone
-        + 'static,
+    Provider:
+        ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header> + Clone + 'static,
     Evm: ConfigureEvm + Clone + 'static,
 {
     /// Creates a new [`BaseEthConfigHandler`].
@@ -106,10 +104,8 @@ where
 
 impl<Provider, Evm> BaseEthConfigApiServer for BaseEthConfigHandler<Provider, Evm>
 where
-    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + Upgrades>
-        + BlockReaderIdExt<Header = alloy_consensus::Header>
-        + Clone
-        + 'static,
+    Provider:
+        ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header> + Clone + 'static,
     Evm: ConfigureEvm + Clone + 'static,
 {
     fn config(&self) -> RpcResult<EthConfig> {

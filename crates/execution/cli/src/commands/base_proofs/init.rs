@@ -51,12 +51,9 @@ pub struct InitCommand<C: ChainSpecParser> {
     pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
 }
 
-impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
+impl<C: ChainSpecParser> InitCommand<C> {
     /// Execute the `proofs init` command.
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec>>(
-        self,
-        runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<()> {
+    pub async fn execute<N: CliNodeTypes>(self, runtime: reth_tasks::Runtime) -> eyre::Result<()> {
         let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
@@ -147,7 +144,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
 
 impl<C: ChainSpecParser> InitCommand<C> {
     /// Returns the underlying chain being used to run this command
-    pub const fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub const fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)
     }
 }

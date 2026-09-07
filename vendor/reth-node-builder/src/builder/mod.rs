@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use alloy_eips::eip4844::env_settings::EnvKzgSettings;
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_chainspec::BaseChainSpec;
 use futures::Future;
-use reth_chainspec::{EthChainSpec, EthereumHardforks, Hardforks};
 use reth_db_api::{database::Database, database_metrics::DatabaseMetrics};
 use reth_exex::ExExContext;
 use reth_network::{
@@ -152,30 +152,30 @@ pub type RethFullAdapter<DB, Types> =
 /// configured by the builder itself during launch. This might change in the future.
 ///
 /// [builder]: https://doc.rust-lang.org/1.0.0/style/ownership/builders.html
-pub struct NodeBuilder<DB, ChainSpec> {
+pub struct NodeBuilder<DB> {
     /// All settings for how the node should be configured.
-    config: NodeConfig<ChainSpec>,
+    config: NodeConfig,
     /// The configured database for the node.
     database: DB,
     /// An optional [`RocksDBProvider`] to use instead of creating one during launch.
     rocksdb_provider: Option<RocksDBProvider>,
 }
 
-impl<ChainSpec> NodeBuilder<(), ChainSpec> {
+impl NodeBuilder<()> {
     /// Create a new [`NodeBuilder`].
-    pub const fn new(config: NodeConfig<ChainSpec>) -> Self {
+    pub const fn new(config: NodeConfig) -> Self {
         Self { config, database: (), rocksdb_provider: None }
     }
 }
 
-impl<DB, ChainSpec> NodeBuilder<DB, ChainSpec> {
+impl<DB> NodeBuilder<DB> {
     /// Returns a reference to the node builder's config.
-    pub const fn config(&self) -> &NodeConfig<ChainSpec> {
+    pub const fn config(&self) -> &NodeConfig {
         &self.config
     }
 
     /// Returns a mutable reference to the node builder's config.
-    pub const fn config_mut(&mut self) -> &mut NodeConfig<ChainSpec> {
+    pub const fn config_mut(&mut self) -> &mut NodeConfig {
         &mut self.config
     }
 
@@ -222,9 +222,9 @@ impl<DB, ChainSpec> NodeBuilder<DB, ChainSpec> {
     }
 }
 
-impl<DB, ChainSpec: EthChainSpec> NodeBuilder<DB, ChainSpec> {
+impl<DB> NodeBuilder<DB> {
     /// Configures the underlying database that the node will use.
-    pub fn with_database<D>(self, database: D) -> NodeBuilder<D, ChainSpec> {
+    pub fn with_database<D>(self, database: D) -> NodeBuilder<D> {
         NodeBuilder { config: self.config, database, rocksdb_provider: self.rocksdb_provider }
     }
 
@@ -246,9 +246,8 @@ impl<DB, ChainSpec: EthChainSpec> NodeBuilder<DB, ChainSpec> {
     pub fn testing_node(
         self,
         task_executor: TaskExecutor,
-    ) -> WithLaunchContext<
-        NodeBuilder<Arc<reth_db::test_utils::TempDatabase<reth_db::DatabaseEnv>>, ChainSpec>,
-    > {
+    ) -> WithLaunchContext<NodeBuilder<Arc<reth_db::test_utils::TempDatabase<reth_db::DatabaseEnv>>>>
+    {
         let path = reth_db::test_utils::tempdir_path();
         self.testing_node_with_datadir(task_executor, path)
     }
@@ -261,9 +260,8 @@ impl<DB, ChainSpec: EthChainSpec> NodeBuilder<DB, ChainSpec> {
         mut self,
         task_executor: TaskExecutor,
         datadir: impl Into<std::path::PathBuf>,
-    ) -> WithLaunchContext<
-        NodeBuilder<Arc<reth_db::test_utils::TempDatabase<reth_db::DatabaseEnv>>, ChainSpec>,
-    > {
+    ) -> WithLaunchContext<NodeBuilder<Arc<reth_db::test_utils::TempDatabase<reth_db::DatabaseEnv>>>>
+    {
         let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(datadir.into());
         self.config = self.config.with_datadir_args(reth_node_core::args::DatadirArgs {
             datadir: path.clone(),
@@ -279,15 +277,14 @@ impl<DB, ChainSpec: EthChainSpec> NodeBuilder<DB, ChainSpec> {
     }
 }
 
-impl<DB, ChainSpec> NodeBuilder<DB, ChainSpec>
+impl<DB> NodeBuilder<DB>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    ChainSpec: EthChainSpec + EthereumHardforks,
 {
     /// Configures the types of the node.
     pub fn with_types<T>(self) -> NodeBuilderWithTypes<RethFullAdapter<DB, T>>
     where
-        T: NodeTypesForProvider<ChainSpec = ChainSpec>,
+        T: NodeTypesForProvider,
     {
         self.with_types_and_provider()
     }
@@ -297,7 +294,7 @@ where
         self,
     ) -> NodeBuilderWithTypes<FullNodeTypesAdapter<T, DB, P>>
     where
-        T: NodeTypesForProvider<ChainSpec = ChainSpec>,
+        T: NodeTypesForProvider,
         P: FullProvider<NodeTypesWithDBAdapter<T, DB>>,
     {
         NodeBuilderWithTypes::new(self.config, self.database, self.rocksdb_provider)
@@ -311,7 +308,7 @@ where
         node: N,
     ) -> NodeBuilderWithComponents<RethFullAdapter<DB, N>, N::ComponentsBuilder, N::AddOns>
     where
-        N: Node<RethFullAdapter<DB, N>, ChainSpec = ChainSpec> + NodeTypesForProvider,
+        N: Node<RethFullAdapter<DB, N>> + NodeTypesForProvider,
     {
         self.with_types().with_components(node.components_builder()).with_add_ons(node.add_ons())
     }
@@ -333,22 +330,21 @@ impl<Builder> WithLaunchContext<Builder> {
     }
 }
 
-impl<DB, ChainSpec> WithLaunchContext<NodeBuilder<DB, ChainSpec>> {
+impl<DB> WithLaunchContext<NodeBuilder<DB>> {
     /// Returns a reference to the node builder's config.
-    pub const fn config(&self) -> &NodeConfig<ChainSpec> {
+    pub const fn config(&self) -> &NodeConfig {
         self.builder.config()
     }
 
     /// Returns a mutable reference to the node builder's config.
-    pub const fn config_mut(&mut self) -> &mut NodeConfig<ChainSpec> {
+    pub const fn config_mut(&mut self) -> &mut NodeConfig {
         self.builder.config_mut()
     }
 }
 
-impl<DB, ChainSpec> WithLaunchContext<NodeBuilder<DB, ChainSpec>>
+impl<DB> WithLaunchContext<NodeBuilder<DB>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    ChainSpec: EthChainSpec + EthereumHardforks,
 {
     /// Sets the [`RocksDBProvider`] to use instead of creating one during launch.
     pub fn with_rocksdb_provider(mut self, rocksdb_provider: RocksDBProvider) -> Self {
@@ -359,7 +355,7 @@ where
     /// Configures the types of the node.
     pub fn with_types<T>(self) -> WithLaunchContext<NodeBuilderWithTypes<RethFullAdapter<DB, T>>>
     where
-        T: NodeTypesForProvider<ChainSpec = ChainSpec>,
+        T: NodeTypesForProvider,
     {
         WithLaunchContext { builder: self.builder.with_types(), task_executor: self.task_executor }
     }
@@ -369,7 +365,7 @@ where
         self,
     ) -> WithLaunchContext<NodeBuilderWithTypes<FullNodeTypesAdapter<T, DB, P>>>
     where
-        T: NodeTypesForProvider<ChainSpec = ChainSpec>,
+        T: NodeTypesForProvider,
         P: FullProvider<NodeTypesWithDBAdapter<T, DB>>,
     {
         WithLaunchContext {
@@ -388,7 +384,7 @@ where
         NodeBuilderWithComponents<RethFullAdapter<DB, N>, N::ComponentsBuilder, N::AddOns>,
     >
     where
-        N: Node<RethFullAdapter<DB, N>, ChainSpec = ChainSpec> + NodeTypesForProvider,
+        N: Node<RethFullAdapter<DB, N>> + NodeTypesForProvider,
     {
         self.with_types().with_components(node.components_builder()).with_add_ons(node.add_ons())
     }
@@ -407,7 +403,7 @@ where
         >>::Node,
     >
     where
-        N: Node<RethFullAdapter<DB, N>, ChainSpec = ChainSpec> + NodeTypesForProvider,
+        N: Node<RethFullAdapter<DB, N>> + NodeTypesForProvider,
         N::AddOns: RethRpcAddOns<
             NodeAdapter<
                 RethFullAdapter<DB, N>,
@@ -466,12 +462,12 @@ where
     AO: RethRpcAddOns<NodeAdapter<T, CB::Components>>,
 {
     /// Returns a reference to the node builder's config.
-    pub const fn config(&self) -> &NodeConfig<<T::Types as NodeTypes>::ChainSpec> {
+    pub const fn config(&self) -> &NodeConfig {
         &self.builder.config
     }
 
     /// Returns a mutable reference to the node builder's config.
-    pub const fn config_mut(&mut self) -> &mut NodeConfig<<T::Types as NodeTypes>::ChainSpec> {
+    pub const fn config_mut(&mut self) -> &mut NodeConfig {
         &mut self.builder.config
     }
 
@@ -694,13 +690,12 @@ where
     /// if they are configured.
     pub fn launch_with_debug_capabilities<R>(
         self,
-        config: DebugNodeConfig<T::Types, R>,
-    ) -> <DebugNodeLauncher<EngineNodeLauncher, T::Types, R> as LaunchNode<
+        config: DebugNodeConfig<R>,
+    ) -> <DebugNodeLauncher<EngineNodeLauncher, R> as LaunchNode<
         NodeBuilderWithComponents<T, CB, AO>,
     >>::Future
     where
-        DebugNodeLauncher<EngineNodeLauncher, T::Types, R>:
-            LaunchNode<NodeBuilderWithComponents<T, CB, AO>>,
+        DebugNodeLauncher<EngineNodeLauncher, R>: LaunchNode<NodeBuilderWithComponents<T, CB, AO>>,
     {
         let Self { builder, task_executor } = self;
 
@@ -734,7 +729,7 @@ pub struct BuilderContext<Node: FullNodeTypes> {
     /// The executor of the node.
     pub(crate) executor: TaskExecutor,
     /// Config container
-    pub(crate) config_container: WithConfigs<<Node::Types as NodeTypes>::ChainSpec>,
+    pub(crate) config_container: WithConfigs,
     /// Cache of recovered transaction senders shared by node components, if enabled.
     sender_recovery_cache: Option<reth_evm::SenderRecoveryCache>,
 }
@@ -745,7 +740,7 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
         head: Head,
         provider: Node::Provider,
         executor: TaskExecutor,
-        config_container: WithConfigs<<Node::Types as NodeTypes>::ChainSpec>,
+        config_container: WithConfigs,
     ) -> Self {
         let sender_recovery_cache = config_container
             .config
@@ -766,12 +761,12 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
     }
 
     /// Returns the config of the node.
-    pub const fn config(&self) -> &NodeConfig<<Node::Types as NodeTypes>::ChainSpec> {
+    pub const fn config(&self) -> &NodeConfig {
         &self.config_container.config
     }
 
     /// Returns a mutable reference to the config of the node.
-    pub const fn config_mut(&mut self) -> &mut NodeConfig<<Node::Types as NodeTypes>::ChainSpec> {
+    pub const fn config_mut(&mut self) -> &mut NodeConfig {
         &mut self.config_container.config
     }
 
@@ -793,7 +788,7 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
     }
 
     /// Returns the chain spec of the node.
-    pub fn chain_spec(&self) -> Arc<<Node::Types as NodeTypes>::ChainSpec> {
+    pub fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.provider().chain_spec()
     }
 
@@ -959,13 +954,13 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
         network_builder: NetworkConfigBuilder,
     ) -> NetworkConfig<Node::Provider>
     where
-        Node::Types: NodeTypes<ChainSpec: Hardforks>,
+        Node::Types: NodeTypes,
     {
         network_builder.build(self.provider.clone())
     }
 }
 
-impl<Node: FullNodeTypes<Types: NodeTypes<ChainSpec: Hardforks>>> BuilderContext<Node> {
+impl<Node: FullNodeTypes<Types: NodeTypes>> BuilderContext<Node> {
     /// Creates the [`NetworkBuilder`] for the node.
     pub async fn network_builder(&self) -> eyre::Result<NetworkBuilder<(), ()>> {
         let network_config = self.network_config()?;
@@ -988,7 +983,7 @@ impl<Node: FullNodeTypes<Types: NodeTypes<ChainSpec: Hardforks>>> BuilderContext
             .network
             .network_config(
                 self.reth_config(),
-                self.config().chain.clone(),
+                &self.config().chain,
                 secret_key,
                 default_peers_path,
                 self.executor.clone(),

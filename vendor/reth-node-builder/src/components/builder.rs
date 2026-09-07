@@ -3,7 +3,6 @@
 use std::{future::Future, marker::PhantomData};
 
 use base_common_consensus::BaseTxEnvelope;
-use reth_chainspec::EthChainSpec;
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_network_api::{FullNetwork, noop::NoopNetwork};
 use reth_payload_builder::PayloadBuilderHandle;

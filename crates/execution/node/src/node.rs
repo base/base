@@ -30,7 +30,7 @@ use base_execution_txpool::{
     maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
-use reth_chainspec::{BaseFeeParams, EthChainSpec, Hardforks};
+use reth_chainspec::BaseFeeParams;
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_evm::ConfigureEvm;
 use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
@@ -71,15 +71,15 @@ use crate::{
 pub const BASE_V0_PROTOCOL_VERSION: [u8; 6] = *b"basev0";
 
 /// Marker trait for Base node types with standard engine, chain spec, and primitives.
-pub trait BaseNodeTypes: NodeTypes<ChainSpec = BaseChainSpec> {}
+pub trait BaseNodeTypes: NodeTypes {}
 /// Blanket impl for all node types that conform to the Base spec.
-impl<N> BaseNodeTypes for N where N: NodeTypes<ChainSpec = BaseChainSpec> {}
+impl<N> BaseNodeTypes for N where N: NodeTypes {}
 
 /// Helper trait for Base node types with full configuration including storage and execution
 /// data.
-pub trait BaseFullNodeTypes: NodeTypes<ChainSpec = BaseChainSpec> {}
+pub trait BaseFullNodeTypes: NodeTypes {}
 
-impl<N> BaseFullNodeTypes for N where N: NodeTypes<ChainSpec = BaseChainSpec> {}
+impl<N> BaseFullNodeTypes for N where N: NodeTypes {}
 
 /// Local payload attributes builder for Base.
 #[derive(Debug)]
@@ -316,7 +316,7 @@ where
 
 impl BaseNode {
     /// Returns the concrete RPC conversion and local-mining configuration.
-    pub fn debug_config() -> DebugNodeConfig<Self, alloy_rpc_types_eth::Block<BaseTxEnvelope>> {
+    pub fn debug_config() -> DebugNodeConfig<alloy_rpc_types_eth::Block<BaseTxEnvelope>> {
         DebugNodeConfig {
             rpc_to_primitive_block: |block| block.into_consensus(),
             local_payload_attributes_builder: |chain_spec| {
@@ -326,9 +326,7 @@ impl BaseNode {
     }
 }
 
-impl NodeTypes for BaseNode {
-    type ChainSpec = BaseChainSpec;
-}
+impl NodeTypes for BaseNode {}
 
 /// Add-ons w.r.t. Base.
 ///
@@ -1188,7 +1186,7 @@ impl BaseNetworkBuilder {
         ctx: &BuilderContext<Node>,
     ) -> eyre::Result<NetworkConfig<Node::Provider>>
     where
-        Node: FullNodeTypes<Types: NodeTypes<ChainSpec: Hardforks>>,
+        Node: FullNodeTypes<Types: NodeTypes>,
     {
         let discovery_config = BaseDiscoveryConfig::new(self.disable_discovery_v4);
         let args = &ctx.config().network;
@@ -1247,9 +1245,9 @@ pub struct BasePayloadValidatorBuilder;
 
 impl<Node> PayloadValidatorBuilder<Node> for BasePayloadValidatorBuilder
 where
-    Node: FullNodeComponents<Types: NodeTypes<ChainSpec: Upgrades>>,
+    Node: FullNodeComponents<Types: NodeTypes>,
 {
-    type Validator = BaseEngineValidator<BaseTxEnvelope, <Node::Types as NodeTypes>::ChainSpec>;
+    type Validator = BaseEngineValidator<BaseTxEnvelope>;
 
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
         Ok(BaseEngineValidator::new::<KeccakKeyHasher>(Arc::clone(&ctx.config.chain)))
@@ -1263,7 +1261,6 @@ mod tests {
         sync::Arc,
     };
 
-    use reth_chainspec::MAINNET;
     use reth_discv5::{build_local_enr, discv5::ListenConfig};
     use reth_network::{NetworkConfigBuilder, config::rng_secret_key};
     use rstest::rstest;
@@ -1323,7 +1320,7 @@ mod tests {
                 Vec::<NodeRecord>::new(),
                 None,
             )
-            .build_with_noop_provider(Arc::clone(&MAINNET));
+            .build_with_noop_provider(Arc::new(BaseChainSpec::mainnet()));
 
         assert_eq!(network_config.discovery_v4_config.is_some(), expected_enabled);
     }
@@ -1346,7 +1343,7 @@ mod tests {
                 Vec::<NodeRecord>::new(),
                 None,
             )
-            .build_with_noop_provider(Arc::clone(&MAINNET));
+            .build_with_noop_provider(Arc::new(BaseChainSpec::mainnet()));
 
         assert_eq!(network_config.discovery_v5_config.is_some(), expected_enabled);
     }

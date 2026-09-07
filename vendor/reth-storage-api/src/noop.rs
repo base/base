@@ -12,7 +12,8 @@ use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, TxNumber,
 };
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
-use reth_chainspec::{ChainInfo, ChainSpecProvider, EthChainSpec, MAINNET};
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
+use reth_chainspec::ChainInfo;
 #[cfg(feature = "db-api")]
 use reth_db_api::mock::{DatabaseMock, TxMock};
 use reth_db_models::{AccountBeforeTx, StoredBlockBodyIndices};
@@ -46,8 +47,8 @@ use crate::{
 /// Supports various api interfaces for testing purposes.
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct NoopProvider<ChainSpec = reth_chainspec::ChainSpec> {
-    chain_spec: Arc<ChainSpec>,
+pub struct NoopProvider {
+    chain_spec: Arc<BaseChainSpec>,
     bal_store: BalStoreHandle,
     #[cfg(feature = "db-api")]
     tx: TxMock,
@@ -55,9 +56,9 @@ pub struct NoopProvider<ChainSpec = reth_chainspec::ChainSpec> {
     prune_modes: PruneModes,
 }
 
-impl<ChainSpec> NoopProvider<ChainSpec> {
+impl NoopProvider {
     /// Create a new instance for specific primitive types.
-    pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
+    pub fn new(chain_spec: Arc<BaseChainSpec>) -> Self {
         Self {
             chain_spec,
             bal_store: BalStoreHandle::default(),
@@ -69,9 +70,9 @@ impl<ChainSpec> NoopProvider<ChainSpec> {
     }
 }
 
-impl<ChainSpec> NoopProvider<ChainSpec> {
+impl NoopProvider {
     /// Create a new instance of the `NoopBlockReader`.
-    pub fn eth(chain_spec: Arc<ChainSpec>) -> Self {
+    pub fn eth(chain_spec: Arc<BaseChainSpec>) -> Self {
         Self {
             chain_spec,
             bal_store: BalStoreHandle::default(),
@@ -86,7 +87,7 @@ impl<ChainSpec> NoopProvider<ChainSpec> {
 impl NoopProvider {
     /// Create a new instance of the [`NoopProvider`] with the mainnet chain spec.
     pub fn mainnet() -> Self {
-        Self::eth(MAINNET.clone())
+        Self::eth(Arc::new(BaseChainSpec::mainnet()))
     }
 }
 
@@ -96,7 +97,7 @@ impl Default for NoopProvider {
     }
 }
 
-impl<ChainSpec> Clone for NoopProvider<ChainSpec> {
+impl Clone for NoopProvider {
     fn clone(&self) -> Self {
         Self {
             chain_spec: Arc::clone(&self.chain_spec),
@@ -109,20 +110,20 @@ impl<ChainSpec> Clone for NoopProvider<ChainSpec> {
     }
 }
 
-impl<ChainSpec> BalProvider for NoopProvider<ChainSpec> {
+impl BalProvider for NoopProvider {
     fn bal_store(&self) -> &BalStoreHandle {
         &self.bal_store
     }
 }
 
-impl<ChainSpec> StateRangeProviderFactory for NoopProvider<ChainSpec> {
+impl StateRangeProviderFactory for NoopProvider {
     fn state_range_provider(&self, _state_root: B256) -> ProviderResult<Option<StateRangeView>> {
         Ok(None)
     }
 }
 
 /// Noop implementation for testing purposes
-impl<ChainSpec: Send + Sync> BlockHashReader for NoopProvider<ChainSpec> {
+impl BlockHashReader for NoopProvider {
     fn block_hash(&self, _number: u64) -> ProviderResult<Option<B256>> {
         Ok(None)
     }
@@ -136,7 +137,7 @@ impl<ChainSpec: Send + Sync> BlockHashReader for NoopProvider<ChainSpec> {
     }
 }
 
-impl<ChainSpec: Send + Sync> BlockNumReader for NoopProvider<ChainSpec> {
+impl BlockNumReader for NoopProvider {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         Ok(ChainInfo::default())
     }
@@ -154,15 +155,13 @@ impl<ChainSpec: Send + Sync> BlockNumReader for NoopProvider<ChainSpec> {
     }
 }
 
-impl<ChainSpec: EthChainSpec + 'static> ChainSpecProvider for NoopProvider<ChainSpec> {
-    type ChainSpec = ChainSpec;
-
-    fn chain_spec(&self) -> Arc<Self::ChainSpec> {
+impl ChainSpecProvider for NoopProvider {
+    fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.chain_spec.clone()
     }
 }
 
-impl<C: Send + Sync> BlockIdReader for NoopProvider<C> {
+impl BlockIdReader for NoopProvider {
     fn pending_block_num_hash(&self) -> ProviderResult<Option<alloy_eips::BlockNumHash>> {
         Ok(None)
     }
@@ -176,7 +175,7 @@ impl<C: Send + Sync> BlockIdReader for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> BlockReaderIdExt for NoopProvider<C> {
+impl BlockReaderIdExt for NoopProvider {
     fn block_by_id(&self, _id: BlockId) -> ProviderResult<Option<BaseBlock>> {
         Ok(None)
     }
@@ -193,7 +192,7 @@ impl<C: Send + Sync> BlockReaderIdExt for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> BlockReader for NoopProvider<C> {
+impl BlockReader for NoopProvider {
     type Block = BaseBlock;
 
     fn find_block_by_hash(
@@ -257,7 +256,7 @@ impl<C: Send + Sync> BlockReader for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> TransactionsProvider for NoopProvider<C> {
+impl TransactionsProvider for NoopProvider {
     type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, _tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
@@ -319,7 +318,7 @@ impl<C: Send + Sync> TransactionsProvider for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> ReceiptProvider for NoopProvider<C> {
+impl ReceiptProvider for NoopProvider {
     type Receipt = BaseReceipt;
 
     fn receipt(&self, _id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
@@ -352,9 +351,9 @@ impl<C: Send + Sync> ReceiptProvider for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> ReceiptProviderIdExt for NoopProvider<C> {}
+impl ReceiptProviderIdExt for NoopProvider {}
 
-impl<C: Send + Sync> HeaderProvider for NoopProvider<C> {
+impl HeaderProvider for NoopProvider {
     type Header = alloy_consensus::Header;
 
     fn header(&self, _block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
@@ -388,13 +387,13 @@ impl<C: Send + Sync> HeaderProvider for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> AccountReader for NoopProvider<C> {
+impl AccountReader for NoopProvider {
     fn basic_account(&self, _address: &Address) -> ProviderResult<Option<Account>> {
         Ok(None)
     }
 }
 
-impl<C: Send + Sync> ChangeSetReader for NoopProvider<C> {
+impl ChangeSetReader for NoopProvider {
     fn account_block_changeset(
         &self,
         _block_number: BlockNumber,
@@ -419,7 +418,7 @@ impl<C: Send + Sync> ChangeSetReader for NoopProvider<C> {
 }
 
 #[cfg(feature = "db-api")]
-impl<C: Send + Sync> StorageChangeSetReader for NoopProvider<C> {
+impl StorageChangeSetReader for NoopProvider {
     fn storage_changeset(
         &self,
         _block_number: BlockNumber,
@@ -448,7 +447,7 @@ impl<C: Send + Sync> StorageChangeSetReader for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> StateRootProvider for NoopProvider<C> {
+impl StateRootProvider for NoopProvider {
     fn state_root(&self, _state: HashedPostState) -> ProviderResult<B256> {
         Ok(B256::default())
     }
@@ -472,7 +471,7 @@ impl<C: Send + Sync> StateRootProvider for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> StorageRootProvider for NoopProvider<C> {
+impl StorageRootProvider for NoopProvider {
     fn storage_root(
         &self,
         _address: Address,
@@ -500,7 +499,7 @@ impl<C: Send + Sync> StorageRootProvider for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> StateProofProvider for NoopProvider<C> {
+impl StateProofProvider for NoopProvider {
     fn proof(
         &self,
         _input: TrieInput,
@@ -528,7 +527,7 @@ impl<C: Send + Sync> StateProofProvider for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> HashedPostStateProvider for NoopProvider<C> {
+impl HashedPostStateProvider for NoopProvider {
     fn hashed_post_state(
         &self,
         _bundle_state: &revm::database::BundleState,
@@ -537,7 +536,7 @@ impl<C: Send + Sync> HashedPostStateProvider for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> StateReader for NoopProvider<C> {
+impl StateReader for NoopProvider {
     type Receipt = BaseReceipt;
 
     fn get_state(
@@ -548,7 +547,7 @@ impl<C: Send + Sync> StateReader for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> StateProvider for NoopProvider<C> {
+impl StateProvider for NoopProvider {
     fn storage(
         &self,
         _account: Address,
@@ -558,13 +557,13 @@ impl<C: Send + Sync> StateProvider for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> BytecodeReader for NoopProvider<C> {
+impl BytecodeReader for NoopProvider {
     fn bytecode_by_hash(&self, _code_hash: &B256) -> ProviderResult<Option<Bytecode>> {
         Ok(None)
     }
 }
 
-impl<C: Send + Sync + 'static> StateProviderFactory for NoopProvider<C> {
+impl StateProviderFactory for NoopProvider {
     fn latest(&self) -> ProviderResult<StateProviderBox> {
         Ok(Box::new(self.clone()))
     }
@@ -622,7 +621,7 @@ impl<C: Send + Sync + 'static> StateProviderFactory for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync + 'static> TryIntoHistoricalStateProvider for NoopProvider<C> {
+impl TryIntoHistoricalStateProvider for NoopProvider {
     fn try_into_history_at_block(
         self,
         block_number: BlockNumber,
@@ -631,7 +630,7 @@ impl<C: Send + Sync + 'static> TryIntoHistoricalStateProvider for NoopProvider<C
     }
 }
 
-impl<C: Send + Sync> StageCheckpointReader for NoopProvider<C> {
+impl StageCheckpointReader for NoopProvider {
     fn get_stage_checkpoint(&self, _id: StageId) -> ProviderResult<Option<StageCheckpoint>> {
         Ok(None)
     }
@@ -645,7 +644,7 @@ impl<C: Send + Sync> StageCheckpointReader for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> PruneCheckpointReader for NoopProvider<C> {
+impl PruneCheckpointReader for NoopProvider {
     fn get_prune_checkpoint(
         &self,
         _segment: PruneSegment,
@@ -658,7 +657,7 @@ impl<C: Send + Sync> PruneCheckpointReader for NoopProvider<C> {
     }
 }
 
-impl<C: Send + Sync> BlockBodyIndicesProvider for NoopProvider<C> {
+impl BlockBodyIndicesProvider for NoopProvider {
     fn block_body_indices(&self, _num: u64) -> ProviderResult<Option<StoredBlockBodyIndices>> {
         Ok(None)
     }
@@ -672,7 +671,7 @@ impl<C: Send + Sync> BlockBodyIndicesProvider for NoopProvider<C> {
 }
 
 #[cfg(feature = "db-api")]
-impl<ChainSpec: Send + Sync> DbTxProvider for NoopProvider<ChainSpec> {
+impl DbTxProvider for NoopProvider {
     type Tx = TxMock;
 
     fn tx(&self) -> &Self::Tx {
@@ -681,7 +680,7 @@ impl<ChainSpec: Send + Sync> DbTxProvider for NoopProvider<ChainSpec> {
 }
 
 #[cfg(feature = "db-api")]
-impl<ChainSpec: Send + Sync> DBProvider for NoopProvider<ChainSpec> {
+impl DBProvider for NoopProvider {
     fn tx_mut(&mut self) -> &mut Self::Tx {
         &mut self.tx
     }
@@ -702,7 +701,7 @@ impl<ChainSpec: Send + Sync> DBProvider for NoopProvider<ChainSpec> {
 }
 
 #[cfg(feature = "db-api")]
-impl<ChainSpec: Send + Sync> DatabaseProviderFactory for NoopProvider<ChainSpec> {
+impl DatabaseProviderFactory for NoopProvider {
     type DB = DatabaseMock;
     type Provider = Self;
     type ProviderRW = Self;
@@ -717,7 +716,7 @@ impl<ChainSpec: Send + Sync> DatabaseProviderFactory for NoopProvider<ChainSpec>
 }
 
 #[cfg(feature = "db-api")]
-impl<ChainSpec: Send + Sync> StorageSettingsCache for NoopProvider<ChainSpec> {
+impl StorageSettingsCache for NoopProvider {
     fn cached_storage_settings(&self) -> reth_db_api::models::StorageSettings {
         reth_db_api::models::StorageSettings::default()
     }

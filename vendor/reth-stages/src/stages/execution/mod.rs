@@ -10,8 +10,9 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
 use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_execution_chainspec::ChainSpecProvider;
 use num_traits::Zero;
-use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
+use reth_chainspec::EthereumHardforks;
 use reth_config::config::ExecutionConfig;
 use reth_consensus::FullConsensus;
 use reth_db::{static_file::HeaderMask, tables};
@@ -271,7 +272,7 @@ where
         + StateWriter<Receipt = BaseReceipt>
         + StorageSettingsCache
         + StoragePath
-        + ChainSpecProvider<ChainSpec: EthereumHardforks>,
+        + ChainSpecProvider,
 {
     /// Return the id of the stage
     fn id(&self) -> StageId {
@@ -607,7 +608,7 @@ fn reject_cancun_boundary_unwind<Provider>(
     unwind_to: u64,
 ) -> Result<(), StageError>
 where
-    Provider: HeaderProvider + ChainSpecProvider<ChainSpec: EthereumHardforks>,
+    Provider: HeaderProvider + ChainSpecProvider,
 {
     let checkpoint_header = provider
         .header_by_number(checkpoint_block)?
@@ -767,7 +768,7 @@ mod tests {
         let evm_config =
             TestEvmConfig::new(Arc::new(ChainSpecBuilder::mainnet().berlin_activated().build()));
         let consensus = Arc::new(TestConsensus::new(Arc::new(
-            ChainSpecBuilder::mainnet().berlin_activated().build(),
+            ChainSpecBuilder::mainnet().berlin_activated().build().into(),
         )));
         ExecutionStage::new(
             evm_config,

@@ -1,8 +1,8 @@
 //! Helper trait for interfacing with [`FullNodeComponents`].
 
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_execution_chainspec::ChainSpecProvider;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_network_api::NetworkInfo;
 use reth_node_api::FullNodeComponents;
@@ -29,11 +29,8 @@ pub trait RpcNodeCore: Clone + Send + Sync + Unpin + 'static {
             Receipt = BaseReceipt,
             Header = alloy_consensus::Header,
             Transaction = BaseTxEnvelope,
-        > + ChainSpecProvider<
-            ChainSpec: EthChainSpec<Header = alloy_consensus::Header>
-                           + Hardforks
-                           + EthereumHardforks,
-        > + StateProviderFactory
+        > + ChainSpecProvider
+        + StateProviderFactory
         + CanonStateSubscriptions
         + StageCheckpointReader
         + PruneCheckpointReader
@@ -65,7 +62,7 @@ pub trait RpcNodeCore: Clone + Send + Sync + Unpin + 'static {
 
 impl<T> RpcNodeCore for T
 where
-    T: FullNodeComponents<Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks>>,
+    T: FullNodeComponents<Provider: ChainSpecProvider>,
 {
     type Provider = T::Provider;
     type Pool = T::Pool;
@@ -123,11 +120,8 @@ where
             Receipt = BaseReceipt,
             Header = alloy_consensus::Header,
             Transaction = BaseTxEnvelope,
-        > + ChainSpecProvider<
-            ChainSpec: EthChainSpec<Header = alloy_consensus::Header>
-                           + Hardforks
-                           + EthereumHardforks,
-        > + StateProviderFactory
+        > + ChainSpecProvider
+        + StateProviderFactory
         + CanonStateSubscriptions
         + StageCheckpointReader
         + PruneCheckpointReader

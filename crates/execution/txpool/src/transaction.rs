@@ -541,8 +541,9 @@ mod tests {
     #[tokio::test]
     async fn validate_base_transaction() {
         let chain_spec = Arc::new(BaseChainSpec::mainnet());
-        let client =
-            MockEthProvider::new().with_chain_spec(Arc::clone(&chain_spec)).with_genesis_block();
+        let client = MockEthProvider::new()
+            .with_chain_spec(chain_spec.as_ref().clone())
+            .with_genesis_block();
         let evm_config = BaseEvmConfig::base(chain_spec);
         let validator = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()

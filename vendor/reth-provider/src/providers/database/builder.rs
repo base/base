@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use base_execution_chainspec::BaseChainSpec;
 use reth_db::{
     DatabaseEnv,
     mdbx::{DatabaseArguments, MaxReadTransactionDuration},
@@ -42,7 +43,7 @@ impl<N> ProviderFactoryBuilder<N> {
     /// use reth_chainspec::MAINNET;
     /// use reth_provider::providers::{NodeTypesForProvider, ProviderFactoryBuilder};
     ///
-    /// fn demo<N: NodeTypesForProvider<ChainSpec = reth_chainspec::ChainSpec>>(
+    /// fn demo<N: NodeTypesForProvider>(
     ///     runtime: reth_tasks::Runtime,
     /// ) {
     ///     let provider_factory = ProviderFactoryBuilder::<N>::default()
@@ -59,7 +60,7 @@ impl<N> ProviderFactoryBuilder<N> {
     /// use reth_chainspec::MAINNET;
     /// use reth_provider::providers::{NodeTypesForProvider, ProviderFactoryBuilder, ReadOnlyConfig};
     ///
-    /// fn demo<N: NodeTypesForProvider<ChainSpec = reth_chainspec::ChainSpec>>(
+    /// fn demo<N: NodeTypesForProvider>(
     ///     runtime: reth_tasks::Runtime,
     /// ) {
     ///     let provider_factory = ProviderFactoryBuilder::<N>::default()
@@ -83,7 +84,7 @@ impl<N> ProviderFactoryBuilder<N> {
     /// use reth_chainspec::MAINNET;
     /// use reth_provider::providers::{NodeTypesForProvider, ProviderFactoryBuilder, ReadOnlyConfig};
     ///
-    /// fn demo<N: NodeTypesForProvider<ChainSpec = reth_chainspec::ChainSpec>>(
+    /// fn demo<N: NodeTypesForProvider>(
     ///     runtime: reth_tasks::Runtime,
     /// ) {
     ///     let provider_factory = ProviderFactoryBuilder::<N>::default()
@@ -97,7 +98,7 @@ impl<N> ProviderFactoryBuilder<N> {
     /// ```
     pub fn open_read_only(
         self,
-        chainspec: Arc<N::ChainSpec>,
+        chainspec: Arc<BaseChainSpec>,
         config: impl Into<ReadOnlyConfig>,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<ProviderFactory<NodeTypesWithDBAdapter<N, DatabaseEnv>>>

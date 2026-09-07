@@ -7,7 +7,7 @@ use alloy_consensus::{
 };
 use alloy_eips::{eip4895::Withdrawals, merge::BEACON_NONCE};
 use alloy_evm::{block::BlockExecutorFactory, eth::EthBlockExecutionCtx};
-use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks};
+use reth_chainspec::{ChainSpec, EthereumHardforks};
 use reth_primitives_traits::{Receipt, SignedTransaction, logs_bloom};
 use revm::context::Block as _;
 

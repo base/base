@@ -2,7 +2,8 @@ use alloc::vec::Vec;
 
 use alloy_consensus::Header;
 use base_common_consensus::{BaseBlockBody, BaseTxEnvelope};
-use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
+use base_execution_chainspec::ChainSpecProvider;
+use reth_chainspec::EthereumHardforks;
 use reth_storage_errors::provider::ProviderResult;
 
 /// Reconstructs Base block bodies from transactions and the chain's fork schedule.
@@ -16,7 +17,7 @@ impl BaseBodyStorage {
         inputs: Vec<(&Header, Vec<BaseTxEnvelope>)>,
     ) -> ProviderResult<Vec<BaseBlockBody>>
     where
-        Provider: ChainSpecProvider<ChainSpec: EthereumHardforks>,
+        Provider: ChainSpecProvider,
     {
         let chain_spec = provider.chain_spec();
         Ok(inputs

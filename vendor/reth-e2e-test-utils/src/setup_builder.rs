@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use base_common_consensus::BaseTxEnvelope;
+use base_execution_chainspec::BaseChainSpec;
 use futures_util::future::TryJoinAll;
-use reth_chainspec::EthChainSpec;
 use reth_node_builder::{
     EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle, NodeTypesWithDBAdapter,
 };
@@ -26,33 +26,31 @@ type TreeConfigModifier =
     Box<dyn Fn(reth_node_api::TreeConfig) -> reth_node_api::TreeConfig + Send + Sync>;
 
 /// Type alias for node config modifier closure
-type NodeConfigModifier<C> = Box<dyn Fn(NodeConfig<C>) -> NodeConfig<C> + Send + Sync>;
+type NodeConfigModifier = Box<dyn Fn(NodeConfig) -> NodeConfig + Send + Sync>;
 
 /// Builder for configuring and creating test node setups.
 ///
 /// This builder allows customizing test node configurations through closures that
 /// modify `NodeConfig` and `TreeConfig`. It avoids code duplication by centralizing
 /// the node creation logic.
-pub struct E2ETestSetupBuilder<N, F>
+pub struct E2ETestSetupBuilder<F>
 where
-    N: NodeBuilderHelper,
     F: Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync + Copy + 'static,
 {
     num_nodes: usize,
-    chain_spec: Arc<N::ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     attributes_generator: F,
     connect_nodes: bool,
     tree_config_modifier: Option<TreeConfigModifier>,
-    node_config_modifier: Option<NodeConfigModifier<N::ChainSpec>>,
+    node_config_modifier: Option<NodeConfigModifier>,
 }
 
-impl<N, F> E2ETestSetupBuilder<N, F>
+impl<F> E2ETestSetupBuilder<F>
 where
-    N: NodeBuilderHelper,
     F: Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync + Copy + 'static,
 {
     /// Creates a new builder with the required parameters.
-    pub fn new(num_nodes: usize, chain_spec: Arc<N::ChainSpec>, attributes_generator: F) -> Self {
+    pub fn new(num_nodes: usize, chain_spec: Arc<BaseChainSpec>, attributes_generator: F) -> Self {
         Self {
             num_nodes,
             chain_spec,
@@ -85,7 +83,7 @@ where
     /// The closure receives the base node config and returns a modified version.
     pub fn with_node_config_modifier<G>(mut self, modifier: G) -> Self
     where
-        G: Fn(NodeConfig<N::ChainSpec>) -> NodeConfig<N::ChainSpec> + Send + Sync + 'static,
+        G: Fn(NodeConfig) -> NodeConfig + Send + Sync + 'static,
     {
         self.node_config_modifier = Some(Box::new(modifier));
         self
@@ -97,7 +95,7 @@ where
     }
 
     /// Builds and launches the test nodes.
-    pub async fn build(
+    pub async fn build<N: NodeBuilderHelper>(
         self,
     ) -> eyre::Result<(
         Vec<NodeHelperType<N, BlockchainProvider<NodeTypesWithDBAdapter<N, TmpDB>>>>,
@@ -190,9 +188,8 @@ where
     }
 }
 
-impl<N, F> std::fmt::Debug for E2ETestSetupBuilder<N, F>
+impl<F> std::fmt::Debug for E2ETestSetupBuilder<F>
 where
-    N: NodeBuilderHelper,
     F: Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync + Copy + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

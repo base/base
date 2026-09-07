@@ -22,6 +22,7 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, BaseExecutionPayloadV4, ExecutionData,
 };
+use base_execution_chainspec::BaseChainSpec;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
 use reth_chainspec::EthereumHardforks;
 use reth_engine_primitives::{ConsensusEngineHandle, EngineApiValidator};
@@ -56,13 +57,13 @@ const MAX_BLOB_LIMIT: usize = 128;
 /// functions in the Execution layer that are crucial for the consensus process.
 ///
 /// Uses concrete Base payloads and versioned engine API responses.
-pub struct EngineApi<Provider, Pool, Validator, ChainSpec> {
-    inner: Arc<EngineApiInner<Provider, Pool, Validator, ChainSpec>>,
+pub struct EngineApi<Provider, Pool, Validator> {
+    inner: Arc<EngineApiInner<Provider, Pool, Validator>>,
 }
 
-impl<Provider, Pool, Validator, ChainSpec> EngineApi<Provider, Pool, Validator, ChainSpec> {
+impl<Provider, Pool, Validator> EngineApi<Provider, Pool, Validator> {
     /// Returns the configured chainspec.
-    pub fn chain_spec(&self) -> &Arc<ChainSpec> {
+    pub fn chain_spec(&self) -> &Arc<BaseChainSpec> {
         &self.inner.chain_spec
     }
 
@@ -72,18 +73,17 @@ impl<Provider, Pool, Validator, ChainSpec> EngineApi<Provider, Pool, Validator, 
     }
 }
 
-impl<Provider, Pool, Validator, ChainSpec> EngineApi<Provider, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator> EngineApi<Provider, Pool, Validator>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator,
-    ChainSpec: EthereumHardforks + Send + Sync + 'static,
 {
     /// Create new instance of [`EngineApi`].
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         provider: Provider,
-        chain_spec: Arc<ChainSpec>,
+        chain_spec: Arc<BaseChainSpec>,
         beacon_consensus: ConsensusEngineHandle,
         payload_store: PayloadStore,
         tx_pool: Pool,
@@ -289,12 +289,11 @@ where
     }
 }
 
-impl<Provider, Pool, Validator, ChainSpec> EngineApi<Provider, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator> EngineApi<Provider, Pool, Validator>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator,
-    ChainSpec: EthereumHardforks + Send + Sync + 'static,
 {
     /// Sends a message to the beacon consensus engine to update the fork choice _without_
     /// withdrawals.
@@ -1158,13 +1157,11 @@ where
 
 // Engine RPC endpoints backed by Base payload validation.
 #[async_trait]
-impl<Provider, Pool, Validator, ChainSpec> EngineApiServer
-    for EngineApi<Provider, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator> EngineApiServer for EngineApi<Provider, Pool, Validator>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator,
-    ChainSpec: EthereumHardforks + Send + Sync + 'static,
 {
     /// Handler for `engine_newPayloadV1`
     /// See also <https://github.com/ethereum/execution-apis/blob/3d627c95a4d3510a8187dd02e0250ecb4331d27e/src/engine/paris.md#engine_newpayloadv1>
@@ -1523,8 +1520,7 @@ where
     }
 }
 
-impl<Provider, Pool, Validator, ChainSpec> IntoEngineApiRpcModule
-    for EngineApi<Provider, Pool, Validator, ChainSpec>
+impl<Provider, Pool, Validator> IntoEngineApiRpcModule for EngineApi<Provider, Pool, Validator>
 where
     Self: EngineApiServer,
 {
@@ -1533,28 +1529,24 @@ where
     }
 }
 
-impl<Provider, Pool, Validator, ChainSpec> std::fmt::Debug
-    for EngineApi<Provider, Pool, Validator, ChainSpec>
-{
+impl<Provider, Pool, Validator> std::fmt::Debug for EngineApi<Provider, Pool, Validator> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EngineApi").finish_non_exhaustive()
     }
 }
 
-impl<Provider, Pool, Validator, ChainSpec> Clone
-    for EngineApi<Provider, Pool, Validator, ChainSpec>
-{
+impl<Provider, Pool, Validator> Clone for EngineApi<Provider, Pool, Validator> {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
 }
 
 /// The container type for the engine API internals.
-struct EngineApiInner<Provider, Pool, Validator, ChainSpec> {
+struct EngineApiInner<Provider, Pool, Validator> {
     /// The provider to interact with the chain.
     provider: Provider,
     /// Consensus configuration
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     /// The channel to send messages to the beacon consensus engine.
     beacon_consensus: ConsensusEngineHandle,
     /// The type that can communicate with the payload service to retrieve payloads.
@@ -1587,7 +1579,8 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use base_common_consensus::BaseBlock as Block;
-    use reth_chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
+    use base_execution_chainspec::BaseChainSpec;
+    use reth_chainspec::{ChainSpecBuilder, MAINNET};
     use reth_engine_primitives::{
         BeaconEngineMessage, OnForkChoiceUpdated, test_utils::TestEngineValidator,
     };
@@ -1604,7 +1597,7 @@ mod tests {
 
     fn setup_engine_api() -> (
         EngineApiTestHandle,
-        EngineApi<Arc<MockEthProvider>, NoopTransactionPool, TestEngineValidator, ChainSpec>,
+        EngineApi<Arc<MockEthProvider>, NoopTransactionPool, TestEngineValidator>,
     ) {
         let client = ClientVersionV1 {
             code: ClientCode::RH,
@@ -1613,12 +1606,12 @@ mod tests {
             commit: "defa64b2".to_string(),
         };
 
-        let chain_spec: Arc<ChainSpec> = MAINNET.clone();
+        let chain_spec: Arc<BaseChainSpec> = Arc::new(MAINNET.as_ref().clone().into());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, engine_rx) = unbounded_channel();
         let task_executor = Runtime::test();
-        let api = EngineApi::<_, _, _, _>::new(
+        let api = EngineApi::<_, _, _>::new(
             provider.clone(),
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1680,10 +1673,10 @@ mod tests {
             version: "v0.2.0-beta.5".to_string(),
             commit: "defa64b2".to_string(),
         };
-        let chain_spec: Arc<ChainSpec> = MAINNET.clone();
+        let chain_spec: Arc<BaseChainSpec> = Arc::new(MAINNET.as_ref().clone().into());
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel();
-        let api = EngineApi::<_, _, _, _>::new(
+        let api = EngineApi::<_, _, _>::new(
             provider.clone(),
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1735,10 +1728,10 @@ mod tests {
             version: "v0.2.0-beta.5".to_string(),
             commit: "defa64b2".to_string(),
         };
-        let chain_spec: Arc<ChainSpec> = MAINNET.clone();
+        let chain_spec: Arc<BaseChainSpec> = Arc::new(MAINNET.as_ref().clone().into());
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel();
-        let api = EngineApi::<_, _, _, _>::new(
+        let api = EngineApi::<_, _, _>::new(
             provider.clone(),
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1775,7 +1768,7 @@ mod tests {
 
     struct EngineApiTestHandle {
         #[allow(dead_code)]
-        chain_spec: Arc<ChainSpec>,
+        chain_spec: Arc<BaseChainSpec>,
         provider: Arc<MockEthProvider>,
         from_api: UnboundedReceiver<BeaconEngineMessage>,
     }
@@ -1819,12 +1812,13 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_amsterdam_payload_without_slot_number() {
-        let chain_spec = Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build());
+        let chain_spec: Arc<BaseChainSpec> =
+            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build().into());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, mut engine_rx) = unbounded_channel();
 
-        let api = EngineApi::<_, _, _, _>::new(
+        let api = EngineApi::<_, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1919,13 +1913,13 @@ mod tests {
 
     #[tokio::test]
     async fn get_blobs_v3_returns_null_when_syncing() {
-        let chain_spec: Arc<ChainSpec> =
-            Arc::new(ChainSpecBuilder::mainnet().osaka_activated().build());
+        let chain_spec: Arc<BaseChainSpec> =
+            Arc::new(ChainSpecBuilder::mainnet().osaka_activated().build().into());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage>();
 
-        let api = EngineApi::<_, _, _, _>::new(
+        let api = EngineApi::<_, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1950,13 +1944,13 @@ mod tests {
 
     #[tokio::test]
     async fn get_blobs_v4_returns_null_when_syncing() {
-        let chain_spec: Arc<ChainSpec> =
-            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build());
+        let chain_spec: Arc<BaseChainSpec> =
+            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build().into());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage>();
 
-        let api = EngineApi::<_, _, _, _>::new(
+        let api = EngineApi::<_, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -1981,15 +1975,15 @@ mod tests {
 
     #[tokio::test]
     async fn fcu_v4_updates_shared_cell_custody_before_forkchoice_result() {
-        let chain_spec: Arc<ChainSpec> =
-            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build());
+        let chain_spec: Arc<BaseChainSpec> =
+            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build().into());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, mut engine_rx) = unbounded_channel();
         let network = NoopNetwork::default();
         let cell_custody = network.cell_custody().clone();
 
-        let api = EngineApi::<_, _, _, _>::new(
+        let api = EngineApi::<_, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),
@@ -2047,15 +2041,15 @@ mod tests {
 
     #[tokio::test]
     async fn fcu_v4_updates_shared_cell_custody_when_payload_attrs_invalid() {
-        let chain_spec: Arc<ChainSpec> =
-            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build());
+        let chain_spec: Arc<BaseChainSpec> =
+            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build().into());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, mut engine_rx) = unbounded_channel();
         let network = NoopNetwork::default();
         let cell_custody = network.cell_custody().clone();
 
-        let api = EngineApi::<_, _, _, _>::new(
+        let api = EngineApi::<_, _, _>::new(
             provider,
             chain_spec.clone(),
             ConsensusEngineHandle::new(to_engine),

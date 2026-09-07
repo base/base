@@ -10,6 +10,7 @@ use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 use base_common_evm::BaseBlockExecutionCtx;
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;
@@ -19,18 +20,18 @@ use revm::context::Block as _;
 
 /// Block builder for Base.
 #[derive(Debug)]
-pub struct BaseBlockAssembler<ChainSpec> {
-    chain_spec: Arc<ChainSpec>,
+pub struct BaseBlockAssembler {
+    chain_spec: Arc<BaseChainSpec>,
 }
 
-impl<ChainSpec> BaseBlockAssembler<ChainSpec> {
+impl BaseBlockAssembler {
     /// Creates a new [`BaseBlockAssembler`].
-    pub const fn new(chain_spec: Arc<ChainSpec>) -> Self {
+    pub const fn new(chain_spec: Arc<BaseChainSpec>) -> Self {
         Self { chain_spec }
     }
 }
 
-impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
+impl BaseBlockAssembler {
     /// Builds a block for `input` without any bounds on header `H`.
     pub fn assemble_block<
         F: for<'a> BlockExecutorFactory<
@@ -129,15 +130,14 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
     }
 }
 
-impl<ChainSpec> Clone for BaseBlockAssembler<ChainSpec> {
+impl Clone for BaseBlockAssembler {
     fn clone(&self) -> Self {
         Self { chain_spec: Arc::clone(&self.chain_spec) }
     }
 }
 
-impl<F, ChainSpec> BlockAssembler<F> for BaseBlockAssembler<ChainSpec>
+impl<F> BlockAssembler<F> for BaseBlockAssembler
 where
-    ChainSpec: Upgrades,
     F: for<'a> BlockExecutorFactory<
             ExecutionCtx<'a> = BaseBlockExecutionCtx,
             Transaction: SignedTransaction,

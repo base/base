@@ -4,7 +4,6 @@
 use std::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
-use reth_chainspec::EthChainSpec;
 use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::BlockReader;
@@ -18,7 +17,7 @@ pub struct ExExContextDyn {
     /// The current head of the blockchain at launch.
     pub head: BlockNumHash,
     /// The config of the node
-    pub config: NodeConfig<Box<dyn EthChainSpec<Header = alloy_consensus::Header> + 'static>>,
+    pub config: NodeConfig,
     /// The loaded node config
     pub reth_config: reth_config::Config,
     /// Channel used to send [`ExExEvent`]s to the rest of the node.
@@ -56,14 +55,11 @@ where
     Node::Provider: Debug + BlockReader,
 {
     fn from(ctx: ExExContext<Node>) -> Self {
-        let config = ctx.config.map_chainspec(|chainspec| {
-            Box::new(chainspec) as Box<dyn EthChainSpec<Header = alloy_consensus::Header>>
-        });
         let notifications = Box::new(ctx.notifications) as Box<_>;
 
         Self {
             head: ctx.head,
-            config,
+            config: ctx.config,
             reth_config: ctx.reth_config,
             events: ctx.events,
             notifications,

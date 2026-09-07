@@ -8,7 +8,7 @@
 use std::{fmt, fmt::Debug, future::Future};
 
 use reth_exex::ExExContext;
-use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeAddOns, NodeTypes};
+use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeAddOns};
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::providers::RocksDBProvider;
 use reth_tasks::TaskExecutor;
@@ -24,7 +24,7 @@ use crate::{
 /// A node builder that also has the configured types.
 pub struct NodeBuilderWithTypes<T: FullNodeTypes> {
     /// All settings for how the node should be configured.
-    config: NodeConfig<<T::Types as NodeTypes>::ChainSpec>,
+    config: NodeConfig,
     /// The configured database for the node.
     adapter: NodeTypesAdapter<T>,
     /// An optional [`RocksDBProvider`] to use instead of creating one during launch.
@@ -34,7 +34,7 @@ pub struct NodeBuilderWithTypes<T: FullNodeTypes> {
 impl<T: FullNodeTypes> NodeBuilderWithTypes<T> {
     /// Creates a new instance of the node builder with the given configuration and types.
     pub const fn new(
-        config: NodeConfig<<T::Types as NodeTypes>::ChainSpec>,
+        config: NodeConfig,
         database: T::DB,
         rocksdb_provider: Option<RocksDBProvider>,
     ) -> Self {
@@ -149,7 +149,7 @@ pub struct NodeBuilderWithComponents<
     AO: NodeAddOns<NodeAdapter<T, CB::Components>>,
 > {
     /// All settings for how the node should be configured.
-    pub config: NodeConfig<<T::Types as NodeTypes>::ChainSpec>,
+    pub config: NodeConfig,
     /// Adapter for the underlying node types and database
     pub adapter: NodeTypesAdapter<T>,
     /// An optional [`RocksDBProvider`] to use instead of creating one during launch.
@@ -316,7 +316,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use reth_chainspec::ChainSpec;
+
     use reth_consensus::noop::NoopConsensus;
     use reth_db_api::mock::DatabaseMock;
     use reth_evm::{MockEvmConfig, noop::NoopEvmConfig};
@@ -343,10 +343,8 @@ mod test {
 
         let task_executor = Runtime::test();
 
-        let node: NodeAdapter<
-            FullNodeTypesAdapter<AnyNodeTypes<ChainSpec>, DatabaseMock, NoopProvider>,
-            _,
-        > = NodeAdapter { components, task_executor, provider: NoopProvider::default() };
+        let node: NodeAdapter<FullNodeTypesAdapter<AnyNodeTypes, DatabaseMock, NoopProvider>, _> =
+            NodeAdapter { components, task_executor, provider: NoopProvider::default() };
 
         // test that node implements `FullNodeComponents``
         <NodeAdapter<_, _> as FullNodeComponents>::pool(&node);

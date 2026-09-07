@@ -16,8 +16,7 @@ use reth_db_api::{
 };
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_provider::{
-    DatabaseProviderRW, StorageTrieWriter, TrieWriter, providers::ProviderNodeTypes,
-    test_utils::create_test_provider_factory,
+    DatabaseProviderRW, StorageTrieWriter, TrieWriter, test_utils::create_test_provider_factory,
 };
 use reth_trie::{
     BranchNodeCompact, HashBuilder, IntermediateStateRootState, Nibbles, StateRoot,
@@ -800,8 +799,8 @@ fn storage_trie_around_extension_node() {
     });
 }
 
-fn extension_node_storage_trie<N: ProviderNodeTypes>(
-    tx: &DatabaseProviderRW<Arc<TempDatabase<DatabaseEnv>>, N>,
+fn extension_node_storage_trie(
+    tx: &DatabaseProviderRW<Arc<TempDatabase<DatabaseEnv>>>,
     hashed_address: B256,
 ) -> (B256, StorageTrieUpdates) {
     let value = U256::from(1);
@@ -830,9 +829,7 @@ fn extension_node_storage_trie<N: ProviderNodeTypes>(
     (root, trie_updates)
 }
 
-fn extension_node_trie<N: ProviderNodeTypes>(
-    tx: &DatabaseProviderRW<Arc<TempDatabase<DatabaseEnv>>, N>,
-) -> B256 {
+fn extension_node_trie(tx: &DatabaseProviderRW<Arc<TempDatabase<DatabaseEnv>>>) -> B256 {
     let a = Account { nonce: 0, balance: U256::from(1u64), bytecode_hash: Some(B256::random()) };
     let val = encode_account(a, None);
 

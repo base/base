@@ -29,6 +29,7 @@ reth-storage-errors = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
+base-execution-chainspec = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 reth-db-api = { workspace = true, optional = true }
 reth-tokio-util = { workspace = true, optional = true }

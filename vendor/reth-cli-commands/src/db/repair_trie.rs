@@ -6,7 +6,6 @@ use std::{
 use alloy_consensus::BlockHeader as AlloyBlockHeader;
 use clap::Parser;
 use metrics::{self, Counter};
-use reth_chainspec::EthChainSpec;
 use reth_cli_util::parse_socket_address;
 use reth_db_api::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
@@ -219,7 +218,7 @@ fn verify_and_repair<N: ProviderNodeTypes>(tool: &DbTool<N>) -> eyre::Result<()>
     verify_checkpoints(provider_rw.as_ref())?;
 
     let inconsistent_nodes = reth_trie_db::with_adapter!(tool.provider_factory, |A| {
-        do_verify_and_repair::<_, A>(&mut provider_rw, finish_checkpoint.block_number)?
+        do_verify_and_repair::<N, A>(&mut provider_rw, finish_checkpoint.block_number)?
     });
 
     if inconsistent_nodes == 0 {
@@ -233,7 +232,7 @@ fn verify_and_repair<N: ProviderNodeTypes>(tool: &DbTool<N>) -> eyre::Result<()>
 }
 
 fn do_verify_and_repair<N: ProviderNodeTypes, A: TrieTableAdapter>(
-    provider_rw: &mut reth_provider::DatabaseProviderRW<N::DB, N>,
+    provider_rw: &mut reth_provider::DatabaseProviderRW<N::DB>,
     block_number: u64,
 ) -> eyre::Result<usize>
 where
@@ -340,14 +339,14 @@ where
     if inconsistent_nodes > 0 {
         // Refuse to commit repaired trie tables unless they reproduce the canonical tip state
         // root.
-        verify_repaired_state_root::<_, A>(provider_rw, block_number)?;
+        verify_repaired_state_root::<N, A>(provider_rw, block_number)?;
     }
 
     Ok(inconsistent_nodes as usize)
 }
 
 fn verify_repaired_state_root<N: ProviderNodeTypes, A: TrieTableAdapter>(
-    provider_rw: &reth_provider::DatabaseProviderRW<N::DB, N>,
+    provider_rw: &reth_provider::DatabaseProviderRW<N::DB>,
     block_number: u64,
 ) -> eyre::Result<()>
 where

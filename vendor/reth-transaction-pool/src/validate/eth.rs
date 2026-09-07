@@ -24,7 +24,8 @@ use alloy_eips::{
 use alloy_primitives::U256;
 use alloy_rlp::Encodable;
 use base_common_consensus::BaseBlock;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
+use reth_chainspec::EthereumHardforks;
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{
     Account, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
@@ -162,7 +163,7 @@ impl<Client, Tx, Evm> fmt::Debug for EthTransactionValidator<Client, Tx, Evm> {
 
 impl<Client, Tx, Evm> EthTransactionValidator<Client, Tx, Evm> {
     /// Returns the configured chain spec
-    pub fn chain_spec(&self) -> Arc<Client::ChainSpec>
+    pub fn chain_spec(&self) -> Arc<BaseChainSpec>
     where
         Client: ChainSpecProvider,
     {
@@ -357,7 +358,7 @@ impl<Client, Tx, Evm> EthTransactionValidator<Client, Tx, Evm> {
 
 impl<Client, Tx, Evm> EthTransactionValidator<Client, Tx, Evm>
 where
-    Client: ChainSpecProvider<ChainSpec: EthChainSpec + EthereumHardforks> + StateProviderFactory,
+    Client: ChainSpecProvider + StateProviderFactory,
     Tx: EthPoolTransaction,
     Evm: ConfigureEvm,
 {
@@ -982,7 +983,7 @@ where
 
 impl<Client, Tx, Evm> TransactionValidator for EthTransactionValidator<Client, Tx, Evm>
 where
-    Client: ChainSpecProvider<ChainSpec: EthChainSpec + EthereumHardforks> + StateProviderFactory,
+    Client: ChainSpecProvider + StateProviderFactory,
     Tx: EthPoolTransaction,
     Evm: ConfigureEvm,
 {
@@ -1093,8 +1094,7 @@ impl<Client, Evm> EthTransactionValidatorBuilder<Client, Evm> {
     ///  - EIP-7702
     pub fn new(client: Client, evm_config: Evm) -> Self
     where
-        Client: ChainSpecProvider<ChainSpec: EthChainSpec + EthereumHardforks>
-            + BlockReaderIdExt<Header = alloy_consensus::Header>,
+        Client: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header>,
         Evm: ConfigureEvm,
     {
         let chain_spec = client.chain_spec();
