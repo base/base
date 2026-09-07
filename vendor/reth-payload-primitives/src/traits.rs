@@ -135,15 +135,15 @@ pub trait PayloadAttributesBuilder<Attributes, Header = alloy_consensus::Header>
     Send + Sync + 'static
 {
     /// Constructs new payload attributes for the given timestamp.
-    fn build(&self, parent: &SealedHeader<Header>) -> Attributes;
+    fn build(&self, parent: &SealedHeader) -> Attributes;
 }
 
 impl<Attributes, Header, F> PayloadAttributesBuilder<Attributes, Header> for F
 where
     Header: Clone,
-    F: Fn(SealedHeader<Header>) -> Attributes + Send + Sync + 'static,
+    F: Fn(SealedHeader) -> Attributes + Send + Sync + 'static,
 {
-    fn build(&self, parent: &SealedHeader<Header>) -> Attributes {
+    fn build(&self, parent: &SealedHeader) -> Attributes {
         self(parent.clone())
     }
 }
@@ -153,7 +153,7 @@ where
     L: PayloadAttributesBuilder<Attributes, Header>,
     R: PayloadAttributesBuilder<Attributes, Header>,
 {
-    fn build(&self, parent: &SealedHeader<Header>) -> Attributes {
+    fn build(&self, parent: &SealedHeader) -> Attributes {
         match self {
             Self::Left(l) => l.build(parent),
             Self::Right(r) => r.build(parent),
@@ -167,7 +167,7 @@ where
     Header: 'static,
     Attributes: 'static,
 {
-    fn build(&self, parent: &SealedHeader<Header>) -> Attributes {
+    fn build(&self, parent: &SealedHeader) -> Attributes {
         self.as_ref().build(parent)
     }
 }
@@ -175,11 +175,11 @@ where
 /// Trait to build the EVM environment for the next block from the given payload attributes.
 ///
 /// Accepts payload attributes from CL, parent header and additional payload builder context.
-pub trait BuildNextEnv<Attributes, Header, Ctx>: Sized {
+pub trait BuildNextEnv<Attributes, Ctx>: Sized {
     /// Builds the EVM environment for the next block from the given payload attributes.
     fn build_next_env(
         attributes: &Attributes,
-        parent: &SealedHeader<Header>,
+        parent: &SealedHeader,
         ctx: &Ctx,
     ) -> Result<Self, PayloadBuilderError>;
 }

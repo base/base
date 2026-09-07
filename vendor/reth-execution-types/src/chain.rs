@@ -108,7 +108,7 @@ impl Chain {
     }
 
     /// Returns an iterator over all headers in the block with increasing block numbers.
-    pub fn headers(&self) -> impl Iterator<Item = SealedHeader<alloy_consensus::Header>> + '_ {
+    pub fn headers(&self) -> impl Iterator<Item = SealedHeader> + '_ {
         self.blocks.values().map(|block| block.clone_sealed_header())
     }
 

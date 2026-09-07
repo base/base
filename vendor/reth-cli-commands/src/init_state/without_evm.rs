@@ -35,7 +35,7 @@ where
 /// first valid block.
 pub fn setup_without_evm<Provider, F>(
     provider_rw: &Provider,
-    header: SealedHeader<alloy_consensus::Header>,
+    header: SealedHeader,
     header_factory: F,
 ) -> ProviderResult<()>
 where

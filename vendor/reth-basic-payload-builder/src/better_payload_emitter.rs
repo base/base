@@ -3,7 +3,7 @@ use std::sync::Arc;
 use reth_payload_builder::PayloadBuilderError;
 use tokio::sync::broadcast;
 
-use crate::{BuildArguments, BuildOutcome, HeaderForPayload, PayloadBuilder, PayloadConfig};
+use crate::{BuildArguments, BuildOutcome, PayloadBuilder, PayloadConfig};
 
 /// Emits events when a payload is built (both `Better` and `Freeze` outcomes).
 /// Delegates the actual payload building to an inner [`PayloadBuilder`].
@@ -56,7 +56,7 @@ where
 
     fn build_empty_payload(
         &self,
-        config: PayloadConfig<Self::Attributes, HeaderForPayload>,
+        config: PayloadConfig<Self::Attributes>,
     ) -> Result<Self::BuiltPayload, PayloadBuilderError> {
         self.inner.build_empty_payload(config)
     }

@@ -37,7 +37,7 @@ pub enum PendingBlockEnvOrigin<B: Block = reth_ethereum_primitives::Block, R = R
     ///  - the timestamp
     ///  - the block number
     ///  - fees
-    DerivedFromLatest(SealedHeader<B::Header>),
+    DerivedFromLatest(SealedHeader),
 }
 
 impl<B: Block, R> PendingBlockEnvOrigin<B, R> {

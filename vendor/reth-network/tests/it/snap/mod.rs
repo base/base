@@ -61,7 +61,7 @@ fn snap_protocols() -> Vec<Protocol> {
 /// A provider usable by the snap/2 testnet helpers: real block, header, state, bal, and range
 /// access.
 trait SnapTestProvider:
-    BlockReader<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+    BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
     + HeaderProvider
     + BalProvider
     + StateProviderFactory
@@ -74,7 +74,7 @@ trait SnapTestProvider:
 }
 
 impl<T> SnapTestProvider for T where
-    T: BlockReader<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+    T: BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
         + HeaderProvider
         + BalProvider
         + StateProviderFactory

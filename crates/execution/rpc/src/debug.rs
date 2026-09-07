@@ -141,12 +141,9 @@ impl<Eth, P, Provider> DebugApiExt<Eth, P, Provider>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     P: BaseProofsStore + Clone + 'static,
-    Provider: BlockReaderIdExt + HeaderProvider<Header = alloy_consensus::Header>,
+    Provider: BlockReaderIdExt + HeaderProvider,
 {
-    fn parent_header(
-        &self,
-        parent_block_hash: B256,
-    ) -> ProviderResult<SealedHeader<Provider::Header>> {
+    fn parent_header(&self, parent_block_hash: B256) -> ProviderResult<SealedHeader> {
         self.inner
             .provider
             .sealed_header_by_hash(parent_block_hash)?
@@ -160,10 +157,10 @@ impl<Eth, P, Provider> DebugApiOverrideServer<BasePayloadAttributes>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     P: BaseProofsStore + Clone + 'static,
-    Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
+    Provider: BlockReaderIdExt
         + StateProviderFactory
         + ChainSpecProvider
-        + HeaderProvider<Header = alloy_consensus::Header>
+        + HeaderProvider
         + Clone
         + 'static,
 {

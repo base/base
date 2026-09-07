@@ -5,7 +5,6 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use alloy_primitives::Sealable;
 use futures::Stream;
 use futures_util::StreamExt;
 use pin_project::pin_project;
@@ -25,20 +24,20 @@ pub const HEADERS_TASK_BUFFER_SIZE: usize = 8;
 /// A [HeaderDownloader] that drives a spawned [HeaderDownloader] on a spawned task.
 #[derive(Debug)]
 #[pin_project]
-pub struct TaskDownloader<H: Sealable> {
+pub struct TaskDownloader {
     #[pin]
-    from_downloader: ReceiverStream<HeadersDownloaderResult<Vec<SealedHeader<H>>, H>>,
-    to_downloader: UnboundedSender<DownloaderUpdates<H>>,
+    from_downloader: ReceiverStream<HeadersDownloaderResult<Vec<SealedHeader>>>,
+    to_downloader: UnboundedSender<DownloaderUpdates>,
 }
 
 // === impl TaskDownloader ===
 
-impl<H: Sealable + Send + Sync + Unpin + 'static> TaskDownloader<H> {
+impl TaskDownloader {
     /// Spawns the given `downloader` via the given [`Runtime`] and returns a [`TaskDownloader`]
     /// that's connected to that task.
     pub fn spawn_with<T>(downloader: T, runtime: &Runtime) -> Self
     where
-        T: HeaderDownloader<Header = H> + 'static,
+        T: HeaderDownloader + 'static,
     {
         let (headers_tx, headers_rx) = mpsc::channel(HEADERS_TASK_BUFFER_SIZE);
         let (to_downloader, updates_rx) = mpsc::unbounded_channel();
@@ -54,14 +53,12 @@ impl<H: Sealable + Send + Sync + Unpin + 'static> TaskDownloader<H> {
     }
 }
 
-impl<H: Sealable + Debug + Send + Sync + Unpin + 'static> HeaderDownloader for TaskDownloader<H> {
-    type Header = H;
-
-    fn update_sync_gap(&mut self, head: SealedHeader<H>, target: SyncTarget) {
+impl HeaderDownloader for TaskDownloader {
+    fn update_sync_gap(&mut self, head: SealedHeader, target: SyncTarget) {
         let _ = self.to_downloader.send(DownloaderUpdates::UpdateSyncGap(head, target));
     }
 
-    fn update_local_head(&mut self, head: SealedHeader<H>) {
+    fn update_local_head(&mut self, head: SealedHeader) {
         let _ = self.to_downloader.send(DownloaderUpdates::UpdateLocalHead(head));
     }
 
@@ -74,8 +71,8 @@ impl<H: Sealable + Debug + Send + Sync + Unpin + 'static> HeaderDownloader for T
     }
 }
 
-impl<H: Sealable> Stream for TaskDownloader<H> {
-    type Item = HeadersDownloaderResult<Vec<SealedHeader<H>>, H>;
+impl Stream for TaskDownloader {
+    type Item = HeadersDownloaderResult<Vec<SealedHeader>>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.project().from_downloader.poll_next(cx)
@@ -85,8 +82,8 @@ impl<H: Sealable> Stream for TaskDownloader<H> {
 /// A [`HeaderDownloader`] that runs on its own task
 #[expect(clippy::complexity)]
 struct SpawnedDownloader<T: HeaderDownloader> {
-    updates: UnboundedReceiverStream<DownloaderUpdates<T::Header>>,
-    headers_tx: PollSender<HeadersDownloaderResult<Vec<SealedHeader<T::Header>>, T::Header>>,
+    updates: UnboundedReceiverStream<DownloaderUpdates>,
+    headers_tx: PollSender<HeadersDownloaderResult<Vec<SealedHeader>>>,
     downloader: T,
 }
 
@@ -147,9 +144,9 @@ impl<T: HeaderDownloader> Future for SpawnedDownloader<T> {
 
 /// Commands delegated to the spawned [`HeaderDownloader`]
 #[derive(Debug)]
-enum DownloaderUpdates<H> {
-    UpdateSyncGap(SealedHeader<H>, SyncTarget),
-    UpdateLocalHead(SealedHeader<H>),
+enum DownloaderUpdates {
+    UpdateSyncGap(SealedHeader, SyncTarget),
+    UpdateLocalHead(SealedHeader),
     UpdateSyncTarget(SyncTarget),
     SetBatchSize(usize),
 }

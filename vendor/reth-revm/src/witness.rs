@@ -36,7 +36,6 @@ impl<'a, DB> ExecutionWitnessRecord<'a, DB> {
             + reth_storage_api::StateProofProvider
             + ?Sized,
         HP: reth_storage_api::HeaderProvider + ?Sized,
-        HP::Header: alloy_rlp::Encodable,
     {
         let codes = match mode {
             ExecutionWitnessMode::Legacy => self

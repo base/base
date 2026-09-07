@@ -59,9 +59,9 @@ impl SignableTxRequest<BaseTxEnvelope> for BaseTransactionRequest {
     }
 }
 
-impl<T: alloy_consensus::Sealable> crate::FromConsensusHeader<T> for BaseHeaderResponse<Header<T>> {
+impl crate::FromConsensusHeader for BaseHeaderResponse<Header> {
     fn from_consensus_header(
-        header: reth_primitives_traits::SealedHeader<T>,
+        header: reth_primitives_traits::SealedHeader,
         block_size: usize,
     ) -> Self {
         Self::new(Header::from_consensus(header.into(), None, Some(U256::from(block_size))))

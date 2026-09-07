@@ -1092,7 +1092,7 @@ impl<Client> EthTransactionValidatorBuilder<Client> {
     ///  - EIP-7702
     pub fn new(client: Client, evm_config: BaseEvmConfig) -> Self
     where
-        Client: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header>,
+        Client: ChainSpecProvider + BlockReaderIdExt,
     {
         let chain_spec = client.chain_spec();
         let tip = client

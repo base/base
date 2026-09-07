@@ -42,14 +42,14 @@ const REQUESTS_PER_PEER_MULTIPLIER: usize = 5;
 
 /// Wrapper for internal downloader errors.
 #[derive(Error, Debug)]
-enum ReverseHeadersDownloaderError<H: Sealable> {
+enum ReverseHeadersDownloaderError {
     #[error(transparent)]
-    Downloader(#[from] HeadersDownloaderError<H>),
+    Downloader(#[from] HeadersDownloaderError),
     #[error(transparent)]
     Response(#[from] Box<HeadersResponseError>),
 }
 
-impl<H: Sealable> From<HeadersResponseError> for ReverseHeadersDownloaderError<H> {
+impl From<HeadersResponseError> for ReverseHeadersDownloaderError {
     fn from(value: HeadersResponseError) -> Self {
         Self::Response(Box::new(value))
     }
@@ -70,17 +70,17 @@ impl<H: Sealable> From<HeadersResponseError> for ReverseHeadersDownloaderError<H
 #[derive(Debug)]
 pub struct ReverseHeadersDownloader<H: HeadersClient> {
     /// Consensus client used to validate headers
-    consensus: Arc<dyn HeaderValidator<H::Header>>,
+    consensus: Arc<dyn HeaderValidator>,
     /// Client used to download headers.
     client: Arc<H>,
     /// The local head of the chain.
-    local_head: Option<SealedHeader<H::Header>>,
+    local_head: Option<SealedHeader>,
     /// Block we want to close the gap to.
     sync_target: Option<SyncTargetBlock>,
     /// The block number to use for requests.
     next_request_block_number: u64,
     /// Keeps track of the block we need to validate next.
-    lowest_validated_header: Option<SealedHeader<H::Header>>,
+    lowest_validated_header: Option<SealedHeader>,
     /// Tip block number to start validating from (in reverse)
     next_chain_tip_block_number: u64,
     /// The batch size per one request
@@ -101,11 +101,11 @@ pub struct ReverseHeadersDownloader<H: HeadersClient> {
     /// requests in progress
     in_progress_queue: FuturesUnordered<HeadersRequestFuture<H::Output>>,
     /// Buffered, unvalidated responses
-    buffered_responses: BinaryHeap<OrderedHeadersResponse<H::Header>>,
+    buffered_responses: BinaryHeap<OrderedHeadersResponse<alloy_consensus::Header>>,
     /// Buffered, _sorted_ and validated headers ready to be returned.
     ///
     /// Note: headers are sorted from high to low
-    queued_validated_headers: Vec<SealedHeader<H::Header>>,
+    queued_validated_headers: Vec<SealedHeader>,
     /// Header downloader metrics.
     metrics: HeaderDownloaderMetrics,
 }
@@ -114,7 +114,7 @@ pub struct ReverseHeadersDownloader<H: HeadersClient> {
 
 impl<H> ReverseHeadersDownloader<H>
 where
-    H: HeadersClient<Header: reth_primitives_traits::BlockHeader> + 'static,
+    H: HeadersClient + 'static,
 {
     /// Convenience method to create a [`ReverseHeadersDownloaderBuilder`] without importing it
     pub fn builder() -> ReverseHeadersDownloaderBuilder {
@@ -198,7 +198,7 @@ where
     /// `lowest_validated_header`.
     ///
     /// This only returns `None` if we haven't fetched the initial chain tip yet.
-    fn lowest_validated_header(&self) -> Option<&SealedHeader<H::Header>> {
+    fn lowest_validated_header(&self) -> Option<&SealedHeader> {
         self.queued_validated_headers.last().or(self.lowest_validated_header.as_ref())
     }
 
@@ -215,7 +215,7 @@ where
     /// Validate that the received header matches the expected sync target.
     fn validate_sync_target(
         &self,
-        header: &SealedHeader<H::Header>,
+        header: &SealedHeader,
         request: HeadersRequest,
         peer_id: PeerId,
     ) -> Result<(), Box<HeadersResponseError>> {
@@ -255,9 +255,9 @@ where
     fn process_next_headers(
         &mut self,
         request: HeadersRequest,
-        headers: Vec<H::Header>,
+        headers: Vec<alloy_consensus::Header>,
         peer_id: PeerId,
-    ) -> Result<(), ReverseHeadersDownloaderError<H::Header>> {
+    ) -> Result<(), ReverseHeadersDownloaderError> {
         let mut validated = Vec::with_capacity(headers.len());
 
         let sealed_headers =
@@ -376,8 +376,8 @@ where
     /// Handles the response for the request for the sync target
     fn on_sync_target_outcome(
         &mut self,
-        response: HeadersRequestOutcome<H::Header>,
-    ) -> Result<(), ReverseHeadersDownloaderError<H::Header>> {
+        response: HeadersRequestOutcome<alloy_consensus::Header>,
+    ) -> Result<(), ReverseHeadersDownloaderError> {
         let sync_target = self.existing_sync_target();
         let HeadersRequestOutcome { request, outcome } = response;
         match outcome {
@@ -440,7 +440,7 @@ where
 
                 // try to validate all buffered responses blocked by this successful response
                 self.try_validate_buffered()
-                    .map(Err::<(), ReverseHeadersDownloaderError<H::Header>>)
+                    .map(Err::<(), ReverseHeadersDownloaderError>)
                     .transpose()?;
 
                 Ok(())
@@ -454,8 +454,8 @@ where
     /// Invoked when we received a response
     fn on_headers_outcome(
         &mut self,
-        response: HeadersRequestOutcome<H::Header>,
-    ) -> Result<(), ReverseHeadersDownloaderError<H::Header>> {
+        response: HeadersRequestOutcome<alloy_consensus::Header>,
+    ) -> Result<(), ReverseHeadersDownloaderError> {
         let requested_block_number = response.block_number();
         let HeadersRequestOutcome { request, outcome } = response;
 
@@ -525,7 +525,7 @@ where
                     );
                     // try to validate all buffered responses blocked by this successful response
                     self.try_validate_buffered()
-                        .map(Err::<(), ReverseHeadersDownloaderError<H::Header>>)
+                        .map(Err::<(), ReverseHeadersDownloaderError>)
                         .transpose()?;
                 } else if highest.number() > self.existing_local_block_number() {
                     self.metrics.buffered_responses.increment(1.);
@@ -579,7 +579,7 @@ where
     /// Attempts to validate the buffered responses
     ///
     /// Returns an error if the next expected response was popped, but failed validation.
-    fn try_validate_buffered(&mut self) -> Option<ReverseHeadersDownloaderError<H::Header>> {
+    fn try_validate_buffered(&mut self) -> Option<ReverseHeadersDownloaderError> {
         loop {
             // Check to see if we've already received the next value
             let next_response = self.buffered_responses.peek_mut()?;
@@ -651,11 +651,7 @@ where
     }
 
     /// Validate whether the header is valid in relation to it's parent
-    fn validate(
-        &self,
-        header: &SealedHeader<H::Header>,
-        parent: &SealedHeader<H::Header>,
-    ) -> DownloadResult<()> {
+    fn validate(&self, header: &SealedHeader, parent: &SealedHeader) -> DownloadResult<()> {
         validate_header_download(&self.consensus, header, parent)
     }
 
@@ -671,7 +667,7 @@ where
     }
 
     /// Splits off the next batch of headers
-    fn split_next_batch(&mut self) -> Vec<SealedHeader<H::Header>> {
+    fn split_next_batch(&mut self) -> Vec<SealedHeader> {
         let batch_size = self.stream_batch_size.min(self.queued_validated_headers.len());
         let mut rem = self.queued_validated_headers.split_off(batch_size);
         std::mem::swap(&mut rem, &mut self.queued_validated_headers);
@@ -701,21 +697,16 @@ where
     Self: HeaderDownloader + 'static,
 {
     /// Convert the downloader into a [`TaskDownloader`] by spawning it via the given [`Runtime`].
-    pub fn into_task_with(
-        self,
-        runtime: &Runtime,
-    ) -> TaskDownloader<<Self as HeaderDownloader>::Header> {
+    pub fn into_task_with(self, runtime: &Runtime) -> TaskDownloader {
         TaskDownloader::spawn_with(self, runtime)
     }
 }
 
 impl<H> HeaderDownloader for ReverseHeadersDownloader<H>
 where
-    H: HeadersClient<Header: reth_primitives_traits::BlockHeader> + 'static,
+    H: HeadersClient + 'static,
 {
-    type Header = H::Header;
-
-    fn update_local_head(&mut self, head: SealedHeader<H::Header>) {
+    fn update_local_head(&mut self, head: SealedHeader) {
         // ensure we're only yielding headers that are in range and follow the current local head.
         while self
             .queued_validated_headers
@@ -809,9 +800,9 @@ where
 
 impl<H> Stream for ReverseHeadersDownloader<H>
 where
-    H: HeadersClient<Header: reth_primitives_traits::BlockHeader> + 'static,
+    H: HeadersClient + 'static,
 {
-    type Item = HeadersDownloaderResult<Vec<SealedHeader<H::Header>>, H::Header>;
+    type Item = HeadersDownloaderResult<Vec<SealedHeader>>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -1228,7 +1219,7 @@ impl ReverseHeadersDownloaderBuilder {
     pub fn build<H>(
         self,
         client: H,
-        consensus: Arc<dyn HeaderValidator<H::Header>>,
+        consensus: Arc<dyn HeaderValidator>,
     ) -> ReverseHeadersDownloader<H>
     where
         H: HeadersClient + 'static,
@@ -1345,7 +1336,6 @@ mod tests {
     }
 
     impl HeadersClient for CappedHeadersClient {
-        type Header = Header;
         type Output = futures::future::Ready<PeerRequestResult<Vec<Header>>>;
 
         fn get_headers_with_priority(

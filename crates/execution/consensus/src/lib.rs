@@ -13,7 +13,7 @@ extern crate alloc;
 use alloc::{boxed::Box, format, sync::Arc};
 
 use alloy_consensus::{
-    BlockHeader as _, EMPTY_OMMER_ROOT_HASH, Header, constants::MAXIMUM_EXTRA_DATA_SIZE,
+    BlockHeader as _, EMPTY_OMMER_ROOT_HASH, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{B64, B256};
@@ -82,12 +82,12 @@ impl FullConsensus for BaseBeaconConsensus {
 
 impl<B> Consensus<B> for BaseBeaconConsensus
 where
-    B: Block<Header = Header, Body: BlockBody<Transaction = BaseTxEnvelope>>,
+    B: Block<Body: BlockBody<Transaction = BaseTxEnvelope>>,
 {
     fn validate_body_against_header(
         &self,
         body: &B::Body,
-        header: &SealedHeader<B::Header>,
+        header: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         validation::validate_body_against_header_base(&self.chain_spec, body, header.header())?;
         // This is also checked by `validate_block_pre_execution` because callers may invoke either
@@ -165,8 +165,8 @@ where
     }
 }
 
-impl HeaderValidator<Header> for BaseBeaconConsensus {
-    fn validate_header(&self, header: &SealedHeader<Header>) -> Result<(), ConsensusError> {
+impl HeaderValidator for BaseBeaconConsensus {
+    fn validate_header(&self, header: &SealedHeader) -> Result<(), ConsensusError> {
         let header = header.header();
 
         if header.nonce() != Some(B64::ZERO) {
@@ -221,8 +221,8 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
 
     fn validate_header_against_parent(
         &self,
-        header: &SealedHeader<Header>,
-        parent: &SealedHeader<Header>,
+        header: &SealedHeader,
+        parent: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         validate_against_parent_hash_number(header.header(), parent)?;
 
@@ -869,7 +869,7 @@ mod tests {
 
     /// Builds a minimal post-Isthmus header that satisfies all of `validate_header`'s checks
     /// other than the `requests_hash` rule under test.
-    fn isthmus_header_with_requests_hash(requests_hash: Option<B256>) -> SealedHeader<Header> {
+    fn isthmus_header_with_requests_hash(requests_hash: Option<B256>) -> SealedHeader {
         SealedHeader::seal_slow(Header {
             base_fee_per_gas: Some(1337),
             withdrawals_root: Some(B256::ZERO),

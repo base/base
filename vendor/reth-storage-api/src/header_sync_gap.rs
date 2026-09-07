@@ -11,5 +11,5 @@ pub trait HeaderSyncGapProvider: Send {
     fn local_tip_header(
         &self,
         highest_uninterrupted_block: BlockNumber,
-    ) -> ProviderResult<SealedHeader<Self::Header>>;
+    ) -> ProviderResult<SealedHeader>;
 }

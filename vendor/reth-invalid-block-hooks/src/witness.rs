@@ -213,7 +213,7 @@ where
     /// Re-executes the block and collects execution data
     fn re_execute_block(
         &self,
-        parent_header: &SealedHeader<alloy_consensus::Header>,
+        parent_header: &SealedHeader,
         block: &RecoveredBlock<BaseBlock>,
     ) -> eyre::Result<(ExecutionWitness, BundleState)> {
         let mut executor = self.evm_config.batch_executor(StateProviderDatabase::new(
@@ -301,7 +301,7 @@ where
     /// Validates state root and trie updates after re-execution
     fn validate_state_root_and_trie(
         &self,
-        parent_header: &SealedHeader<alloy_consensus::Header>,
+        parent_header: &SealedHeader,
         block: &RecoveredBlock<BaseBlock>,
         bundle_state: &BundleState,
         trie_updates: Option<(&TrieUpdates, B256)>,
@@ -347,7 +347,7 @@ where
 
     fn on_invalid_block(
         &self,
-        parent_header: &SealedHeader<alloy_consensus::Header>,
+        parent_header: &SealedHeader,
         block: &RecoveredBlock<BaseBlock>,
         output: &BlockExecutionOutput<BaseReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,
@@ -400,7 +400,7 @@ where
 {
     fn on_invalid_block(
         &self,
-        parent_header: &SealedHeader<alloy_consensus::Header>,
+        parent_header: &SealedHeader,
         block: &RecoveredBlock<BaseBlock>,
         output: &BlockExecutionOutput<BaseReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,

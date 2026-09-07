@@ -272,12 +272,12 @@ impl<B: Block> RecoveredBlock<B> {
     }
 
     /// Clone the header.
-    pub fn clone_header(&self) -> B::Header {
+    pub fn clone_header(&self) -> alloy_consensus::Header {
         self.header().clone()
     }
 
     /// Clones the internal header and returns a [`SealedHeader`] sealed with the hash.
-    pub fn clone_sealed_header(&self) -> SealedHeader<B::Header> {
+    pub fn clone_sealed_header(&self) -> SealedHeader {
         SealedHeader::new(self.clone_header(), self.hash())
     }
 
@@ -288,7 +288,7 @@ impl<B: Block> RecoveredBlock<B> {
 
     /// Consumes the block and returns the block's header.
     #[inline]
-    pub fn into_header(self) -> B::Header {
+    pub fn into_header(self) -> alloy_consensus::Header {
         self.block.into_header()
     }
 
@@ -534,13 +534,11 @@ impl<B: Block> From<RecoveredBlock<B>> for Sealed<B> {
 /// This implementation takes an `alloy_consensus::Block` where transactions are of type
 /// `Recovered<T>` (transactions with their recovered senders) and converts it into a
 /// [`RecoveredBlock`] which stores transactions and senders separately for efficiency.
-impl<T, H> From<alloy_consensus::Block<Recovered<T>, H>>
-    for RecoveredBlock<alloy_consensus::Block<T, H>>
+impl<T> From<alloy_consensus::Block<Recovered<T>>> for RecoveredBlock<alloy_consensus::Block<T>>
 where
     T: SignedTransaction,
-    H: crate::block::header::BlockHeader,
 {
-    fn from(block: alloy_consensus::Block<Recovered<T>, H>) -> Self {
+    fn from(block: alloy_consensus::Block<Recovered<T>>) -> Self {
         let header = block.header;
 
         // Split the recovered transactions into transactions and senders
@@ -608,7 +606,7 @@ where
 impl<B: crate::test_utils::TestBlock> RecoveredBlock<B> {
     /// Updates the block header.
     #[inline]
-    pub fn set_header(&mut self, header: B::Header) {
+    pub fn set_header(&mut self, header: alloy_consensus::Header) {
         *self.header_mut() = header
     }
 
@@ -620,7 +618,7 @@ impl<B: crate::test_utils::TestBlock> RecoveredBlock<B> {
 
     /// Returns a mutable reference to the header.
     #[inline]
-    pub const fn header_mut(&mut self) -> &mut B::Header {
+    pub const fn header_mut(&mut self) -> &mut alloy_consensus::Header {
         self.block.header_mut()
     }
 
@@ -748,7 +746,7 @@ mod rpc_compat {
             self,
             kind: BlockTransactionsKind,
             converter: F,
-            header_builder: impl FnOnce(SealedHeader<B::Header>, usize) -> Result<RpcH, E>,
+            header_builder: impl FnOnce(SealedHeader, usize) -> Result<RpcH, E>,
         ) -> Result<Block<T, RpcH>, E>
         where
             F: Fn(
@@ -777,7 +775,7 @@ mod rpc_compat {
             &self,
             kind: BlockTransactionsKind,
             converter: F,
-            header_builder: impl FnOnce(SealedHeader<B::Header>, usize) -> Result<RpcH, E>,
+            header_builder: impl FnOnce(SealedHeader, usize) -> Result<RpcH, E>,
         ) -> Result<Block<T, RpcH>, E>
         where
             F: Fn(
@@ -799,7 +797,7 @@ mod rpc_compat {
         /// Efficiently clones only necessary parts, not the entire block.
         pub fn to_rpc_block_with_tx_hashes<T, RpcH, E>(
             &self,
-            header_builder: impl FnOnce(SealedHeader<B::Header>, usize) -> Result<RpcH, E>,
+            header_builder: impl FnOnce(SealedHeader, usize) -> Result<RpcH, E>,
         ) -> Result<Block<T, RpcH>, E> {
             let transactions = self.body().transaction_hashes_iter().copied().collect();
             let rlp_length = self.rlp_length();
@@ -820,7 +818,7 @@ mod rpc_compat {
         /// hashes.
         pub fn into_rpc_block_with_tx_hashes<T, E, RpcHeader>(
             self,
-            f: impl FnOnce(SealedHeader<B::Header>, usize) -> Result<RpcHeader, E>,
+            f: impl FnOnce(SealedHeader, usize) -> Result<RpcHeader, E>,
         ) -> Result<Block<T, RpcHeader>, E> {
             let transactions = self.body().transaction_hashes_iter().copied().collect();
             let rlp_length = self.rlp_length();
@@ -841,7 +839,7 @@ mod rpc_compat {
         pub fn into_rpc_block_full<T, RpcHeader, F, E>(
             self,
             converter: F,
-            header_builder: impl FnOnce(SealedHeader<B::Header>, usize) -> Result<RpcHeader, E>,
+            header_builder: impl FnOnce(SealedHeader, usize) -> Result<RpcHeader, E>,
         ) -> Result<Block<T, RpcHeader>, E>
         where
             F: Fn(

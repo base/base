@@ -88,7 +88,7 @@ pub fn build_pipeline<DB, H, B>(
 ) -> eyre::Result<Pipeline<DB>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    H: HeaderDownloader<Header = alloy_consensus::Header> + 'static,
+    H: HeaderDownloader + 'static,
     B: BodyDownloader<Block = BaseBlock> + 'static,
 {
     let mut builder = Pipeline::<DB>::builder();

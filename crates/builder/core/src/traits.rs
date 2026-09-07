@@ -1,6 +1,5 @@
 //! Trait bounds for Base builder components.
 
-use alloy_consensus::Header;
 use base_common_consensus::BaseTransactionSigned;
 use base_execution_payload_builder::ParkablePayloadTransactions;
 use base_execution_txpool::{BasePooledTx, StateDiffInvalidation, TimestampedTransaction};
@@ -36,12 +35,12 @@ where
 
 /// Composite trait bound for state provider clients used by the Base builder.
 pub trait ClientBounds:
-    StateProviderFactory + ChainSpecProvider + BlockReaderIdExt<Header = Header> + Clone
+    StateProviderFactory + ChainSpecProvider + BlockReaderIdExt + Clone
 {
 }
 
 impl<T> ClientBounds for T where
-    T: StateProviderFactory + ChainSpecProvider + BlockReaderIdExt<Header = Header> + Clone
+    T: StateProviderFactory + ChainSpecProvider + BlockReaderIdExt + Clone
 {
 }
 

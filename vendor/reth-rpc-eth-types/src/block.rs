@@ -62,7 +62,7 @@ impl<B: Block, R> CachedTransaction<B, R> {
     /// Constructs a [`TransactionMeta`] for this cached transaction using the given tx hash.
     pub fn transaction_meta(&self, tx_hash: TxHash) -> TransactionMeta
     where
-        B::Header: BlockHeader,
+        alloy_consensus::Header: BlockHeader,
     {
         TransactionMeta {
             tx_hash,

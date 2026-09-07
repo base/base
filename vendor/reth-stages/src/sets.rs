@@ -215,7 +215,7 @@ where
 impl<P, H, B> OnlineStages<P, H, B>
 where
     P: HeaderSyncGapProvider + 'static,
-    H: HeaderDownloader<Header = <B::Block as Block>::Header> + 'static,
+    H: HeaderDownloader + 'static,
     B: BodyDownloader + 'static,
 {
     /// Create a new builder using the given headers stage.
@@ -251,7 +251,7 @@ where
 impl<Provider, P, H, B> StageSet<Provider> for OnlineStages<P, H, B>
 where
     P: HeaderSyncGapProvider + 'static,
-    H: HeaderDownloader<Header = <B::Block as Block>::Header> + 'static,
+    H: HeaderDownloader + 'static,
     B: BodyDownloader + 'static,
     HeaderStage<P, H>: Stage<Provider>,
     BodyStage<B>: Stage<Provider>,

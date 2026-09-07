@@ -41,14 +41,14 @@ use alloy_primitives::{Address, B256};
 use alloy_rlp::{Decodable, Encodable};
 
 use crate::{
-    BlockBody, BlockHeader, FullBlockBody, FullBlockHeader, InMemorySize, MaybeSerde, SealedHeader,
-    SignedTransaction, block::error::BlockRecoveryError, transaction::signed::RecoveryError,
+    BlockBody, FullBlockBody, InMemorySize, MaybeSerde, SealedHeader, SignedTransaction,
+    block::error::BlockRecoveryError, transaction::signed::RecoveryError,
 };
 
 /// Helper trait that unifies all behaviour required by block to support full node operations.
-pub trait FullBlock: Block<Header: FullBlockHeader, Body: FullBlockBody> {}
+pub trait FullBlock: Block<Body: FullBlockBody> {}
 
-impl<T> FullBlock for T where T: Block<Header: FullBlockHeader, Body: FullBlockBody> {}
+impl<T> FullBlock for T where T: Block<Body: FullBlockBody> {}
 
 /// Helper trait to access [`BlockBody::Transaction`] given a [`Block`].
 pub type BlockTx<B> = <<B as Block>::Body as BlockBody>::Transaction;
@@ -72,19 +72,16 @@ pub trait Block:
     + Encodable
     + Decodable
 {
-    /// Header part of the block.
-    type Header: BlockHeader;
-
     /// The block's body contains the transactions in the block and additional data, e.g.
     /// withdrawals in ethereum.
-    type Body: BlockBody<OmmerHeader = Self::Header>;
+    type Body: BlockBody<OmmerHeader = alloy_consensus::Header>;
 
     /// Create new block instance.
-    fn new(header: Self::Header, body: Self::Body) -> Self;
+    fn new(header: alloy_consensus::Header, body: Self::Body) -> Self;
 
     /// Create new a sealed block instance from a sealed header and the block body.
     #[inline]
-    fn new_sealed(header: SealedHeader<Self::Header>, body: Self::Body) -> SealedBlock<Self> {
+    fn new_sealed(header: SealedHeader, body: Self::Body) -> SealedBlock<Self> {
         SealedBlock::from_sealed_parts(header, body)
     }
 
@@ -119,23 +116,23 @@ pub trait Block:
     }
 
     /// Returns reference to block header.
-    fn header(&self) -> &Self::Header;
+    fn header(&self) -> &alloy_consensus::Header;
 
     /// Returns reference to block body.
     fn body(&self) -> &Self::Body;
 
     /// Splits the block into its header and body.
-    fn split(self) -> (Self::Header, Self::Body);
+    fn split(self) -> (alloy_consensus::Header, Self::Body);
 
     /// Returns a tuple of references to the block's header and body.
     #[inline]
-    fn split_ref(&self) -> (&Self::Header, &Self::Body) {
+    fn split_ref(&self) -> (&alloy_consensus::Header, &Self::Body) {
         (self.header(), self.body())
     }
 
     /// Consumes the block and returns the header.
     #[inline]
-    fn into_header(self) -> Self::Header {
+    fn into_header(self) -> alloy_consensus::Header {
         self.split().0
     }
 
@@ -147,7 +144,7 @@ pub trait Block:
 
     /// Encodes the block with the given header and body.
     fn rlp_encode(
-        header: &Self::Header,
+        header: &alloy_consensus::Header,
         body: &Self::Body,
         out: &mut dyn alloy_rlp::bytes::BufMut,
     ) {
@@ -156,7 +153,7 @@ pub trait Block:
     }
 
     /// Returns the rlp length of the block with the given header and body.
-    fn rlp_length(header: &Self::Header, body: &Self::Body) -> usize;
+    fn rlp_length(header: &alloy_consensus::Header, body: &Self::Body) -> usize;
 
     /// Expensive operation that recovers transaction signer.
     fn recover_signers(&self) -> Result<Vec<Address>, RecoveryError>
@@ -230,27 +227,23 @@ pub trait Block:
     #[inline]
     fn into_ethereum_block(
         self,
-    ) -> alloy_consensus::Block<<Self::Body as BlockBody>::Transaction, Self::Header> {
+    ) -> alloy_consensus::Block<<Self::Body as BlockBody>::Transaction, alloy_consensus::Header>
+    {
         let (header, body) = self.split();
         alloy_consensus::Block::new(header, body.into_ethereum_body())
     }
 }
 
-impl<T, H> Block for alloy_consensus::Block<T, H>
-where
-    T: SignedTransaction,
-    H: BlockHeader,
-{
-    type Header = H;
-    type Body = alloy_consensus::BlockBody<T, H>;
+impl<T: SignedTransaction> Block for alloy_consensus::Block<T> {
+    type Body = alloy_consensus::BlockBody<T>;
 
     #[inline]
-    fn new(header: Self::Header, body: Self::Body) -> Self {
+    fn new(header: alloy_consensus::Header, body: Self::Body) -> Self {
         Self { header, body }
     }
 
     #[inline]
-    fn header(&self) -> &Self::Header {
+    fn header(&self) -> &alloy_consensus::Header {
         &self.header
     }
 
@@ -260,16 +253,16 @@ where
     }
 
     #[inline]
-    fn split(self) -> (Self::Header, Self::Body) {
+    fn split(self) -> (alloy_consensus::Header, Self::Body) {
         (self.header, self.body)
     }
 
-    fn rlp_length(header: &Self::Header, body: &Self::Body) -> usize {
+    fn rlp_length(header: &alloy_consensus::Header, body: &Self::Body) -> usize {
         Self::rlp_length_for(header, body)
     }
 
     fn rlp_encode(
-        header: &Self::Header,
+        header: &alloy_consensus::Header,
         body: &Self::Body,
         out: &mut dyn alloy_rlp::bytes::BufMut,
     ) {
@@ -290,15 +283,15 @@ where
 ///
 /// This allows for modifying the block's header and body for testing purposes.
 #[cfg(any(test, feature = "test-utils"))]
-pub trait TestBlock: Block<Header: crate::test_utils::TestHeader> {
+pub trait TestBlock: Block {
     /// Returns mutable reference to block body.
     fn body_mut(&mut self) -> &mut Self::Body;
 
     /// Returns mutable reference to block header.
-    fn header_mut(&mut self) -> &mut Self::Header;
+    fn header_mut(&mut self) -> &mut alloy_consensus::Header;
 
     /// Updates the block header.
-    fn set_header(&mut self, header: Self::Header);
+    fn set_header(&mut self, header: alloy_consensus::Header);
 
     /// Updates the parent block hash.
     #[inline]
@@ -332,23 +325,19 @@ pub trait TestBlock: Block<Header: crate::test_utils::TestHeader> {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-impl<T, H> TestBlock for alloy_consensus::Block<T, H>
-where
-    T: SignedTransaction,
-    H: crate::test_utils::TestHeader,
-{
+impl<T: SignedTransaction> TestBlock for alloy_consensus::Block<T> {
     #[inline]
     fn body_mut(&mut self) -> &mut Self::Body {
         &mut self.body
     }
 
     #[inline]
-    fn header_mut(&mut self) -> &mut Self::Header {
+    fn header_mut(&mut self) -> &mut alloy_consensus::Header {
         &mut self.header
     }
 
     #[inline]
-    fn set_header(&mut self, header: Self::Header) {
+    fn set_header(&mut self, header: alloy_consensus::Header) {
         self.header = header
     }
 }

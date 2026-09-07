@@ -166,7 +166,7 @@ where
     C: BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
-        + BlockReader<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+        + BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
         + HeaderProvider
         + Clone
         + Unpin

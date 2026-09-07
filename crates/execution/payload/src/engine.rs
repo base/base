@@ -91,7 +91,7 @@ where
         &self,
         state_updates: impl FnOnce() -> &'a HashedPostState,
         block: &RecoveredBlock<Self::Block>,
-        parent_header: &SealedHeader<<Self::Block as Block>::Header>,
+        parent_header: &SealedHeader,
         parent_state: impl FnOnce() -> ProviderResult<StateProviderBox>,
     ) -> Result<(), InsertBlockErrorKind> {
         let timestamp = block.timestamp();
@@ -158,7 +158,7 @@ where
     fn validate_payload_attributes_against_header(
         &self,
         attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        header: &<Self::Block as Block>::Header,
+        header: &alloy_consensus::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         let timestamp = attributes.timestamp();
         if !self.chain_spec().is_denim_active_at_timestamp(timestamp) {

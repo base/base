@@ -151,11 +151,7 @@ impl<Client, Builder> BasicPayloadJobGenerator<Client, Builder> {
 
 impl<Client, Builder> PayloadJobGenerator for BasicPayloadJobGenerator<Client, Builder>
 where
-    Client: StateProviderFactory
-        + BlockReaderIdExt<Header = HeaderForPayload>
-        + Clone
-        + Unpin
-        + 'static,
+    Client: StateProviderFactory + BlockReaderIdExt + Clone + Unpin + 'static,
     Builder: PayloadBuilder + Unpin + 'static,
     Builder::Attributes: Unpin + Clone,
     Builder::BuiltPayload: Unpin + Clone,
@@ -372,7 +368,7 @@ where
     Builder: PayloadBuilder,
 {
     /// The configuration for how the payload will be created.
-    config: PayloadConfig<Builder::Attributes, HeaderForPayload>,
+    config: PayloadConfig<Builder::Attributes>,
     /// How to spawn building tasks
     executor: Runtime,
     /// The deadline when this job should resolve.
@@ -767,9 +763,9 @@ impl<P> Future for PendingPayload<P> {
 
 /// Static config for how to build a payload.
 #[derive(Clone, Debug)]
-pub struct PayloadConfig<Attributes, Header = alloy_consensus::Header> {
+pub struct PayloadConfig<Attributes> {
     /// The parent header.
-    pub parent_header: Arc<SealedHeader<Header>>,
+    pub parent_header: Arc<SealedHeader>,
     /// Additional parent block information, if available.
     pub parent_block_info: Option<PayloadParentBlockInfo>,
     /// Requested attributes for the payload.
@@ -785,13 +781,13 @@ pub struct PayloadParentBlockInfo {
     pub transaction_count: usize,
 }
 
-impl<Attributes, Header> PayloadConfig<Attributes, Header>
+impl<Attributes> PayloadConfig<Attributes>
 where
     Attributes: PayloadAttributes,
 {
     /// Create new payload config.
     pub const fn new(
-        parent_header: Arc<SealedHeader<Header>>,
+        parent_header: Arc<SealedHeader>,
         attributes: Attributes,
         payload_id: PayloadId,
     ) -> Self {
@@ -940,7 +936,7 @@ pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     /// invalidated and cleared.
     pub state_root_handle: Option<PayloadStateRootHandle>,
     /// How to configure the payload.
-    pub config: PayloadConfig<Attributes, alloy_consensus::Header>,
+    pub config: PayloadConfig<Attributes>,
     /// A marker that can be used to cancel the job.
     pub cancel: CancelOnDrop,
     /// The best payload achieved so far.
@@ -953,7 +949,7 @@ impl<Attributes, Payload: BuiltPayload> BuildArguments<Attributes, Payload> {
         cached_reads: CachedReads,
         execution_cache: Option<SavedCache>,
         state_root_handle: Option<PayloadStateRootHandle>,
-        config: PayloadConfig<Attributes, alloy_consensus::Header>,
+        config: PayloadConfig<Attributes>,
         cancel: CancelOnDrop,
         best_payload: Option<Payload>,
     ) -> Self {
@@ -1005,7 +1001,7 @@ pub trait PayloadBuilder: Send + Sync + Clone {
     /// Builds an empty payload without any transaction.
     fn build_empty_payload(
         &self,
-        config: PayloadConfig<Self::Attributes, HeaderForPayload>,
+        config: PayloadConfig<Self::Attributes>,
     ) -> Result<Self::BuiltPayload, PayloadBuilderError>;
 }
 

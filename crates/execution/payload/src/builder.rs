@@ -234,7 +234,7 @@ where
     /// Computes the witness for the payload.
     pub fn payload_witness(
         &self,
-        parent: SealedHeader<alloy_consensus::Header>,
+        parent: SealedHeader,
         attributes: BasePayloadAttributes,
     ) -> Result<ExecutionWitness, PayloadBuilderError> {
         let attributes =
@@ -290,7 +290,7 @@ where
     // system txs, hence on_missing_payload we return [MissingPayloadBehaviour::AwaitInProgress].
     fn build_empty_payload(
         &self,
-        config: PayloadConfig<Self::Attributes, alloy_consensus::Header>,
+        config: PayloadConfig<Self::Attributes>,
     ) -> Result<Self::BuiltPayload, PayloadBuilderError> {
         let args = BuildArguments {
             config,
@@ -638,8 +638,7 @@ pub struct BasePayloadBuilderCtx {
     /// The chainspec
     pub chain_spec: Arc<BaseChainSpec>,
     /// How to build the payload.
-    pub config:
-        PayloadConfig<BasePayloadBuilderAttributes<BaseTxEnvelope>, alloy_consensus::Header>,
+    pub config: PayloadConfig<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancelOnDrop,
     /// The currently best payload.

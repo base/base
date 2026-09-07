@@ -63,10 +63,7 @@ use reth_primitives_traits::Block;
 
 /// Helper trait that unifies network behaviour needed for fetching entire blocks.
 pub trait BlockClient:
-    HeadersClient<Header = <Self::Block as Block>::Header>
-    + BodiesClient<Body = <Self::Block as Block>::Body>
-    + Unpin
-    + Clone
+    HeadersClient + BodiesClient<Body = <Self::Block as Block>::Body> + Unpin + Clone
 {
     /// The Block type that this client fetches.
     type Block: Block;

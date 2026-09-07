@@ -15,11 +15,11 @@ pub trait CanonChainTracker: Send + Sync {
     fn last_received_update_timestamp(&self) -> Option<std::time::Instant>;
 
     /// Sets the canonical head of the chain.
-    fn set_canonical_head(&self, header: SealedHeader<Self::Header>);
+    fn set_canonical_head(&self, header: SealedHeader);
 
     /// Sets the safe block of the chain.
-    fn set_safe(&self, header: SealedHeader<Self::Header>);
+    fn set_safe(&self, header: SealedHeader);
 
     /// Sets the finalized block of the chain.
-    fn set_finalized(&self, header: SealedHeader<Self::Header>);
+    fn set_finalized(&self, header: SealedHeader);
 }

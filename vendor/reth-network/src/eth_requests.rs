@@ -128,7 +128,7 @@ where
     C: BlockReader,
 {
     /// Returns the list of requested headers
-    fn get_headers_response(&self, request: GetBlockHeaders) -> Vec<C::Header> {
+    fn get_headers_response(&self, request: GetBlockHeaders) -> Vec<alloy_consensus::Header> {
         let GetBlockHeaders { start_block, limit, skip, direction } = request;
 
         let mut headers = Vec::new();
@@ -195,7 +195,7 @@ where
         &self,
         _peer_id: PeerId,
         request: GetBlockHeaders,
-        response: oneshot::Sender<RequestResult<BlockHeaders<C::Header>>>,
+        response: oneshot::Sender<RequestResult<BlockHeaders<alloy_consensus::Header>>>,
     ) {
         self.metrics.eth_headers_requests_received_total.increment(1);
         let headers = self.get_headers_response(request);
@@ -644,7 +644,7 @@ where
         + StateProviderFactory
         + StateRangeProviderFactory
         + BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
-        + HeaderProvider<Header = alloy_consensus::Header>
+        + HeaderProvider
         + Unpin,
 {
     type Output = ();

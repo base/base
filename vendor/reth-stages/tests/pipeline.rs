@@ -101,12 +101,11 @@ fn assert_changesets_queryable(
 /// Builds downloaders from a `FileClient`.
 fn build_downloaders_from_file_client(
     file_client: Arc<FileClient<Block>>,
-    genesis: reth_primitives_traits::SealedHeader<Header>,
+    genesis: reth_primitives_traits::SealedHeader,
     stages_config: StageConfig,
     consensus: Arc<NoopConsensus>,
     provider_factory: reth_provider::ProviderFactory<reth_provider::test_utils::MockNodeDatabase>,
-) -> (impl HeaderDownloader<Header = Header>, impl BodyDownloader<Block = Block>, reth_tasks::Runtime)
-{
+) -> (impl HeaderDownloader, impl BodyDownloader<Block = Block>, reth_tasks::Runtime) {
     let tip = file_client.tip().expect("file client should have tip");
     let min_block = file_client.min_block().expect("file client should have min block");
     let max_block = file_client.max_block().expect("file client should have max block");
@@ -136,7 +135,7 @@ fn build_pipeline<H, B>(
     tip: B256,
 ) -> Pipeline<reth_provider::test_utils::MockNodeDatabase>
 where
-    H: HeaderDownloader<Header = Header> + 'static,
+    H: HeaderDownloader + 'static,
     B: BodyDownloader<Block = Block> + 'static,
 {
     let consensus = NoopConsensus::arc();

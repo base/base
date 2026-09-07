@@ -33,7 +33,6 @@ use reth_rpc_eth_api::{
     },
 };
 use reth_rpc_eth_types::{EthStateCache, FeeHistoryCache, GasPriceOracle};
-use reth_storage_api::ProviderHeader;
 use reth_tasks::{
     Runtime,
     pool::{BlockingTaskGuard, BlockingTaskPool},
@@ -197,7 +196,7 @@ where
     }
 
     #[inline]
-    fn fee_history_cache(&self) -> &FeeHistoryCache<ProviderHeader<N::Provider>> {
+    fn fee_history_cache(&self) -> &FeeHistoryCache {
         self.inner.eth_api.fee_history_cache()
     }
 

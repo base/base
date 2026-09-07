@@ -186,8 +186,8 @@ impl CanonicalInMemoryState {
         blocks: B256Map<Arc<BlockState>>,
         numbers: BTreeMap<u64, B256>,
         pending: Option<BlockState>,
-        finalized: Option<SealedHeader<alloy_consensus::Header>>,
-        safe: Option<SealedHeader<alloy_consensus::Header>>,
+        finalized: Option<SealedHeader>,
+        safe: Option<SealedHeader>,
     ) -> Self {
         let in_memory_state = InMemoryState::new(blocks, numbers, pending);
         let header = in_memory_state.head_state().map_or_else(SealedHeader::default, |state| {
@@ -214,9 +214,9 @@ impl CanonicalInMemoryState {
     /// Create a new in memory state with the given local head and finalized header
     /// if it exists.
     pub fn with_head(
-        head: SealedHeader<alloy_consensus::Header>,
-        finalized: Option<SealedHeader<alloy_consensus::Header>>,
-        safe: Option<SealedHeader<alloy_consensus::Header>>,
+        head: SealedHeader,
+        finalized: Option<SealedHeader>,
+        safe: Option<SealedHeader>,
     ) -> Self {
         let chain_info_tracker = ChainInfoTracker::new(head, finalized, safe);
         let in_memory_state = InMemoryState::default();
@@ -237,7 +237,7 @@ impl CanonicalInMemoryState {
     }
 
     /// Returns the header corresponding to the given hash.
-    pub fn header_by_hash(&self, hash: B256) -> Option<SealedHeader<alloy_consensus::Header>> {
+    pub fn header_by_hash(&self, hash: B256) -> Option<SealedHeader> {
         self.state_by_hash(hash)
             .map(|block| block.block_ref().recovered_block().clone_sealed_header())
     }
@@ -442,17 +442,17 @@ impl CanonicalInMemoryState {
     }
 
     /// Canonical head setter.
-    pub fn set_canonical_head(&self, header: SealedHeader<alloy_consensus::Header>) {
+    pub fn set_canonical_head(&self, header: SealedHeader) {
         self.inner.chain_info_tracker.set_canonical_head(header);
     }
 
     /// Safe head setter.
-    pub fn set_safe(&self, header: SealedHeader<alloy_consensus::Header>) {
+    pub fn set_safe(&self, header: SealedHeader) {
         self.inner.chain_info_tracker.set_safe(header);
     }
 
     /// Finalized head setter.
-    pub fn set_finalized(&self, header: SealedHeader<alloy_consensus::Header>) {
+    pub fn set_finalized(&self, header: SealedHeader) {
         self.inner.chain_info_tracker.set_finalized(header);
     }
 
@@ -462,17 +462,17 @@ impl CanonicalInMemoryState {
     }
 
     /// Canonical head getter.
-    pub fn get_canonical_head(&self) -> SealedHeader<alloy_consensus::Header> {
+    pub fn get_canonical_head(&self) -> SealedHeader {
         self.inner.chain_info_tracker.get_canonical_head()
     }
 
     /// Finalized header getter.
-    pub fn get_finalized_header(&self) -> Option<SealedHeader<alloy_consensus::Header>> {
+    pub fn get_finalized_header(&self) -> Option<SealedHeader> {
         self.inner.chain_info_tracker.get_finalized_header()
     }
 
     /// Safe header getter.
-    pub fn get_safe_header(&self) -> Option<SealedHeader<alloy_consensus::Header>> {
+    pub fn get_safe_header(&self) -> Option<SealedHeader> {
         self.inner.chain_info_tracker.get_safe_header()
     }
 
@@ -482,7 +482,7 @@ impl CanonicalInMemoryState {
     }
 
     /// Returns the `SealedHeader` corresponding to the pending state.
-    pub fn pending_sealed_header(&self) -> Option<SealedHeader<alloy_consensus::Header>> {
+    pub fn pending_sealed_header(&self) -> Option<SealedHeader> {
         self.pending_state().map(|h| h.block_ref().recovered_block().clone_sealed_header())
     }
 
@@ -519,16 +519,12 @@ impl CanonicalInMemoryState {
     }
 
     /// Subscribe to new safe block events.
-    pub fn subscribe_safe_block(
-        &self,
-    ) -> watch::Receiver<Option<SealedHeader<alloy_consensus::Header>>> {
+    pub fn subscribe_safe_block(&self) -> watch::Receiver<Option<SealedHeader>> {
         self.inner.chain_info_tracker.subscribe_safe_block()
     }
 
     /// Subscribe to new finalized block events.
-    pub fn subscribe_finalized_block(
-        &self,
-    ) -> watch::Receiver<Option<SealedHeader<alloy_consensus::Header>>> {
+    pub fn subscribe_finalized_block(&self) -> watch::Receiver<Option<SealedHeader>> {
         self.inner.chain_info_tracker.subscribe_finalized_block()
     }
 

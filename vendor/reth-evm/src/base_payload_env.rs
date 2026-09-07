@@ -8,15 +8,13 @@ use reth_primitives_traits::{SealedHeader, SignedTransaction};
 
 use crate::BaseNextBlockEnvAttributes;
 
-impl<H, T> BuildNextEnv<BasePayloadBuilderAttributes<T>, H, BaseChainSpec>
-    for BaseNextBlockEnvAttributes
+impl<T> BuildNextEnv<BasePayloadBuilderAttributes<T>, BaseChainSpec> for BaseNextBlockEnvAttributes
 where
-    H: BlockHeader,
     T: SignedTransaction,
 {
     fn build_next_env(
         attributes: &BasePayloadBuilderAttributes<T>,
-        parent: &SealedHeader<H>,
+        parent: &SealedHeader,
         chain_spec: &BaseChainSpec,
     ) -> Result<Self, PayloadBuilderError> {
         let extra_data =

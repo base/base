@@ -111,10 +111,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockchainProvide
     ///
     /// This returns a `ProviderResult` since it tries the retrieve the last finalized header from
     /// `database`.
-    pub fn with_latest(
-        storage: ProviderFactory<DB>,
-        latest: SealedHeader<alloy_consensus::Header>,
-    ) -> ProviderResult<Self> {
+    pub fn with_latest(storage: ProviderFactory<DB>, latest: SealedHeader) -> ProviderResult<Self> {
         let provider = storage.provider()?;
         let finalized_header = provider
             .last_finalized_block_number()?
@@ -442,42 +439,40 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> RocksDBProviderFa
 impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
     for BlockchainProvider<DB>
 {
-    type Header = alloy_consensus::Header;
-
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
+    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.consistent_provider()?.header(block_hash)
     }
 
-    fn header_by_number(&self, num: BlockNumber) -> ProviderResult<Option<Self::Header>> {
+    fn header_by_number(
+        &self,
+        num: BlockNumber,
+    ) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.consistent_provider()?.header_by_number(num)
     }
 
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<Self::Header>> {
+    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
         self.consistent_provider()?.headers_range(range)
     }
 
-    fn sealed_header(
-        &self,
-        number: BlockNumber,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn sealed_header(&self, number: BlockNumber) -> ProviderResult<Option<SealedHeader>> {
         self.consistent_provider()?.sealed_header(number)
     }
 
     fn sealed_headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+    ) -> ProviderResult<Vec<SealedHeader>> {
         self.consistent_provider()?.sealed_headers_range(range)
     }
 
     fn sealed_headers_while(
         &self,
         range: impl RangeBounds<BlockNumber>,
-        predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
-    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+        predicate: impl FnMut(&SealedHeader) -> bool,
+    ) -> ProviderResult<Vec<SealedHeader>> {
         self.consistent_provider()?.sealed_headers_while(range, predicate)
     }
 }
@@ -908,15 +903,15 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> CanonChainTracker
         self.canonical_in_memory_state.last_received_update_timestamp()
     }
 
-    fn set_canonical_head(&self, header: SealedHeader<Self::Header>) {
+    fn set_canonical_head(&self, header: SealedHeader) {
         self.canonical_in_memory_state.set_canonical_head(header);
     }
 
-    fn set_safe(&self, header: SealedHeader<Self::Header>) {
+    fn set_safe(&self, header: SealedHeader) {
         self.canonical_in_memory_state.set_safe(header);
     }
 
-    fn set_finalized(&self, header: SealedHeader<Self::Header>) {
+    fn set_finalized(&self, header: SealedHeader) {
         self.canonical_in_memory_state.set_finalized(header);
     }
 }
@@ -933,25 +928,22 @@ where
     fn header_by_number_or_tag(
         &self,
         id: BlockNumberOrTag,
-    ) -> ProviderResult<Option<Self::Header>> {
+    ) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.consistent_provider()?.header_by_number_or_tag(id)
     }
 
     fn sealed_header_by_number_or_tag(
         &self,
         id: BlockNumberOrTag,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    ) -> ProviderResult<Option<SealedHeader>> {
         self.consistent_provider()?.sealed_header_by_number_or_tag(id)
     }
 
-    fn sealed_header_by_id(
-        &self,
-        id: BlockId,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn sealed_header_by_id(&self, id: BlockId) -> ProviderResult<Option<SealedHeader>> {
         self.consistent_provider()?.sealed_header_by_id(id)
     }
 
-    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<Self::Header>> {
+    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.consistent_provider()?.header_by_id(id)
     }
 }
@@ -967,14 +959,12 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> CanonStateSubscri
 impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ForkChoiceSubscriptions
     for BlockchainProvider<DB>
 {
-    type Header = alloy_consensus::Header;
-
-    fn subscribe_safe_block(&self) -> ForkChoiceNotifications<Self::Header> {
+    fn subscribe_safe_block(&self) -> ForkChoiceNotifications {
         let receiver = self.canonical_in_memory_state.subscribe_safe_block();
         ForkChoiceNotifications(receiver)
     }
 
-    fn subscribe_finalized_block(&self) -> ForkChoiceNotifications<Self::Header> {
+    fn subscribe_finalized_block(&self) -> ForkChoiceNotifications {
         let receiver = self.canonical_in_memory_state.subscribe_finalized_block();
         ForkChoiceNotifications(receiver)
     }

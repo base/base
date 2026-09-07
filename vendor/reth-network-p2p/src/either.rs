@@ -60,9 +60,8 @@ where
 impl<A, B> HeadersClient for Either<A, B>
 where
     A: HeadersClient,
-    B: HeadersClient<Header = A::Header>,
+    B: HeadersClient,
 {
-    type Header = A::Header;
     type Output = Either<A::Output, B::Output>;
 
     fn get_headers_with_priority(

@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_consensus::{BlockHeader, Header, transaction::SignerRecoverable};
+use alloy_consensus::{BlockHeader, transaction::SignerRecoverable};
 use alloy_primitives::B256;
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::BaseChainSpec;
@@ -36,7 +36,7 @@ pub fn meter_block<P>(
     block: &BaseBlock,
 ) -> EyreResult<MeterBlockResponse>
 where
-    P: StateProviderFactory + HeaderProvider<Header = Header>,
+    P: StateProviderFactory + HeaderProvider,
 {
     let block_hash = block.header().hash_slow();
     let block_number = block.header().number();

@@ -258,7 +258,7 @@ impl ExecutionStage {
 impl<Provider> Stage<Provider> for ExecutionStage
 where
     Provider: DBProvider
-        + BlockReader<Block = BaseBlock, Header = alloy_consensus::Header>
+        + BlockReader<Block = BaseBlock>
         + StaticFileProviderFactory
         + StatsReader
         + BlockHashReader

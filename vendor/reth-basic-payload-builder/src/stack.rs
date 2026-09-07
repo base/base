@@ -7,10 +7,7 @@ use reth_payload_builder::PayloadId;
 use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::SealedBlock;
 
-use crate::{
-    BuildArguments, BuildOutcome, HeaderForPayload, PayloadBuilder, PayloadBuilderError,
-    PayloadConfig,
-};
+use crate::{BuildArguments, BuildOutcome, PayloadBuilder, PayloadBuilderError, PayloadConfig};
 
 /// hand rolled Either enum to handle two builder types
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -217,7 +214,7 @@ where
 
     fn build_empty_payload(
         &self,
-        config: PayloadConfig<Self::Attributes, HeaderForPayload>,
+        config: PayloadConfig<Self::Attributes>,
     ) -> Result<Self::BuiltPayload, PayloadBuilderError> {
         match config {
             PayloadConfig {

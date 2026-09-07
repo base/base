@@ -31,12 +31,8 @@ pub trait FullProvider<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>
                       + 'static,
     > + StaticFileProviderFactory
     + RocksDBProviderFactory
-    + BlockReaderIdExt<
-        Transaction = BaseTxEnvelope,
-        Block = BaseBlock,
-        Receipt = BaseReceipt,
-        Header = alloy_consensus::Header,
-    > + BalProvider
+    + BlockReaderIdExt<Transaction = BaseTxEnvelope, Block = BaseBlock, Receipt = BaseReceipt>
+    + BalProvider
     + StateProviderFactory
     + StateRangeProviderFactory
     + StateReader
@@ -44,7 +40,7 @@ pub trait FullProvider<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>
     + ChangeSetReader
     + StorageChangeSetReader
     + CanonStateSubscriptions
-    + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
+    + ForkChoiceSubscriptions
     + PersistedBlockSubscriptions
     + StageCheckpointReader
     + PruneCheckpointReader
@@ -68,12 +64,8 @@ impl<T, DB: Database + DatabaseMetrics + Clone + Unpin + 'static> FullProvider<D
                           + 'static,
         > + StaticFileProviderFactory
         + RocksDBProviderFactory
-        + BlockReaderIdExt<
-            Transaction = BaseTxEnvelope,
-            Block = BaseBlock,
-            Receipt = BaseReceipt,
-            Header = alloy_consensus::Header,
-        > + BalProvider
+        + BlockReaderIdExt<Transaction = BaseTxEnvelope, Block = BaseBlock, Receipt = BaseReceipt>
+        + BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
         + StateReader
@@ -81,7 +73,7 @@ impl<T, DB: Database + DatabaseMetrics + Clone + Unpin + 'static> FullProvider<D
         + ChangeSetReader
         + StorageChangeSetReader
         + CanonStateSubscriptions
-        + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
+        + ForkChoiceSubscriptions
         + PersistedBlockSubscriptions
         + StageCheckpointReader
         + PruneCheckpointReader

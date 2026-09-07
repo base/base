@@ -57,10 +57,7 @@ where
     Provider: BlockReaderIdExt,
 {
     /// Fetches the parent header by hash.
-    fn parent_header(
-        &self,
-        parent_block_hash: B256,
-    ) -> ProviderResult<SealedHeader<Provider::Header>> {
+    fn parent_header(&self, parent_block_hash: B256) -> ProviderResult<SealedHeader> {
         self.inner
             .provider
             .sealed_header_by_hash(parent_block_hash)?
@@ -73,11 +70,7 @@ impl<Pool, Provider> DebugExecutionWitnessApiServer<BasePayloadAttributes>
     for BaseDebugWitnessApi<Pool, Provider>
 where
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + 'static,
-    Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
-        + StateProviderFactory
-        + ChainSpecProvider
-        + Clone
-        + 'static,
+    Provider: BlockReaderIdExt + StateProviderFactory + ChainSpecProvider + Clone + 'static,
 {
     async fn execute_payload(
         &self,

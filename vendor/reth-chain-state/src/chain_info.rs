@@ -24,9 +24,9 @@ impl ChainInfoTracker {
     /// Create a new chain info container for the given canonical head and finalized header if it
     /// exists.
     pub fn new(
-        head: SealedHeader<alloy_consensus::Header>,
-        finalized: Option<SealedHeader<alloy_consensus::Header>>,
-        safe: Option<SealedHeader<alloy_consensus::Header>>,
+        head: SealedHeader,
+        finalized: Option<SealedHeader>,
+        safe: Option<SealedHeader>,
     ) -> Self {
         let (finalized_block, _) = watch::channel(finalized);
         let (safe_block, _) = watch::channel(safe);
@@ -62,17 +62,17 @@ impl ChainInfoTracker {
     }
 
     /// Returns the canonical head of the chain.
-    pub fn get_canonical_head(&self) -> SealedHeader<alloy_consensus::Header> {
+    pub fn get_canonical_head(&self) -> SealedHeader {
         self.inner.canonical_head.read().clone()
     }
 
     /// Returns the safe header of the chain.
-    pub fn get_safe_header(&self) -> Option<SealedHeader<alloy_consensus::Header>> {
+    pub fn get_safe_header(&self) -> Option<SealedHeader> {
         self.inner.safe_block.borrow().clone()
     }
 
     /// Returns the finalized header of the chain.
-    pub fn get_finalized_header(&self) -> Option<SealedHeader<alloy_consensus::Header>> {
+    pub fn get_finalized_header(&self) -> Option<SealedHeader> {
         self.inner.finalized_block.borrow().clone()
     }
 
@@ -102,7 +102,7 @@ impl ChainInfoTracker {
     }
 
     /// Sets the canonical head of the chain.
-    pub fn set_canonical_head(&self, header: SealedHeader<alloy_consensus::Header>) {
+    pub fn set_canonical_head(&self, header: SealedHeader) {
         let number = header.number();
         *self.inner.canonical_head.write() = header;
 
@@ -111,7 +111,7 @@ impl ChainInfoTracker {
     }
 
     /// Sets the safe header of the chain.
-    pub fn set_safe(&self, header: SealedHeader<alloy_consensus::Header>) {
+    pub fn set_safe(&self, header: SealedHeader) {
         self.inner.safe_block.send_if_modified(|current_header| {
             if current_header.as_ref().map(SealedHeader::hash) != Some(header.hash()) {
                 let _ = current_header.replace(header);
@@ -123,7 +123,7 @@ impl ChainInfoTracker {
     }
 
     /// Sets the finalized header of the chain.
-    pub fn set_finalized(&self, header: SealedHeader<alloy_consensus::Header>) {
+    pub fn set_finalized(&self, header: SealedHeader) {
         self.inner.finalized_block.send_if_modified(|current_header| {
             if current_header.as_ref().map(SealedHeader::hash) != Some(header.hash()) {
                 let _ = current_header.replace(header);
@@ -147,16 +147,12 @@ impl ChainInfoTracker {
     }
 
     /// Subscribe to the finalized block.
-    pub fn subscribe_finalized_block(
-        &self,
-    ) -> watch::Receiver<Option<SealedHeader<alloy_consensus::Header>>> {
+    pub fn subscribe_finalized_block(&self) -> watch::Receiver<Option<SealedHeader>> {
         self.inner.finalized_block.subscribe()
     }
 
     /// Subscribe to the safe block.
-    pub fn subscribe_safe_block(
-        &self,
-    ) -> watch::Receiver<Option<SealedHeader<alloy_consensus::Header>>> {
+    pub fn subscribe_safe_block(&self) -> watch::Receiver<Option<SealedHeader>> {
         self.inner.safe_block.subscribe()
     }
 
@@ -177,11 +173,11 @@ struct ChainInfoInner {
     /// Tracks the number of the `canonical_head`.
     canonical_head_number: AtomicU64,
     /// The canonical head of the chain.
-    canonical_head: RwLock<SealedHeader<alloy_consensus::Header>>,
+    canonical_head: RwLock<SealedHeader>,
     /// The block that the beacon node considers safe.
-    safe_block: watch::Sender<Option<SealedHeader<alloy_consensus::Header>>>,
+    safe_block: watch::Sender<Option<SealedHeader>>,
     /// The block that the beacon node considers finalized.
-    finalized_block: watch::Sender<Option<SealedHeader<alloy_consensus::Header>>>,
+    finalized_block: watch::Sender<Option<SealedHeader>>,
     /// The last block that was persisted to disk.
     persisted_block: watch::Sender<Option<BlockNumHash>>,
 }

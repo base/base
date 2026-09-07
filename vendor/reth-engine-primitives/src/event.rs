@@ -30,7 +30,7 @@ pub enum ConsensusEngineEvent {
     /// A block was added to the canonical chain, and the elapsed time validating the block
     CanonicalBlockAdded(ExecutedBlock, Duration),
     /// A canonical chain was committed, and the elapsed time committing the data
-    CanonicalChainCommitted(Box<SealedHeader<alloy_consensus::Header>>, Duration),
+    CanonicalChainCommitted(Box<SealedHeader>, Duration),
     /// The consensus engine processed an invalid block.
     InvalidBlock {
         /// The invalid block.
@@ -45,7 +45,7 @@ pub enum ConsensusEngineEvent {
 impl ConsensusEngineEvent {
     /// Returns the canonical header if the event is a
     /// [`ConsensusEngineEvent::CanonicalChainCommitted`].
-    pub const fn canonical_header(&self) -> Option<&SealedHeader<alloy_consensus::Header>> {
+    pub const fn canonical_header(&self) -> Option<&SealedHeader> {
         match self {
             Self::CanonicalChainCommitted(header, _) => Some(header),
             _ => None,

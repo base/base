@@ -11,9 +11,7 @@ use reth_rpc_eth_types::{
     RpcInvalidTransactionError, fee_history::calculate_reward_percentiles_for_block,
     utils::checked_blob_gas_used_ratio,
 };
-use reth_storage_api::{
-    BlockIdReader, BlockNumReader, BlockReaderIdExt, HeaderProvider, ProviderHeader,
-};
+use reth_storage_api::{BlockIdReader, BlockNumReader, BlockReaderIdExt, HeaderProvider};
 use tracing::debug;
 
 use super::LoadBlock;
@@ -275,11 +273,7 @@ pub trait EthFees: LoadFee<Provider: ChainSpecProvider> {
 
     /// Approximates reward at a given percentile for a specific block
     /// Based on the configured resolution
-    fn approximate_percentile(
-        &self,
-        entry: &FeeHistoryEntry<ProviderHeader<Self::Provider>>,
-        requested_percentile: f64,
-    ) -> u128 {
+    fn approximate_percentile(&self, entry: &FeeHistoryEntry, requested_percentile: f64) -> u128 {
         let resolution = self.fee_history_cache().resolution();
         let rounded_percentile =
             (requested_percentile * resolution as f64).round() / resolution as f64;
@@ -307,7 +301,7 @@ where
     /// Returns a handle for reading fee history data from memory.
     ///
     /// Data access in default (L1) trait method implementations.
-    fn fee_history_cache(&self) -> &FeeHistoryCache<ProviderHeader<Self::Provider>>;
+    fn fee_history_cache(&self) -> &FeeHistoryCache;
 
     /// Returns the gas price if it is set, otherwise fetches a suggested gas price for legacy
     /// transactions.

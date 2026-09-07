@@ -173,29 +173,24 @@ impl CanonStateNotification {
 
 /// Wrapper around a broadcast receiver that receives fork choice notifications.
 #[derive(Debug, Deref, DerefMut)]
-pub struct ForkChoiceNotifications<T = alloy_consensus::Header>(
-    pub watch::Receiver<Option<SealedHeader<T>>>,
-);
+pub struct ForkChoiceNotifications(pub watch::Receiver<Option<SealedHeader>>);
 
 /// A trait that allows to register to fork choice related events
 /// and get notified when a new fork choice is available.
 pub trait ForkChoiceSubscriptions: Send + Sync {
-    /// Block Header type.
-    type Header: Clone + Send + Sync + 'static;
-
     /// Get notified when a new safe block of the chain is selected.
-    fn subscribe_safe_block(&self) -> ForkChoiceNotifications<Self::Header>;
+    fn subscribe_safe_block(&self) -> ForkChoiceNotifications;
 
     /// Get notified when a new finalized block of the chain is selected.
-    fn subscribe_finalized_block(&self) -> ForkChoiceNotifications<Self::Header>;
+    fn subscribe_finalized_block(&self) -> ForkChoiceNotifications;
 
     /// Convenience method to get a stream of the new safe blocks of the chain.
-    fn safe_block_stream(&self) -> ForkChoiceStream<SealedHeader<Self::Header>> {
+    fn safe_block_stream(&self) -> ForkChoiceStream<SealedHeader> {
         ForkChoiceStream::new(self.subscribe_safe_block().0)
     }
 
     /// Convenience method to get a stream of the new finalized blocks of the chain.
-    fn finalized_block_stream(&self) -> ForkChoiceStream<SealedHeader<Self::Header>> {
+    fn finalized_block_stream(&self) -> ForkChoiceStream<SealedHeader> {
         ForkChoiceStream::new(self.subscribe_finalized_block().0)
     }
 }

@@ -34,9 +34,9 @@ pub fn get_or_create_jwt_secret_from_path(path: &Path) -> Result<JwtSecret, JwtE
 pub async fn get_single_header<Client>(
     client: Client,
     id: BlockHashOrNumber,
-) -> Result<SealedHeader<Client::Header>>
+) -> Result<SealedHeader>
 where
-    Client: HeadersClient<Header: reth_primitives_traits::BlockHeader>,
+    Client: HeadersClient,
 {
     let (peer_id, response) = client.get_header_with_priority(id, Priority::High).await?.split();
 
@@ -67,7 +67,7 @@ where
 /// Get a body from the network based on header
 pub async fn get_single_body<B, Client>(
     client: Client,
-    header: SealedHeader<B::Header>,
+    header: SealedHeader,
     consensus: impl Consensus<B>,
 ) -> Result<SealedBlock<B>>
 where

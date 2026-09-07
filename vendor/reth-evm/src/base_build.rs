@@ -40,10 +40,9 @@ impl BaseBlockAssembler {
                 Transaction: SignedTransaction,
                 Receipt = BaseReceipt,
             >,
-        H,
     >(
         &self,
-        input: BlockAssemblerInput<'_, '_, F, H>,
+        input: BlockAssemblerInput<'_, '_, F>,
     ) -> Result<Block<F::Transaction>, BlockExecutionError> {
         let BlockAssemblerInput {
             evm_env,

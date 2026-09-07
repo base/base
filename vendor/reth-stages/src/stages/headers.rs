@@ -51,7 +51,7 @@ pub struct HeaderStage<Provider, Downloader: HeaderDownloader> {
     /// This determines the sync target of the stage (set by the pipeline).
     tip: watch::Receiver<B256>,
     /// Current sync gap.
-    sync_gap: Option<HeaderSyncGap<Downloader::Header>>,
+    sync_gap: Option<HeaderSyncGap>,
     /// ETL collector with `HeaderHash` -> `BlockNumber`
     hash_collector: Collector<BlockHash, BlockNumber>,
     /// ETL collector with `BlockNumber` -> `RLP-encoded SealedHeader`
@@ -99,7 +99,7 @@ where
     fn write_headers<P>(&mut self, provider: &P) -> Result<BlockNumber, StageError>
     where
         P: DBProvider<Tx: DbTxMut> + StaticFileProviderFactory,
-        Downloader: HeaderDownloader<Header = alloy_consensus::Header>,
+        Downloader: HeaderDownloader,
     {
         let total_headers = self.header_collector.len();
 
@@ -124,7 +124,7 @@ where
                 info!(target: "sync::stages::headers", progress = %format!("{:.2}%", (index as f64 / total_headers as f64) * 100.0), "Writing headers");
             }
 
-            let sealed_header: SealedHeader<Downloader::Header> = SealedHeader::new_unhashed(
+            let sealed_header: SealedHeader = SealedHeader::new_unhashed(
                 Decodable::decode(&mut header_buf.as_slice())
                     .map_err(|err| StageError::Fatal(Box::new(err)))?,
             );
@@ -186,7 +186,7 @@ impl<Provider, P, D> Stage<Provider> for HeaderStage<P, D>
 where
     Provider: DBProvider<Tx: DbTxMut> + StaticFileProviderFactory,
     P: HeaderSyncGapProvider<Header = alloy_consensus::Header>,
-    D: HeaderDownloader<Header = alloy_consensus::Header>,
+    D: HeaderDownloader,
 {
     /// Return the id of the stage
     fn id(&self) -> StageId {
@@ -431,9 +431,7 @@ mod tests {
             }
         }
 
-        impl<D: HeaderDownloader<Header = alloy_consensus::Header> + 'static> StageTestRunner
-            for HeadersTestRunner<D>
-        {
+        impl<D: HeaderDownloader + 'static> StageTestRunner for HeadersTestRunner<D> {
             type S = HeaderStage<ProviderFactory<MockNodeDatabase>, D>;
 
             fn db(&self) -> &TestStageDB {
@@ -450,9 +448,7 @@ mod tests {
             }
         }
 
-        impl<D: HeaderDownloader<Header = alloy_consensus::Header> + 'static> ExecuteStageTestRunner
-            for HeadersTestRunner<D>
-        {
+        impl<D: HeaderDownloader + 'static> ExecuteStageTestRunner for HeadersTestRunner<D> {
             type Seed = Vec<SealedHeader>;
 
             fn seed_execution(&mut self, input: ExecInput) -> Result<Self::Seed, TestRunnerError> {
@@ -518,9 +514,7 @@ mod tests {
             }
         }
 
-        impl<D: HeaderDownloader<Header = alloy_consensus::Header> + 'static> UnwindStageTestRunner
-            for HeadersTestRunner<D>
-        {
+        impl<D: HeaderDownloader + 'static> UnwindStageTestRunner for HeadersTestRunner<D> {
             fn validate_unwind(&self, input: UnwindInput) -> Result<(), TestRunnerError> {
                 self.check_no_header_entry_above(input.unwind_to)
             }

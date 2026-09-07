@@ -62,7 +62,7 @@ where
         &mut self,
         client: Arc<C>,
         consensus: Arc<dyn Consensus<B>>,
-        request: Vec<SealedHeader<B::Header>>,
+        request: Vec<SealedHeader>,
     ) {
         // Set last max requested block number
         self.last_requested_block_number = request

@@ -202,8 +202,7 @@ pub trait EthBlocks: LoadBlock {
     fn ommers(
         &self,
         block_id: BlockId,
-    ) -> impl Future<Output = Result<Option<Vec<ProviderHeader<Self::Provider>>>, BaseEthApiError>> + Send
-    {
+    ) -> impl Future<Output = Result<Option<Vec<ProviderHeader>>, BaseEthApiError>> + Send {
         async move {
             if let Some(block) = self.recovered_block(block_id).await? {
                 Ok(block.body().ommers().map(|o| o.to_vec()))

@@ -13,7 +13,7 @@ use reth_provider::{
 };
 
 pub(crate) fn zip_blocks<'a, B: Block>(
-    headers: impl Iterator<Item = &'a SealedHeader<B::Header>>,
+    headers: impl Iterator<Item = &'a SealedHeader>,
     bodies: &mut B256Map<B::Body>,
 ) -> Vec<BlockResponse<B>> {
     headers

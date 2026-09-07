@@ -180,10 +180,7 @@ impl BlockReaderIdExt for NoopProvider {
         Ok(None)
     }
 
-    fn sealed_header_by_id(
-        &self,
-        _id: BlockId,
-    ) -> ProviderResult<Option<SealedHeader<alloy_consensus::Header>>> {
+    fn sealed_header_by_id(&self, _id: BlockId) -> ProviderResult<Option<SealedHeader>> {
         Ok(None)
     }
 
@@ -354,35 +351,30 @@ impl ReceiptProvider for NoopProvider {
 impl ReceiptProviderIdExt for NoopProvider {}
 
 impl HeaderProvider for NoopProvider {
-    type Header = alloy_consensus::Header;
-
-    fn header(&self, _block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
+    fn header(&self, _block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
         Ok(None)
     }
 
-    fn header_by_number(&self, _num: u64) -> ProviderResult<Option<Self::Header>> {
+    fn header_by_number(&self, _num: u64) -> ProviderResult<Option<alloy_consensus::Header>> {
         Ok(None)
     }
 
     fn headers_range(
         &self,
         _range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<Self::Header>> {
+    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
         Ok(Vec::new())
     }
 
-    fn sealed_header(
-        &self,
-        _number: BlockNumber,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn sealed_header(&self, _number: BlockNumber) -> ProviderResult<Option<SealedHeader>> {
         Ok(None)
     }
 
     fn sealed_headers_while(
         &self,
         _range: impl RangeBounds<BlockNumber>,
-        _predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
-    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+        _predicate: impl FnMut(&SealedHeader) -> bool,
+    ) -> ProviderResult<Vec<SealedHeader>> {
         Ok(Vec::new())
     }
 }

@@ -42,17 +42,17 @@ impl NoopConsensus {
     }
 }
 
-impl<H> HeaderValidator<H> for NoopConsensus {
+impl HeaderValidator for NoopConsensus {
     /// Validates a header (no-op implementation).
-    fn validate_header(&self, _header: &SealedHeader<H>) -> Result<(), ConsensusError> {
+    fn validate_header(&self, _header: &SealedHeader) -> Result<(), ConsensusError> {
         Ok(())
     }
 
     /// Validates a header against its parent (no-op implementation).
     fn validate_header_against_parent(
         &self,
-        _header: &SealedHeader<H>,
-        _parent: &SealedHeader<H>,
+        _header: &SealedHeader,
+        _parent: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         Ok(())
     }
@@ -63,7 +63,7 @@ impl<B: Block> Consensus<B> for NoopConsensus {
     fn validate_body_against_header(
         &self,
         _body: &B::Body,
-        _header: &SealedHeader<B::Header>,
+        _header: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         Ok(())
     }

@@ -78,8 +78,7 @@ pub struct BaseEthConfigHandler<Provider: ChainSpecProvider> {
 
 impl<Provider> BaseEthConfigHandler<Provider>
 where
-    Provider:
-        ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header> + Clone + 'static,
+    Provider: ChainSpecProvider + BlockReaderIdExt + Clone + 'static,
 {
     /// Creates a new [`BaseEthConfigHandler`].
     pub fn new(provider: Provider, evm_config: BaseEvmConfig) -> Self {
@@ -103,8 +102,7 @@ where
 
 impl<Provider> BaseEthConfigApiServer for BaseEthConfigHandler<Provider>
 where
-    Provider:
-        ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header> + Clone + 'static,
+    Provider: ChainSpecProvider + BlockReaderIdExt + Clone + 'static,
 {
     fn config(&self) -> RpcResult<EthConfig> {
         let mut config = EthConfigApiServer::config(&self.eth_config)?;

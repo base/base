@@ -18,7 +18,7 @@ use reth_rpc_eth_types::{
     EthApiError, EthStateCache, FeeHistoryCache, GasCap, GasPriceOracle, PendingBlock,
     builder::config::PendingBlockKind,
 };
-use reth_storage_api::{BlockReaderIdExt, ProviderHeader};
+use reth_storage_api::BlockReaderIdExt;
 use reth_tasks::{
     Runtime,
     pool::{BlockingTaskGuard, BlockingTaskPool},
@@ -168,7 +168,7 @@ pub struct EthApiInner<N: RpcNodeCore> {
     /// A pool dedicated to CPU heavy blocking tasks.
     blocking_task_pool: BlockingTaskPool,
     /// Cache for block fees history
-    fee_history_cache: FeeHistoryCache<ProviderHeader<N::Provider>>,
+    fee_history_cache: FeeHistoryCache,
 
     /// Guard for getproof calls
     blocking_task_guard: BlockingTaskGuard,
@@ -222,7 +222,7 @@ where
         compute_state_root_for_eth_simulate: bool,
         eth_proof_window: u64,
         blocking_task_pool: BlockingTaskPool,
-        fee_history_cache: FeeHistoryCache<ProviderHeader<N::Provider>>,
+        fee_history_cache: FeeHistoryCache,
         task_spawner: Runtime,
         proof_permits: usize,
         converter: BaseRpcConverter<N::Provider>,
@@ -364,7 +364,7 @@ where
 
     /// Returns a handle to the fee history cache.
     #[inline]
-    pub const fn fee_history_cache(&self) -> &FeeHistoryCache<ProviderHeader<N::Provider>> {
+    pub const fn fee_history_cache(&self) -> &FeeHistoryCache {
         &self.fee_history_cache
     }
 
@@ -508,12 +508,8 @@ mod tests {
         EthApi<RpcNodeCoreAdapter<P, crate::test_utils::TestPool, NoopNetwork>>;
 
     fn build_test_eth_api<
-        P: BlockReaderIdExt<
-                Block = BaseBlock,
-                Receipt = BaseReceipt,
-                Header = alloy_consensus::Header,
-                Transaction = BaseTxEnvelope,
-            > + BlockReader
+        P: BlockReaderIdExt<Block = BaseBlock, Receipt = BaseReceipt, Transaction = BaseTxEnvelope>
+            + BlockReader
             + ChainSpecProvider
             + StateProviderFactory
             + CanonStateSubscriptions

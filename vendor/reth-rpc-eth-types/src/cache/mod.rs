@@ -339,7 +339,7 @@ pub(crate) struct EthStateCacheService<
     Provider: BlockReader + BalProvider,
     LimitBlocks: Limiter<B256, Arc<RecoveredBlock<Provider::Block>>>,
     LimitReceipts: Limiter<B256, Arc<Vec<Provider::Receipt>>>,
-    LimitHeaders: Limiter<B256, Provider::Header>,
+    LimitHeaders: Limiter<B256, alloy_consensus::Header>,
     LimitBals: Limiter<B256, CachedRevmBal>,
 {
     /// The type used to lookup data from disk
@@ -352,7 +352,7 @@ pub(crate) struct EthStateCacheService<
     ///
     /// Headers are cached because they are required to populate the environment for execution
     /// (evm).
-    headers_cache: HeaderLruCache<Provider::Header, LimitHeaders>,
+    headers_cache: HeaderLruCache<alloy_consensus::Header, LimitHeaders>,
     /// The LRU cache for revm BALs grouped by the block hash.
     bal_cache: BalLruCache<LimitBals>,
     /// Sender half of the action channel.
@@ -462,7 +462,7 @@ where
         }
     }
 
-    fn on_reorg_header(&mut self, block_hash: B256, res: ProviderResult<Provider::Header>) {
+    fn on_reorg_header(&mut self, block_hash: B256, res: ProviderResult<alloy_consensus::Header>) {
         if let Some(queued) = self.headers_cache.remove(&block_hash) {
             // send the response to queued senders
             for tx in queued {
@@ -748,7 +748,7 @@ enum CacheAction<B: Block, R> {
     },
     GetHeader {
         block_hash: B256,
-        response_tx: HeaderResponseSender<B::Header>,
+        response_tx: HeaderResponseSender<alloy_consensus::Header>,
     },
     GetReceipts {
         block_hash: B256,
@@ -776,7 +776,7 @@ enum CacheAction<B: Block, R> {
     },
     HeaderResult {
         block_hash: B256,
-        res: Box<ProviderResult<B::Header>>,
+        res: Box<ProviderResult<alloy_consensus::Header>>,
     },
     BalResult {
         block_hash: B256,
@@ -868,7 +868,7 @@ impl<R: Send + Sync, B: Block> ActionSender<B, R> {
         }
     }
 
-    fn send_header(&mut self, header: Result<<B as Block>::Header, ProviderError>) {
+    fn send_header(&mut self, header: Result<alloy_consensus::Header, ProviderError>) {
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(CacheAction::HeaderResult {
                 block_hash: self.blockhash,
@@ -1292,35 +1292,33 @@ mod tests {
     }
 
     impl HeaderProvider for TestBalProvider {
-        type Header = Header;
-
-        fn header(&self, _block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
+        fn header(
+            &self,
+            _block_hash: BlockHash,
+        ) -> ProviderResult<Option<alloy_consensus::Header>> {
             Ok(None)
         }
 
-        fn header_by_number(&self, _num: u64) -> ProviderResult<Option<Self::Header>> {
+        fn header_by_number(&self, _num: u64) -> ProviderResult<Option<alloy_consensus::Header>> {
             Ok(None)
         }
 
         fn headers_range(
             &self,
             _range: impl RangeBounds<BlockNumber>,
-        ) -> ProviderResult<Vec<Self::Header>> {
+        ) -> ProviderResult<Vec<alloy_consensus::Header>> {
             Ok(Vec::new())
         }
 
-        fn sealed_header(
-            &self,
-            _number: BlockNumber,
-        ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+        fn sealed_header(&self, _number: BlockNumber) -> ProviderResult<Option<SealedHeader>> {
             Ok(None)
         }
 
         fn sealed_headers_while(
             &self,
             _range: impl RangeBounds<BlockNumber>,
-            _predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
-        ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+            _predicate: impl FnMut(&SealedHeader) -> bool,
+        ) -> ProviderResult<Vec<SealedHeader>> {
             Ok(Vec::new())
         }
     }

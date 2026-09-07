@@ -238,9 +238,9 @@ impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Networ
 
 impl<Provider, Pool, Network, Consensus> RpcModuleBuilder<Provider, Pool, Network, Consensus>
 where
-    Provider: FullRpcProvider<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+    Provider: FullRpcProvider<Block = BaseBlock, Receipt = BaseReceipt>
         + CanonStateSubscriptions
-        + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
+        + ForkChoiceSubscriptions
         + PersistedBlockSubscriptions
         + ChangeSetReader,
     Pool: TransactionPool + Clone + 'static,
@@ -570,14 +570,10 @@ where
 impl<Provider, Pool, Network, EthApi, Consensus>
     RpcRegistryInner<Provider, Pool, Network, EthApi, Consensus>
 where
-    Provider: FullRpcProvider<
-            Header = alloy_consensus::Header,
-            Block = BaseBlock,
-            Receipt = BaseReceipt,
-            Transaction = BaseTxEnvelope,
-        > + ChangeSetReader
+    Provider: FullRpcProvider<Block = BaseBlock, Receipt = BaseReceipt, Transaction = BaseTxEnvelope>
+        + ChangeSetReader
         + CanonStateSubscriptions
-        + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
+        + ForkChoiceSubscriptions
         + PersistedBlockSubscriptions,
     Network: NetworkInfo + Peers + Clone + 'static,
     EthApi: EthApiServer<
@@ -685,12 +681,8 @@ where
 impl<Provider, Pool, Network, EthApi, Consensus>
     RpcRegistryInner<Provider, Pool, Network, EthApi, Consensus>
 where
-    Provider: FullRpcProvider<
-            Block = BaseBlock,
-            Header = alloy_consensus::Header,
-            Transaction = BaseTxEnvelope,
-            Receipt = BaseReceipt,
-        > + ChangeSetReader,
+    Provider: FullRpcProvider<Block = BaseBlock, Transaction = BaseTxEnvelope, Receipt = BaseReceipt>
+        + ChangeSetReader,
     Network: NetworkInfo + Peers + Clone + 'static,
     EthApi: EthApiTypes,
 {
@@ -766,7 +758,7 @@ impl<Provider, Pool, Network, EthApi, Consensus>
 where
     Provider: FullRpcProvider<Block = BaseBlock>
         + CanonStateSubscriptions
-        + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
+        + ForkChoiceSubscriptions
         + PersistedBlockSubscriptions
         + ChangeSetReader,
     Pool: TransactionPool + Clone + 'static,

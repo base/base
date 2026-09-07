@@ -165,7 +165,7 @@ where
 {
     /// Spawns a new [`LocalMiner`] with the given parameters.
     pub fn new(
-        provider: impl BlockReader<Header = alloy_consensus::Header>,
+        provider: impl BlockReader,
         payload_attributes_builder: B,
         to_engine: ConsensusEngineHandle,
         mode: MiningMode<Pool>,

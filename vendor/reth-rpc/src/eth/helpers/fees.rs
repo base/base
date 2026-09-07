@@ -5,7 +5,6 @@ use reth_rpc_eth_api::{
     helpers::{EthFees, LoadFee},
 };
 use reth_rpc_eth_types::{EthApiError, FeeHistoryCache, GasPriceOracle};
-use reth_storage_api::ProviderHeader;
 
 use crate::EthApi;
 
@@ -27,7 +26,7 @@ where
     }
 
     #[inline]
-    fn fee_history_cache(&self) -> &FeeHistoryCache<ProviderHeader<N::Provider>> {
+    fn fee_history_cache(&self) -> &FeeHistoryCache {
         self.inner.fee_history_cache()
     }
 }

@@ -66,7 +66,7 @@ impl ExecutorMetrics {
     where
         F: FnOnce(&RecoveredBlock<B>) -> R,
         B: Block,
-        B::Header: BlockHeader,
+        alloy_consensus::Header: BlockHeader,
     {
         self.metered(|| (block.header().gas_used(), f(block)))
     }

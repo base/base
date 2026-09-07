@@ -1508,7 +1508,7 @@ impl<TX: DbTx + 'static> HeaderSyncGapProvider for DatabaseProvider<TX> {
     fn local_tip_header(
         &self,
         highest_uninterrupted_block: BlockNumber,
-    ) -> ProviderResult<SealedHeader<Self::Header>> {
+    ) -> ProviderResult<SealedHeader> {
         let static_file_provider = self.static_file_provider();
 
         // Make sure Headers static file is at the same height. If it's further, this
@@ -1546,9 +1546,7 @@ impl<TX: DbTx + 'static> HeaderSyncGapProvider for DatabaseProvider<TX> {
 }
 
 impl<TX: DbTx + 'static> HeaderProvider for DatabaseProvider<TX> {
-    type Header = alloy_consensus::Header;
-
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
+    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
         if let Some(num) = self.block_number(block_hash)? {
             Ok(self.header_by_number(num)?)
         } else {
@@ -1556,29 +1554,29 @@ impl<TX: DbTx + 'static> HeaderProvider for DatabaseProvider<TX> {
         }
     }
 
-    fn header_by_number(&self, num: BlockNumber) -> ProviderResult<Option<Self::Header>> {
+    fn header_by_number(
+        &self,
+        num: BlockNumber,
+    ) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.static_file_provider.header_by_number(num)
     }
 
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<Self::Header>> {
+    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
         self.static_file_provider.headers_range(range)
     }
 
-    fn sealed_header(
-        &self,
-        number: BlockNumber,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn sealed_header(&self, number: BlockNumber) -> ProviderResult<Option<SealedHeader>> {
         self.static_file_provider.sealed_header(number)
     }
 
     fn sealed_headers_while(
         &self,
         range: impl RangeBounds<BlockNumber>,
-        predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
-    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+        predicate: impl FnMut(&SealedHeader) -> bool,
+    ) -> ProviderResult<Vec<SealedHeader>> {
         self.static_file_provider.sealed_headers_while(range, predicate)
     }
 }

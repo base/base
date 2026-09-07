@@ -1051,7 +1051,7 @@ where
     /// Block can be optional and we can fetch it lazily when needed.
     recovered_block: Option<Arc<reth_primitives_traits::RecoveredBlock<ProviderBlock<P>>>>,
     /// The header of the block.
-    header: SealedHeader<<P as HeaderProvider>::Header>,
+    header: SealedHeader,
 }
 
 /// Represents different modes for processing block ranges when filtering logs
@@ -1079,7 +1079,7 @@ impl<
     /// Creates a new `RangeMode`.
     fn new(
         filter_inner: Arc<EthFilterInner<Eth>>,
-        sealed_headers: Vec<SealedHeader<<Eth::Provider as HeaderProvider>::Header>>,
+        sealed_headers: Vec<SealedHeader>,
         from_block: u64,
         to_block: u64,
         max_headers_range: u64,
@@ -1107,7 +1107,7 @@ impl<
 
     /// Determines whether to use cached mode based on bloom filter matches and range size
     const fn should_use_cached_mode(
-        headers: &[SealedHeader<<Eth::Provider as HeaderProvider>::Header>],
+        headers: &[SealedHeader],
         block_count: u64,
         distance_from_tip: u64,
     ) -> bool {
@@ -1152,7 +1152,7 @@ struct CachedMode<
         + 'static,
 > {
     filter_inner: Arc<EthFilterInner<Eth>>,
-    headers_iter: std::vec::IntoIter<SealedHeader<<Eth::Provider as HeaderProvider>::Header>>,
+    headers_iter: std::vec::IntoIter<SealedHeader>,
 }
 
 impl<
@@ -1194,7 +1194,7 @@ struct RangeBlockMode<
         + 'static,
 > {
     filter_inner: Arc<EthFilterInner<Eth>>,
-    iter: Peekable<std::vec::IntoIter<SealedHeader<<Eth::Provider as HeaderProvider>::Header>>>,
+    iter: Peekable<std::vec::IntoIter<SealedHeader>>,
     next: VecDeque<ReceiptBlockResult<Eth::Provider>>,
     max_range: usize,
     // Stream of ongoing receipt fetching tasks
@@ -1273,7 +1273,7 @@ impl<
     /// This is used when the remaining headers count is below [`PARALLEL_PROCESSING_THRESHOLD`].
     async fn process_small_range(
         &mut self,
-        range_headers: Vec<SealedHeader<<Eth::Provider as HeaderProvider>::Header>>,
+        range_headers: Vec<SealedHeader>,
     ) -> Result<Option<ReceiptBlockResult<Eth::Provider>>, EthFilterError> {
         // Process each header individually to avoid queuing for all receipts
         for header in range_headers {
@@ -1311,10 +1311,7 @@ impl<
     ///
     /// This is used when the remaining headers count is at or above
     /// [`PARALLEL_PROCESSING_THRESHOLD`].
-    fn spawn_parallel_tasks(
-        &mut self,
-        range_headers: Vec<SealedHeader<<Eth::Provider as HeaderProvider>::Header>>,
-    ) {
+    fn spawn_parallel_tasks(&mut self, range_headers: Vec<SealedHeader>) {
         // Split headers into chunks
         let chunk_size = std::cmp::max(range_headers.len() / DEFAULT_PARALLEL_CONCURRENCY, 1);
         let header_chunks = range_headers
@@ -1844,7 +1841,7 @@ mod tests {
             super::EthFilter::new(eth_api, EthFilterConfig::default(), Runtime::test());
         let filter_inner = eth_filter.inner;
 
-        let headers: Vec<SealedHeader<alloy_consensus::Header>> = vec![];
+        let headers: Vec<SealedHeader> = vec![];
 
         let mut cached_mode = CachedMode { filter_inner, headers_iter: headers.into_iter() };
 

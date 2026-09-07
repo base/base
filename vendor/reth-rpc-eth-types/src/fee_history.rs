@@ -30,14 +30,11 @@ use crate::utils::checked_blob_gas_used_ratio;
 ///
 /// Purpose for this is to provide cached data for `eth_feeHistory`.
 #[derive(Debug, Clone)]
-pub struct FeeHistoryCache<H> {
-    inner: Arc<FeeHistoryCacheInner<H>>,
+pub struct FeeHistoryCache {
+    inner: Arc<FeeHistoryCacheInner>,
 }
 
-impl<H> FeeHistoryCache<H>
-where
-    H: BlockHeader + Clone,
-{
+impl FeeHistoryCache {
     /// Creates new `FeeHistoryCache` instance, initialize it with the more recent data, set bounds
     pub fn new(config: FeeHistoryCacheConfig) -> Self {
         let inner = FeeHistoryCacheInner {
@@ -77,7 +74,7 @@ where
     /// Insert block data into the cache.
     async fn insert_blocks<'a, I, B, R>(&self, blocks: I, chain_spec: &BaseChainSpec)
     where
-        B: Block<Header = H> + 'a,
+        B: Block + 'a,
         R: TxReceipt + 'a,
         I: IntoIterator<Item = (&'a SealedBlock<B>, &'a [R])>,
     {
@@ -86,7 +83,7 @@ where
         let percentiles = self.predefined_percentiles();
         // Insert all new blocks and calculate approximated rewards
         for (block, receipts) in blocks {
-            let mut fee_history_entry = FeeHistoryEntry::<H>::new(
+            let mut fee_history_entry = FeeHistoryEntry::new(
                 block,
                 chain_spec.blob_params_at_timestamp(block.header().timestamp()),
             );
@@ -144,7 +141,7 @@ where
         &self,
         start_block: u64,
         end_block: u64,
-    ) -> Option<Vec<FeeHistoryEntry<H>>> {
+    ) -> Option<Vec<FeeHistoryEntry>> {
         if end_block < start_block {
             // invalid range, return None
             return None;
@@ -200,7 +197,7 @@ impl Default for FeeHistoryCacheConfig {
 
 /// Container type for shared state in [`FeeHistoryCache`]
 #[derive(Debug)]
-struct FeeHistoryCacheInner<H> {
+struct FeeHistoryCacheInner {
     /// Stores the lower bound of the cache
     lower_bound: AtomicU64,
     /// Stores the upper bound of the cache
@@ -209,13 +206,13 @@ struct FeeHistoryCacheInner<H> {
     /// and max number of blocks
     config: FeeHistoryCacheConfig,
     /// Stores the entries of the cache
-    entries: tokio::sync::RwLock<BTreeMap<u64, FeeHistoryEntry<H>>>,
+    entries: tokio::sync::RwLock<BTreeMap<u64, FeeHistoryEntry>>,
 }
 
 /// Awaits for new chain events and directly inserts them into the cache so they're available
 /// immediately before they need to be fetched from disk.
 pub async fn fee_history_cache_new_blocks_task<St, Provider>(
-    fee_history_cache: FeeHistoryCache<alloy_consensus::Header>,
+    fee_history_cache: FeeHistoryCache,
     mut events: St,
     provider: Provider,
     cache: EthStateCache,
@@ -338,9 +335,9 @@ where
 
 /// A cached entry for a block's fee history.
 #[derive(Debug, Clone)]
-pub struct FeeHistoryEntry<H = Header> {
+pub struct FeeHistoryEntry {
     /// The full block header.
-    pub header: H,
+    pub header: Header,
     /// Gas used ratio this block.
     pub gas_used_ratio: f64,
     /// The base per blob gas for EIP-4844.
@@ -357,16 +354,13 @@ pub struct FeeHistoryEntry<H = Header> {
     pub blob_params: Option<BlobParams>,
 }
 
-impl<H> FeeHistoryEntry<H>
-where
-    H: BlockHeader + Clone,
-{
+impl FeeHistoryEntry {
     /// Creates a new entry from a sealed block.
     ///
     /// Note: This does not calculate the rewards for the block.
     pub fn new<B>(block: &SealedBlock<B>, blob_params: Option<BlobParams>) -> Self
     where
-        B: Block<Header = H>,
+        B: Block,
     {
         let header = block.header();
         Self {

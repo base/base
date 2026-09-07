@@ -282,7 +282,7 @@ where
                           + StorageSettingsCache
                           + TryIntoHistoricalStateProvider
                           + 'static,
-        > + BlockReader<Header = alloy_consensus::Header>
+        > + BlockReader
         + ChangeSetReader
         + StateProviderFactory
         + StateReader
@@ -875,7 +875,7 @@ where
     pub fn spawn_convert_and_validate(
         &self,
         input: &BlockOrPayload,
-        parent: SealedHeader<alloy_consensus::Header>,
+        parent: SealedHeader,
     ) -> LazyHandle<Result<SealedBlock<BaseBlock>, InsertPayloadError<BaseBlock>>>
     where
         V: PayloadValidator<Block = BaseBlock> + Clone,
@@ -928,7 +928,7 @@ where
         &self,
         hash: B256,
         state: &EngineApiTreeState,
-    ) -> ProviderResult<Option<SealedHeader<alloy_consensus::Header>>> {
+    ) -> ProviderResult<Option<SealedHeader>> {
         // check memory first
         let header = state.tree_state.sealed_header_by_hash(&hash);
 
@@ -1264,7 +1264,7 @@ where
     fn validate_post_execution(
         &self,
         block: &RecoveredBlock<BaseBlock>,
-        parent_block: &SealedHeader<alloy_consensus::Header>,
+        parent_block: &SealedHeader,
         output: &BlockExecutionOutput<BaseReceipt>,
         ctx: &mut TreeCtx<'_>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
@@ -1373,7 +1373,7 @@ where
     /// Called when an invalid block is encountered during validation.
     fn on_invalid_block(
         &self,
-        parent_header: &SealedHeader<alloy_consensus::Header>,
+        parent_header: &SealedHeader,
         block: &RecoveredBlock<BaseBlock>,
         output: &BlockExecutionOutput<BaseReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,
@@ -1737,7 +1737,7 @@ where
                           + StorageSettingsCache
                           + TryIntoHistoricalStateProvider
                           + 'static,
-        > + BlockReader<Header = alloy_consensus::Header>
+        > + BlockReader
         + StateProviderFactory
         + StateReader
         + ChangeSetReader

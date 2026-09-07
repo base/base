@@ -11,7 +11,7 @@ pub trait InvalidBlockHook: Send + Sync {
     /// Invoked when an invalid block is encountered.
     fn on_invalid_block(
         &self,
-        parent_header: &SealedHeader<alloy_consensus::Header>,
+        parent_header: &SealedHeader,
         block: &RecoveredBlock<BaseBlock>,
         output: &BlockExecutionOutput<BaseReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,
@@ -21,7 +21,7 @@ pub trait InvalidBlockHook: Send + Sync {
 impl<F> InvalidBlockHook for F
 where
     F: Fn(
-            &SealedHeader<alloy_consensus::Header>,
+            &SealedHeader,
             &RecoveredBlock<BaseBlock>,
             &BlockExecutionOutput<BaseReceipt>,
             Option<(&TrieUpdates, B256)>,
@@ -30,7 +30,7 @@ where
 {
     fn on_invalid_block(
         &self,
-        parent_header: &SealedHeader<alloy_consensus::Header>,
+        parent_header: &SealedHeader,
         block: &RecoveredBlock<BaseBlock>,
         output: &BlockExecutionOutput<BaseReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,
@@ -47,7 +47,7 @@ pub struct NoopInvalidBlockHook;
 impl InvalidBlockHook for NoopInvalidBlockHook {
     fn on_invalid_block(
         &self,
-        _parent_header: &SealedHeader<alloy_consensus::Header>,
+        _parent_header: &SealedHeader,
         _block: &RecoveredBlock<BaseBlock>,
         _output: &BlockExecutionOutput<BaseReceipt>,
         _trie_updates: Option<(&TrieUpdates, B256)>,
@@ -67,7 +67,7 @@ impl fmt::Debug for InvalidBlockHooks {
 impl InvalidBlockHook for InvalidBlockHooks {
     fn on_invalid_block(
         &self,
-        parent_header: &SealedHeader<alloy_consensus::Header>,
+        parent_header: &SealedHeader,
         block: &RecoveredBlock<BaseBlock>,
         output: &BlockExecutionOutput<BaseReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,

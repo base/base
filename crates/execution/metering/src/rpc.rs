@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
@@ -40,9 +39,9 @@ impl<Provider> MeteringApiImpl<Provider>
 where
     Provider: StateProviderFactory
         + ChainSpecProvider
-        + BlockReaderIdExt<Header = Header>
+        + BlockReaderIdExt
         + BlockReader<Block = BaseBlock>
-        + HeaderProvider<Header = Header>
+        + HeaderProvider
         + Clone,
 {
     /// Creates a new instance of `MeteringApi`.
@@ -56,9 +55,9 @@ impl<Provider> MeteringApiServer for MeteringApiImpl<Provider>
 where
     Provider: StateProviderFactory
         + ChainSpecProvider
-        + BlockReaderIdExt<Header = Header>
+        + BlockReaderIdExt
         + BlockReader<Block = BaseBlock>
-        + HeaderProvider<Header = Header>
+        + HeaderProvider
         + Clone
         + Send
         + Sync
@@ -246,9 +245,9 @@ impl<Provider> MeteringApiImpl<Provider>
 where
     Provider: StateProviderFactory
         + ChainSpecProvider
-        + BlockReaderIdExt<Header = Header>
+        + BlockReaderIdExt
         + BlockReader<Block = BaseBlock>
-        + HeaderProvider<Header = Header>
+        + HeaderProvider
         + Clone
         + Send
         + Sync

@@ -64,7 +64,7 @@ pub struct MockEthProvider {
     ///local block store
     pub blocks: Arc<Mutex<B256Map<BaseBlock>>>,
     /// Local header store
-    pub headers: Arc<Mutex<B256Map<<BaseBlock as Block>::Header>>>,
+    pub headers: Arc<Mutex<B256Map<alloy_consensus::Header>>>,
     /// Local receipt store indexed by block number
     pub receipts: Arc<Mutex<HashMap<BlockNumber, Vec<BaseReceipt>>>>,
     /// Local account store
@@ -261,15 +261,12 @@ impl MockEthProvider {
     }
 
     /// Add header to local header store
-    pub fn add_header(&self, hash: B256, header: <BaseBlock as Block>::Header) {
+    pub fn add_header(&self, hash: B256, header: alloy_consensus::Header) {
         self.headers.lock().insert(hash, header);
     }
 
     /// Add multiple headers to local header store
-    pub fn extend_headers(
-        &self,
-        iter: impl IntoIterator<Item = (B256, <BaseBlock as Block>::Header)>,
-    ) {
+    pub fn extend_headers(&self, iter: impl IntoIterator<Item = (B256, alloy_consensus::Header)>) {
         for (hash, header) in iter {
             self.add_header(hash, header)
         }
@@ -508,14 +505,12 @@ impl DBProvider for MockEthProvider {
 }
 
 impl HeaderProvider for MockEthProvider {
-    type Header = <BaseBlock as Block>::Header;
-
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
+    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
         let lock = self.headers.lock();
         Ok(lock.get(&block_hash).cloned())
     }
 
-    fn header_by_number(&self, num: u64) -> ProviderResult<Option<Self::Header>> {
+    fn header_by_number(&self, num: u64) -> ProviderResult<Option<alloy_consensus::Header>> {
         let lock = self.headers.lock();
         Ok(lock.values().find(|h| h.number() == num).cloned())
     }
@@ -523,7 +518,7 @@ impl HeaderProvider for MockEthProvider {
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<Self::Header>> {
+    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
         let lock = self.headers.lock();
 
         let mut headers: Vec<_> =
@@ -533,18 +528,15 @@ impl HeaderProvider for MockEthProvider {
         Ok(headers)
     }
 
-    fn sealed_header(
-        &self,
-        number: BlockNumber,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn sealed_header(&self, number: BlockNumber) -> ProviderResult<Option<SealedHeader>> {
         Ok(self.header_by_number(number)?.map(SealedHeader::seal_slow))
     }
 
     fn sealed_headers_while(
         &self,
         range: impl RangeBounds<BlockNumber>,
-        mut predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
-    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+        mut predicate: impl FnMut(&SealedHeader) -> bool,
+    ) -> ProviderResult<Vec<SealedHeader>> {
         Ok(self
             .headers_range(range)?
             .into_iter()
@@ -906,14 +898,11 @@ impl BlockReaderIdExt for MockEthProvider {
         }
     }
 
-    fn sealed_header_by_id(
-        &self,
-        id: BlockId,
-    ) -> ProviderResult<Option<SealedHeader<<BaseBlock as Block>::Header>>> {
+    fn sealed_header_by_id(&self, id: BlockId) -> ProviderResult<Option<SealedHeader>> {
         self.header_by_id(id)?.map_or_else(|| Ok(None), |h| Ok(Some(SealedHeader::seal_slow(h))))
     }
 
-    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<<BaseBlock as Block>::Header>> {
+    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<alloy_consensus::Header>> {
         match self.block_by_id(id)? {
             None => Ok(None),
             Some(block) => Ok(Some(block.into_header())),

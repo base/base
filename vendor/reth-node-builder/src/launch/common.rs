@@ -57,7 +57,6 @@ use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
     node_config::NodeConfig,
-    primitives::BlockHeader,
     version::version_metadata,
 };
 use reth_node_ethstats::EthStatsService;
@@ -921,7 +920,7 @@ where
     /// necessary
     pub async fn max_block<C>(&self, client: C) -> eyre::Result<Option<BlockNumber>>
     where
-        C: HeadersClient<Header: BlockHeader>,
+        C: HeadersClient,
     {
         self.node_config().max_block(client, self.provider_factory().clone()).await
     }

@@ -138,7 +138,7 @@ impl BaseEvmConfig {
     /// Builds the context for the next block.
     pub fn context_for_next_block(
         &self,
-        parent: &SealedHeader<alloy_consensus::Header>,
+        parent: &SealedHeader,
         attributes: BaseNextBlockEnvAttributes,
     ) -> Result<BaseBlockExecutionCtx, EIP1559ParamError> {
         Ok(BaseBlockExecutionCtx {
@@ -294,7 +294,7 @@ impl BaseEvmConfig {
     pub fn create_block_builder<'a, DB, I>(
         &'a self,
         evm: EvmFor<&'a mut State<DB>, I>,
-        parent: &'a SealedHeader<alloy_consensus::Header>,
+        parent: &'a SealedHeader,
         ctx: <BaseExecutorFactory as BlockExecutorFactory>::ExecutionCtx<'a>,
     ) -> impl BlockBuilder<Executor = BlockExecutorForEvm<'a, DB, I>>
     where
@@ -342,7 +342,7 @@ impl BaseEvmConfig {
     pub fn builder_for_next_block<'a, DB: Database + 'a>(
         &'a self,
         db: &'a mut State<DB>,
-        parent: &'a SealedHeader<alloy_consensus::Header>,
+        parent: &'a SealedHeader,
         attributes: BaseNextBlockEnvAttributes,
     ) -> Result<impl BlockBuilder<Executor = BlockExecutorForEvm<'a, DB>>, EIP1559ParamError> {
         let evm_env = self.next_evm_env(parent, &attributes)?;

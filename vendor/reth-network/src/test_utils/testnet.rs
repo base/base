@@ -186,7 +186,7 @@ where
     C: ChainSpecProvider
         + StateProviderFactory
         + BlockReaderIdExt
-        + HeaderProvider<Header = alloy_consensus::Header>
+        + HeaderProvider
         + Clone
         + 'static,
     Pool: TransactionPool,
@@ -251,7 +251,7 @@ where
 
 impl<C, Pool> Testnet<C, Pool>
 where
-    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
         + HeaderProvider
         + BalProvider
         + StateProviderFactory
@@ -323,7 +323,7 @@ impl<C, Pool> fmt::Debug for Testnet<C, Pool> {
 
 impl<C, Pool> Future for Testnet<C, Pool>
 where
-    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
         + HeaderProvider
         + BalProvider
         + StateProviderFactory
@@ -589,7 +589,7 @@ where
 
 impl<C, Pool> Future for Peer<C, Pool>
 where
-    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt, Header = alloy_consensus::Header>
+    C: BlockReader<Block = BaseBlock, Receipt = BaseReceipt>
         + HeaderProvider
         + BalProvider
         + StateProviderFactory

@@ -48,7 +48,7 @@ pub const DEFAULT_BYTE_LEN_CHUNK_CHAIN_FILE: u64 = 1_000_000_000;
 #[derive(Debug, Clone)]
 pub struct FileClient<B: Block> {
     /// The buffered headers retrieved when fetching new bodies.
-    headers: HashMap<BlockNumber, B::Header>,
+    headers: HashMap<BlockNumber, alloy_consensus::Header>,
 
     /// A mapping between block hash and number.
     hash_to_number: HashMap<BlockHash, BlockNumber>,
@@ -155,7 +155,7 @@ impl<B: FullBlock> FileClient<B> {
 
     /// Clones and returns the highest header of this client has or `None` if empty. Seals header
     /// before returning.
-    pub fn tip_header(&self) -> Option<SealedHeader<B::Header>> {
+    pub fn tip_header(&self) -> Option<SealedHeader> {
         self.headers.get(&self.max_block()?).map(|h| SealedHeader::seal_slow(h.clone()))
     }
 
@@ -176,7 +176,7 @@ impl<B: FullBlock> FileClient<B> {
     }
 
     /// Use the provided headers as the file client's block body buffer.
-    pub fn with_headers(mut self, headers: HashMap<BlockNumber, B::Header>) -> Self {
+    pub fn with_headers(mut self, headers: HashMap<BlockNumber, alloy_consensus::Header>) -> Self {
         self.headers = headers;
         for (number, header) in &self.headers {
             self.hash_to_number.insert(header.hash_slow(), *number);
@@ -195,7 +195,7 @@ impl<B: FullBlock> FileClient<B> {
     }
 
     /// Returns an iterator over headers in the client.
-    pub fn headers_iter(&self) -> impl Iterator<Item = &B::Header> {
+    pub fn headers_iter(&self) -> impl Iterator<Item = &alloy_consensus::Header> {
         self.headers.values()
     }
 
@@ -216,13 +216,11 @@ impl<B: FullBlock> FileClient<B> {
 
 struct FileClientBuilder<B: Block> {
     pub consensus: Arc<dyn Consensus<B>>,
-    pub parent_header: Option<SealedHeader<B::Header>>,
+    pub parent_header: Option<SealedHeader>,
     pub skip_invalid_blocks: bool,
 }
 
-impl<B: FullBlock<Header: reth_primitives_traits::BlockHeader>> FromReader
-    for FileClientBuilder<B>
-{
+impl<B: FullBlock> FromReader for FileClientBuilder<B> {
     type Error = FileClientError;
     type Output = FileClient<B>;
 
@@ -338,8 +336,7 @@ impl<B: FullBlock<Header: reth_primitives_traits::BlockHeader>> FromReader
 }
 
 impl<B: FullBlock> HeadersClient for FileClient<B> {
-    type Header = B::Header;
-    type Output = HeadersFut<B::Header>;
+    type Output = HeadersFut;
 
     fn get_headers_with_priority(
         &self,
@@ -608,7 +605,7 @@ impl ChunkedFileReader {
     pub async fn next_chunk<B: FullBlock>(
         &mut self,
         consensus: Arc<dyn Consensus<B>>,
-        parent_header: Option<SealedHeader<B::Header>>,
+        parent_header: Option<SealedHeader>,
     ) -> Result<Option<FileClient<B>>, FileClientError> {
         self.next_chunk_with_invalid_block_handling(consensus, parent_header, false).await
     }
@@ -617,7 +614,7 @@ impl ChunkedFileReader {
     pub async fn next_chunk_with_invalid_block_handling<B: FullBlock>(
         &mut self,
         consensus: Arc<dyn Consensus<B>>,
-        parent_header: Option<SealedHeader<B::Header>>,
+        parent_header: Option<SealedHeader>,
         skip_invalid_blocks: bool,
     ) -> Result<Option<FileClient<B>>, FileClientError> {
         let Some(chunk_len) = self.read_next_chunk().await? else { return Ok(None) };

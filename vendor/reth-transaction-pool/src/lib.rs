@@ -401,11 +401,7 @@ where
 
 impl<Client, S> EthTransactionPool<Client, S>
 where
-    Client: ChainSpecProvider
-        + StateProviderFactory
-        + Clone
-        + BlockReaderIdExt<Header = alloy_consensus::Header>
-        + 'static,
+    Client: ChainSpecProvider + StateProviderFactory + Clone + BlockReaderIdExt + 'static,
     S: BlobStore,
 {
     /// Returns a new [`Pool`] that uses the default [`TransactionValidationTaskExecutor`] when

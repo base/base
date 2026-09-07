@@ -31,7 +31,7 @@ use reth_ethereum_forks::{
     ForkCondition, ForkFilter, ForkFilterKey, ForkHash, ForkId, Hardfork, Hardforks, Head,
 };
 use reth_network_peers::{NodeRecord, holesky_nodes, hoodi_nodes, mainnet_nodes, sepolia_nodes};
-use reth_primitives_traits::{BlockHeader, SealedHeader, sync::LazyLock};
+use reth_primitives_traits::{SealedHeader, sync::LazyLock};
 
 use crate::{
     constants::{MAINNET_DEPOSIT_CONTRACT, MAINNET_PRUNE_DELETE_LIMIT},
@@ -397,7 +397,7 @@ impl From<ForkBaseFeeParams> for BaseFeeParamsKind {
 #[derive(Clone, Debug, PartialEq, Eq, From)]
 pub struct ForkBaseFeeParams(Vec<(Box<dyn Hardfork>, BaseFeeParams)>);
 
-impl<H: BlockHeader> core::ops::Deref for ChainSpec<H> {
+impl core::ops::Deref for ChainSpec {
     type Target = ChainHardforks;
 
     fn deref(&self) -> &Self::Target {
@@ -413,7 +413,7 @@ impl<H: BlockHeader> core::ops::Deref for ChainSpec<H> {
 /// - The genesis block of the chain ([`Genesis`])
 /// - What hardforks are activated, and under which conditions
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChainSpec<H: BlockHeader = Header> {
+pub struct ChainSpec {
     /// The chain ID
     pub chain: Chain,
 
@@ -421,7 +421,7 @@ pub struct ChainSpec<H: BlockHeader = Header> {
     pub genesis: Genesis,
 
     /// The header corresponding to the genesis block.
-    pub genesis_header: SealedHeader<H>,
+    pub genesis_header: SealedHeader,
 
     /// The block at which [`EthereumHardfork::Paris`] was activated and the final difficulty at
     /// this block.
@@ -443,7 +443,7 @@ pub struct ChainSpec<H: BlockHeader = Header> {
     pub blob_params: BlobScheduleBlobParams,
 }
 
-impl<H: BlockHeader> Default for ChainSpec<H> {
+impl Default for ChainSpec {
     fn default() -> Self {
         Self {
             chain: Default::default(),
@@ -483,7 +483,7 @@ impl ChainSpec {
     }
 }
 
-impl<H: BlockHeader> ChainSpec<H> {
+impl ChainSpec {
     /// Get information about the chain itself
     pub const fn chain(&self) -> Chain {
         self.chain
@@ -515,12 +515,12 @@ impl<H: BlockHeader> ChainSpec<H> {
     }
 
     /// Get the header for the genesis block.
-    pub fn genesis_header(&self) -> &H {
+    pub fn genesis_header(&self) -> &Header {
         &self.genesis_header
     }
 
     /// Get the sealed header for the genesis block.
-    pub fn sealed_genesis_header(&self) -> SealedHeader<H> {
+    pub fn sealed_genesis_header(&self) -> SealedHeader {
         SealedHeader::new(self.genesis_header().clone(), self.genesis_hash())
     }
 
@@ -790,32 +790,6 @@ impl<H: BlockHeader> ChainSpec<H> {
             _ => None,
         }
     }
-
-    /// Convert header to another type.
-    pub fn map_header<NewH: BlockHeader>(self, f: impl FnOnce(H) -> NewH) -> ChainSpec<NewH> {
-        let Self {
-            chain,
-            genesis,
-            genesis_header,
-            paris_block_and_final_difficulty,
-            hardforks,
-            deposit_contract,
-            base_fee_params,
-            prune_delete_limit,
-            blob_params,
-        } = self;
-        ChainSpec {
-            chain,
-            genesis,
-            genesis_header: SealedHeader::new_unhashed(f(genesis_header.into_header())),
-            paris_block_and_final_difficulty,
-            hardforks,
-            deposit_contract,
-            base_fee_params,
-            prune_delete_limit,
-            blob_params,
-        }
-    }
 }
 
 impl From<Genesis> for ChainSpec {
@@ -947,7 +921,7 @@ impl From<Genesis> for ChainSpec {
     }
 }
 
-impl<H: BlockHeader> Hardforks for ChainSpec<H> {
+impl Hardforks for ChainSpec {
     fn fork<HF: Hardfork>(&self, fork: HF) -> ForkCondition {
         self.hardforks.fork(fork)
     }
@@ -969,7 +943,7 @@ impl<H: BlockHeader> Hardforks for ChainSpec<H> {
     }
 }
 
-impl<H: BlockHeader> EthereumHardforks for ChainSpec<H> {
+impl EthereumHardforks for ChainSpec {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
         self.fork(fork)
     }
@@ -1247,7 +1221,7 @@ impl From<&Arc<ChainSpec>> for ChainSpecBuilder {
     }
 }
 
-impl<H: BlockHeader> EthExecutorSpec for ChainSpec<H> {
+impl EthExecutorSpec for ChainSpec {
     fn deposit_contract_address(&self) -> Option<Address> {
         self.deposit_contract.map(|deposit_contract| deposit_contract.address)
     }

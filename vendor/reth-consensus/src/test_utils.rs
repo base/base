@@ -66,7 +66,7 @@ impl<B: Block> Consensus<B> for TestConsensus {
     fn validate_body_against_header(
         &self,
         _body: &B::Body,
-        _header: &SealedHeader<B::Header>,
+        _header: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         if self.fail_body_against_header() { Err(ConsensusError::BaseFeeMissing) } else { Ok(()) }
     }
@@ -76,15 +76,15 @@ impl<B: Block> Consensus<B> for TestConsensus {
     }
 }
 
-impl<H> HeaderValidator<H> for TestConsensus {
-    fn validate_header(&self, _header: &SealedHeader<H>) -> Result<(), ConsensusError> {
+impl HeaderValidator for TestConsensus {
+    fn validate_header(&self, _header: &SealedHeader) -> Result<(), ConsensusError> {
         if self.fail_validation() { Err(ConsensusError::BaseFeeMissing) } else { Ok(()) }
     }
 
     fn validate_header_against_parent(
         &self,
-        _header: &SealedHeader<H>,
-        _parent: &SealedHeader<H>,
+        _header: &SealedHeader,
+        _parent: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         if self.fail_validation() { Err(ConsensusError::BaseFeeMissing) } else { Ok(()) }
     }

@@ -60,7 +60,6 @@ pub trait BlockReader:
     /// The block type this provider reads.
     type Block: reth_primitives_traits::Block<
             Body: reth_primitives_traits::BlockBody<Transaction = Self::Transaction>,
-            Header = Self::Header,
         >;
 
     /// Tries to find in the given block source.
@@ -326,7 +325,7 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
     ///
     /// Note: This returns a [`SealedHeader`] because it's expected that this is sealed by the
     /// provider and the caller does not know the hash.
-    fn pending_header(&self) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn pending_header(&self) -> ProviderResult<Option<SealedHeader>> {
         self.sealed_header_by_id(BlockNumberOrTag::Pending.into())
     }
 
@@ -334,7 +333,7 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
     ///
     /// Note: This returns a [`SealedHeader`] because it's expected that this is sealed by the
     /// provider and the caller does not know the hash.
-    fn latest_header(&self) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn latest_header(&self) -> ProviderResult<Option<SealedHeader>> {
         self.sealed_header_by_id(BlockNumberOrTag::Latest.into())
     }
 
@@ -342,7 +341,7 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
     ///
     /// Note: This returns a [`SealedHeader`] because it's expected that this is sealed by the
     /// provider and the caller does not know the hash.
-    fn safe_header(&self) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn safe_header(&self) -> ProviderResult<Option<SealedHeader>> {
         self.sealed_header_by_id(BlockNumberOrTag::Safe.into())
     }
 
@@ -350,7 +349,7 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
     ///
     /// Note: This returns a [`SealedHeader`] because it's expected that this is sealed by the
     /// provider and the caller does not know the hash.
-    fn finalized_header(&self) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn finalized_header(&self) -> ProviderResult<Option<SealedHeader>> {
         self.sealed_header_by_id(BlockNumberOrTag::Finalized.into())
     }
 
@@ -383,7 +382,7 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
     fn header_by_number_or_tag(
         &self,
         id: BlockNumberOrTag,
-    ) -> ProviderResult<Option<Self::Header>> {
+    ) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.convert_block_number(id)?
             .map_or_else(|| Ok(None), |num| self.header_by_hash_or_number(num.into()))
     }
@@ -394,7 +393,7 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
     fn sealed_header_by_number_or_tag(
         &self,
         id: BlockNumberOrTag,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    ) -> ProviderResult<Option<SealedHeader>> {
         self.convert_block_number(id)?
             .map_or_else(|| Ok(None), |num| self.header_by_hash_or_number(num.into()))?
             .map_or_else(|| Ok(None), |h| Ok(Some(SealedHeader::seal_slow(h))))
@@ -403,15 +402,12 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
     /// Returns the sealed header with the matching `BlockId` from the database.
     ///
     /// Returns `None` if header is not found.
-    fn sealed_header_by_id(
-        &self,
-        id: BlockId,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>>;
+    fn sealed_header_by_id(&self, id: BlockId) -> ProviderResult<Option<SealedHeader>>;
 
     /// Returns the header with the matching `BlockId` from the database.
     ///
     /// Returns `None` if header is not found.
-    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<Self::Header>>;
+    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<alloy_consensus::Header>>;
 }
 
 /// Functionality to read the last known chain blocks from the database.

@@ -105,11 +105,7 @@ pub fn maintain_transaction_pool_future<Client, P, St>(
     config: MaintainPoolConfig,
 ) -> BoxFuture<'static, ()>
 where
-    Client: StateProviderFactory
-        + BlockReaderIdExt<Header = alloy_consensus::Header>
-        + ChainSpecProvider
-        + Clone
-        + 'static,
+    Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + 'static,
     P: TransactionPoolExt<
             Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
             Block = BaseBlock,
@@ -132,11 +128,7 @@ pub async fn maintain_transaction_pool<Client, P, St>(
     task_spawner: Runtime,
     config: MaintainPoolConfig,
 ) where
-    Client: StateProviderFactory
-        + BlockReaderIdExt<Header = alloy_consensus::Header>
-        + ChainSpecProvider
-        + Clone
-        + 'static,
+    Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + 'static,
     P: TransactionPoolExt<
             Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
             Block = BaseBlock,

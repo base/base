@@ -2,7 +2,7 @@
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
-use alloy_consensus::{BlockHeader, Header};
+use alloy_consensus::BlockHeader;
 use alloy_eip7928::{BlockAccessList, compute_block_access_list_hash};
 use alloy_eips::eip2718::WithEncoded;
 pub use alloy_evm::block::{BlockExecutor, BlockExecutorFactory, GasOutput};
@@ -191,7 +191,7 @@ pub trait Executor<DB: Database>: Sized {
 /// ```
 #[derive(derive_more::Debug)]
 #[non_exhaustive]
-pub struct BlockAssemblerInput<'a, 'b, F: BlockExecutorFactory, H = Header> {
+pub struct BlockAssemblerInput<'a, 'b, F: BlockExecutorFactory> {
     /// Configuration of EVM used when executing the block.
     ///
     /// Contains context relevant to EVM such as [`revm::context::BlockEnv`].
@@ -200,7 +200,7 @@ pub struct BlockAssemblerInput<'a, 'b, F: BlockExecutorFactory, H = Header> {
     /// [`BlockExecutorFactory::ExecutionCtx`] used to execute the block.
     pub execution_ctx: F::ExecutionCtx<'a>,
     /// Parent block header.
-    pub parent: &'a SealedHeader<H>,
+    pub parent: &'a SealedHeader,
     /// Transactions that were executed in this block.
     pub transactions: Vec<F::Transaction>,
     /// Output of block execution.
@@ -216,7 +216,7 @@ pub struct BlockAssemblerInput<'a, 'b, F: BlockExecutorFactory, H = Header> {
     pub block_access_list_hash: Option<B256>,
 }
 
-impl<'a, 'b, F: BlockExecutorFactory, H> BlockAssemblerInput<'a, 'b, F, H> {
+impl<'a, 'b, F: BlockExecutorFactory> BlockAssemblerInput<'a, 'b, F> {
     /// Creates a new [`BlockAssemblerInput`].
     #[expect(clippy::too_many_arguments)]
     pub fn new(
@@ -225,7 +225,7 @@ impl<'a, 'b, F: BlockExecutorFactory, H> BlockAssemblerInput<'a, 'b, F, H> {
             <F::EvmFactory as EvmFactory>::BlockEnv,
         >,
         execution_ctx: F::ExecutionCtx<'a>,
-        parent: &'a SealedHeader<H>,
+        parent: &'a SealedHeader,
         transactions: Vec<F::Transaction>,
         output: &'b BlockExecutionResult<F::Receipt>,
         bundle_state: &'a BundleState,
@@ -297,7 +297,7 @@ pub trait BlockAssembler<F: BlockExecutorFactory> {
     /// Builds a block. see [`BlockAssemblerInput`] documentation for more details.
     fn assemble_block(
         &self,
-        input: BlockAssemblerInput<'_, '_, F, <Self::Block as Block>::Header>,
+        input: BlockAssemblerInput<'_, '_, F>,
     ) -> Result<Self::Block, BlockExecutionError>;
 }
 
@@ -404,7 +404,7 @@ where
     /// The parent block execution context.
     pub ctx: F::ExecutionCtx<'a>,
     /// The sealed parent block header.
-    pub parent: &'a SealedHeader<alloy_consensus::Header>,
+    pub parent: &'a SealedHeader,
     /// The assembler used to build the block.
     pub assembler: Builder,
 }

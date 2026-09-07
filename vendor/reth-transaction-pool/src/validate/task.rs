@@ -126,7 +126,7 @@ impl TransactionValidationTaskExecutor<()> {
         evm_config: BaseEvmConfig,
     ) -> EthTransactionValidatorBuilder<Client>
     where
-        Client: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header>,
+        Client: ChainSpecProvider + BlockReaderIdExt,
     {
         EthTransactionValidatorBuilder::new(client, evm_config)
     }
@@ -162,7 +162,7 @@ impl<Client, Tx> TransactionValidationTaskExecutor<EthTransactionValidator<Clien
         tasks: Runtime,
     ) -> Self
     where
-        Client: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header>,
+        Client: ChainSpecProvider + BlockReaderIdExt,
     {
         Self::eth_with_additional_tasks(client, evm_config, blob_store, tasks, 0)
     }
@@ -184,7 +184,7 @@ impl<Client, Tx> TransactionValidationTaskExecutor<EthTransactionValidator<Clien
         num_additional_tasks: usize,
     ) -> Self
     where
-        Client: ChainSpecProvider + BlockReaderIdExt<Header = alloy_consensus::Header>,
+        Client: ChainSpecProvider + BlockReaderIdExt,
     {
         EthTransactionValidatorBuilder::new(client, evm_config)
             .with_additional_tasks(num_additional_tasks)

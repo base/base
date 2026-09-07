@@ -1,13 +1,13 @@
 //! Inherent chain specification accessors.
 
+use alloy_consensus::BlockHeader;
 use alloy_eips::{calc_next_block_base_fee, eip7840::BlobParams};
 use alloy_primitives::U256;
 use reth_ethereum_forks::EthereumHardforks;
-use reth_primitives_traits::BlockHeader;
 
 use crate::{ChainSpec, DepositContract};
 
-impl<H: BlockHeader> ChainSpec<H> {
+impl ChainSpec {
     /// Get the [`BlobParams`] for the given timestamp
     pub fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
         if let Some(blob_param) = self.blob_params.active_scheduled_params_at_timestamp(timestamp) {
@@ -49,7 +49,11 @@ impl<H: BlockHeader> ChainSpec<H> {
     }
 
     /// See [`calc_next_block_base_fee`].
-    pub fn next_block_base_fee(&self, parent: &H, target_timestamp: u64) -> Option<u64> {
+    pub fn next_block_base_fee(
+        &self,
+        parent: &alloy_consensus::Header,
+        target_timestamp: u64,
+    ) -> Option<u64> {
         Some(calc_next_block_base_fee(
             parent.gas_used(),
             parent.gas_limit(),

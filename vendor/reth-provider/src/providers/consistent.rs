@@ -464,9 +464,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StaticFileProvide
 impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
     for ConsistentProvider<DB>
 {
-    type Header = alloy_consensus::Header;
-
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
+    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.get_in_memory_or_storage_by_block(
             block_hash.into(),
             |db_provider| db_provider.header(block_hash),
@@ -474,7 +472,10 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
         )
     }
 
-    fn header_by_number(&self, num: BlockNumber) -> ProviderResult<Option<Self::Header>> {
+    fn header_by_number(
+        &self,
+        num: BlockNumber,
+    ) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.get_in_memory_or_storage_by_block(
             num.into(),
             |db_provider| db_provider.header_by_number(num),
@@ -485,7 +486,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<Self::Header>> {
+    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
         self.get_in_memory_or_storage_by_block_range_while(
             range,
             |db_provider, range, _| db_provider.headers_range(range),
@@ -494,10 +495,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
         )
     }
 
-    fn sealed_header(
-        &self,
-        number: BlockNumber,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn sealed_header(&self, number: BlockNumber) -> ProviderResult<Option<SealedHeader>> {
         self.get_in_memory_or_storage_by_block(
             number.into(),
             |db_provider| db_provider.sealed_header(number),
@@ -508,7 +506,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
     fn sealed_headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+    ) -> ProviderResult<Vec<SealedHeader>> {
         self.get_in_memory_or_storage_by_block_range_while(
             range,
             |db_provider, range, _| db_provider.sealed_headers_range(range),
@@ -520,8 +518,8 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
     fn sealed_headers_while(
         &self,
         range: impl RangeBounds<BlockNumber>,
-        predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
-    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+        predicate: impl FnMut(&SealedHeader) -> bool,
+    ) -> ProviderResult<Vec<SealedHeader>> {
         self.get_in_memory_or_storage_by_block_range_while(
             range,
             |db_provider, range, predicate| db_provider.sealed_headers_while(range, predicate),
@@ -1127,7 +1125,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReaderIdExt
     fn sealed_header_by_number_or_tag(
         &self,
         id: BlockNumberOrTag,
-    ) -> ProviderResult<Option<SealedHeader<alloy_consensus::Header>>> {
+    ) -> ProviderResult<Option<SealedHeader>> {
         match id {
             BlockNumberOrTag::Latest => {
                 Ok(Some(self.canonical_in_memory_state.get_canonical_head()))
@@ -1146,10 +1144,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReaderIdExt
         }
     }
 
-    fn sealed_header_by_id(
-        &self,
-        id: BlockId,
-    ) -> ProviderResult<Option<SealedHeader<alloy_consensus::Header>>> {
+    fn sealed_header_by_id(&self, id: BlockId) -> ProviderResult<Option<SealedHeader>> {
         Ok(match id {
             BlockId::Number(num) => self.sealed_header_by_number_or_tag(num)?,
             BlockId::Hash(hash) => self

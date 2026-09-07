@@ -1,10 +1,11 @@
 use std::fmt::Debug;
 
+use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockHashOrNumber, eip1898::BlockWithParent};
-use alloy_primitives::{B256, Sealable};
+use alloy_primitives::B256;
 use futures::Stream;
 use reth_consensus::HeaderValidator;
-use reth_primitives_traits::{BlockHeader, Header, SealedHeader};
+use reth_primitives_traits::SealedHeader;
 
 use super::error::HeadersDownloaderResult;
 use crate::error::{DownloadError, DownloadResult};
@@ -17,25 +18,21 @@ use crate::error::{DownloadError, DownloadResult};
 ///
 /// A [`HeaderDownloader`] is a [Stream] that returns batches of headers.
 pub trait HeaderDownloader:
-    Send
-    + Sync
-    + Stream<Item = HeadersDownloaderResult<Vec<SealedHeader<Self::Header>>, Self::Header>>
-    + Unpin
+    Send + Sync + Stream<Item = HeadersDownloaderResult<Vec<SealedHeader>>> + Unpin
 {
     /// The header type being downloaded.
-    type Header: Sealable + Debug + Send + Sync + Unpin + 'static;
 
     /// Updates the gap to sync which ranges from local head to the sync target.
     ///
     /// See also [`HeaderDownloader::update_sync_target`] and
     /// [`HeaderDownloader::update_local_head`]
-    fn update_sync_gap(&mut self, head: SealedHeader<Self::Header>, target: SyncTarget) {
+    fn update_sync_gap(&mut self, head: SealedHeader, target: SyncTarget) {
         self.update_local_head(head);
         self.update_sync_target(target);
     }
 
     /// Updates the block number of the local database
-    fn update_local_head(&mut self, head: SealedHeader<Self::Header>);
+    fn update_local_head(&mut self, head: SealedHeader);
 
     /// Updates the target we want to sync to.
     fn update_sync_target(&mut self, target: SyncTarget);
@@ -83,15 +80,15 @@ impl SyncTarget {
 
 /// Represents a gap to sync: from `local_head` to `target`
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HeaderSyncGap<H: Sealable = Header> {
+pub struct HeaderSyncGap {
     /// The local head block. Represents lower bound of sync range.
-    pub local_head: SealedHeader<H>,
+    pub local_head: SealedHeader,
 
     /// The sync target. Represents upper bound of sync range.
     pub target: SyncTarget,
 }
 
-impl<H: BlockHeader + Sealable> HeaderSyncGap<H> {
+impl HeaderSyncGap {
     /// Returns `true` if the gap from the head to the target was closed
     #[inline]
     pub fn is_closed(&self) -> bool {
@@ -103,10 +100,10 @@ impl<H: BlockHeader + Sealable> HeaderSyncGap<H> {
 }
 
 /// Validate whether the header is valid in relation to its parent.
-pub fn validate_header_download<H: BlockHeader>(
-    consensus: &dyn HeaderValidator<H>,
-    header: &SealedHeader<H>,
-    parent: &SealedHeader<H>,
+pub fn validate_header_download(
+    consensus: &dyn HeaderValidator,
+    header: &SealedHeader,
+    parent: &SealedHeader,
 ) -> DownloadResult<()> {
     // validate header against parent
     consensus.validate_header_against_parent(header, parent).map_err(|error| {

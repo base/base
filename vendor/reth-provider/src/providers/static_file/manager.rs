@@ -2562,13 +2562,11 @@ impl StaticFileProvider {
 }
 
 impl HeaderProvider for StaticFileProvider {
-    type Header = alloy_consensus::Header;
-
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
+    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.find_static_file(StaticFileSegment::Headers, |jar_provider| {
             Ok(jar_provider
                 .cursor()?
-                .get_two::<HeaderWithHashMask<Self::Header>>((&block_hash).into())?
+                .get_two::<HeaderWithHashMask<alloy_consensus::Header>>((&block_hash).into())?
                 .and_then(|(header, hash)| {
                     if hash == block_hash {
                         return Some(header);
@@ -2578,7 +2576,10 @@ impl HeaderProvider for StaticFileProvider {
         })
     }
 
-    fn header_by_number(&self, num: BlockNumber) -> ProviderResult<Option<Self::Header>> {
+    fn header_by_number(
+        &self,
+        num: BlockNumber,
+    ) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.get_segment_provider_for_block(StaticFileSegment::Headers, num, None)
             .and_then(|provider| provider.header_by_number(num))
             .or_else(|err| {
@@ -2593,19 +2594,16 @@ impl HeaderProvider for StaticFileProvider {
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<Self::Header>> {
+    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
         self.fetch_range_with_predicate(
             StaticFileSegment::Headers,
             to_range(range),
-            |cursor, number| cursor.get_one::<HeaderMask<Self::Header>>(number.into()),
+            |cursor, number| cursor.get_one::<HeaderMask<alloy_consensus::Header>>(number.into()),
             |_| true,
         )
     }
 
-    fn sealed_header(
-        &self,
-        num: BlockNumber,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn sealed_header(&self, num: BlockNumber) -> ProviderResult<Option<SealedHeader>> {
         self.get_segment_provider_for_block(StaticFileSegment::Headers, num, None)
             .and_then(|provider| provider.sealed_header(num))
             .or_else(|err| {
@@ -2620,14 +2618,14 @@ impl HeaderProvider for StaticFileProvider {
     fn sealed_headers_while(
         &self,
         range: impl RangeBounds<BlockNumber>,
-        predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
-    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+        predicate: impl FnMut(&SealedHeader) -> bool,
+    ) -> ProviderResult<Vec<SealedHeader>> {
         self.fetch_range_with_predicate(
             StaticFileSegment::Headers,
             to_range(range),
             |cursor, number| {
                 Ok(cursor
-                    .get_two::<HeaderWithHashMask<Self::Header>>(number.into())?
+                    .get_two::<HeaderWithHashMask<alloy_consensus::Header>>(number.into())?
                     .map(|(header, hash)| SealedHeader::new(header, hash)))
             },
             predicate,

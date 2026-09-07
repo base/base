@@ -454,9 +454,9 @@ where
 
 /// Check that the computed state root matches the root in the expected header.
 #[inline]
-fn validate_state_root<H: BlockHeader + Sealable + Debug>(
+fn validate_state_root(
     got: B256,
-    expected: SealedHeader<H>,
+    expected: SealedHeader,
     target_block: BlockNumber,
 ) -> Result<(), StageError> {
     if got == expected.state_root() {

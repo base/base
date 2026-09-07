@@ -287,7 +287,7 @@ pub fn validate_header_extra_data<H: BlockHeader>(
 #[inline]
 pub fn validate_against_parent_hash_number<H: BlockHeader>(
     header: &H,
-    parent: &SealedHeader<H>,
+    parent: &SealedHeader,
 ) -> Result<(), ConsensusError> {
     if parent.hash() != header.parent_hash() {
         return Err(ConsensusError::ParentHashMismatch(
@@ -366,8 +366,8 @@ pub fn validate_against_parent_timestamp<H: BlockHeader>(
 /// parent's gas limit divided by the [`GAS_LIMIT_BOUND_DIVISOR`].
 #[inline]
 pub fn validate_against_parent_gas_limit<H: BlockHeader>(
-    header: &SealedHeader<H>,
-    parent: &SealedHeader<H>,
+    header: &SealedHeader,
+    parent: &SealedHeader,
     chain_spec: &BaseChainSpec,
 ) -> Result<(), ConsensusError> {
     // Determine the parent gas limit, considering elasticity multiplier on the London fork.

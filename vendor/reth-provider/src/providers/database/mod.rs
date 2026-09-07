@@ -654,7 +654,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderSyncGapProv
     fn local_tip_header(
         &self,
         highest_uninterrupted_block: BlockNumber,
-    ) -> ProviderResult<SealedHeader<Self::Header>> {
+    ) -> ProviderResult<SealedHeader> {
         self.provider()?.local_tip_header(highest_uninterrupted_block)
     }
 }
@@ -662,42 +662,40 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderSyncGapProv
 impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
     for ProviderFactory<DB>
 {
-    type Header = alloy_consensus::Header;
-
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
+    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.provider()?.header(block_hash)
     }
 
-    fn header_by_number(&self, num: BlockNumber) -> ProviderResult<Option<Self::Header>> {
+    fn header_by_number(
+        &self,
+        num: BlockNumber,
+    ) -> ProviderResult<Option<alloy_consensus::Header>> {
         self.caught_up_static_file_provider()?.header_by_number(num)
     }
 
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<Self::Header>> {
+    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
         self.caught_up_static_file_provider()?.headers_range(range)
     }
 
-    fn sealed_header(
-        &self,
-        number: BlockNumber,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+    fn sealed_header(&self, number: BlockNumber) -> ProviderResult<Option<SealedHeader>> {
         self.caught_up_static_file_provider()?.sealed_header(number)
     }
 
     fn sealed_headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+    ) -> ProviderResult<Vec<SealedHeader>> {
         self.caught_up_static_file_provider()?.sealed_headers_range(range)
     }
 
     fn sealed_headers_while(
         &self,
         range: impl RangeBounds<BlockNumber>,
-        predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
-    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+        predicate: impl FnMut(&SealedHeader) -> bool,
+    ) -> ProviderResult<Vec<SealedHeader>> {
         self.caught_up_static_file_provider()?.sealed_headers_while(range, predicate)
     }
 }

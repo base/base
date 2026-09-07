@@ -159,7 +159,7 @@ pub trait PayloadValidator: Send + Sync + Unpin + 'static {
         &self,
         _state_updates: impl FnOnce() -> &'a HashedPostState,
         _block: &RecoveredBlock<Self::Block>,
-        _parent_header: &SealedHeader<<Self::Block as Block>::Header>,
+        _parent_header: &SealedHeader,
         _parent_state: impl FnOnce() -> ProviderResult<StateProviderBox>,
     ) -> Result<(), InsertBlockErrorKind>
     where
@@ -186,7 +186,7 @@ pub trait PayloadValidator: Send + Sync + Unpin + 'static {
     fn validate_payload_attributes_against_header(
         &self,
         attr: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        header: &<Self::Block as Block>::Header,
+        header: &alloy_consensus::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         if attr.timestamp() <= header.timestamp() {
             return Err(InvalidPayloadAttributesError::InvalidTimestamp);

@@ -199,7 +199,7 @@ where
     consensus: Arc<dyn Consensus<Client::Block>>,
     hash: B256,
     request: FullBlockRequest<Client>,
-    header: Option<SealedHeader<Client::Header>>,
+    header: Option<SealedHeader>,
     body: Option<BodyResponse<Client::Body>>,
 }
 
@@ -272,7 +272,7 @@ where
 
 impl<Client> Future for FetchFullBlockFuture<Client>
 where
-    Client: BlockClient<Header: BlockHeader + Sealable> + 'static,
+    Client: BlockClient + 'static,
 {
     type Output = SealedBlock<Client::Block>;
 
@@ -358,7 +358,7 @@ where
 
 impl<Client> FetchFullBlockWithBalFuture<Client>
 where
-    Client: BlockClient<Header: BlockHeader> + BlockAccessListsClient,
+    Client: BlockClient + BlockAccessListsClient,
 {
     /// Returns the hash of the block being requested.
     pub const fn hash(&self) -> &B256 {
@@ -368,7 +368,7 @@ where
 
 impl<Client> FetchFullBlockWithBalFuture<Client>
 where
-    Client: BlockClient<Header: BlockHeader + Sealable> + BlockAccessListsClient + 'static,
+    Client: BlockClient + BlockAccessListsClient + 'static,
 {
     /// If the header request is already complete, this returns the block number.
     pub fn block_number(&self) -> Option<u64> {
@@ -445,7 +445,7 @@ where
 
 impl<Client> Future for FetchFullBlockWithBalFuture<Client>
 where
-    Client: BlockClient<Header: BlockHeader + Sealable> + BlockAccessListsClient + 'static,
+    Client: BlockClient + BlockAccessListsClient + 'static,
 {
     type Output = SealedBlockWithAccessList<Client::Block>;
 
@@ -470,7 +470,7 @@ where
 
 impl<Client> Debug for FetchFullBlockWithBalFuture<Client>
 where
-    Client: BlockClient<Header: BlockHeader> + BlockAccessListsClient,
+    Client: BlockClient + BlockAccessListsClient,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FetchFullBlockWithBalFuture")
@@ -513,8 +513,7 @@ where
 
 impl<Client> FetchFullBlockRangeWithBalFuture<Client>
 where
-    Client: BlockClient<Header: Debug + BlockHeader + Sealable + Clone + Hash + Eq>
-        + BlockAccessListsClient,
+    Client: BlockClient + BlockAccessListsClient,
 {
     /// Returns the block hash the requested range starts at (inclusive).
     pub const fn start_hash(&self) -> B256 {
@@ -586,9 +585,7 @@ where
 
 impl<Client> Future for FetchFullBlockRangeWithBalFuture<Client>
 where
-    Client: BlockClient<Header: Debug + BlockHeader + Sealable + Clone + Hash + Eq>
-        + BlockAccessListsClient
-        + 'static,
+    Client: BlockClient + BlockAccessListsClient + 'static,
 {
     type Output = Vec<SealedBlockWithAccessList<Client::Block>>;
 
@@ -627,7 +624,7 @@ enum OptionalBlockAccessListsState<Req> {
 
 impl<Client> Debug for FetchFullBlockFuture<Client>
 where
-    Client: BlockClient<Header: Debug, Body: Debug>,
+    Client: BlockClient<Body: Debug>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FetchFullBlockFuture")
@@ -650,7 +647,10 @@ impl<Client> FullBlockRequest<Client>
 where
     Client: BlockClient,
 {
-    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<ResponseResult<Client::Header, Client::Body>> {
+    fn poll(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<ResponseResult<alloy_consensus::Header, Client::Body>> {
         if let Some(fut) = Pin::new(&mut self.header).as_pin_mut()
             && let Poll::Ready(res) = fut.poll(cx)
         {
@@ -713,16 +713,16 @@ where
     /// Requests for headers and bodies that are in progress.
     request: FullBlockRangeRequest<Client>,
     /// Fetched headers.
-    headers: Option<Vec<SealedHeader<Client::Header>>>,
+    headers: Option<Vec<SealedHeader>>,
     /// The next headers to request bodies for. This is drained as responses are received.
-    pending_headers: VecDeque<SealedHeader<Client::Header>>,
+    pending_headers: VecDeque<SealedHeader>,
     /// The bodies that have been received so far.
-    bodies: HashMap<SealedHeader<Client::Header>, BodyResponse<Client::Body>>,
+    bodies: HashMap<SealedHeader, BodyResponse<Client::Body>>,
 }
 
 impl<Client> FetchFullBlockRangeFuture<Client>
 where
-    Client: BlockClient<Header: Debug + BlockHeader + Sealable + Clone + Hash + Eq>,
+    Client: BlockClient,
 {
     /// Returns whether or not the bodies map is fully populated with requested headers and bodies.
     fn is_bodies_complete(&self) -> bool {
@@ -816,7 +816,7 @@ where
         Some(valid_responses)
     }
 
-    fn on_headers_response(&mut self, headers: WithPeerId<Vec<Client::Header>>) {
+    fn on_headers_response(&mut self, headers: WithPeerId<Vec<alloy_consensus::Header>>) {
         let (peer, mut headers_falling) =
             headers.map(|h| h.into_iter().map(SealedHeader::seal_slow).collect::<Vec<_>>()).split();
 
@@ -874,7 +874,7 @@ where
 
 impl<Client> Future for FetchFullBlockRangeFuture<Client>
 where
-    Client: BlockClient<Header: Debug + BlockHeader + Sealable + Clone + Hash + Eq> + 'static,
+    Client: BlockClient + 'static,
 {
     type Output = Vec<SealedBlock<Client::Block>>;
 
@@ -986,7 +986,7 @@ where
     fn poll(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<RangeResponseResult<Client::Header, Client::Body>> {
+    ) -> Poll<RangeResponseResult<alloy_consensus::Header, Client::Body>> {
         if let Some(fut) = Pin::new(&mut self.headers).as_pin_mut()
             && let Poll::Ready(res) = fut.poll(cx)
         {
@@ -1066,10 +1066,9 @@ impl BodiesClient for NoopFullBlockClient {
 }
 
 impl HeadersClient for NoopFullBlockClient {
-    type Header = alloy_consensus::Header;
     /// The output type representing a future containing a peer request result with a vector of
     /// headers.
-    type Output = futures::future::Ready<PeerRequestResult<Vec<Self::Header>>>;
+    type Output = futures::future::Ready<PeerRequestResult<Vec<alloy_consensus::Header>>>;
 
     /// Retrieves headers with a specified priority level.
     ///
@@ -1558,7 +1557,6 @@ mod tests {
     }
 
     impl HeadersClient for FullBlockWithAccessListsClient {
-        type Header = <TestFullBlockClient as HeadersClient>::Header;
         type Output = <TestFullBlockClient as HeadersClient>::Output;
 
         fn get_headers_with_priority(
@@ -1680,7 +1678,6 @@ mod tests {
     }
 
     impl HeadersClient for FailingBodiesClient {
-        type Header = <TestFullBlockClient as HeadersClient>::Header;
         type Output = <TestFullBlockClient as HeadersClient>::Output;
 
         fn get_headers_with_priority(

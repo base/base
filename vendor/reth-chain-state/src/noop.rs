@@ -15,14 +15,12 @@ impl CanonStateSubscriptions for NoopProvider {
 }
 
 impl ForkChoiceSubscriptions for NoopProvider {
-    type Header = alloy_consensus::Header;
-
-    fn subscribe_safe_block(&self) -> ForkChoiceNotifications<alloy_consensus::Header> {
+    fn subscribe_safe_block(&self) -> ForkChoiceNotifications {
         let (_, rx) = watch::channel(None);
         ForkChoiceNotifications(rx)
     }
 
-    fn subscribe_finalized_block(&self) -> ForkChoiceNotifications<alloy_consensus::Header> {
+    fn subscribe_finalized_block(&self) -> ForkChoiceNotifications {
         let (_, rx) = watch::channel(None);
         ForkChoiceNotifications(rx)
     }

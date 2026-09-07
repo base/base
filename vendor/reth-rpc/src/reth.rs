@@ -191,7 +191,7 @@ where
         + StateProviderFactory
         + BlockReader<Block = BaseBlock>
         + CanonStateSubscriptions
-        + ForkChoiceSubscriptions<Header = alloy_consensus::Header>
+        + ForkChoiceSubscriptions
         + PersistedBlockSubscriptions
         + 'static,
 {
@@ -302,7 +302,7 @@ where
 async fn finalized_chain_notifications(
     sink: SubscriptionSink,
     mut canon_stream: reth_chain_state::CanonStateNotificationStream,
-    mut finalized_stream: reth_chain_state::ForkChoiceStream<SealedHeader<alloy_consensus::Header>>,
+    mut finalized_stream: reth_chain_state::ForkChoiceStream<SealedHeader>,
 ) {
     let mut buffered: Vec<CanonStateNotification> = Vec::new();
 

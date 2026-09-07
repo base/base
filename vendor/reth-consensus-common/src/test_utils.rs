@@ -12,7 +12,7 @@ use reth_chainspec::EthereumHardforks;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
-    Block, BlockHeader, GotExpected, RecoveredBlock, SealedBlock, SealedHeader,
+    Block, GotExpected, RecoveredBlock, SealedBlock, SealedHeader,
     receipt::gas_spent_by_transactions,
 };
 
@@ -36,11 +36,8 @@ impl TestConsensus {
     }
 }
 
-impl<H> HeaderValidator<H> for TestConsensus
-where
-    H: BlockHeader,
-{
-    fn validate_header(&self, header: &SealedHeader<H>) -> Result<(), ConsensusError> {
+impl HeaderValidator for TestConsensus {
+    fn validate_header(&self, header: &SealedHeader) -> Result<(), ConsensusError> {
         validate_header_extra_data(header.header(), 32)?;
         validate_header_gas(header.header())?;
         validate_header_base_fee(header.header(), &self.chain_spec)
@@ -48,8 +45,8 @@ where
 
     fn validate_header_against_parent(
         &self,
-        header: &SealedHeader<H>,
-        parent: &SealedHeader<H>,
+        header: &SealedHeader,
+        parent: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         validate_against_parent_hash_number(header.header(), parent)?;
         validate_against_parent_timestamp(header.header(), parent.header())
@@ -63,7 +60,7 @@ where
     fn validate_body_against_header(
         &self,
         body: &B::Body,
-        header: &SealedHeader<B::Header>,
+        header: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         validate_body_against_header(body, header.header())
     }

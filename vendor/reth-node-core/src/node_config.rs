@@ -342,7 +342,7 @@ impl NodeConfig {
     ) -> eyre::Result<Option<BlockNumber>>
     where
         Provider: HeaderProvider,
-        Client: HeadersClient<Header: reth_primitives_traits::BlockHeader>,
+        Client: HeadersClient,
     {
         let max_block = if let Some(block) = self.debug.max_block {
             Some(block)
@@ -397,7 +397,7 @@ impl NodeConfig {
     ) -> ProviderResult<u64>
     where
         Provider: HeaderProvider,
-        Client: HeadersClient<Header: reth_primitives_traits::BlockHeader>,
+        Client: HeadersClient,
     {
         let header = provider.header_by_hash_or_number(tip.into())?;
 
@@ -417,9 +417,9 @@ impl NodeConfig {
         &self,
         client: Client,
         tip: BlockHashOrNumber,
-    ) -> SealedHeader<Client::Header>
+    ) -> SealedHeader
     where
-        Client: HeadersClient<Header: reth_primitives_traits::BlockHeader>,
+        Client: HeadersClient,
     {
         info!(target: "reth::cli", ?tip, "Fetching tip block from the network.");
         let mut fetch_failures = 0;

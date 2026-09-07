@@ -35,11 +35,7 @@ use crate::{bodies::task::TaskDownloader, metrics::BodyDownloaderMetrics};
 /// All blocks in a batch are fetched at the same time.
 #[must_use = "Stream does nothing unless polled"]
 #[derive(Debug)]
-pub struct BodiesDownloader<
-    B: Block,
-    C: BodiesClient<Body = B::Body>,
-    Provider: HeaderProvider<Header = B::Header>,
-> {
+pub struct BodiesDownloader<B: Block, C: BodiesClient<Body = B::Body>, Provider: HeaderProvider> {
     /// The bodies client
     client: Arc<C>,
     /// The consensus client
@@ -74,10 +70,10 @@ impl<B, C, Provider> BodiesDownloader<B, C, Provider>
 where
     B: Block,
     C: BodiesClient<Body = B::Body> + 'static,
-    Provider: HeaderProvider<Header = B::Header> + Unpin + 'static,
+    Provider: HeaderProvider + Unpin + 'static,
 {
     /// Returns the next contiguous request.
-    fn next_headers_request(&self) -> DownloadResult<Option<Vec<SealedHeader<Provider::Header>>>> {
+    fn next_headers_request(&self) -> DownloadResult<Option<Vec<SealedHeader>>> {
         let start_at = match self.in_progress_queue.last_requested_block_number {
             Some(num) => num + 1,
             None => *self.download_range.start(),
@@ -102,7 +98,7 @@ where
         &self,
         range: RangeInclusive<BlockNumber>,
         max_non_empty: u64,
-    ) -> DownloadResult<Option<Vec<SealedHeader<B::Header>>>> {
+    ) -> DownloadResult<Option<Vec<SealedHeader>>> {
         if range.is_empty() || max_non_empty == 0 {
             return Ok(None);
         }
@@ -285,7 +281,7 @@ impl<B, C, Provider> BodiesDownloader<B, C, Provider>
 where
     B: Block + 'static,
     C: BodiesClient<Body = B::Body> + 'static,
-    Provider: HeaderProvider<Header = B::Header> + Unpin + 'static,
+    Provider: HeaderProvider + Unpin + 'static,
 {
     /// Convert the downloader into a [`TaskDownloader`] by spawning it via the given [`Runtime`].
     pub fn into_task_with(self, runtime: &Runtime) -> TaskDownloader<B> {
@@ -297,7 +293,7 @@ impl<B, C, Provider> BodyDownloader for BodiesDownloader<B, C, Provider>
 where
     B: Block + 'static,
     C: BodiesClient<Body = B::Body> + 'static,
-    Provider: HeaderProvider<Header = B::Header> + Unpin + 'static,
+    Provider: HeaderProvider + Unpin + 'static,
 {
     type Block = B;
 
@@ -356,7 +352,7 @@ impl<B, C, Provider> Stream for BodiesDownloader<B, C, Provider>
 where
     B: Block + 'static,
     C: BodiesClient<Body = B::Body> + 'static,
-    Provider: HeaderProvider<Header = B::Header> + Unpin + 'static,
+    Provider: HeaderProvider + Unpin + 'static,
 {
     type Item = BodyDownloaderResult<B>;
 
@@ -579,7 +575,7 @@ impl BodiesDownloaderBuilder {
     where
         B: Block,
         C: BodiesClient<Body = B::Body> + 'static,
-        Provider: HeaderProvider<Header = B::Header>,
+        Provider: HeaderProvider,
     {
         let Self {
             request_limit,

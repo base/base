@@ -23,7 +23,7 @@ use crate::{
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SealedBlock<B: Block> {
     /// Sealed Header.
-    header: SealedHeader<B::Header>,
+    header: SealedHeader,
     /// the block's body.
     body: B::Body,
 }
@@ -59,25 +59,29 @@ impl<B: Block> SealedBlock<B> {
     ///
     /// This calculates the header hash. To create a [`SealedBlock`] from its parts without
     /// calculating the hash upfront see [`SealedBlock::from_parts_unhashed`]
-    pub fn seal_parts(header: B::Header, body: B::Body) -> Self {
+    pub fn seal_parts(header: alloy_consensus::Header, body: B::Body) -> Self {
         Self::seal_slow(B::new(header, body))
     }
 
     /// Creates the [`SealedBlock`] from the block's parts without calculating the hash upfront.
     #[inline]
-    pub fn from_parts_unhashed(header: B::Header, body: B::Body) -> Self {
+    pub fn from_parts_unhashed(header: alloy_consensus::Header, body: B::Body) -> Self {
         Self::new_unhashed(B::new(header, body))
     }
 
     /// Creates the [`SealedBlock`] from the block's parts.
     #[inline]
-    pub fn from_parts_unchecked(header: B::Header, body: B::Body, hash: BlockHash) -> Self {
+    pub fn from_parts_unchecked(
+        header: alloy_consensus::Header,
+        body: B::Body,
+        hash: BlockHash,
+    ) -> Self {
         Self::new_unchecked(B::new(header, body), hash)
     }
 
     /// Creates the [`SealedBlock`] from the [`SealedHeader`] and the body.
     #[inline]
-    pub fn from_sealed_parts(header: SealedHeader<B::Header>, body: B::Body) -> Self {
+    pub fn from_sealed_parts(header: SealedHeader, body: B::Body) -> Self {
         let (header, hash) = header.split();
         Self::from_parts_unchecked(header, body, hash)
     }
@@ -179,7 +183,7 @@ impl<B: Block> SealedBlock<B> {
 
     /// Returns reference to block header.
     #[inline]
-    pub const fn header(&self) -> &B::Header {
+    pub const fn header(&self) -> &alloy_consensus::Header {
         self.header.header()
     }
 
@@ -215,30 +219,24 @@ impl<B: Block> SealedBlock<B> {
 
     /// Returns the Sealed header.
     #[inline]
-    pub const fn sealed_header(&self) -> &SealedHeader<B::Header> {
+    pub const fn sealed_header(&self) -> &SealedHeader {
         &self.header
     }
 
-    /// Returns the wrapped `SealedHeader<B::Header>` as `SealedHeader<&B::Header>`.
-    #[inline]
-    pub fn sealed_header_ref(&self) -> SealedHeader<&B::Header> {
-        SealedHeader::new(self.header(), self.hash())
-    }
-
     /// Clones the wrapped header and returns a [`SealedHeader`] sealed with the hash.
-    pub fn clone_sealed_header(&self) -> SealedHeader<B::Header> {
+    pub fn clone_sealed_header(&self) -> SealedHeader {
         self.header.clone()
     }
 
     /// Consumes the block and returns the sealed header.
     #[inline]
-    pub fn into_sealed_header(self) -> SealedHeader<B::Header> {
+    pub fn into_sealed_header(self) -> SealedHeader {
         self.header
     }
 
     /// Consumes the block and returns the header.
     #[inline]
-    pub fn into_header(self) -> B::Header {
+    pub fn into_header(self) -> alloy_consensus::Header {
         self.header.unseal()
     }
 
@@ -250,13 +248,13 @@ impl<B: Block> SealedBlock<B> {
 
     /// Splits the block into body and header into separate components
     #[inline]
-    pub fn split_header_body(self) -> (B::Header, B::Body) {
+    pub fn split_header_body(self) -> (alloy_consensus::Header, B::Body) {
         let header = self.header.unseal();
         (header, self.body)
     }
 
     /// Splits the block into body and header into separate components.
-    pub fn split_sealed_header_body(self) -> (SealedHeader<B::Header>, B::Body) {
+    pub fn split_sealed_header_body(self) -> (SealedHeader, B::Body) {
         (self.header, self.body)
     }
 
@@ -326,7 +324,7 @@ impl<B: Block> InMemorySize for SealedBlock<B> {
 }
 
 impl<B: Block> Deref for SealedBlock<B> {
-    type Target = B::Header;
+    type Target = alloy_consensus::Header;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -381,7 +379,7 @@ where
 impl<B: crate::test_utils::TestBlock> SealedBlock<B> {
     /// Returns a mutable reference to the header.
     #[inline]
-    pub const fn header_mut(&mut self) -> &mut B::Header {
+    pub const fn header_mut(&mut self) -> &mut alloy_consensus::Header {
         self.header.header_mut()
     }
 

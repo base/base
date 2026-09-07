@@ -19,7 +19,7 @@ pub fn ensure_well_formed_fields<T, B, H>(
 where
     T: Transaction + Typed2718,
     H: AlloyBlockHeader,
-    B: Block<Header = H, Body = BlockBody<T, H>>,
+    B: Block<Body = BlockBody<T, H>>,
 {
     ensure_well_formed_header_and_sidecar_fields(block, cancun_sidecar_fields, is_cancun_active)?;
     ensure_well_formed_transactions_field_with_sidecar(

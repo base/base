@@ -27,8 +27,8 @@ use reth_rpc_eth_types::{
     block::BlockAndReceipts, builder::config::PendingBlockKind,
 };
 use reth_storage_api::{
-    BlockReader, BlockReaderIdExt, ProviderHeader, ProviderTx, StateProviderBox,
-    StateProviderFactory, noop::NoopProvider,
+    BlockReader, BlockReaderIdExt, ProviderTx, StateProviderBox, StateProviderFactory,
+    noop::NoopProvider,
 };
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
@@ -143,7 +143,7 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
     /// [`Self::local_pending_block`] to avoid resolving the pending block environment twice.
     fn build_pool_pending_block(
         &self,
-        parent: SealedHeader<ProviderHeader<Self::Provider>>,
+        parent: SealedHeader,
         evm_env: EvmEnvFor,
     ) -> impl Future<Output = Result<Option<PendingBlock>, BaseEthApiError>> + Send
     where
@@ -226,10 +226,7 @@ pub trait LoadPendingBlock: EthApiTypes + RpcNodeCore {
     ///
     /// Withdrawals and any fork-specific behavior (such as EIP-4788 pre-block contract calls) are
     /// determined by the EVM environment and chain specification used during construction.
-    fn build_block(
-        &self,
-        parent: &SealedHeader<ProviderHeader<Self::Provider>>,
-    ) -> Result<ExecutedBlock, BaseEthApiError>
+    fn build_block(&self, parent: &SealedHeader) -> Result<ExecutedBlock, BaseEthApiError>
     where
         Self::Pool:
             TransactionPool<Transaction: PoolTransaction<Consensus = ProviderTx<Self::Provider>>>,
@@ -436,9 +433,7 @@ pub struct BasePendingEnv;
 
 impl BasePendingEnv {
     /// Derives pending block attributes from the parent header.
-    pub fn attributes(
-        parent: &SealedHeader<alloy_consensus::Header>,
-    ) -> BaseNextBlockEnvAttributes {
+    pub fn attributes(parent: &SealedHeader) -> BaseNextBlockEnvAttributes {
         BaseNextBlockEnvAttributes {
             timestamp: parent.timestamp().saturating_add(12),
             suggested_fee_recipient: parent.beneficiary(),

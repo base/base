@@ -1069,7 +1069,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
 
 fn init_v2_pipeline_provider_factory(
     chain_spec: Arc<reth_chainspec::ChainSpec>,
-) -> eyre::Result<(TestProviderFactory, reth_primitives_traits::SealedHeader<Header>)> {
+) -> eyre::Result<(TestProviderFactory, reth_primitives_traits::SealedHeader)> {
     let pipeline_provider_factory = create_test_provider_factory_with_chain_spec(chain_spec);
     init_genesis_with_settings(&pipeline_provider_factory, StorageSettings::v2())?;
     pipeline_provider_factory.set_storage_settings_cache(StorageSettings::v2());
@@ -1294,7 +1294,7 @@ fn build_pipeline_without_history<H, B>(
     tip: B256,
 ) -> Pipeline<reth_provider::test_utils::MockNodeDatabase>
 where
-    H: HeaderDownloader<Header = Header> + 'static,
+    H: HeaderDownloader + 'static,
     B: BodyDownloader<Block = Block> + 'static,
 {
     let consensus = NoopConsensus::arc();
@@ -1340,7 +1340,7 @@ where
 async fn run_pipeline_range(
     provider_factory: TestProviderFactory,
     file_client: Arc<FileClient<Block>>,
-    local_head: reth_primitives_traits::SealedHeader<Header>,
+    local_head: reth_primitives_traits::SealedHeader,
     download_range: std::ops::RangeInclusive<u64>,
     max_block: u64,
 ) -> eyre::Result<()> {

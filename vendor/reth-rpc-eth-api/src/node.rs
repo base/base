@@ -24,12 +24,8 @@ use reth_transaction_pool::{PoolTransaction, TransactionPool};
 /// Every type that is a [`FullNodeComponents`] also implements this trait.
 pub trait RpcNodeCore: Clone + Send + Sync + Unpin + 'static {
     /// The provider type used to interact with the node.
-    type Provider: BlockReaderIdExt<
-            Block = BaseBlock,
-            Receipt = BaseReceipt,
-            Header = alloy_consensus::Header,
-            Transaction = BaseTxEnvelope,
-        > + ChainSpecProvider
+    type Provider: BlockReaderIdExt<Block = BaseBlock, Receipt = BaseReceipt, Transaction = BaseTxEnvelope>
+        + ChainSpecProvider
         + StateProviderFactory
         + CanonStateSubscriptions
         + StageCheckpointReader
@@ -119,12 +115,8 @@ impl<Provider, Pool, Network> RpcNodeCoreAdapter<Provider, Pool, Network> {
 
 impl<Provider, Pool, Network> RpcNodeCore for RpcNodeCoreAdapter<Provider, Pool, Network>
 where
-    Provider: BlockReaderIdExt<
-            Block = BaseBlock,
-            Receipt = BaseReceipt,
-            Header = alloy_consensus::Header,
-            Transaction = BaseTxEnvelope,
-        > + ChainSpecProvider
+    Provider: BlockReaderIdExt<Block = BaseBlock, Receipt = BaseReceipt, Transaction = BaseTxEnvelope>
+        + ChainSpecProvider
         + StateProviderFactory
         + CanonStateSubscriptions
         + StageCheckpointReader

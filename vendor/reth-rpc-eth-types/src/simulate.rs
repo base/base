@@ -168,15 +168,12 @@ impl ToRpcError for EthSimulateError {
 ///   rounded up because block timestamps are second-granular;
 /// - enforces the global `max_simulate_blocks` cap on the total number of blocks (including
 ///   generated fillers).
-pub fn sanitize_chain<TxReq, H>(
+pub fn sanitize_chain<TxReq>(
     blocks: Vec<SimBlock<TxReq>>,
-    parent: &SealedHeader<H>,
+    parent: &SealedHeader,
     chain_id: u64,
     max_simulate_blocks: u64,
-) -> Result<Vec<SimBlock<TxReq>>, EthApiError>
-where
-    H: BlockHeader,
-{
+) -> Result<Vec<SimBlock<TxReq>>, EthApiError> {
     let timestamp_increment = Chain::from(chain_id)
         .average_blocktime_hint()
         .map(|d| d.as_secs().saturating_add(u64::from(d.subsec_nanos() > 0)))
@@ -635,7 +632,7 @@ mod tests {
         assert_eq!(err.message(), "block not found: 0x186a0");
     }
 
-    fn parent_at(number: u64, timestamp: u64) -> SealedHeader<Header> {
+    fn parent_at(number: u64, timestamp: u64) -> SealedHeader {
         SealedHeader::seal_slow(Header { number, timestamp, ..Default::default() })
     }
 

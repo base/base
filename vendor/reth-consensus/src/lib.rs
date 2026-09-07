@@ -39,7 +39,6 @@ use alloc::{
 };
 use core::{error::Error, fmt::Display};
 
-use alloy_consensus::Header;
 use alloy_eip7928::BlockAccessListGasError;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bloom};
 use base_common_consensus::{BaseBlock, BaseReceipt};
@@ -93,12 +92,12 @@ pub trait FullConsensus: Consensus<BaseBlock> {
 
 /// Consensus is a protocol that chooses canonical chain.
 #[auto_impl::auto_impl(&, Arc)]
-pub trait Consensus<B: Block>: HeaderValidator<B::Header> {
+pub trait Consensus<B: Block>: HeaderValidator {
     /// Ensures that body field values match the header.
     fn validate_body_against_header(
         &self,
         body: &B::Body,
-        header: &SealedHeader<B::Header>,
+        header: &SealedHeader,
     ) -> Result<(), ConsensusError>;
 
     /// Validate a block disregarding world state, i.e. things that can be checked before sender
@@ -144,11 +143,11 @@ pub trait Consensus<B: Block>: HeaderValidator<B::Header> {
 
 /// `HeaderValidator` is a protocol that validates headers and their relationships.
 #[auto_impl::auto_impl(&, Arc)]
-pub trait HeaderValidator<H = Header>: Debug + Send + Sync {
+pub trait HeaderValidator: Debug + Send + Sync {
     /// Validate if header is correct and follows consensus specification.
     ///
     /// This is called on standalone header to check if all hashes are correct.
-    fn validate_header(&self, header: &SealedHeader<H>) -> Result<(), ConsensusError>;
+    fn validate_header(&self, header: &SealedHeader) -> Result<(), ConsensusError>;
 
     /// Validate that the header information regarding parent are correct.
     /// This checks the block number, timestamp, basefee and gas limit increment.
@@ -162,8 +161,8 @@ pub trait HeaderValidator<H = Header>: Debug + Send + Sync {
     /// validations.
     fn validate_header_against_parent(
         &self,
-        header: &SealedHeader<H>,
-        parent: &SealedHeader<H>,
+        header: &SealedHeader,
+        parent: &SealedHeader,
     ) -> Result<(), ConsensusError>;
 
     /// Validates the given headers
@@ -172,13 +171,7 @@ pub trait HeaderValidator<H = Header>: Debug + Send + Sync {
     /// on its own and valid against its parent.
     ///
     /// Note: this expects that the headers are in natural order (ascending block number)
-    fn validate_header_range(
-        &self,
-        headers: &[SealedHeader<H>],
-    ) -> Result<(), HeaderConsensusError<H>>
-    where
-        H: Clone,
-    {
+    fn validate_header_range(&self, headers: &[SealedHeader]) -> Result<(), HeaderConsensusError> {
         if let Some((initial_header, remaining_headers)) = headers.split_first() {
             self.validate_header(initial_header)
                 .map_err(|e| HeaderConsensusError(e, initial_header.clone()))?;
@@ -572,7 +565,7 @@ impl From<BlockAccessListGasError> for ConsensusError {
 /// `HeaderConsensusError` combines a `ConsensusError` with the `SealedHeader` it relates to.
 #[derive(thiserror::Error, Debug)]
 #[error("Consensus error: {0}, Invalid header: {1:?}")]
-pub struct HeaderConsensusError<H>(ConsensusError, SealedHeader<H>);
+pub struct HeaderConsensusError(ConsensusError, SealedHeader);
 
 /// EIP-7825: Transaction gas limit exceeds maximum allowed
 #[derive(thiserror::Error, Debug, Eq, PartialEq, Clone)]

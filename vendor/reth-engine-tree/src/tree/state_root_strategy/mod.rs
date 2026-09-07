@@ -234,7 +234,7 @@ pub struct StateRootJobContext<'a, P> {
     executor: &'a reth_tasks::Runtime,
     overlay_manager: &'a OverlayManager,
     env: &'a ExecutionEnv,
-    parent_header: &'a SealedHeader<alloy_consensus::Header>,
+    parent_header: &'a SealedHeader,
     provider_builder: StateProviderBuilder<P>,
     overlay_factory: OverlayStateProviderFactory<P>,
     config: &'a TreeConfig,
@@ -258,7 +258,7 @@ impl<'a, P> StateRootJobContext<'a, P> {
         executor: &'a reth_tasks::Runtime,
         overlay_manager: &'a OverlayManager,
         env: &'a ExecutionEnv,
-        parent_header: &'a SealedHeader<alloy_consensus::Header>,
+        parent_header: &'a SealedHeader,
         provider_builder: StateProviderBuilder<P>,
         overlay_factory: OverlayStateProviderFactory<P>,
         config: &'a TreeConfig,
@@ -284,7 +284,7 @@ impl<'a, P> StateRootJobContext<'a, P> {
     }
 
     /// Returns the sealed parent block header.
-    pub const fn parent_header(&self) -> &SealedHeader<alloy_consensus::Header> {
+    pub const fn parent_header(&self) -> &SealedHeader {
         self.parent_header
     }
 
@@ -736,7 +736,7 @@ impl DefaultStateRootStrategy {
 }
 
 struct SparseTrieTaskOptions {
-    parent_header: SealedHeader<alloy_consensus::Header>,
+    parent_header: SealedHeader,
     preserved_sparse_trie: Option<PreservedSparseTrie>,
     chunk_size: usize,
     /// `None` disables pruning. `Some(Vec::new())` prunes nodes older than the current block.
@@ -744,7 +744,7 @@ struct SparseTrieTaskOptions {
 }
 
 struct StateRootTaskOptions<'a> {
-    parent_header: SealedHeader<alloy_consensus::Header>,
+    parent_header: SealedHeader,
     preserved_sparse_trie: Option<PreservedSparseTrie>,
     transaction_count: Option<usize>,
     config: &'a TreeConfig,

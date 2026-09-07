@@ -103,10 +103,7 @@ impl<Provider> ValidationApi<Provider> {
 
 impl<Provider> ValidationApi<Provider>
 where
-    Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
-        + ChainSpecProvider
-        + StateProviderFactory
-        + 'static,
+    Provider: BlockReaderIdExt + ChainSpecProvider + StateProviderFactory + 'static,
 {
     /// Validates the given block and a [`BidTrace`] against it.
     pub async fn validate_message_against_block(
@@ -532,11 +529,7 @@ where
 #[async_trait]
 impl<Provider> BlockSubmissionValidationApiServer for ValidationApi<Provider>
 where
-    Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
-        + ChainSpecProvider
-        + StateProviderFactory
-        + Clone
-        + 'static,
+    Provider: BlockReaderIdExt + ChainSpecProvider + StateProviderFactory + Clone + 'static,
 {
     async fn validate_builder_submission_v1(
         &self,

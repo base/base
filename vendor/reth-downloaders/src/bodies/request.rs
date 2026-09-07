@@ -46,7 +46,7 @@ pub(crate) struct BodiesRequestFuture<B: Block, C: BodiesClient<Body = B::Body>>
     /// responses change while bodies are being downloaded.
     response_metrics: ResponseMetrics,
     // Headers to download. The collection is shrunk as responses are buffered.
-    pending_headers: VecDeque<SealedHeader<B::Header>>,
+    pending_headers: VecDeque<SealedHeader>,
     /// Internal buffer for all blocks
     buffer: Vec<BlockResponse<B>>,
     fut: Option<C::Output>,
@@ -77,7 +77,7 @@ where
         }
     }
 
-    pub(crate) fn with_headers(mut self, headers: Vec<SealedHeader<B::Header>>) -> Self {
+    pub(crate) fn with_headers(mut self, headers: Vec<SealedHeader>) -> Self {
         self.buffer.reserve_exact(headers.len());
         self.pending_headers = VecDeque::from(headers);
         // Submit the request only if there are any headers to download.

@@ -7,7 +7,7 @@ pub enum BlockResponse<B: Block> {
     /// Full block response (with transactions or ommers)
     Full(SealedBlock<B>),
     /// The empty block response
-    Empty(SealedHeader<B::Header>),
+    Empty(SealedHeader),
 }
 
 impl<B> BlockResponse<B>

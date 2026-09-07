@@ -1,13 +1,15 @@
 use core::mem;
 
 pub use alloy_consensus::Header;
-use alloy_consensus::Sealed;
+use alloy_consensus::{BlockHeader, Sealed};
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{BlockHash, Sealable, keccak256};
 use alloy_rlp::{Decodable, Encodable};
 use bytes::BufMut;
 use derive_more::{AsRef, Deref};
 
+#[cfg(any(test, feature = "test-utils"))]
+use crate::test_utils::TestHeader;
 use crate::{InMemorySize, sync::OnceLock};
 
 /// Seals the header with the block hash.
@@ -20,65 +22,56 @@ use crate::{InMemorySize, sync::OnceLock};
 #[derive(Debug, Clone, AsRef, Deref)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "reth-codec", reth_codecs::add_arbitrary_tests(rlp))]
-pub struct SealedHeader<H = Header> {
+pub struct SealedHeader {
     /// Block hash
     #[cfg_attr(feature = "serde", serde(skip))]
     hash: OnceLock<BlockHash>,
     /// Locked Header fields.
     #[as_ref]
     #[deref]
-    header: H,
+    header: Header,
 }
 
-impl<H> SealedHeader<H> {
+impl SealedHeader {
     /// Creates the sealed header without hashing the header.
     #[inline]
-    pub fn new_unhashed(header: H) -> Self {
+    pub fn new_unhashed(header: Header) -> Self {
         Self { header, hash: Default::default() }
     }
 
     /// Creates the sealed header with the corresponding block hash.
     #[inline]
-    pub fn new(header: H, hash: BlockHash) -> Self {
+    pub fn new(header: Header, hash: BlockHash) -> Self {
         Self { header, hash: hash.into() }
     }
 
     /// Returns the sealed Header fields.
     #[inline]
-    pub const fn header(&self) -> &H {
+    pub const fn header(&self) -> &Header {
         &self.header
     }
 
     /// Clone the header.
-    pub fn clone_header(&self) -> H
-    where
-        H: Clone,
-    {
+    pub fn clone_header(&self) -> Header {
         self.header.clone()
     }
 
     /// Consumes the type and returns the wrapped header.
     #[inline]
-    pub fn into_header(self) -> H {
+    pub fn into_header(self) -> Header {
         self.header
     }
 
     /// Consumes the type and returns the wrapped header.
     #[inline]
-    pub fn unseal(self) -> H {
+    pub fn unseal(self) -> Header {
         self.header
-    }
-
-    /// Converts from &`SealedHeader<H>` to `SealedHeader<&H>`.
-    #[inline]
-    pub fn sealed_ref(&self) -> SealedHeader<&H> {
-        SealedHeader { hash: self.hash.clone(), header: &self.header }
     }
 }
 
-impl<H: Sealable> SealedHeader<H> {
+impl SealedHeader {
     /// Hashes the header and creates a sealed header.
-    pub fn seal_slow(header: H) -> Self {
+    pub fn seal_slow(header: Header) -> Self {
         let hash = header.hash_slow();
         Self::new(header, hash)
     }
@@ -97,29 +90,18 @@ impl<H: Sealable> SealedHeader<H> {
     }
 
     /// This is the inverse of [`Self::seal_slow`] which returns the raw header and hash.
-    pub fn split(self) -> (H, BlockHash) {
+    pub fn split(self) -> (Header, BlockHash) {
         let hash = self.hash();
         (self.header, hash)
     }
 
     /// Returns references to both the header and hash without taking ownership.
-    pub fn split_ref(&self) -> (&H, &BlockHash) {
+    pub fn split_ref(&self) -> (&Header, &BlockHash) {
         (self.header(), self.hash_ref())
     }
 }
 
-impl<H: Sealable> SealedHeader<&H> {
-    /// Maps a `SealedHeader<&H>` to a `SealedHeader<H>` by cloning the header.
-    pub fn cloned(self) -> SealedHeader<H>
-    where
-        H: Clone,
-    {
-        let Self { hash, header } = self;
-        SealedHeader { hash, header: header.clone() }
-    }
-}
-
-impl<H: alloy_consensus::BlockHeader + Sealable> SealedHeader<H> {
+impl SealedHeader {
     /// Return the number hash tuple.
     pub fn num_hash(&self) -> BlockNumHash {
         BlockNumHash::new(self.number(), self.hash())
@@ -139,21 +121,21 @@ impl<H: alloy_consensus::BlockHeader + Sealable> SealedHeader<H> {
     }
 }
 
-impl<H: Sealable> Eq for SealedHeader<H> {}
+impl Eq for SealedHeader {}
 
-impl<H: Sealable> PartialEq for SealedHeader<H> {
+impl PartialEq for SealedHeader {
     fn eq(&self, other: &Self) -> bool {
         self.hash() == other.hash()
     }
 }
 
-impl<H: Sealable> core::hash::Hash for SealedHeader<H> {
+impl core::hash::Hash for SealedHeader {
     fn hash<Ha: core::hash::Hasher>(&self, state: &mut Ha) {
         self.hash().hash(state)
     }
 }
 
-impl<H: InMemorySize> InMemorySize for SealedHeader<H> {
+impl InMemorySize for SealedHeader {
     /// Calculates a heuristic for the in-memory size of the [`SealedHeader`].
     #[inline]
     fn size(&self) -> usize {
@@ -161,9 +143,9 @@ impl<H: InMemorySize> InMemorySize for SealedHeader<H> {
     }
 }
 
-impl<H: Sealable + Default> Default for SealedHeader<H> {
+impl Default for SealedHeader {
     fn default() -> Self {
-        Self::seal_slow(H::default())
+        Self::seal_slow(Header::default())
     }
 }
 
@@ -192,30 +174,27 @@ impl Decodable for SealedHeader {
     }
 }
 
-impl<H: Sealable> From<SealedHeader<H>> for Sealed<H> {
-    fn from(value: SealedHeader<H>) -> Self {
+impl From<SealedHeader> for Sealed<Header> {
+    fn from(value: SealedHeader) -> Self {
         let (header, hash) = value.split();
         Self::new_unchecked(header, hash)
     }
 }
 
 #[cfg(any(test, feature = "arbitrary"))]
-impl<'a, H> arbitrary::Arbitrary<'a> for SealedHeader<H>
-where
-    H: for<'b> arbitrary::Arbitrary<'b> + Sealable,
-{
+impl<'a> arbitrary::Arbitrary<'a> for SealedHeader {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let header = H::arbitrary(u)?;
+        let header = Header::arbitrary(u)?;
 
         Ok(Self::seal_slow(header))
     }
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-impl<H: crate::test_utils::TestHeader> SealedHeader<H> {
+impl SealedHeader {
     /// Updates the block header.
     #[inline]
-    pub fn set_header(&mut self, header: H) {
+    pub fn set_header(&mut self, header: Header) {
         self.header = header
     }
 
@@ -227,7 +206,7 @@ impl<H: crate::test_utils::TestHeader> SealedHeader<H> {
 
     /// Returns a mutable reference to the header.
     #[inline]
-    pub const fn header_mut(&mut self) -> &mut H {
+    pub const fn header_mut(&mut self) -> &mut Header {
         &mut self.header
     }
 
@@ -266,28 +245,25 @@ impl<H: crate::test_utils::TestHeader> SealedHeader<H> {
 mod rpc_compat {
     use super::*;
 
-    impl<H> SealedHeader<H> {
-        /// Converts this header into `alloy_rpc_types_eth::Header<H>`.
+    impl SealedHeader {
+        /// Converts this header into `alloy_rpc_types_eth::Header`.
         ///
         /// Note: This does not set the total difficulty or size of the block.
         #[inline]
-        pub fn into_rpc_header(self) -> alloy_rpc_types_eth::Header<H>
-        where
-            H: Sealable,
-        {
+        pub fn into_rpc_header(self) -> alloy_rpc_types_eth::Header<Header> {
             alloy_rpc_types_eth::Header::from_sealed(self.into())
         }
 
-        /// Converts an `alloy_rpc_types_eth::Header<H>` into a `SealedHeader<H>`.
+        /// Converts an `alloy_rpc_types_eth::Header` into a `SealedHeader`.
         #[inline]
-        pub fn from_rpc_header(header: alloy_rpc_types_eth::Header<H>) -> Self {
+        pub fn from_rpc_header(header: alloy_rpc_types_eth::Header<Header>) -> Self {
             Self::new(header.inner, header.hash)
         }
     }
 
-    impl<H> From<alloy_rpc_types_eth::Header<H>> for SealedHeader<H> {
+    impl From<alloy_rpc_types_eth::Header<Header>> for SealedHeader {
         #[inline]
-        fn from(value: alloy_rpc_types_eth::Header<H>) -> Self {
+        fn from(value: alloy_rpc_types_eth::Header<Header>) -> Self {
             Self::from_rpc_header(value)
         }
     }

@@ -97,9 +97,7 @@ impl<S, Provider, Validator> EngineReorg<S, Provider, Validator> {
 impl<S, Provider, Validator> Stream for EngineReorg<S, Provider, Validator>
 where
     S: Stream<Item = BeaconEngineMessage>,
-    Provider: BlockReader<Header = alloy_consensus::Header, Block = BaseBlock>
-        + StateProviderFactory
-        + ChainSpecProvider,
+    Provider: BlockReader<Block = BaseBlock> + StateProviderFactory + ChainSpecProvider,
     Validator: EngineValidator,
 {
     type Item = S::Item;
@@ -228,9 +226,7 @@ fn create_reorg_head<Provider, Validator>(
     next_payload: base_common_rpc_types_engine::ExecutionData,
 ) -> RethResult<(SealedBlock<BaseBlock>, Option<Bytes>)>
 where
-    Provider: BlockReader<Header = alloy_consensus::Header, Block = BaseBlock>
-        + StateProviderFactory
-        + ChainSpecProvider,
+    Provider: BlockReader<Block = BaseBlock> + StateProviderFactory + ChainSpecProvider,
     Validator: EngineValidator,
 {
     // Ensure next payload is valid.

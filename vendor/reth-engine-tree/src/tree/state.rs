@@ -92,10 +92,7 @@ impl TreeState {
     }
 
     /// Returns the sealed block header by hash.
-    pub fn sealed_header_by_hash(
-        &self,
-        hash: &B256,
-    ) -> Option<SealedHeader<alloy_consensus::Header>> {
+    pub fn sealed_header_by_hash(&self, hash: &B256) -> Option<SealedHeader> {
         self.blocks_by_hash.get(hash).map(|b| b.sealed_block().sealed_header().clone())
     }
 

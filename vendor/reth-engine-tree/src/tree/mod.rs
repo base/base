@@ -421,13 +421,13 @@ impl<P: Debug, V: Debug> std::fmt::Debug for EngineApiTreeHandler<P, V> {
 impl<P, V> EngineApiTreeHandler<P, V>
 where
     P: DatabaseProviderFactory
-        + BlockReader<Block = BaseBlock, Header = alloy_consensus::Header>
+        + BlockReader<Block = BaseBlock>
         + StateProviderFactory
         + StateReader<Receipt = BaseReceipt>
         + BalProvider
         + Clone
         + 'static,
-    P::Provider: BlockReader<Block = BaseBlock, Header = alloy_consensus::Header>
+    P::Provider: BlockReader<Block = BaseBlock>
         + PruneCheckpointReader
         + StageCheckpointReader
         + ChangeSetReader
@@ -1073,7 +1073,7 @@ where
     /// Caution: This unwinds the canonical chain
     fn update_latest_block_to_canonical_ancestor(
         &mut self,
-        canonical_header: &SealedHeader<alloy_consensus::Header>,
+        canonical_header: &SealedHeader,
     ) -> ProviderResult<()> {
         debug!(target: "engine::tree", head = ?canonical_header.num_hash(), "Update latest block to canonical ancestor");
         let current_head_number = self.state.tree_state.canonical_block_number();
@@ -1111,7 +1111,7 @@ where
     fn handle_canonical_chain_unwind(
         &self,
         current_head_number: u64,
-        canonical_header: &SealedHeader<alloy_consensus::Header>,
+        canonical_header: &SealedHeader,
     ) -> ProviderResult<()> {
         let new_head_number = canonical_header.number();
         debug!(
@@ -1163,7 +1163,7 @@ where
     /// Applies the canonical ancestor block via a reorg operation.
     fn apply_canonical_ancestor_via_reorg(
         &self,
-        canonical_header: &SealedHeader<alloy_consensus::Header>,
+        canonical_header: &SealedHeader,
         old_blocks: Vec<ExecutedBlock>,
     ) -> ProviderResult<()> {
         let new_head_hash = canonical_header.hash();
@@ -1192,7 +1192,7 @@ where
     /// Handles chain advance or same height scenarios.
     fn handle_chain_advance_or_same_height(
         &self,
-        canonical_header: &SealedHeader<alloy_consensus::Header>,
+        canonical_header: &SealedHeader,
     ) -> ProviderResult<()> {
         // Load the block into memory if it's not already present
         self.ensure_block_in_memory(canonical_header.number(), canonical_header.hash())?;
@@ -2444,10 +2444,7 @@ where
     }
 
     /// Return sealed block header from in-memory state or database by hash.
-    fn sealed_header_by_hash(
-        &self,
-        hash: B256,
-    ) -> ProviderResult<Option<SealedHeader<alloy_consensus::Header>>> {
+    fn sealed_header_by_hash(&self, hash: B256) -> ProviderResult<Option<SealedHeader>> {
         // check memory first
         let header = self.state.tree_state.sealed_header_by_hash(&hash);
 
@@ -3352,10 +3349,7 @@ where
     }
 
     /// Attempts to find the header for the given block hash if it is canonical.
-    pub fn find_canonical_header(
-        &self,
-        hash: B256,
-    ) -> Result<Option<SealedHeader<alloy_consensus::Header>>, ProviderError> {
+    pub fn find_canonical_header(&self, hash: B256) -> Result<Option<SealedHeader>, ProviderError> {
         let mut canonical = self.canonical_in_memory_state.header_by_hash(hash);
 
         if canonical.is_none() {

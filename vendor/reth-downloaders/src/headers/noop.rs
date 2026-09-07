@@ -1,6 +1,5 @@
 use std::fmt::Debug;
 
-use alloy_primitives::Sealable;
 use futures::Stream;
 use reth_network_p2p::headers::{
     downloader::{HeaderDownloader, SyncTarget},
@@ -11,22 +10,18 @@ use reth_primitives_traits::SealedHeader;
 /// A [`HeaderDownloader`] implementation that does nothing.
 #[derive(Debug, Default)]
 #[non_exhaustive]
-pub struct NoopHeaderDownloader<H>(std::marker::PhantomData<H>);
+pub struct NoopHeaderDownloader;
 
-impl<H: Sealable + Debug + Send + Sync + Unpin + 'static> HeaderDownloader
-    for NoopHeaderDownloader<H>
-{
-    type Header = H;
-
-    fn update_local_head(&mut self, _: SealedHeader<H>) {}
+impl HeaderDownloader for NoopHeaderDownloader {
+    fn update_local_head(&mut self, _: SealedHeader) {}
 
     fn update_sync_target(&mut self, _: SyncTarget) {}
 
     fn set_batch_size(&mut self, _: usize) {}
 }
 
-impl<H: Sealable> Stream for NoopHeaderDownloader<H> {
-    type Item = Result<Vec<SealedHeader<H>>, HeadersDownloaderError<H>>;
+impl Stream for NoopHeaderDownloader {
+    type Item = Result<Vec<SealedHeader>, HeadersDownloaderError>;
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,

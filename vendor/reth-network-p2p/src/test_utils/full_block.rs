@@ -87,7 +87,6 @@ impl DownloadClient for TestFullBlockClient {
 
 /// Implements the `HeadersClient` trait for the `TestFullBlockClient` struct.
 impl HeadersClient for TestFullBlockClient {
-    type Header = Header;
     /// Specifies the associated output type.
     type Output = futures::future::Ready<PeerRequestResult<Vec<Header>>>;
 
