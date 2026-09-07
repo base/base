@@ -15,11 +15,10 @@ use base_common_rpc_types::{
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::RethL1BlockInfo;
 use reth_primitives_traits::SealedBlock;
-use reth_rpc_convert::transaction::{ConvertReceiptInput, ReceiptConverter};
-use crate::{BaseEthApiError, EthApiError, receipt::build_receipt};
+use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_storage_api::BlockReader;
 
-use crate::BaseTimeCache;
+use crate::{BaseEthApiError, BaseTimeCache, EthApiError, receipt::build_receipt};
 
 /// Converter for Base receipts.
 #[derive(Clone)]
@@ -41,21 +40,18 @@ impl<Provider> BaseReceiptConverter<Provider> {
     }
 }
 
-impl<Provider> ReceiptConverter for BaseReceiptConverter<Provider>
+impl<Provider> BaseReceiptConverter<Provider>
 where
     Provider:
         BlockReader<Block = BaseBlock, Transaction = BaseTxEnvelope> + ChainSpecProvider + 'static,
 {
-    type RpcReceipt = BaseTransactionReceipt;
-    type RpcLog = BaseLogResponse;
-    type Error = BaseEthApiError;
-
-    fn convert_log(
+    /// Adds the validated BaseTime timestamp to a receipt log.
+    pub fn convert_log(
         &self,
         log: Log,
         _receipt: &BaseReceipt,
         header: &reth_primitives_traits::SealedHeader,
-    ) -> Result<Self::RpcLog, Self::Error> {
+    ) -> Result<BaseLogResponse, BaseEthApiError> {
         let block_timestamp_ms = self.base_time.get::<BaseTxEnvelope, _>(
             &self.provider,
             header.hash(),
@@ -66,10 +62,11 @@ where
         Ok(BaseLogResponse { inner: log, block_timestamp_ms })
     }
 
-    fn convert_receipts(
+    /// Loads receipt blocks and calculates Base receipt fields.
+    pub fn convert_receipts(
         &self,
         inputs: Vec<ConvertReceiptInput<'_>>,
-    ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
+    ) -> Result<Vec<BaseTransactionReceipt>, BaseEthApiError> {
         let Some(block_number) = inputs.first().map(|r| r.meta.block_number) else {
             return Ok(Vec::new());
         };
@@ -82,11 +79,12 @@ where
         self.convert_receipts_with_block(inputs, &SealedBlock::new_unhashed(block))
     }
 
-    fn convert_receipts_with_block(
+    /// Calculates Base receipt fields from the supplied block.
+    pub fn convert_receipts_with_block(
         &self,
         inputs: Vec<ConvertReceiptInput<'_>>,
         block: &SealedBlock<BaseBlock>,
-    ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
+    ) -> Result<Vec<BaseTransactionReceipt>, BaseEthApiError> {
         let block_timestamp_ms = self.base_time.insert_from_transactions(
             block.hash(),
             block.header().number(),

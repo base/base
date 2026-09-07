@@ -10,14 +10,12 @@ use base_execution_chainspec::ChainSpecProvider;
 use reth_evm::{EvmEnvFor, TxEnvFor};
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_convert::{
-    FromConsensusHeader, FromConsensusTx, TransactionConversionError, TryIntoSimTx,
-    TryIntoTxEnv, TxInfoMapper,
-    transaction::{ConvertReceiptInput, ReceiptConverter},
+    FromConsensusHeader, FromConsensusTx, TransactionConversionError, TryIntoSimTx, TryIntoTxEnv,
+    TxInfoMapper, transaction::ConvertReceiptInput,
 };
-use crate::BaseEthApiError;
 use reth_storage_api::BlockReader;
 
-use crate::{BaseReceiptConverter, BaseTimeCache, BaseTxInfoMapper};
+use crate::{BaseEthApiError, BaseReceiptConverter, BaseTimeCache, BaseTxInfoMapper};
 
 /// Converts Base RPC data using the provider and shared BaseTime cache.
 #[derive(Clone)]
@@ -54,9 +52,11 @@ where
         + Unpin
         + 'static,
 {
-
     /// Converts a pending transaction without mined block metadata.
-    pub fn fill_pending(&self, tx: Recovered<BaseTxEnvelope>) -> Result<base_common_rpc_types::Transaction, BaseEthApiError> {
+    pub fn fill_pending(
+        &self,
+        tx: Recovered<BaseTxEnvelope>,
+    ) -> Result<base_common_rpc_types::Transaction, BaseEthApiError> {
         self.fill(tx, TransactionInfo::default())
     }
 
