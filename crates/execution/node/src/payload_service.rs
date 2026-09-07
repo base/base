@@ -9,7 +9,7 @@ use reth_chain_state::CanonStateSubscriptions;
 use reth_node_builder::{BuilderContext, FullNodeTypes};
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 
-use crate::{BaseEngineTypes, BaseNodePool, BaseNodeTypes, BasePayloadBuilder};
+use crate::{BaseNodePool, BaseNodeTypes, BasePayloadBuilder};
 
 /// Scheduling used for Base payload construction.
 #[derive(Debug, Clone, Copy)]
@@ -79,7 +79,7 @@ impl<Txs> BasePayloadServiceBuilder<BasePayloadBuilder<Txs>> {
         ctx: &BuilderContext<Node>,
         pool: BaseNodePool<Node>,
         evm_config: BaseEvmConfig,
-    ) -> eyre::Result<PayloadBuilderHandle<BaseEngineTypes>>
+    ) -> eyre::Result<PayloadBuilderHandle>
     where
         Node: FullNodeTypes<Types: BaseNodeTypes>,
         Txs: BasePayloadTransactions<BaseNodePool<Node>>,
@@ -113,10 +113,8 @@ impl<Txs> BasePayloadServiceBuilder<BasePayloadBuilder<Txs>> {
             job_config,
             payload_builder,
         );
-        let (service, handle) = PayloadBuilderService::<_, _, BaseEngineTypes>::new(
-            generator,
-            ctx.provider().canonical_state_stream(),
-        );
+        let (service, handle) =
+            PayloadBuilderService::<_, _>::new(generator, ctx.provider().canonical_state_stream());
         match self.mode {
             BasePayloadServiceMode::DedicatedThread => {
                 ctx.task_executor().spawn_critical_os_thread(

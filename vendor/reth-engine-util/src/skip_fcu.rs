@@ -7,7 +7,6 @@ use std::{
 
 use futures::{Stream, StreamExt};
 use reth_engine_primitives::{BeaconEngineMessage, OnForkChoiceUpdated};
-use reth_payload_primitives::PayloadTypes;
 
 /// Engine API stream wrapper that skips the specified number of forkchoice updated messages.
 #[derive(Debug)]
@@ -33,10 +32,9 @@ impl<S> EngineSkipFcu<S> {
     }
 }
 
-impl<S, T> Stream for EngineSkipFcu<S>
+impl<S> Stream for EngineSkipFcu<S>
 where
-    S: Stream<Item = BeaconEngineMessage<T>>,
-    T: PayloadTypes,
+    S: Stream<Item = BeaconEngineMessage>,
 {
     type Item = S::Item;
 

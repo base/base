@@ -32,12 +32,14 @@ alloy-rlp = { workspace = true, features = ["core-net"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 [dev-dependencies]
 assert_matches = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 [features]
 default = ["std"]
 std = [
+    "base-common-rpc-types-engine/std",
     "reth-chainspec/std",
     "reth-execution-types/std",
     "reth-trie-common/std",

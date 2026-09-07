@@ -3,7 +3,7 @@ use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated};
 use async_trait::async_trait;
 use jsonrpsee_core::RpcResult;
 use reth_engine_primitives::ConsensusEngineHandle;
-use reth_payload_primitives::PayloadTypes;
+use reth_payload_primitives::BaseBuiltPayload;
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_api::{RethEngineApiServer, RethNewPayloadInput, RethPayloadStatus};
 use tracing::trace;
@@ -16,22 +16,22 @@ use crate::EngineApiError;
 /// RLP-encoded block, optionally waiting for persistence, execution cache, and sparse trie locks
 /// before processing, and returns timing breakdowns with server-measured execution latency.
 #[derive(Debug)]
-pub struct RethEngineApi<Payload: PayloadTypes> {
-    beacon_engine_handle: ConsensusEngineHandle<Payload>,
+pub struct RethEngineApi {
+    beacon_engine_handle: ConsensusEngineHandle,
 }
 
-impl<Payload: PayloadTypes> RethEngineApi<Payload> {
+impl RethEngineApi {
     /// Creates a new [`RethEngineApi`].
-    pub const fn new(beacon_engine_handle: ConsensusEngineHandle<Payload>) -> Self {
+    pub const fn new(beacon_engine_handle: ConsensusEngineHandle) -> Self {
         Self { beacon_engine_handle }
     }
 }
 
 #[async_trait]
-impl<Payload: PayloadTypes> RethEngineApiServer<Payload::ExecutionData> for RethEngineApi<Payload> {
+impl RethEngineApiServer<base_common_rpc_types_engine::ExecutionData> for RethEngineApi {
     async fn reth_new_payload(
         &self,
-        input: RethNewPayloadInput<Payload::ExecutionData>,
+        input: RethNewPayloadInput<base_common_rpc_types_engine::ExecutionData>,
         wait_for_persistence: Option<bool>,
         wait_for_caches: Option<bool>,
     ) -> RpcResult<RethPayloadStatus> {
@@ -44,7 +44,7 @@ impl<Payload: PayloadTypes> RethEngineApiServer<Payload::ExecutionData> for Reth
             RethNewPayloadInput::BlockRlp { block: block_rlp, bal } => {
                 let block = Decodable::decode(&mut block_rlp.as_ref())
                     .map_err(|err| EngineApiError::Internal(Box::new(err)))?;
-                Payload::block_to_payload(SealedBlock::new_unhashed(block), bal)
+                BaseBuiltPayload::block_to_payload(SealedBlock::new_unhashed(block), bal)
             }
         };
 

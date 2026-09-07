@@ -6,25 +6,20 @@ use std::{
 
 use alloy_consensus::transaction::Either;
 use alloy_provider::network::AnyNetwork;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use jsonrpsee::core::{DeserializeOwned, Serialize};
 use reth_chainspec::EthChainSpec;
 use reth_consensus_debug_client::{
     DebugConsensusClient, EtherscanBlockProvider, PayloadProvider, RpcBlockProvider,
 };
 use reth_engine_local::{LocalMiner, MiningMode};
-use reth_node_api::{
-    FullNodeComponents, FullNodeTypes, NodeTypes, PayloadAttrTy, PayloadAttributesBuilder,
-    PayloadTypes,
-};
+use reth_node_api::{FullNodeComponents, NodeTypes, PayloadAttributesBuilder};
+use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use reth_primitives_traits::SealedBlock;
 use tracing::info;
 
 use super::LaunchNode;
 use crate::{NodeHandle, rpc::RethRpcAddOns};
-
-/// Helper adapter type for accessing [`PayloadTypes::ExecutionData`] on [`NodeTypes`].
-pub(crate) type PayloadDataTy<N> = <<N as NodeTypes>::Payload as PayloadTypes>::ExecutionData;
 
 /// Concrete conversions used by the debug launcher.
 #[derive(Debug)]
@@ -32,10 +27,14 @@ pub struct DebugNodeConfig<T: NodeTypes, R> {
     /// Converts an RPC response to the node's primitive block.
     pub rpc_to_primitive_block: fn(R) -> BaseBlock,
     /// Creates the default local-mining payload attributes builder.
-    pub local_payload_attributes_builder:
-        fn(
-            &T::ChainSpec,
-        ) -> Box<dyn PayloadAttributesBuilder<PayloadAttrTy<T>, alloy_consensus::Header>>,
+    pub local_payload_attributes_builder: fn(
+        &T::ChainSpec,
+    ) -> Box<
+        dyn PayloadAttributesBuilder<
+                BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                alloy_consensus::Header,
+            >,
+    >,
 }
 
 impl<T: NodeTypes, R> Copy for DebugNodeConfig<T, R> {}
@@ -82,22 +81,35 @@ impl<L, T: NodeTypes, R> DebugNodeLauncher<L, T, R> {
 
 /// Type alias for the default debug block provider. We use etherscan provider to satisfy the
 /// bounds.
-pub type DefaultDebugBlockProvider<N, R> =
-    EtherscanBlockProvider<R, PayloadDataTy<<N as FullNodeTypes>::Types>>;
+pub type DefaultDebugBlockProvider<R> =
+    EtherscanBlockProvider<R, base_common_rpc_types_engine::ExecutionData>;
 
 /// Future for the [`DebugNodeLauncher`].
 #[expect(missing_debug_implementations, clippy::type_complexity)]
-pub struct DebugNodeLauncherFuture<L, Target, N, R, B = DefaultDebugBlockProvider<N, R>>
+pub struct DebugNodeLauncherFuture<L, Target, N, R, B = DefaultDebugBlockProvider<R>>
 where
     N: FullNodeComponents,
 {
     inner: L,
     target: Target,
     config: DebugNodeConfig<N::Types, R>,
-    local_payload_attributes_builder:
-        Option<Box<dyn PayloadAttributesBuilder<PayloadAttrTy<N::Types>, alloy_consensus::Header>>>,
-    map_attributes:
-        Option<Box<dyn Fn(PayloadAttrTy<N::Types>) -> PayloadAttrTy<N::Types> + Send + Sync>>,
+    local_payload_attributes_builder: Option<
+        Box<
+            dyn PayloadAttributesBuilder<
+                    BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                    alloy_consensus::Header,
+                >,
+        >,
+    >,
+    map_attributes: Option<
+        Box<
+            dyn Fn(
+                    BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                ) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
+                + Send
+                + Sync,
+        >,
+    >,
     debug_block_provider: Option<B>,
     mining_mode: Option<MiningMode<N::Pool>>,
 }
@@ -108,12 +120,15 @@ where
     R: Serialize + DeserializeOwned + 'static,
     AddOns: RethRpcAddOns<N>,
     L: LaunchNode<Target, Node = NodeHandle<N, AddOns>>,
-    B: PayloadProvider<ExecutionData = PayloadDataTy<N::Types>> + Clone,
+    B: PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData> + Clone,
 {
     /// Sets a custom payload attributes builder for local mining in dev mode.
     pub fn with_payload_attributes_builder(
         self,
-        builder: impl PayloadAttributesBuilder<PayloadAttrTy<N::Types>, alloy_consensus::Header>,
+        builder: impl PayloadAttributesBuilder<
+            BasePayloadBuilderAttributes<BaseTxEnvelope>,
+            alloy_consensus::Header,
+        >,
     ) -> Self {
         Self {
             inner: self.inner,
@@ -129,7 +144,12 @@ where
     /// Sets a function to map payload attributes before building.
     pub fn map_debug_payload_attributes(
         self,
-        f: impl Fn(PayloadAttrTy<N::Types>) -> PayloadAttrTy<N::Types> + Send + Sync + 'static,
+        f: impl Fn(
+            BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        ) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         Self {
             inner: self.inner,
@@ -160,7 +180,7 @@ where
         provider: B2,
     ) -> DebugNodeLauncherFuture<L, Target, N, R, B2>
     where
-        B2: PayloadProvider<ExecutionData = PayloadDataTy<N::Types>> + Clone,
+        B2: PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData> + Clone,
     {
         DebugNodeLauncherFuture {
             inner: self.inner,
@@ -214,7 +234,7 @@ where
                     let rpc_block =
                         serde_json::from_value(json).expect("Block deserialization cannot fail");
                     let primitive_block = rpc_to_primitive_block(rpc_block);
-                    <N::Types as NodeTypes>::Payload::block_to_payload(
+                    BaseBuiltPayload::block_to_payload(
                         SealedBlock::new_unhashed(primitive_block),
                         extras.bal,
                     )
@@ -251,7 +271,7 @@ where
                 chain.id(),
                 move |rpc_block| {
                     let primitive_block = rpc_to_primitive_block(rpc_block);
-                    <N::Types as NodeTypes>::Payload::block_to_payload(
+                    BaseBuiltPayload::block_to_payload(
                         SealedBlock::new_unhashed(primitive_block),
                         None,
                     )
@@ -327,7 +347,9 @@ where
     R: Serialize + DeserializeOwned + 'static,
     AddOns: RethRpcAddOns<N> + 'static,
     L: LaunchNode<Target, Node = NodeHandle<N, AddOns>> + 'static,
-    B: PayloadProvider<ExecutionData = PayloadDataTy<N::Types>> + Clone + 'static,
+    B: PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData>
+        + Clone
+        + 'static,
 {
     type Output = eyre::Result<NodeHandle<N, AddOns>>;
     type IntoFuture = Pin<Box<dyn Future<Output = eyre::Result<NodeHandle<N, AddOns>>> + Send>>;
@@ -344,8 +366,8 @@ where
     R: Serialize + DeserializeOwned + 'static,
     AddOns: RethRpcAddOns<N> + 'static,
     L: LaunchNode<Target, Node = NodeHandle<N, AddOns>> + 'static,
-    DefaultDebugBlockProvider<N, R>:
-        PayloadProvider<ExecutionData = PayloadDataTy<N::Types>> + Clone,
+    DefaultDebugBlockProvider<R>:
+        PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData> + Clone,
 {
     type Node = NodeHandle<N, AddOns>;
     type Future = DebugNodeLauncherFuture<L, Target, N, R>;

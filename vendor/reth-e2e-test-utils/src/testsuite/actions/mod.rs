@@ -130,12 +130,11 @@ impl MakeCanonical {
     }
 }
 
-impl<Engine> Action<Engine> for MakeCanonical
-where
-    Engine: EngineTypes + reth_node_api::PayloadTypes,
-    Engine::PayloadAttributes: From<alloy_rpc_types_engine::PayloadAttributes> + Clone,
-    Engine::ExecutionPayloadEnvelopeV3:
-        Into<alloy_rpc_types_engine::payload::ExecutionPayloadEnvelopeV3>,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for MakeCanonical
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {

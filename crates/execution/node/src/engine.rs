@@ -1,32 +1,33 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
+use base_common_consensus::{BaseTransaction, BaseTxEnvelope, Predeploys};
 use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     ExecutionData,
 };
 use base_execution_consensus::{BaseConsensusError, isthmus};
-use base_execution_payload_builder::{
-    BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
-};
+use base_execution_payload_builder::BaseExecutionPayloadValidator;
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_chainspec::EthChainSpec;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
-    BuiltPayload, EngineApiValidator, EngineTypes, InsertBlockErrorKind, PayloadValidator,
+    EngineApiValidator, EngineTypes, InsertBlockErrorKind, PayloadValidator,
     payload::{
         EngineApiMessageVersion, EngineObjectValidationError, MessageValidationKind,
-        NewPayloadError, PayloadOrAttributes, PayloadTypes, VersionSpecificValidationError,
+        NewPayloadError, PayloadOrAttributes, VersionSpecificValidationError,
         validate_parent_beacon_block_root_presence,
     },
     validate_version_specific_fields,
 };
-use reth_payload_primitives::{InvalidPayloadAttributesError, PayloadAttributes};
+use reth_payload_primitives::{
+    BaseBuiltPayload, BasePayloadBuilderAttributes, InvalidPayloadAttributesError,
+    PayloadAttributes,
+};
 use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SealedHeader, SignedTransaction};
 use reth_provider::StateProvider;
 use reth_storage_api::{StateProviderBox, errors::ProviderResult};
@@ -35,39 +36,11 @@ use reth_trie_common::{HashedPostState, KeyHasher};
 /// The types used in the Base beacon consensus engine.
 #[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
-pub struct BaseEngineTypes<T: PayloadTypes = BasePayloadTypes> {
-    _marker: PhantomData<T>,
-}
+pub struct BaseEngineTypes {}
 
-impl<T: PayloadTypes<ExecutionData = ExecutionData>> PayloadTypes for BaseEngineTypes<T>
+impl EngineTypes for BaseEngineTypes
 where
-    ExecutionData: From<T::BuiltPayload>,
-{
-    type ExecutionData = T::ExecutionData;
-    type BuiltPayload = T::BuiltPayload;
-    type PayloadAttributes = T::PayloadAttributes;
-
-    fn block_to_payload(
-        block: SealedBlock<BaseBlock>,
-        bal: Option<Bytes>,
-    ) -> <T as PayloadTypes>::ExecutionData {
-        ExecutionData::from_block_unchecked_with_extras(
-            block.hash(),
-            &block.into_block().into_ethereum_block(),
-            bal,
-        )
-    }
-}
-
-impl<T: PayloadTypes<ExecutionData = ExecutionData>> EngineTypes for BaseEngineTypes<T>
-where
-    ExecutionData: From<T::BuiltPayload>,
-    T::BuiltPayload: BuiltPayload
-        + TryInto<ExecutionPayloadV1>
-        + TryInto<ExecutionPayloadEnvelopeV2>
-        + TryInto<BaseExecutionPayloadEnvelopeV3>
-        + TryInto<BaseExecutionPayloadEnvelopeV4>
-        + TryInto<BaseExecutionPayloadEnvelopeV5>,
+    ExecutionData: From<BaseBuiltPayload>,
 {
     type ExecutionPayloadEnvelopeV1 = ExecutionPayloadV1;
     type ExecutionPayloadEnvelopeV2 = ExecutionPayloadEnvelopeV2;
@@ -141,14 +114,10 @@ where
     }
 }
 
-impl<Tx, ChainSpec, Types> PayloadValidator<Types> for BaseEngineValidator<Tx, ChainSpec>
+impl<Tx, ChainSpec> PayloadValidator for BaseEngineValidator<Tx, ChainSpec>
 where
     Tx: BaseTransaction + SignedTransaction + Unpin + 'static,
     ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
-    Types: PayloadTypes<
-            ExecutionData = ExecutionData,
-            PayloadAttributes = BasePayloadBuilderAttributes<Tx>,
-        >,
 {
     type Block = alloy_consensus::Block<Tx>;
 
@@ -222,7 +191,7 @@ where
 
     fn validate_payload_attributes_against_header(
         &self,
-        attributes: &Types::PayloadAttributes,
+        attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
         header: &<Self::Block as Block>::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         let timestamp = attributes.timestamp();
@@ -254,13 +223,8 @@ where
     }
 }
 
-impl<Types, Tx, ChainSpec> EngineApiValidator<Types> for BaseEngineValidator<Tx, ChainSpec>
+impl<Tx, ChainSpec> EngineApiValidator for BaseEngineValidator<Tx, ChainSpec>
 where
-    Types: PayloadTypes<
-            PayloadAttributes = BasePayloadBuilderAttributes<Tx>,
-            ExecutionData = ExecutionData,
-            BuiltPayload: BuiltPayload,
-        >,
     Tx: BaseTransaction + SignedTransaction + Unpin + 'static,
     ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
 {
@@ -269,8 +233,8 @@ where
         version: EngineApiMessageVersion,
         payload_or_attrs: PayloadOrAttributes<
             '_,
-            Types::ExecutionData,
-            <Types as PayloadTypes>::PayloadAttributes,
+            base_common_rpc_types_engine::ExecutionData,
+            BasePayloadBuilderAttributes<BaseTxEnvelope>,
         >,
     ) -> Result<(), EngineObjectValidationError> {
         validate_withdrawals_presence(
@@ -292,14 +256,17 @@ where
     fn ensure_well_formed_attributes(
         &self,
         version: EngineApiMessageVersion,
-        attributes: &<Types as PayloadTypes>::PayloadAttributes,
+        attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
     ) -> Result<(), EngineObjectValidationError> {
         validate_version_specific_fields(
             self.chain_spec(),
             version,
-            PayloadOrAttributes::<ExecutionData, Types::PayloadAttributes>::PayloadAttributes(
-                attributes,
-            ),
+            PayloadOrAttributes::<
+                ExecutionData,
+                BasePayloadBuilderAttributes<
+                    BaseTxEnvelope,
+                >,
+            >::PayloadAttributes(attributes),
         )?;
 
         if attributes.gas_limit.is_none() {
@@ -399,11 +366,12 @@ mod tests {
     use alloy_primitives::{Address, B64, B256, U256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::{BaseUpgrade, ChainConfig};
-    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
     use reth_ethereum_forks::ForkCondition;
+    use reth_payload_primitives::BasePayloadBuilderAttributes;
     use reth_primitives_traits::WithEncoded;
     use reth_provider::{
         noop::NoopProvider,
@@ -496,9 +464,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(None, None, 1732633199);
 
-        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
-            BaseEngineTypes,
-        >>::ensure_well_formed_attributes(
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert!(result.is_ok());
@@ -509,9 +475,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(None, None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
-            BaseEngineTypes,
-        >>::ensure_well_formed_attributes(
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "MissingEip1559ParamsInPayloadAttributes");
@@ -522,9 +486,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000008")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
-            BaseEngineTypes,
-        >>::ensure_well_formed_attributes(
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "Eip1559ParamsDenominatorZero");
@@ -535,9 +497,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000000")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
-            BaseEngineTypes,
-        >>::ensure_well_formed_attributes(
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "Eip1559ParamsElasticityZero");
@@ -548,9 +508,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000008")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
-            BaseEngineTypes,
-        >>::ensure_well_formed_attributes(
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert!(result.is_ok());
@@ -561,9 +519,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
-            BaseEngineTypes,
-        >>::ensure_well_formed_attributes(
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert!(result.is_ok());
@@ -578,9 +534,7 @@ mod tests {
             ChainConfig::sepolia().jovian_timestamp,
         );
 
-        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
-            BaseEngineTypes,
-        >>::ensure_well_formed_attributes(
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert!(result.is_ok());
@@ -592,9 +546,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(None, Some(1), ChainConfig::sepolia().jovian_timestamp);
 
-        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
-            BaseEngineTypes,
-        >>::ensure_well_formed_attributes(
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "MissingEip1559ParamsInPayloadAttributes");
@@ -606,9 +558,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), Some(1), 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
-            BaseEngineTypes,
-        >>::ensure_well_formed_attributes(
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "MinBaseFeeNotAllowedBeforeJovian");
@@ -624,9 +574,7 @@ mod tests {
             ChainConfig::sepolia().jovian_timestamp,
         );
 
-        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
-            BaseEngineTypes,
-        >>::ensure_well_formed_attributes(
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "MissingMinBaseFeeInPayloadAttributes");
@@ -642,7 +590,7 @@ mod tests {
         add_base_time_transaction(&mut attributes, timestamp_millis_part);
         let header = Header { number: 8, timestamp: parent_timestamp, ..Default::default() };
 
-        <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
+        <engine::BaseEngineValidator<_, _> as PayloadValidator>::
             validate_payload_attributes_against_header(validator, &attributes, &header)
     }
 
@@ -678,7 +626,7 @@ mod tests {
         let attributes = denim_attributes(DENIM_TIMESTAMP);
         let header = Header { number: 8, timestamp: DENIM_TIMESTAMP, ..Default::default() };
 
-        let result = <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
+        let result = <engine::BaseEngineValidator<_, _> as PayloadValidator>::
             validate_payload_attributes_against_header(&validator, &attributes, &header);
 
         assert_eq!(
@@ -697,7 +645,7 @@ mod tests {
         ];
         let header = Header { number: 8, timestamp: DENIM_TIMESTAMP, ..Default::default() };
 
-        let result = <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
+        let result = <engine::BaseEngineValidator<_, _> as PayloadValidator>::
             validate_payload_attributes_against_header(&validator, &attributes, &header);
 
         assert_eq!(
@@ -780,7 +728,7 @@ mod tests {
         let state_updates = HashedPostState::default();
         let parent_state = parent_state(parent_millis_part);
 
-        PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+        PayloadValidator::validate_block_post_execution_with_hashed_state(
             &validator,
             || &state_updates,
             &block,
@@ -811,15 +759,14 @@ mod tests {
             ..Default::default()
         });
         let state_updates = HashedPostState::default();
-        let error =
-            PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
-                &denim_validator(),
-                || &state_updates,
-                &block,
-                &parent,
-                || Ok(Box::new(NoopProvider::default())),
-            )
-            .unwrap_err();
+        let error = PayloadValidator::validate_block_post_execution_with_hashed_state(
+            &denim_validator(),
+            || &state_updates,
+            &block,
+            &parent,
+            || Ok(Box::new(NoopProvider::default())),
+        )
+        .unwrap_err();
 
         assert!(matches!(
             base_consensus_error(&error),
@@ -916,15 +863,14 @@ mod tests {
                 ..Default::default()
             });
             let state_updates = HashedPostState::default();
-            let error = PayloadValidator::<BaseEngineTypes>::
-                validate_block_post_execution_with_hashed_state(
-                    &denim_validator(),
-                    || &state_updates,
-                    &block,
-                    &parent,
-                    || Ok(Box::new(parent_state(200))),
-                )
-                .unwrap_err();
+            let error = PayloadValidator::validate_block_post_execution_with_hashed_state(
+                &denim_validator(),
+                || &state_updates,
+                &block,
+                &parent,
+                || Ok(Box::new(parent_state(200))),
+            )
+            .unwrap_err();
 
             assert_eq!(base_time_metadata_error(&error), Some(&expected));
         }
@@ -939,7 +885,7 @@ mod tests {
         });
         let state_updates = HashedPostState::default();
 
-        PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+        PayloadValidator::validate_block_post_execution_with_hashed_state(
             &denim_validator(),
             || &state_updates,
             &block,
@@ -958,15 +904,14 @@ mod tests {
                 ..Default::default()
             });
             let state_updates = HashedPostState::default();
-            let error = PayloadValidator::<BaseEngineTypes>::
-                validate_block_post_execution_with_hashed_state(
-                    &denim_validator(),
-                    || &state_updates,
-                    &block,
-                    &parent,
-                    || Ok(Box::new(parent_state(0))),
-                )
-                .unwrap_err();
+            let error = PayloadValidator::validate_block_post_execution_with_hashed_state(
+                &denim_validator(),
+                || &state_updates,
+                &block,
+                &parent,
+                || Ok(Box::new(parent_state(0))),
+            )
+            .unwrap_err();
 
             assert!(matches!(
                 base_consensus_error(&error),
@@ -989,15 +934,14 @@ mod tests {
             ..Default::default()
         });
         let state_updates = HashedPostState::default();
-        let error =
-            PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
-                &denim_validator(),
-                || &state_updates,
-                &block,
-                &parent,
-                || Ok(Box::new(parent_state(0))),
-            )
-            .unwrap_err();
+        let error = PayloadValidator::validate_block_post_execution_with_hashed_state(
+            &denim_validator(),
+            || &state_updates,
+            &block,
+            &parent,
+            || Ok(Box::new(parent_state(0))),
+        )
+        .unwrap_err();
 
         assert_eq!(base_time_metadata_error(&error), Some(&BaseTimeMetadataError::Missing));
     }

@@ -1311,6 +1311,7 @@ mod tests {
     use alloy_consensus::{Header, SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxKind, U256};
+    use alloy_rpc_types_engine::PayloadId;
     use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BaseTxEnvelope, Predeploys};
     use base_common_evm::BaseTime;
@@ -1321,7 +1322,6 @@ mod tests {
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
     use reth_ethereum_forks::ForkCondition;
-    use reth_payload_builder::PayloadId;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction};
     use reth_provider::noop::NoopProvider;

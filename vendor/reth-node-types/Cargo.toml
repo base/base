@@ -20,7 +20,6 @@ reth-chainspec = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
-reth-payload-primitives = { workspace = true, features = ["default"] }
 [features]
 default = ["std"]
 std = [

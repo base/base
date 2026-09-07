@@ -1,13 +1,11 @@
 //! Fork creation actions for the e2e testing framework.
 
-use std::marker::PhantomData;
-
-use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
+use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use reth_ethereum_primitives::TransactionSigned;
-use reth_node_api::{EngineTypes, PayloadTypes};
+use reth_node_api::EngineTypes;
 use reth_rpc_api::clients::EthApiClient;
 use tracing::debug;
 
@@ -27,37 +25,30 @@ pub enum ForkBase {
 
 /// Action to create a fork from a specified block and produce blocks on top
 #[derive(Debug)]
-pub struct CreateFork<Engine> {
+pub struct CreateFork {
     /// Fork base specification (either block number or tag)
     pub fork_base: ForkBase,
     /// Number of blocks to produce on top of the fork base
     pub num_blocks: u64,
-    /// Tracks engine type
-    _phantom: PhantomData<Engine>,
 }
 
-impl<Engine> CreateFork<Engine> {
+impl CreateFork {
     /// Create a new `CreateFork` action from a block number
     pub fn new(fork_base_block: u64, num_blocks: u64) -> Self {
-        Self {
-            fork_base: ForkBase::Number(fork_base_block),
-            num_blocks,
-            _phantom: Default::default(),
-        }
+        Self { fork_base: ForkBase::Number(fork_base_block), num_blocks }
     }
 
     /// Create a new `CreateFork` action from a tagged block
     pub fn new_from_tag(tag: impl Into<String>, num_blocks: u64) -> Self {
-        Self { fork_base: ForkBase::Tag(tag.into()), num_blocks, _phantom: Default::default() }
+        Self { fork_base: ForkBase::Tag(tag.into()), num_blocks }
     }
 }
 
-impl<Engine> Action<Engine> for CreateFork<Engine>
-where
-    Engine: EngineTypes + PayloadTypes,
-    Engine::PayloadAttributes: From<PayloadAttributes> + Clone,
-    Engine::ExecutionPayloadEnvelopeV3:
-        Into<alloy_rpc_types_engine::payload::ExecutionPayloadEnvelopeV3>,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for CreateFork
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {

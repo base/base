@@ -3,7 +3,8 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use reth_payload_primitives::PayloadTypes;
+use base_common_consensus::BaseTxEnvelope;
+use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use tokio::sync::broadcast;
 use tokio_stream::{
     Stream, StreamExt,
@@ -13,41 +14,41 @@ use tracing::debug;
 
 /// Payload builder events.
 #[derive(Clone, Debug)]
-pub enum Events<T: PayloadTypes> {
+pub enum Events {
     /// The payload attributes as
     /// they are received from the CL through the engine api.
-    Attributes(T::PayloadAttributes),
+    Attributes(BasePayloadBuilderAttributes<BaseTxEnvelope>),
     /// The built payload that has been just built.
     /// Triggered by the CL whenever it asks for an execution payload.
     /// This event is only thrown if the CL is a validator.
-    BuiltPayload(T::BuiltPayload),
+    BuiltPayload(BaseBuiltPayload),
 }
 
 /// Represents a receiver for various payload events.
 #[derive(Debug)]
-pub struct PayloadEvents<T: PayloadTypes> {
+pub struct PayloadEvents {
     /// The receiver for the payload events.
-    pub receiver: broadcast::Receiver<Events<T>>,
+    pub receiver: broadcast::Receiver<Events>,
 }
 
-impl<T: PayloadTypes> PayloadEvents<T> {
+impl PayloadEvents {
     /// Convert this receiver into a stream of `PayloadEvents`.
-    pub fn into_stream(self) -> BroadcastStream<Events<T>> {
+    pub fn into_stream(self) -> BroadcastStream<Events> {
         BroadcastStream::new(self.receiver)
     }
     /// Asynchronously receives the next payload event.
-    pub async fn recv(self) -> Option<Result<Events<T>, BroadcastStreamRecvError>> {
+    pub async fn recv(self) -> Option<Result<Events, BroadcastStreamRecvError>> {
         let mut event_stream = self.into_stream();
         event_stream.next().await
     }
 
     /// Returns a new stream that yields all built payloads.
-    pub fn into_built_payload_stream(self) -> BuiltPayloadStream<T> {
+    pub fn into_built_payload_stream(self) -> BuiltPayloadStream {
         BuiltPayloadStream { st: self.into_stream() }
     }
 
     /// Returns a new stream that yields received payload attributes
-    pub fn into_attributes_stream(self) -> PayloadAttributeStream<T> {
+    pub fn into_attributes_stream(self) -> PayloadAttributeStream {
         PayloadAttributeStream { st: self.into_stream() }
     }
 }
@@ -55,14 +56,14 @@ impl<T: PayloadTypes> PayloadEvents<T> {
 /// A stream that yields built payloads.
 #[derive(Debug)]
 #[pin_project::pin_project]
-pub struct BuiltPayloadStream<T: PayloadTypes> {
+pub struct BuiltPayloadStream {
     /// The stream of events.
     #[pin]
-    st: BroadcastStream<Events<T>>,
+    st: BroadcastStream<Events>,
 }
 
-impl<T: PayloadTypes> Stream for BuiltPayloadStream<T> {
-    type Item = T::BuiltPayload;
+impl Stream for BuiltPayloadStream {
+    type Item = BaseBuiltPayload;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
@@ -85,14 +86,14 @@ impl<T: PayloadTypes> Stream for BuiltPayloadStream<T> {
 /// A stream that yields received payload attributes
 #[derive(Debug)]
 #[pin_project::pin_project]
-pub struct PayloadAttributeStream<T: PayloadTypes> {
+pub struct PayloadAttributeStream {
     /// The stream of events.
     #[pin]
-    st: BroadcastStream<Events<T>>,
+    st: BroadcastStream<Events>,
 }
 
-impl<T: PayloadTypes> Stream for PayloadAttributeStream<T> {
-    type Item = T::PayloadAttributes;
+impl Stream for PayloadAttributeStream {
+    type Item = BasePayloadBuilderAttributes<BaseTxEnvelope>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {

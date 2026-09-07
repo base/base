@@ -2,8 +2,6 @@
 
 #[path = "../fixtures/mod.rs"]
 pub mod fixtures;
-use fixtures::BaseTestPayload;
-
 use std::sync::Arc;
 
 use alloy_primitives::B256;
@@ -11,6 +9,7 @@ use alloy_rpc_types_engine::PayloadAttributes;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_node_core::{BaseEngineTypes, BaseNode};
 use eyre::Result;
+use fixtures::BaseTestPayload;
 use reth_e2e_test_utils::{
     E2ETestSetupBuilder,
     testsuite::{
@@ -42,7 +41,7 @@ async fn test_testsuite_produce_blocks() -> Result<()> {
 
     let test = TestBuilder::new()
         .with_setup(setup)
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(5))
+        .with_action(ProduceBlocks::new(5))
         .with_action(MakeCanonical::new());
 
     test.run::<BaseNode>().await?;
@@ -68,9 +67,9 @@ async fn test_testsuite_create_fork() -> Result<()> {
 
     let test = TestBuilder::new()
         .with_setup(setup)
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(2))
+        .with_action(ProduceBlocks::new(2))
         .with_action(MakeCanonical::new())
-        .with_action(CreateFork::<BaseEngineTypes>::new(1, 3));
+        .with_action(CreateFork::new(1, 3));
 
     test.run::<BaseNode>().await?;
 
@@ -95,9 +94,9 @@ async fn test_testsuite_reorg_with_tagging() -> Result<()> {
 
     let test = TestBuilder::new()
         .with_setup(setup)
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(1)) // produce block 1
+        .with_action(ProduceBlocks::new(1)) // produce block 1
         .with_action(CaptureBlock::new("fork_base"))
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(2)) // produce blocks 2, 3
+        .with_action(ProduceBlocks::new(2)) // produce blocks 2, 3
         .with_action(CaptureBlock::new("main_tip"))
         .with_action(MakeCanonical::new()) // make main chain tip canonical
         // block production finalizes the produced blocks, so re-establish finality at the fork
@@ -107,9 +106,9 @@ async fn test_testsuite_reorg_with_tagging() -> Result<()> {
                 .with_head(BlockReference::Tag("main_tip".to_string())),
         )
         // fork from block 1, produce blocks 2', 3'
-        .with_action(CreateFork::<BaseEngineTypes>::new_from_tag("fork_base", 2))
+        .with_action(CreateFork::new_from_tag("fork_base", 2))
         .with_action(CaptureBlock::new("fork_tip")) // tag fork tip
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("fork_tip")); // reorg to fork tip
+        .with_action(ReorgTo::new_from_tag("fork_tip")); // reorg to fork tip
 
     test.run::<BaseNode>().await?;
 
@@ -136,19 +135,19 @@ async fn test_testsuite_deep_reorg() -> Result<()> {
     let test = TestBuilder::new()
         .with_setup(setup)
         // receive newPayload and forkchoiceUpdated with block height 1
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(1))
+        .with_action(ProduceBlocks::new(1))
         .with_action(MakeCanonical::new())
         .with_action(CaptureBlock::new("block1"))
         // receive forkchoiceUpdated with block hash A as head (block A at height 2)
-        .with_action(CreateFork::<BaseEngineTypes>::new(1, 1))
+        .with_action(CreateFork::new(1, 1))
         .with_action(CaptureBlock::new("blockA_height2"))
         .with_action(MakeCanonical::new())
         // receive newPayload with block hash B and height 2
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("block1"))
-        .with_action(CreateFork::<BaseEngineTypes>::new(1, 1))
+        .with_action(ReorgTo::new_from_tag("block1"))
+        .with_action(CreateFork::new(1, 1))
         .with_action(CaptureBlock::new("blockB_height2"))
         // receive forkchoiceUpdated with block hash B as head
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("blockB_height2"));
+        .with_action(ReorgTo::new_from_tag("blockB_height2"));
 
     test.run::<BaseNode>().await?;
 
@@ -187,12 +186,12 @@ async fn test_testsuite_multinode_block_production() -> Result<()> {
         .with_action(CompareNodeChainTips::expect_same(0, 1))
         // build main chain (blocks 1-3)
         .with_action(SelectActiveNode::new(0))
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(3))
+        .with_action(ProduceBlocks::new(3))
         .with_action(MakeCanonical::new())
         .with_action(CaptureBlockOnNode::new("node0_tip", 0))
         .with_action(CompareNodeChainTips::expect_same(0, 1))
         // node 0 already has the state and can continue producing blocks
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(2))
+        .with_action(ProduceBlocks::new(2))
         .with_action(MakeCanonical::new())
         .with_action(CaptureBlockOnNode::new("node0_tip_2", 0))
         // verify both nodes remain in sync

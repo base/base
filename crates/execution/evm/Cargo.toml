@@ -19,6 +19,7 @@ alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
+reth-payload-primitives = { workspace = true }
 reth-evm = { workspace = true, features = ["default"] }
 reth-rpc-eth-api = { workspace = true, optional = true }
 alloy-rpc-types-eth = { workspace = true, optional = true }
@@ -30,7 +31,7 @@ reth-execution-errors = { workspace = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["evm", "reth"] }
-base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 [dev-dependencies]
 alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }

@@ -31,7 +31,7 @@ use reth_metrics::{
     Metrics, metrics,
     metrics::{Gauge, gauge},
 };
-use reth_node_api::{NewPayloadError, PayloadTypes};
+use reth_node_api::NewPayloadError;
 use reth_primitives_traits::{BlockBody, GotExpected, RecoveredBlock, SealedBlock};
 use reth_revm::{cached::CachedReads, database::StateProviderDatabase};
 use reth_rpc_api::BlockSubmissionValidationApiServer;
@@ -45,15 +45,14 @@ use tracing::warn;
 
 /// The type that implements the `validation` rpc namespace trait
 #[derive(Clone, Debug, derive_more::Deref)]
-pub struct ValidationApi<Provider, E: ConfigureEvm, T: PayloadTypes> {
+pub struct ValidationApi<Provider, E: ConfigureEvm> {
     #[deref]
-    inner: Arc<ValidationApiInner<Provider, E, T>>,
+    inner: Arc<ValidationApiInner<Provider, E>>,
 }
 
-impl<Provider, E, T> ValidationApi<Provider, E, T>
+impl<Provider, E> ValidationApi<Provider, E>
 where
     E: ConfigureEvm,
-    T: PayloadTypes,
 {
     /// Create a new instance of the [`ValidationApi`]
     pub fn new(
@@ -62,7 +61,7 @@ where
         evm_config: E,
         config: ValidationApiConfig,
         task_spawner: Runtime,
-        payload_validator: Arc<dyn PayloadValidator<T, Block = BaseBlock>>,
+        payload_validator: Arc<dyn PayloadValidator<Block = BaseBlock>>,
     ) -> Self {
         let ValidationApiConfig { disallow, validation_window } = config;
 
@@ -104,14 +103,13 @@ where
     }
 }
 
-impl<Provider, E, T> ValidationApi<Provider, E, T>
+impl<Provider, E> ValidationApi<Provider, E>
 where
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + ChainSpecProvider<ChainSpec: EthereumHardforks>
         + StateProviderFactory
         + 'static,
     E: ConfigureEvm + 'static,
-    T: PayloadTypes<ExecutionData = ExecutionData>,
 {
     /// Validates the given block and a [`BidTrace`] against it.
     pub async fn validate_message_against_block(
@@ -364,12 +362,45 @@ where
         Ok(versioned_hashes)
     }
 
+    /// Decodes a relay submission into Base transactions before applying Base payload validation.
+    pub fn validate_relay_payload(
+        &self,
+        data: ExecutionData,
+    ) -> Result<RecoveredBlock<BaseBlock>, ValidationApiError> {
+        let block_hash = data.payload.block_hash();
+        let block_access_list =
+            data.payload.as_v4().map(|payload| payload.block_access_list.clone());
+        let block: BaseBlock = data
+            .payload
+            .try_into_block_with_sidecar(&data.sidecar)
+            .map_err(NewPayloadError::from)?;
+        let mut payload =
+            base_common_rpc_types_engine::ExecutionData::from_block_unchecked_with_extras(
+                block_hash,
+                &block,
+                block_access_list,
+            );
+        payload.sidecar = match (data.sidecar.cancun(), data.sidecar.prague()) {
+            (Some(cancun), Some(prague)) => {
+                base_common_rpc_types_engine::BaseExecutionPayloadSidecar::v4(
+                    cancun.clone(),
+                    prague.clone(),
+                )
+            }
+            (Some(cancun), None) => {
+                base_common_rpc_types_engine::BaseExecutionPayloadSidecar::v3(cancun.clone())
+            }
+            _ => Default::default(),
+        };
+        Ok(self.payload_validator.ensure_well_formed_payload(payload)?)
+    }
+
     /// Core logic for validating the builder submission v3
     async fn validate_builder_submission_v3(
         &self,
         request: BuilderBlockValidationRequestV3,
     ) -> Result<(), ValidationApiError> {
-        let block = self.payload_validator.ensure_well_formed_payload(ExecutionData {
+        let block = self.validate_relay_payload(ExecutionData {
             payload: ExecutionPayload::V3(request.request.execution_payload),
             sidecar: ExecutionPayloadSidecar::v3(CancunPayloadFields {
                 parent_beacon_block_root: request.parent_beacon_block_root,
@@ -391,7 +422,7 @@ where
         &self,
         request: BuilderBlockValidationRequestV4,
     ) -> Result<(), ValidationApiError> {
-        let block = self.payload_validator.ensure_well_formed_payload(ExecutionData {
+        let block = self.validate_relay_payload(ExecutionData {
             payload: ExecutionPayload::V3(request.request.execution_payload),
             sidecar: ExecutionPayloadSidecar::v4(
                 CancunPayloadFields {
@@ -420,7 +451,7 @@ where
         &self,
         request: BuilderBlockValidationRequestV5,
     ) -> Result<(), ValidationApiError> {
-        let block = self.payload_validator.ensure_well_formed_payload(ExecutionData {
+        let block = self.validate_relay_payload(ExecutionData {
             payload: ExecutionPayload::V3(request.request.execution_payload),
             sidecar: ExecutionPayloadSidecar::v4(
                 CancunPayloadFields {
@@ -465,7 +496,7 @@ where
             DecodedBal::from_rlp_bytes(request.request.execution_payload.block_access_list.clone())
                 .map_err(ValidationApiError::InvalidBlockAccessList)?;
 
-        let block = self.payload_validator.ensure_well_formed_payload(ExecutionData {
+        let block = self.validate_relay_payload(ExecutionData {
             payload: ExecutionPayload::V4(request.request.execution_payload),
             sidecar: ExecutionPayloadSidecar::v4(
                 CancunPayloadFields {
@@ -502,7 +533,7 @@ where
 }
 
 #[async_trait]
-impl<Provider, E, T> BlockSubmissionValidationApiServer for ValidationApi<Provider, E, T>
+impl<Provider, E> BlockSubmissionValidationApiServer for ValidationApi<Provider, E>
 where
     Provider: BlockReaderIdExt<Header = alloy_consensus::Header>
         + ChainSpecProvider<ChainSpec: EthereumHardforks>
@@ -510,7 +541,6 @@ where
         + Clone
         + 'static,
     E: ConfigureEvm + 'static,
-    T: PayloadTypes<ExecutionData = ExecutionData>,
 {
     async fn validate_builder_submission_v1(
         &self,
@@ -601,13 +631,13 @@ where
     }
 }
 
-pub struct ValidationApiInner<Provider, E: ConfigureEvm, T: PayloadTypes> {
+pub struct ValidationApiInner<Provider, E: ConfigureEvm> {
     /// The provider that can interact with the chain.
     provider: Provider,
     /// Consensus implementation.
     consensus: Arc<dyn FullConsensus>,
     /// Execution payload validator.
-    payload_validator: Arc<dyn PayloadValidator<T, Block = BaseBlock>>,
+    payload_validator: Arc<dyn PayloadValidator<Block = BaseBlock>>,
     /// Block executor factory.
     evm_config: E,
     /// Set of disallowed addresses
@@ -641,7 +671,7 @@ fn hash_disallow_list(disallow: &AddressSet) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-impl<Provider, E: ConfigureEvm, T: PayloadTypes> fmt::Debug for ValidationApiInner<Provider, E, T> {
+impl<Provider, E: ConfigureEvm> fmt::Debug for ValidationApiInner<Provider, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ValidationApiInner").finish_non_exhaustive()
     }

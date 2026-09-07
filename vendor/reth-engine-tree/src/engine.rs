@@ -10,7 +10,7 @@ use base_common_consensus::BaseBlock;
 use crossbeam_channel::Sender;
 use futures::{Stream, StreamExt};
 use reth_engine_primitives::{BeaconEngineMessage, ConsensusEngineEvent};
-use reth_payload_primitives::{BuiltPayloadExecutedBlock, PayloadTypes};
+use reth_payload_primitives::BuiltPayloadExecutedBlock;
 use reth_primitives_traits::{Block, SealedBlock};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -242,14 +242,14 @@ impl EngineApiKind {
 
 /// The request variants that the engine API handler can receive.
 #[derive(Debug)]
-pub enum EngineApiRequest<T: PayloadTypes> {
+pub enum EngineApiRequest {
     /// A request received from the consensus engine.
-    Beacon(BeaconEngineMessage<T>),
+    Beacon(BeaconEngineMessage),
     /// Request to insert an already executed block, e.g. via payload building.
     InsertExecutedBlock(BuiltPayloadExecutedBlock),
 }
 
-impl<T: PayloadTypes> Display for EngineApiRequest<T> {
+impl Display for EngineApiRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Beacon(msg) => msg.fmt(f),
@@ -260,14 +260,14 @@ impl<T: PayloadTypes> Display for EngineApiRequest<T> {
     }
 }
 
-impl<T: PayloadTypes> From<BeaconEngineMessage<T>> for EngineApiRequest<T> {
-    fn from(msg: BeaconEngineMessage<T>) -> Self {
+impl From<BeaconEngineMessage> for EngineApiRequest {
+    fn from(msg: BeaconEngineMessage) -> Self {
         Self::Beacon(msg)
     }
 }
 
-impl<T: PayloadTypes> From<EngineApiRequest<T>> for FromEngine<EngineApiRequest<T>, BaseBlock> {
-    fn from(req: EngineApiRequest<T>) -> Self {
+impl From<EngineApiRequest> for FromEngine<EngineApiRequest, BaseBlock> {
+    fn from(req: EngineApiRequest) -> Self {
         Self::Request(req)
     }
 }

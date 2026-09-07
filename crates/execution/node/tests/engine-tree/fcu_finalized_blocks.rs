@@ -1,12 +1,9 @@
 //! E2E tests for forkchoice updates to canonical ancestors around the finalized block.
 
-use crate::fixtures::BaseTestPayload;
-
 use std::sync::Arc;
 
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_node_core::BaseEngineTypes;
-use base_node_core::BaseNode;
+use base_node_core::{BaseEngineTypes, BaseNode};
 use eyre::Result;
 use reth_e2e_test_utils::testsuite::{
     TestBuilder,
@@ -17,6 +14,8 @@ use reth_e2e_test_utils::testsuite::{
     setup::{NetworkSetup, Setup},
 };
 use reth_node_api::TreeConfig;
+
+use crate::fixtures::BaseTestPayload;
 
 /// Creates the standard setup for engine tree e2e tests.
 fn default_engine_tree_setup() -> Setup<BaseEngineTypes> {
@@ -43,11 +42,11 @@ async fn test_fcu_to_canonical_ancestor_around_finalized() -> Result<()> {
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
         // Build and tag canonical ancestors on the way to block 10.
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(7))
+        .with_action(ProduceBlocks::new(7))
         .with_action(CaptureBlock::new("block_7"))
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(1))
+        .with_action(ProduceBlocks::new(1))
         .with_action(CaptureBlock::new("block_8"))
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(2))
+        .with_action(ProduceBlocks::new(2))
         .with_action(CaptureBlock::new("block_10"))
         .with_action(MakeCanonical::new())
         // Establish block 7 as the latest known finalized block.
@@ -70,7 +69,7 @@ async fn test_fcu_to_canonical_ancestor_around_finalized() -> Result<()> {
         // With payload attributes, an FCU to block 8 starts a payload build on top of it:
         // `CreateFork` drives the full fcu(attrs) -> getPayload -> newPayload flow. Making the
         // built block canonical reorgs out the previous blocks 9 and 10.
-        .with_action(CreateFork::<BaseEngineTypes>::new_from_tag("block_8", 1))
+        .with_action(CreateFork::new_from_tag("block_8", 1))
         .with_action(MakeCanonical::new())
         .with_action(AssertChainTip::new(9));
 

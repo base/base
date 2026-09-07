@@ -23,7 +23,6 @@ pub type BaseNodePool<Node> =
 
 /// Base node components, with only the provider supplied by the launch adapter.
 pub type BaseNodeComponents<Node> = Components<
-    Node,
     NetworkHandle<BaseNetworkPrimitives>,
     BaseNodePool<Node>,
     BaseEvmConfig,

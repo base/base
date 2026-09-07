@@ -12,19 +12,16 @@ use alloy_rpc_types_engine::{
     ExecutionData, ForkChoiceUpdateResult, ForkchoiceState, ForkchoiceUpdateError,
     ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
 };
+use base_common_consensus::BaseTxEnvelope;
 use futures::{FutureExt, TryFutureExt, future::Either};
 use reth_errors::RethResult;
 use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::PayloadTypes;
+use reth_payload_primitives::BasePayloadBuilderAttributes;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 use crate::{
     BeaconOnNewPayloadError, ExecutionPayload, ForkchoiceStatus, error::BeaconForkChoiceUpdateError,
 };
-
-/// Type alias for backwards compat
-#[deprecated(note = "Use ConsensusEngineHandle instead")]
-pub type BeaconConsensusEngineHandle<Payload> = ConsensusEngineHandle<Payload>;
 
 /// Represents the outcome of forkchoice update.
 ///
@@ -247,11 +244,11 @@ impl ExecutionPayload for BigBlockData<ExecutionData> {
 /// A message for the beacon engine from other components of the node (engine RPC API invoked by the
 /// consensus layer).
 #[derive(Debug)]
-pub enum BeaconEngineMessage<Payload: PayloadTypes> {
+pub enum BeaconEngineMessage {
     /// Message with new payload.
     NewPayload {
         /// The execution payload received by Engine API.
-        payload: Payload::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
         /// The sender for returning payload status result.
         tx: oneshot::Sender<Result<PayloadStatus, BeaconOnNewPayloadError>>,
     },
@@ -263,7 +260,7 @@ pub enum BeaconEngineMessage<Payload: PayloadTypes> {
     /// Returns detailed timing breakdown alongside the payload status.
     RethNewPayload {
         /// The execution payload received by Engine API.
-        payload: Payload::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
         /// Whether to wait for in-flight persistence to complete before processing.
         wait_for_persistence: bool,
         /// Whether to wait for execution cache and sparse trie locks before processing.
@@ -278,13 +275,13 @@ pub enum BeaconEngineMessage<Payload: PayloadTypes> {
         /// The updated forkchoice state.
         state: ForkchoiceState,
         /// The payload attributes for block building.
-        payload_attrs: Option<Payload::PayloadAttributes>,
+        payload_attrs: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
         /// The sender for returning forkchoice updated result.
         tx: oneshot::Sender<RethResult<OnForkChoiceUpdated>>,
     },
 }
 
-impl<Payload: PayloadTypes> Display for BeaconEngineMessage<Payload> {
+impl Display for BeaconEngineMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NewPayload { payload, .. } => {
@@ -322,19 +319,13 @@ impl<Payload: PayloadTypes> Display for BeaconEngineMessage<Payload> {
 ///
 /// This type mirrors consensus related functions of the engine API.
 #[derive(Debug, Clone)]
-pub struct ConsensusEngineHandle<Payload>
-where
-    Payload: PayloadTypes,
-{
-    to_engine: UnboundedSender<BeaconEngineMessage<Payload>>,
+pub struct ConsensusEngineHandle {
+    to_engine: UnboundedSender<BeaconEngineMessage>,
 }
 
-impl<Payload> ConsensusEngineHandle<Payload>
-where
-    Payload: PayloadTypes,
-{
+impl ConsensusEngineHandle {
     /// Creates a new beacon consensus engine handle.
-    pub const fn new(to_engine: UnboundedSender<BeaconEngineMessage<Payload>>) -> Self {
+    pub const fn new(to_engine: UnboundedSender<BeaconEngineMessage>) -> Self {
         Self { to_engine }
     }
 
@@ -343,7 +334,7 @@ where
     /// See also <https://github.com/ethereum/execution-apis/blob/3d627c95a4d3510a8187dd02e0250ecb4331d27e/src/engine/shanghai.md#engine_newpayloadv2>
     pub async fn new_payload(
         &self,
-        payload: Payload::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
     ) -> Result<PayloadStatus, BeaconOnNewPayloadError> {
         let (tx, rx) = oneshot::channel();
         let _ = self.to_engine.send(BeaconEngineMessage::NewPayload { payload, tx });
@@ -358,7 +349,7 @@ where
     /// Returns detailed timing breakdown alongside the payload status.
     pub async fn reth_new_payload(
         &self,
-        payload: Payload::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
         wait_for_persistence: bool,
         wait_for_caches: bool,
     ) -> Result<(PayloadStatus, NewPayloadTimings), BeaconOnNewPayloadError> {
@@ -379,7 +370,7 @@ where
     pub async fn fork_choice_updated(
         &self,
         state: ForkchoiceState,
-        payload_attrs: Option<Payload::PayloadAttributes>,
+        payload_attrs: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> Result<ForkchoiceUpdated, BeaconForkChoiceUpdateError> {
         Ok(self
             .send_fork_choice_updated(state, payload_attrs)
@@ -394,7 +385,7 @@ where
     fn send_fork_choice_updated(
         &self,
         state: ForkchoiceState,
-        payload_attrs: Option<Payload::PayloadAttributes>,
+        payload_attrs: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> oneshot::Receiver<RethResult<OnForkChoiceUpdated>> {
         let (tx, rx) = oneshot::channel();
         let _ = self.to_engine.send(BeaconEngineMessage::ForkchoiceUpdated {

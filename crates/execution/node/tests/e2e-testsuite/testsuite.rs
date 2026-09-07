@@ -5,7 +5,7 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
-use base_node_core::{BaseEngineTypes, BaseNode};
+use base_node_core::BaseNode;
 use eyre::Result;
 use reth_e2e_test_utils::testsuite::{
     TestBuilder,
@@ -27,37 +27,36 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
         ))
         .with_network(NetworkSetup::single_node());
 
-    let test =
-        TestBuilder::new().with_setup(setup).with_action(AssertMineBlock::<BaseEngineTypes>::new(
-            0,
-            vec![],
-            Some(B256::ZERO),
-            // TODO: refactor once we have actions to generate payload attributes.
-            BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
-                B256::ZERO,
-                BasePayloadAttributes {
-                    payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
-                        timestamp: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs(),
-                        prev_randao: B256::random(),
-                        suggested_fee_recipient: Address::random(),
-                        withdrawals: None,
-                        parent_beacon_block_root: None,
-                        slot_number: None,
-                        target_gas_limit: None,
-                    },
-                    transactions: None,
-                    no_tx_pool: None,
-                    eip_1559_params: None,
-                    min_base_fee: None,
-                    gas_limit: Some(30_000_000),
+    let test = TestBuilder::new().with_setup(setup).with_action(AssertMineBlock::new(
+        0,
+        vec![],
+        Some(B256::ZERO),
+        // TODO: refactor once we have actions to generate payload attributes.
+        BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+            B256::ZERO,
+            BasePayloadAttributes {
+                payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    prev_randao: B256::random(),
+                    suggested_fee_recipient: Address::random(),
+                    withdrawals: None,
+                    parent_beacon_block_root: None,
+                    slot_number: None,
+                    target_gas_limit: None,
                 },
-                3,
-            )
-            .expect("valid test payload attributes"),
-        ));
+                transactions: None,
+                no_tx_pool: None,
+                eip_1559_params: None,
+                min_base_fee: None,
+                gas_limit: Some(30_000_000),
+            },
+            3,
+        )
+        .expect("valid test payload attributes"),
+    ));
 
     test.run::<BaseNode>().await?;
 
@@ -79,37 +78,36 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
         ))
         .with_network(NetworkSetup::single_node());
 
-    let test =
-        TestBuilder::new().with_setup(setup).with_action(AssertMineBlock::<BaseEngineTypes>::new(
-            0,
-            vec![],
-            Some(B256::ZERO),
-            // TODO: refactor once we have actions to generate payload attributes.
-            BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
-                B256::ZERO,
-                BasePayloadAttributes {
-                    payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
-                        timestamp: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs(),
-                        prev_randao: B256::random(),
-                        suggested_fee_recipient: Address::random(),
-                        withdrawals: Some(vec![]),
-                        parent_beacon_block_root: Some(B256::ZERO),
-                        slot_number: None,
-                        target_gas_limit: None,
-                    },
-                    transactions: None,
-                    no_tx_pool: None,
-                    eip_1559_params: Some(B64::ZERO),
-                    min_base_fee: None,
-                    gas_limit: Some(30_000_000),
+    let test = TestBuilder::new().with_setup(setup).with_action(AssertMineBlock::new(
+        0,
+        vec![],
+        Some(B256::ZERO),
+        // TODO: refactor once we have actions to generate payload attributes.
+        BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+            B256::ZERO,
+            BasePayloadAttributes {
+                payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    prev_randao: B256::random(),
+                    suggested_fee_recipient: Address::random(),
+                    withdrawals: Some(vec![]),
+                    parent_beacon_block_root: Some(B256::ZERO),
+                    slot_number: None,
+                    target_gas_limit: None,
                 },
-                3,
-            )
-            .expect("valid test payload attributes"),
-        ));
+                transactions: None,
+                no_tx_pool: None,
+                eip_1559_params: Some(B64::ZERO),
+                min_base_fee: None,
+                gas_limit: Some(30_000_000),
+            },
+            3,
+        )
+        .expect("valid test payload attributes"),
+    ));
 
     test.run::<BaseNode>().await?;
 

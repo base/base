@@ -13,11 +13,14 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, BlockTimestamp};
 use alloy_rpc_types::engine::PayloadId;
+use base_common_consensus::BaseTxEnvelope;
 use futures_util::{Stream, StreamExt, future::FutureExt};
 use reth_chain_state::CanonStateNotification;
 use reth_execution_cache::SavedCache;
 use reth_payload_builder_primitives::{Events, PayloadBuilderError, PayloadEvents};
-use reth_payload_primitives::{BuiltPayload, PayloadAttributes, PayloadKind, PayloadTypes};
+use reth_payload_primitives::{
+    BaseBuiltPayload, BasePayloadBuilderAttributes, BuiltPayload, PayloadAttributes, PayloadKind,
+};
 use reth_primitives_traits::FastInstant as Instant;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use tokio::sync::{
@@ -41,14 +44,11 @@ type ResolvePayloadResult<P, Job> = (Option<PayloadFuture<P>>, Option<PayloadJob
 /// This type is intended to be used to retrieve payloads from the service (e.g. from the engine
 /// API).
 #[derive(Debug)]
-pub struct PayloadStore<T: PayloadTypes> {
-    inner: Arc<PayloadBuilderHandle<T>>,
+pub struct PayloadStore {
+    inner: Arc<PayloadBuilderHandle>,
 }
 
-impl<T> PayloadStore<T>
-where
-    T: PayloadTypes,
-{
+impl PayloadStore {
     /// Resolves the payload job and returns the best payload that has been built so far.
     ///
     /// Note: depending on the installed [`PayloadJobGenerator`], this may or may not terminate the
@@ -57,7 +57,7 @@ where
         &self,
         id: PayloadId,
         kind: PayloadKind,
-    ) -> impl Future<Output = Option<Result<T::BuiltPayload, PayloadBuilderError>>> {
+    ) -> impl Future<Output = Option<Result<BaseBuiltPayload, PayloadBuilderError>>> {
         self.inner.resolve_kind(id, kind)
     }
 
@@ -65,7 +65,7 @@ where
     pub async fn resolve(
         &self,
         id: PayloadId,
-    ) -> Option<Result<T::BuiltPayload, PayloadBuilderError>> {
+    ) -> Option<Result<BaseBuiltPayload, PayloadBuilderError>> {
         self.resolve_kind(id, PayloadKind::Earliest).await
     }
 
@@ -75,7 +75,7 @@ where
     pub async fn best_payload(
         &self,
         id: PayloadId,
-    ) -> Option<Result<T::BuiltPayload, PayloadBuilderError>> {
+    ) -> Option<Result<BaseBuiltPayload, PayloadBuilderError>> {
         self.inner.best_payload(id).await
     }
 
@@ -90,16 +90,13 @@ where
     }
 
     /// Create a new instance
-    pub fn new(inner: PayloadBuilderHandle<T>) -> Self {
+    pub fn new(inner: PayloadBuilderHandle) -> Self {
         Self { inner: Arc::new(inner) }
     }
 }
 
-impl<T> From<PayloadBuilderHandle<T>> for PayloadStore<T>
-where
-    T: PayloadTypes,
-{
-    fn from(inner: PayloadBuilderHandle<T>) -> Self {
+impl From<PayloadBuilderHandle> for PayloadStore {
+    fn from(inner: PayloadBuilderHandle) -> Self {
         Self::new(inner)
     }
 }
@@ -108,17 +105,17 @@ where
 ///
 /// This is the API used to create new payloads and to get the current state of existing ones.
 #[derive(Debug)]
-pub struct PayloadBuilderHandle<T: PayloadTypes> {
+pub struct PayloadBuilderHandle {
     /// Sender half of the message channel to the [`PayloadBuilderService`].
-    to_service: mpsc::UnboundedSender<PayloadServiceCommand<T>>,
+    to_service: mpsc::UnboundedSender<PayloadServiceCommand>,
 }
 
-impl<T: PayloadTypes> PayloadBuilderHandle<T> {
+impl PayloadBuilderHandle {
     /// Creates a new payload builder handle for the given channel.
     ///
     /// Note: this is only used internally by the [`PayloadBuilderService`] to manage the payload
     /// building flow See [`PayloadBuilderService::poll`] for implementation details.
-    pub const fn new(to_service: mpsc::UnboundedSender<PayloadServiceCommand<T>>) -> Self {
+    pub const fn new(to_service: mpsc::UnboundedSender<PayloadServiceCommand>) -> Self {
         Self { to_service }
     }
 
@@ -127,7 +124,7 @@ impl<T: PayloadTypes> PayloadBuilderHandle<T> {
     /// Returns a receiver that will receive the payload id.
     pub fn send_new_payload(
         &self,
-        input: BuildNewPayload<T::PayloadAttributes>,
+        input: BuildNewPayload<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> Receiver<Result<PayloadId, PayloadBuilderError>> {
         let (tx, rx) = oneshot::channel();
         let span = debug_span!(parent: Span::current(), "payload_job");
@@ -141,7 +138,7 @@ impl<T: PayloadTypes> PayloadBuilderHandle<T> {
     pub async fn best_payload(
         &self,
         id: PayloadId,
-    ) -> Option<Result<T::BuiltPayload, PayloadBuilderError>> {
+    ) -> Option<Result<BaseBuiltPayload, PayloadBuilderError>> {
         let (tx, rx) = oneshot::channel();
         self.to_service.send(PayloadServiceCommand::BestPayload(id, tx)).ok()?;
         rx.await.ok()?
@@ -158,7 +155,7 @@ impl<T: PayloadTypes> PayloadBuilderHandle<T> {
         &self,
         id: PayloadId,
         kind: PayloadKind,
-    ) -> impl Future<Output = Option<Result<T::BuiltPayload, PayloadBuilderError>>> {
+    ) -> impl Future<Output = Option<Result<BaseBuiltPayload, PayloadBuilderError>>> {
         let (tx, rx) = oneshot::channel();
         let sent = self.to_service.send(PayloadServiceCommand::Resolve(id, kind, tx)).is_ok();
         async move {
@@ -175,7 +172,7 @@ impl<T: PayloadTypes> PayloadBuilderHandle<T> {
 
     /// Sends a message to the service to subscribe to payload events.
     /// Returns a receiver that will receive them.
-    pub async fn subscribe(&self) -> Result<PayloadEvents<T>, PayloadBuilderError> {
+    pub async fn subscribe(&self) -> Result<PayloadEvents, PayloadBuilderError> {
         let (tx, rx) = oneshot::channel();
         let _ = self.to_service.send(PayloadServiceCommand::Subscribe(tx));
         Ok(PayloadEvents { receiver: rx.await? })
@@ -194,10 +191,7 @@ impl<T: PayloadTypes> PayloadBuilderHandle<T> {
     }
 }
 
-impl<T> Clone for PayloadBuilderHandle<T>
-where
-    T: PayloadTypes,
-{
+impl Clone for PayloadBuilderHandle {
     fn clone(&self) -> Self {
         Self { to_service: self.to_service.clone() }
     }
@@ -213,11 +207,10 @@ where
 /// does know nothing about how to build them, it just drives their jobs to completion.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-pub struct PayloadBuilderService<Gen, St, T>
+pub struct PayloadBuilderService<Gen, St>
 where
-    T: PayloadTypes,
     Gen: PayloadJobGenerator,
-    Gen::Job: PayloadJob<PayloadAttributes = T::PayloadAttributes>,
+    Gen::Job: PayloadJob<PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>>,
 {
     /// The type that knows how to create new payloads.
     generator: Gen,
@@ -226,32 +219,31 @@ where
     /// original Engine API request.
     payload_jobs: Vec<PayloadJobEntry<Gen::Job>>,
     /// Copy of the sender half, so new [`PayloadBuilderHandle`] can be created on demand.
-    service_tx: mpsc::UnboundedSender<PayloadServiceCommand<T>>,
+    service_tx: mpsc::UnboundedSender<PayloadServiceCommand>,
     /// Receiver half of the command channel.
-    command_rx: UnboundedReceiverStream<PayloadServiceCommand<T>>,
+    command_rx: UnboundedReceiverStream<PayloadServiceCommand>,
     /// Metrics for the payload builder service
     metrics: PayloadBuilderServiceMetrics,
     /// Chain events notification stream
     chain_events: St,
     /// Payload events handler, used to broadcast and subscribe to payload events.
-    payload_events: broadcast::Sender<Events<T>>,
+    payload_events: broadcast::Sender<Events>,
     /// We retain latest resolved payload just to make sure that we can handle repeating
     /// requests for it gracefully.
-    cached_payload_rx: watch::Receiver<Option<(PayloadId, BlockTimestamp, T::BuiltPayload)>>,
+    cached_payload_rx: watch::Receiver<Option<(PayloadId, BlockTimestamp, BaseBuiltPayload)>>,
     /// Sender half of the cached payload channel.
-    cached_payload_tx: watch::Sender<Option<(PayloadId, BlockTimestamp, T::BuiltPayload)>>,
+    cached_payload_tx: watch::Sender<Option<(PayloadId, BlockTimestamp, BaseBuiltPayload)>>,
 }
 
 const PAYLOAD_EVENTS_BUFFER_SIZE: usize = 20;
 
 // === impl PayloadBuilderService ===
 
-impl<Gen, St, T> PayloadBuilderService<Gen, St, T>
+impl<Gen, St> PayloadBuilderService<Gen, St>
 where
-    T: PayloadTypes,
     Gen: PayloadJobGenerator,
-    Gen::Job: PayloadJob<PayloadAttributes = T::PayloadAttributes>,
-    <Gen::Job as PayloadJob>::BuiltPayload: Into<T::BuiltPayload>,
+    Gen::Job: PayloadJob<PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+    <Gen::Job as PayloadJob>::BuiltPayload: Into<BaseBuiltPayload>,
 {
     /// Creates a new payload builder service and returns the [`PayloadBuilderHandle`] to interact
     /// with it.
@@ -259,7 +251,7 @@ where
     /// This also takes a stream of chain events that will be forwarded to the generator to apply
     /// additional logic when new state is committed. See also
     /// [`PayloadJobGenerator::on_new_state`].
-    pub fn new(generator: Gen, chain_events: St) -> (Self, PayloadBuilderHandle<T>) {
+    pub fn new(generator: Gen, chain_events: St) -> (Self, PayloadBuilderHandle) {
         let (service_tx, command_rx) = mpsc::unbounded_channel();
         let (payload_events, _) = broadcast::channel(PAYLOAD_EVENTS_BUFFER_SIZE);
 
@@ -282,13 +274,13 @@ where
     }
 
     /// Returns a handle to the service.
-    pub fn handle(&self) -> PayloadBuilderHandle<T> {
+    pub fn handle(&self) -> PayloadBuilderHandle {
         PayloadBuilderHandle::new(self.service_tx.clone())
     }
 
     /// Create clone on `payload_events` sending handle that could be used by builder to produce
     /// additional events during block building
-    pub fn payload_events_handle(&self) -> broadcast::Sender<Events<T>> {
+    pub fn payload_events_handle(&self) -> broadcast::Sender<Events> {
         self.payload_events.clone()
     }
 
@@ -298,7 +290,7 @@ where
     }
 
     /// Returns the best payload for the given identifier that has been built so far.
-    fn best_payload(&self, id: PayloadId) -> Option<Result<T::BuiltPayload, PayloadBuilderError>> {
+    fn best_payload(&self, id: PayloadId) -> Option<Result<BaseBuiltPayload, PayloadBuilderError>> {
         let res = self
             .payload_jobs
             .iter()
@@ -319,7 +311,7 @@ where
         &mut self,
         id: PayloadId,
         kind: PayloadKind,
-    ) -> ResolvePayloadResult<T::BuiltPayload, Gen::Job> {
+    ) -> ResolvePayloadResult<BaseBuiltPayload, Gen::Job> {
         let start = Instant::now();
         debug!(target: "payload_builder", %id, "resolving payload job");
 
@@ -393,14 +385,13 @@ where
     }
 }
 
-impl<Gen, St, T> Future for PayloadBuilderService<Gen, St, T>
+impl<Gen, St> Future for PayloadBuilderService<Gen, St>
 where
-    T: PayloadTypes,
     Gen: PayloadJobGenerator + Unpin + 'static,
     <Gen as PayloadJobGenerator>::Job: Unpin + 'static,
     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
-    Gen::Job: PayloadJob<PayloadAttributes = T::PayloadAttributes>,
-    <Gen::Job as PayloadJob>::BuiltPayload: Into<T::BuiltPayload>,
+    Gen::Job: PayloadJob<PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+    <Gen::Job as PayloadJob>::BuiltPayload: Into<BaseBuiltPayload>,
 {
     type Output = ();
 
@@ -534,28 +525,28 @@ where
 
 /// Message type for the [`PayloadBuilderService`].
 #[derive(derive_more::Debug)]
-pub enum PayloadServiceCommand<T: PayloadTypes> {
+pub enum PayloadServiceCommand {
     /// Start building a new payload.
     ///
     /// Carries the caller's [`Span`] so the service can parent payload-building work under the
     /// originating Engine API trace.
     BuildNewPayload(
-        Box<BuildNewPayload<T::PayloadAttributes>>,
+        Box<BuildNewPayload<BasePayloadBuilderAttributes<BaseTxEnvelope>>>,
         Span,
         oneshot::Sender<Result<PayloadId, PayloadBuilderError>>,
     ),
     /// Get the best payload so far
-    BestPayload(PayloadId, oneshot::Sender<Option<Result<T::BuiltPayload, PayloadBuilderError>>>),
+    BestPayload(PayloadId, oneshot::Sender<Option<Result<BaseBuiltPayload, PayloadBuilderError>>>),
     /// Get the payload timestamp for the given payload
     PayloadTimestamp(PayloadId, oneshot::Sender<Option<Result<u64, PayloadBuilderError>>>),
     /// Resolve the payload and return the payload
     Resolve(
         PayloadId,
         /* kind: */ PayloadKind,
-        #[debug(skip)] oneshot::Sender<Option<PayloadFuture<T::BuiltPayload>>>,
+        #[debug(skip)] oneshot::Sender<Option<PayloadFuture<BaseBuiltPayload>>>,
     ),
     /// Payload service events
-    Subscribe(oneshot::Sender<broadcast::Receiver<Events<T>>>),
+    Subscribe(oneshot::Sender<broadcast::Receiver<Events>>),
 }
 
 /// A request to build a new payload.
@@ -669,7 +660,6 @@ mod tests {
 
     use alloy_primitives::Address;
     use alloy_rpc_types::engine::PayloadAttributes as EthPayloadAttributes;
-    use reth_engine_primitives::TestEngineTypes;
 
     use super::*;
     use crate::test_utils::test_payload_service;
@@ -685,7 +675,7 @@ mod tests {
     #[test]
     fn payload_builder_lease_is_held_until_resolve_finishes() {
         tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
-            let (service, handle) = test_payload_service::<TestEngineTypes>();
+            let (service, handle) = test_payload_service();
             let service = tokio::spawn(service);
             let dropped = Arc::new(AtomicBool::new(false));
             let lease = PayloadBuilderLease::new(DropProbe(Arc::clone(&dropped)));
@@ -698,7 +688,8 @@ mod tests {
                     parent_beacon_block_root: None,
                     slot_number: None,
                     target_gas_limit: None,
-                },
+                }
+                .into(),
                 parent_hash: B256::ZERO,
                 resources: PayloadBuilderResources::default().with_lease(lease),
             };

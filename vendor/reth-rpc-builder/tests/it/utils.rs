@@ -43,7 +43,7 @@ where
     HttpMiddleware: RethAuthHttpMiddleware<RpcMiddleware>,
 {
     let (tx, _rx) = unbounded_channel();
-    let beacon_engine_handle = ConsensusEngineHandle::<TestEngineTypes>::new(tx);
+    let beacon_engine_handle = ConsensusEngineHandle::new(tx);
     let client = ClientVersionV1 {
         code: ClientCode::RH,
         name: "Reth".to_string(),
@@ -51,7 +51,7 @@ where
         commit: "defa64b2".to_string(),
     };
 
-    let engine_api = EngineApi::new(
+    let engine_api = EngineApi::<_, TestEngineTypes, _, _, _>::new(
         NoopProvider::default(),
         MAINNET.clone(),
         beacon_engine_handle,

@@ -26,7 +26,6 @@ pub use pool::*;
 use reth_consensus::FullConsensus;
 use reth_network::types::NetPrimitivesFor;
 use reth_network_api::FullNetwork;
-use reth_node_api::NodeTypes;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_transaction_pool::{PoolPooledTx, PoolTransaction, TransactionPool};
 
@@ -64,14 +63,14 @@ pub trait NodeComponents<T: FullNodeTypes>: Clone + Debug + Unpin + Send + Sync 
 
     /// Returns the handle to the payload builder service handling payload building requests from
     /// the engine.
-    fn payload_builder_handle(&self) -> &PayloadBuilderHandle<<T::Types as NodeTypes>::Payload>;
+    fn payload_builder_handle(&self) -> &PayloadBuilderHandle;
 }
 
 /// All the components of the node.
 ///
 /// This provides access to all the components of the node.
 #[derive(Debug)]
-pub struct Components<Node: FullNodeTypes, Network, Pool, EVM, Consensus> {
+pub struct Components<Network, Pool, EVM, Consensus> {
     /// The transaction pool of the node.
     pub transaction_pool: Pool,
     /// The node's EVM configuration, defining settings for the Ethereum Virtual Machine.
@@ -81,11 +80,10 @@ pub struct Components<Node: FullNodeTypes, Network, Pool, EVM, Consensus> {
     /// The network implementation of the node.
     pub network: Network,
     /// The handle to the payload builder service.
-    pub payload_builder_handle: PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>,
+    pub payload_builder_handle: PayloadBuilderHandle,
 }
 
-impl<Node, Pool, EVM, Cons, Network> NodeComponents<Node>
-    for Components<Node, Network, Pool, EVM, Cons>
+impl<Node, Pool, EVM, Cons, Network> NodeComponents<Node> for Components<Network, Pool, EVM, Cons>
 where
     Node: FullNodeTypes,
     Network: FullNetwork<Primitives: NetPrimitivesFor<PooledTransaction = PoolPooledTx<Pool>>>,
@@ -115,15 +113,14 @@ where
         &self.network
     }
 
-    fn payload_builder_handle(&self) -> &PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload> {
+    fn payload_builder_handle(&self) -> &PayloadBuilderHandle {
         &self.payload_builder_handle
     }
 }
 
-impl<Node, N, Pool, EVM, Cons> Clone for Components<Node, N, Pool, EVM, Cons>
+impl<N, Pool, EVM, Cons> Clone for Components<N, Pool, EVM, Cons>
 where
     N: Clone,
-    Node: FullNodeTypes,
     Pool: TransactionPool,
     EVM: ConfigureEvm,
     Cons: Clone,

@@ -21,6 +21,7 @@ reth-rpc-server-types = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 tower = { workspace = true, optional = true }
+reth-payload-primitives = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 reth-ipc = { workspace = true, optional = true }
 jsonrpsee = { workspace = true, optional = true }

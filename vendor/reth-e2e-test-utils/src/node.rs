@@ -5,15 +5,15 @@ use alloy_eips::BlockId;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
 use reth_chainspec::EthereumHardforks;
 use reth_network_api::test_utils::PeersHandleProvider;
-use reth_node_api::{Block, FullNodeComponents, PayloadTypes};
+use reth_node_api::{Block, FullNodeComponents};
 use reth_node_builder::{FullNode, NodeTypes, rpc::RethRpcAddOns};
-use reth_payload_primitives::BuiltPayload;
+use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use reth_provider::{
     BlockReader, BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions,
     HeaderProvider, StageCheckpointReader,
@@ -36,7 +36,7 @@ where
     /// The core structure representing the full node.
     pub inner: FullNode<Node, AddOns>,
     /// Context for testing payload-related features.
-    pub payload: PayloadTestContext<<Node::Types as NodeTypes>::Payload>,
+    pub payload: PayloadTestContext,
     /// Context for testing network functionalities.
     pub network: NetworkTestContext<Node::Network>,
     /// Context for testing RPC features.
@@ -45,18 +45,20 @@ where
     pub canonical_stream: CanonStateNotificationStream,
 }
 
-impl<Node, Payload, AddOns> NodeTestContext<Node, AddOns>
+impl<Node, AddOns> NodeTestContext<Node, AddOns>
 where
-    Payload: PayloadTypes,
     Node: FullNodeComponents,
-    Node::Types: NodeTypes<ChainSpec: EthereumHardforks, Payload = Payload>,
+    Node::Types: NodeTypes<ChainSpec: EthereumHardforks>,
     Node::Network: PeersHandleProvider,
     AddOns: RethRpcAddOns<Node>,
 {
     /// Creates a new test node
     pub async fn new(
         node: FullNode<Node, AddOns>,
-        attributes_generator: impl Fn(u64) -> Payload::PayloadAttributes + Send + Sync + 'static,
+        attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
+        + Send
+        + Sync
+        + 'static,
     ) -> eyre::Result<Self> {
         Ok(Self {
             inner: node.clone(),
@@ -85,7 +87,7 @@ where
         &mut self,
         length: u64,
         tx_generator: impl Fn(u64) -> Pin<Box<dyn Future<Output = Bytes>>>,
-    ) -> eyre::Result<Vec<Payload::BuiltPayload>>
+    ) -> eyre::Result<Vec<BaseBuiltPayload>>
     where
         AddOns::EthApi:
             EthApiSpec<Provider: BlockReader<Block = BaseBlock>> + EthTransactions + TraceExt,
@@ -133,7 +135,7 @@ where
     /// expects a payload attribute event and waits until the payload is built.
     ///
     /// It triggers the resolve payload via engine api and expects the built payload event.
-    pub async fn new_payload(&mut self) -> eyre::Result<Payload::BuiltPayload> {
+    pub async fn new_payload(&mut self) -> eyre::Result<BaseBuiltPayload> {
         let eth_attr = self.payload.next_attributes();
         let payload_id = self
             .inner
@@ -152,7 +154,7 @@ where
     }
 
     /// Triggers payload building job and submits it to the engine.
-    pub async fn build_and_submit_payload(&mut self) -> eyre::Result<Payload::BuiltPayload> {
+    pub async fn build_and_submit_payload(&mut self) -> eyre::Result<BaseBuiltPayload> {
         let payload = self.new_payload().await?;
 
         self.submit_payload(payload.clone()).await?;
@@ -161,7 +163,7 @@ where
     }
 
     /// Advances the node forward one block
-    pub async fn advance_block(&mut self) -> eyre::Result<Payload::BuiltPayload> {
+    pub async fn advance_block(&mut self) -> eyre::Result<BaseBuiltPayload> {
         let payload = self.build_and_submit_payload().await?;
 
         // trigger forkchoice update via engine api to commit the block to the blockchain
@@ -307,7 +309,7 @@ where
     }
 
     /// Submits a payload to the engine.
-    pub async fn submit_payload(&self, payload: Payload::BuiltPayload) -> eyre::Result<B256> {
+    pub async fn submit_payload(&self, payload: BaseBuiltPayload) -> eyre::Result<B256> {
         let block_hash = payload.block().hash();
         self.inner.add_ons_handle.beacon_engine_handle.new_payload(payload.into()).await?;
 
@@ -335,7 +337,7 @@ where
     /// This helper method extracts the necessary handles and creates a client
     /// that can interact with both the regular RPC and Engine API endpoints.
     /// It automatically includes the beacon engine handle for direct consensus engine interaction.
-    pub fn to_node_client(&self) -> eyre::Result<crate::testsuite::NodeClient<Payload>> {
+    pub fn to_node_client(&self) -> eyre::Result<crate::testsuite::NodeClient> {
         let rpc = self
             .rpc_client()
             .ok_or_else(|| eyre::eyre!("Failed to create HTTP RPC client for node"))?;

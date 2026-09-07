@@ -7,7 +7,6 @@ use reth_chainspec::EthChainSpec;
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_network::{EthNetworkPrimitives, NetworkPrimitives, types::NetPrimitivesFor};
 use reth_network_api::{FullNetwork, noop::NoopNetwork};
-use reth_node_api::NodeTypes;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_transaction_pool::{
     EthPoolTransaction, EthPooledTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
@@ -369,8 +368,7 @@ where
     ExecB: ExecutorBuilder<Node>,
     ConsB: ConsensusBuilder<Node>,
 {
-    type Components =
-        Components<Node, NetworkB::Network, PoolB::Pool, ExecB::EVM, ConsB::Consensus>;
+    type Components = Components<NetworkB::Network, PoolB::Pool, ExecB::EVM, ConsB::Consensus>;
 
     async fn build_components(
         self,
@@ -441,13 +439,13 @@ where
     Net: FullNetwork<Primitives: NetPrimitivesFor<PooledTransaction = PoolPooledTx<Pool>>>,
     Node: FullNodeTypes,
     F: FnOnce(&BuilderContext<Node>) -> Fut + Send,
-    Fut: Future<Output = eyre::Result<Components<Node, Net, Pool, EVM, Cons>>> + Send,
+    Fut: Future<Output = eyre::Result<Components<Net, Pool, EVM, Cons>>> + Send,
     Pool:
         TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
     EVM: ConfigureEvm + 'static,
     Cons: FullConsensus + Clone + Unpin + 'static,
 {
-    type Components = Components<Node, Net, Pool, EVM, Cons>;
+    type Components = Components<Net, Pool, EVM, Cons>;
 
     fn build_components(
         self,
@@ -553,7 +551,7 @@ where
         _ctx: &BuilderContext<N>,
         _pool: Pool,
         _evm_config: EVM,
-    ) -> eyre::Result<PayloadBuilderHandle<<N::Types as NodeTypes>::Payload>> {
-        Ok(PayloadBuilderHandle::<<N::Types as NodeTypes>::Payload>::noop())
+    ) -> eyre::Result<PayloadBuilderHandle> {
+        Ok(PayloadBuilderHandle::noop())
     }
 }

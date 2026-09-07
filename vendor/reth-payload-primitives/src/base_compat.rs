@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::PayloadId;
-use reth_payload_primitives::{ExecutionPayload, PayloadAttributes};
+use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 
-use crate::{BasePayloadAttributes, ExecutionData};
+use crate::{ExecutionPayload, PayloadAttributes};
 
 impl PayloadAttributes for BasePayloadAttributes {
     fn payload_id(&self, parent_hash: &B256) -> PayloadId {

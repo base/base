@@ -14,16 +14,14 @@ use base_common_consensus::BaseBlock;
 use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Either;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
-use reth_engine_primitives::{
-    BeaconEngineMessage, BeaconOnNewPayloadError, ExecutionPayload as _, OnForkChoiceUpdated,
-};
+use reth_engine_primitives::{BeaconEngineMessage, BeaconOnNewPayloadError, OnForkChoiceUpdated};
 use reth_engine_tree::tree::EngineValidator;
 use reth_errors::{BlockExecutionError, BlockValidationError, RethError, RethResult};
 use reth_evm::{
     ConfigureEvm,
     execute::{BlockBuilder, BlockBuilderOutcome},
 };
-use reth_payload_primitives::PayloadTypes;
+use reth_payload_primitives::BaseBuiltPayload;
 use reth_primitives_traits::{BlockBody as _, SealedBlock, SignedTransaction, block::Block as _};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::{BlockReader, StateProviderFactory, errors::ProviderError};
@@ -31,9 +29,9 @@ use tokio::sync::oneshot;
 use tracing::*;
 
 #[derive(Debug)]
-enum EngineReorgState<T: PayloadTypes> {
+enum EngineReorgState {
     Forward,
-    Reorg { queue: VecDeque<BeaconEngineMessage<T>> },
+    Reorg { queue: VecDeque<BeaconEngineMessage> },
 }
 
 type EngineReorgResponse = Result<
@@ -46,7 +44,7 @@ type ReorgResponseFut = Pin<Box<dyn Future<Output = EngineReorgResponse> + Send 
 /// Engine API stream wrapper that simulates reorgs with specified frequency.
 #[derive(Debug)]
 #[pin_project::pin_project]
-pub struct EngineReorg<S, T: PayloadTypes, Provider, Evm, Validator> {
+pub struct EngineReorg<S, Provider, Evm, Validator> {
     /// Underlying stream
     #[pin]
     stream: S,
@@ -64,14 +62,14 @@ pub struct EngineReorg<S, T: PayloadTypes, Provider, Evm, Validator> {
     /// This is reset after a reorg.
     forkchoice_states_forwarded: usize,
     /// Current state of the stream.
-    state: EngineReorgState<T>,
+    state: EngineReorgState,
     /// Last forkchoice state.
     last_forkchoice_state: Option<ForkchoiceState>,
     /// Pending engine responses to reorg messages.
     reorg_responses: FuturesUnordered<ReorgResponseFut>,
 }
 
-impl<S, T: PayloadTypes, Provider, Evm, Validator> EngineReorg<S, T, Provider, Evm, Validator> {
+impl<S, Provider, Evm, Validator> EngineReorg<S, Provider, Evm, Validator> {
     /// Creates new [`EngineReorg`] stream wrapper.
     pub fn new(
         stream: S,
@@ -96,15 +94,14 @@ impl<S, T: PayloadTypes, Provider, Evm, Validator> EngineReorg<S, T, Provider, E
     }
 }
 
-impl<S, T, Provider, Evm, Validator> Stream for EngineReorg<S, T, Provider, Evm, Validator>
+impl<S, Provider, Evm, Validator> Stream for EngineReorg<S, Provider, Evm, Validator>
 where
-    S: Stream<Item = BeaconEngineMessage<T>>,
-    T: PayloadTypes,
+    S: Stream<Item = BeaconEngineMessage>,
     Provider: BlockReader<Header = alloy_consensus::Header, Block = BaseBlock>
         + StateProviderFactory
         + ChainSpecProvider,
     Evm: ConfigureEvm,
-    Validator: EngineValidator<T>,
+    Validator: EngineValidator,
 {
     type Item = S::Item;
 
@@ -195,7 +192,7 @@ where
                         BeaconEngineMessage::NewPayload { payload, tx },
                         // Reorg payload
                         BeaconEngineMessage::NewPayload {
-                            payload: T::block_to_payload(reorg_block, encoded_bal),
+                            payload: BaseBuiltPayload::block_to_payload(reorg_block, encoded_bal),
                             tx: reorg_payload_tx,
                         },
                         // Reorg forkchoice state
@@ -224,20 +221,19 @@ where
 }
 
 #[allow(clippy::type_complexity)]
-fn create_reorg_head<Provider, Evm, T, Validator>(
+fn create_reorg_head<Provider, Evm, Validator>(
     provider: &Provider,
     evm_config: &Evm,
     payload_validator: &Validator,
     mut depth: usize,
-    next_payload: T::ExecutionData,
+    next_payload: base_common_rpc_types_engine::ExecutionData,
 ) -> RethResult<(SealedBlock<BaseBlock>, Option<Bytes>)>
 where
     Provider: BlockReader<Header = alloy_consensus::Header, Block = BaseBlock>
         + StateProviderFactory
         + ChainSpecProvider<ChainSpec: EthChainSpec>,
     Evm: ConfigureEvm,
-    T: PayloadTypes,
-    Validator: EngineValidator<T>,
+    Validator: EngineValidator,
 {
     // Ensure next payload is valid.
     let next_block =

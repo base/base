@@ -4,7 +4,7 @@ use std::future::Future;
 
 use reth_basic_payload_builder::{BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig};
 use reth_chain_state::CanonStateSubscriptions;
-use reth_node_api::{NodeTypes, PayloadBuilderFor};
+use reth_node_api::PayloadBuilderFor;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService, PayloadServiceCommand};
 use reth_transaction_pool::TransactionPool;
 use tokio::sync::{broadcast, mpsc};
@@ -25,9 +25,7 @@ pub trait PayloadServiceBuilder<Node: FullNodeTypes, Pool: TransactionPool, EvmC
         ctx: &BuilderContext<Node>,
         pool: Pool,
         evm_config: EvmConfig,
-    ) -> impl Future<
-        Output = eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>>,
-    > + Send;
+    ) -> impl Future<Output = eyre::Result<PayloadBuilderHandle>> + Send;
 }
 
 impl<Node, F, Fut, Pool, EvmConfig> PayloadServiceBuilder<Node, Pool, EvmConfig> for F
@@ -35,16 +33,14 @@ where
     Node: FullNodeTypes,
     Pool: TransactionPool,
     F: Fn(&BuilderContext<Node>, Pool, EvmConfig) -> Fut + Send,
-    Fut: Future<Output = eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>>>
-        + Send,
+    Fut: Future<Output = eyre::Result<PayloadBuilderHandle>> + Send,
 {
     fn spawn_payload_builder_service(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
         evm_config: EvmConfig,
-    ) -> impl Future<Output = eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>>>
-    {
+    ) -> impl Future<Output = eyre::Result<PayloadBuilderHandle>> {
         self(ctx, pool, evm_config)
     }
 }
@@ -111,7 +107,7 @@ where
         ctx: &BuilderContext<Node>,
         pool: Pool,
         evm_config: EvmConfig,
-    ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
+    ) -> eyre::Result<PayloadBuilderHandle> {
         let Self { payload_builder_builder, pre_cache_state } = self;
         let payload_builder =
             payload_builder_builder.build_payload_builder(ctx, pool, evm_config).await?;
@@ -130,11 +126,10 @@ where
             payload_job_config,
             payload_builder,
         );
-        let (payload_service, payload_service_handle) =
-            PayloadBuilderService::<_, _, <Node::Types as NodeTypes>::Payload>::new(
-                payload_generator,
-                ctx.provider().canonical_state_stream(),
-            );
+        let (payload_service, payload_service_handle) = PayloadBuilderService::<_, _>::new(
+            payload_generator,
+            ctx.provider().canonical_state_stream(),
+        );
 
         ctx.task_executor().spawn_critical_os_thread(
             "payload-service",
@@ -163,7 +158,7 @@ where
         ctx: &BuilderContext<Node>,
         _pool: Pool,
         _evm_config: Evm,
-    ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
+    ) -> eyre::Result<PayloadBuilderHandle> {
         let (tx, mut rx) = mpsc::unbounded_channel();
 
         ctx.task_executor().spawn_critical_os_thread(

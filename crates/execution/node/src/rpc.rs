@@ -93,7 +93,6 @@
 use std::sync::Arc;
 
 use alloy_rpc_types_engine::ClientVersionV1;
-use base_common_rpc_types_engine::ExecutionData;
 use base_execution_rpc::{BaseEngineApi, engine::ENGINE_CAPABILITIES};
 use reth_chainspec::EthereumHardforks;
 use reth_node_api::{
@@ -114,14 +113,9 @@ pub struct BaseEngineApiBuilder<EV> {
 
 impl<N, EV> EngineApiBuilder<N> for BaseEngineApiBuilder<EV>
 where
-    N: FullNodeComponents<
-        Types: NodeTypes<
-            ChainSpec: EthereumHardforks,
-            Payload: EngineTypes<ExecutionData = ExecutionData>,
-        >,
-    >,
+    N: FullNodeComponents<Types: NodeTypes<ChainSpec: EthereumHardforks, Payload: EngineTypes>>,
     EV: PayloadValidatorBuilder<N>,
-    EV::Validator: EngineApiValidator<<N::Types as NodeTypes>::Payload>,
+    EV::Validator: EngineApiValidator,
 {
     type EngineApi = BaseEngineApi<
         N::Provider,

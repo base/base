@@ -3,10 +3,12 @@
 use std::{collections::HashMap, marker::PhantomData};
 
 use alloy_primitives::B256;
+use base_common_consensus::BaseTxEnvelope;
 use eyre::Result;
 use jsonrpsee::http_client::HttpClient;
-use reth_node_api::{EngineTypes, PayloadTypes};
+use reth_node_api::EngineTypes;
 use reth_payload_builder::PayloadId;
+use reth_payload_primitives::BasePayloadBuilderAttributes;
 
 use crate::{
     NodeBuilderHelper,
@@ -26,24 +28,18 @@ use crate::testsuite::setup::Setup;
 
 /// Client handles for both regular RPC and Engine API endpoints
 #[derive(Clone)]
-pub struct NodeClient<Payload>
-where
-    Payload: PayloadTypes,
-{
+pub struct NodeClient {
     /// Regular JSON-RPC client
     pub rpc: HttpClient,
     /// Engine API client
     pub engine: AuthServerHandle,
     /// Beacon consensus engine handle for direct interaction with the consensus engine
-    pub beacon_engine_handle: Option<ConsensusEngineHandle<Payload>>,
+    pub beacon_engine_handle: Option<ConsensusEngineHandle>,
     /// Alloy provider for interacting with the node
     provider: Arc<dyn Provider + Send + Sync>,
 }
 
-impl<Payload> NodeClient<Payload>
-where
-    Payload: PayloadTypes,
-{
+impl NodeClient {
     /// Instantiates a new [`NodeClient`] with the given handles and RPC URL
     pub fn new(rpc: HttpClient, engine: AuthServerHandle, url: Url) -> Self {
         let provider =
@@ -56,7 +52,7 @@ where
         rpc: HttpClient,
         engine: AuthServerHandle,
         url: Url,
-        beacon_engine_handle: ConsensusEngineHandle<Payload>,
+        beacon_engine_handle: ConsensusEngineHandle,
     ) -> Self {
         let provider =
             Arc::new(ProviderBuilder::new().connect_http(url)) as Arc<dyn Provider + Send + Sync>;
@@ -80,10 +76,7 @@ where
     }
 }
 
-impl<Payload> std::fmt::Debug for NodeClient<Payload>
-where
-    Payload: PayloadTypes,
-{
+impl std::fmt::Debug for NodeClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NodeClient")
             .field("rpc", &self.rpc)
@@ -180,7 +173,7 @@ where
     I: EngineTypes,
 {
     /// Combined clients with both RPC and Engine API endpoints
-    pub node_clients: Vec<NodeClient<I>>,
+    pub node_clients: Vec<NodeClient>,
     /// Per-node state tracking
     pub node_states: Vec<NodeState<I>>,
     /// Tracks instance generic.
@@ -198,7 +191,8 @@ where
     /// Currently active node index for backward compatibility with single-node actions
     pub active_node_idx: usize,
     /// Converts shared payload attributes to the node's configured attributes.
-    pub payload_attributes_converter: Option<fn(PayloadAttributes) -> I::PayloadAttributes>,
+    pub payload_attributes_converter:
+        Option<fn(PayloadAttributes) -> BasePayloadBuilderAttributes<BaseTxEnvelope>>,
 }
 
 impl<I> Default for Environment<I>

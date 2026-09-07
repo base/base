@@ -1,25 +1,30 @@
+use base_common_consensus::BaseTxEnvelope;
 use futures_util::StreamExt;
 use reth_node_api::{PayloadAttributes, PayloadKind};
 use reth_payload_builder::{PayloadBuilderHandle, PayloadId};
 use reth_payload_builder_primitives::Events;
-use reth_payload_primitives::PayloadTypes;
+use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use tokio_stream::wrappers::BroadcastStream;
 
 /// Helper for payload operations
 #[derive(derive_more::Debug)]
-pub struct PayloadTestContext<T: PayloadTypes> {
-    pub payload_event_stream: BroadcastStream<Events<T>>,
-    payload_builder: PayloadBuilderHandle<T>,
+pub struct PayloadTestContext {
+    pub payload_event_stream: BroadcastStream<Events>,
+    payload_builder: PayloadBuilderHandle,
     pub timestamp: u64,
     #[debug(skip)]
-    attributes_generator: Box<dyn Fn(u64) -> T::PayloadAttributes + Send + Sync>,
+    attributes_generator:
+        Box<dyn Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync>,
 }
 
-impl<T: PayloadTypes> PayloadTestContext<T> {
+impl PayloadTestContext {
     /// Creates a new payload helper
     pub async fn new(
-        payload_builder: PayloadBuilderHandle<T>,
-        attributes_generator: impl Fn(u64) -> T::PayloadAttributes + Send + Sync + 'static,
+        payload_builder: PayloadBuilderHandle,
+        attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope>
+        + Send
+        + Sync
+        + 'static,
     ) -> eyre::Result<Self> {
         let payload_events = payload_builder.subscribe().await?;
         let payload_event_stream = payload_events.into_stream();
@@ -33,13 +38,16 @@ impl<T: PayloadTypes> PayloadTestContext<T> {
     }
 
     /// Generates the next payload attributes
-    pub fn next_attributes(&mut self) -> T::PayloadAttributes {
+    pub fn next_attributes(&mut self) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
         self.timestamp += 1;
         (self.attributes_generator)(self.timestamp)
     }
 
     /// Asserts that the next event is a payload attributes event
-    pub async fn expect_attr_event(&mut self, attrs: T::PayloadAttributes) -> eyre::Result<()> {
+    pub async fn expect_attr_event(
+        &mut self,
+        attrs: BasePayloadBuilderAttributes<BaseTxEnvelope>,
+    ) -> eyre::Result<()> {
         let first_event = self.payload_event_stream.next().await.unwrap()?;
         if let Events::Attributes(attr) = first_event {
             assert_eq!(attrs.timestamp(), attr.timestamp());
@@ -61,7 +69,7 @@ impl<T: PayloadTypes> PayloadTestContext<T> {
     }
 
     /// Expects the next event to be a built payload event or panics
-    pub async fn expect_built_payload(&mut self) -> eyre::Result<T::BuiltPayload> {
+    pub async fn expect_built_payload(&mut self) -> eyre::Result<BaseBuiltPayload> {
         let second_event = self.payload_event_stream.next().await.unwrap()?;
         if let Events::BuiltPayload(payload) = second_event {
             Ok(payload)

@@ -44,9 +44,6 @@ pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracke
 mod predicate_loads;
 pub use predicate_loads::{PredicateLoadTracker, PredicateReadRecorder};
 
-mod types;
-pub use types::BasePayloadTypes;
-
 mod validity;
 pub use validity::{
     ParkedPredicateIndex, StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,

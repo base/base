@@ -128,7 +128,8 @@ use reth_evm::{
 use reth_execution_cache::{CacheFillMode, CacheStats};
 use reth_payload_builder::{PayloadBuilderLease, PayloadBuilderResources};
 use reth_payload_primitives::{
-    BuiltPayloadExecutedBlock, InvalidPayloadAttributesError, NewPayloadError, PayloadTypes,
+    BasePayloadBuilderAttributes, BuiltPayloadExecutedBlock, InvalidPayloadAttributesError,
+    NewPayloadError,
 };
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, FastInstant as Instant, GotExpected, RecoveredBlock, SealedBlock,
@@ -380,12 +381,12 @@ where
 
     /// Converts a [`BlockOrPayload`] to a recovered block.
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
-    pub fn convert_to_block<T: PayloadTypes>(
+    pub fn convert_to_block(
         &self,
-        input: BlockOrPayload<T>,
+        input: BlockOrPayload,
     ) -> Result<SealedBlock<BaseBlock>, NewPayloadError>
     where
-        V: PayloadValidator<T, Block = BaseBlock>,
+        V: PayloadValidator<Block = BaseBlock>,
     {
         match input {
             BlockOrPayload::Payload(payload) => self.validator.convert_payload_to_block(payload),
@@ -394,13 +395,10 @@ where
     }
 
     /// Returns EVM environment for the given payload or block.
-    pub fn evm_env_for<T: PayloadTypes>(
-        &self,
-        input: &BlockOrPayload<T>,
-    ) -> Result<EvmEnvFor<Evm>, Evm::Error>
+    pub fn evm_env_for(&self, input: &BlockOrPayload) -> Result<EvmEnvFor<Evm>, Evm::Error>
     where
-        V: PayloadValidator<T, Block = BaseBlock>,
-        Evm: ConfigureEngineEvm<T::ExecutionData>,
+        V: PayloadValidator<Block = BaseBlock>,
+        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
     {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.evm_env_for_payload(payload)?),
@@ -409,13 +407,13 @@ where
     }
 
     /// Returns [`ExecutableTxIterator`] for the given payload or block.
-    pub fn tx_iterator_for<'a, T: PayloadTypes>(
+    pub fn tx_iterator_for<'a>(
         &'a self,
-        input: &'a BlockOrPayload<T>,
+        input: &'a BlockOrPayload,
     ) -> Result<impl ExecutableTxIterator<Evm>, NewPayloadError>
     where
-        V: PayloadValidator<T, Block = BaseBlock>,
-        Evm: ConfigureEngineEvm<T::ExecutionData>,
+        V: PayloadValidator<Block = BaseBlock>,
+        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
     {
         Ok(match input {
             BlockOrPayload::Payload(payload) => {
@@ -434,13 +432,13 @@ where
     }
 
     /// Returns a [`ExecutionCtxFor`] for the given payload or block.
-    pub fn execution_ctx_for<'a, T: PayloadTypes>(
+    pub fn execution_ctx_for<'a>(
         &self,
-        input: &'a BlockOrPayload<T>,
+        input: &'a BlockOrPayload,
     ) -> Result<ExecutionCtxFor<'a, Evm>, Evm::Error>
     where
-        V: PayloadValidator<T, Block = BaseBlock>,
-        Evm: ConfigureEngineEvm<T::ExecutionData>,
+        V: PayloadValidator<Block = BaseBlock>,
+        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
     {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.context_for_payload(payload)?),
@@ -464,14 +462,14 @@ where
             type_name = ?input.type_name(),
         )
     )]
-    pub fn validate_block_with_state<T: PayloadTypes>(
+    pub fn validate_block_with_state(
         &mut self,
-        input: BlockOrPayload<T>,
+        input: BlockOrPayload,
         mut ctx: TreeCtx<'_>,
     ) -> InsertPayloadResult
     where
-        V: PayloadValidator<T, Block = BaseBlock> + Clone,
-        Evm: ConfigureEngineEvm<T::ExecutionData>,
+        V: PayloadValidator<Block = BaseBlock> + Clone,
+        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
     {
         let parent_hash = input.parent_hash();
         let _txpool_pause = self.txpool_prewarm.as_ref().map(txpool_prewarm::Handle::pause);
@@ -907,14 +905,13 @@ where
     /// Spawns a background task to convert a [`BlockOrPayload`] into a [`SealedBlock`] and perform
     /// basic consensus validations on it.
     #[expect(clippy::type_complexity)]
-    pub fn spawn_convert_and_validate<T>(
+    pub fn spawn_convert_and_validate(
         &self,
-        input: &BlockOrPayload<T>,
+        input: &BlockOrPayload,
         parent: SealedHeader<alloy_consensus::Header>,
     ) -> LazyHandle<Result<SealedBlock<BaseBlock>, InsertPayloadError<BaseBlock>>>
     where
-        T: PayloadTypes,
-        V: PayloadValidator<T, Block = BaseBlock> + Clone,
+        V: PayloadValidator<Block = BaseBlock> + Clone,
     {
         let input = input.clone();
         let validator = self.validator.clone();
@@ -980,11 +977,11 @@ where
     /// 4. Merges state transitions and records execution metrics
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
     #[expect(clippy::type_complexity)]
-    fn execute_block<S, Err, T>(
+    fn execute_block<S, Err>(
         &mut self,
         state_provider: S,
         env: ExecutionEnv<Evm>,
-        input: &BlockOrPayload<T>,
+        input: &BlockOrPayload,
         handle: &mut PayloadHandle<impl ExecutableTxFor<Evm>, Err, BaseReceipt>,
         state_hook: Option<Box<dyn OnStateHook + 'static>>,
     ) -> Result<
@@ -999,9 +996,8 @@ where
     where
         S: StateProvider + Send,
         Err: core::error::Error + Send + Sync + 'static,
-        V: PayloadValidator<T, Block = BaseBlock>,
-        T: PayloadTypes,
-        Evm: ConfigureEngineEvm<T::ExecutionData>,
+        V: PayloadValidator<Block = BaseBlock>,
+        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
     {
         debug!(target: "engine::tree::payload_validator", "Executing block");
 
@@ -1117,10 +1113,10 @@ where
     /// 5. Returns the rebuilt BAL for post-execution consensus validation.
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
     #[expect(clippy::type_complexity)]
-    fn execute_block_bal<Tx, Err, MakeStateProvider, T>(
+    fn execute_block_bal<Tx, Err, MakeStateProvider>(
         &self,
         env: ExecutionEnv<Evm>,
-        input: &BlockOrPayload<T>,
+        input: &BlockOrPayload,
         handle: &PayloadHandle<Tx, Err, BaseReceipt>,
         make_state_provider: &MakeStateProvider,
     ) -> Result<
@@ -1136,9 +1132,8 @@ where
         Tx: ExecutableTxFor<Evm> + Send,
         Err: core::error::Error + Send + Sync + 'static,
         MakeStateProvider: Fn(bool) -> ProviderResult<StateProviderBox> + Sync,
-        Evm: ConfigureEngineEvm<T::ExecutionData>,
-        T: PayloadTypes,
-        V: PayloadValidator<T, Block = BaseBlock>,
+        Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>,
+        V: PayloadValidator<Block = BaseBlock>,
     {
         debug!(target: "engine::tree::payload_validator", "Executing block via BAL path");
 
@@ -1301,7 +1296,7 @@ where
     ///
     /// The `hashed_state` handle wraps the background hashed post state computation.
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
-    fn validate_post_execution<T: PayloadTypes>(
+    fn validate_post_execution(
         &self,
         block: &RecoveredBlock<BaseBlock>,
         parent_block: &SealedHeader<alloy_consensus::Header>,
@@ -1311,7 +1306,7 @@ where
         built_bal: Option<BlockAccessList>,
     ) -> Result<(), InsertBlockErrorKind>
     where
-        V: PayloadValidator<T, Block = BaseBlock>,
+        V: PayloadValidator<Block = BaseBlock>,
     {
         let start = Instant::now();
 
@@ -1697,7 +1692,7 @@ where
 /// Type that validates the payloads processed by the engine.
 ///
 /// This provides the necessary functions for validating/executing payloads/blocks.
-pub trait EngineValidator<Types: PayloadTypes>: Send + Sync + 'static {
+pub trait EngineValidator: Send + Sync + 'static {
     /// Validates the payload attributes with respect to the header.
     ///
     /// By default, this enforces that the payload attributes timestamp is greater than the
@@ -1709,7 +1704,7 @@ pub trait EngineValidator<Types: PayloadTypes>: Send + Sync + 'static {
     /// See also: <https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#specification-1>
     fn validate_payload_attributes_against_header(
         &self,
-        attr: &Types::PayloadAttributes,
+        attr: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
         header: &alloy_consensus::Header,
     ) -> Result<(), InvalidPayloadAttributesError>;
 
@@ -1723,13 +1718,13 @@ pub trait EngineValidator<Types: PayloadTypes>: Send + Sync + 'static {
     /// engine-API specification.
     fn convert_payload_to_block(
         &self,
-        payload: Types::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
     ) -> Result<SealedBlock<BaseBlock>, NewPayloadError>;
 
     /// Validates a payload received from engine API.
     fn validate_payload(
         &mut self,
-        payload: Types::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
         ctx: TreeCtx<'_>,
     ) -> ValidationOutcome;
 
@@ -1766,7 +1761,7 @@ pub trait EngineValidator<Types: PayloadTypes>: Send + Sync + 'static {
     ) -> PayloadBuilderResources;
 }
 
-impl<Types, P, Evm, V> EngineValidator<Types> for BasicEngineValidator<P, Evm, V>
+impl<P, Evm, V> EngineValidator for BasicEngineValidator<P, Evm, V>
 where
     P: DatabaseProviderFactory<
             Provider: BlockReader
@@ -1786,13 +1781,12 @@ where
     OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
         + Clone
         + 'static,
-    V: PayloadValidator<Types, Block = BaseBlock> + Clone,
-    Evm: ConfigureEngineEvm<Types::ExecutionData> + 'static,
-    Types: PayloadTypes,
+    V: PayloadValidator<Block = BaseBlock> + Clone,
+    Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData> + 'static,
 {
     fn validate_payload_attributes_against_header(
         &self,
-        attr: &Types::PayloadAttributes,
+        attr: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
         header: &alloy_consensus::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         self.validator.validate_payload_attributes_against_header(attr, header)
@@ -1800,7 +1794,7 @@ where
 
     fn convert_payload_to_block(
         &self,
-        payload: Types::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
     ) -> Result<SealedBlock<BaseBlock>, NewPayloadError> {
         let block = self.validator.convert_payload_to_block(payload)?;
         Ok(block)
@@ -1808,7 +1802,7 @@ where
 
     fn validate_payload(
         &mut self,
-        payload: Types::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
         ctx: TreeCtx<'_>,
     ) -> ValidationOutcome {
         self.validate_block_with_state(BlockOrPayload::Payload(payload), ctx)
@@ -1950,14 +1944,14 @@ where
 
 /// Enum representing either block or payload being validated.
 #[derive(Debug, Clone)]
-pub enum BlockOrPayload<T: PayloadTypes> {
+pub enum BlockOrPayload {
     /// Payload.
-    Payload(T::ExecutionData),
+    Payload(base_common_rpc_types_engine::ExecutionData),
     /// Block.
     Block(SealedBlock<BaseBlock>),
 }
 
-impl<T: PayloadTypes> BlockOrPayload<T> {
+impl BlockOrPayload {
     /// Returns the hash of the block.
     pub fn hash(&self) -> B256 {
         match self {
@@ -2020,10 +2014,7 @@ impl<T: PayloadTypes> BlockOrPayload<T> {
     }
 
     /// Returns the number of transactions in the payload or block.
-    pub fn transaction_count(&self) -> usize
-    where
-        T::ExecutionData: ExecutionPayload,
-    {
+    pub fn transaction_count(&self) -> usize {
         match self {
             Self::Payload(payload) => payload.transaction_count(),
             Self::Block(block) => block.transaction_count(),
@@ -2031,10 +2022,7 @@ impl<T: PayloadTypes> BlockOrPayload<T> {
     }
 
     /// Returns the withdrawals from the payload or block.
-    pub fn withdrawals(&self) -> Option<&[Withdrawal]>
-    where
-        T::ExecutionData: ExecutionPayload,
-    {
+    pub fn withdrawals(&self) -> Option<&[Withdrawal]> {
         match self {
             Self::Payload(payload) => payload.withdrawals().map(|w| w.as_slice()),
             Self::Block(block) => block.body().withdrawals().map(|w| w.as_slice()),
@@ -2042,10 +2030,7 @@ impl<T: PayloadTypes> BlockOrPayload<T> {
     }
 
     /// Returns the total gas used by the block.
-    pub fn gas_used(&self) -> u64
-    where
-        T::ExecutionData: ExecutionPayload,
-    {
+    pub fn gas_used(&self) -> u64 {
         match self {
             Self::Payload(payload) => payload.gas_used(),
             Self::Block(block) => block.gas_used(),
@@ -2053,10 +2038,7 @@ impl<T: PayloadTypes> BlockOrPayload<T> {
     }
 
     /// Returns the gas limit used by the block.
-    pub fn gas_limit(&self) -> u64
-    where
-        T::ExecutionData: ExecutionPayload,
-    {
+    pub fn gas_limit(&self) -> u64 {
         match self {
             Self::Payload(payload) => payload.gas_limit(),
             Self::Block(block) => block.gas_limit(),

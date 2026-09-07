@@ -223,3 +223,17 @@ where
         if let Self::ExecutionPayload(payload) = self { payload.sidecar.requests() } else { None }
     }
 }
+
+/// Extended functionality for Base execution payloads.
+impl<Attributes: PayloadAttributes>
+    PayloadOrAttributes<'_, base_common_rpc_types_engine::ExecutionData, Attributes>
+{
+    /// Returns execution requests included in the payload sidecar.
+    pub fn execution_requests(&self) -> Option<&Requests> {
+        if let Self::ExecutionPayload(payload) = self {
+            payload.sidecar.isthmus().and_then(|fields| fields.requests.requests())
+        } else {
+            None
+        }
+    }
+}

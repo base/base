@@ -12,11 +12,14 @@ use std::{
 
 use alloy_primitives::{B256, TxHash};
 use alloy_rpc_types_engine::ForkchoiceState;
+use base_common_consensus::BaseTxEnvelope;
 use eyre::OptionExt;
 use futures_util::{Stream, StreamExt, stream::Fuse};
 use reth_engine_primitives::ConsensusEngineHandle;
 use reth_payload_builder::PayloadBuilderHandle;
-use reth_payload_primitives::{BuiltPayload, PayloadAttributesBuilder, PayloadKind, PayloadTypes};
+use reth_payload_primitives::{
+    BasePayloadBuilderAttributes, PayloadAttributesBuilder, PayloadKind,
+};
 use reth_storage_api::BlockReader;
 use reth_transaction_pool::TransactionPool;
 use tokio::time::Interval;
@@ -130,15 +133,15 @@ impl<Pool: TransactionPool + Unpin> Future for MiningMode<Pool> {
 
 /// Local miner advancing the chain
 #[derive(Debug)]
-pub struct LocalMiner<T: PayloadTypes, B, Pool: TransactionPool + Unpin> {
+pub struct LocalMiner<B, Pool: TransactionPool + Unpin> {
     /// The payload attribute builder for the engine
     payload_attributes_builder: B,
     /// Sender for events to engine.
-    to_engine: ConsensusEngineHandle<T>,
+    to_engine: ConsensusEngineHandle,
     /// The mining mode for the engine
     mode: MiningMode<Pool>,
     /// The payload builder for the engine
-    payload_builder: PayloadBuilderHandle<T>,
+    payload_builder: PayloadBuilderHandle,
     /// Latest block in the chain so far.
     last_header: reth_primitives_traits::SealedHeader,
     /// Stores latest mined blocks.
@@ -152,19 +155,21 @@ pub struct LocalMiner<T: PayloadTypes, B, Pool: TransactionPool + Unpin> {
     payload_wait_time: Option<Duration>,
 }
 
-impl<T, B, Pool> LocalMiner<T, B, Pool>
+impl<B, Pool> LocalMiner<B, Pool>
 where
-    T: PayloadTypes,
-    B: PayloadAttributesBuilder<T::PayloadAttributes, alloy_consensus::Header>,
+    B: PayloadAttributesBuilder<
+            BasePayloadBuilderAttributes<BaseTxEnvelope>,
+            alloy_consensus::Header,
+        >,
     Pool: TransactionPool + Unpin,
 {
     /// Spawns a new [`LocalMiner`] with the given parameters.
     pub fn new(
         provider: impl BlockReader<Header = alloy_consensus::Header>,
         payload_attributes_builder: B,
-        to_engine: ConsensusEngineHandle<T>,
+        to_engine: ConsensusEngineHandle,
         mode: MiningMode<Pool>,
-        payload_builder: PayloadBuilderHandle<T>,
+        payload_builder: PayloadBuilderHandle,
     ) -> Self {
         let last_header =
             provider.sealed_header(provider.best_block_number().unwrap()).unwrap().unwrap();

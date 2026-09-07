@@ -53,7 +53,7 @@ pub use reth_rpc_convert::RpcTypes;
 pub use rpc::RPCApi;
 pub use trace::TraceApi;
 pub use txpool::TxPoolApi;
-pub use validation::{ValidationApi, ValidationApiConfig};
+pub use validation::{ValidationApi, ValidationApiConfig, ValidationApiError, ValidationApiInner};
 pub use web3::Web3Api;
 
 #[cfg(any(test, feature = "test-utils"))]

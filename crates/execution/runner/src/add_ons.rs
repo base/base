@@ -14,7 +14,7 @@ use base_execution_rpc::{
 use base_execution_txpool::BasePooledTx;
 use base_node_core::{BaseEngineApiBuilder, BaseNodeTypes, BasePayloadValidatorBuilder};
 use reth_evm::ConfigureEvm;
-use reth_node_api::{BuildNextEnv, FullNodeComponents, NodeAddOns, PayloadTypes};
+use reth_node_api::{BuildNextEnv, FullNodeComponents, NodeAddOns};
 use reth_node_builder::{
     node::NodeTypes,
     rpc::{
@@ -179,17 +179,10 @@ impl<N, EthB, PVB, EB, EVB, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes
-                       + NodeTypes<
-                Payload: PayloadTypes<
-                    PayloadAttributes = BasePayloadBuilderAttributes<
-                        base_common_consensus::BaseTxEnvelope,
-                    >,
-                >,
-            >,
+            Types: BaseNodeTypes + NodeTypes,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
-                    BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>,
+                    BasePayloadBuilderAttributes<BaseTxEnvelope>,
                     alloy_consensus::Header,
                     base_execution_chainspec::BaseChainSpec,
                 >,
@@ -263,17 +256,10 @@ impl<N, EthB, PVB, EB, EVB, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes
-                       + NodeTypes<
-                Payload: PayloadTypes<
-                    PayloadAttributes = BasePayloadBuilderAttributes<
-                        base_common_consensus::BaseTxEnvelope,
-                    >,
-                >,
-            >,
+            Types: BaseNodeTypes + NodeTypes,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
-                    BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>,
+                    BasePayloadBuilderAttributes<BaseTxEnvelope>,
                     alloy_consensus::Header,
                     base_execution_chainspec::BaseChainSpec,
                 >,

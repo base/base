@@ -32,4 +32,5 @@ ringbuffer = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reqwest = { workspace = true, features = ["rustls", "stream", "query"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws"] }

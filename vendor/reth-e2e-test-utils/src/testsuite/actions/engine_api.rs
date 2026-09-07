@@ -1,14 +1,11 @@
 //! Engine API specific actions for testing.
 
-use std::marker::PhantomData;
-
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadV3, PayloadStatusEnum};
 use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use reth_ethereum_primitives::TransactionSigned;
-use reth_node_api::{EngineTypes, PayloadTypes};
 use reth_rpc_api::clients::{EngineApiClient, EthApiClient};
 use tracing::debug;
 
@@ -16,10 +13,7 @@ use crate::testsuite::{Action, Environment};
 
 /// Action that sends a newPayload request to a specific node.
 #[derive(Debug)]
-pub struct SendNewPayload<Engine>
-where
-    Engine: EngineTypes,
-{
+pub struct SendNewPayload {
     /// The node index to send to
     pub node_idx: usize,
     /// The block number to send
@@ -28,7 +22,6 @@ where
     pub source_node_idx: usize,
     /// Expected payload status
     pub expected_status: ExpectedPayloadStatus,
-    _phantom: PhantomData<Engine>,
 }
 
 /// Expected status for a payload
@@ -42,10 +35,7 @@ pub enum ExpectedPayloadStatus {
     SyncingOrAccepted,
 }
 
-impl<Engine> SendNewPayload<Engine>
-where
-    Engine: EngineTypes,
-{
+impl SendNewPayload {
     /// Create a new `SendNewPayload` action
     pub fn new(
         node_idx: usize,
@@ -53,19 +43,15 @@ where
         source_node_idx: usize,
         expected_status: ExpectedPayloadStatus,
     ) -> Self {
-        Self {
-            node_idx,
-            block_number,
-            source_node_idx,
-            expected_status,
-            _phantom: Default::default(),
-        }
+        Self { node_idx, block_number, source_node_idx, expected_status }
     }
 }
 
-impl<Engine> Action<Engine> for SendNewPayload<Engine>
-where
-    Engine: EngineTypes + PayloadTypes,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for SendNewPayload
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
@@ -194,10 +180,7 @@ where
 
 /// Action that sends multiple blocks to a node in a specific order.
 #[derive(Debug)]
-pub struct SendNewPayloads<Engine>
-where
-    Engine: EngineTypes,
-{
+pub struct SendNewPayloads {
     /// The node index to send to
     target_node: Option<usize>,
     /// The source node to get the blocks from
@@ -210,13 +193,9 @@ where
     reverse_order: bool,
     /// Custom block numbers to send (if not using `start_block` + `total_blocks`)
     custom_block_numbers: Option<Vec<u64>>,
-    _phantom: PhantomData<Engine>,
 }
 
-impl<Engine> SendNewPayloads<Engine>
-where
-    Engine: EngineTypes,
-{
+impl SendNewPayloads {
     /// Create a new `SendNewPayloads` action builder
     pub fn new() -> Self {
         Self {
@@ -226,7 +205,6 @@ where
             total_blocks: None,
             reverse_order: false,
             custom_block_numbers: None,
-            _phantom: Default::default(),
         }
     }
 
@@ -267,18 +245,17 @@ where
     }
 }
 
-impl<Engine> Default for SendNewPayloads<Engine>
-where
-    Engine: EngineTypes,
-{
+impl Default for SendNewPayloads {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<Engine> Action<Engine> for SendNewPayloads<Engine>
-where
-    Engine: EngineTypes + PayloadTypes,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for SendNewPayloads
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
@@ -316,12 +293,8 @@ where
                         ExpectedPayloadStatus::Valid
                     };
 
-                let mut action = SendNewPayload::<Engine>::new(
-                    target_node,
-                    block_number,
-                    source_node,
-                    expected_status,
-                );
+                let mut action =
+                    SendNewPayload::new(target_node, block_number, source_node, expected_status);
 
                 action.execute(env).await?;
             }

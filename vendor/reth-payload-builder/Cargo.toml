@@ -28,17 +28,15 @@ reth-payload-builder-primitives = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-trie-parallel = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
 reth-payload-primitives = { workspace = true, features = ["default"] }
-reth-engine-primitives = { workspace = true, optional = true, features = ["test-utils"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["sync", "rt"] }
-reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 [features]
 test-utils = [
-    "dep:reth-engine-primitives",
     "reth-chain-state/test-utils",
     "reth-primitives-traits/test-utils",
     "tokio/rt",

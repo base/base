@@ -30,6 +30,3 @@ pub use payload::{
 };
 #[cfg(feature = "std")]
 pub use payload::{BoundedTransactions, BoundedWithdrawals};
-
-#[cfg(feature = "reth")]
-mod reth;

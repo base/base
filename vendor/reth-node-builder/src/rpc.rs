@@ -8,7 +8,6 @@ use std::{
 };
 
 use alloy_rpc_types::engine::ClientVersionV1;
-use alloy_rpc_types_engine::ExecutionData;
 use base_common_consensus::BaseBlock;
 use jsonrpsee::RpcModule;
 pub use jsonrpsee::{
@@ -22,7 +21,7 @@ use reth_engine_tree::tree::WaitForCaches;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_api::{
     AddOnsContext, EngineApiValidator, EngineTypes, FullNodeComponents, FullNodeTypes, NodeAddOns,
-    NodeTypes, PayloadTypes, PayloadValidator, TreeConfig,
+    NodeTypes, PayloadValidator, TreeConfig,
 };
 use reth_node_core::{
     cli::config::RethTransactionPoolConfig,
@@ -325,9 +324,7 @@ where
     }
 
     /// Returns the handle to the payload builder service
-    pub fn payload_builder_handle(
-        &self,
-    ) -> &PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload> {
+    pub fn payload_builder_handle(&self) -> &PayloadBuilderHandle {
         self.node.payload_builder_handle()
     }
 }
@@ -344,7 +341,7 @@ pub struct RpcHandle<Node: FullNodeComponents, EthApi: EthApiTypes> {
     /// dispatch events
     pub engine_events: EventSender<ConsensusEngineEvent>,
     /// Handle to the beacon consensus engine.
-    pub beacon_engine_handle: ConsensusEngineHandle<<Node::Types as NodeTypes>::Payload>,
+    pub beacon_engine_handle: ConsensusEngineHandle,
     /// Handle to trigger engine shutdown.
     pub engine_shutdown: EngineShutdown,
 }
@@ -391,9 +388,7 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcHandle<Node, EthApi> {
     /// Returns the consensus engine handle.
     ///
     /// This handle can be used to interact with the engine service directly.
-    pub const fn consensus_engine_handle(
-        &self,
-    ) -> &ConsensusEngineHandle<<Node::Types as NodeTypes>::Payload> {
+    pub const fn consensus_engine_handle(&self) -> &ConsensusEngineHandle {
         &self.beacon_engine_handle
     }
 
@@ -432,7 +427,7 @@ pub struct RpcServerOnlyHandle<Node: FullNodeComponents, EthApi: EthApiTypes> {
     /// Notification channel for engine API events
     pub engine_events: EventSender<ConsensusEngineEvent>,
     /// Handle to the consensus engine.
-    pub engine_handle: ConsensusEngineHandle<<Node::Types as NodeTypes>::Payload>,
+    pub engine_handle: ConsensusEngineHandle,
 }
 
 impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcServerOnlyHandle<Node, EthApi> {
@@ -444,9 +439,7 @@ impl<Node: FullNodeComponents, EthApi: EthApiTypes> RpcServerOnlyHandle<Node, Et
     /// Returns the consensus engine handle.
     ///
     /// This handle can be used to interact with the engine service directly.
-    pub const fn consensus_engine_handle(
-        &self,
-    ) -> &ConsensusEngineHandle<<Node::Types as NodeTypes>::Payload> {
+    pub const fn consensus_engine_handle(&self) -> &ConsensusEngineHandle {
         &self.engine_handle
     }
 
@@ -470,16 +463,14 @@ pub struct AuthServerOnlyHandle<Node: FullNodeComponents, EthApi: EthApiTypes> {
     /// Notification channel for engine API events
     pub engine_events: EventSender<ConsensusEngineEvent>,
     /// Handle to the consensus engine.
-    pub engine_handle: ConsensusEngineHandle<<Node::Types as NodeTypes>::Payload>,
+    pub engine_handle: ConsensusEngineHandle,
 }
 
 impl<Node: FullNodeComponents, EthApi: EthApiTypes> AuthServerOnlyHandle<Node, EthApi> {
     /// Returns the consensus engine handle.
     ///
     /// This handle can be used to interact with the engine service directly.
-    pub const fn consensus_engine_handle(
-        &self,
-    ) -> &ConsensusEngineHandle<<Node::Types as NodeTypes>::Payload> {
+    pub const fn consensus_engine_handle(&self) -> &ConsensusEngineHandle {
         &self.engine_handle
     }
 
@@ -499,7 +490,7 @@ struct RpcSetupContext<'a, Node: FullNodeComponents, EthApi: EthApiTypes> {
     registry: RpcRegistry<Node, EthApi>,
     on_rpc_started: Box<dyn OnRpcStarted<Node, EthApi>>,
     engine_events: EventSender<ConsensusEngineEvent>,
-    engine_handle: ConsensusEngineHandle<<Node::Types as NodeTypes>::Payload>,
+    engine_handle: ConsensusEngineHandle,
 }
 
 /// Node add-ons containing RPC server configuration, with customizable eth API handler.
@@ -1288,7 +1279,7 @@ pub struct EthApiCtx<'a, N: FullNodeTypes> {
     /// Cache for eth state
     pub cache: EthStateCache,
     /// Handle to the beacon consensus engine
-    pub engine_handle: ConsensusEngineHandle<<N::Types as NodeTypes>::Payload>,
+    pub engine_handle: ConsensusEngineHandle,
 }
 
 impl<'a, N: FullNodeComponents<Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>>>
@@ -1380,7 +1371,7 @@ pub trait EngineApiBuilder<Node: FullNodeComponents>: Send + Sync {
 /// to validate payloads.
 pub trait PayloadValidatorBuilder<Node: FullNodeComponents>: Send + Sync + Clone {
     /// The validator type that will be used by the Engine API.
-    type Validator: PayloadValidator<<Node::Types as NodeTypes>::Payload>;
+    type Validator: PayloadValidator;
 
     /// Builds the engine API validator.
     ///
@@ -1398,7 +1389,7 @@ pub trait PayloadValidatorBuilder<Node: FullNodeComponents>: Send + Sync + Clone
 /// for block execution, state validation, and fork handling.
 pub trait EngineValidatorBuilder<Node: FullNodeComponents>: Send + Sync + Clone {
     /// The tree validator type that will be used by the consensus engine.
-    type EngineValidator: EngineValidator<<Node::Types as NodeTypes>::Payload> + WaitForCaches;
+    type EngineValidator: EngineValidator + WaitForCaches;
 
     /// Builds the tree validator for the consensus engine.
     ///
@@ -1438,16 +1429,9 @@ where
 
 impl<Node, EV> EngineValidatorBuilder<Node> for BasicEngineValidatorBuilder<EV>
 where
-    Node: FullNodeComponents<
-        Evm: ConfigureEngineEvm<
-            <<Node::Types as NodeTypes>::Payload as PayloadTypes>::ExecutionData,
-        >,
-    >,
+    Node: FullNodeComponents<Evm: ConfigureEngineEvm<base_common_rpc_types_engine::ExecutionData>>,
     EV: PayloadValidatorBuilder<Node>,
-    EV::Validator: reth_engine_primitives::PayloadValidator<
-            <Node::Types as NodeTypes>::Payload,
-            Block = BaseBlock,
-        > + Clone,
+    EV::Validator: reth_engine_primitives::PayloadValidator<Block = BaseBlock> + Clone,
 {
     type EngineValidator = BasicEngineValidator<Node::Provider, Node::Evm, EV::Validator>;
 
@@ -1501,14 +1485,9 @@ pub struct BasicEngineApiBuilder<PVB> {
 
 impl<N, PVB> EngineApiBuilder<N> for BasicEngineApiBuilder<PVB>
 where
-    N: FullNodeComponents<
-        Types: NodeTypes<
-            ChainSpec: EthereumHardforks,
-            Payload: PayloadTypes<ExecutionData = ExecutionData> + EngineTypes,
-        >,
-    >,
+    N: FullNodeComponents<Types: NodeTypes<ChainSpec: EthereumHardforks, Payload: EngineTypes>>,
     PVB: PayloadValidatorBuilder<N>,
-    PVB::Validator: EngineApiValidator<<N::Types as NodeTypes>::Payload>,
+    PVB::Validator: EngineApiValidator,
 {
     type EngineApi = EngineApi<
         N::Provider,

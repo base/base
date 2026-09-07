@@ -9,6 +9,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
+use base_common_consensus::BaseTxEnvelope;
+use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 extern crate alloc;
 
 use alloy_consensus::BlockHeader;
@@ -18,7 +20,7 @@ pub use reth_evm::{ConfigureEngineEvm, ConvertTx, ExecutableTxIterator, Executab
 pub use reth_payload_primitives::ExecutionPayload;
 use reth_payload_primitives::{
     EngineApiMessageVersion, EngineObjectValidationError, InvalidPayloadAttributesError,
-    NewPayloadError, PayloadAttributes, PayloadOrAttributes, PayloadTypes,
+    NewPayloadError, PayloadAttributes, PayloadOrAttributes,
 };
 use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_storage_api::{StateProviderBox, errors::ProviderResult};
@@ -48,7 +50,7 @@ pub use config::*;
 /// This type defines the versioned types of the engine API based on the [ethereum engine API](https://github.com/ethereum/execution-apis/tree/main/src/engine).
 ///
 /// This includes the execution payload types and payload attributes that are used to trigger a
-/// payload job. Hence this trait is also [`PayloadTypes`].
+/// payload job. Payload data and builder attributes use concrete Base types.
 ///
 /// Implementations of this type are intended to be stateless and just define the types as
 /// associated types.
@@ -56,18 +58,11 @@ pub use config::*;
 /// but may have different payload, for example opstack, but structurally equivalent otherwise (same
 /// engine API RPC endpoints for example).
 pub trait EngineTypes:
-    PayloadTypes<
-        BuiltPayload: TryInto<Self::ExecutionPayloadEnvelopeV1>
-                          + TryInto<Self::ExecutionPayloadEnvelopeV2>
-                          + TryInto<Self::ExecutionPayloadEnvelopeV3>
-                          + TryInto<Self::ExecutionPayloadEnvelopeV4>
-                          + TryInto<Self::ExecutionPayloadEnvelopeV5>
-                          + TryInto<Self::ExecutionPayloadEnvelopeV6>,
-    > + DeserializeOwned
-    + Serialize
+    Send + Sync + Unpin + core::fmt::Debug + Clone + 'static + DeserializeOwned + Serialize
 {
     /// Execution Payload V1 envelope type.
-    type ExecutionPayloadEnvelopeV1: DeserializeOwned
+    type ExecutionPayloadEnvelopeV1: TryFrom<BaseBuiltPayload>
+        + DeserializeOwned
         + Serialize
         + Clone
         + Unpin
@@ -75,7 +70,8 @@ pub trait EngineTypes:
         + Sync
         + 'static;
     /// Execution Payload V2  envelope type.
-    type ExecutionPayloadEnvelopeV2: DeserializeOwned
+    type ExecutionPayloadEnvelopeV2: TryFrom<BaseBuiltPayload>
+        + DeserializeOwned
         + Serialize
         + Clone
         + Unpin
@@ -83,7 +79,8 @@ pub trait EngineTypes:
         + Sync
         + 'static;
     /// Execution Payload V3 envelope type.
-    type ExecutionPayloadEnvelopeV3: DeserializeOwned
+    type ExecutionPayloadEnvelopeV3: TryFrom<BaseBuiltPayload>
+        + DeserializeOwned
         + Serialize
         + Clone
         + Unpin
@@ -91,7 +88,8 @@ pub trait EngineTypes:
         + Sync
         + 'static;
     /// Execution Payload V4 envelope type.
-    type ExecutionPayloadEnvelopeV4: DeserializeOwned
+    type ExecutionPayloadEnvelopeV4: TryFrom<BaseBuiltPayload>
+        + DeserializeOwned
         + Serialize
         + Clone
         + Unpin
@@ -99,7 +97,8 @@ pub trait EngineTypes:
         + Sync
         + 'static;
     /// Execution Payload V5 envelope type.
-    type ExecutionPayloadEnvelopeV5: DeserializeOwned
+    type ExecutionPayloadEnvelopeV5: TryFrom<BaseBuiltPayload>
+        + DeserializeOwned
         + Serialize
         + Clone
         + Unpin
@@ -107,7 +106,8 @@ pub trait EngineTypes:
         + Sync
         + 'static;
     /// Execution Payload V6 envelope type.
-    type ExecutionPayloadEnvelopeV6: DeserializeOwned
+    type ExecutionPayloadEnvelopeV6: TryFrom<BaseBuiltPayload>
+        + DeserializeOwned
         + Serialize
         + Clone
         + Unpin
@@ -129,20 +129,24 @@ pub trait EngineTypes:
 ///
 /// After this validation passes, the engine performs the full consensus validation
 /// pipeline (header, pre-execution, execution, post-execution).
-pub trait EngineApiValidator<Types: PayloadTypes>: Send + Sync + Unpin + 'static {
+pub trait EngineApiValidator: Send + Sync + Unpin + 'static {
     /// Validates the presence or exclusion of fork-specific fields based on the payload attributes
     /// and the message version.
     fn validate_version_specific_fields(
         &self,
         version: EngineApiMessageVersion,
-        payload_or_attrs: PayloadOrAttributes<'_, Types::ExecutionData, Types::PayloadAttributes>,
+        payload_or_attrs: PayloadOrAttributes<
+            '_,
+            base_common_rpc_types_engine::ExecutionData,
+            BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        >,
     ) -> Result<(), EngineObjectValidationError>;
 
     /// Ensures that the payload attributes are valid for the given [`EngineApiMessageVersion`].
     fn ensure_well_formed_attributes(
         &self,
         version: EngineApiMessageVersion,
-        attributes: &Types::PayloadAttributes,
+        attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
     ) -> Result<(), EngineObjectValidationError>;
 }
 
@@ -176,7 +180,7 @@ pub trait EngineApiValidator<Types: PayloadTypes>: Send + Sync + Unpin + 'static
 /// validation (header checks, pre/post-execution). This trait handles engine API-specific
 /// concerns: payload encoding/decoding and attribute validation.
 #[auto_impl::auto_impl(&, Arc)]
-pub trait PayloadValidator<Types: PayloadTypes>: Send + Sync + Unpin + 'static {
+pub trait PayloadValidator: Send + Sync + Unpin + 'static {
     /// The block type used by the engine.
     type Block: Block;
 
@@ -192,7 +196,7 @@ pub trait PayloadValidator<Types: PayloadTypes>: Send + Sync + Unpin + 'static {
     /// engine-API specification.
     fn convert_payload_to_block(
         &self,
-        payload: Types::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
     ) -> Result<SealedBlock<Self::Block>, NewPayloadError>;
 
     /// Ensures that the given payload does not violate any consensus rules that concern the block's
@@ -205,7 +209,7 @@ pub trait PayloadValidator<Types: PayloadTypes>: Send + Sync + Unpin + 'static {
     /// engine-API specification.
     fn ensure_well_formed_payload(
         &self,
-        payload: Types::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
     ) -> Result<RecoveredBlock<Self::Block>, NewPayloadError> {
         let sealed_block = self.convert_payload_to_block(payload)?;
         sealed_block.try_recover().map_err(|e| NewPayloadError::Other(e.into()))
@@ -251,7 +255,7 @@ pub trait PayloadValidator<Types: PayloadTypes>: Send + Sync + Unpin + 'static {
     /// `INVALID_PAYLOAD_ATTRIBUTES`.
     fn validate_payload_attributes_against_header(
         &self,
-        attr: &Types::PayloadAttributes,
+        attr: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
         header: &<Self::Block as Block>::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         if attr.timestamp() <= header.timestamp() {
@@ -270,4 +274,4 @@ pub use test_utils::TestEngineValidator;
 #[cfg(feature = "test-utils")]
 mod test_payload;
 #[cfg(feature = "test-utils")]
-pub use test_payload::{TestBuiltPayload, TestEngineTypes};
+pub use test_payload::TestEngineTypes;

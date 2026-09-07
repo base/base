@@ -10,8 +10,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::PayloadStatusEnum;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_node_core::BaseEngineTypes;
-use base_node_core::BaseNode;
+use base_node_core::{BaseEngineTypes, BaseNode};
 use eyre::Result;
 use reth_e2e_test_utils::testsuite::{
     TestBuilder,
@@ -57,11 +56,11 @@ async fn test_engine_tree_fcu_canon_chain_insertion_e2e() -> Result<()> {
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
         // produce one block
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(1))
+        .with_action(ProduceBlocks::new(1))
         // make it canonical via forkchoice update
         .with_action(MakeCanonical::new())
         // extend with 3 more blocks
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(3))
+        .with_action(ProduceBlocks::new(3))
         // make the latest block canonical
         .with_action(MakeCanonical::new());
 
@@ -78,9 +77,9 @@ async fn test_engine_tree_fcu_reorg_with_all_blocks_e2e() -> Result<()> {
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
         // create a main chain with 5 blocks (blocks 0-4)
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(2))
+        .with_action(ProduceBlocks::new(2))
         .with_action(CaptureBlock::new("fork_base"))
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(3))
+        .with_action(ProduceBlocks::new(3))
         .with_action(CaptureBlock::new("main_tip"))
         .with_action(MakeCanonical::new())
         // block production finalizes the produced blocks, so re-establish finality at the fork
@@ -90,10 +89,10 @@ async fn test_engine_tree_fcu_reorg_with_all_blocks_e2e() -> Result<()> {
                 .with_head(BlockReference::Tag("main_tip".to_string())),
         )
         // create a fork from block 2 with 3 additional blocks
-        .with_action(CreateFork::<BaseEngineTypes>::new_from_tag("fork_base", 3))
+        .with_action(CreateFork::new_from_tag("fork_base", 3))
         .with_action(CaptureBlock::new("fork_tip"))
         // perform FCU to the fork tip - this should make the fork canonical
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("fork_tip"));
+        .with_action(ReorgTo::new_from_tag("fork_tip"));
 
     test.run::<BaseNode>().await?;
 
@@ -112,17 +111,17 @@ async fn test_engine_tree_valid_forks_with_older_canonical_head_e2e() -> Result<
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
         // create base chain with 1 block (this will be our old head)
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(1))
+        .with_action(ProduceBlocks::new(1))
         .with_action(CaptureBlock::new("old_head"))
         .with_action(MakeCanonical::new())
         // extend base chain with 5 more blocks to establish a fork point
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(5))
+        .with_action(ProduceBlocks::new(5))
         .with_action(CaptureBlock::new("fork_point"))
         .with_action(MakeCanonical::new())
         // revert to old head to simulate scenario where canonical head is older
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("old_head"))
+        .with_action(ReorgTo::new_from_tag("old_head"))
         // create first competing chain (chain A) from fork point with 10 blocks
-        .with_action(CreateFork::<BaseEngineTypes>::new_from_tag("fork_point", 10))
+        .with_action(CreateFork::new_from_tag("fork_point", 10))
         .with_action(CaptureBlock::new("chain_a_tip"))
         // producing chain A finalized its blocks, so re-establish finality at the fork point
         // before building below it again
@@ -131,10 +130,10 @@ async fn test_engine_tree_valid_forks_with_older_canonical_head_e2e() -> Result<
                 .with_head(BlockReference::Tag("chain_a_tip".to_string())),
         )
         // create second competing chain (chain B) from same fork point with 10 blocks
-        .with_action(CreateFork::<BaseEngineTypes>::new_from_tag("fork_point", 10))
+        .with_action(CreateFork::new_from_tag("fork_point", 10))
         .with_action(CaptureBlock::new("chain_b_tip"))
         // switch to chain B via forkchoice update - this should become canonical
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("chain_b_tip"));
+        .with_action(ReorgTo::new_from_tag("chain_b_tip"));
 
     test.run::<BaseNode>().await?;
 
@@ -149,35 +148,35 @@ async fn test_engine_tree_valid_and_invalid_forks_with_older_canonical_head_e2e(
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
         // create base chain with 1 block (old head)
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(1))
+        .with_action(ProduceBlocks::new(1))
         .with_action(CaptureBlock::new("old_head"))
         .with_action(MakeCanonical::new())
         // extend base chain with 5 more blocks to establish fork point
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(5))
+        .with_action(ProduceBlocks::new(5))
         .with_action(CaptureBlock::new("fork_point"))
         .with_action(MakeCanonical::new())
         // revert to old head to simulate older canonical head scenario
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("old_head"))
+        .with_action(ReorgTo::new_from_tag("old_head"))
         // create chain B (the valid chain) from fork point with 10 blocks
-        .with_action(CreateFork::<BaseEngineTypes>::new_from_tag("fork_point", 10))
+        .with_action(CreateFork::new_from_tag("fork_point", 10))
         .with_action(CaptureBlock::new("chain_b_tip"))
         // make chain B canonical via FCU - this becomes the valid chain
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("chain_b_tip"))
+        .with_action(ReorgTo::new_from_tag("chain_b_tip"))
         // create chain A (competing chain) - first produce valid blocks, then test invalid
         // scenario
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("fork_point"))
+        .with_action(ReorgTo::new_from_tag("fork_point"))
         // producing chain B finalized its blocks, so re-establish finality at the fork point
         // before building below it again
         .with_action(
             FinalizeBlock::<BaseEngineTypes>::new(BlockReference::Tag("fork_point".to_string()))
                 .with_head(BlockReference::Tag("chain_b_tip".to_string())),
         )
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(10))
+        .with_action(ProduceBlocks::new(10))
         .with_action(CaptureBlock::new("chain_a_tip"))
         // test that FCU to chain A tip returns VALID status (it's a valid competing chain)
         .with_action(ExpectFcuStatus::valid("chain_a_tip"))
         // attempt to produce invalid blocks (which should be rejected)
-        .with_action(ProduceInvalidBlocks::<BaseEngineTypes>::with_invalid_at(3, 2))
+        .with_action(ProduceInvalidBlocks::with_invalid_at(3, 2))
         // the invalid block is rejected and the chain remains on the last valid block built on
         // chain A: the fork point at 6, ten chain A blocks and two valid blocks on top. Chain B
         // was reorged out when chain A became canonical and its blocks were finalized.
@@ -199,11 +198,11 @@ async fn test_engine_tree_reorg_with_missing_ancestor_expecting_valid_e2e() -> R
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
         // build main chain (blocks 1-6)
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(6))
+        .with_action(ProduceBlocks::new(6))
         .with_action(MakeCanonical::new())
         .with_action(CaptureBlock::new("main_chain_tip"))
         // create a valid fork first
-        .with_action(CreateFork::<BaseEngineTypes>::new_from_tag("main_chain_tip", 5))
+        .with_action(CreateFork::new_from_tag("main_chain_tip", 5))
         .with_action(CaptureBlock::new("valid_fork_tip"))
         // FCU to the valid fork should work
         .with_action(ExpectFcuStatus::valid("valid_fork_tip"));
@@ -213,10 +212,10 @@ async fn test_engine_tree_reorg_with_missing_ancestor_expecting_valid_e2e() -> R
     // attempting to build invalid chains fails properly
     let invalid_test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(3))
+        .with_action(ProduceBlocks::new(3))
         .with_action(MakeCanonical::new())
         // This should fail when trying to build subsequent blocks on the invalid block
-        .with_action(ProduceInvalidBlocks::<BaseEngineTypes>::with_invalid_at(2, 0));
+        .with_action(ProduceInvalidBlocks::with_invalid_at(2, 0));
 
     assert!(invalid_test.run::<BaseNode>().await.is_err());
 
@@ -247,12 +246,12 @@ async fn test_engine_tree_buffered_blocks_are_eventually_connected_e2e() -> Resu
         )
         // node 0 produces blocks 1 and 2 locally without broadcasting
         .with_action(SelectActiveNode::new(0))
-        .with_action(ProduceBlocksLocally::<BaseEngineTypes>::new(2))
+        .with_action(ProduceBlocksLocally::new(2))
         // make the blocks canonical on node 0 so they're available via RPC
         .with_action(MakeCanonical::with_active_node())
         // send blocks in reverse order (2, then 1) from node 0 to node 1
         .with_action(
-            SendNewPayloads::<BaseEngineTypes>::new()
+            SendNewPayloads::new()
                 .with_target_node(1)
                 .with_source_node(0)
                 .with_start_block(1)
@@ -285,14 +284,14 @@ async fn test_engine_tree_fcu_extends_canon_chain_e2e() -> Result<()> {
     let test = TestBuilder::new()
         .with_setup(default_engine_tree_setup())
         // create and make canonical a base chain with 1 block
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(1))
+        .with_action(ProduceBlocks::new(1))
         .with_action(MakeCanonical::new())
         // extend the chain with 10 more blocks (total 11 blocks: 0-10)
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(10))
+        .with_action(ProduceBlocks::new(10))
         // capture block 6 as our intermediate target (from 0-indexed, this is block 6)
         .with_action(CaptureBlock::new("target_block"))
         // make the intermediate target canonical via FCU
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("target_block"))
+        .with_action(ReorgTo::new_from_tag("target_block"))
         // now make the chain tip canonical via FCU
         .with_action(MakeCanonical::new());
 
@@ -334,11 +333,11 @@ async fn test_engine_tree_live_sync_transition_eventually_canonical_e2e() -> Res
         )
         // Both nodes start with the same base chain (1 block)
         .with_action(SelectActiveNode::new(0))
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(1))
+        .with_action(ProduceBlocks::new(1))
         .with_action(MakeCanonical::new()) // Both nodes have the same base chain
         .with_action(CaptureBlock::new("base_chain_tip"))
         // Node 0: Build a much longer chain but don't broadcast it yet
-        .with_action(ProduceBlocksLocally::<BaseEngineTypes>::new(MIN_BLOCKS_FOR_PIPELINE_RUN + 10))
+        .with_action(ProduceBlocksLocally::new(MIN_BLOCKS_FOR_PIPELINE_RUN + 10))
         .with_action(MakeCanonical::with_active_node()) // Only make it canonical on Node 0
         .with_action(CaptureBlock::new("long_chain_tip"))
         // Verify Node 0's canonical tip is the long chain tip
@@ -350,7 +349,7 @@ async fn test_engine_tree_live_sync_transition_eventually_canonical_e2e() -> Res
         .with_action(CompareNodeChainTips::expect_different(0, 1))
         // Node 1: Send FCU pointing to Node 0's long chain tip
         // This should trigger Node 1 to sync the missing blocks from Node 0
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("long_chain_tip"))
+        .with_action(ReorgTo::new_from_tag("long_chain_tip"))
         // Wait for Node 1 to sync with Node 0
         .with_action(WaitForSync::new(0, 1).with_timeout(60))
         // Verify both nodes end up with the same canonical chain
@@ -372,9 +371,9 @@ async fn test_engine_tree_fcu_canon_chain_insertion_v2_e2e() -> Result<()> {
 
     let test = TestBuilder::new()
         .with_setup(v2_engine_tree_setup())
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(1))
+        .with_action(ProduceBlocks::new(1))
         .with_action(MakeCanonical::new())
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(3))
+        .with_action(ProduceBlocks::new(3))
         .with_action(MakeCanonical::new());
 
     test.run::<BaseNode>().await?;
@@ -391,9 +390,9 @@ async fn test_engine_tree_fcu_reorg_with_all_blocks_v2_e2e() -> Result<()> {
 
     let test = TestBuilder::new()
         .with_setup(v2_engine_tree_setup())
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(2))
+        .with_action(ProduceBlocks::new(2))
         .with_action(CaptureBlock::new("fork_base"))
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(3))
+        .with_action(ProduceBlocks::new(3))
         .with_action(CaptureBlock::new("main_tip"))
         .with_action(MakeCanonical::new())
         // block production finalizes the produced blocks, so re-establish finality at the fork
@@ -402,9 +401,9 @@ async fn test_engine_tree_fcu_reorg_with_all_blocks_v2_e2e() -> Result<()> {
             FinalizeBlock::<BaseEngineTypes>::new(BlockReference::Tag("fork_base".to_string()))
                 .with_head(BlockReference::Tag("main_tip".to_string())),
         )
-        .with_action(CreateFork::<BaseEngineTypes>::new_from_tag("fork_base", 3))
+        .with_action(CreateFork::new_from_tag("fork_base", 3))
         .with_action(CaptureBlock::new("fork_tip"))
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("fork_tip"));
+        .with_action(ReorgTo::new_from_tag("fork_tip"));
 
     test.run::<BaseNode>().await?;
 
@@ -418,11 +417,11 @@ async fn test_engine_tree_fcu_extends_canon_chain_v2_e2e() -> Result<()> {
 
     let test = TestBuilder::new()
         .with_setup(v2_engine_tree_setup())
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(1))
+        .with_action(ProduceBlocks::new(1))
         .with_action(MakeCanonical::new())
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(10))
+        .with_action(ProduceBlocks::new(10))
         .with_action(CaptureBlock::new("target_block"))
-        .with_action(ReorgTo::<BaseEngineTypes>::new_from_tag("target_block"))
+        .with_action(ReorgTo::new_from_tag("target_block"))
         .with_action(MakeCanonical::new());
 
     test.run::<BaseNode>().await?;
@@ -462,17 +461,17 @@ fn disk_reorg_test() -> TestBuilder<BaseEngineTypes> {
     TestBuilder::new()
         .with_setup(disk_reorg_setup())
         .with_action(SelectActiveNode::new(0))
-        .with_action(ProduceBlocks::<BaseEngineTypes>::new(3))
+        .with_action(ProduceBlocks::new(3))
         .with_action(MakeCanonical::new())
-        .with_action(ProduceBlocksLocally::<BaseEngineTypes>::new(7))
+        .with_action(ProduceBlocksLocally::new(7))
         .with_action(MakeCanonical::with_active_node())
         .with_action(SelectActiveNode::new(1))
         .with_action(SetForkBase::new(3))
-        .with_action(ProduceBlocksLocally::<BaseEngineTypes>::new(8))
+        .with_action(ProduceBlocksLocally::new(8))
         .with_action(MakeCanonical::with_active_node())
         .with_action(CaptureBlock::new("fork_tip"))
         .with_action(
-            SendNewPayloads::<BaseEngineTypes>::new()
+            SendNewPayloads::new()
                 .with_source_node(1)
                 .with_target_node(0)
                 .with_start_block(4)

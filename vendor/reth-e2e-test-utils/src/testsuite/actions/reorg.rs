@@ -1,12 +1,10 @@
 //! Reorg actions for the e2e testing framework.
 
-use std::marker::PhantomData;
-
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
+use alloy_rpc_types_engine::ForkchoiceState;
 use eyre::Result;
 use futures_util::future::BoxFuture;
-use reth_node_api::{EngineTypes, PayloadTypes};
+use reth_node_api::EngineTypes;
 use tracing::debug;
 
 use crate::testsuite::{
@@ -25,31 +23,28 @@ pub enum ReorgTarget {
 
 /// Action that performs a reorg by setting a new head block as canonical
 #[derive(Debug)]
-pub struct ReorgTo<Engine> {
+pub struct ReorgTo {
     /// Target for the reorg operation
     pub target: ReorgTarget,
-    /// Tracks engine type
-    _phantom: PhantomData<Engine>,
 }
 
-impl<Engine> ReorgTo<Engine> {
+impl ReorgTo {
     /// Create a new `ReorgTo` action with a direct block hash
     pub const fn new(target_hash: B256) -> Self {
-        Self { target: ReorgTarget::Hash(target_hash), _phantom: PhantomData }
+        Self { target: ReorgTarget::Hash(target_hash) }
     }
 
     /// Create a new `ReorgTo` action with a tagged block reference
     pub fn new_from_tag(tag: impl Into<String>) -> Self {
-        Self { target: ReorgTarget::Tag(tag.into()), _phantom: PhantomData }
+        Self { target: ReorgTarget::Tag(tag.into()) }
     }
 }
 
-impl<Engine> Action<Engine> for ReorgTo<Engine>
-where
-    Engine: EngineTypes + PayloadTypes,
-    Engine::PayloadAttributes: From<PayloadAttributes> + Clone,
-    Engine::ExecutionPayloadEnvelopeV3:
-        Into<alloy_rpc_types_engine::payload::ExecutionPayloadEnvelopeV3>,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for ReorgTo
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {

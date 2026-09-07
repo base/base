@@ -12,7 +12,7 @@ use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut, map::AddressS
 use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
 use base_common_consensus::BaseTxEnvelope;
-use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
+use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
@@ -41,7 +41,7 @@ use reth_network::{
 use reth_network_peers::NodeRecord;
 use reth_node_api::{
     AddOnsContext, BuildNextEnv, EngineTypes, FullNodeComponents, NodeAddOns,
-    PayloadAttributesBuilder, PayloadTypes,
+    PayloadAttributesBuilder,
 };
 use reth_node_builder::{
     BuilderContext, DebugNodeConfig, NodeAdapter,
@@ -82,15 +82,9 @@ impl<N> BaseNodeTypes for N where N: NodeTypes<Payload = BaseEngineTypes, ChainS
 
 /// Helper trait for Base node types with full configuration including storage and execution
 /// data.
-pub trait BaseFullNodeTypes:
-    NodeTypes<ChainSpec = BaseChainSpec, Payload: EngineTypes<ExecutionData = ExecutionData>>
-{
-}
+pub trait BaseFullNodeTypes: NodeTypes<ChainSpec = BaseChainSpec, Payload: EngineTypes> {}
 
-impl<N> BaseFullNodeTypes for N where
-    N: NodeTypes<ChainSpec = BaseChainSpec, Payload: EngineTypes<ExecutionData = ExecutionData>>
-{
-}
+impl<N> BaseFullNodeTypes for N where N: NodeTypes<ChainSpec = BaseChainSpec, Payload: EngineTypes> {}
 
 /// Local payload attributes builder for Base.
 #[derive(Debug)]
@@ -529,12 +523,7 @@ impl<N, EthB, PVB, EB, EVB, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes
-                       + NodeTypes<
-                Payload: PayloadTypes<
-                    PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                >,
-            >,
+            Types: BaseNodeTypes + NodeTypes,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     BasePayloadBuilderAttributes<BaseTxEnvelope>,
@@ -611,12 +600,7 @@ impl<N, EthB, PVB, EB, EVB, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes
-                       + NodeTypes<
-                Payload: PayloadTypes<
-                    PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                >,
-            >,
+            Types: BaseNodeTypes + NodeTypes,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     BasePayloadBuilderAttributes<BaseTxEnvelope>,
@@ -1278,15 +1262,7 @@ pub struct BasePayloadValidatorBuilder;
 
 impl<Node> PayloadValidatorBuilder<Node> for BasePayloadValidatorBuilder
 where
-    Node: FullNodeComponents<
-        Types: NodeTypes<
-            ChainSpec: Upgrades,
-            Payload: PayloadTypes<
-                ExecutionData = ExecutionData,
-                PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
-            >,
-        >,
-    >,
+    Node: FullNodeComponents<Types: NodeTypes<ChainSpec: Upgrades>>,
 {
     type Validator = BaseEngineValidator<BaseTxEnvelope, <Node::Types as NodeTypes>::ChainSpec>;
 

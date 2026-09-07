@@ -117,11 +117,7 @@ impl<T: FullNodeTypes, C: NodeComponents<T>> FullNodeComponents for NodeAdapter<
         self.components.network()
     }
 
-    fn payload_builder_handle(
-        &self,
-    ) -> &reth_payload_builder::PayloadBuilderHandle<
-        <Self::Types as reth_node_api::NodeTypes>::Payload,
-    > {
+    fn payload_builder_handle(&self) -> &reth_payload_builder::PayloadBuilderHandle {
         self.components.payload_builder_handle()
     }
 
@@ -339,11 +335,6 @@ mod test {
     #[test]
     fn test_noop_components() {
         let components = Components::<
-            FullNodeTypesAdapter<
-                AnyNodeTypes<ChainSpec, TestEngineTypes>,
-                DatabaseMock,
-                NoopProvider,
-            >,
             NoopNetwork<BasicNetworkPrimitives<base_common_consensus::BasePooledTransaction>>,
             _,
             NoopEvmConfig<MockEvmConfig>,
@@ -354,12 +345,19 @@ mod test {
             evm_config: NoopEvmConfig::default(),
             consensus: NoopConsensus::default(),
             network: NoopNetwork::new(),
-            payload_builder_handle: PayloadBuilderHandle::<TestEngineTypes>::noop(),
+            payload_builder_handle: PayloadBuilderHandle::noop(),
         };
 
         let task_executor = Runtime::test();
 
-        let node = NodeAdapter { components, task_executor, provider: NoopProvider::default() };
+        let node: NodeAdapter<
+            FullNodeTypesAdapter<
+                AnyNodeTypes<ChainSpec, TestEngineTypes>,
+                DatabaseMock,
+                NoopProvider,
+            >,
+            _,
+        > = NodeAdapter { components, task_executor, provider: NoopProvider::default() };
 
         // test that node implements `FullNodeComponents``
         <NodeAdapter<_, _> as FullNodeComponents>::pool(&node);

@@ -14,7 +14,6 @@ use core::{fmt::Debug, marker::PhantomData};
 use reth_chainspec::EthChainSpec;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::EngineTypes;
-use reth_payload_primitives::PayloadTypes;
 pub use reth_primitives_traits::{Block, BlockBody, FullBlock, FullReceipt, FullSignedTx};
 
 /// The type that configures the essential types of an Ethereum-like node.
@@ -26,7 +25,7 @@ pub trait NodeTypes: Clone + Debug + Send + Sync + Unpin + 'static {
     /// The type used for configuration of the EVM.
     type ChainSpec: EthChainSpec<Header = alloy_consensus::Header>;
     /// The node's engine types, defining the interaction with the consensus engine.
-    type Payload: PayloadTypes;
+    type Payload: EngineTypes;
 }
 
 /// A helper trait that is downstream of the [`NodeTypes`] trait and adds database to the
@@ -93,7 +92,7 @@ impl<C, PL> AnyNodeTypes<C, PL> {
 impl<C, PL> NodeTypes for AnyNodeTypes<C, PL>
 where
     C: EthChainSpec<Header = alloy_consensus::Header> + Clone + 'static,
-    PL: PayloadTypes + Send + Sync + Unpin + 'static,
+    PL: EngineTypes + Send + Sync + Unpin + 'static,
 {
     type ChainSpec = C;
     type Payload = PL;
@@ -134,11 +133,8 @@ impl<E, C, PL> NodeTypes for AnyNodeTypesWithEngine<E, C, PL>
 where
     E: EngineTypes + Send + Sync + Unpin,
     C: EthChainSpec<Header = alloy_consensus::Header> + Clone + 'static,
-    PL: PayloadTypes + Send + Sync + Unpin + 'static,
+    PL: EngineTypes + Send + Sync + Unpin + 'static,
 {
     type ChainSpec = C;
     type Payload = PL;
 }
-
-/// Helper adapter type for accessing [`PayloadTypes::PayloadAttributes`] on [`NodeTypes`].
-pub type PayloadAttrTy<N> = <<N as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes;

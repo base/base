@@ -5,11 +5,13 @@ use std::{marker::PhantomData, sync::Arc};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
+use base_common_consensus::BaseTxEnvelope;
 use eyre::{Result, eyre};
 use reth_chainspec::ChainSpec;
 use reth_ethereum_primitives::Block;
-use reth_node_api::{EngineTypes, PayloadTypes, TreeConfig};
+use reth_node_api::{EngineTypes, TreeConfig};
 use reth_node_core::primitives::RecoveredBlock;
+use reth_payload_primitives::BasePayloadBuilderAttributes;
 use revm::state::EvmState;
 use tokio::{
     sync::mpsc,
@@ -39,7 +41,8 @@ pub struct Setup<I: EngineTypes> {
     /// Is this setup in dev mode
     pub is_dev: bool,
     /// Conversion for chain-specific payload attributes.
-    pub payload_attributes_converter: Option<fn(PayloadAttributes) -> I::PayloadAttributes>,
+    pub payload_attributes_converter:
+        Option<fn(PayloadAttributes) -> BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     /// Tracks instance generic.
     _phantom: PhantomData<I>,
 }
@@ -77,7 +80,7 @@ where
     /// Supplies chain-specific fields when the framework creates payload attributes.
     pub fn with_payload_attributes_converter(
         mut self,
-        converter: fn(PayloadAttributes) -> I::PayloadAttributes,
+        converter: fn(PayloadAttributes) -> BasePayloadBuilderAttributes<BaseTxEnvelope>,
     ) -> Self {
         self.payload_attributes_converter = Some(converter);
         self
@@ -219,7 +222,7 @@ where
     async fn finalize_setup(
         &self,
         env: &mut Environment<I>,
-        node_clients: Vec<crate::testsuite::NodeClient<I>>,
+        node_clients: Vec<crate::testsuite::NodeClient>,
         use_latest_block: bool,
     ) -> Result<()> {
         if node_clients.is_empty() {
@@ -272,13 +275,10 @@ where
     }
 
     /// Wait for all nodes to be ready to accept RPC requests
-    async fn wait_for_nodes_ready<P>(
+    async fn wait_for_nodes_ready(
         &self,
-        node_clients: &[crate::testsuite::NodeClient<P>],
-    ) -> Result<()>
-    where
-        P: PayloadTypes,
-    {
+        node_clients: &[crate::testsuite::NodeClient],
+    ) -> Result<()> {
         for (idx, client) in node_clients.iter().enumerate() {
             let mut retry_count = 0;
             const MAX_RETRIES: usize = 10;
@@ -304,14 +304,11 @@ where
     }
 
     /// Get block info for a given block number or tag
-    async fn get_block_info<P>(
+    async fn get_block_info(
         &self,
-        client: &crate::testsuite::NodeClient<P>,
+        client: &crate::testsuite::NodeClient,
         block: BlockNumberOrTag,
-    ) -> Result<crate::testsuite::BlockInfo>
-    where
-        P: PayloadTypes,
-    {
+    ) -> Result<crate::testsuite::BlockInfo> {
         let block = client
             .get_block_by_number(block)
             .await?

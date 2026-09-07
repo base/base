@@ -19,8 +19,10 @@ use alloy_rpc_types_eth::{
     BlockOverrides, EIP1186AccountProofResponse, Filter, SyncStatus, state::StateOverride,
 };
 use alloy_serde::JsonStorageKey;
+use base_common_consensus::BaseTxEnvelope;
 use jsonrpsee::{RpcModule, core::RpcResult, proc_macros::rpc};
 use reth_engine_primitives::EngineTypes;
+use reth_payload_primitives::BasePayloadBuilderAttributes;
 use serde_json::Value;
 
 /// Helper trait for the engine api server.
@@ -40,8 +42,8 @@ pub trait IntoEngineApiRpcModule {
 // trait methods. Instead, we have to add the bounds manually. This would be disastrous if we had
 // more than one associated type used in the trait methods.
 
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "engine"), server_bounds(Engine::PayloadAttributes: jsonrpsee::core::DeserializeOwned))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "engine", client_bounds(Engine::PayloadAttributes: jsonrpsee::core::Serialize + Clone), server_bounds(Engine::PayloadAttributes: jsonrpsee::core::DeserializeOwned)))]
+#[cfg_attr(not(feature = "client"), rpc(server, namespace = "engine"), server_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::DeserializeOwned))]
+#[cfg_attr(feature = "client", rpc(server, client, namespace = "engine", client_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::Serialize + Clone), server_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::DeserializeOwned)))]
 pub trait EngineApi<Engine: EngineTypes> {
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/paris.md#engine_newpayloadv1>
     /// Caution: This should not accept the `withdrawals` field
@@ -69,7 +71,7 @@ pub trait EngineApi<Engine: EngineTypes> {
     #[method(name = "newPayloadV4")]
     async fn new_payload_v4(
         &self,
-        payload: ExecutionPayloadV3,
+        payload: base_common_rpc_types_engine::BaseExecutionPayloadV4,
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
         execution_requests: RequestsOrHash,
@@ -94,7 +96,7 @@ pub trait EngineApi<Engine: EngineTypes> {
     async fn fork_choice_updated_v1(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<Engine::PayloadAttributes>,
+        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated>;
 
     /// Post Shanghai forkchoice update handler
@@ -110,7 +112,7 @@ pub trait EngineApi<Engine: EngineTypes> {
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<Engine::PayloadAttributes>,
+        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated>;
 
     /// Post Cancun forkchoice update handler
@@ -124,7 +126,7 @@ pub trait EngineApi<Engine: EngineTypes> {
     async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<Engine::PayloadAttributes>,
+        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated>;
 
     /// Post Amsterdam forkchoice update handler
@@ -147,7 +149,7 @@ pub trait EngineApi<Engine: EngineTypes> {
     async fn fork_choice_updated_v4(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<Engine::PayloadAttributes>,
+        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
         custody_columns: Option<B128>,
     ) -> RpcResult<ForkchoiceUpdated>;
 

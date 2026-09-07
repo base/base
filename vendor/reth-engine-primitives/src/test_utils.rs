@@ -3,12 +3,13 @@
 
 use std::sync::Arc;
 
-use alloy_rpc_types_engine::{ExecutionData, PayloadAttributes};
+use base_common_consensus::{BaseBlock as Block, BaseTxEnvelope};
+use base_common_rpc_types_engine::{BasePayloadError, ExecutionData};
 use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks};
-use reth_ethereum_primitives::Block;
 use reth_payload_primitives::{
-    EngineApiMessageVersion, EngineObjectValidationError, NewPayloadError, PayloadOrAttributes,
-    PayloadTypes, validate_execution_requests, validate_version_specific_fields,
+    BasePayloadBuilderAttributes as PayloadAttributes, EngineApiMessageVersion,
+    EngineObjectValidationError, NewPayloadError, PayloadOrAttributes, validate_execution_requests,
+    validate_version_specific_fields,
 };
 use reth_primitives_traits::{Block as _, SealedBlock};
 
@@ -28,10 +29,9 @@ impl<C> TestEngineValidator<C> {
     }
 }
 
-impl<C, T> PayloadValidator<T> for TestEngineValidator<C>
+impl<C> PayloadValidator for TestEngineValidator<C>
 where
     C: EthChainSpec + EthereumHardforks + 'static,
-    T: PayloadTypes<ExecutionData = ExecutionData>,
 {
     type Block = Block;
 
@@ -39,19 +39,25 @@ where
         &self,
         data: ExecutionData,
     ) -> Result<SealedBlock<Block>, NewPayloadError> {
-        Ok(data.payload.try_into_block_with_sidecar(&data.sidecar)?.seal_slow())
+        Ok(data
+            .payload
+            .try_into_block_with_sidecar(&data.sidecar)
+            .map_err(|error| match error {
+                BasePayloadError::Eth(error) => NewPayloadError::Eth(error),
+                error => NewPayloadError::other(error),
+            })?
+            .seal_slow())
     }
 }
 
-impl<C, T> EngineApiValidator<T> for TestEngineValidator<C>
+impl<C> EngineApiValidator for TestEngineValidator<C>
 where
     C: EthChainSpec + EthereumHardforks + 'static,
-    T: PayloadTypes<ExecutionData = ExecutionData, PayloadAttributes = PayloadAttributes>,
 {
     fn validate_version_specific_fields(
         &self,
         version: EngineApiMessageVersion,
-        object: PayloadOrAttributes<'_, ExecutionData, PayloadAttributes>,
+        object: PayloadOrAttributes<'_, ExecutionData, PayloadAttributes<BaseTxEnvelope>>,
     ) -> Result<(), EngineObjectValidationError> {
         object
             .execution_requests()
@@ -63,12 +69,12 @@ where
     fn ensure_well_formed_attributes(
         &self,
         version: EngineApiMessageVersion,
-        attributes: &PayloadAttributes,
+        attributes: &PayloadAttributes<BaseTxEnvelope>,
     ) -> Result<(), EngineObjectValidationError> {
         validate_version_specific_fields(
             &self.chain_spec,
             version,
-            PayloadOrAttributes::<ExecutionData, PayloadAttributes>::PayloadAttributes(attributes),
+            PayloadOrAttributes::<ExecutionData, PayloadAttributes<BaseTxEnvelope>>::PayloadAttributes(attributes),
         )
     }
 }

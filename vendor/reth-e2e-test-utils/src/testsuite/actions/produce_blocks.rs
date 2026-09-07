@@ -1,16 +1,18 @@
 //! Block production actions for the e2e testing framework.
 
-use std::{collections::HashSet, marker::PhantomData, time::Duration};
+use std::{collections::HashSet, time::Duration};
 
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadAttributes, PayloadStatusEnum, payload::ExecutionPayloadEnvelopeV3,
 };
 use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
+use base_common_consensus::BaseTxEnvelope;
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use reth_ethereum_primitives::TransactionSigned;
-use reth_node_api::{EngineTypes, PayloadTypes};
+use reth_node_api::EngineTypes;
+use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_api::clients::{EngineApiClient, EthApiClient};
 use tokio::time::sleep;
 use tracing::debug;
@@ -23,10 +25,7 @@ use crate::testsuite::{
 /// Mine a single block with the given transactions and verify the block was created
 /// successfully.
 #[derive(Debug)]
-pub struct AssertMineBlock<Engine>
-where
-    Engine: PayloadTypes,
-{
+pub struct AssertMineBlock {
     /// The node index to mine
     pub node_idx: usize,
     /// Transactions to include in the block
@@ -35,35 +34,26 @@ where
     pub expected_hash: Option<B256>,
     /// Block's payload attributes
     // TODO: refactor once we have actions to generate payload attributes.
-    pub payload_attributes: Engine::PayloadAttributes,
-    /// Tracks engine type
-    _phantom: PhantomData<Engine>,
+    pub payload_attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
 }
 
-impl<Engine> AssertMineBlock<Engine>
-where
-    Engine: PayloadTypes,
-{
+impl AssertMineBlock {
     /// Create a new `AssertMineBlock` action
     pub fn new(
         node_idx: usize,
         transactions: Vec<Bytes>,
         expected_hash: Option<B256>,
-        payload_attributes: Engine::PayloadAttributes,
+        payload_attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
     ) -> Self {
-        Self {
-            node_idx,
-            transactions,
-            expected_hash,
-            payload_attributes,
-            _phantom: Default::default(),
-        }
+        Self { node_idx, transactions, expected_hash, payload_attributes }
     }
 }
 
-impl<Engine> Action<Engine> for AssertMineBlock<Engine>
-where
-    Engine: EngineTypes,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for AssertMineBlock
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
@@ -210,10 +200,11 @@ where
 #[derive(Debug, Default)]
 pub struct GeneratePayloadAttributes {}
 
-impl<Engine> Action<Engine> for GeneratePayloadAttributes
-where
-    Engine: EngineTypes + PayloadTypes,
-    Engine::PayloadAttributes: From<PayloadAttributes>,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for GeneratePayloadAttributes
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
@@ -246,10 +237,11 @@ where
 #[derive(Debug, Default)]
 pub struct GenerateNextPayload {}
 
-impl<Engine> Action<Engine> for GenerateNextPayload
-where
-    Engine: EngineTypes + PayloadTypes,
-    Engine::PayloadAttributes: From<PayloadAttributes> + Clone,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for GenerateNextPayload
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
@@ -365,11 +357,11 @@ where
 #[derive(Debug, Default)]
 pub struct BroadcastLatestForkchoice {}
 
-impl<Engine> Action<Engine> for BroadcastLatestForkchoice
-where
-    Engine: EngineTypes + PayloadTypes,
-    Engine::PayloadAttributes: From<PayloadAttributes> + Clone,
-    Engine::ExecutionPayloadEnvelopeV3: Into<ExecutionPayloadEnvelopeV3>,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for BroadcastLatestForkchoice
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
@@ -512,10 +504,11 @@ where
 #[derive(Debug, Default)]
 pub struct UpdateBlockInfoToLatestPayload {}
 
-impl<Engine> Action<Engine> for UpdateBlockInfoToLatestPayload
-where
-    Engine: EngineTypes + PayloadTypes,
-    Engine::ExecutionPayloadEnvelopeV3: Into<ExecutionPayloadEnvelopeV3>,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for UpdateBlockInfoToLatestPayload
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
@@ -686,11 +679,11 @@ impl BroadcastNextNewPayload {
     }
 }
 
-impl<Engine> Action<Engine> for BroadcastNextNewPayload
-where
-    Engine: EngineTypes + PayloadTypes,
-    Engine::PayloadAttributes: From<PayloadAttributes> + Clone,
-    Engine::ExecutionPayloadEnvelopeV3: Into<ExecutionPayloadEnvelopeV3>,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for BroadcastNextNewPayload
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
@@ -798,31 +791,29 @@ where
 
 /// Action that produces a sequence of blocks using the available clients
 #[derive(Debug)]
-pub struct ProduceBlocks<Engine> {
+pub struct ProduceBlocks {
     /// Number of blocks to produce
     pub num_blocks: u64,
-    /// Tracks engine type
-    _phantom: PhantomData<Engine>,
 }
 
-impl<Engine> ProduceBlocks<Engine> {
+impl ProduceBlocks {
     /// Create a new `ProduceBlocks` action
     pub fn new(num_blocks: u64) -> Self {
-        Self { num_blocks, _phantom: Default::default() }
+        Self { num_blocks }
     }
 }
 
-impl<Engine> Default for ProduceBlocks<Engine> {
+impl Default for ProduceBlocks {
     fn default() -> Self {
         Self::new(0)
     }
 }
 
-impl<Engine> Action<Engine> for ProduceBlocks<Engine>
-where
-    Engine: EngineTypes + PayloadTypes,
-    Engine::PayloadAttributes: From<PayloadAttributes> + Clone,
-    Engine::ExecutionPayloadEnvelopeV3: Into<ExecutionPayloadEnvelopeV3>,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for ProduceBlocks
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
@@ -993,31 +984,29 @@ where
 /// Action that produces blocks locally without broadcasting to other nodes
 /// This sends the payload only to the active node to ensure it's available locally
 #[derive(Debug)]
-pub struct ProduceBlocksLocally<Engine> {
+pub struct ProduceBlocksLocally {
     /// Number of blocks to produce
     pub num_blocks: u64,
-    /// Tracks engine type
-    _phantom: PhantomData<Engine>,
 }
 
-impl<Engine> ProduceBlocksLocally<Engine> {
+impl ProduceBlocksLocally {
     /// Create a new `ProduceBlocksLocally` action
     pub fn new(num_blocks: u64) -> Self {
-        Self { num_blocks, _phantom: Default::default() }
+        Self { num_blocks }
     }
 }
 
-impl<Engine> Default for ProduceBlocksLocally<Engine> {
+impl Default for ProduceBlocksLocally {
     fn default() -> Self {
         Self::new(0)
     }
 }
 
-impl<Engine> Action<Engine> for ProduceBlocksLocally<Engine>
-where
-    Engine: EngineTypes + PayloadTypes,
-    Engine::PayloadAttributes: From<PayloadAttributes> + Clone,
-    Engine::ExecutionPayloadEnvelopeV3: Into<ExecutionPayloadEnvelopeV3>,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for ProduceBlocksLocally
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
@@ -1046,19 +1035,17 @@ where
 
 /// Action that produces a sequence of blocks where some blocks are intentionally invalid
 #[derive(Debug)]
-pub struct ProduceInvalidBlocks<Engine> {
+pub struct ProduceInvalidBlocks {
     /// Number of blocks to produce
     pub num_blocks: u64,
     /// Set of indices (0-based) where blocks should be made invalid
     pub invalid_indices: HashSet<u64>,
-    /// Tracks engine type
-    _phantom: PhantomData<Engine>,
 }
 
-impl<Engine> ProduceInvalidBlocks<Engine> {
+impl ProduceInvalidBlocks {
     /// Create a new `ProduceInvalidBlocks` action
     pub fn new(num_blocks: u64, invalid_indices: HashSet<u64>) -> Self {
-        Self { num_blocks, invalid_indices, _phantom: Default::default() }
+        Self { num_blocks, invalid_indices }
     }
 
     /// Create a new `ProduceInvalidBlocks` action with a single invalid block at the specified
@@ -1070,11 +1057,11 @@ impl<Engine> ProduceInvalidBlocks<Engine> {
     }
 }
 
-impl<Engine> Action<Engine> for ProduceInvalidBlocks<Engine>
-where
-    Engine: EngineTypes + PayloadTypes,
-    Engine::PayloadAttributes: From<PayloadAttributes> + Clone,
-    Engine::ExecutionPayloadEnvelopeV3: Into<ExecutionPayloadEnvelopeV3>,
+impl<
+    Engine: reth_engine_primitives::EngineTypes<
+            ExecutionPayloadEnvelopeV3: Into<alloy_rpc_types_engine::ExecutionPayloadEnvelopeV3>,
+        >,
+> Action<Engine> for ProduceInvalidBlocks
 {
     fn execute<'a>(&'a mut self, env: &'a mut Environment<Engine>) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {

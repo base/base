@@ -7,7 +7,6 @@ use std::{
 };
 
 use futures_util::{StreamExt, ready};
-use reth_payload_primitives::PayloadTypes;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -15,17 +14,14 @@ use crate::{PayloadBuilderHandle, service::PayloadServiceCommand};
 
 /// A service task that does not build any payloads.
 #[derive(Debug)]
-pub struct NoopPayloadBuilderService<T: PayloadTypes> {
+pub struct NoopPayloadBuilderService {
     /// Receiver half of the command channel.
-    command_rx: UnboundedReceiverStream<PayloadServiceCommand<T>>,
+    command_rx: UnboundedReceiverStream<PayloadServiceCommand>,
 }
 
-impl<T> NoopPayloadBuilderService<T>
-where
-    T: PayloadTypes,
-{
+impl NoopPayloadBuilderService {
     /// Creates a new [`NoopPayloadBuilderService`].
-    pub fn new() -> (Self, PayloadBuilderHandle<T>) {
+    pub fn new() -> (Self, PayloadBuilderHandle) {
         let (service_tx, command_rx) = mpsc::unbounded_channel();
         (
             Self { command_rx: UnboundedReceiverStream::new(command_rx) },
@@ -34,10 +30,7 @@ where
     }
 }
 
-impl<T> Future for NoopPayloadBuilderService<T>
-where
-    T: PayloadTypes,
-{
+impl Future for NoopPayloadBuilderService {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -59,14 +52,14 @@ where
     }
 }
 
-impl<T: PayloadTypes> Default for NoopPayloadBuilderService<T> {
+impl Default for NoopPayloadBuilderService {
     fn default() -> Self {
         let (service, _) = Self::new();
         service
     }
 }
 
-impl<T: PayloadTypes> PayloadBuilderHandle<T> {
+impl PayloadBuilderHandle {
     /// Returns a new noop instance.
     pub fn noop() -> Self {
         Self::new(mpsc::unbounded_channel().0)

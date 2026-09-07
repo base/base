@@ -5,13 +5,14 @@
 
 use std::sync::Arc;
 
+use base_common_consensus::BaseTxEnvelope;
 use futures_util::future::TryJoinAll;
 use reth_chainspec::EthChainSpec;
 use reth_node_builder::{
-    EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle, NodeTypes, NodeTypesWithDBAdapter,
-    PayloadTypes,
+    EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle, NodeTypesWithDBAdapter,
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
+use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_primitives_traits::AlloyBlockHeader;
 use reth_provider::providers::BlockchainProvider;
 use reth_rpc_server_types::RpcModuleSelection;
@@ -35,11 +36,7 @@ type NodeConfigModifier<C> = Box<dyn Fn(NodeConfig<C>) -> NodeConfig<C> + Send +
 pub struct E2ETestSetupBuilder<N, F>
 where
     N: NodeBuilderHelper,
-    F: Fn(u64) -> <<N as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes
-        + Send
-        + Sync
-        + Copy
-        + 'static,
+    F: Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync + Copy + 'static,
 {
     num_nodes: usize,
     chain_spec: Arc<N::ChainSpec>,
@@ -52,11 +49,7 @@ where
 impl<N, F> E2ETestSetupBuilder<N, F>
 where
     N: NodeBuilderHelper,
-    F: Fn(u64) -> <<N as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes
-        + Send
-        + Sync
-        + Copy
-        + 'static,
+    F: Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync + Copy + 'static,
 {
     /// Creates a new builder with the required parameters.
     pub fn new(num_nodes: usize, chain_spec: Arc<N::ChainSpec>, attributes_generator: F) -> Self {
@@ -200,11 +193,7 @@ where
 impl<N, F> std::fmt::Debug for E2ETestSetupBuilder<N, F>
 where
     N: NodeBuilderHelper,
-    F: Fn(u64) -> <<N as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes
-        + Send
-        + Sync
-        + Copy
-        + 'static,
+    F: Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync + Copy + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("E2ETestSetupBuilder")

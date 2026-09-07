@@ -13,12 +13,11 @@ use reth_network_api::FullNetwork;
 use reth_node_core::node_config::NodeConfig;
 use reth_node_types::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_payload_builder::PayloadBuilderHandle;
+use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use reth_provider::FullProvider;
 use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
-
-use crate::PayloadTypes;
 
 /// A helper trait that is downstream of the [`NodeTypes`] trait and adds stateful
 /// components to the node.
@@ -51,16 +50,16 @@ where
 /// Helper trait to bound [`PayloadBuilder`] to the node's engine types.
 pub trait PayloadBuilderFor<N: NodeTypes>:
     PayloadBuilder<
-        Attributes = <N::Payload as PayloadTypes>::PayloadAttributes,
-        BuiltPayload = <N::Payload as PayloadTypes>::BuiltPayload,
+        Attributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        BuiltPayload = BaseBuiltPayload,
     >
 {
 }
 
 impl<T, N: NodeTypes> PayloadBuilderFor<N> for T where
     T: PayloadBuilder<
-            Attributes = <N::Payload as PayloadTypes>::PayloadAttributes,
-            BuiltPayload = <N::Payload as PayloadTypes>::BuiltPayload,
+            Attributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
+            BuiltPayload = BaseBuiltPayload,
         >
 {
 }
@@ -93,7 +92,7 @@ pub trait FullNodeComponents: FullNodeTypes + Clone + 'static {
 
     /// Returns the handle to the payload builder service handling payload building requests from
     /// the engine.
-    fn payload_builder_handle(&self) -> &PayloadBuilderHandle<<Self::Types as NodeTypes>::Payload>;
+    fn payload_builder_handle(&self) -> &PayloadBuilderHandle;
 
     /// Returns the provider of the node.
     fn provider(&self) -> &Self::Provider;
@@ -113,7 +112,7 @@ pub struct AddOnsContext<'a, N: FullNodeComponents> {
     /// Node configuration.
     pub config: &'a NodeConfig<<N::Types as NodeTypes>::ChainSpec>,
     /// Handle to the beacon consensus engine.
-    pub beacon_engine_handle: ConsensusEngineHandle<<N::Types as NodeTypes>::Payload>,
+    pub beacon_engine_handle: ConsensusEngineHandle,
     /// Notification channel for engine API events
     pub engine_events: EventSender<ConsensusEngineEvent>,
     /// JWT secret for the node.

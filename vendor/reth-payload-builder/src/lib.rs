@@ -32,10 +32,11 @@
 //! use alloy_primitives::B256;
 //! use reth_payload_builder::PayloadId;
 //! use alloy_primitives::U256;
-//! use reth_engine_primitives::TestBuiltPayload;
+//! use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+//! use base_common_consensus::BaseTxEnvelope;
 //! use reth_payload_builder::{PayloadBuilderError, KeepPayloadJobAlive, PayloadJob, PayloadJobGenerator, PayloadKind};
 //! use reth_primitives_traits::{RecoveredBlock, SealedBlock};
-//! use alloy_rpc_types::engine::PayloadAttributes;
+//! type PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>;
 //! use reth_payload_builder::BuildNewPayload;
 //!
 //! /// The generator type that creates new jobs that builds empty blocks.
@@ -59,22 +60,22 @@
 //!
 //! impl PayloadJob for EmptyBlockPayloadJob {
 //!    type PayloadAttributes = PayloadAttributes;
-//!    type ResolvePayloadFuture = futures_util::future::Ready<Result<TestBuiltPayload, PayloadBuilderError>>;
-//!    type BuiltPayload = TestBuiltPayload;
+//!    type ResolvePayloadFuture = futures_util::future::Ready<Result<BaseBuiltPayload, PayloadBuilderError>>;
+//!    type BuiltPayload = BaseBuiltPayload;
 //!
-//! fn best_payload(&self) -> Result<TestBuiltPayload, PayloadBuilderError> {
+//! fn best_payload(&self) -> Result<BaseBuiltPayload, PayloadBuilderError> {
 //!     // NOTE: some fields are omitted here for brevity
 //!     let block = Block {
 //!         header: Header {
 //!             parent_hash: self.parent,
-//!             timestamp: self.attributes.timestamp,
-//!             beneficiary: self.attributes.suggested_fee_recipient,
+//!             timestamp: self.attributes.payload_attributes.timestamp,
+//!             beneficiary: self.attributes.payload_attributes.suggested_fee_recipient,
 //!             ..Default::default()
 //!         },
 //!         ..Default::default()
 //!     };
-//!     let block = RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), vec![]);
-//!     let payload = TestBuiltPayload::new(Arc::new(block), U256::ZERO, None, None);
+//!     let block = SealedBlock::seal_slow(block);
+//!     let payload = BaseBuiltPayload::new(self.attributes.payload_attributes.id, Arc::new(block), U256::ZERO, None, None);
 //!     Ok(payload)
 //! }
 //!
@@ -83,7 +84,7 @@
 //! }
 //!
 //! fn payload_timestamp(&self) -> Result<u64, PayloadBuilderError> {
-//!     Ok(self.attributes.timestamp)
+//!     Ok(self.attributes.payload_attributes.timestamp)
 //! }
 //!
 //! fn resolve_kind(&mut self, _kind: PayloadKind) -> (Self::ResolvePayloadFuture, KeepPayloadJobAlive) {

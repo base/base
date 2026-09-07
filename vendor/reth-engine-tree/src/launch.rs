@@ -60,7 +60,7 @@ pub fn build_engine_orchestrator<N, Client, S, V, C>(
     provider: ProviderFactory<N>,
     blockchain_db: BlockchainProvider<N>,
     pruner: PrunerWithFactory<ProviderFactory<N>>,
-    payload_builder: PayloadBuilderHandle<N::Payload>,
+    payload_builder: PayloadBuilderHandle,
     payload_validator: V,
     overlay_manager: OverlayManager,
     tree_config: TreeConfig,
@@ -69,7 +69,7 @@ pub fn build_engine_orchestrator<N, Client, S, V, C>(
     runtime: Runtime,
 ) -> ChainOrchestrator<
     EngineHandler<
-        EngineApiRequestHandler<EngineApiRequest<N::Payload>>,
+        EngineApiRequestHandler<EngineApiRequest>,
         S,
         BasicBlockDownloader<Client, BaseBlock>,
     >,
@@ -78,8 +78,8 @@ pub fn build_engine_orchestrator<N, Client, S, V, C>(
 where
     N: ProviderNodeTypes,
     Client: BlockClient<Block = BaseBlock> + 'static,
-    S: Stream<Item = BeaconEngineMessage<N::Payload>> + Send + Sync + Unpin + 'static,
-    V: EngineValidator<N::Payload> + WaitForCaches,
+    S: Stream<Item = BeaconEngineMessage> + Send + Sync + Unpin + 'static,
+    V: EngineValidator + WaitForCaches,
     C: ConfigureEvm + 'static,
 {
     let downloader = BasicBlockDownloader::new(client, consensus.clone());

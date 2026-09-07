@@ -8,12 +8,14 @@ use std::{fmt, marker::PhantomData, time::Duration};
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
+use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BaseExecutionPayloadV4;
 use base_execution_rpc::BaseEngineApiClient;
 use base_node_core::BaseEngineTypes;
 use eyre::Result;
 use jsonrpsee::core::client::SubscriptionClientT;
-use reth_node_builder::{EngineTypes, PayloadTypes};
+use reth_node_builder::EngineTypes;
+use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use reth_tracing::tracing::debug;
 use url::Url;
@@ -173,7 +175,7 @@ impl<P: EngineProtocol> EngineApi<P> {
         &self,
         current_head: B256,
         new_head: B256,
-        payload_attributes: Option<<BaseEngineTypes as PayloadTypes>::PayloadAttributes>,
+        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> eyre::Result<ForkchoiceUpdated> {
         debug!(
             "Updating forkchoice at {} (current: {}, new: {})",

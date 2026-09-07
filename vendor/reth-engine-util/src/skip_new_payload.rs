@@ -7,8 +7,7 @@ use std::{
 
 use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
 use futures::{Stream, StreamExt};
-use reth_engine_primitives::{BeaconEngineMessage, ExecutionPayload};
-use reth_payload_primitives::PayloadTypes;
+use reth_engine_primitives::BeaconEngineMessage;
 
 /// Engine API stream wrapper that skips the specified number of new payload messages.
 #[derive(Debug)]
@@ -29,10 +28,9 @@ impl<S> EngineSkipNewPayload<S> {
     }
 }
 
-impl<S, T> Stream for EngineSkipNewPayload<S>
+impl<S> Stream for EngineSkipNewPayload<S>
 where
-    S: Stream<Item = BeaconEngineMessage<T>>,
-    T: PayloadTypes,
+    S: Stream<Item = BeaconEngineMessage>,
 {
     type Item = S::Item;
 

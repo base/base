@@ -28,7 +28,6 @@ reth-execution-types = { workspace = true }
 reth-execution-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
-reth-ethereum-primitives = { workspace = true }
 reth-evm = { workspace = true, optional = true }
 reth-chainspec = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
@@ -37,6 +36,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-payload-primitives = { workspace = true, features = ["default"] }
 futures = { workspace = true, optional = true, features = ["default"] }
 reth-payload-builder-primitives = { workspace = true, optional = true }
+base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 [features]
@@ -48,7 +48,6 @@ std = [
     "dep:reth-payload-builder-primitives",
     "reth-execution-errors/std",
     "reth-execution-types/std",
-    "reth-ethereum-primitives/std",
     "reth-primitives-traits/std",
     "reth-trie-common/std",
     "reth-storage-api/std",

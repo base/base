@@ -15,19 +15,21 @@ use alloy_primitives::{
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types_engine::{
-    ExecutionData, ExecutionPayloadSidecar, ExecutionPayloadV1, ForkchoiceState,
-    ForkchoiceUpdateError, PayloadAttributes as EthPayloadAttributes,
+    ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdateError,
+    PayloadAttributes as EthPayloadAttributes,
 };
 use assert_matches::assert_matches;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_rpc_types_engine::{
+    BaseExecutionPayload, BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, ExecutionData,
+};
 use reth_chain_state::{BlockState, test_utils::TestBlockBuilder};
 use reth_chainspec::{ChainSpec, HOLESKY, MAINNET};
 use reth_consensus_common::test_utils::TestConsensus;
-use reth_engine_primitives::{
-    EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook, TestEngineTypes,
-};
+use reth_engine_primitives::{EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook};
 use reth_evm::MockEvmConfig;
 use reth_payload_builder::PayloadServiceCommand;
+use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_primitives_traits::Block as _;
 use reth_provider::{BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider};
 use reth_storage_overlay::OverlayManager;
@@ -49,7 +51,7 @@ use crate::{
 #[derive(Debug, Clone)]
 struct MockEngineValidator;
 
-impl reth_engine_primitives::PayloadValidator<TestEngineTypes> for MockEngineValidator {
+impl reth_engine_primitives::PayloadValidator for MockEngineValidator {
     type Block = BaseBlock;
 
     fn convert_payload_to_block(
@@ -59,21 +61,21 @@ impl reth_engine_primitives::PayloadValidator<TestEngineTypes> for MockEngineVal
         reth_primitives_traits::SealedBlock<Self::Block>,
         reth_payload_primitives::NewPayloadError,
     > {
-        let block = BaseBlock::try_from(payload.payload).map_err(|e| {
+        let block = payload.payload.try_into_block_with_sidecar(&payload.sidecar).map_err(|e| {
             reth_payload_primitives::NewPayloadError::Other(format!("{e:?}").into())
         })?;
         Ok(block.seal_slow())
     }
 }
 
-impl EngineApiValidator<TestEngineTypes> for MockEngineValidator {
+impl EngineApiValidator for MockEngineValidator {
     fn validate_version_specific_fields(
         &self,
         _version: reth_payload_primitives::EngineApiMessageVersion,
         _payload_or_attrs: reth_payload_primitives::PayloadOrAttributes<
             '_,
-            alloy_rpc_types_engine::ExecutionData,
-            alloy_rpc_types_engine::PayloadAttributes,
+            ExecutionData,
+            BasePayloadBuilderAttributes<BaseTxEnvelope>,
         >,
     ) -> Result<(), reth_payload_primitives::EngineObjectValidationError> {
         // Mock implementation - always valid
@@ -83,7 +85,7 @@ impl EngineApiValidator<TestEngineTypes> for MockEngineValidator {
     fn ensure_well_formed_attributes(
         &self,
         _version: reth_payload_primitives::EngineApiMessageVersion,
-        _attributes: &alloy_rpc_types_engine::PayloadAttributes,
+        _attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
     ) -> Result<(), reth_payload_primitives::EngineObjectValidationError> {
         // Mock implementation - always valid
         Ok(())
@@ -147,13 +149,12 @@ impl TestChannelHandle {
 struct TestHarness {
     tree: EngineApiTreeHandler<
         MockEthProvider,
-        TestEngineTypes,
         BasicEngineValidator<MockEthProvider, MockEvmConfig, MockEngineValidator>,
         MockEvmConfig,
     >,
-    to_tree_tx: crossbeam_channel::Sender<FromEngine<EngineApiRequest<TestEngineTypes>, BaseBlock>>,
+    to_tree_tx: crossbeam_channel::Sender<FromEngine<EngineApiRequest, BaseBlock>>,
     from_tree_rx: UnboundedReceiver<EngineApiEvent>,
-    payload_command_rx: UnboundedReceiver<PayloadServiceCommand<TestEngineTypes>>,
+    payload_command_rx: UnboundedReceiver<PayloadServiceCommand>,
     blocks: Vec<ExecutedBlock>,
     action_rx: Receiver<PersistenceAction>,
     block_builder: TestBlockBuilder,
@@ -878,7 +879,7 @@ fn process_payload_attributes_shares_sparse_trie_during_validation_fallback() {
     test_harness.tree.state.set_pending_sparse_trie_prune(true);
 
     let updated = test_harness.tree.process_payload_attributes(
-        EthPayloadAttributes {
+        BasePayloadBuilderAttributes::<BaseTxEnvelope>::from(EthPayloadAttributes {
             timestamp: head.timestamp() + 1,
             prev_randao: B256::ZERO,
             suggested_fee_recipient: Default::default(),
@@ -886,7 +887,7 @@ fn process_payload_attributes_shares_sparse_trie_during_validation_fallback() {
             parent_beacon_block_root: None,
             slot_number: None,
             target_gas_limit: None,
-        },
+        }),
         &head,
         state,
     );
@@ -975,8 +976,9 @@ fn test_disconnected_payload() {
     let outcome = test_harness
         .tree
         .on_new_payload(ExecutionData {
-            payload: payload.into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(payload),
+            sidecar: ExecutionPayloadSidecar::default(),
         })
         .unwrap();
     assert!(outcome.outcome.is_syncing());
@@ -1056,8 +1058,9 @@ async fn test_holesky_payload() {
         .on_engine_message(FromEngine::Request(
             BeaconEngineMessage::NewPayload {
                 payload: ExecutionData {
-                    payload: payload.clone().into(),
-                    sidecar: ExecutionPayloadSidecar::none(),
+                    block_access_list: None,
+                    payload: BaseExecutionPayload::V1(payload.clone()),
+                    sidecar: ExecutionPayloadSidecar::default(),
                 },
                 tx,
             }
@@ -1659,15 +1662,16 @@ async fn test_fcu_with_canonical_ancestor_below_finalized_is_rejected() {
 
     // An FCU to an ancestor below the latest known finalized block would reorg out the
     // finalized block and is rejected, with or without payload attributes.
-    let payload_attributes = EthPayloadAttributes {
-        timestamp: ancestor.timestamp() + 1,
-        prev_randao: B256::ZERO,
-        suggested_fee_recipient: Default::default(),
-        withdrawals: None,
-        parent_beacon_block_root: None,
-        slot_number: None,
-        target_gas_limit: None,
-    };
+    let payload_attributes =
+        BasePayloadBuilderAttributes::<BaseTxEnvelope>::from(EthPayloadAttributes {
+            timestamp: ancestor.timestamp() + 1,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: Default::default(),
+            withdrawals: None,
+            parent_beacon_block_root: None,
+            slot_number: None,
+            target_gas_limit: None,
+        });
     for attrs in [Some(payload_attributes), None] {
         let err = test_harness
             .tree
@@ -1693,15 +1697,16 @@ async fn test_fcu_with_canonical_ancestor_below_finalized_is_rejected() {
 
     // the finalized block itself is not below finality and can become the parent of the next
     // block
-    let payload_attributes = EthPayloadAttributes {
-        timestamp: finalized.timestamp() + 1,
-        prev_randao: B256::ZERO,
-        suggested_fee_recipient: Default::default(),
-        withdrawals: None,
-        parent_beacon_block_root: None,
-        slot_number: None,
-        target_gas_limit: None,
-    };
+    let payload_attributes =
+        BasePayloadBuilderAttributes::<BaseTxEnvelope>::from(EthPayloadAttributes {
+            timestamp: finalized.timestamp() + 1,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: Default::default(),
+            withdrawals: None,
+            parent_beacon_block_root: None,
+            slot_number: None,
+            target_gas_limit: None,
+        });
     let outcome = test_harness
         .tree
         .on_forkchoice_updated(
@@ -1736,15 +1741,16 @@ async fn test_fcu_with_canonical_ancestor_above_finalized_starts_payload_build()
     let ancestor = blocks[2].recovered_block();
     test_harness.tree.canonical_in_memory_state.set_finalized(finalized.clone_sealed_header());
 
-    let payload_attributes = EthPayloadAttributes {
-        timestamp: ancestor.timestamp() + 1,
-        prev_randao: B256::ZERO,
-        suggested_fee_recipient: Default::default(),
-        withdrawals: None,
-        parent_beacon_block_root: None,
-        slot_number: None,
-        target_gas_limit: None,
-    };
+    let payload_attributes =
+        BasePayloadBuilderAttributes::<BaseTxEnvelope>::from(EthPayloadAttributes {
+            timestamp: ancestor.timestamp() + 1,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: Default::default(),
+            withdrawals: None,
+            parent_beacon_block_root: None,
+            slot_number: None,
+            target_gas_limit: None,
+        });
     let outcome = test_harness
         .tree
         .on_forkchoice_updated(
@@ -1795,8 +1801,9 @@ fn test_on_new_payload_canonical_insertion() {
     let outcome1 = test_harness
         .tree
         .on_new_payload(ExecutionData {
-            payload: payload1.into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(payload1),
+            sidecar: ExecutionPayloadSidecar::default(),
         })
         .unwrap();
 
@@ -1850,8 +1857,9 @@ fn test_on_new_payload_invalid_ancestor() {
     let outcome = test_harness
         .tree
         .on_new_payload(ExecutionData {
-            payload: payload2.into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(payload2),
+            sidecar: ExecutionPayloadSidecar::default(),
         })
         .unwrap();
 
@@ -1897,8 +1905,9 @@ fn test_on_new_payload_backfill_buffering() {
     let outcome = test_harness
         .tree
         .on_new_payload(ExecutionData {
-            payload: payload.into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(payload),
+            sidecar: ExecutionPayloadSidecar::default(),
         })
         .unwrap();
 
@@ -1943,8 +1952,9 @@ fn test_on_new_payload_malformed_payload() {
     let outcome = test_harness
         .tree
         .on_new_payload(ExecutionData {
-            payload: payload.into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(payload),
+            sidecar: ExecutionPayloadSidecar::default(),
         })
         .unwrap();
 
@@ -1988,8 +1998,9 @@ fn test_state_root_strategy_paths() {
     let outcome1 = test_harness
         .tree
         .on_new_payload(ExecutionData {
-            payload: payload1.into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(payload1),
+            sidecar: ExecutionPayloadSidecar::default(),
         })
         .unwrap();
 
@@ -2010,8 +2021,9 @@ fn test_state_root_strategy_paths() {
     let outcome2 = test_harness
         .tree
         .on_new_payload(ExecutionData {
-            payload: payload2.into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(payload2),
+            sidecar: ExecutionPayloadSidecar::default(),
         })
         .unwrap();
 
@@ -2111,9 +2123,12 @@ mod check_invalid_ancestors_tests {
         let block = BaseBlock::decode(&mut data.as_ref()).unwrap();
         let sealed = block.seal_slow();
         let payload = ExecutionData {
-            payload: ExecutionPayloadV1::from_block_unchecked(sealed.hash(), &sealed.into_block())
-                .into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(ExecutionPayloadV1::from_block_unchecked(
+                sealed.hash(),
+                &sealed.into_block(),
+            )),
+            sidecar: ExecutionPayloadSidecar::default(),
         };
 
         // Check for invalid ancestors - should return None since none are marked invalid
@@ -2150,12 +2165,12 @@ mod check_invalid_ancestors_tests {
 
         // Create payload for block 2
         let payload2 = ExecutionData {
-            payload: ExecutionPayloadV1::from_block_unchecked(
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(ExecutionPayloadV1::from_block_unchecked(
                 sealed2.hash(),
                 &sealed2.into_block(),
-            )
-            .into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            )),
+            sidecar: ExecutionPayloadSidecar::default(),
         };
 
         // Check for invalid ancestors - should detect invalid parent
@@ -2182,12 +2197,12 @@ mod check_invalid_ancestors_tests {
         let mut test_block_builder = TestBlockBuilder::eth();
         let genesis_block = test_block_builder.generate_random_block(0, B256::ZERO);
         let genesis_payload = ExecutionData {
-            payload: ExecutionPayloadV1::from_block_unchecked(
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(ExecutionPayloadV1::from_block_unchecked(
                 genesis_block.hash(),
                 &genesis_block.into_block(),
-            )
-            .into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            )),
+            sidecar: ExecutionPayloadSidecar::default(),
         };
 
         // Check for invalid ancestors - should return None for genesis block
@@ -2250,8 +2265,12 @@ mod check_invalid_ancestors_tests {
 
         // Create payload for block 1 (same block, sent again by CL)
         let payload1 = ExecutionData {
-            payload: ExecutionPayloadV1::from_block_unchecked(hash1, &sealed1.into_block()).into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(ExecutionPayloadV1::from_block_unchecked(
+                hash1,
+                &sealed1.into_block(),
+            )),
+            sidecar: ExecutionPayloadSidecar::default(),
         };
 
         // find_invalid_ancestor should detect the block itself without re-execution
@@ -2273,8 +2292,12 @@ mod check_invalid_ancestors_tests {
         let wrong_hash = B256::from([0xff; 32]);
 
         ExecutionData {
-            payload: ExecutionPayloadV1::from_block_unchecked(wrong_hash, &unsealed_block).into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(ExecutionPayloadV1::from_block_unchecked(
+                wrong_hash,
+                &unsealed_block,
+            )),
+            sidecar: ExecutionPayloadSidecar::default(),
         }
     }
 }
@@ -2296,9 +2319,12 @@ mod payload_execution_tests {
         let mut test_block_builder = TestBlockBuilder::eth();
         let block = test_block_builder.generate_random_block(1, B256::ZERO);
         let payload = ExecutionData {
-            payload: ExecutionPayloadV1::from_block_unchecked(block.hash(), &block.into_block())
-                .into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(ExecutionPayloadV1::from_block_unchecked(
+                block.hash(),
+                &block.into_block(),
+            )),
+            sidecar: ExecutionPayloadSidecar::default(),
         };
 
         // Test the function directly
@@ -2338,9 +2364,12 @@ mod payload_execution_tests {
         let mut test_block_builder = TestBlockBuilder::eth();
         let block = test_block_builder.generate_random_block(1, B256::ZERO);
         let payload = ExecutionData {
-            payload: ExecutionPayloadV1::from_block_unchecked(block.hash(), &block.into_block())
-                .into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(ExecutionPayloadV1::from_block_unchecked(
+                block.hash(),
+                &block.into_block(),
+            )),
+            sidecar: ExecutionPayloadSidecar::default(),
         };
 
         // Test buffering during backfill sync
@@ -2367,12 +2396,12 @@ mod payload_execution_tests {
         unsealed_block.header.gas_limit = 0;
 
         ExecutionData {
-            payload: ExecutionPayloadV1::from_block_unchecked(
+            block_access_list: None,
+            payload: BaseExecutionPayload::V1(ExecutionPayloadV1::from_block_unchecked(
                 unsealed_block.hash_slow(),
                 &unsealed_block,
-            )
-            .into(),
-            sidecar: ExecutionPayloadSidecar::none(),
+            )),
+            sidecar: ExecutionPayloadSidecar::default(),
         }
     }
 }

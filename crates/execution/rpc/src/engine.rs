@@ -6,12 +6,14 @@ use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadInputV2, ExecutionPayloadV3,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
+use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::{BaseExecutionPayloadV4, ExecutionData};
 use derive_more::Constructor;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
 use reth_chainspec::EthereumHardforks;
 use reth_node_api::{EngineApiValidator, EngineTypes};
+use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_rpc_engine_api::EngineApi;
 use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
@@ -44,8 +46,8 @@ pub const ENGINE_CAPABILITIES: &[&str] = &[
 ///
 /// This follows the Base specs that can be found at:
 /// <https://specs.base.org/protocol/execution#engine-api>
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "engine"), server_bounds(Engine::PayloadAttributes: jsonrpsee::core::DeserializeOwned))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "engine", client_bounds(Engine::PayloadAttributes: jsonrpsee::core::Serialize + Clone), server_bounds(Engine::PayloadAttributes: jsonrpsee::core::DeserializeOwned)))]
+#[cfg_attr(not(feature = "client"), rpc(server, namespace = "engine"), server_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::DeserializeOwned))]
+#[cfg_attr(feature = "client", rpc(server, client, namespace = "engine", client_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::Serialize + Clone), server_bounds(reth_payload_primitives::BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>: jsonrpsee::core::DeserializeOwned)))]
 pub trait BaseEngineApi<Engine: EngineTypes> {
     /// Sends the given payload to the execution layer client, as specified for the Shanghai fork.
     ///
@@ -97,7 +99,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     async fn fork_choice_updated_v1(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<Engine::PayloadAttributes>,
+        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated>;
 
     /// Updates the execution layer client with the given fork choice, as specified for the Shanghai
@@ -113,7 +115,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<Engine::PayloadAttributes>,
+        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated>;
 
     /// Updates the execution layer client with the given fork choice, as specified for the Cancun
@@ -129,7 +131,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<Engine::PayloadAttributes>,
+        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated>;
 
     /// Retrieves an execution payload from a previously started build process, as specified for the
@@ -265,9 +267,9 @@ impl<Provider, EngineT, Pool, Validator, ChainSpec> BaseEngineApiServer<EngineT>
     for BaseEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
-    EngineT: EngineTypes<ExecutionData = ExecutionData>,
+    EngineT: EngineTypes,
     Pool: TransactionPool + 'static,
-    Validator: EngineApiValidator<EngineT>,
+    Validator: EngineApiValidator,
     ChainSpec: EthereumHardforks + Send + Sync + 'static,
 {
     async fn new_payload_v2(&self, payload: ExecutionPayloadInputV2) -> RpcResult<PayloadStatus> {
@@ -320,7 +322,7 @@ where
     async fn fork_choice_updated_v1(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<EngineT::PayloadAttributes>,
+        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated> {
         trace!(target: "rpc::engine", "Serving engine_forkchoiceUpdatedV1");
         Ok(self.inner.fork_choice_updated_v1_metered(fork_choice_state, payload_attributes).await?)
@@ -340,7 +342,7 @@ where
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<EngineT::PayloadAttributes>,
+        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated> {
         trace!(target: "rpc::engine", "Serving engine_forkchoiceUpdatedV2");
         Ok(self.inner.fork_choice_updated_v2_metered(fork_choice_state, payload_attributes).await?)
@@ -360,7 +362,7 @@ where
     async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<EngineT::PayloadAttributes>,
+        payload_attributes: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> RpcResult<ForkchoiceUpdated> {
         trace!(target: "rpc::engine", "Serving engine_forkchoiceUpdatedV3");
         Ok(self.inner.fork_choice_updated_v3_metered(fork_choice_state, payload_attributes).await?)

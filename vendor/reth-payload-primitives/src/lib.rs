@@ -14,9 +14,12 @@
 extern crate alloc;
 
 use alloy_primitives::Bytes;
-use base_common_consensus::BaseBlock;
 use reth_chainspec::EthereumHardforks;
-use reth_primitives_traits::SealedBlock;
+
+mod base;
+pub use base::{BaseBuiltPayload, BasePayloadBuilderAttributes, EthPayloadBuilderAttributes};
+
+mod base_compat;
 
 mod error;
 pub use error::{
@@ -32,26 +35,6 @@ pub use traits::{
 
 mod payload;
 pub use payload::{ExecutionPayload, PayloadOrAttributes};
-
-/// Core trait that defines the associated types for working with execution payloads.
-pub trait PayloadTypes: Send + Sync + Unpin + core::fmt::Debug + Clone + 'static {
-    /// The format for execution payload data that can be processed and validated.
-    ///
-    /// This type represents the canonical format for block data that includes
-    /// all necessary information for execution and validation.
-    type ExecutionData: ExecutionPayload + From<Self::BuiltPayload>;
-    /// The type representing a successfully built payload/block.
-    type BuiltPayload: BuiltPayload + Clone + Unpin;
-
-    /// Attributes that specify how a payload should be constructed.
-    ///
-    /// These attributes typically come from external sources (e.g., consensus layer over RPC such
-    /// as the Engine API) and contain parameters like timestamp, fee recipient, and randomness.
-    type PayloadAttributes: PayloadAttributes + Unpin;
-
-    /// Converts a sealed block into the execution payload format.
-    fn block_to_payload(block: SealedBlock<BaseBlock>, bal: Option<Bytes>) -> Self::ExecutionData;
-}
 
 /// Validates the timestamp depending on the version called:
 ///

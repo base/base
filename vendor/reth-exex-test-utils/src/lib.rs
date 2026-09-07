@@ -75,7 +75,6 @@ pub type TestFullNodeTypes = FullNodeTypesAdapter<
 pub type Adapter = NodeAdapter<
     TestFullNodeTypes,
     Components<
-        TestFullNodeTypes,
         NetworkHandle<BasicNetworkPrimitives<base_common_consensus::BasePooledTransaction>>,
         Pool<
             MockTransactionValidator<BasePooledTransaction>,
@@ -200,7 +199,7 @@ pub async fn test_exex_context_with_chain_spec(
     let task_executor = runtime.clone();
     runtime.spawn_task(network_manager);
 
-    let (_, payload_builder_handle) = NoopPayloadBuilderService::<TestEngineTypes>::new();
+    let (_, payload_builder_handle) = NoopPayloadBuilderService::new();
 
     let components = NodeAdapter::<FullNodeTypesAdapter<_, _, _>, _> {
         components: Components {

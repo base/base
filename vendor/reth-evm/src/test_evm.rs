@@ -14,10 +14,10 @@ use alloy_evm::{
     },
 };
 use alloy_primitives::{Bytes, U256};
-use alloy_rpc_types_engine::ExecutionData;
 use base_common_consensus::{
     BaseBlock as Block, BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType,
 };
+use base_common_rpc_types_engine::ExecutionData;
 use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks, MAINNET};
 use reth_primitives_traits::{
     SealedBlock, SealedHeader, SignedTransaction, constants::MAX_TX_GAS_LIMIT_OSAKA,
@@ -226,7 +226,7 @@ impl ConfigureEngineEvm<ExecutionData> for TestEvmConfig {
             gas_limit: payload.payload.gas_limit(),
             basefee: payload.payload.saturated_base_fee_per_gas(),
             blob_excess_gas_and_price,
-            slot_num: payload.payload.as_v4().map(|v4| v4.slot_number).unwrap_or_default(),
+            slot_num: 0,
         };
 
         Ok(EvmEnv { cfg_env, block_env })
@@ -241,9 +241,12 @@ impl ConfigureEngineEvm<ExecutionData> for TestEvmConfig {
             parent_hash: payload.parent_hash(),
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
             ommers: &[],
-            withdrawals: payload.payload.withdrawals().map(|w| Cow::Borrowed(w.as_slice())),
+            withdrawals: payload
+                .payload
+                .as_v2()
+                .map(|payload| Cow::Borrowed(payload.withdrawals.as_slice())),
             extra_data: payload.payload.as_v1().extra_data.clone(),
-            slot_number: payload.payload.as_v4().map(|v4| v4.slot_number),
+            slot_number: None,
         })
     }
 

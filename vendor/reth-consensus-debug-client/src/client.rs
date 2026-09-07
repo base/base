@@ -1,7 +1,7 @@
 use std::future::Future;
 
 use alloy_primitives::B256;
-use reth_node_api::{ConsensusEngineHandle, ExecutionPayload, PayloadTypes};
+use reth_node_api::{ConsensusEngineHandle, ExecutionPayload};
 use reth_tracing::tracing::warn;
 use ringbuffer::{AllocRingBuffer, RingBuffer};
 use tokio::sync::mpsc;
@@ -55,25 +55,24 @@ pub trait PayloadProvider: Send + Sync + 'static {
 /// Debug consensus client that sends FCUs and new payloads using recent payloads from an external
 /// provider like Etherscan or an RPC endpoint.
 #[derive(Debug)]
-pub struct DebugConsensusClient<P: PayloadProvider, T: PayloadTypes> {
+pub struct DebugConsensusClient<P: PayloadProvider> {
     /// Handle to execution client.
-    engine_handle: ConsensusEngineHandle<T>,
+    engine_handle: ConsensusEngineHandle,
     /// Provider to get consensus payloads from.
     block_provider: P,
 }
 
-impl<P: PayloadProvider, T: PayloadTypes> DebugConsensusClient<P, T> {
+impl<P: PayloadProvider> DebugConsensusClient<P> {
     /// Create a new debug consensus client with the given handle to execution
     /// client and block provider.
-    pub const fn new(engine_handle: ConsensusEngineHandle<T>, block_provider: P) -> Self {
+    pub const fn new(engine_handle: ConsensusEngineHandle, block_provider: P) -> Self {
         Self { engine_handle, block_provider }
     }
 }
 
-impl<P, T> DebugConsensusClient<P, T>
+impl<P> DebugConsensusClient<P>
 where
-    P: PayloadProvider<ExecutionData = T::ExecutionData> + Clone,
-    T: PayloadTypes,
+    P: PayloadProvider<ExecutionData = base_common_rpc_types_engine::ExecutionData> + Clone,
 {
     /// Spawn the client to start sending FCUs and new payloads by periodically fetching recent
     /// payloads.

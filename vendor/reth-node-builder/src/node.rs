@@ -6,7 +6,7 @@ use std::{
 };
 
 use reth_db::DatabaseEnv;
-use reth_node_api::{EngineTypes, FullNodeComponents, PayloadTypes};
+use reth_node_api::{EngineTypes, FullNodeComponents};
 // re-export the node api types
 pub use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_node_core::{
@@ -110,7 +110,7 @@ pub struct FullNode<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> {
     /// Provider to interact with the node's database
     pub provider: Node::Provider,
     /// Handle to the node's payload builder service.
-    pub payload_builder_handle: PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>,
+    pub payload_builder_handle: PayloadBuilderHandle,
     /// Task executor for the node.
     pub task_executor: TaskExecutor,
     /// The initial node config.
@@ -137,10 +137,9 @@ impl<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> Clone for FullNode<Node
     }
 }
 
-impl<Payload, Node, AddOns> FullNode<Node, AddOns>
+impl<Node, AddOns> FullNode<Node, AddOns>
 where
-    Payload: PayloadTypes,
-    Node: FullNodeComponents<Types: NodeTypes<Payload = Payload>>,
+    Node: FullNodeComponents<Types: NodeTypes>,
     AddOns: NodeAddOns<Node>,
 {
     /// Returns the chain spec of the node.
@@ -149,10 +148,9 @@ where
     }
 }
 
-impl<Payload, Node, AddOns> FullNode<Node, AddOns>
+impl<Node, AddOns> FullNode<Node, AddOns>
 where
-    Payload: PayloadTypes,
-    Node: FullNodeComponents<Types: NodeTypes<Payload = Payload>>,
+    Node: FullNodeComponents<Types: NodeTypes>,
     AddOns: RethRpcAddOns<Node>,
 {
     /// Returns the [`RpcServerHandle`] to the started rpc server.

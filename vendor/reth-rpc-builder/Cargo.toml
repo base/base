@@ -52,7 +52,6 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 tower-http = { workspace = true, features = ["default", "full"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
-reth-payload-primitives = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws", "ipc"] }
 [dev-dependencies]
 alloy-eips = { workspace = true }

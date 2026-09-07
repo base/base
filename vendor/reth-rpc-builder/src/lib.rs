@@ -50,7 +50,6 @@ pub use reth_ipc::server::{
     Builder as IpcServerBuilder, RpcServiceBuilder as IpcRpcServiceBuilder,
 };
 use reth_network_api::{NetworkInfo, Peers, noop::NoopNetwork};
-use reth_payload_primitives::PayloadTypes;
 use reth_rpc::{
     AdminApi, DebugApi, EngineEthApi, EthApi, EthApiBuilder, EthBundle, MinerApi, NetApi,
     OtterscanApi, RPCApi, RethApi, TraceApi, TxPoolApi, Web3Api,
@@ -305,13 +304,13 @@ where
     /// This behaves exactly as [`RpcModuleBuilder::build`] for the [`TransportRpcModules`], but
     /// also configures the auth (engine api) server, which exposes a subset of the `eth_`
     /// namespace.
-    pub fn build_with_auth_server<EthApi, Payload>(
+    pub fn build_with_auth_server<EthApi>(
         self,
         module_config: TransportRpcModuleConfig,
         engine: impl IntoEngineApiRpcModule,
         eth: EthApi,
         engine_events: EventSender<ConsensusEngineEvent>,
-        beacon_engine_handle: ConsensusEngineHandle<Payload>,
+        beacon_engine_handle: ConsensusEngineHandle,
     ) -> (
         TransportRpcModules,
         AuthRpcModule,
@@ -319,7 +318,6 @@ where
     )
     where
         EthApi: FullEthApiServer<Provider = Provider, Pool = Pool>,
-        Payload: PayloadTypes,
     {
         let config = module_config.config.clone().unwrap_or_default();
 
@@ -834,14 +832,11 @@ where
     ///   * `api_` namespace
     ///
     /// Note: This does _not_ register the `engine_` in this registry.
-    pub fn create_auth_module<Payload>(
+    pub fn create_auth_module(
         &self,
         engine_api: impl IntoEngineApiRpcModule,
-        beacon_engine_handle: ConsensusEngineHandle<Payload>,
-    ) -> AuthRpcModule
-    where
-        Payload: PayloadTypes,
-    {
+        beacon_engine_handle: ConsensusEngineHandle,
+    ) -> AuthRpcModule {
         let mut module = engine_api.into_rpc_module();
 
         // Merge reth_* endpoints

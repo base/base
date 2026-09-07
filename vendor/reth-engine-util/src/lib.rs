@@ -12,7 +12,6 @@ use std::path::PathBuf;
 
 use futures::{Future, Stream};
 use reth_engine_primitives::BeaconEngineMessage;
-use reth_payload_primitives::PayloadTypes;
 use tokio_util::either::Either;
 
 pub mod engine_store;
@@ -28,11 +27,11 @@ pub mod reorg;
 use reorg::EngineReorg;
 
 /// The result type for `maybe_reorg` method.
-type MaybeReorgResult<S, T, Provider, Evm, Validator, E> =
-    Result<Either<EngineReorg<S, T, Provider, Evm, Validator>, S>, E>;
+type MaybeReorgResult<S, Provider, Evm, Validator, E> =
+    Result<Either<EngineReorg<S, Provider, Evm, Validator>, S>, E>;
 
 /// The collection of stream extensions for engine API message stream.
-pub trait EngineMessageStreamExt<T: PayloadTypes>: Stream<Item = BeaconEngineMessage<T>> {
+pub trait EngineMessageStreamExt: Stream<Item = BeaconEngineMessage> {
     /// Skips the specified number of [`BeaconEngineMessage::ForkchoiceUpdated`] messages from the
     /// engine message stream.
     fn skip_fcu(self, count: usize) -> EngineSkipFcu<Self>
@@ -112,7 +111,7 @@ pub trait EngineMessageStreamExt<T: PayloadTypes>: Stream<Item = BeaconEngineMes
         payload_validator: Validator,
         frequency: usize,
         depth: Option<usize>,
-    ) -> EngineReorg<Self, T, Provider, Evm, Validator>
+    ) -> EngineReorg<Self, Provider, Evm, Validator>
     where
         Self: Sized,
     {
@@ -138,7 +137,7 @@ pub trait EngineMessageStreamExt<T: PayloadTypes>: Stream<Item = BeaconEngineMes
         payload_validator_fn: F,
         frequency: Option<usize>,
         depth: Option<usize>,
-    ) -> impl Future<Output = MaybeReorgResult<Self, T, Provider, Evm, Validator, E>> + Send
+    ) -> impl Future<Output = MaybeReorgResult<Self, Provider, Evm, Validator, E>> + Send
     where
         Self: Sized + Send,
         Provider: Send,
@@ -164,9 +163,4 @@ pub trait EngineMessageStreamExt<T: PayloadTypes>: Stream<Item = BeaconEngineMes
     }
 }
 
-impl<T, S> EngineMessageStreamExt<T> for S
-where
-    T: PayloadTypes,
-    S: Stream<Item = BeaconEngineMessage<T>>,
-{
-}
+impl<S> EngineMessageStreamExt for S where S: Stream<Item = BeaconEngineMessage> {}

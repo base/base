@@ -14,7 +14,7 @@ use alloy_primitives::{B256, map::B256Map};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use crossbeam_channel::{Receiver, Sender};
 use error::{InsertBlockError, InsertBlockFatalError, InsertBlockValidationError};
 use reth_chain_state::{
@@ -29,7 +29,7 @@ use reth_engine_primitives::{
 use reth_errors::{ConsensusError, ProviderResult};
 use reth_evm::ConfigureEvm;
 use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
-use reth_payload_primitives::{NewPayloadError, PayloadAttributes, PayloadTypes};
+use reth_payload_primitives::{BasePayloadBuilderAttributes, NewPayloadError, PayloadAttributes};
 use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_provider::{
     BalProvider, BlockExecutionOutput, BlockExecutionResult, BlockNumReader, BlockReader,
@@ -339,9 +339,8 @@ pub enum TreeAction {
 ///
 /// This type is responsible for processing engine API requests, maintaining the canonical state and
 /// emitting events.
-pub struct EngineApiTreeHandler<P, T, V, C>
+pub struct EngineApiTreeHandler<P, V, C>
 where
-    T: PayloadTypes,
     C: ConfigureEvm + 'static,
 {
     provider: P,
@@ -357,9 +356,9 @@ where
     /// them one by one so that we can handle incoming engine API in between and don't become
     /// unresponsive. This can happen during live sync transition where we're trying to close the
     /// gap (up to 3 epochs of blocks in the worst case).
-    incoming_tx: Sender<FromEngine<EngineApiRequest<T>, BaseBlock>>,
+    incoming_tx: Sender<FromEngine<EngineApiRequest, BaseBlock>>,
     /// Incoming engine API requests.
-    incoming: Receiver<FromEngine<EngineApiRequest<T>, BaseBlock>>,
+    incoming: Receiver<FromEngine<EngineApiRequest, BaseBlock>>,
     /// Outgoing events that are emitted to the handler.
     outgoing: UnboundedSender<EngineApiEvent>,
     /// Channels to the persistence layer.
@@ -373,7 +372,7 @@ where
     canonical_in_memory_state: CanonicalInMemoryState,
     /// Handle to the payload builder that will receive payload attributes for valid forkchoice
     /// updates
-    payload_builder: PayloadBuilderHandle<T>,
+    payload_builder: PayloadBuilderHandle,
     /// Configuration settings.
     config: TreeConfig,
     /// Metrics for the engine api.
@@ -397,8 +396,7 @@ where
     runtime: reth_tasks::Runtime,
 }
 
-impl<P: Debug, T: PayloadTypes + Debug, V: Debug, C> std::fmt::Debug
-    for EngineApiTreeHandler<P, T, V, C>
+impl<P: Debug, V: Debug, C> std::fmt::Debug for EngineApiTreeHandler<P, V, C>
 where
     C: Debug + ConfigureEvm,
 {
@@ -426,7 +424,7 @@ where
     }
 }
 
-impl<P, T, V, C> EngineApiTreeHandler<P, T, V, C>
+impl<P, V, C> EngineApiTreeHandler<P, V, C>
 where
     P: DatabaseProviderFactory
         + BlockReader<Block = BaseBlock, Header = alloy_consensus::Header>
@@ -444,8 +442,7 @@ where
         + TryIntoHistoricalStateProvider
         + 'static,
     C: ConfigureEvm + 'static,
-    T: PayloadTypes,
-    V: EngineValidator<T> + WaitForCaches,
+    V: EngineValidator + WaitForCaches,
 {
     /// Creates a new [`EngineApiTreeHandler`].
     #[expect(clippy::too_many_arguments)]
@@ -458,7 +455,7 @@ where
         canonical_in_memory_state: CanonicalInMemoryState,
         persistence: PersistenceHandle,
         persistence_state: PersistenceState,
-        payload_builder: PayloadBuilderHandle<T>,
+        payload_builder: PayloadBuilderHandle,
         config: TreeConfig,
         engine_kind: EngineApiKind,
         evm_config: C,
@@ -504,15 +501,14 @@ where
         consensus: Arc<dyn FullConsensus>,
         payload_validator: V,
         persistence: PersistenceHandle,
-        payload_builder: PayloadBuilderHandle<T>,
+        payload_builder: PayloadBuilderHandle,
         canonical_in_memory_state: CanonicalInMemoryState,
         overlay_manager: OverlayManager,
         config: TreeConfig,
         kind: EngineApiKind,
         evm_config: C,
         runtime: reth_tasks::Runtime,
-    ) -> (Sender<FromEngine<EngineApiRequest<T>, BaseBlock>>, UnboundedReceiver<EngineApiEvent>)
-    {
+    ) -> (Sender<FromEngine<EngineApiRequest, BaseBlock>>, UnboundedReceiver<EngineApiEvent>) {
         let best_block_number = provider.best_block_number().unwrap_or(0);
         let header = provider.sealed_header(best_block_number).ok().flatten().unwrap_or_default();
 
@@ -564,7 +560,7 @@ where
     }
 
     /// Returns a new [`Sender`] to send messages to this type.
-    pub fn sender(&self) -> Sender<FromEngine<EngineApiRequest<T>, BaseBlock>> {
+    pub fn sender(&self) -> Sender<FromEngine<EngineApiRequest, BaseBlock>> {
         self.incoming_tx.clone()
     }
 
@@ -693,7 +689,7 @@ where
     ///
     /// Unlike `wait_for_event`, this deliberately does not read from the tree input channel. Any
     /// requests sent to the tree remain queued upstream until persistence catches up.
-    fn wait_for_persistence_event(&mut self) -> LoopEvent<T> {
+    fn wait_for_persistence_event(&mut self) -> LoopEvent {
         let maybe_persistence = self.persistence_state.rx.take();
 
         if let Some((persistence_rx, start_time, _action)) = maybe_persistence {
@@ -713,7 +709,7 @@ where
     /// without reclaiming the in-memory overlay while a payload job may still access it. Otherwise,
     /// uses biased selection to prioritize persistence completion to update in-memory state and
     /// unblock further writes.
-    fn wait_for_event(&mut self) -> LoopEvent<T> {
+    fn wait_for_event(&mut self) -> LoopEvent {
         if self.pending_persisted_handoff.is_some() {
             self.metrics.engine.backpressure_active.set(0.0);
             return crossbeam_channel::select_biased! {
@@ -814,8 +810,8 @@ where
 
     /// When the Consensus layer receives a new block via the consensus gossip protocol,
     /// the transactions in the block are sent to the execution layer in the form of a
-    /// [`PayloadTypes::ExecutionData`], for example
-    /// [`ExecutionData`](reth_payload_primitives::PayloadTypes::ExecutionData). The
+    /// [`base_common_rpc_types_engine::ExecutionData`], for example
+    /// [`ExecutionData`](base_common_rpc_types_engine::ExecutionData). The
     /// Execution layer executes the transactions and validates the state in the block header,
     /// then passes validation data back to Consensus layer, that adds the block to the head of
     /// its own blockchain and attests to it. The block is then broadcast over the consensus p2p
@@ -834,7 +830,7 @@ where
     )]
     fn on_new_payload(
         &mut self,
-        payload: T::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
     ) -> Result<TreeOutcome<PayloadStatus>, InsertBlockFatalError> {
         let _thread_resource_usage =
             self.metrics.engine.new_payload.measure_thread_resource_usage();
@@ -910,7 +906,7 @@ where
     #[instrument(level = "debug", target = "engine::tree", skip_all)]
     fn try_insert_payload(
         &mut self,
-        payload: T::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
     ) -> Result<TryInsertPayloadResult, InsertBlockFatalError> {
         let block_hash = payload.block_hash();
         let num_hash = payload.num_hash();
@@ -966,7 +962,7 @@ where
     /// - Error status: Payload is malformed or invalid
     fn try_buffer_payload(
         &mut self,
-        payload: T::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
     ) -> Result<PayloadStatus, InsertBlockFatalError> {
         let parent_hash = payload.parent_hash();
         let num_hash = payload.num_hash();
@@ -1248,7 +1244,7 @@ where
     fn on_forkchoice_updated(
         &mut self,
         state: ForkchoiceState,
-        attrs: Option<T::PayloadAttributes>,
+        attrs: Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> ProviderResult<TreeOutcome<OnForkChoiceUpdated>> {
         trace!(target: "engine::tree", ?attrs, "invoked forkchoice update");
 
@@ -1317,7 +1313,7 @@ where
     fn handle_canonical_head(
         &mut self,
         state: ForkchoiceState,
-        attrs: &Option<T::PayloadAttributes>, // Changed to reference
+        attrs: &Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>, // Changed to reference
     ) -> ProviderResult<Option<TreeOutcome<OnForkChoiceUpdated>>> {
         // Process the forkchoice update by trying to make the head block canonical
         //
@@ -1379,7 +1375,7 @@ where
     fn apply_chain_update(
         &mut self,
         state: ForkchoiceState,
-        attrs: &Option<T::PayloadAttributes>,
+        attrs: &Option<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
     ) -> ProviderResult<Option<TreeOutcome<OnForkChoiceUpdated>>> {
         // Check if the head is already part of the canonical chain
         if let Ok(Some(canonical_header)) = self.find_canonical_header(state.head_block_hash) {
@@ -1714,7 +1710,7 @@ where
     /// Returns `ControlFlow::Break(())` if the engine should terminate.
     fn on_engine_message(
         &mut self,
-        msg: FromEngine<EngineApiRequest<T>, BaseBlock>,
+        msg: FromEngine<EngineApiRequest, BaseBlock>,
     ) -> Result<ops::ControlFlow<()>, InsertBlockFatalError> {
         match msg {
             FromEngine::Event(event) => match event {
@@ -2602,7 +2598,10 @@ where
     /// 4. Checking if this ancestor is in the `invalid_headers` map
     ///
     /// Returns the invalid ancestor block info if found, or None if no invalid ancestor exists.
-    fn find_invalid_ancestor(&mut self, payload: &T::ExecutionData) -> Option<BlockWithParent> {
+    fn find_invalid_ancestor(
+        &mut self,
+        payload: &base_common_rpc_types_engine::ExecutionData,
+    ) -> Option<BlockWithParent> {
         let parent_hash = payload.parent_hash();
         let block_hash = payload.block_hash();
 
@@ -2630,7 +2629,7 @@ where
     ///    validated due to its own structural issues
     fn handle_invalid_ancestor_payload(
         &mut self,
-        payload: T::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
         invalid: BlockWithParent,
     ) -> Result<PayloadStatus, InsertBlockFatalError> {
         let parent_hash = payload.parent_hash();
@@ -3107,7 +3106,7 @@ where
     /// or `InsertPayloadError` if validation or execution failed.
     fn insert_payload(
         &mut self,
-        payload: T::ExecutionData,
+        payload: base_common_rpc_types_engine::ExecutionData,
     ) -> Result<InsertPayloadOk, InsertPayloadError<BaseBlock>> {
         self.insert_block_or_payload(
             payload.block_with_parent(),
@@ -3481,7 +3480,7 @@ where
     /// return an error if the payload attributes are invalid.
     fn process_payload_attributes(
         &mut self,
-        attributes: T::PayloadAttributes,
+        attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
         head: &alloy_consensus::Header,
         state: ForkchoiceState,
     ) -> OnForkChoiceUpdated {
@@ -3589,12 +3588,9 @@ where
 
 /// Events received in the main engine loop.
 #[derive(Debug)]
-enum LoopEvent<T>
-where
-    T: PayloadTypes,
-{
+enum LoopEvent {
     /// An engine API message was received.
-    EngineMessage(FromEngine<EngineApiRequest<T>, BaseBlock>),
+    EngineMessage(FromEngine<EngineApiRequest, BaseBlock>),
     /// A persistence task completed.
     PersistenceComplete {
         /// The unified result of the persistence operation.
