@@ -51,3 +51,6 @@ pub use validity::{
 
 pub mod validator;
 pub use validator::BaseExecutionPayloadValidator;
+
+mod engine;
+pub use engine::{BaseEngineValidator, validate_withdrawals_presence};

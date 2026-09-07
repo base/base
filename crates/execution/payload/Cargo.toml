@@ -23,6 +23,8 @@ serde_json = { workspace = true }
 derive_more = { workspace = true }
 base-metrics = { workspace = true }
 base-bundles = { workspace = true }
+base-protocol = { workspace = true }
+reth-consensus = { workspace = true }
 base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
@@ -42,9 +44,11 @@ reth-evm = { workspace = true, features = ["default"] }
 reth-chainspec = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default"] }
+reth-engine-primitives = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-trie-parallel = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
+base-execution-consensus = { workspace = true, features = ["std"] }
 reth-execution-types = { workspace = true, features = ["default"] }
 reth-revm = { workspace = true, features = ["default", "witness"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
@@ -52,9 +56,9 @@ reth-payload-validator = { workspace = true, features = ["default"] }
 reth-payload-primitives = { workspace = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 [dev-dependencies]
-reth-provider = { workspace = true }
 reth-ethereum-forks = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
+reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["default"] }
 reth-revm = { workspace = true, features = ["default", "test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
