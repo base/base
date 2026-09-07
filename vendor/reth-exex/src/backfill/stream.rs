@@ -247,6 +247,7 @@ mod tests {
     use reth_chainspec::{ChainSpec, EthereumHardfork, MIN_TRANSACTION_GAS};
     use reth_db_common::init::init_genesis;
     use reth_evm::TestEvmConfig;
+    use reth_node_api::NodeTypesWithDB;
     use reth_primitives_traits::{Block as _, crypto::secp256k1::public_key_to_address};
     use reth_provider::{
         ProviderFactory, providers::BlockchainProvider,

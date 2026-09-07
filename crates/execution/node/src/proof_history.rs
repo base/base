@@ -26,7 +26,7 @@ use crate::{
     args::{DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, RollupArgs},
 };
 
-type ProofHistoryNodeTypes = RethFullAdapter<Arc<DatabaseEnv>, BaseNode>;
+type ProofHistoryNodeTypes = RethFullAdapter<Arc<DatabaseEnv>>;
 type ProofHistoryNodeBuilder = WithLaunchContext<
     NodeBuilderWithComponents<
         ProofHistoryNodeTypes,
@@ -87,7 +87,7 @@ pub async fn launch_node_with_proof_history(
         upgrade_signal_l1_rpc,
     });
     let mut node_builder = builder
-        .with_types::<BaseNode>()
+        .with_provider()
         .with_components(node.components())
         .with_add_ons(node.add_ons_builder().build());
 

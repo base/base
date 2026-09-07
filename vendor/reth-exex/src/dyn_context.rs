@@ -4,7 +4,7 @@
 use std::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
-use reth_node_api::{FullNodeComponents, NodeTypes};
+use reth_node_api::FullNodeComponents;
 use reth_node_core::node_config::NodeConfig;
 use reth_provider::BlockReader;
 use tokio::sync::mpsc;
@@ -51,7 +51,7 @@ impl Debug for ExExContextDyn {
 
 impl<Node> From<ExExContext<Node>> for ExExContextDyn
 where
-    Node: FullNodeComponents<Types: NodeTypes>,
+    Node: FullNodeComponents,
     Node::Provider: Debug + BlockReader,
 {
     fn from(ctx: ExExContext<Node>) -> Self {

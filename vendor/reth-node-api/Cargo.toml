@@ -27,7 +27,6 @@ reth-payload-builder = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
-reth-basic-payload-builder = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 reth-payload-builder-primitives = { workspace = true }
 reth-node-types = { workspace = true, features = ["default"] }

@@ -48,7 +48,6 @@ tokio-util = { workspace = true, features = ["default"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 miniz_oxide = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
-base-node-core = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["std"] }
 reth-trie-common = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }

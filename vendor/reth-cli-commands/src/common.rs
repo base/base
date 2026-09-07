@@ -13,9 +13,7 @@ use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_evm::{ConfigureEvm, noop::NoopEvmConfig};
 use reth_node_api::FullNodeTypesAdapter;
-use reth_node_builder::{
-    Node, NodeComponents, NodeComponentsBuilder, NodeTypes, NodeTypesWithDBAdapter,
-};
+use reth_node_builder::{Node, NodeComponents, NodeComponentsBuilder, NodeTypesWithDBAdapter};
 use reth_node_core::{
     args::{DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs},
     dirs::{ChainPath, DataDirPath},
@@ -93,7 +91,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         &self,
         access: AccessRights,
         runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<Environment<N>>
+    ) -> eyre::Result<Environment>
     where
         C: ChainSpecParser,
     {
@@ -165,7 +163,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         };
 
         let provider_factory =
-            self.create_provider_factory(&config, db, sfp, rocksdb_provider, access, runtime)?;
+            self.create_provider_factory::<N>(&config, db, sfp, rocksdb_provider, access, runtime)?;
         if access.is_read_write() {
             debug!(target: "reth::cli", chain=%self.chain.chain(), genesis=?self.chain.genesis_hash(), "Initializing genesis");
             init_genesis_with_settings(&provider_factory, self.storage_settings())?;
@@ -187,7 +185,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         rocksdb_provider: RocksDBProvider,
         access: AccessRights,
         runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<ProviderFactory<NodeTypesWithDBAdapter<N, DatabaseEnv>>>
+    ) -> eyre::Result<ProviderFactory<NodeTypesWithDBAdapter<DatabaseEnv>>>
     where
         C: ChainSpecParser,
     {
@@ -196,7 +194,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         let bal_store = BalStoreHandle::new(InMemoryBalStore::new(
             BalConfig::with_in_memory_retention_distance(balstore_cache_size),
         ));
-        let factory = ProviderFactory::<NodeTypesWithDBAdapter<N, DatabaseEnv>>::new(
+        let factory = ProviderFactory::<NodeTypesWithDBAdapter<DatabaseEnv>>::new(
             db,
             self.chain.clone(),
             static_file_provider,
@@ -230,7 +228,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
             let (_tip_tx, tip_rx) = watch::channel(B256::ZERO);
 
             // Builds and executes an unwind-only pipeline
-            let mut pipeline = Pipeline::<NodeTypesWithDBAdapter<N, DatabaseEnv>>::builder()
+            let mut pipeline = Pipeline::<NodeTypesWithDBAdapter<DatabaseEnv>>::builder()
                 .add_stages(DefaultStages::new(
                     factory.clone(),
                     tip_rx,
@@ -255,11 +253,11 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
 
 /// Environment built from [`EnvironmentArgs`].
 #[derive(Debug)]
-pub struct Environment<N: NodeTypes> {
+pub struct Environment {
     /// Configuration for reth node
     pub config: Config,
     /// Provider factory.
-    pub provider_factory: ProviderFactory<NodeTypesWithDBAdapter<N, DatabaseEnv>>,
+    pub provider_factory: ProviderFactory<NodeTypesWithDBAdapter<DatabaseEnv>>,
     /// Datadir path.
     pub data_dir: ChainPath<DataDirPath>,
 }
@@ -296,15 +294,11 @@ impl AccessRights {
 }
 
 /// Helper alias to satisfy `FullNodeTypes` bound on [`Node`] trait generic.
-type FullTypesAdapter<T> = FullNodeTypesAdapter<
-    T,
-    DatabaseEnv,
-    BlockchainProvider<NodeTypesWithDBAdapter<T, DatabaseEnv>>,
->;
+type FullTypesAdapter =
+    FullNodeTypesAdapter<DatabaseEnv, BlockchainProvider<NodeTypesWithDBAdapter<DatabaseEnv>>>;
 
-/// Helper trait with a common set of requirements for the
-/// [`NodeTypes`] in CLI.
-pub trait CliNodeTypes: reth_node_builder::NodeTypes {
+/// Execution and consensus components used by offline commands.
+pub trait CliNodeTypes {
     /// EVM used by offline execution commands.
     type Evm: ConfigureEvm + 'static;
     /// Consensus used by offline validation commands.
@@ -313,10 +307,10 @@ pub trait CliNodeTypes: reth_node_builder::NodeTypes {
 
 impl<N> CliNodeTypes for N
 where
-    N: Node<FullTypesAdapter<Self>> + reth_node_builder::NodeTypes,
+    N: Node<FullTypesAdapter>,
 {
-    type Evm = <<N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter<Self>>>::Components as NodeComponents<FullTypesAdapter<Self>>>::Evm;
-    type Consensus = <<N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter<Self>>>::Components as NodeComponents<FullTypesAdapter<Self>>>::Consensus;
+    type Evm = <<N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter>>::Components as NodeComponents<FullTypesAdapter>>::Evm;
+    type Consensus = <<N::ComponentsBuilder as NodeComponentsBuilder<FullTypesAdapter>>::Components as NodeComponents<FullTypesAdapter>>::Consensus;
 }
 
 #[cfg(test)]

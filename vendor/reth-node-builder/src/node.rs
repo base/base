@@ -9,7 +9,7 @@ use base_execution_chainspec::BaseChainSpec;
 use reth_db::DatabaseEnv;
 use reth_node_api::FullNodeComponents;
 // re-export the node api types
-pub use reth_node_api::{FullNodeTypes, NodeTypes};
+pub use reth_node_api::FullNodeTypes;
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     node_config::NodeConfig,
@@ -25,14 +25,10 @@ use crate::{
     rpc::RethRpcAddOns,
 };
 
-/// A helper type to obtain components for a given node when [`FullNodeTypes::Types`] is a [`Node`]
-/// implementation.
-pub type ComponentsFor<N> = <<<N as FullNodeTypes>::Types as Node<N>>::ComponentsBuilder as NodeComponentsBuilder<N>>::Components;
-
-/// A [`crate::Node`] is a [`NodeTypes`] that comes with preconfigured components.
+/// A node with preconfigured components.
 ///
 /// This can be used to configure the builder with a preset of components.
-pub trait Node<N: FullNodeTypes>: NodeTypes + Clone {
+pub trait Node<N: FullNodeTypes>: Clone + Debug + Send + Sync + Unpin + 'static {
     /// The type that builds the node's components.
     type ComponentsBuilder: NodeComponentsBuilder<N>;
 
@@ -67,14 +63,6 @@ impl<N, C, AO> AnyNode<N, C, AO> {
     pub fn add_ons<T>(self, value: T) -> AnyNode<N, C, T> {
         AnyNode(PhantomData, self.1, value)
     }
-}
-
-impl<N, C, AO> NodeTypes for AnyNode<N, C, AO>
-where
-    N: FullNodeTypes,
-    C: Clone + Debug + Send + Sync + Unpin + 'static,
-    AO: Clone + Debug + Send + Sync + Unpin + 'static,
-{
 }
 
 impl<N, C, AO> Node<N> for AnyNode<N, C, AO>
@@ -138,7 +126,7 @@ impl<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> Clone for FullNode<Node
 
 impl<Node, AddOns> FullNode<Node, AddOns>
 where
-    Node: FullNodeComponents<Types: NodeTypes>,
+    Node: FullNodeComponents,
     AddOns: NodeAddOns<Node>,
 {
     /// Returns the chain spec of the node.
@@ -149,7 +137,7 @@ where
 
 impl<Node, AddOns> FullNode<Node, AddOns>
 where
-    Node: FullNodeComponents<Types: NodeTypes>,
+    Node: FullNodeComponents,
     AddOns: RethRpcAddOns<Node>,
 {
     /// Returns the [`RpcServerHandle`] to the started rpc server.
@@ -165,7 +153,7 @@ where
 
 impl<Node, AddOns> FullNode<Node, AddOns>
 where
-    Node: FullNodeComponents<Types: NodeTypes>,
+    Node: FullNodeComponents,
     AddOns: RethRpcAddOns<Node>,
 {
     /// Returns the [`EngineApiClient`] interface for the authenticated engine API.
@@ -206,9 +194,23 @@ impl<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> DerefMut for FullNode<N
 }
 
 /// Helper type alias to define [`FullNode`] for a given [`Node`].
-pub type FullNodeFor<N, DB = DatabaseEnv> =
-    FullNode<NodeAdapter<RethFullAdapter<DB, N>>, <N as Node<RethFullAdapter<DB, N>>>::AddOns>;
+pub type FullNodeFor<N, DB = DatabaseEnv> = FullNode<
+    NodeAdapter<
+        RethFullAdapter<DB>,
+        <<N as Node<RethFullAdapter<DB>>>::ComponentsBuilder as NodeComponentsBuilder<
+            RethFullAdapter<DB>,
+        >>::Components,
+    >,
+    <N as Node<RethFullAdapter<DB>>>::AddOns,
+>;
 
 /// Helper type alias to define [`NodeHandle`] for a given [`Node`].
-pub type NodeHandleFor<N, DB = DatabaseEnv> =
-    NodeHandle<NodeAdapter<RethFullAdapter<DB, N>>, <N as Node<RethFullAdapter<DB, N>>>::AddOns>;
+pub type NodeHandleFor<N, DB = DatabaseEnv> = NodeHandle<
+    NodeAdapter<
+        RethFullAdapter<DB>,
+        <<N as Node<RethFullAdapter<DB>>>::ComponentsBuilder as NodeComponentsBuilder<
+            RethFullAdapter<DB>,
+        >>::Components,
+    >,
+    <N as Node<RethFullAdapter<DB>>>::AddOns,
+>;

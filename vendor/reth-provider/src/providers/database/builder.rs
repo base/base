@@ -1,7 +1,6 @@
 //! Helper builder entrypoint to instantiate a [`ProviderFactory`].
 
 use std::{
-    marker::PhantomData,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -22,17 +21,10 @@ use crate::{
 /// Helper type to create a [`ProviderFactory`].
 ///
 /// See [`ProviderFactoryBuilder::open_read_only`] for usage examples.
-#[derive(Debug)]
-pub struct ProviderFactoryBuilder<N> {
-    _types: PhantomData<N>,
-}
+#[derive(Debug, Default)]
+pub struct ProviderFactoryBuilder;
 
-impl<N> ProviderFactoryBuilder<N> {
-    /// Maps the [`reth_node_types::NodeTypes`] of this builder.
-    pub fn types<T>(self) -> ProviderFactoryBuilder<T> {
-        ProviderFactoryBuilder::default()
-    }
-
+impl ProviderFactoryBuilder {
     /// Opens the database with the given chainspec and [`ReadOnlyConfig`].
     ///
     /// # Open a monitored instance
@@ -40,14 +32,14 @@ impl<N> ProviderFactoryBuilder<N> {
     /// This is recommended when the new read-only instance is used with an active node.
     ///
     /// ```no_run
-    /// use reth_chainspec::MAINNET;
+    /// use base_execution_chainspec::BaseChainSpec;
     /// use reth_provider::providers::{ProviderFactoryBuilder};
     ///
-    /// fn demo<N: reth_node_types::NodeTypes>(
+    /// fn demo(
     ///     runtime: reth_tasks::Runtime,
     /// ) {
-    ///     let provider_factory = ProviderFactoryBuilder::<N>::default()
-    ///         .open_read_only(MAINNET.clone(), "datadir", runtime)
+    ///     let provider_factory = ProviderFactoryBuilder
+    ///         .open_read_only(BaseChainSpec::mainnet().into(), "datadir", runtime)
     ///         .unwrap();
     /// }
     /// ```
@@ -57,15 +49,15 @@ impl<N> ProviderFactoryBuilder<N> {
     /// This is recommended when no changes to the database are expected (e.g. no active node)
     ///
     /// ```no_run
-    /// use reth_chainspec::MAINNET;
+    /// use base_execution_chainspec::BaseChainSpec;
     /// use reth_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
     ///
-    /// fn demo<N: reth_node_types::NodeTypes>(
+    /// fn demo(
     ///     runtime: reth_tasks::Runtime,
     /// ) {
-    ///     let provider_factory = ProviderFactoryBuilder::<N>::default()
+    ///     let provider_factory = ProviderFactoryBuilder
     ///         .open_read_only(
-    ///             MAINNET.clone(),
+    ///             BaseChainSpec::mainnet().into(),
     ///             ReadOnlyConfig::from_datadir("datadir").no_watch(),
     ///             runtime,
     ///         )
@@ -81,15 +73,15 @@ impl<N> ProviderFactoryBuilder<N> {
     /// [`ReadOnlyConfig::disable_long_read_transaction_safety`].
     ///
     /// ```no_run
-    /// use reth_chainspec::MAINNET;
+    /// use base_execution_chainspec::BaseChainSpec;
     /// use reth_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
     ///
-    /// fn demo<N: reth_node_types::NodeTypes>(
+    /// fn demo(
     ///     runtime: reth_tasks::Runtime,
     /// ) {
-    ///     let provider_factory = ProviderFactoryBuilder::<N>::default()
+    ///     let provider_factory = ProviderFactoryBuilder
     ///         .open_read_only(
-    ///             MAINNET.clone(),
+    ///             BaseChainSpec::mainnet().into(),
     ///             ReadOnlyConfig::from_datadir("datadir").disable_long_read_transaction_safety(),
     ///             runtime,
     ///         )
@@ -101,10 +93,7 @@ impl<N> ProviderFactoryBuilder<N> {
         chainspec: Arc<BaseChainSpec>,
         config: impl Into<ReadOnlyConfig>,
         runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<ProviderFactory<NodeTypesWithDBAdapter<N, DatabaseEnv>>>
-    where
-        N: reth_node_types::NodeTypes,
-    {
+    ) -> eyre::Result<ProviderFactory<NodeTypesWithDBAdapter<DatabaseEnv>>> {
         let ReadOnlyConfig { db_dir, db_args, static_files_dir, rocksdb_dir, watch } =
             config.into();
         let db = open_db_read_only(db_dir, db_args)?;
@@ -117,12 +106,6 @@ impl<N> ProviderFactoryBuilder<N> {
             ProviderFactory::new(db, chainspec, static_file_provider, rocksdb_provider, runtime)?
                 .with_read_only_sync(watch);
         Ok(factory)
-    }
-}
-
-impl<N> Default for ProviderFactoryBuilder<N> {
-    fn default() -> Self {
-        Self { _types: Default::default() }
     }
 }
 

@@ -102,10 +102,10 @@ pub struct ProviderFactory<N: NodeTypesWithDB> {
     read_only_sync: Option<Arc<ReadOnlySyncState>>,
 }
 
-impl<N: reth_node_types::NodeTypes> ProviderFactory<NodeTypesWithDBAdapter<N, DatabaseEnv>> {
+impl ProviderFactory<NodeTypesWithDBAdapter<DatabaseEnv>> {
     /// Instantiates the builder for this type
-    pub fn builder() -> ProviderFactoryBuilder<N> {
-        ProviderFactoryBuilder::default()
+    pub fn builder() -> ProviderFactoryBuilder {
+        ProviderFactoryBuilder
     }
 }
 

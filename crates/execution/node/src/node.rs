@@ -41,7 +41,7 @@ use reth_node_api::{
 use reth_node_builder::{
     BuilderContext, DebugNodeConfig, NodeAdapter,
     components::{PoolBuilderConfigOverrides, spawn_maintenance_tasks},
-    node::{FullNodeTypes, NodeTypes},
+    node::FullNodeTypes,
     rpc::{
         BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn,
         EngineValidatorBuilder, EthApiBuilder, Identity, PayloadValidatorBuilder, RethRpcAddOns,
@@ -193,7 +193,7 @@ impl BaseNode {
     /// Returns the components for the given [`RollupArgs`].
     pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
     where
-        Node: FullNodeTypes<Types: NodeTypes>,
+        Node: FullNodeTypes,
     {
         let RollupArgs {
             discovery_v4,
@@ -273,7 +273,7 @@ impl BaseNode {
     ///         .unwrap();
     /// }
     /// ```
-    pub fn provider_factory_builder() -> ProviderFactoryBuilder<Self> {
+    pub fn provider_factory_builder() -> ProviderFactoryBuilder {
         ProviderFactoryBuilder::default()
     }
 }
@@ -289,7 +289,7 @@ pub type BaseNodeAddOns<N> = BaseAddOns<
 #[cfg(feature = "test-utils")]
 impl<N> reth_node_builder::Node<N> for BaseNode
 where
-    N: FullNodeTypes<Types: NodeTypes>,
+    N: FullNodeTypes,
 {
     type ComponentsBuilder = BaseComponentsBuilder<N>;
     type AddOns = BaseNodeAddOns<N>;
@@ -314,8 +314,6 @@ impl BaseNode {
         }
     }
 }
-
-impl NodeTypes for BaseNode {}
 
 /// Add-ons w.r.t. Base.
 ///
@@ -373,7 +371,7 @@ where
 
 impl<N> Default for BaseAddOns<N, BaseEthApiBuilder, BasePayloadValidatorBuilder>
 where
-    N: FullNodeComponents<Types: NodeTypes>,
+    N: FullNodeComponents,
     BaseEthApiBuilder: EthApiBuilder<N>,
 {
     fn default() -> Self {
@@ -390,7 +388,7 @@ impl<N, RpcMiddleware>
         RpcMiddleware,
     >
 where
-    N: FullNodeComponents<Types: NodeTypes>,
+    N: FullNodeComponents,
     BaseEthApiBuilder: EthApiBuilder<N>,
 {
     /// Build a [`BaseAddOns`] using [`BaseAddOnsBuilder`].
@@ -504,7 +502,6 @@ impl<N, EthB, PVB, EB, EVB, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: NodeTypes,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     BasePayloadBuilderAttributes<BaseTxEnvelope>,
@@ -581,15 +578,14 @@ impl<N, EthB, PVB, EB, EVB, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: NodeTypes,
-            Evm: ConfigureEvm<
-                NextBlockEnvCtx: BuildNextEnv<
-                    BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                    alloy_consensus::Header,
-                    BaseChainSpec,
-                >,
+        Evm: ConfigureEvm<
+            NextBlockEnvCtx: BuildNextEnv<
+                BasePayloadBuilderAttributes<BaseTxEnvelope>,
+                alloy_consensus::Header,
+                BaseChainSpec,
             >,
         >,
+    >,
     <<N as FullNodeComponents>::Pool as TransactionPool>::Transaction: BasePooledTx,
     EthB: EthApiBuilder<N>,
     PVB: PayloadValidatorBuilder<N>,
@@ -724,7 +720,7 @@ impl<RpcMiddleware> BaseAddOnsBuilder<RpcMiddleware> {
         self,
     ) -> BaseAddOns<N, BaseEthApiBuilder, PVB, EB, EVB, RpcMiddleware>
     where
-        N: FullNodeComponents<Types: NodeTypes>,
+        N: FullNodeComponents,
         BaseEthApiBuilder: EthApiBuilder<N>,
         PVB: PayloadValidatorBuilder<N> + Default,
         EB: Default,
@@ -862,7 +858,7 @@ where
         BaseTransactionPool<Node::Provider, DiskFileBlobStore, BaseEvmConfig, T, BaseOrdering<T>>,
     >
     where
-        Node: FullNodeTypes<Types: NodeTypes>,
+        Node: FullNodeTypes,
     {
         let Self {
             pool_config_overrides,
@@ -1175,7 +1171,7 @@ impl BaseNetworkBuilder {
         ctx: &BuilderContext<Node>,
     ) -> eyre::Result<NetworkConfig<Node::Provider>>
     where
-        Node: FullNodeTypes<Types: NodeTypes>,
+        Node: FullNodeTypes,
     {
         let discovery_config = BaseDiscoveryConfig::new(self.disable_discovery_v4);
         let args = &ctx.config().network;
@@ -1216,7 +1212,7 @@ impl BaseNetworkBuilder {
         pool: crate::BaseNodePool<Node>,
     ) -> eyre::Result<NetworkHandle>
     where
-        Node: FullNodeTypes<Types: NodeTypes>,
+        Node: FullNodeTypes,
     {
         let network_config = self.network_config(ctx)?;
         let network = NetworkManager::builder(network_config).await?;
@@ -1234,7 +1230,7 @@ pub struct BasePayloadValidatorBuilder;
 
 impl<Node> PayloadValidatorBuilder<Node> for BasePayloadValidatorBuilder
 where
-    Node: FullNodeComponents<Types: NodeTypes>,
+    Node: FullNodeComponents,
 {
     type Validator = BaseEngineValidator<BaseTxEnvelope>;
 

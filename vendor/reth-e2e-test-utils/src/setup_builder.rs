@@ -98,7 +98,7 @@ where
     pub async fn build<N: NodeBuilderHelper>(
         self,
     ) -> eyre::Result<(
-        Vec<NodeHelperType<N, BlockchainProvider<NodeTypesWithDBAdapter<N, TmpDB>>>>,
+        Vec<NodeHelperType<N, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>>,
         Wallet,
     )> {
         let runtime = Runtime::test();
@@ -141,7 +141,7 @@ where
                 let node = N::default();
                 let NodeHandle { node, node_exit_future: _ } = NodeBuilder::new(node_config)
                     .testing_node(runtime.clone())
-                    .with_types_and_provider::<N, BlockchainProvider<_>>()
+                    .with_custom_provider::<BlockchainProvider<_>>()
                     .with_components(node.components_builder())
                     .with_add_ons(node.add_ons())
                     .launch_with_fn(|builder| {

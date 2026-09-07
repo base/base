@@ -32,7 +32,7 @@ use reth_evm::MockEvmConfig;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
 use reth_network::{NetworkConfigBuilder, NetworkHandle, NetworkManager, config::rng_secret_key};
-use reth_node_api::{FullNodeTypesAdapter, NodeTypes, NodeTypesWithDBAdapter};
+use reth_node_api::{FullNodeTypesAdapter, NodeTypesWithDBAdapter};
 use reth_node_builder::{NodeAdapter, components::Components};
 use reth_node_core::node_config::NodeConfig;
 use reth_payload_builder::noop::NoopPayloadBuilderService;
@@ -49,21 +49,12 @@ use tempfile::TempDir;
 use thiserror::Error;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 
-/// Node types for storage-backed execution-extension tests.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct TestNode;
-
-impl NodeTypes for TestNode {}
-
 /// A shared [`TempDatabase`] used for testing
 pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
 /// The [`NodeAdapter`] for the [`TestExExContext`]. Contains type necessary to
 /// boot the testing environment
-pub type TestFullNodeTypes = FullNodeTypesAdapter<
-    TestNode,
-    TmpDB,
-    BlockchainProvider<NodeTypesWithDBAdapter<TestNode, TmpDB>>,
->;
+pub type TestFullNodeTypes =
+    FullNodeTypesAdapter<TmpDB, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>;
 /// Components needed by an execution extension, without a node launcher or RPC addons.
 pub type Adapter = NodeAdapter<
     TestFullNodeTypes,
@@ -87,7 +78,7 @@ pub struct TestExExHandle {
     /// Genesis block that was inserted into the storage
     pub genesis: RecoveredBlock<BaseBlock>,
     /// Provider Factory for accessing the emphemeral storage of the host node
-    pub provider_factory: ProviderFactory<NodeTypesWithDBAdapter<TestNode, TmpDB>>,
+    pub provider_factory: ProviderFactory<NodeTypesWithDBAdapter<TmpDB>>,
     /// Channel for receiving events from the Execution Extension
     pub events_rx: UnboundedReceiver<ExExEvent>,
     /// Channel for sending notifications to the Execution Extension
@@ -169,7 +160,7 @@ pub async fn test_exex_context_with_chain_spec(
     let (static_dir, _) = create_test_static_files_dir();
     let (rocksdb_dir, _) = create_test_rocksdb_dir();
     let db = create_test_rw_db();
-    let provider_factory = ProviderFactory::<NodeTypesWithDBAdapter<TestNode, _>>::new(
+    let provider_factory = ProviderFactory::<NodeTypesWithDBAdapter<_>>::new(
         db,
         Arc::new(chain_spec.as_ref().clone().into()),
         StaticFileProvider::read_write(static_dir.keep()).expect("static file provider"),
@@ -194,7 +185,7 @@ pub async fn test_exex_context_with_chain_spec(
 
     let (_, payload_builder_handle) = NoopPayloadBuilderService::new();
 
-    let components = NodeAdapter::<FullNodeTypesAdapter<_, _, _>, _> {
+    let components = NodeAdapter::<FullNodeTypesAdapter<_, _>, _> {
         components: Components {
             transaction_pool,
             evm_config,

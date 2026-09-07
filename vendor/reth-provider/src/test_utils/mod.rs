@@ -30,12 +30,8 @@ pub use mock::{ExtendedAccount, MockEthProvider};
 pub use noop::NoopProvider;
 pub use reth_chain_state::test_utils::TestCanonStateSubscriptions;
 
-/// Mock [`reth_node_types::NodeTypes`] for testing.
-pub type MockNodeTypes = reth_node_types::AnyNodeTypes;
-
 /// Mock [`reth_node_types::NodeTypesWithDB`] for testing.
-pub type MockNodeTypesWithDB<DB = Arc<TempDatabase<DatabaseEnv>>> =
-    NodeTypesWithDBAdapter<MockNodeTypes, DB>;
+pub type MockNodeTypesWithDB<DB = Arc<TempDatabase<DatabaseEnv>>> = NodeTypesWithDBAdapter<DB>;
 
 /// Creates test provider factory with mainnet chain spec.
 pub fn create_test_provider_factory() -> ProviderFactory<MockNodeTypesWithDB> {
@@ -47,7 +43,7 @@ pub fn create_test_provider_factory_with_chain_spec(
     chain_spec: Arc<ChainSpec>,
 ) -> ProviderFactory<MockNodeTypesWithDB> {
     let genesis_block_number = chain_spec.genesis.number.unwrap_or_default();
-    create_test_provider_factory_with_node_types_and_genesis::<MockNodeTypes>(
+    create_test_provider_factory_with_genesis(
         Arc::new((*chain_spec).clone().into()),
         genesis_block_number,
     )
@@ -64,16 +60,16 @@ pub fn create_test_provider_factory_with_genesis_block_number(
 }
 
 /// Creates test provider factory with provided chain spec.
-pub fn create_test_provider_factory_with_node_types<N: reth_node_types::NodeTypes>(
+pub fn create_test_provider_factory_with_base_chain_spec(
     chain_spec: Arc<BaseChainSpec>,
-) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {
-    create_test_provider_factory_with_node_types_and_genesis(chain_spec, 0)
+) -> ProviderFactory<NodeTypesWithDBAdapter<Arc<TempDatabase<DatabaseEnv>>>> {
+    create_test_provider_factory_with_genesis(chain_spec, 0)
 }
 
-fn create_test_provider_factory_with_node_types_and_genesis<N: reth_node_types::NodeTypes>(
+fn create_test_provider_factory_with_genesis(
     chain_spec: Arc<BaseChainSpec>,
     genesis_block_number: u64,
-) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {
+) -> ProviderFactory<NodeTypesWithDBAdapter<Arc<TempDatabase<DatabaseEnv>>>> {
     // Create a single temp directory that contains all data dirs (db, static_files, rocksdb).
     // TempDatabase will clean up the entire directory on drop.
     let datadir_path = reth_db::test_utils::tempdir_path();

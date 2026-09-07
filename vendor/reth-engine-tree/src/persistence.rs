@@ -423,7 +423,7 @@ mod tests {
         ChainSpecProvider, HeaderProvider, InMemoryBalStore, ProviderError, ProviderResult, RawBal,
         StorageSettingsCache, TryIntoHistoricalStateProvider,
         providers::{ProviderFactoryBuilder, ReadOnlyConfig},
-        test_utils::{MockNodeTypes, create_test_provider_factory},
+        test_utils::create_test_provider_factory,
     };
     use reth_prune::Pruner;
     use reth_prune_types::PruneMode;
@@ -660,7 +660,7 @@ mod tests {
         provider_factory.set_storage_settings_cache(reth_provider::StorageSettings::v2());
 
         // Open the secondary provider concurrently with the primary.
-        let secondary = ProviderFactoryBuilder::<MockNodeTypes>::default()
+        let secondary = ProviderFactoryBuilder::default()
             .open_read_only(
                 provider_factory.chain_spec(),
                 ReadOnlyConfig::from_datadir(provider_factory.db_ref().path()),

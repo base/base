@@ -17,10 +17,7 @@ use reth_provider::{DBProvider, StaticFileProviderFactory};
 use reth_static_file_types::{ChangesetOffset, StaticFileSegment};
 use tracing::{info, warn};
 
-use crate::{
-    common::CliNodeTypes,
-    db::get::{maybe_json_value_parser, table_key},
-};
+use crate::db::get::{maybe_json_value_parser, table_key};
 
 mod rocksdb;
 
@@ -86,10 +83,7 @@ enum Subcommand {
 
 impl Command {
     /// Execute `db checksum` command
-    pub fn execute<N: CliNodeTypes>(
-        self,
-        tool: &DbTool<NodeTypesWithDBAdapter<N, DatabaseEnv>>,
-    ) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool<NodeTypesWithDBAdapter<DatabaseEnv>>) -> eyre::Result<()> {
         warn!("This command should be run without the node running!");
 
         match self.subcommand {
@@ -113,8 +107,8 @@ fn checksum_hasher() -> impl Hasher {
     FixedState::with_seed(u64::from_be_bytes(*b"RETHRETH")).build_hasher()
 }
 
-fn checksum_static_file<N: CliNodeTypes>(
-    tool: &DbTool<NodeTypesWithDBAdapter<N, DatabaseEnv>>,
+fn checksum_static_file(
+    tool: &DbTool<NodeTypesWithDBAdapter<DatabaseEnv>>,
     segment: StaticFileSegment,
     start_block: Option<u64>,
     end_block: Option<u64>,

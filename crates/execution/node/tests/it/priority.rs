@@ -21,7 +21,7 @@ use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
     node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
-use reth_node_api::{FullNodeTypes, NodeTypes};
+use reth_node_api::FullNodeTypes;
 use reth_node_builder::{EngineNodeLauncher, Node, NodeBuilder, NodeConfig};
 use reth_node_core::args::DatadirArgs;
 use reth_payload_util::{
@@ -85,7 +85,7 @@ fn build_components<Node>(
     chain_id: ChainId,
 ) -> BaseNodeComponentBuilder<Node, BasePayloadBuilder<CustomTxPriority>>
 where
-    Node: FullNodeTypes<Types: NodeTypes>,
+    Node: FullNodeTypes,
 {
     let RollupArgs { discovery_v4, .. } = RollupArgs::default();
     BaseComponentsBuilder::new(
@@ -128,7 +128,7 @@ async fn test_custom_block_priority_config() {
     let runtime = Runtime::test();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
-        .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
+        .with_custom_provider::<BlockchainProvider<_>>()
         .with_components(build_components(config.chain.chain_id()))
         .with_add_ons(BaseNode::new(Default::default()).add_ons())
         .launch_with_fn(|builder| {

@@ -6,7 +6,7 @@ use eyre::WrapErr;
 use reth_db::{DatabaseEnv, transaction::DbTx};
 use reth_db_api::{RawValue, TableViewer, Tables, database::Database, table::Table};
 use reth_db_common::{DbTool, ListFilter};
-use reth_node_builder::{NodeTypes, NodeTypesWithDBAdapter};
+use reth_node_builder::NodeTypesWithDBAdapter;
 use tracing::error;
 
 use super::tui::DbListTUI;
@@ -54,10 +54,7 @@ pub struct Command {
 
 impl Command {
     /// Execute `db list` command
-    pub fn execute<N: NodeTypes>(
-        self,
-        tool: &DbTool<NodeTypesWithDBAdapter<N, DatabaseEnv>>,
-    ) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool<NodeTypesWithDBAdapter<DatabaseEnv>>) -> eyre::Result<()> {
         self.table.view(&ListTableViewer { tool, args: &self })
     }
 
@@ -89,12 +86,12 @@ impl Command {
     }
 }
 
-struct ListTableViewer<'a, N: NodeTypes> {
-    tool: &'a DbTool<NodeTypesWithDBAdapter<N, DatabaseEnv>>,
+struct ListTableViewer<'a> {
+    tool: &'a DbTool<NodeTypesWithDBAdapter<DatabaseEnv>>,
     args: &'a Command,
 }
 
-impl<N: NodeTypes> TableViewer<()> for ListTableViewer<'_, N> {
+impl TableViewer<()> for ListTableViewer<'_> {
     type Error = eyre::Report;
 
     fn view<T: Table>(&self) -> Result<(), Self::Error> {

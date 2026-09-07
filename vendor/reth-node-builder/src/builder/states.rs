@@ -14,7 +14,7 @@ use reth_provider::providers::RocksDBProvider;
 use reth_tasks::TaskExecutor;
 
 use crate::{
-    AddOns, ComponentsFor, FullNode,
+    AddOns, FullNode,
     components::{NodeComponents, NodeComponentsBuilder},
     hooks::NodeHooks,
     launch::LaunchNode,
@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// A node builder that also has the configured types.
-pub struct NodeBuilderWithTypes<T: FullNodeTypes> {
+pub struct NodeBuilderWithProvider<T: FullNodeTypes> {
     /// All settings for how the node should be configured.
     config: NodeConfig,
     /// The configured database for the node.
@@ -31,7 +31,7 @@ pub struct NodeBuilderWithTypes<T: FullNodeTypes> {
     rocksdb_provider: Option<RocksDBProvider>,
 }
 
-impl<T: FullNodeTypes> NodeBuilderWithTypes<T> {
+impl<T: FullNodeTypes> NodeBuilderWithProvider<T> {
     /// Creates a new instance of the node builder with the given configuration and types.
     pub const fn new(
         config: NodeConfig,
@@ -80,7 +80,7 @@ impl<T: FullNodeTypes> fmt::Debug for NodeTypesAdapter<T> {
 /// Container for the node's types and the components and other internals that can be used by
 /// addons of the node.
 #[derive(Debug)]
-pub struct NodeAdapter<T: FullNodeTypes, C: NodeComponents<T> = ComponentsFor<T>> {
+pub struct NodeAdapter<T: FullNodeTypes, C: NodeComponents<T>> {
     /// The components of the node.
     pub components: C,
     /// The task executor for the node.
@@ -90,7 +90,6 @@ pub struct NodeAdapter<T: FullNodeTypes, C: NodeComponents<T> = ComponentsFor<T>
 }
 
 impl<T: FullNodeTypes, C: NodeComponents<T>> FullNodeTypes for NodeAdapter<T, C> {
-    type Types = T::Types;
     type DB = T::DB;
     type Provider = T::Provider;
 }
@@ -251,7 +250,7 @@ where
     /// use tower::layer::util::Identity;
     ///
     /// let builder = NodeBuilder::new(config)
-    ///     .with_types::<BaseNode>()
+    ///     .with_provider()
     ///     .with_components(BaseNode::components())
     ///     .with_add_ons(BaseAddOns::default())
     ///     .map_add_ons(|addons| addons.with_rpc_middleware(Identity::default()));
@@ -321,7 +320,7 @@ mod test {
     use reth_db_api::mock::DatabaseMock;
     use reth_evm::{MockEvmConfig, noop::NoopEvmConfig};
     use reth_network_api::noop::NoopNetwork;
-    use reth_node_api::{AnyNodeTypes, FullNodeTypesAdapter};
+    use reth_node_api::FullNodeTypesAdapter;
     use reth_payload_builder::PayloadBuilderHandle;
     use reth_provider::noop::NoopProvider;
     use reth_tasks::Runtime;
@@ -343,7 +342,7 @@ mod test {
 
         let task_executor = Runtime::test();
 
-        let node: NodeAdapter<FullNodeTypesAdapter<AnyNodeTypes, DatabaseMock, NoopProvider>, _> =
+        let node: NodeAdapter<FullNodeTypesAdapter<DatabaseMock, NoopProvider>, _> =
             NodeAdapter { components, task_executor, provider: NoopProvider::default() };
 
         // test that node implements `FullNodeComponents``

@@ -7,7 +7,7 @@ use base_node_core::{
     args::RollupArgs,
     node::{BasePayloadBuilder, BasePoolBuilder},
 };
-use reth_node_builder::node::{FullNodeTypes, NodeTypes};
+use reth_node_builder::node::FullNodeTypes;
 use reth_provider::providers::ProviderFactoryBuilder;
 
 use crate::BaseAddOnsBuilder;
@@ -72,7 +72,7 @@ impl BaseNode {
     /// Returns the components for the given [`RollupArgs`].
     pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
     where
-        Node: FullNodeTypes<Types: NodeTypes>,
+        Node: FullNodeTypes,
     {
         let RollupArgs {
             discovery_v4,
@@ -157,9 +157,7 @@ impl BaseNode {
     ///     )
     ///     .unwrap();
     /// ```
-    pub fn provider_factory_builder() -> ProviderFactoryBuilder<Self> {
+    pub fn provider_factory_builder() -> ProviderFactoryBuilder {
         ProviderFactoryBuilder::default()
     }
 }
-
-impl NodeTypes for BaseNode {}

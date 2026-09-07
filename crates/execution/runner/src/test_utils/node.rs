@@ -104,7 +104,7 @@ impl LocalNode {
         let builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(exec.clone())
-            .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
+            .with_custom_provider::<BlockchainProvider<_>>()
             .with_components(base_node.components())
             .with_add_ons(base_node.add_ons_builder().build())
             .on_component_initialized(move |_ctx| Ok(()));

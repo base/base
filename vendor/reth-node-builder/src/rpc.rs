@@ -20,7 +20,7 @@ use reth_chain_state::CanonStateSubscriptions;
 use reth_engine_tree::tree::WaitForCaches;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_api::{
-    AddOnsContext, EngineApiValidator, FullNodeComponents, FullNodeTypes, NodeAddOns, NodeTypes,
+    AddOnsContext, EngineApiValidator, FullNodeComponents, FullNodeTypes, NodeAddOns,
     PayloadValidator, TreeConfig,
 };
 use reth_node_core::{
@@ -1277,7 +1277,7 @@ pub struct EthApiCtx<'a, N: FullNodeTypes> {
     pub engine_handle: ConsensusEngineHandle,
 }
 
-impl<'a, N: FullNodeComponents<Types: NodeTypes>> EthApiCtx<'a, N> {
+impl<'a, N: FullNodeComponents> EthApiCtx<'a, N> {
     /// Provides a [`EthApiBuilder`] with preconfigured config and components.
     pub fn eth_api_builder(self) -> reth_rpc::EthApiBuilder<N, ()> {
         reth_rpc::EthApiBuilder::new_with_components(self.components.clone())
@@ -1476,7 +1476,7 @@ pub struct BasicEngineApiBuilder<PVB> {
 
 impl<N, PVB> EngineApiBuilder<N> for BasicEngineApiBuilder<PVB>
 where
-    N: FullNodeComponents<Types: NodeTypes>,
+    N: FullNodeComponents,
     PVB: PayloadValidatorBuilder<N>,
     PVB::Validator: EngineApiValidator,
 {

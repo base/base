@@ -14,7 +14,7 @@ use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{RocksDBProviderFactory, providers::StaticFileProvider};
 use reth_static_file_types::SegmentRangeInclusive;
 
-use crate::{common::CliNodeTypes, db::checksum::ChecksumViewer};
+use crate::db::checksum::ChecksumViewer;
 
 #[derive(Parser, Debug)]
 /// The arguments for the `reth db stats` command
@@ -43,10 +43,10 @@ pub struct Command {
 
 impl Command {
     /// Execute `db stats` command
-    pub fn execute<N: CliNodeTypes>(
+    pub fn execute(
         self,
         data_dir: ChainPath<DataDirPath>,
-        tool: &DbTool<NodeTypesWithDBAdapter<N, DatabaseEnv>>,
+        tool: &DbTool<NodeTypesWithDBAdapter<DatabaseEnv>>,
     ) -> eyre::Result<()> {
         if self.checksum {
             let checksum_report = self.checksum_report(tool)?;

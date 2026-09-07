@@ -62,18 +62,13 @@ impl EngineNodeLauncher {
         Self { ctx: LaunchContext::new(task_executor, data_dir), engine_tree_config }
     }
 
-    async fn launch_node<N, DB, T, CB, AO>(
+    async fn launch_node<DB, T, CB, AO>(
         self,
         target: NodeBuilderWithComponents<T, CB, AO>,
     ) -> eyre::Result<NodeHandle<NodeAdapter<T, CB::Components>, AO>>
     where
-        N: reth_node_api::NodeTypes,
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-        T: FullNodeTypes<
-                Types = N,
-                Provider = BlockchainProvider<NodeTypesWithDBAdapter<N, DB>>,
-                DB = DB,
-            >,
+        T: FullNodeTypes<Provider = BlockchainProvider<NodeTypesWithDBAdapter<DB>>, DB = DB>,
         CB: NodeComponentsBuilder<T>,
         AO: RethRpcAddOns<NodeAdapter<T, CB::Components>>
             + EngineValidatorAddOn<NodeAdapter<T, CB::Components>>,
@@ -434,14 +429,9 @@ impl EngineNodeLauncher {
     }
 }
 
-impl<N, DB, T, CB, AO> LaunchNode<NodeBuilderWithComponents<T, CB, AO>> for EngineNodeLauncher
+impl<DB, T, CB, AO> LaunchNode<NodeBuilderWithComponents<T, CB, AO>> for EngineNodeLauncher
 where
-    T: FullNodeTypes<
-            Types = N,
-            DB = DB,
-            Provider = BlockchainProvider<NodeTypesWithDBAdapter<N, DB>>,
-        >,
-    N: reth_node_api::NodeTypes,
+    T: FullNodeTypes<DB = DB, Provider = BlockchainProvider<NodeTypesWithDBAdapter<DB>>>,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     CB: NodeComponentsBuilder<T> + 'static,
     AO: RethRpcAddOns<NodeAdapter<T, CB::Components>>

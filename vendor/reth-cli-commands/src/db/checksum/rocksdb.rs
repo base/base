@@ -12,7 +12,6 @@ use reth_provider::RocksDBProviderFactory;
 use tracing::info;
 
 use super::{PROGRESS_LOG_INTERVAL, checksum_hasher};
-use crate::common::CliNodeTypes;
 
 /// RocksDB tables that can be checksummed.
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -37,8 +36,8 @@ impl RocksDbTable {
 }
 
 /// Computes a checksum for a RocksDB table.
-pub fn checksum_rocksdb<N: CliNodeTypes>(
-    tool: &DbTool<NodeTypesWithDBAdapter<N, DatabaseEnv>>,
+pub fn checksum_rocksdb(
+    tool: &DbTool<NodeTypesWithDBAdapter<DatabaseEnv>>,
     table: RocksDbTable,
     limit: Option<usize>,
 ) -> eyre::Result<()> {

@@ -151,7 +151,7 @@ impl BaseNodeRunner {
         };
 
         let builder = builder
-            .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
+            .with_custom_provider::<BlockchainProvider<_>>()
             .with_components(components)
             .with_add_ons(base_node.add_ons_builder().build())
             .on_component_initialized(move |_ctx| Ok(()));

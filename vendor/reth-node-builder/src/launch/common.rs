@@ -52,7 +52,7 @@ use reth_evm::{ConfigureEvm, noop::NoopEvmConfig};
 use reth_exex::ExExManagerHandle;
 use reth_fs_util as fs;
 use reth_network_p2p::headers::client::HeadersClient;
-use reth_node_api::{FullNodeTypes, NodeTypes, NodeTypesWithDB, NodeTypesWithDBAdapter};
+use reth_node_api::{FullNodeTypes, NodeTypesWithDB, NodeTypesWithDBAdapter};
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
@@ -788,14 +788,12 @@ where
     }
 }
 
-impl<N, DB>
-    LaunchContextWith<Attached<WithConfigs, WithMeteredProvider<NodeTypesWithDBAdapter<N, DB>>>>
+impl<DB> LaunchContextWith<Attached<WithConfigs, WithMeteredProvider<NodeTypesWithDBAdapter<DB>>>>
 where
-    N: NodeTypes,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     /// Returns the configured `ProviderFactory`.
-    const fn provider_factory(&self) -> &ProviderFactory<NodeTypesWithDBAdapter<N, DB>> {
+    const fn provider_factory(&self) -> &ProviderFactory<NodeTypesWithDBAdapter<DB>> {
         &self.right().provider_factory
     }
 
@@ -811,8 +809,8 @@ where
         create_blockchain_provider: F,
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<T>>>>
     where
-        T: FullNodeTypes<Types = N, DB = DB>,
-        F: FnOnce(ProviderFactory<NodeTypesWithDBAdapter<N, DB>>) -> eyre::Result<T::Provider>,
+        T: FullNodeTypes<DB = DB>,
+        F: FnOnce(ProviderFactory<NodeTypesWithDBAdapter<DB>>) -> eyre::Result<T::Provider>,
     {
         let blockchain_db = create_blockchain_provider(self.provider_factory().clone())?;
 
@@ -835,7 +833,7 @@ where
 
 impl<T> LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<T>>>
 where
-    T: FullNodeTypes<Types: reth_node_api::NodeTypes>,
+    T: FullNodeTypes,
 {
     /// Returns access to the underlying database.
     pub const fn database(&self) -> &T::DB {
@@ -843,9 +841,7 @@ where
     }
 
     /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(
-        &self,
-    ) -> &ProviderFactory<NodeTypesWithDBAdapter<T::Types, T::DB>> {
+    pub const fn provider_factory(&self) -> &ProviderFactory<NodeTypesWithDBAdapter<T::DB>> {
         &self.right().db_provider_container.provider_factory
     }
 
@@ -923,13 +919,11 @@ where
 
 impl<T, CB> LaunchContextWith<Attached<WithConfigs, WithComponents<T, CB>>>
 where
-    T: FullNodeTypes<Types: reth_node_api::NodeTypes>,
+    T: FullNodeTypes,
     CB: NodeComponentsBuilder<T>,
 {
     /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(
-        &self,
-    ) -> &ProviderFactory<NodeTypesWithDBAdapter<T::Types, T::DB>> {
+    pub const fn provider_factory(&self) -> &ProviderFactory<NodeTypesWithDBAdapter<T::DB>> {
         &self.right().db_provider_container.provider_factory
     }
 
@@ -950,7 +944,7 @@ where
     /// Creates a new [`StaticFileProducer`] with the attached database.
     pub fn static_file_producer(
         &self,
-    ) -> StaticFileProducer<ProviderFactory<NodeTypesWithDBAdapter<T::Types, T::DB>>> {
+    ) -> StaticFileProducer<ProviderFactory<NodeTypesWithDBAdapter<T::DB>>> {
         StaticFileProducer::new(self.provider_factory().clone(), self.prune_modes())
     }
 
@@ -1292,7 +1286,7 @@ pub struct WithMeteredProviders<T>
 where
     T: FullNodeTypes,
 {
-    db_provider_container: WithMeteredProvider<NodeTypesWithDBAdapter<T::Types, T::DB>>,
+    db_provider_container: WithMeteredProvider<NodeTypesWithDBAdapter<T::DB>>,
     blockchain_db: T::Provider,
 }
 
@@ -1303,7 +1297,7 @@ where
     T: FullNodeTypes,
     CB: NodeComponentsBuilder<T>,
 {
-    db_provider_container: WithMeteredProvider<NodeTypesWithDBAdapter<T::Types, T::DB>>,
+    db_provider_container: WithMeteredProvider<NodeTypesWithDBAdapter<T::DB>>,
     node_adapter: NodeAdapter<T, CB::Components>,
     head: Head,
 }

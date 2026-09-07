@@ -7,7 +7,6 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::builder::BasePayloadTransactions;
 use base_execution_txpool::BaseTransactionPool;
 use reth_network::NetworkHandle;
-use reth_node_api::NodeTypes;
 use reth_node_builder::{
     BuilderContext, FullNodeTypes, NodeComponentsBuilder, components::Components,
 };
@@ -62,7 +61,7 @@ impl<Node, Payload> BaseComponentsBuilder<Node, Payload> {
 
 impl<Node, Txs> NodeComponentsBuilder<Node> for BaseComponentsBuilder<Node, BasePayloadBuilder<Txs>>
 where
-    Node: FullNodeTypes<Types: NodeTypes>,
+    Node: FullNodeTypes,
     Txs: BasePayloadTransactions<BaseNodePool<Node>>,
 {
     type Components = BaseNodeComponents<Node>;

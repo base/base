@@ -10,37 +10,32 @@ use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
 use reth_evm::ConfigureEvm;
 use reth_network_api::FullNetwork;
 use reth_node_core::node_config::NodeConfig;
-use reth_node_types::{NodeTypes, NodeTypesWithDBAdapter};
+use reth_node_types::NodeTypesWithDBAdapter;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_provider::FullProvider;
 use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
 use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
-/// A helper trait that is downstream of the [`NodeTypes`] trait and adds stateful
-/// components to the node.
+/// Database and state provider backends used by the node.
 ///
 /// Its types are configured by node internally and are not intended to be user configurable.
 pub trait FullNodeTypes: Clone + Debug + Send + Sync + Unpin + 'static {
-    /// Node's types with the database.
-    type Types: NodeTypes;
     /// Underlying database type used by the node to store and retrieve data.
     type DB: Database + DatabaseMetrics + Clone + Unpin + 'static;
     /// The provider type used to interact with the node.
-    type Provider: FullProvider<NodeTypesWithDBAdapter<Self::Types, Self::DB>>;
+    type Provider: FullProvider<NodeTypesWithDBAdapter<Self::DB>>;
 }
 
 /// An adapter type that adds the builtin provider type to the user configured node types.
 #[derive(Clone, Debug)]
-pub struct FullNodeTypesAdapter<Types, DB, Provider>(PhantomData<(Types, DB, Provider)>);
+pub struct FullNodeTypesAdapter<DB, Provider>(PhantomData<(DB, Provider)>);
 
-impl<Types, DB, Provider> FullNodeTypes for FullNodeTypesAdapter<Types, DB, Provider>
+impl<DB, Provider> FullNodeTypes for FullNodeTypesAdapter<DB, Provider>
 where
-    Types: NodeTypes,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    Provider: FullProvider<NodeTypesWithDBAdapter<Types, DB>>,
+    Provider: FullProvider<NodeTypesWithDBAdapter<DB>>,
 {
-    type Types = Types;
     type DB = DB;
     type Provider = Provider;
 }
@@ -120,7 +115,7 @@ pub struct AddOnsContext<'a, N: FullNodeComponents> {
 /// In the node builder pattern, add-ons are the final layer that gets applied after all core
 /// components are configured and started. The builder flow typically follows:
 ///
-/// 1. Configure [`NodeTypes`] (chain spec, database types, etc.)
+/// 1. Configure the database and state provider
 /// 2. Build [`FullNodeComponents`] (consensus, networking, transaction pool, etc.)
 /// 3. Launch [`NodeAddOns`] with access to all components via [`AddOnsContext`]
 ///

@@ -93,7 +93,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::ClientVersionV1;
 use base_execution_rpc::{BaseEngineApi, engine::ENGINE_CAPABILITIES};
-use reth_node_api::{AddOnsContext, EngineApiValidator, FullNodeComponents, NodeTypes};
+use reth_node_api::{AddOnsContext, EngineApiValidator, FullNodeComponents};
 use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
 use reth_node_core::version::{CLIENT_CODE, version_metadata};
 use reth_payload_builder::PayloadStore;
@@ -109,7 +109,7 @@ pub struct BaseEngineApiBuilder<EV> {
 
 impl<N, EV> EngineApiBuilder<N> for BaseEngineApiBuilder<EV>
 where
-    N: FullNodeComponents<Types: NodeTypes>,
+    N: FullNodeComponents,
     EV: PayloadValidatorBuilder<N>,
     EV::Validator: EngineApiValidator,
 {

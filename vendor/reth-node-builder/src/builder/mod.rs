@@ -18,9 +18,7 @@ use reth_network::{
         config::{AnnouncementFilteringPolicy, StrictEthAnnouncementFilter},
     },
 };
-use reth_node_api::{
-    FullNodeTypes, FullNodeTypesAdapter, NodeAddOns, NodeTypes, NodeTypesWithDBAdapter,
-};
+use reth_node_api::{FullNodeTypes, FullNodeTypesAdapter, NodeAddOns, NodeTypesWithDBAdapter};
 use reth_node_core::{
     cli::config::{PayloadBuilderConfig, RethTransactionPoolConfig},
     dirs::{ChainPath, DataDirPath},
@@ -51,8 +49,8 @@ pub use states::*;
 
 /// The adapter type for a reth node with the builtin provider type
 // Note: we need to hardcode this because custom components might depend on it in associated types.
-pub type RethFullAdapter<DB, Types> =
-    FullNodeTypesAdapter<Types, DB, BlockchainProvider<NodeTypesWithDBAdapter<Types, DB>>>;
+pub type RethFullAdapter<DB> =
+    FullNodeTypesAdapter<DB, BlockchainProvider<NodeTypesWithDBAdapter<DB>>>;
 
 #[expect(clippy::doc_markdown)]
 #[cfg_attr(doc, aquamarine::aquamarine)]
@@ -63,13 +61,8 @@ pub type RethFullAdapter<DB, Types> =
 ///
 /// ## Order
 ///
-/// Configuring a node starts out with a [`NodeConfig`] (this can be obtained from cli arguments for
-/// example) and then proceeds to configure the core static types of the node:
-/// [`NodeTypes`], these include the node's primitive types and the node's engine
-/// types.
-///
-/// Next all stateful components of the node are configured, these include all the
-/// components of the node that are downstream of those types, these include:
+/// Configuring a node starts with a [`NodeConfig`], a database, and a state provider.
+/// Next the runtime components are configured:
 ///
 ///  - The EVM and Executor configuration: [`ExecutorBuilder`](crate::components::ExecutorBuilder)
 ///  - The transaction pool: [`PoolBuilder`](crate::components::PoolBuilder)
@@ -132,18 +125,9 @@ pub type RethFullAdapter<DB, Types> =
 ///
 /// ## Internals
 ///
-/// The node builder is fully type safe, it uses the [`NodeTypes`] trait to enforce that
-/// all components are configured with the correct types. However the database types and with that
-/// the provider trait implementations are currently created by the builder itself during the launch
-/// process, hence the database type is not part of the [`NodeTypes`] trait and the node's
-/// components, that depend on the database, are configured separately. In order to have a nice
-/// trait that encapsulates the entire node the
-/// [`FullNodeComponents`](reth_node_api::FullNodeComponents) trait was introduced. This
-/// trait has convenient associated types for all the components of the node. After
-/// [`WithLaunchContext::launch`] the [`NodeHandle`] contains an instance of [`FullNode`] that
-/// implements the [`FullNodeComponents`](reth_node_api::FullNodeComponents) trait and has access to
-/// all the components of the node. Internally the node builder uses several generic adapter types
-/// that are then map to traits with associated types for ease of use.
+/// The builder carries the database and provider backends through its construction phases.
+/// [`FullNodeComponents`](reth_node_api::FullNodeComponents) exposes the initialized services.
+/// After [`WithLaunchContext::launch`], the [`NodeHandle`] contains the running [`FullNode`].
 ///
 /// ### Limitations
 ///
@@ -281,23 +265,17 @@ impl<DB> NodeBuilder<DB>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
-    /// Configures the types of the node.
-    pub fn with_types<T>(self) -> NodeBuilderWithTypes<RethFullAdapter<DB, T>>
-    where
-        T: reth_node_api::NodeTypes,
-    {
-        self.with_types_and_provider()
+    /// Configures the built-in state provider.
+    pub fn with_provider(self) -> NodeBuilderWithProvider<RethFullAdapter<DB>> {
+        self.with_custom_provider()
     }
 
-    /// Configures the types of the node and the provider type that will be used by the node.
-    pub fn with_types_and_provider<T, P>(
-        self,
-    ) -> NodeBuilderWithTypes<FullNodeTypesAdapter<T, DB, P>>
+    /// Configures a custom state provider.
+    pub fn with_custom_provider<P>(self) -> NodeBuilderWithProvider<FullNodeTypesAdapter<DB, P>>
     where
-        T: reth_node_api::NodeTypes,
-        P: FullProvider<NodeTypesWithDBAdapter<T, DB>>,
+        P: FullProvider<NodeTypesWithDBAdapter<DB>>,
     {
-        NodeBuilderWithTypes::new(self.config, self.database, self.rocksdb_provider)
+        NodeBuilderWithProvider::new(self.config, self.database, self.rocksdb_provider)
     }
 
     /// Preconfigures the node with a specific node implementation.
@@ -306,11 +284,11 @@ where
     pub fn node<N>(
         self,
         node: N,
-    ) -> NodeBuilderWithComponents<RethFullAdapter<DB, N>, N::ComponentsBuilder, N::AddOns>
+    ) -> NodeBuilderWithComponents<RethFullAdapter<DB>, N::ComponentsBuilder, N::AddOns>
     where
-        N: Node<RethFullAdapter<DB, N>> + reth_node_api::NodeTypes,
+        N: Node<RethFullAdapter<DB>>,
     {
-        self.with_types().with_components(node.components_builder()).with_add_ons(node.add_ons())
+        self.with_provider().with_components(node.components_builder()).with_add_ons(node.add_ons())
     }
 }
 
@@ -352,24 +330,23 @@ where
         self
     }
 
-    /// Configures the types of the node.
-    pub fn with_types<T>(self) -> WithLaunchContext<NodeBuilderWithTypes<RethFullAdapter<DB, T>>>
-    where
-        T: reth_node_api::NodeTypes,
-    {
-        WithLaunchContext { builder: self.builder.with_types(), task_executor: self.task_executor }
+    /// Configures the built-in state provider.
+    pub fn with_provider(self) -> WithLaunchContext<NodeBuilderWithProvider<RethFullAdapter<DB>>> {
+        WithLaunchContext {
+            builder: self.builder.with_provider(),
+            task_executor: self.task_executor,
+        }
     }
 
-    /// Configures the types of the node and the provider type that will be used by the node.
-    pub fn with_types_and_provider<T, P>(
+    /// Configures a custom state provider.
+    pub fn with_custom_provider<P>(
         self,
-    ) -> WithLaunchContext<NodeBuilderWithTypes<FullNodeTypesAdapter<T, DB, P>>>
+    ) -> WithLaunchContext<NodeBuilderWithProvider<FullNodeTypesAdapter<DB, P>>>
     where
-        T: reth_node_api::NodeTypes,
-        P: FullProvider<NodeTypesWithDBAdapter<T, DB>>,
+        P: FullProvider<NodeTypesWithDBAdapter<DB>>,
     {
         WithLaunchContext {
-            builder: self.builder.with_types_and_provider(),
+            builder: self.builder.with_custom_provider(),
             task_executor: self.task_executor,
         }
     }
@@ -381,12 +358,12 @@ where
         self,
         node: N,
     ) -> WithLaunchContext<
-        NodeBuilderWithComponents<RethFullAdapter<DB, N>, N::ComponentsBuilder, N::AddOns>,
+        NodeBuilderWithComponents<RethFullAdapter<DB>, N::ComponentsBuilder, N::AddOns>,
     >
     where
-        N: Node<RethFullAdapter<DB, N>> + reth_node_api::NodeTypes,
+        N: Node<RethFullAdapter<DB>>,
     {
-        self.with_types().with_components(node.components_builder()).with_add_ons(node.add_ons())
+        self.with_provider().with_components(node.components_builder()).with_add_ons(node.add_ons())
     }
 
     /// Launches a preconfigured [Node]
@@ -399,26 +376,26 @@ where
         node: N,
     ) -> eyre::Result<
         <EngineNodeLauncher as LaunchNode<
-            NodeBuilderWithComponents<RethFullAdapter<DB, N>, N::ComponentsBuilder, N::AddOns>,
+            NodeBuilderWithComponents<RethFullAdapter<DB>, N::ComponentsBuilder, N::AddOns>,
         >>::Node,
     >
     where
-        N: Node<RethFullAdapter<DB, N>> + reth_node_api::NodeTypes,
+        N: Node<RethFullAdapter<DB>>,
         N::AddOns: RethRpcAddOns<
             NodeAdapter<
-                RethFullAdapter<DB, N>,
-                <N::ComponentsBuilder as NodeComponentsBuilder<RethFullAdapter<DB, N>>>::Components,
+                RethFullAdapter<DB>,
+                <N::ComponentsBuilder as NodeComponentsBuilder<RethFullAdapter<DB>>>::Components,
             >,
         >,
         EngineNodeLauncher: LaunchNode<
-            NodeBuilderWithComponents<RethFullAdapter<DB, N>, N::ComponentsBuilder, N::AddOns>,
+            NodeBuilderWithComponents<RethFullAdapter<DB>, N::ComponentsBuilder, N::AddOns>,
         >,
     {
         self.node(node).launch().await
     }
 }
 
-impl<T: FullNodeTypes> WithLaunchContext<NodeBuilderWithTypes<T>> {
+impl<T: FullNodeTypes> WithLaunchContext<NodeBuilderWithProvider<T>> {
     /// Advances the state of the node builder to the next state where all components are configured
     pub fn with_components<CB>(
         self,
@@ -546,7 +523,7 @@ where
     /// use tower::layer::util::Identity;
     ///
     /// let builder = NodeBuilder::new(config)
-    ///     .with_types::<BaseNode>()
+    ///     .with_provider()
     ///     .with_components(BaseNode::components())
     ///     .with_add_ons(BaseAddOns::default())
     ///     .map_add_ons(|addons| addons.with_rpc_middleware(Identity::default()));
@@ -952,15 +929,12 @@ impl<Node: FullNodeTypes> BuilderContext<Node> {
     pub fn build_network_config(
         &self,
         network_builder: NetworkConfigBuilder,
-    ) -> NetworkConfig<Node::Provider>
-    where
-        Node::Types: NodeTypes,
-    {
+    ) -> NetworkConfig<Node::Provider> {
         network_builder.build(self.provider.clone())
     }
 }
 
-impl<Node: FullNodeTypes<Types: NodeTypes>> BuilderContext<Node> {
+impl<Node: FullNodeTypes> BuilderContext<Node> {
     /// Creates the [`NetworkBuilder`] for the node.
     pub async fn network_builder(&self) -> eyre::Result<NetworkBuilder<(), ()>> {
         let network_config = self.network_config()?;

@@ -39,7 +39,6 @@ use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, NoopPayloadTransactions,
 };
 use base_execution_txpool::BasePooledTransaction;
-use base_node_core::BaseNode;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use base_test_utils::build_test_genesis;
 use reth_basic_payload_builder::{
@@ -54,7 +53,7 @@ use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory, StateProvider,
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
-    test_utils::create_test_provider_factory_with_node_types,
+    test_utils::create_test_provider_factory_with_base_chain_spec,
 };
 use reth_revm::{cached::CachedReads, cancelled::CancelOnDrop};
 use reth_transaction_pool::noop::NoopTransactionPool;
@@ -63,7 +62,7 @@ use reth_trie_common::HashedStorage;
 use crate::{SharedBlockHashRegistry, SharedL1Chain};
 
 /// Type alias for the node type adapter used in tests.
-pub type TestNodeTypes = NodeTypesWithDBAdapter<BaseNode, Arc<TempDatabase<DatabaseEnv>>>;
+pub type TestNodeTypes = NodeTypesWithDBAdapter<Arc<TempDatabase<DatabaseEnv>>>;
 
 /// Type alias for the test provider factory used by the engine client.
 pub type TestProviderFactory = ProviderFactory<TestNodeTypes>;
@@ -273,7 +272,7 @@ impl ActionEngineClient {
         let chain_spec =
             Arc::new(BaseChainSpec::from_genesis(Self::build_genesis_for_rollup(&rollup_config)));
         let provider_factory =
-            create_test_provider_factory_with_node_types::<BaseNode>(Arc::clone(&chain_spec));
+            create_test_provider_factory_with_base_chain_spec(Arc::clone(&chain_spec));
         init_genesis(&provider_factory).expect("failed to initialize genesis in action engine");
         let blockchain_provider = BlockchainProvider::new(provider_factory.clone())
             .expect("failed to create blockchain provider");

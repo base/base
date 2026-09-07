@@ -23,10 +23,11 @@ base-node-core = { workspace = true }
 ```
 
 ```rust,ignore
-use base_node_core::{BaseEngineApiBuilder, BaseEngineTypes};
+use reth_node_builder::NodeBuilder;
 
 let node = NodeBuilder::new(config)
-    .with_types::<BaseEngineTypes>()
+    .with_database(database)
+    .with_provider()
     .with_components(components)
     .launch()
     .await?;

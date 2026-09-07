@@ -14,53 +14,30 @@ use core::{fmt::Debug, marker::PhantomData};
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 pub use reth_primitives_traits::{Block, BlockBody, FullBlock, FullReceipt, FullSignedTx};
 
-/// The type that configures the essential types of an Ethereum-like node.
-///
-/// This includes the primitive types of a node and chain specification.
-///
-/// This trait is intended to be stateless and only define the types of the node.
-pub trait NodeTypes: Clone + Debug + Send + Sync + Unpin + 'static {}
-
-/// A helper trait that is downstream of the [`NodeTypes`] trait and adds database to the
-/// node.
+/// Database backend used by node providers.
 ///
 /// Its types are configured by node internally and are not intended to be user configurable.
-pub trait NodeTypesWithDB: NodeTypes {
+pub trait NodeTypesWithDB: Clone + Debug + Send + Sync + Unpin + 'static {
     /// Underlying database type used by the node to store and retrieve data.
     type DB: Database + DatabaseMetrics + Clone + Unpin + 'static;
 }
 
-/// An adapter type combining [`NodeTypes`] and db into [`NodeTypesWithDB`].
+/// Selects the database backend used by node providers.
 #[derive(Clone, Debug, Default)]
-pub struct NodeTypesWithDBAdapter<Types, DB> {
-    types: PhantomData<Types>,
+pub struct NodeTypesWithDBAdapter<DB> {
     db: PhantomData<DB>,
 }
 
-impl<Types, DB> NodeTypesWithDBAdapter<Types, DB> {
+impl<DB> NodeTypesWithDBAdapter<DB> {
     /// Create a new adapter with the configured types.
     pub fn new() -> Self {
-        Self { types: Default::default(), db: Default::default() }
+        Self { db: Default::default() }
     }
 }
 
-impl<Types, DB> NodeTypes for NodeTypesWithDBAdapter<Types, DB>
+impl<DB> NodeTypesWithDB for NodeTypesWithDBAdapter<DB>
 where
-    Types: NodeTypes,
-    DB: Clone + Debug + Send + Sync + Unpin + 'static,
-{
-}
-
-impl<Types, DB> NodeTypesWithDB for NodeTypesWithDBAdapter<Types, DB>
-where
-    Types: NodeTypes,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     type DB = DB;
 }
-
-/// A [`NodeTypes`] type builder.
-#[derive(Clone, Debug, Default)]
-pub struct AnyNodeTypes;
-
-impl NodeTypes for AnyNodeTypes {}

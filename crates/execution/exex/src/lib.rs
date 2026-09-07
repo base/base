@@ -22,7 +22,7 @@ use base_execution_trie::{
 use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
-use reth_node_api::{FullNodeComponents, NodeTypes};
+use reth_node_api::FullNodeComponents;
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
@@ -167,7 +167,7 @@ where
 /// // Set this based on your configuration or CLI args
 /// let _builder = NodeBuilder::new(config)
 ///     .with_database(db)
-///     .with_types_and_provider::<BaseNode, BlockchainProvider<NodeTypesWithDBAdapter<BaseNode, _>>>()
+///     .with_custom_provider::<BlockchainProvider<NodeTypesWithDBAdapter<_>>>()
 ///     .with_components(base_node.components())
 ///     .install_exex("proofs-history", move |exex_context| async move {
 ///         Ok(BaseProofsExEx::builder(exex_context, storage_exec)
@@ -225,7 +225,7 @@ where
 
 impl<Node, Storage> BaseProofsExEx<Node, Storage>
 where
-    Node: FullNodeComponents<Types: NodeTypes>,
+    Node: FullNodeComponents,
     Storage: BaseProofsBatchStore + Clone + 'static,
 {
     /// Main execution loop for the `ExEx`

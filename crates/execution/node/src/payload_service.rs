@@ -6,7 +6,6 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{builder::BasePayloadTransactions, config::BaseBuilderConfig};
 use reth_basic_payload_builder::{BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig};
 use reth_chain_state::CanonStateSubscriptions;
-use reth_node_api::NodeTypes;
 use reth_node_builder::{BuilderContext, FullNodeTypes};
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 
@@ -82,7 +81,7 @@ impl<Txs> BasePayloadServiceBuilder<BasePayloadBuilder<Txs>> {
         evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle>
     where
-        Node: FullNodeTypes<Types: NodeTypes>,
+        Node: FullNodeTypes,
         Txs: BasePayloadTransactions<BaseNodePool<Node>>,
     {
         let payload_builder =

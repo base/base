@@ -4,7 +4,7 @@ use alloy_network::eip2718::Decodable2718;
 use alloy_primitives::{B256, Bytes};
 use base_common_consensus::BaseBlock;
 use reth_node_api::FullNodeComponents;
-use reth_node_builder::{NodeTypes, rpc::RpcRegistry};
+use reth_node_builder::rpc::RpcRegistry;
 use reth_provider::BlockReader;
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_eth_api::{
@@ -19,7 +19,7 @@ pub struct RpcTestContext<Node: FullNodeComponents, EthApi: EthApiTypes> {
 
 impl<Node, EthApi> RpcTestContext<Node, EthApi>
 where
-    Node: FullNodeComponents<Types: NodeTypes>,
+    Node: FullNodeComponents,
     EthApi: EthApiSpec<Provider: BlockReader<Block = BaseBlock>> + EthTransactions + TraceExt,
 {
     /// Injects a raw transaction into the node tx pool via RPC server

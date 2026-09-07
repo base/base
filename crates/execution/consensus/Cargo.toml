@@ -37,7 +37,6 @@ reth-db-common = { workspace = true }
 base-common-genesis = { workspace = true }
 reth-revm = { workspace = true, features = ["default"] }
 reth-chainspec = { workspace = true, features = ["default"] }
-base-node-core = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 [features]
 default = [ "std" ]

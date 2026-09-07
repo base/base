@@ -53,7 +53,7 @@ async fn test_base_node_custom_genesis_number() {
     let runtime = reth_tasks::Runtime::test();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
-        .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
+        .with_custom_provider::<BlockchainProvider<_>>()
         .with_components(BaseNode::default().components())
         .with_add_ons(BaseNode::new(Default::default()).add_ons())
         .launch_with_fn(|builder| {

@@ -7,7 +7,7 @@ use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_network_api::NetworkInfo;
-use reth_node_api::{FullNodeComponents, NodeTypes};
+use reth_node_api::FullNodeComponents;
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -30,7 +30,6 @@ impl ShadowIndexerExEx {
     pub async fn run<Node>(self, mut ctx: ExExContext<Node>) -> Result<()>
     where
         Node: FullNodeComponents,
-        Node::Types: NodeTypes,
     {
         let mut last_finished_height = None;
 

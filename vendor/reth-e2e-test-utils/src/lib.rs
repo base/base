@@ -75,10 +75,7 @@ pub async fn setup_engine<N>(
     + Sync
     + Copy
     + 'static,
-) -> eyre::Result<(
-    Vec<NodeHelperType<N, BlockchainProvider<NodeTypesWithDBAdapter<N, TmpDB>>>>,
-    Wallet,
-)>
+) -> eyre::Result<(Vec<NodeHelperType<N, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>>, Wallet)>
 where
     N: NodeBuilderHelper,
 {
@@ -105,10 +102,7 @@ pub async fn setup_engine_with_connection<N>(
     + Copy
     + 'static,
     connect_nodes: bool,
-) -> eyre::Result<(
-    Vec<NodeHelperType<N, BlockchainProvider<NodeTypesWithDBAdapter<N, TmpDB>>>>,
-    Wallet,
-)>
+) -> eyre::Result<(Vec<NodeHelperType<N, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>>, Wallet)>
 where
     N: NodeBuilderHelper,
 {
@@ -127,39 +121,38 @@ where
 
 /// Testing database
 pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
-type TmpNodeAdapter<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<N, TmpDB>>> =
-    FullNodeTypesAdapter<N, TmpDB, Provider>;
+type TmpNodeAdapter<Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>> =
+    FullNodeTypesAdapter<TmpDB, Provider>;
 
 /// Type alias for a `NodeAdapter`
-pub type Adapter<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<N, TmpDB>>> = NodeAdapter<
-    TmpNodeAdapter<N, Provider>,
-    <<N as Node<TmpNodeAdapter<N, Provider>>>::ComponentsBuilder as NodeComponentsBuilder<
-        TmpNodeAdapter<N, Provider>,
+pub type Adapter<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>> = NodeAdapter<
+    TmpNodeAdapter<Provider>,
+    <<N as Node<TmpNodeAdapter<Provider>>>::ComponentsBuilder as NodeComponentsBuilder<
+        TmpNodeAdapter<Provider>,
     >>::Components,
 >;
 
 /// Type alias for a type of `NodeHelper`
-pub type NodeHelperType<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<N, TmpDB>>> =
-    NodeTestContext<Adapter<N, Provider>, <N as Node<TmpNodeAdapter<N, Provider>>>::AddOns>;
+pub type NodeHelperType<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>> =
+    NodeTestContext<Adapter<N, Provider>, <N as Node<TmpNodeAdapter<Provider>>>::AddOns>;
 
 /// Helper trait to simplify bounds when calling setup functions.
 pub trait NodeBuilderHelper
 where
     Self: Default
-        + reth_node_builder::NodeTypes
         + Node<
-            TmpNodeAdapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
+            TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
             ComponentsBuilder: NodeComponentsBuilder<
-                TmpNodeAdapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
+                TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
                 Components: NodeComponents<
-                    TmpNodeAdapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
+                    TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
                     Network: PeersHandleProvider,
                 >,
             >,
             AddOns: RethRpcAddOns<
-                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
+                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
             > + EngineValidatorAddOn<
-                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
+                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
             >,
         >,
 {
@@ -167,20 +160,19 @@ where
 
 impl<T> NodeBuilderHelper for T where
     Self: Default
-        + reth_node_builder::NodeTypes
         + Node<
-            TmpNodeAdapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
+            TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
             ComponentsBuilder: NodeComponentsBuilder<
-                TmpNodeAdapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
+                TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
                 Components: NodeComponents<
-                    TmpNodeAdapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
+                    TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
                     Network: PeersHandleProvider,
                 >,
             >,
             AddOns: RethRpcAddOns<
-                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
+                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
             > + EngineValidatorAddOn<
-                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<Self, TmpDB>>>,
+                Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
             >,
         >
 {

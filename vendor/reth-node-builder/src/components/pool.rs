@@ -5,7 +5,6 @@ use std::future::Future;
 use alloy_primitives::map::AddressSet;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use reth_chain_state::CanonStateSubscriptions;
-use reth_node_api::NodeTypes;
 use reth_transaction_pool::{
     BlobStore, CoinbaseTipOrdering, PoolConfig, PoolTransaction, SubPoolLimit, TransactionOrdering,
     TransactionPool, TransactionValidationTaskExecutor, TransactionValidator,
@@ -132,7 +131,7 @@ impl<'a, Node: FullNodeTypes, V> TxPoolBuilder<'a, Node, V> {
 
 impl<'a, Node, V> TxPoolBuilder<'a, Node, TransactionValidationTaskExecutor<V>>
 where
-    Node: FullNodeTypes<Types: NodeTypes>,
+    Node: FullNodeTypes,
     V: TransactionValidator<Block = BaseBlock> + 'static,
     V::Transaction:
         PoolTransaction<Consensus = BaseTxEnvelope> + reth_transaction_pool::EthPoolTransaction,
@@ -272,7 +271,7 @@ fn spawn_pool_maintenance_task<Node, Pool>(
     pool_config: &PoolConfig,
 ) -> eyre::Result<()>
 where
-    Node: FullNodeTypes<Types: NodeTypes>,
+    Node: FullNodeTypes,
     Pool: reth_transaction_pool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
     Pool::Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
 {
@@ -304,7 +303,7 @@ pub fn spawn_maintenance_tasks<Node, Pool>(
     pool_config: &PoolConfig,
 ) -> eyre::Result<()>
 where
-    Node: FullNodeTypes<Types: NodeTypes>,
+    Node: FullNodeTypes,
     Pool: reth_transaction_pool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
     Pool::Transaction: PoolTransaction<Consensus = BaseTxEnvelope>,
 {

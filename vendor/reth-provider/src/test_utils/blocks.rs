@@ -11,7 +11,6 @@ use base_common_consensus::{
     BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction,
 };
 use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables};
-use reth_node_types::NodeTypes;
 use reth_primitives_traits::{Account, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_trie::root::{state_root_unhashed, storage_root_unhashed};
 use revm::{database::BundleState, state::AccountInfo};
@@ -19,7 +18,7 @@ use revm::{database::BundleState, state::AccountInfo};
 use crate::{DBProvider, DatabaseProviderRW, ExecutionOutcome};
 
 /// Assert genesis block
-pub fn assert_genesis_block<DB: Database, N: NodeTypes>(
+pub fn assert_genesis_block<DB: Database>(
     provider: &DatabaseProviderRW<DB>,
     g: SealedBlock<BaseBlock>,
 ) {

@@ -21,7 +21,7 @@ use alloy_primitives::U256;
 use eyre::WrapErr;
 pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
 use reth_evm::ConfigureEvm;
-use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
+use reth_node_api::{FullNodeComponents, FullNodeTypes};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
@@ -369,9 +369,8 @@ impl BaseEthApiBuilder {
 impl<N> EthApiBuilder<N> for BaseEthApiBuilder
 where
     N: FullNodeComponents<
-            Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<alloy_consensus::Header>>,
-            Types: NodeTypes,
-        >,
+        Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<alloy_consensus::Header>>,
+    >,
     BaseRpcConvert<N>: RpcConvert,
     BaseEthApi<N, BaseRpcConvert<N>>: FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
