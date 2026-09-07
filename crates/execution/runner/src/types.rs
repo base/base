@@ -1,7 +1,6 @@
 //! Type aliases for the Base node builder.
 
 use base_execution_rpc::eth::BaseEthApiBuilder;
-use base_node_core::BasePayloadValidatorBuilder;
 use reth_db::DatabaseEnv;
 use reth_node_builder::{
     FullNodeTypesAdapter, NodeBuilder, NodeHandle, NodeTypesWithDBAdapter, WithLaunchContext,
@@ -15,8 +14,7 @@ pub type BaseNodeTypes = FullNodeTypesAdapter<DatabaseEnv, BaseProvider>;
 /// Concrete components produced by the Base node runner.
 pub type BaseNodeComponents = base_node_core::BaseNodeComponents<BaseNodeTypes>;
 /// Concrete RPC and engine add-ons for the Base runner.
-pub type BaseNodeAddOns =
-    BaseAddOns<BaseNodeAdapter, BaseEthApiBuilder, BasePayloadValidatorBuilder>;
+pub type BaseNodeAddOns = BaseAddOns<BaseNodeAdapter, BaseEthApiBuilder>;
 
 /// Handle returned by the Base node launcher.
 pub type BaseNodeHandle = NodeHandle<BaseNodeAdapter, BaseNodeAddOns>;

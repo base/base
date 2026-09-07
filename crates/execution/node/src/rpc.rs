@@ -7,33 +7,31 @@
 use std::sync::Arc;
 
 use alloy_rpc_types_engine::ClientVersionV1;
+use base_common_consensus::BaseTxEnvelope;
+use base_execution_payload_builder::BaseEngineValidator;
 use base_execution_rpc::{BaseEngineApi, engine::ENGINE_CAPABILITIES};
-use reth_node_api::{AddOnsContext, EngineApiValidator, FullNodeComponents};
-use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
+use reth_node_api::{AddOnsContext, FullNodeComponents};
+use reth_node_builder::rpc::EngineApiBuilder;
 use reth_node_core::version::{CLIENT_CODE, version_metadata};
 use reth_payload_builder::PayloadStore;
 use reth_rpc_engine_api::{EngineApi, EngineCapabilities};
+use reth_trie_common::KeccakKeyHasher;
 
 use crate::CLIENT_NAME;
 
 /// Builder for basic [`BaseEngineApi`] implementation.
 #[derive(Debug, Default, Clone)]
-pub struct BaseEngineApiBuilder<EV> {
-    engine_validator_builder: EV,
-}
+pub struct BaseEngineApiBuilder;
 
-impl<N, EV> EngineApiBuilder<N> for BaseEngineApiBuilder<EV>
+impl<N> EngineApiBuilder<N> for BaseEngineApiBuilder
 where
     N: FullNodeComponents,
-    EV: PayloadValidatorBuilder<N>,
-    EV::Validator: EngineApiValidator,
 {
-    type EngineApi = BaseEngineApi<N::Provider, N::Pool, EV::Validator>;
+    type EngineApi = BaseEngineApi<N::Provider, N::Pool, BaseEngineValidator<BaseTxEnvelope>>;
 
     async fn build_engine_api(self, ctx: &AddOnsContext<'_, N>) -> eyre::Result<Self::EngineApi> {
-        let Self { engine_validator_builder } = self;
-
-        let engine_validator = engine_validator_builder.build(ctx).await?;
+        let engine_validator =
+            BaseEngineValidator::new::<KeccakKeyHasher>(Arc::clone(&ctx.config.chain));
         let client = ClientVersionV1 {
             code: CLIENT_CODE,
             name: CLIENT_NAME.to_string(),
