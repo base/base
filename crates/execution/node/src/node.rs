@@ -75,12 +75,6 @@ pub trait BaseNodeTypes: NodeTypes {}
 /// Blanket impl for all node types that conform to the Base spec.
 impl<N> BaseNodeTypes for N where N: NodeTypes {}
 
-/// Helper trait for Base node types with full configuration including storage and execution
-/// data.
-pub trait BaseFullNodeTypes: NodeTypes {}
-
-impl<N> BaseFullNodeTypes for N where N: NodeTypes {}
-
 /// Local payload attributes builder for Base.
 #[derive(Debug)]
 pub struct BaseLocalPayloadAttributesBuilder {
@@ -300,7 +294,7 @@ pub type BaseNodeAddOns<N> = BaseAddOns<
 #[cfg(feature = "test-utils")]
 impl<N> reth_node_builder::Node<N> for BaseNode
 where
-    N: FullNodeTypes<Types: BaseFullNodeTypes + BaseNodeTypes>,
+    N: FullNodeTypes<Types: BaseNodeTypes>,
 {
     type ComponentsBuilder = BaseComponentsBuilder<N>;
     type AddOns = BaseNodeAddOns<N>;
