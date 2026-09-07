@@ -199,7 +199,7 @@ impl TestHarness {
     ) -> Self {
         let persistence_handle = PersistenceHandle::new(action_tx);
 
-        let consensus = Arc::new(TestConsensus::new(chain_spec.clone()));
+        let consensus = Arc::new(TestConsensus::new(Arc::new(chain_spec.as_ref().clone().into())));
 
         let provider = MockEthProvider::default();
 
@@ -429,7 +429,7 @@ impl ValidatorTestHarness {
         let harness = TestHarness::new(chain_spec.clone());
 
         // Create validator identical to the one in TestHarness
-        let consensus = Arc::new(TestConsensus::new(chain_spec));
+        let consensus = Arc::new(TestConsensus::new(Arc::new(chain_spec.as_ref().clone().into())));
         let provider = harness.provider.clone();
         let payload_validator = MockEngineValidator;
         let evm_config = MockEvmConfig::default();

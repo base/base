@@ -343,7 +343,8 @@ mod tests {
             let header = SealedHeader::seal_slow(header);
 
             insert_headers_into_client(&client, header, 0..total_blocks);
-            let consensus = Arc::new(TestConsensus::new(chain_spec));
+            let consensus =
+                Arc::new(TestConsensus::new(Arc::new(chain_spec.as_ref().clone().into())));
 
             let block_downloader = BasicBlockDownloader::new(client.clone(), consensus);
             Self { block_downloader, client }
