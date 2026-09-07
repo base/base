@@ -12,7 +12,6 @@ description = "Ethereum RPC implementation for Base."
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 serde = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
@@ -23,12 +22,9 @@ alloy-serde = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
 reth-rpc-api = { workspace = true }
-base-protocol = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-api = { workspace = true }
 alloy-json-rpc = { workspace = true }
-base-common-evm = { workspace = true }
-base-common-flz = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
@@ -51,7 +47,6 @@ base-execution-chainspec = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 reth-basic-payload-builder = { workspace = true }
-lru = { workspace = true, features = ["default"] }
 http = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
@@ -60,14 +55,12 @@ reth-evm = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["rayon"] }
 reth-revm = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, features = ["default"] }
-reth-chainspec = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["constructor"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
-base-execution-evm = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
@@ -86,7 +79,6 @@ client = [
 	"reth-rpc-eth-api/client",
 ]
 metrics = [
-	"base-common-evm/metrics",
 	"base-execution-payload-builder/metrics",
 	"base-execution-trie/metrics",
 	"base-metrics/metrics",

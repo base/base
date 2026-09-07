@@ -33,7 +33,6 @@ reth-payload-builder-primitives = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true, features = ["attributes"] }
 futures-core = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
 reth-trie-parallel = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-payload-primitives = { workspace = true, features = ["default"] }

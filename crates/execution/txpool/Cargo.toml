@@ -37,10 +37,8 @@ metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-reth-evm = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-reth-chainspec = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-chains = { workspace = true, features = ["default"] }
@@ -68,5 +66,4 @@ metrics = [
 	"base-metrics/metrics",
 	"base-observability-events/metrics",
 	"dep:metrics",
-	"reth-evm/metrics",
 ]

@@ -29,7 +29,6 @@ reth-chain-state = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-storage-errors = { workspace = true }
 rayon = { workspace = true, optional = true }
-reth-ethereum-primitives = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["db-api"] }

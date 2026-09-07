@@ -17,7 +17,6 @@ workspace = true
 
 [dependencies]
 rayon = { workspace = true }
-reth-codecs = { workspace = true }
 reth-db-api = { workspace = true }
 reth-provider = { workspace = true }
 reth-tokio-util = { workspace = true }

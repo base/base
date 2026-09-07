@@ -30,7 +30,6 @@ reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 base-execution-chainspec = { workspace = true }
-reth-ethereum-primitives = { workspace = true }
 reth-db-api = { workspace = true, optional = true }
 reth-tokio-util = { workspace = true, optional = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
@@ -52,7 +51,6 @@ std = [
     "reth-primitives-traits/std",
     "reth-stages-types/std",
     "revm/std",
-    "reth-ethereum-primitives/std",
     "reth-execution-types/std",
     "reth-prune-types/std",
     "reth-storage-errors/std",
@@ -69,7 +67,6 @@ db-api = [
 ]
 
 serde = [
-    "reth-ethereum-primitives/serde",
     "reth-db-models/serde",
     "reth-execution-types/serde",
     "reth-primitives-traits/serde",

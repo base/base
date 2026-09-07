@@ -15,11 +15,9 @@ workspace = true
 serde_json = { workspace = true }
 base-metrics = { workspace = true }
 reth-provider = { workspace = true }
-reth-node-api = { workspace = true }
 alloy-primitives = { workspace = true }
 base-node-runner = { workspace = true }
 reth-transaction-pool = { workspace = true }
-reth-primitives-traits = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
 tracing = { workspace = true, features = ["std"] }

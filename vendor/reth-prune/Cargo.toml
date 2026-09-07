@@ -19,7 +19,6 @@ workspace = true
 tokio = { workspace = true }
 metrics = { workspace = true }
 thiserror = { workspace = true }
-itertools = { workspace = true }
 rustc-hash = { workspace = true }
 reth-config = { workspace = true }
 reth-db-api = { workspace = true }

@@ -38,7 +38,6 @@ reth-discv5 = { workspace = true }
 reth-fs-util = { workspace = true }
 reth-cli-util = { workspace = true }
 reth-eth-wire = { workspace = true }
-reth-node-api = { workspace = true }
 reth-provider = { workspace = true }
 reth-chainspec = { workspace = true }
 reth-consensus = { workspace = true }

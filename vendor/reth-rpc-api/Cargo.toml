@@ -29,7 +29,6 @@ alloy-rpc-types-debug = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }
 alloy-rpc-types-anvil = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
-reth-engine-primitives = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
 alloy-rpc-types-beacon = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
