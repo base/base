@@ -10,7 +10,7 @@ use base_execution_rpc::{
     witness::{BaseDebugWitnessApi, DebugExecutionWitnessApiServer},
 };
 use base_execution_txpool::BasePooledTx;
-use base_node_core::{BaseEngineApiBuilder, BaseNodeTypes, BasePayloadValidatorBuilder};
+use base_node_core::{BaseEngineApiBuilder, BasePayloadValidatorBuilder};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, NodeAddOns};
 use reth_node_builder::{
@@ -66,7 +66,7 @@ where
 
 impl<N> Default for BaseAddOns<N, BaseEthApiBuilder, BasePayloadValidatorBuilder>
 where
-    N: FullNodeComponents<Types: BaseNodeTypes>,
+    N: FullNodeComponents<Types: NodeTypes>,
     BaseEthApiBuilder: EthApiBuilder<N>,
 {
     fn default() -> Self {
@@ -83,7 +83,7 @@ impl<N, RpcMiddleware>
         RpcMiddleware,
     >
 where
-    N: FullNodeComponents<Types: BaseNodeTypes>,
+    N: FullNodeComponents<Types: NodeTypes>,
     BaseEthApiBuilder: EthApiBuilder<N>,
 {
     /// Build a [`BaseAddOns`] using [`BaseAddOnsBuilder`].
@@ -177,7 +177,7 @@ impl<N, EthB, PVB, EB, EVB, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes + NodeTypes,
+            Types: NodeTypes,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     BasePayloadBuilderAttributes<BaseTxEnvelope>,
@@ -254,7 +254,7 @@ impl<N, EthB, PVB, EB, EVB, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes + NodeTypes,
+            Types: NodeTypes,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     BasePayloadBuilderAttributes<BaseTxEnvelope>,

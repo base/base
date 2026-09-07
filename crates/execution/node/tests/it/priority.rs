@@ -14,17 +14,14 @@ use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{
     BaseComponentsBuilder, BaseNode, BasePayloadServiceBuilder,
     args::RollupArgs,
-    node::{
-        BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadBuilder,
-        BasePoolBuilder,
-    },
+    node::{BaseNetworkBuilder, BaseNodeComponentBuilder, BasePayloadBuilder, BasePoolBuilder},
     utils::payload_attributes,
 };
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
     node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
-use reth_node_api::FullNodeTypes;
+use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_node_builder::{EngineNodeLauncher, Node, NodeBuilder, NodeConfig};
 use reth_node_core::args::DatadirArgs;
 use reth_payload_util::{
@@ -88,7 +85,7 @@ fn build_components<Node>(
     chain_id: ChainId,
 ) -> BaseNodeComponentBuilder<Node, BasePayloadBuilder<CustomTxPriority>>
 where
-    Node: FullNodeTypes<Types: BaseNodeTypes>,
+    Node: FullNodeTypes<Types: NodeTypes>,
 {
     let RollupArgs { discovery_v4, .. } = RollupArgs::default();
     BaseComponentsBuilder::new(

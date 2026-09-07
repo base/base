@@ -3,8 +3,7 @@
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_txpool::GuardLimits;
 use base_node_core::{
-    BaseComponentsBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes,
-    BasePayloadServiceBuilder,
+    BaseComponentsBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder, BasePayloadServiceBuilder,
     args::RollupArgs,
     node::{BasePayloadBuilder, BasePoolBuilder},
 };
@@ -73,7 +72,7 @@ impl BaseNode {
     /// Returns the components for the given [`RollupArgs`].
     pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
     where
-        Node: FullNodeTypes<Types: BaseNodeTypes>,
+        Node: FullNodeTypes<Types: NodeTypes>,
     {
         let RollupArgs {
             discovery_v4,

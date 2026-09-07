@@ -7,15 +7,13 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::builder::BasePayloadTransactions;
 use base_execution_txpool::BaseTransactionPool;
 use reth_network::NetworkHandle;
+use reth_node_api::NodeTypes;
 use reth_node_builder::{
     BuilderContext, FullNodeTypes, NodeComponentsBuilder, components::Components,
 };
 use reth_transaction_pool::blobstore::DiskFileBlobStore;
 
-use crate::{
-    BaseNetworkBuilder, BaseNodeTypes, BasePayloadBuilder, BasePayloadServiceBuilder,
-    BasePoolBuilder,
-};
+use crate::{BaseNetworkBuilder, BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder};
 
 /// The concrete transaction pool used by Base nodes.
 pub type BaseNodePool<Node> =
@@ -64,7 +62,7 @@ impl<Node, Payload> BaseComponentsBuilder<Node, Payload> {
 
 impl<Node, Txs> NodeComponentsBuilder<Node> for BaseComponentsBuilder<Node, BasePayloadBuilder<Txs>>
 where
-    Node: FullNodeTypes<Types: BaseNodeTypes>,
+    Node: FullNodeTypes<Types: NodeTypes>,
     Txs: BasePayloadTransactions<BaseNodePool<Node>>,
 {
     type Components = BaseNodeComponents<Node>;
