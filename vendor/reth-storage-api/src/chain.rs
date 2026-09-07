@@ -3,7 +3,6 @@ use core::marker::PhantomData;
 
 use alloy_consensus::Header;
 use alloy_primitives::BlockNumber;
-use base_common_consensus::BaseBlock;
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
 use reth_db_api::{
     DbTxUnwindExt,
@@ -38,16 +37,6 @@ pub trait BlockBodyWriter<Provider, Body: BlockBody> {
         provider: &Provider,
         block: BlockNumber,
     ) -> ProviderResult<()>;
-}
-
-/// Trait that implements how chain-specific types are written to the storage.
-pub trait ChainStorageWriter<Provider>:
-    BlockBodyWriter<Provider, <BaseBlock as Block>::Body>
-{
-}
-impl<T, Provider> ChainStorageWriter<Provider> for T where
-    T: BlockBodyWriter<Provider, <BaseBlock as Block>::Body>
-{
 }
 
 /// Input for reading a block body. Contains a header of block being read and a list of pre-fetched
