@@ -724,6 +724,7 @@ mod test {
 
     use ::enr::{CombinedKey, EnrKey};
     use discv5_reth::ListenConfig;
+    use futures::FutureExt;
     use rand_08::thread_rng;
     use reth_chainspec::MAINNET;
     use tracing::trace;
@@ -856,7 +857,13 @@ mod test {
         );
 
         // manually trigger connection from node_1 to node_2
-        node_1.with_discv5(|discv5| discv5.send_ping(node_2_enr.clone())).await.unwrap();
+        node_1
+            .with_discv5(|discv5| {
+                Box::pin(discv5.send_ping(node_2_enr.clone()).map(|result| {
+                    result.expect("discovery ping should succeed");
+                })) as futures::future::BoxFuture<'static, ()>
+            })
+            .await;
 
         // verify node_1:discv5 is connected to node_2:discv5 and vv
         let event_1_v5 = stream_1.recv().await.unwrap();
