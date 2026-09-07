@@ -11,8 +11,7 @@ use futures_util::future::TryJoinAll;
 use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_api::FullNodeComponents;
 use reth_node_builder::{
-    ComponentBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle,
-    rpc::{EngineValidatorAddOn, RethRpcAddOns},
+    ComponentBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle, rpc::RethRpcAddOns,
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use reth_payload_primitives::BasePayloadBuilderAttributes;
@@ -109,7 +108,7 @@ where
                 Provider = crate::TestProvider,
                 Network: PeersHandleProvider,
             >,
-        AO: RethRpcAddOns<crate::Adapter<C>> + EngineValidatorAddOn<crate::Adapter<C>> + 'static,
+        AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
     {
         let runtime = Runtime::test();
 

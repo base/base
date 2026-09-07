@@ -9,8 +9,7 @@ use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_api::FullNodeComponents;
 use reth_node_builder::{
-    ComponentBuilder, FullNodeTypesAdapter, NodeAdapter, NodeTypesWithDBAdapter,
-    rpc::{EngineValidatorAddOn, RethRpcAddOns},
+    ComponentBuilder, FullNodeTypesAdapter, NodeAdapter, NodeTypesWithDBAdapter, rpc::RethRpcAddOns,
 };
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
@@ -63,7 +62,7 @@ where
             Provider = crate::TestProvider,
             Network: PeersHandleProvider,
         >,
-    AO: RethRpcAddOns<crate::Adapter<C>> + EngineValidatorAddOn<crate::Adapter<C>> + 'static,
+    AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
 {
     E2ETestSetupBuilder::new(num_nodes, chain_spec, attributes_generator)
         .with_node_config_modifier(move |config| config.set_dev(is_dev))
@@ -91,7 +90,7 @@ where
             Provider = crate::TestProvider,
             Network: PeersHandleProvider,
         >,
-    AO: RethRpcAddOns<crate::Adapter<C>> + EngineValidatorAddOn<crate::Adapter<C>> + 'static,
+    AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
 {
     setup_engine_with_connection(
         node_factory,
@@ -126,7 +125,7 @@ where
             Provider = crate::TestProvider,
             Network: PeersHandleProvider,
         >,
-    AO: RethRpcAddOns<crate::Adapter<C>> + EngineValidatorAddOn<crate::Adapter<C>> + 'static,
+    AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
 {
     E2ETestSetupBuilder::new(num_nodes, chain_spec, attributes_generator)
         .with_tree_config_modifier(move |base| {

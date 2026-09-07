@@ -39,7 +39,7 @@ use crate::{
     NodeBuilderWithComponents, NodeHandle, NodeTypesAdapter,
     common::{Attached, LaunchContextWith, WithConfigs},
     hooks::NodeHooks,
-    rpc::{EngineShutdown, EngineValidatorAddOn, RethRpcAddOns, RpcHandle},
+    rpc::{BasicEngineValidatorBuilder, EngineShutdown, RethRpcAddOns, RpcHandle},
     setup::build_networked_pipeline,
 };
 
@@ -73,7 +73,7 @@ impl EngineNodeLauncher {
         T: FullNodeTypes<Provider = BlockchainProvider<NodeTypesWithDBAdapter<DB>>, DB = DB>,
         CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
         NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
-        AO: RethRpcAddOns<NodeAdapter<T, CB>> + EngineValidatorAddOn<NodeAdapter<T, CB>>,
+        AO: RethRpcAddOns<NodeAdapter<T, CB>>,
     {
         let Self { ctx, engine_tree_config } = self;
         let NodeBuilderWithComponents {
@@ -192,13 +192,14 @@ impl EngineNodeLauncher {
             jwt_secret,
             engine_events: event_sender.clone(),
         };
-        let validator_builder = add_ons.engine_validator_builder();
 
         // Build the engine validator with all required components
-        let engine_validator = validator_builder
-            .clone()
-            .build_tree_validator(&add_ons_ctx, engine_tree_config.clone(), overlay_manager.clone())
-            .await?;
+        let engine_validator = BasicEngineValidatorBuilder::build_tree_validator(
+            &add_ons_ctx,
+            engine_tree_config.clone(),
+            overlay_manager.clone(),
+        )
+        .await?;
 
         // Create the consensus engine stream with optional reorg
         let reorg_overlay_manager = overlay_manager.clone();
@@ -209,13 +210,12 @@ impl EngineNodeLauncher {
                 ctx.blockchain_db().clone(),
                 ctx.node_adapter().evm_config().clone(),
                 || async {
-                    validator_builder
-                        .build_tree_validator(
-                            &add_ons_ctx,
-                            engine_tree_config.clone(),
-                            reorg_overlay_manager.clone(),
-                        )
-                        .await
+                    BasicEngineValidatorBuilder::build_tree_validator(
+                        &add_ons_ctx,
+                        engine_tree_config.clone(),
+                        reorg_overlay_manager.clone(),
+                    )
+                    .await
                 },
                 node_config.debug.reorg_frequency,
                 node_config.debug.reorg_depth,
@@ -437,7 +437,7 @@ where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
     NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
-    AO: RethRpcAddOns<NodeAdapter<T, CB>> + EngineValidatorAddOn<NodeAdapter<T, CB>> + 'static,
+    AO: RethRpcAddOns<NodeAdapter<T, CB>> + 'static,
 {
     type Node = NodeHandle<NodeAdapter<T, CB>, AO>;
     type Future = Pin<Box<dyn Future<Output = eyre::Result<Self::Node>> + Send>>;

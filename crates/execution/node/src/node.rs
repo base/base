@@ -40,9 +40,8 @@ use reth_node_builder::{
     components::{PoolBuilderConfigOverrides, spawn_maintenance_tasks},
     node::FullNodeTypes,
     rpc::{
-        BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn, EthApiBuilder,
-        Identity, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext,
-        RpcHandle,
+        EngineApiBuilder, EthApiBuilder, Identity, RethRpcAddOns, RethRpcMiddleware,
+        RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
     },
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
@@ -531,18 +530,6 @@ where
 
     fn hooks_mut(&mut self) -> &mut reth_node_builder::rpc::RpcHooks<N, Self::EthApi> {
         self.rpc_add_ons.hooks_mut()
-    }
-}
-
-impl<N, EthB, EB, RpcMiddleware> EngineValidatorAddOn<N> for BaseAddOns<N, EthB, EB, RpcMiddleware>
-where
-    N: FullNodeComponents,
-    EthB: EthApiBuilder<N>,
-    EB: EngineApiBuilder<N>,
-    RpcMiddleware: Send,
-{
-    fn engine_validator_builder(&self) -> BasicEngineValidatorBuilder {
-        EngineValidatorAddOn::engine_validator_builder(&self.rpc_add_ons)
     }
 }
 

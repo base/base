@@ -9,8 +9,8 @@ use base_execution_txpool::BasePooledTx;
 use base_node_core::BaseEngineApiBuilder;
 use reth_node_api::{FullNodeComponents, NodeAddOns};
 use reth_node_builder::rpc::{
-    BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn, EthApiBuilder, Identity,
-    RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
+    EngineApiBuilder, EthApiBuilder, Identity, RethRpcAddOns, RethRpcMiddleware,
+    RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
 };
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_server_types::RethRpcModule;
@@ -205,18 +205,6 @@ where
 
     fn hooks_mut(&mut self) -> &mut reth_node_builder::rpc::RpcHooks<N, Self::EthApi> {
         self.rpc_add_ons.hooks_mut()
-    }
-}
-
-impl<N, EthB, EB, RpcMiddleware> EngineValidatorAddOn<N> for BaseAddOns<N, EthB, EB, RpcMiddleware>
-where
-    N: FullNodeComponents,
-    EthB: EthApiBuilder<N>,
-    EB: EngineApiBuilder<N>,
-    RpcMiddleware: Send,
-{
-    fn engine_validator_builder(&self) -> BasicEngineValidatorBuilder {
-        EngineValidatorAddOn::engine_validator_builder(&self.rpc_add_ons)
     }
 }
 

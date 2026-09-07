@@ -12,10 +12,7 @@ use reth_chainspec::ChainSpec;
 use reth_ethereum_primitives::Block;
 use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_api::{FullNodeComponents, TreeConfig};
-use reth_node_builder::{
-    ComponentBuilder,
-    rpc::{EngineValidatorAddOn, RethRpcAddOns},
-};
+use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 use reth_node_core::primitives::RecoveredBlock;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use revm::state::EvmState;
@@ -148,7 +145,7 @@ impl Setup {
                 Provider = crate::TestProvider,
                 Network: PeersHandleProvider,
             >,
-        AO: RethRpcAddOns<crate::Adapter<C>> + EngineValidatorAddOn<crate::Adapter<C>> + 'static,
+        AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
     {
         // Note: this future is quite large so we box it
         Box::pin(self.apply_(env, node_factory)).await
@@ -167,7 +164,7 @@ impl Setup {
                 Provider = crate::TestProvider,
                 Network: PeersHandleProvider,
             >,
-        AO: RethRpcAddOns<crate::Adapter<C>> + EngineValidatorAddOn<crate::Adapter<C>> + 'static,
+        AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
     {
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;

@@ -9,10 +9,7 @@ use eyre::Result;
 use jsonrpsee::http_client::HttpClient;
 use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_api::FullNodeComponents;
-use reth_node_builder::{
-    ComponentBuilder,
-    rpc::{EngineValidatorAddOn, RethRpcAddOns},
-};
+use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 use reth_payload_builder::PayloadId;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 
@@ -319,7 +316,7 @@ impl TestBuilder {
                 Provider = crate::TestProvider,
                 Network: PeersHandleProvider,
             >,
-        AO: RethRpcAddOns<crate::Adapter<C>> + EngineValidatorAddOn<crate::Adapter<C>> + 'static,
+        AO: RethRpcAddOns<crate::Adapter<C>> + 'static,
     {
         let mut setup = self.setup.take();
 

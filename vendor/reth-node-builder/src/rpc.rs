@@ -1193,26 +1193,6 @@ pub trait EthApiBuilder<N: FullNodeComponents>: Default + Send + 'static {
     ) -> impl Future<Output = eyre::Result<Self::EthApi>> + Send;
 }
 
-/// Helper trait that provides the validator builder for the engine API
-pub trait EngineValidatorAddOn<Node: FullNodeComponents>: Send {
-    /// Returns the validator builder.
-    fn engine_validator_builder(&self) -> BasicEngineValidatorBuilder;
-}
-
-impl<N, EthB, EB, RpcMiddleware, AuthHttpMiddleware> EngineValidatorAddOn<N>
-    for RpcAddOns<N, EthB, EB, RpcMiddleware, AuthHttpMiddleware>
-where
-    N: FullNodeComponents,
-    EthB: EthApiBuilder<N>,
-    EB: EngineApiBuilder<N>,
-    RpcMiddleware: Send,
-    AuthHttpMiddleware: Send,
-{
-    fn engine_validator_builder(&self) -> BasicEngineValidatorBuilder {
-        BasicEngineValidatorBuilder
-    }
-}
-
 /// Builder for engine API RPC module.
 ///
 /// This builder type is responsible for providing an instance of [`IntoEngineApiRpcModule`], which
@@ -1240,7 +1220,6 @@ pub struct BasicEngineValidatorBuilder;
 impl BasicEngineValidatorBuilder {
     /// Constructs the Base execution validator and its caches.
     pub async fn build_tree_validator<Node: FullNodeComponents>(
-        self,
         ctx: &AddOnsContext<'_, Node>,
         tree_config: TreeConfig,
         overlay_manager: OverlayManager,
