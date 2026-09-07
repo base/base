@@ -24,7 +24,7 @@ pub use engine_api_ext::EngineApiExt;
 
 /// Support for configuring the components of a node.
 pub mod components;
-pub use components::{NodeComponents, NodeComponentsBuilder};
+pub use components::{BuiltComponents, NodeComponentsBuilder};
 
 mod builder;
 pub use builder::{add_ons::AddOns, *};

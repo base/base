@@ -1,4 +1,4 @@
-//! Node add-ons. Depend on core [`NodeComponents`](crate::NodeComponents).
+//! Node add-ons. Depend on core [`Components`](crate::components::Components).
 
 use reth_node_api::{FullNodeComponents, NodeAddOns};
 

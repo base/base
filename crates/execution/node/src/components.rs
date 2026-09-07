@@ -64,9 +64,14 @@ where
     Node: FullNodeTypes,
     Txs: BasePayloadTransactions<BaseNodePool<Node>>,
 {
-    type Components = BaseNodeComponents<Node>;
+    type Pool = BaseNodePool<Node>;
+    type Network = NetworkHandle;
+    type Consensus = Arc<BaseBeaconConsensus>;
 
-    async fn build_components(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Components> {
+    async fn build_components(
+        self,
+        ctx: &BuilderContext<Node>,
+    ) -> eyre::Result<BaseNodeComponents<Node>> {
         let evm_config = BaseEvmConfig::new(ctx.chain_spec());
         let pool = self.pool_builder.build_pool(ctx, evm_config.clone()).await?;
         let network = self.network_builder.build_network(ctx, pool.clone()).await?;

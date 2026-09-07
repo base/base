@@ -16592,7 +16592,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types",
- "alloy-rpc-types-engine",
  "aquamarine",
  "base-common-consensus",
  "base-common-rpc-types-engine",

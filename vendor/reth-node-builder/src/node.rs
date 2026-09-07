@@ -22,7 +22,8 @@ use reth_rpc_builder::{RpcServerHandle, auth::AuthServerHandle};
 use reth_tasks::TaskExecutor;
 
 use crate::{
-    NodeAdapter, NodeAddOns, NodeHandle, RethFullAdapter, components::NodeComponentsBuilder,
+    NodeAdapter, NodeAddOns, NodeHandle, RethFullAdapter,
+    components::{BuiltComponents, NodeComponentsBuilder},
     rpc::RethRpcAddOns,
 };
 
@@ -34,9 +35,7 @@ pub trait Node<N: FullNodeTypes>: Clone + Debug + Send + Sync + Unpin + 'static 
     type ComponentsBuilder: NodeComponentsBuilder<N>;
 
     /// Exposes the customizable node add-on types.
-    type AddOns: NodeAddOns<
-        NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
-    >;
+    type AddOns: NodeAddOns<NodeAdapter<N, BuiltComponents<N, Self::ComponentsBuilder>>>;
 
     /// Returns a [`NodeComponentsBuilder`] for the node.
     fn components_builder(&self) -> Self::ComponentsBuilder;
@@ -70,7 +69,7 @@ impl<N, C, AO> Node<N> for AnyNode<N, C, AO>
 where
     N: FullNodeTypes + Clone,
     C: NodeComponentsBuilder<N> + Clone + Debug + Sync + Unpin + 'static,
-    AO: NodeAddOns<NodeAdapter<N, C::Components>> + Clone + Debug + Sync + Unpin + 'static,
+    AO: NodeAddOns<NodeAdapter<N, BuiltComponents<N, C>>> + Clone + Debug + Sync + Unpin + 'static,
 {
     type ComponentsBuilder = C;
     type AddOns = AO;
@@ -198,9 +197,7 @@ impl<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> DerefMut for FullNode<N
 pub type FullNodeFor<N, DB = DatabaseEnv> = FullNode<
     NodeAdapter<
         RethFullAdapter<DB>,
-        <<N as Node<RethFullAdapter<DB>>>::ComponentsBuilder as NodeComponentsBuilder<
-            RethFullAdapter<DB>,
-        >>::Components,
+        BuiltComponents<RethFullAdapter<DB>, <N as Node<RethFullAdapter<DB>>>::ComponentsBuilder>,
     >,
     <N as Node<RethFullAdapter<DB>>>::AddOns,
 >;
@@ -209,9 +206,7 @@ pub type FullNodeFor<N, DB = DatabaseEnv> = FullNode<
 pub type NodeHandleFor<N, DB = DatabaseEnv> = NodeHandle<
     NodeAdapter<
         RethFullAdapter<DB>,
-        <<N as Node<RethFullAdapter<DB>>>::ComponentsBuilder as NodeComponentsBuilder<
-            RethFullAdapter<DB>,
-        >>::Components,
+        BuiltComponents<RethFullAdapter<DB>, <N as Node<RethFullAdapter<DB>>>::ComponentsBuilder>,
     >,
     <N as Node<RethFullAdapter<DB>>>::AddOns,
 >;

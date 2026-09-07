@@ -5,55 +5,19 @@
 //!  - The network implementation.
 //!  - The payload builder service.
 //!
-//! Components depend on a fully type configured node: [`FullNodeTypes`].
-
-use base_common_consensus::BaseTxEnvelope;
-use reth_evm::BaseEvmConfig;
-mod builder;
-mod pool;
+//! Components depend on a fully type configured node: [`crate::FullNodeTypes`].
 
 use std::fmt::Debug;
 
-pub use builder::*;
-pub use pool::*;
-use reth_consensus::FullConsensus;
-use reth_network_api::FullNetwork;
+use reth_evm::BaseEvmConfig;
 use reth_payload_builder::PayloadBuilderHandle;
-use reth_transaction_pool::{PoolTransaction, TransactionPool};
+use reth_transaction_pool::TransactionPool;
 
-use crate::FullNodeTypes;
+mod builder;
+pub use builder::{BuiltComponents, NodeComponentsBuilder};
 
-/// An abstraction over the components of a node, consisting of:
-///  - evm and executor
-///  - transaction pool
-///  - network
-///  - payload builder.
-pub trait NodeComponents<T: FullNodeTypes>: Clone + Debug + Unpin + Send + Sync + 'static {
-    /// The transaction pool of the node.
-    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin;
-
-    /// The consensus type of the node.
-    type Consensus: FullConsensus + Clone + Unpin + 'static;
-
-    /// Network API.
-    type Network: FullNetwork;
-
-    /// Returns the transaction pool of the node.
-    fn pool(&self) -> &Self::Pool;
-
-    /// Returns the node's evm config.
-    fn evm_config(&self) -> &BaseEvmConfig;
-
-    /// Returns the node's consensus type.
-    fn consensus(&self) -> &Self::Consensus;
-
-    /// Returns the handle to the network
-    fn network(&self) -> &Self::Network;
-
-    /// Returns the handle to the payload builder service handling payload building requests from
-    /// the engine.
-    fn payload_builder_handle(&self) -> &PayloadBuilderHandle;
-}
+mod pool;
+pub use pool::*;
 
 /// All the components of the node.
 ///
@@ -70,40 +34,6 @@ pub struct Components<Network, Pool, Consensus> {
     pub network: Network,
     /// The handle to the payload builder service.
     pub payload_builder_handle: PayloadBuilderHandle,
-}
-
-impl<Node, Pool, Cons, Network> NodeComponents<Node> for Components<Network, Pool, Cons>
-where
-    Node: FullNodeTypes,
-    Network: FullNetwork,
-    Pool:
-        TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>> + Unpin + 'static,
-    Cons: FullConsensus + Clone + Unpin + 'static,
-{
-    type Pool = Pool;
-
-    type Consensus = Cons;
-    type Network = Network;
-
-    fn pool(&self) -> &Self::Pool {
-        &self.transaction_pool
-    }
-
-    fn evm_config(&self) -> &BaseEvmConfig {
-        &self.evm_config
-    }
-
-    fn consensus(&self) -> &Self::Consensus {
-        &self.consensus
-    }
-
-    fn network(&self) -> &Self::Network {
-        &self.network
-    }
-
-    fn payload_builder_handle(&self) -> &PayloadBuilderHandle {
-        &self.payload_builder_handle
-    }
 }
 
 impl<N, Pool, Cons> Clone for Components<N, Pool, Cons>

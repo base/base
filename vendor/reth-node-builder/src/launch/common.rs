@@ -99,7 +99,7 @@ use tokio::sync::{
 
 use crate::{
     BuilderContext, ExExLauncher, NodeAdapter,
-    components::{NodeComponents, NodeComponentsBuilder},
+    components::{BuiltComponents, NodeComponentsBuilder},
     hooks::OnComponentInitializedHook,
 };
 
@@ -867,7 +867,7 @@ where
         self,
         components_builder: CB,
         on_component_initialized: Box<
-            dyn OnComponentInitializedHook<NodeAdapter<T, CB::Components>>,
+            dyn OnComponentInitializedHook<NodeAdapter<T, BuiltComponents<T, CB>>>,
         >,
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents<T, CB>>>>
     where
@@ -952,12 +952,12 @@ where
     }
 
     /// Returns the configured `NodeAdapter`.
-    pub const fn node_adapter(&self) -> &NodeAdapter<T, CB::Components> {
+    pub const fn node_adapter(&self) -> &NodeAdapter<T, BuiltComponents<T, CB>> {
         &self.right().node_adapter
     }
 
     /// Returns mutable reference to the configured `NodeAdapter`.
-    pub const fn node_adapter_mut(&mut self) -> &mut NodeAdapter<T, CB::Components> {
+    pub const fn node_adapter_mut(&mut self) -> &mut NodeAdapter<T, BuiltComponents<T, CB>> {
         &mut self.right_mut().node_adapter
     }
 
@@ -1085,7 +1085,7 @@ where
     }
 
     /// Returns the node adapter components.
-    pub const fn components(&self) -> &CB::Components {
+    pub const fn components(&self) -> &BuiltComponents<T, CB> {
         &self.node_adapter().components
     }
 
@@ -1095,7 +1095,7 @@ where
         &self,
         installed_exex: Vec<(
             String,
-            Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T, CB::Components>>>,
+            Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T, BuiltComponents<T, CB>>>>,
         )>,
     ) -> eyre::Result<Option<ExExManagerHandle>> {
         self.exex_launcher(installed_exex).launch().await
@@ -1117,9 +1117,9 @@ where
         &self,
         installed_exex: Vec<(
             String,
-            Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T, CB::Components>>>,
+            Box<dyn crate::exex::BoxedLaunchExEx<NodeAdapter<T, BuiltComponents<T, CB>>>>,
         )>,
-    ) -> ExExLauncher<NodeAdapter<T, CB::Components>> {
+    ) -> ExExLauncher<NodeAdapter<T, BuiltComponents<T, CB>>> {
         ExExLauncher::new(
             self.head(),
             self.node_adapter().clone(),
@@ -1156,8 +1156,8 @@ where
     {
         let Some(url) = self.node_config().debug.ethstats.as_ref() else { return Ok(()) };
 
-        let network = self.components().network().clone();
-        let pool = self.components().pool().clone();
+        let network = self.components().network.clone();
+        let pool = self.components().transaction_pool.clone();
         let provider = self.node_adapter().provider.clone();
 
         info!(target: "reth::cli", "Starting EthStats service at {}", url);
@@ -1296,7 +1296,7 @@ where
     CB: NodeComponentsBuilder<T>,
 {
     db_provider_container: WithMeteredProvider<NodeTypesWithDBAdapter<T::DB>>,
-    node_adapter: NodeAdapter<T, CB::Components>,
+    node_adapter: NodeAdapter<T, BuiltComponents<T, CB>>,
     head: Head,
 }
 

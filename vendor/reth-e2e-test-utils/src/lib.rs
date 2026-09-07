@@ -8,7 +8,7 @@ use node::NodeTestContext;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_builder::{
-    FullNodeTypesAdapter, Node, NodeAdapter, NodeComponents, NodeTypesWithDBAdapter,
+    BuiltComponents, FullNodeTypesAdapter, Node, NodeAdapter, NodeTypesWithDBAdapter,
     components::NodeComponentsBuilder,
     rpc::{EngineValidatorAddOn, RethRpcAddOns},
 };
@@ -127,9 +127,10 @@ type TmpNodeAdapter<Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>
 /// Type alias for a `NodeAdapter`
 pub type Adapter<N, Provider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>> = NodeAdapter<
     TmpNodeAdapter<Provider>,
-    <<N as Node<TmpNodeAdapter<Provider>>>::ComponentsBuilder as NodeComponentsBuilder<
+    BuiltComponents<
         TmpNodeAdapter<Provider>,
-    >>::Components,
+        <N as Node<TmpNodeAdapter<Provider>>>::ComponentsBuilder,
+    >,
 >;
 
 /// Type alias for a type of `NodeHelper`
@@ -144,10 +145,7 @@ where
             TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
             ComponentsBuilder: NodeComponentsBuilder<
                 TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-                Components: NodeComponents<
-                    TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-                    Network: PeersHandleProvider,
-                >,
+                Network: PeersHandleProvider,
             >,
             AddOns: RethRpcAddOns<
                 Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
@@ -164,10 +162,7 @@ impl<T> NodeBuilderHelper for T where
             TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
             ComponentsBuilder: NodeComponentsBuilder<
                 TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-                Components: NodeComponents<
-                    TmpNodeAdapter<BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
-                    Network: PeersHandleProvider,
-                >,
+                Network: PeersHandleProvider,
             >,
             AddOns: RethRpcAddOns<
                 Adapter<Self, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>,
