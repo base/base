@@ -14,7 +14,6 @@ use crate::NewBlockPayload;
 /// Defines the representations used by the Ethereum Wire Protocol (devp2p).
 /// Broadcast transactions and pooled transactions remain distinct because pooled
 /// transactions can carry sidecars that are absent from the consensus block format.
-/// [`NetPrimitivesFor`] binds network blocks and receipts to the concrete Base types.
 ///
 /// See [`crate::EthMessage`] for more context.
 pub trait NetworkPrimitives: Send + Sync + Unpin + Clone + Debug + 'static {
@@ -57,27 +56,6 @@ pub trait NetworkPrimitives: Send + Sync + Unpin + Clone + Debug + 'static {
 
     /// The payload type for the `NewBlock` message.
     type NewBlockPayload: NewBlockPayload<Block = Self::Block>;
-}
-
-/// Network representations whose blocks, headers, bodies, and receipts use Base types.
-pub trait NetPrimitivesFor:
-    NetworkPrimitives<
-        BlockHeader = alloy_consensus::Header,
-        BlockBody = alloy_consensus::BlockBody<BaseTxEnvelope>,
-        Block = BaseBlock,
-        Receipt = BaseReceipt,
-    >
-{
-}
-
-impl<T> NetPrimitivesFor for T where
-    T: NetworkPrimitives<
-            BlockHeader = alloy_consensus::Header,
-            BlockBody = alloy_consensus::BlockBody<BaseTxEnvelope>,
-            Block = BaseBlock,
-            Receipt = BaseReceipt,
-        >
-{
 }
 
 /// Base network primitives with configurable pooled transaction and new-block wire formats.

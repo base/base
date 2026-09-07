@@ -3,6 +3,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::B256;
+use base_common_consensus::{BaseBlock, BaseReceipt};
 use clap::Parser;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
@@ -11,7 +12,7 @@ use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_db::{DatabaseEnv, init_db, open_db_read_only};
 use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
-use reth_eth_wire::NetPrimitivesFor;
+use reth_eth_wire::NetworkPrimitives;
 use reth_evm::{ConfigureEvm, noop::NoopEvmConfig};
 use reth_network::NetworkEventListenerProvider;
 use reth_node_api::FullNodeTypesAdapter;
@@ -310,7 +311,12 @@ pub trait CliNodeTypes: NodeTypesForProvider {
     /// Consensus used by offline validation commands.
     type Consensus: FullConsensus + Clone + Unpin + 'static;
     /// Wire types used by peer commands.
-    type NetworkPrimitives: NetPrimitivesFor;
+    type NetworkPrimitives: NetworkPrimitives<
+            BlockHeader = alloy_consensus::Header,
+            BlockBody = base_common_consensus::BaseBlockBody,
+            Block = BaseBlock,
+            Receipt = BaseReceipt,
+        >;
 }
 
 impl<N> CliNodeTypes for N

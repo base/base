@@ -5,7 +5,7 @@ use std::{future::Future, marker::PhantomData};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_chainspec::EthChainSpec;
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
-use reth_network::{EthNetworkPrimitives, NetworkPrimitives, types::NetPrimitivesFor};
+use reth_network::{EthNetworkPrimitives, NetworkPrimitives};
 use reth_network_api::{FullNetwork, noop::NoopNetwork};
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_transaction_pool::{
@@ -361,7 +361,13 @@ where
             Node,
             PoolB::Pool,
             Network: FullNetwork<
-                Primitives: NetPrimitivesFor<PooledTransaction = PoolPooledTx<PoolB::Pool>>,
+                Primitives: NetworkPrimitives<
+                    BlockHeader = alloy_consensus::Header,
+                    BlockBody = base_common_consensus::BaseBlockBody,
+                    Block = BaseBlock,
+                    Receipt = BaseReceipt,
+                    PooledTransaction = PoolPooledTx<PoolB::Pool>,
+                >,
             >,
         >,
     PayloadB: PayloadServiceBuilder<Node, PoolB::Pool, ExecB::EVM>,
@@ -436,7 +442,15 @@ pub trait NodeComponentsBuilder<Node: FullNodeTypes>: Send {
 
 impl<Node, Net, F, Fut, Pool, EVM, Cons> NodeComponentsBuilder<Node> for F
 where
-    Net: FullNetwork<Primitives: NetPrimitivesFor<PooledTransaction = PoolPooledTx<Pool>>>,
+    Net: FullNetwork<
+        Primitives: NetworkPrimitives<
+            BlockHeader = alloy_consensus::Header,
+            BlockBody = base_common_consensus::BaseBlockBody,
+            Block = BaseBlock,
+            Receipt = BaseReceipt,
+            PooledTransaction = PoolPooledTx<Pool>,
+        >,
+    >,
     Node: FullNodeTypes,
     F: FnOnce(&BuilderContext<Node>) -> Fut + Send,
     Fut: Future<Output = eyre::Result<Components<Net, Pool, EVM, Cons>>> + Send,
