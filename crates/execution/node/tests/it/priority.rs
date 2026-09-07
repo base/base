@@ -22,7 +22,7 @@ use reth_e2e_test_utils::{
     node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
 use reth_node_api::FullNodeTypes;
-use reth_node_builder::{EngineNodeLauncher, Node, NodeBuilder, NodeConfig};
+use reth_node_builder::{EngineNodeLauncher, NodeBuilder, NodeConfig};
 use reth_node_core::args::DatadirArgs;
 use reth_payload_util::{
     BestPayloadTransactions, PayloadTransactionsChain, PayloadTransactionsFixed,
@@ -126,11 +126,12 @@ async fn test_custom_block_priority_config() {
             .db(),
     );
     let runtime = Runtime::test();
+    let add_ons: base_node_core::BaseNodeAddOns<_> = BaseNode::default().add_ons_builder().build();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
         .with_custom_provider::<BlockchainProvider<_>>()
         .with_components(build_components(config.chain.chain_id()).into_builder())
-        .with_add_ons(BaseNode::new(Default::default()).add_ons())
+        .with_add_ons(add_ons)
         .launch_with_fn(|builder| {
             let launcher = EngineNodeLauncher::new(
                 runtime.clone(),

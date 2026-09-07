@@ -37,8 +37,7 @@ use secp256k1::SecretKey;
 use tracing::{info, trace, warn};
 
 use crate::{
-    BlockReaderFor, DebugNodeConfig, DebugNodeLauncher, EngineNodeLauncher, LaunchNode, Node,
-    NodeBuiltComponents,
+    BlockReaderFor, DebugNodeConfig, DebugNodeLauncher, EngineNodeLauncher, LaunchNode,
     common::WithConfigs,
     components::ComponentBuilder,
     node::FullNode,
@@ -76,11 +75,6 @@ pub type RethFullAdapter<DB> =
 ///
 /// On launch the builder returns a fully type aware [`NodeHandle`] that has access to all the
 /// configured components and can interact with the node.
-///
-/// There are convenience functions for networks that come with a preset of types and components via
-/// the [`Node`] trait, implemented by Base’s node configuration.
-///
-/// The [`NodeBuilder::node`] function configures the node's types and components in one step.
 ///
 /// ## Components
 ///
@@ -275,23 +269,6 @@ where
     {
         NodeBuilderWithProvider::new(self.config, self.database, self.rocksdb_provider)
     }
-
-    /// Preconfigures the node with a specific node implementation.
-    ///
-    /// This is a convenience method that sets the node's types and components in one call.
-    pub fn node<N>(
-        self,
-        node: N,
-    ) -> NodeBuilderWithComponents<
-        RethFullAdapter<DB>,
-        NodeBuiltComponents<RethFullAdapter<DB>, N>,
-        N::AddOns,
-    >
-    where
-        N: Node<RethFullAdapter<DB>>,
-    {
-        self.with_provider().with_components(node.components_builder()).with_add_ons(node.add_ons())
-    }
 }
 
 /// A [`NodeBuilder`] with its launch context already configured.
@@ -351,58 +328,6 @@ where
             builder: self.builder.with_custom_provider(),
             task_executor: self.task_executor,
         }
-    }
-
-    /// Preconfigures the node with a specific node implementation.
-    ///
-    /// This is a convenience method that sets the node's types and components in one call.
-    pub fn node<N>(
-        self,
-        node: N,
-    ) -> WithLaunchContext<
-        NodeBuilderWithComponents<
-            RethFullAdapter<DB>,
-            NodeBuiltComponents<RethFullAdapter<DB>, N>,
-            N::AddOns,
-        >,
-    >
-    where
-        N: Node<RethFullAdapter<DB>>,
-    {
-        self.with_provider().with_components(node.components_builder()).with_add_ons(node.add_ons())
-    }
-
-    /// Launches a preconfigured [Node]
-    ///
-    /// This bootstraps the node internals, creates all the components with the given [Node]
-    ///
-    /// Returns a [`NodeHandle`](crate::NodeHandle) that can be used to interact with the node.
-    pub async fn launch_node<N>(
-        self,
-        node: N,
-    ) -> eyre::Result<
-        <EngineNodeLauncher as LaunchNode<
-            NodeBuilderWithComponents<
-                RethFullAdapter<DB>,
-                NodeBuiltComponents<RethFullAdapter<DB>, N>,
-                N::AddOns,
-            >,
-        >>::Node,
-    >
-    where
-        N: Node<RethFullAdapter<DB>>,
-        N::AddOns: RethRpcAddOns<
-            NodeAdapter<RethFullAdapter<DB>, NodeBuiltComponents<RethFullAdapter<DB>, N>>,
-        >,
-        EngineNodeLauncher: LaunchNode<
-            NodeBuilderWithComponents<
-                RethFullAdapter<DB>,
-                NodeBuiltComponents<RethFullAdapter<DB>, N>,
-                N::AddOns,
-            >,
-        >,
-    {
-        self.node(node).launch().await
     }
 }
 
@@ -587,7 +512,9 @@ where
     /// }
     ///
     /// let node = NodeBuilder::new(config)
-    ///     .node(BaseNode::default())
+    ///     .with_provider()
+    ///     .with_components(BaseNode::default().components().into_builder())
+    ///     .with_add_ons(BaseNode::default().add_ons_builder().build())
     ///     .extend_rpc_modules(|ctx| {
     ///         // Access node components, so they can used by the CustomApi
     ///         let pool = ctx.pool().clone();

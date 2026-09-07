@@ -284,23 +284,17 @@ pub type BaseNodeAddOns<N> = BaseAddOns<
 
 // Compatibility with Reth's generic node test harness.
 #[cfg(feature = "test-utils")]
-impl<N> reth_node_builder::Node<N> for BaseNode
-where
-    N: FullNodeTypes,
-{
-    type Pool = crate::BaseNodePool<N>;
-    type Network = reth_network::NetworkHandle;
-    type Consensus = Arc<base_execution_consensus::BaseBeaconConsensus>;
-    type AddOns = BaseNodeAddOns<N>;
-
-    fn components_builder(
-        &self,
-    ) -> reth_node_builder::ComponentBuilder<N, crate::BaseNodeComponents<N>> {
-        Self::components(self).into_builder()
-    }
-
-    fn add_ons(&self) -> Self::AddOns {
-        self.add_ons_builder().build()
+impl BaseNode {
+    /// Supplies Base components and add-ons for each node in an end-to-end test.
+    pub fn test_setup() -> (
+        reth_node_builder::ComponentBuilder<
+            reth_e2e_test_utils::TmpNodeAdapter,
+            crate::BaseNodeComponents<reth_e2e_test_utils::TmpNodeAdapter>,
+        >,
+        crate::BaseNodeAddOns<reth_e2e_test_utils::TmpNodeAdapter>,
+    ) {
+        let node = Self::default();
+        (node.components().into_builder(), node.add_ons_builder().build())
     }
 }
 

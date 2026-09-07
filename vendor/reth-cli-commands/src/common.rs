@@ -12,8 +12,7 @@ use reth_db::{DatabaseEnv, init_db, open_db_read_only};
 use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_evm::BaseEvmConfig;
-use reth_node_api::FullNodeTypesAdapter;
-use reth_node_builder::{Node, NodeTypesWithDBAdapter};
+use reth_node_builder::NodeTypesWithDBAdapter;
 use reth_node_core::{
     args::{DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs},
     dirs::{ChainPath, DataDirPath},
@@ -22,9 +21,7 @@ pub use reth_primitives_traits::header::HeaderMut;
 use reth_provider::{
     BalConfig, BalStoreHandle, InMemoryBalStore, ProviderFactory, StaticFileProviderFactory,
     StorageSettings,
-    providers::{
-        BlockchainProvider, RocksDBProvider, StaticFileProvider, StaticFileProviderBuilder,
-    },
+    providers::{RocksDBProvider, StaticFileProvider, StaticFileProviderBuilder},
 };
 use reth_stages::{Pipeline, PipelineTarget, sets::DefaultStages};
 use reth_static_file::StaticFileProducer;
@@ -293,21 +290,10 @@ impl AccessRights {
     }
 }
 
-/// Helper alias to satisfy `FullNodeTypes` bound on [`Node`] trait generic.
-type FullTypesAdapter =
-    FullNodeTypesAdapter<DatabaseEnv, BlockchainProvider<NodeTypesWithDBAdapter<DatabaseEnv>>>;
-
 /// Execution and consensus components used by offline commands.
 pub trait CliNodeTypes {
     /// Consensus used by offline validation commands.
     type Consensus: FullConsensus + Clone + Unpin + 'static;
-}
-
-impl<N> CliNodeTypes for N
-where
-    N: Node<FullTypesAdapter>,
-{
-    type Consensus = N::Consensus;
 }
 
 #[cfg(test)]

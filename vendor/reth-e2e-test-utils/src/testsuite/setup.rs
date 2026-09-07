@@ -1,6 +1,6 @@
 //! Test setup utilities for configuring the initial state.
 
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
@@ -10,7 +10,12 @@ use base_execution_chainspec::BaseChainSpec;
 use eyre::{Result, eyre};
 use reth_chainspec::ChainSpec;
 use reth_ethereum_primitives::Block;
-use reth_node_api::TreeConfig;
+use reth_network_api::test_utils::PeersHandleProvider;
+use reth_node_api::{FullNodeComponents, TreeConfig};
+use reth_node_builder::{
+    ComponentBuilder,
+    rpc::{EngineValidatorAddOn, RethRpcAddOns},
+};
 use reth_node_core::primitives::RecoveredBlock;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use revm::state::EvmState;
@@ -131,30 +136,38 @@ impl Setup {
     }
 
     /// Apply the setup to the environment
-    pub async fn apply<N>(&mut self, env: &mut Environment) -> Result<()>
+    pub async fn apply<C, AO>(
+        &mut self,
+        env: &mut Environment,
+        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter, C>, AO) + Send + Sync,
+    ) -> Result<()>
     where
-        N: Default
-            + reth_node_builder::Node<
-                crate::TmpNodeAdapter,
-                Network: reth_network_api::test_utils::PeersHandleProvider,
-                AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
-                            + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
+        C: Clone + Debug + Send + Sync + Unpin + 'static,
+        crate::Adapter<C>: FullNodeComponents<
+                DB = crate::TmpDB,
+                Provider = crate::TestProvider,
+                Network: PeersHandleProvider,
             >,
+        AO: RethRpcAddOns<crate::Adapter<C>> + EngineValidatorAddOn<crate::Adapter<C>> + 'static,
     {
         // Note: this future is quite large so we box it
-        Box::pin(self.apply_::<N>(env)).await
+        Box::pin(self.apply_(env, node_factory)).await
     }
 
     /// Apply the setup to the environment
-    async fn apply_<N>(&mut self, env: &mut Environment) -> Result<()>
+    async fn apply_<C, AO>(
+        &mut self,
+        env: &mut Environment,
+        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter, C>, AO) + Send + Sync,
+    ) -> Result<()>
     where
-        N: Default
-            + reth_node_builder::Node<
-                crate::TmpNodeAdapter,
-                Network: reth_network_api::test_utils::PeersHandleProvider,
-                AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
-                            + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
+        C: Clone + Debug + Send + Sync + Unpin + 'static,
+        crate::Adapter<C>: FullNodeComponents<
+                DB = crate::TmpDB,
+                Provider = crate::TestProvider,
+                Network: PeersHandleProvider,
             >,
+        AO: RethRpcAddOns<crate::Adapter<C>> + EngineValidatorAddOn<crate::Adapter<C>> + 'static,
     {
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;
@@ -185,7 +198,7 @@ impl Setup {
         .with_node_config_modifier(move |config| config.set_dev(is_dev))
         .with_connect_nodes(self.network.connect_nodes);
 
-        let result = builder.build::<N>().await;
+        let result = builder.build(node_factory).await;
 
         let mut node_clients = Vec::new();
         match result {

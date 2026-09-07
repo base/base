@@ -4,12 +4,8 @@ use std::{
     sync::Arc,
 };
 
-use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
-use reth_consensus::FullConsensus;
-use reth_db::DatabaseEnv;
 use reth_evm::BaseEvmConfig;
-use reth_network_api::FullNetwork;
 use reth_node_api::FullNodeComponents;
 // re-export the node api types
 pub use reth_node_api::FullNodeTypes;
@@ -22,36 +18,8 @@ use reth_provider::ChainSpecProvider;
 use reth_rpc_api::EngineApiClient;
 use reth_rpc_builder::{RpcServerHandle, auth::AuthServerHandle};
 use reth_tasks::TaskExecutor;
-use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
-use crate::{
-    NodeAdapter, NodeAddOns, NodeHandle, RethFullAdapter,
-    components::{ComponentBuilder, Components},
-    rpc::RethRpcAddOns,
-};
-
-/// A node with preconfigured components.
-///
-/// This can be used to configure the builder with a preset of components.
-pub trait Node<N: FullNodeTypes>: Clone + Debug + Send + Sync + Unpin + 'static {
-    /// Transaction pool used by this node.
-    type Pool: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>
-        + Unpin
-        + 'static;
-    /// Network handle used by this node.
-    type Network: FullNetwork;
-    /// Consensus validator used by this node.
-    type Consensus: FullConsensus + Clone + Unpin + 'static;
-
-    /// Exposes the customizable node add-on types.
-    type AddOns: NodeAddOns<NodeAdapter<N, NodeBuiltComponents<N, Self>>>;
-
-    /// Returns the component construction callback for the node.
-    fn components_builder(&self) -> ComponentBuilder<N, NodeBuiltComponents<N, Self>>;
-
-    /// Returns the node add-ons.
-    fn add_ons(&self) -> Self::AddOns;
-}
+use crate::{NodeAddOns, rpc::RethRpcAddOns};
 
 /// The launched node with all components including RPC handlers.
 ///
@@ -162,22 +130,3 @@ impl<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> DerefMut for FullNode<N
         &mut self.add_ons_handle
     }
 }
-
-/// Helper type alias to define [`FullNode`] for a given [`Node`].
-pub type FullNodeFor<N, DB = DatabaseEnv> = FullNode<
-    NodeAdapter<RethFullAdapter<DB>, NodeBuiltComponents<RethFullAdapter<DB>, N>>,
-    <N as Node<RethFullAdapter<DB>>>::AddOns,
->;
-
-/// Helper type alias to define [`NodeHandle`] for a given [`Node`].
-pub type NodeHandleFor<N, DB = DatabaseEnv> = NodeHandle<
-    NodeAdapter<RethFullAdapter<DB>, NodeBuiltComponents<RethFullAdapter<DB>, N>>,
-    <N as Node<RethFullAdapter<DB>>>::AddOns,
->;
-
-/// Concrete component container selected by a node preset.
-pub type NodeBuiltComponents<N, Preset> = Components<
-    <Preset as Node<N>>::Network,
-    <Preset as Node<N>>::Pool,
-    <Preset as Node<N>>::Consensus,
->;

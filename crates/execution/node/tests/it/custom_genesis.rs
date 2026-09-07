@@ -13,7 +13,7 @@ use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
     node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
-use reth_node_builder::{EngineNodeLauncher, Node, NodeBuilder, NodeConfig};
+use reth_node_builder::{EngineNodeLauncher, NodeBuilder, NodeConfig};
 use reth_node_core::args::DatadirArgs;
 use reth_provider::{
     BlockReaderIdExt, HeaderProvider, StageCheckpointReader, providers::BlockchainProvider,
@@ -51,11 +51,12 @@ async fn test_base_node_custom_genesis_number() {
             .db(),
     );
     let runtime = reth_tasks::Runtime::test();
+    let add_ons: base_node_core::BaseNodeAddOns<_> = BaseNode::default().add_ons_builder().build();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
         .with_custom_provider::<BlockchainProvider<_>>()
         .with_components(BaseNode::default().components().into_builder())
-        .with_add_ons(BaseNode::new(Default::default()).add_ons())
+        .with_add_ons(add_ons)
         .launch_with_fn(|builder| {
             let launcher = EngineNodeLauncher::new(
                 runtime.clone(),

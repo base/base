@@ -7,23 +7,23 @@ use base_execution_chainspec::BaseChainSpecBuilder;
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, payload::EthPayloadBuilderAttributes,
 };
-use reth_e2e_test_utils::{
-    NodeHelperType, TmpDB, transaction::TransactionTestContext, wallet::Wallet,
-};
-use reth_node_api::NodeTypesWithDBAdapter;
-use reth_provider::providers::BlockchainProvider;
+use reth_e2e_test_utils::{NodeHelperType, transaction::TransactionTestContext, wallet::Wallet};
 use tokio::sync::Mutex;
 
 use crate::BaseNode as OtherOpNode;
 
 /// Base Node Helper type
-pub type BaseNode = NodeHelperType<OtherOpNode, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>;
+pub type BaseNode = NodeHelperType<
+    crate::BaseNodeComponents<reth_e2e_test_utils::TmpNodeAdapter>,
+    crate::BaseNodeAddOns<reth_e2e_test_utils::TmpNodeAdapter>,
+>;
 
 /// Creates the initial setup with `num_nodes` of the node config, started and connected.
 pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<BaseNode>, Wallet)> {
     let genesis: Genesis =
         serde_json::from_str(include_str!("../tests/assets/genesis.json")).unwrap();
-    reth_e2e_test_utils::setup_engine::<OtherOpNode>(
+    reth_e2e_test_utils::setup_engine(
+        OtherOpNode::test_setup,
         num_nodes,
         Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build()),
         false,

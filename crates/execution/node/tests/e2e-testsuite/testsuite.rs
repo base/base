@@ -58,7 +58,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
         .expect("valid test payload attributes"),
     ));
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }
@@ -109,7 +109,7 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
         .expect("valid test payload attributes"),
     ));
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }

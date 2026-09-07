@@ -64,7 +64,7 @@ async fn test_engine_tree_fcu_canon_chain_insertion_e2e() -> Result<()> {
         // make the latest block canonical
         .with_action(MakeCanonical::new());
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }
@@ -94,7 +94,7 @@ async fn test_engine_tree_fcu_reorg_with_all_blocks_e2e() -> Result<()> {
         // perform FCU to the fork tip - this should make the fork canonical
         .with_action(ReorgTo::new_from_tag("fork_tip"));
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }
@@ -135,7 +135,7 @@ async fn test_engine_tree_valid_forks_with_older_canonical_head_e2e() -> Result<
         // switch to chain B via forkchoice update - this should become canonical
         .with_action(ReorgTo::new_from_tag("chain_b_tip"));
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }
@@ -183,7 +183,7 @@ async fn test_engine_tree_valid_and_invalid_forks_with_older_canonical_head_e2e(
         .with_action(UpdateBlockInfo::default())
         .with_action(AssertChainTip::new(18));
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }
@@ -207,7 +207,7 @@ async fn test_engine_tree_reorg_with_missing_ancestor_expecting_valid_e2e() -> R
         // FCU to the valid fork should work
         .with_action(ExpectFcuStatus::valid("valid_fork_tip"));
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     // attempting to build invalid chains fails properly
     let invalid_test = TestBuilder::new()
@@ -217,7 +217,7 @@ async fn test_engine_tree_reorg_with_missing_ancestor_expecting_valid_e2e() -> R
         // This should fail when trying to build subsequent blocks on the invalid block
         .with_action(ProduceInvalidBlocks::with_invalid_at(2, 0));
 
-    assert!(invalid_test.run::<BaseNode>().await.is_err());
+    assert!(invalid_test.run(BaseNode::test_setup).await.is_err());
 
     Ok(())
 }
@@ -267,7 +267,7 @@ async fn test_engine_tree_buffered_blocks_are_eventually_connected_e2e() -> Resu
         // verify both nodes eventually have the same chain tip
         .with_action(CompareNodeChainTips::expect_same(0, 1));
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }
@@ -295,7 +295,7 @@ async fn test_engine_tree_fcu_extends_canon_chain_e2e() -> Result<()> {
         // now make the chain tip canonical via FCU
         .with_action(MakeCanonical::new());
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }
@@ -355,7 +355,7 @@ async fn test_engine_tree_live_sync_transition_eventually_canonical_e2e() -> Res
         // Verify both nodes end up with the same canonical chain
         .with_action(CompareNodeChainTips::expect_same(0, 1));
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }
@@ -376,7 +376,7 @@ async fn test_engine_tree_fcu_canon_chain_insertion_v2_e2e() -> Result<()> {
         .with_action(ProduceBlocks::new(3))
         .with_action(MakeCanonical::new());
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }
@@ -405,7 +405,7 @@ async fn test_engine_tree_fcu_reorg_with_all_blocks_v2_e2e() -> Result<()> {
         .with_action(CaptureBlock::new("fork_tip"))
         .with_action(ReorgTo::new_from_tag("fork_tip"));
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }
@@ -424,7 +424,7 @@ async fn test_engine_tree_fcu_extends_canon_chain_v2_e2e() -> Result<()> {
         .with_action(ReorgTo::new_from_tag("target_block"))
         .with_action(MakeCanonical::new());
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }
@@ -495,6 +495,6 @@ fn disk_reorg_test() -> TestBuilder {
 #[tokio::test]
 async fn test_engine_tree_disk_reorg_v2_e2e() -> Result<()> {
     reth_tracing::init_test_tracing();
-    disk_reorg_test().run::<BaseNode>().await?;
+    disk_reorg_test().run(BaseNode::test_setup).await?;
     Ok(())
 }

@@ -73,7 +73,7 @@ async fn test_fcu_to_canonical_ancestor_around_finalized() -> Result<()> {
         .with_action(MakeCanonical::new())
         .with_action(AssertChainTip::new(9));
 
-    test.run::<BaseNode>().await?;
+    test.run(BaseNode::test_setup).await?;
 
     Ok(())
 }

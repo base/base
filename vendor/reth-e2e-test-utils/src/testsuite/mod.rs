@@ -1,12 +1,18 @@
 //! Utilities for running e2e tests against a node or a network of nodes.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
 use alloy_primitives::B256;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3;
 use eyre::Result;
 use jsonrpsee::http_client::HttpClient;
+use reth_network_api::test_utils::PeersHandleProvider;
+use reth_node_api::FullNodeComponents;
+use reth_node_builder::{
+    ComponentBuilder,
+    rpc::{EngineValidatorAddOn, RethRpcAddOns},
+};
 use reth_payload_builder::PayloadId;
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 
@@ -73,7 +79,7 @@ impl NodeClient {
     }
 }
 
-impl std::fmt::Debug for NodeClient {
+impl Debug for NodeClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NodeClient")
             .field("rpc", &self.rpc)
@@ -137,7 +143,7 @@ impl Default for NodeState {
     }
 }
 
-impl std::fmt::Debug for NodeState {
+impl Debug for NodeState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NodeState")
             .field("current_block_info", &self.current_block_info)
@@ -302,20 +308,23 @@ impl TestBuilder {
     }
 
     /// Run the test scenario
-    pub async fn run<N>(mut self) -> Result<()>
+    pub async fn run<C, AO>(
+        mut self,
+        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter, C>, AO) + Send + Sync,
+    ) -> Result<()>
     where
-        N: Default
-            + reth_node_builder::Node<
-                crate::TmpNodeAdapter,
-                Network: reth_network_api::test_utils::PeersHandleProvider,
-                AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
-                            + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
+        C: Clone + Debug + Send + Sync + Unpin + 'static,
+        crate::Adapter<C>: FullNodeComponents<
+                DB = crate::TmpDB,
+                Provider = crate::TestProvider,
+                Network: PeersHandleProvider,
             >,
+        AO: RethRpcAddOns<crate::Adapter<C>> + EngineValidatorAddOn<crate::Adapter<C>> + 'static,
     {
         let mut setup = self.setup.take();
 
         if let Some(ref mut s) = setup {
-            s.apply::<N>(&mut self.env).await?;
+            s.apply(&mut self.env, node_factory).await?;
         }
 
         let actions = std::mem::take(&mut self.actions);

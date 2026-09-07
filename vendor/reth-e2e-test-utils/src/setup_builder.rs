@@ -3,13 +3,16 @@
 //! This module provides a flexible builder API for setting up test nodes with custom
 //! configurations through closures that modify `NodeConfig` and `TreeConfig`.
 
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use futures_util::future::TryJoinAll;
+use reth_network_api::test_utils::PeersHandleProvider;
+use reth_node_api::FullNodeComponents;
 use reth_node_builder::{
-    EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle, NodeTypesWithDBAdapter,
+    ComponentBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle,
+    rpc::{EngineValidatorAddOn, RethRpcAddOns},
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use reth_payload_primitives::BasePayloadBuilderAttributes;
@@ -19,7 +22,7 @@ use reth_rpc_server_types::RpcModuleSelection;
 use reth_tasks::Runtime;
 use tracing::{Instrument, Level, span};
 
-use crate::{NodeHelperType, TmpDB, node::NodeTestContext, wallet::Wallet};
+use crate::{NodeHelperType, node::NodeTestContext, wallet::Wallet};
 
 /// Type alias for tree config modifier closure
 type TreeConfigModifier =
@@ -95,20 +98,19 @@ where
     }
 
     /// Builds and launches the test nodes.
-    pub async fn build<
-        N: Default
-            + reth_node_builder::Node<
-                crate::TmpNodeAdapter,
-                Network: reth_network_api::test_utils::PeersHandleProvider,
-                AddOns: reth_node_builder::rpc::RethRpcAddOns<crate::Adapter<N>>
-                            + reth_node_builder::rpc::EngineValidatorAddOn<crate::Adapter<N>>,
-            >,
-    >(
+    pub async fn build<C, AO>(
         self,
-    ) -> eyre::Result<(
-        Vec<NodeHelperType<N, BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>>>,
-        Wallet,
-    )> {
+        node_factory: impl Fn() -> (ComponentBuilder<crate::TmpNodeAdapter, C>, AO) + Send + Sync,
+    ) -> eyre::Result<(Vec<NodeHelperType<C, AO>>, Wallet)>
+    where
+        C: Clone + Debug + Send + Sync + Unpin + 'static,
+        crate::Adapter<C>: FullNodeComponents<
+                DB = crate::TmpDB,
+                Provider = crate::TestProvider,
+                Network: PeersHandleProvider,
+            >,
+        AO: RethRpcAddOns<crate::Adapter<C>> + EngineValidatorAddOn<crate::Adapter<C>> + 'static,
+    {
         let runtime = Runtime::test();
 
         let network_config = NetworkArgs {
@@ -146,12 +148,12 @@ where
                 };
 
                 let span = span!(Level::INFO, "node", idx);
-                let node = N::default();
+                let (components_builder, add_ons) = node_factory();
                 let NodeHandle { node, node_exit_future: _ } = NodeBuilder::new(node_config)
                     .testing_node(runtime.clone())
                     .with_custom_provider::<BlockchainProvider<_>>()
-                    .with_components(node.components_builder())
-                    .with_add_ons(node.add_ons())
+                    .with_components(components_builder)
+                    .with_add_ons(add_ons)
                     .launch_with_fn(|builder| {
                         let launcher = EngineNodeLauncher::new(
                             builder.task_executor().clone(),
@@ -196,7 +198,7 @@ where
     }
 }
 
-impl<F> std::fmt::Debug for E2ETestSetupBuilder<F>
+impl<F> Debug for E2ETestSetupBuilder<F>
 where
     F: Fn(u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> + Send + Sync + Copy + 'static,
 {
