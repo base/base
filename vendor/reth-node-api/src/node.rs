@@ -4,7 +4,6 @@ use std::{fmt::Debug, future::Future, marker::PhantomData};
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_consensus::BaseTxEnvelope;
-use reth_basic_payload_builder::PayloadBuilder;
 use reth_consensus::FullConsensus;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
@@ -13,7 +12,6 @@ use reth_network_api::FullNetwork;
 use reth_node_core::node_config::NodeConfig;
 use reth_node_types::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_payload_builder::PayloadBuilderHandle;
-use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use reth_provider::FullProvider;
 use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
@@ -45,23 +43,6 @@ where
     type Types = Types;
     type DB = DB;
     type Provider = Provider;
-}
-
-/// Helper trait to bound [`PayloadBuilder`] to the node's engine types.
-pub trait PayloadBuilderFor<N: NodeTypes>:
-    PayloadBuilder<
-        Attributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        BuiltPayload = BaseBuiltPayload,
-    >
-{
-}
-
-impl<T, N: NodeTypes> PayloadBuilderFor<N> for T where
-    T: PayloadBuilder<
-            Attributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
-            BuiltPayload = BaseBuiltPayload,
-        >
-{
 }
 
 /// Encapsulates all types and components of the node.

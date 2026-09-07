@@ -2,10 +2,13 @@
 
 use std::future::Future;
 
-use reth_basic_payload_builder::{BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig};
+use base_common_consensus::BaseTxEnvelope;
+use reth_basic_payload_builder::{
+    BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig, PayloadBuilder,
+};
 use reth_chain_state::CanonStateSubscriptions;
-use reth_node_api::PayloadBuilderFor;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService, PayloadServiceCommand};
+use reth_payload_primitives::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use reth_transaction_pool::TransactionPool;
 use tokio::sync::{broadcast, mpsc};
 use tracing::warn;
@@ -50,7 +53,11 @@ pub trait PayloadBuilderBuilder<Node: FullNodeTypes, Pool: TransactionPool, EvmC
     Send + Sized
 {
     /// Payload builder implementation.
-    type PayloadBuilder: PayloadBuilderFor<Node::Types> + Unpin + 'static;
+    type PayloadBuilder: PayloadBuilder<
+            Attributes = BasePayloadBuilderAttributes<BaseTxEnvelope>,
+            BuiltPayload = BaseBuiltPayload,
+        > + Unpin
+        + 'static;
 
     /// Spawns the payload service and returns the handle to it.
     ///
