@@ -10,7 +10,7 @@
 use std::task::{Context, Poll, ready};
 
 use futures::FutureExt;
-use reth_node_types::NodeTypesWithDB;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_stages_api::{ControlFlow, Pipeline, PipelineError, PipelineTarget, PipelineWithResult};
 use reth_tasks::Runtime;
 use tokio::sync::oneshot;
@@ -79,19 +79,19 @@ pub enum BackfillEvent {
 
 /// Pipeline sync.
 #[derive(Debug)]
-pub struct PipelineSync<N: NodeTypesWithDB> {
+pub struct PipelineSync<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
     /// The type that can spawn the pipeline task.
     pipeline_task_spawner: Runtime,
     /// The current state of the pipeline.
     /// The pipeline is used for large ranges.
-    pipeline_state: PipelineState<N>,
+    pipeline_state: PipelineState<DB>,
     /// Pending target block for the pipeline to sync
     pending_pipeline_target: Option<PipelineTarget>,
 }
 
-impl<N: NodeTypesWithDB> PipelineSync<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> PipelineSync<DB> {
     /// Create a new instance.
-    pub fn new(pipeline: Pipeline<N>, pipeline_task_spawner: Runtime) -> Self {
+    pub fn new(pipeline: Pipeline<DB>, pipeline_task_spawner: Runtime) -> Self {
         Self {
             pipeline_task_spawner,
             pipeline_state: PipelineState::Idle(Some(Box::new(pipeline))),
@@ -178,7 +178,7 @@ impl<N: NodeTypesWithDB> PipelineSync<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BackfillSync for PipelineSync<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BackfillSync for PipelineSync<DB> {
     fn on_action(&mut self, event: BackfillAction) {
         match event {
             BackfillAction::Start(target) => self.set_pipeline_sync_target(target),
@@ -213,14 +213,14 @@ impl<N: NodeTypesWithDB> BackfillSync for PipelineSync<N> {
 /// blockchain tree any messages that would result in database writes, since it would result in a
 /// deadlock.
 #[derive(Debug)]
-enum PipelineState<N: NodeTypesWithDB> {
+enum PipelineState<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
     /// Pipeline is idle.
-    Idle(Option<Box<Pipeline<N>>>),
+    Idle(Option<Box<Pipeline<DB>>>),
     /// Pipeline is running and waiting for a response
-    Running(oneshot::Receiver<PipelineWithResult<N>>),
+    Running(oneshot::Receiver<PipelineWithResult<DB>>),
 }
 
-impl<N: NodeTypesWithDB> PipelineState<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> PipelineState<DB> {
     /// Returns `true` if the state matches idle.
     const fn is_idle(&self) -> bool {
         matches!(self, Self::Idle(_))
@@ -239,7 +239,7 @@ mod tests {
     use reth_chainspec::{ChainSpecBuilder, MAINNET};
     use reth_network_p2p::test_utils::TestFullBlockClient;
     use reth_primitives_traits::SealedHeader;
-    use reth_provider::test_utils::MockNodeTypesWithDB;
+    use reth_provider::test_utils::MockNodeDatabase;
     use reth_stages::ExecOutput;
     use reth_stages_api::StageCheckpoint;
     use reth_tasks::Runtime;
@@ -248,7 +248,7 @@ mod tests {
     use crate::test_utils::{TestPipelineBuilder, insert_headers_into_client};
 
     struct TestHarness {
-        pipeline_sync: PipelineSync<MockNodeTypesWithDB>,
+        pipeline_sync: PipelineSync<MockNodeDatabase>,
         tip: B256,
     }
 

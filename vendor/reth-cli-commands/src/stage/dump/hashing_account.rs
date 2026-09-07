@@ -1,9 +1,10 @@
 use alloy_primitives::BlockNumber;
 use eyre::Result;
 use reth_db::DatabaseEnv;
-use reth_db_api::{database::Database, table::TableImporter, tables};
+use reth_db_api::{
+    database::Database, database_metrics::DatabaseMetrics, table::TableImporter, tables,
+};
 use reth_db_common::DbTool;
-use reth_node_api::NodeTypesWithDB;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{
     DatabaseProviderFactory, ProviderFactory,
@@ -14,8 +15,8 @@ use tracing::info;
 
 use super::setup;
 
-pub(crate) async fn dump_hashing_account_stage<N: NodeTypesWithDB<DB = DatabaseEnv>>(
-    db_tool: &DbTool<N>,
+pub(crate) async fn dump_hashing_account_stage(
+    db_tool: &DbTool<DatabaseEnv>,
     from: BlockNumber,
     to: BlockNumber,
     output_datadir: ChainPath<DataDirPath>,
@@ -37,7 +38,7 @@ pub(crate) async fn dump_hashing_account_stage<N: NodeTypesWithDB<DB = DatabaseE
 
     if should_run {
         dry_run(
-            ProviderFactory::<N>::new(
+            ProviderFactory::<DatabaseEnv>::new(
                 output_db,
                 db_tool.chain(),
                 StaticFileProvider::read_write(output_datadir.static_files())?,
@@ -53,8 +54,8 @@ pub(crate) async fn dump_hashing_account_stage<N: NodeTypesWithDB<DB = DatabaseE
 }
 
 /// Dry-run an unwind to FROM block and copy the necessary table data to the new database.
-fn unwind_and_copy<N: NodeTypesWithDB>(
-    db_tool: &DbTool<N>,
+fn unwind_and_copy<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    db_tool: &DbTool<DB>,
     from: u64,
     tip_block_number: u64,
     output_db: &DatabaseEnv,
@@ -78,8 +79,8 @@ fn unwind_and_copy<N: NodeTypesWithDB>(
 }
 
 /// Try to re-execute the stage straight away
-fn dry_run<N: NodeTypesWithDB>(
-    output_provider_factory: ProviderFactory<N>,
+fn dry_run<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    output_provider_factory: ProviderFactory<DB>,
     to: u64,
     from: u64,
 ) -> eyre::Result<()> {

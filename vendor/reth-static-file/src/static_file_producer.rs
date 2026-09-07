@@ -232,7 +232,7 @@ mod tests {
     use assert_matches::assert_matches;
     use reth_provider::{
         ProviderError, ProviderFactory, StaticFileProviderFactory, providers::StaticFileWriter,
-        test_utils::MockNodeTypesWithDB,
+        test_utils::MockNodeDatabase,
     };
     use reth_prune_types::PruneModes;
     use reth_stages::test_utils::{StorageKind, TestStageDB};
@@ -244,7 +244,7 @@ mod tests {
         StaticFileProducer, StaticFileProducerInner, StaticFileTargets,
     };
 
-    fn setup() -> (ProviderFactory<MockNodeTypesWithDB>, TempDir) {
+    fn setup() -> (ProviderFactory<MockNodeDatabase>, TempDir) {
         let mut rng = generators::rng();
         let db = TestStageDB::default();
 

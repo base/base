@@ -9,7 +9,7 @@ use reth_network_p2p::bodies::response::BlockResponse;
 use reth_primitives_traits::{Block, SealedBlock, SealedHeader};
 use reth_provider::{
     ProviderFactory, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
-    test_utils::MockNodeTypesWithDB,
+    test_utils::MockNodeDatabase,
 };
 
 pub(crate) fn zip_blocks<'a, B: Block>(
@@ -44,7 +44,7 @@ pub(crate) fn create_raw_bodies(
 
 #[inline]
 pub(crate) fn insert_headers(
-    factory: &ProviderFactory<MockNodeTypesWithDB>,
+    factory: &ProviderFactory<MockNodeDatabase>,
     headers: &[SealedHeader],
 ) {
     let provider_rw = factory.provider_rw().expect("failed to create provider");

@@ -16,9 +16,7 @@ use reth_engine_util::EngineMessageStreamExt;
 use reth_exex::ExExManagerHandle;
 use reth_network::{NetworkSyncUpdater, SyncState, types::BlockRangeUpdate};
 use reth_network_api::BlockDownloaderProvider;
-use reth_node_api::{
-    BuiltPayload, ConsensusEngineHandle, FullNodeComponents, FullNodeTypes, NodeTypesWithDBAdapter,
-};
+use reth_node_api::{BuiltPayload, ConsensusEngineHandle, FullNodeComponents, FullNodeTypes};
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
@@ -70,7 +68,7 @@ impl EngineNodeLauncher {
     ) -> eyre::Result<NodeHandle<NodeAdapter<T, CB>, AO>>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-        T: FullNodeTypes<Provider = BlockchainProvider<NodeTypesWithDBAdapter<DB>>, DB = DB>,
+        T: FullNodeTypes<Provider = BlockchainProvider<DB>, DB = DB>,
         CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
         NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
         AO: RethRpcAddOns<NodeAdapter<T, CB>>,
@@ -102,7 +100,7 @@ impl EngineNodeLauncher {
             // ensure certain settings take effect
             .with_adjusted_configs()
             // Create the provider factory with the shared overlay manager
-            .with_provider_factory::<_>(
+            .with_provider_factory(
                 overlay_manager.clone(),
                 rocksdb_provider,
                 disabled_stages,
@@ -433,7 +431,7 @@ impl EngineNodeLauncher {
 
 impl<DB, T, CB, AO> LaunchNode<NodeBuilderWithComponents<T, CB, AO>> for EngineNodeLauncher
 where
-    T: FullNodeTypes<DB = DB, Provider = BlockchainProvider<NodeTypesWithDBAdapter<DB>>>,
+    T: FullNodeTypes<DB = DB, Provider = BlockchainProvider<DB>>,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
     NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,

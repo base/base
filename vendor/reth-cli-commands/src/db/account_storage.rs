@@ -4,9 +4,11 @@ use alloy_primitives::{Address, keccak256};
 use clap::Parser;
 use human_bytes::human_bytes;
 use reth_codecs::Compact;
-use reth_db_api::{cursor::DbDupCursorRO, database::Database, tables, transaction::DbTx};
+use reth_db_api::{
+    cursor::DbDupCursorRO, database::Database, database_metrics::DatabaseMetrics, tables,
+    transaction::DbTx,
+};
 use reth_db_common::DbTool;
-use reth_node_builder::NodeTypesWithDB;
 use tracing::info;
 
 /// Log progress every 5 seconds
@@ -21,7 +23,10 @@ pub struct Command {
 
 impl Command {
     /// Execute `db account-storage` command
-    pub fn execute<N: NodeTypesWithDB>(self, tool: &DbTool<N>) -> eyre::Result<()> {
+    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+        self,
+        tool: &DbTool<DB>,
+    ) -> eyre::Result<()> {
         let address = self.address;
 
         let (slot_count, storage_size) = {

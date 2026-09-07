@@ -10,7 +10,7 @@ use std::{
 use alloy_primitives::{B256, BlockNumber};
 pub use event::*;
 use futures_util::Future;
-use reth_node_types::NodeTypesWithDB;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_primitives_traits::constants::BEACON_CONSENSUS_REORG_UNWIND_DEPTH;
 use reth_provider::{
     BlockHashReader, BlockNumReader, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
@@ -70,14 +70,14 @@ pub type PipelineWithResult<N> = (Pipeline<N>, Result<ControlFlow, PipelineError
 /// # Defaults
 ///
 /// The [`DefaultStages`](crate::sets::DefaultStages) are used to fully sync reth.
-pub struct Pipeline<N: NodeTypesWithDB> {
+pub struct Pipeline<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
     /// Provider factory.
-    provider_factory: ProviderFactory<N>,
+    provider_factory: ProviderFactory<DB>,
     /// All configured stages in the order they will be executed.
-    stages: Vec<BoxedStage<<ProviderFactory<N> as DatabaseProviderFactory>::ProviderRW>>,
+    stages: Vec<BoxedStage<<ProviderFactory<DB> as DatabaseProviderFactory>::ProviderRW>>,
     /// The maximum block number to sync to.
     max_block: Option<BlockNumber>,
-    static_file_producer: StaticFileProducer<ProviderFactory<N>>,
+    static_file_producer: StaticFileProducer<ProviderFactory<DB>>,
     /// Sender for events the pipeline emits.
     event_sender: EventSender<PipelineEvent>,
     /// Keeps track of the progress of the pipeline.
@@ -98,9 +98,9 @@ pub struct Pipeline<N: NodeTypesWithDB> {
     detached_head_attempts: u64,
 }
 
-impl<N: NodeTypesWithDB> Pipeline<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Pipeline<DB> {
     /// Construct a pipeline using a [`PipelineBuilder`].
-    pub fn builder() -> PipelineBuilder<<ProviderFactory<N> as DatabaseProviderFactory>::ProviderRW>
+    pub fn builder() -> PipelineBuilder<<ProviderFactory<DB> as DatabaseProviderFactory>::ProviderRW>
     {
         PipelineBuilder::default()
     }
@@ -128,12 +128,12 @@ impl<N: NodeTypesWithDB> Pipeline<N> {
     pub fn stage(
         &mut self,
         idx: usize,
-    ) -> &mut dyn Stage<<ProviderFactory<N> as DatabaseProviderFactory>::ProviderRW> {
+    ) -> &mut dyn Stage<<ProviderFactory<DB> as DatabaseProviderFactory>::ProviderRW> {
         &mut self.stages[idx]
     }
 }
 
-impl<N: NodeTypesWithDB> Pipeline<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Pipeline<DB> {
     /// Registers progress metrics for each registered stage
     pub fn register_metrics(&mut self) -> Result<(), PipelineError> {
         let Some(metrics_tx) = &mut self.metrics_tx else { return Ok(()) };
@@ -154,7 +154,7 @@ impl<N: NodeTypesWithDB> Pipeline<N> {
     /// Consume the pipeline and run it until it reaches the provided tip, if set. Return the
     /// pipeline and its result as a future.
     #[track_caller]
-    pub fn run_as_fut(mut self, target: Option<PipelineTarget>) -> PipelineFut<N> {
+    pub fn run_as_fut(mut self, target: Option<PipelineTarget>) -> PipelineFut<DB> {
         let _ = self.register_metrics();
         Box::pin(async move {
             // NOTE: the tip should only be None if we are in continuous sync mode.
@@ -612,7 +612,7 @@ impl<N: NodeTypesWithDB> Pipeline<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> std::fmt::Debug for Pipeline<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> std::fmt::Debug for Pipeline<DB> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Pipeline")
             .field("stages", &self.stages.iter().map(|stage| stage.id()).collect::<Vec<StageId>>())
@@ -630,7 +630,7 @@ mod tests {
     use assert_matches::assert_matches;
     use reth_consensus::ConsensusError;
     use reth_errors::ProviderError;
-    use reth_provider::test_utils::{MockNodeTypesWithDB, create_test_provider_factory};
+    use reth_provider::test_utils::{MockNodeDatabase, create_test_provider_factory};
     use reth_prune::PruneModes;
     use reth_testing_utils::generators::{self, random_block_with_parent};
     use tokio_stream::StreamExt;
@@ -680,7 +680,7 @@ mod tests {
         let (stage_b, post_execute_commit_counter_b) = stage_b.with_post_execute_commit_counter();
         let (stage_b, post_unwind_commit_counter_b) = stage_b.with_post_unwind_commit_counter();
 
-        let mut pipeline = Pipeline::<MockNodeTypesWithDB>::builder()
+        let mut pipeline = Pipeline::<MockNodeDatabase>::builder()
             .add_stage(stage_a)
             .add_stage(stage_b)
             .with_max_block(10)
@@ -766,7 +766,7 @@ mod tests {
         let (stage_c, post_execute_commit_counter_c) = stage_c.with_post_execute_commit_counter();
         let (stage_c, post_unwind_commit_counter_c) = stage_c.with_post_unwind_commit_counter();
 
-        let mut pipeline = Pipeline::<MockNodeTypesWithDB>::builder()
+        let mut pipeline = Pipeline::<MockNodeDatabase>::builder()
             .add_stage(stage_a)
             .add_stage(stage_b)
             .add_stage(stage_c)
@@ -897,7 +897,7 @@ mod tests {
     async fn unwind_pipeline_with_intermediate_progress() {
         let provider_factory = create_test_provider_factory();
 
-        let mut pipeline = Pipeline::<MockNodeTypesWithDB>::builder()
+        let mut pipeline = Pipeline::<MockNodeDatabase>::builder()
             .add_stage(
                 TestStage::new(StageId::Other("A"))
                     .add_exec(Ok(ExecOutput { checkpoint: StageCheckpoint::new(100), done: true }))
@@ -997,7 +997,7 @@ mod tests {
     async fn run_pipeline_with_unwind() {
         let provider_factory = create_test_provider_factory();
 
-        let mut pipeline = Pipeline::<MockNodeTypesWithDB>::builder()
+        let mut pipeline = Pipeline::<MockNodeDatabase>::builder()
             .add_stage(
                 TestStage::new(StageId::Other("A"))
                     .add_exec(Ok(ExecOutput { checkpoint: StageCheckpoint::new(10), done: true }))
@@ -1118,7 +1118,7 @@ mod tests {
     async fn pipeline_error_handling() {
         // Non-fatal
         let provider_factory = create_test_provider_factory();
-        let mut pipeline = Pipeline::<MockNodeTypesWithDB>::builder()
+        let mut pipeline = Pipeline::<MockNodeDatabase>::builder()
             .add_stage(
                 TestStage::new(StageId::Other("NonFatal"))
                     .add_exec(Err(StageError::Recoverable(Box::new(std::fmt::Error))))
@@ -1134,7 +1134,7 @@ mod tests {
 
         // Fatal
         let provider_factory = create_test_provider_factory();
-        let mut pipeline = Pipeline::<MockNodeTypesWithDB>::builder()
+        let mut pipeline = Pipeline::<MockNodeDatabase>::builder()
             .add_stage(TestStage::new(StageId::Other("Fatal")).add_exec(Err(
                 StageError::DatabaseIntegrity(ProviderError::BlockBodyIndicesNotFound(5)),
             )))

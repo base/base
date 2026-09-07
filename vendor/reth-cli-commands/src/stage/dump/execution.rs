@@ -4,11 +4,11 @@ use base_common_consensus::BaseTxEnvelope;
 use reth_consensus::{FullConsensus, noop::NoopConsensus};
 use reth_db::DatabaseEnv;
 use reth_db_api::{
-    cursor::DbCursorRO, database::Database, table::TableImporter, tables, transaction::DbTx,
+    cursor::DbCursorRO, database::Database, database_metrics::DatabaseMetrics,
+    table::TableImporter, tables, transaction::DbTx,
 };
 use reth_db_common::DbTool;
 use reth_evm::BaseEvmConfig;
-use reth_node_api::NodeTypesWithDB;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{
     DatabaseProviderFactory, ProviderFactory,
@@ -20,8 +20,8 @@ use tracing::info;
 use super::setup;
 
 #[expect(clippy::too_many_arguments)]
-pub(crate) async fn dump_execution_stage<N, C>(
-    db_tool: &DbTool<N>,
+pub(crate) async fn dump_execution_stage<C>(
+    db_tool: &DbTool<DatabaseEnv>,
     from: u64,
     to: u64,
     output_datadir: ChainPath<DataDirPath>,
@@ -31,7 +31,6 @@ pub(crate) async fn dump_execution_stage<N, C>(
     runtime: reth_tasks::Runtime,
 ) -> eyre::Result<()>
 where
-    N: NodeTypesWithDB<DB = DatabaseEnv>,
     C: FullConsensus + 'static,
 {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
@@ -42,7 +41,7 @@ where
 
     if should_run {
         dry_run(
-            ProviderFactory::<N>::new(
+            ProviderFactory::<DatabaseEnv>::new(
                 output_db,
                 db_tool.chain(),
                 StaticFileProvider::read_write(output_datadir.static_files())?,
@@ -60,9 +59,9 @@ where
 }
 
 /// Imports all the tables that can be copied over a range.
-fn import_tables_with_range<N: NodeTypesWithDB>(
+fn import_tables_with_range<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
     output_db: &DatabaseEnv,
-    db_tool: &DbTool<N>,
+    db_tool: &DbTool<DB>,
     from: u64,
     to: u64,
 ) -> eyre::Result<()> {
@@ -133,8 +132,8 @@ fn import_tables_with_range<N: NodeTypesWithDB>(
 /// Dry-run an unwind to FROM block, so we can get the `PlainStorageState` and
 /// `PlainAccountState` safely. There might be some state dependency from an address
 /// which hasn't been changed in the given range.
-fn unwind_and_copy<N: NodeTypesWithDB>(
-    db_tool: &DbTool<N>,
+fn unwind_and_copy<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    db_tool: &DbTool<DB>,
     from: u64,
     tip_block_number: u64,
     output_db: &DatabaseEnv,
@@ -164,15 +163,15 @@ fn unwind_and_copy<N: NodeTypesWithDB>(
 }
 
 /// Try to re-execute the stage without committing
-fn dry_run<N, C>(
-    output_provider_factory: ProviderFactory<N>,
+fn dry_run<DB, C>(
+    output_provider_factory: ProviderFactory<DB>,
     to: u64,
     from: u64,
     evm_config: BaseEvmConfig,
     consensus: C,
 ) -> eyre::Result<()>
 where
-    N: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     C: FullConsensus + 'static,
 {
     info!(target: "reth::cli", "Executing stage. [dry-run]");

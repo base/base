@@ -130,7 +130,6 @@ where
 /// ```
 /// use futures::FutureExt;
 /// use reth_db::test_utils::create_test_rw_db;
-/// use reth_node_api::NodeTypesWithDBAdapter;
 /// use reth_node_builder::{NodeBuilder, NodeConfig};
 /// use base_execution_chainspec::BaseChainSpec;
 /// use base_execution_exex::BaseProofsExEx;
@@ -167,7 +166,7 @@ where
 /// // Set this based on your configuration or CLI args
 /// let _builder = NodeBuilder::new(config)
 ///     .with_database(db)
-///     .with_custom_provider::<BlockchainProvider<NodeTypesWithDBAdapter<_>>>()
+///     .with_custom_provider::<BlockchainProvider<_>>()
 ///     .with_components(base_node.components().into_builder())
 ///     .install_exex("proofs-history", move |exex_context| async move {
 ///         Ok(BaseProofsExEx::builder(exex_context, storage_exec)

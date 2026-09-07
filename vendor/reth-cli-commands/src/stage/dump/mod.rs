@@ -6,11 +6,10 @@ use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_db::{DatabaseEnv, init_db, mdbx::DatabaseArguments};
 use reth_db_api::{
-    cursor::DbCursorRO, database::Database, models::ClientVersion, table::TableImporter, tables,
-    transaction::DbTx,
+    cursor::DbCursorRO, database::Database, database_metrics::DatabaseMetrics,
+    models::ClientVersion, table::TableImporter, tables, transaction::DbTx,
 };
 use reth_db_common::DbTool;
-use reth_node_builder::NodeTypesWithDB;
 use reth_node_core::{
     args::DatadirArgs,
     dirs::{DataDirPath, PlatformPath},
@@ -142,11 +141,11 @@ impl<C: ChainSpecParser> Command<C> {
 
 /// Sets up the database and initial state on [`tables::BlockBodyIndices`]. Also returns the tip
 /// block number.
-pub(crate) fn setup<N: NodeTypesWithDB>(
+pub(crate) fn setup<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
     from: u64,
     to: u64,
     output_db: &PathBuf,
-    db_tool: &DbTool<N>,
+    db_tool: &DbTool<DB>,
 ) -> eyre::Result<(DatabaseEnv, u64)> {
     assert!(from < to, "FROM block should be lower than TO block.");
 

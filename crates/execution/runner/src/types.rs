@@ -1,9 +1,7 @@
 //! Type aliases for the Base node builder.
 
 use reth_db::DatabaseEnv;
-use reth_node_builder::{
-    FullNodeTypesAdapter, NodeBuilder, NodeHandle, NodeTypesWithDBAdapter, WithLaunchContext,
-};
+use reth_node_builder::{FullNodeTypesAdapter, NodeBuilder, NodeHandle, WithLaunchContext};
 use reth_provider::providers::BlockchainProvider;
 
 use crate::{BaseAddOns, BaseNodeAdapter};
@@ -19,7 +17,7 @@ pub type BaseNodeAddOns = BaseAddOns<BaseNodeAdapter>;
 pub type BaseNodeHandle = NodeHandle<BaseNodeAdapter, BaseNodeAddOns>;
 
 /// A [`BlockchainProvider`] instance.
-pub type BaseProvider = BlockchainProvider<NodeTypesWithDBAdapter<DatabaseEnv>>;
+pub type BaseProvider = BlockchainProvider<DatabaseEnv>;
 
 /// Convenience alias for the Base node builder type.
 pub type BaseNodeBuilder = WithLaunchContext<NodeBuilder<DatabaseEnv>>;

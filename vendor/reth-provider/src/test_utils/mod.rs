@@ -6,8 +6,8 @@ use alloy_primitives::B256;
 use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
 use reth_db::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_errors::ProviderResult;
-use reth_node_types::{NodeTypesWithDB, NodeTypesWithDBAdapter};
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_trie::StateRoot;
 use reth_trie_db::DatabaseStateRoot;
@@ -30,18 +30,18 @@ pub use mock::{ExtendedAccount, MockEthProvider};
 pub use noop::NoopProvider;
 pub use reth_chain_state::test_utils::TestCanonStateSubscriptions;
 
-/// Mock [`reth_node_types::NodeTypesWithDB`] for testing.
-pub type MockNodeTypesWithDB<DB = Arc<TempDatabase<DatabaseEnv>>> = NodeTypesWithDBAdapter<DB>;
+/// Temporary database retained for the lifetime of provider tests.
+pub type MockNodeDatabase = Arc<TempDatabase<DatabaseEnv>>;
 
 /// Creates test provider factory with mainnet chain spec.
-pub fn create_test_provider_factory() -> ProviderFactory<MockNodeTypesWithDB> {
+pub fn create_test_provider_factory() -> ProviderFactory<MockNodeDatabase> {
     create_test_provider_factory_with_chain_spec(MAINNET.clone())
 }
 
 /// Creates test provider factory with provided chain spec.
 pub fn create_test_provider_factory_with_chain_spec(
     chain_spec: Arc<ChainSpec>,
-) -> ProviderFactory<MockNodeTypesWithDB> {
+) -> ProviderFactory<MockNodeDatabase> {
     let genesis_block_number = chain_spec.genesis.number.unwrap_or_default();
     create_test_provider_factory_with_genesis(
         Arc::new((*chain_spec).clone().into()),
@@ -52,7 +52,7 @@ pub fn create_test_provider_factory_with_chain_spec(
 /// Creates a test provider factory whose chain starts at `genesis_block_number`.
 pub fn create_test_provider_factory_with_genesis_block_number(
     genesis_block_number: u64,
-) -> ProviderFactory<MockNodeTypesWithDB> {
+) -> ProviderFactory<MockNodeDatabase> {
     let mut genesis = MAINNET.genesis.clone();
     genesis.number = Some(genesis_block_number);
     let chain_spec = Arc::new(ChainSpecBuilder::mainnet().genesis(genesis).build());
@@ -62,14 +62,14 @@ pub fn create_test_provider_factory_with_genesis_block_number(
 /// Creates test provider factory with provided chain spec.
 pub fn create_test_provider_factory_with_base_chain_spec(
     chain_spec: Arc<BaseChainSpec>,
-) -> ProviderFactory<NodeTypesWithDBAdapter<Arc<TempDatabase<DatabaseEnv>>>> {
+) -> ProviderFactory<Arc<TempDatabase<DatabaseEnv>>> {
     create_test_provider_factory_with_genesis(chain_spec, 0)
 }
 
 fn create_test_provider_factory_with_genesis(
     chain_spec: Arc<BaseChainSpec>,
     genesis_block_number: u64,
-) -> ProviderFactory<NodeTypesWithDBAdapter<Arc<TempDatabase<DatabaseEnv>>>> {
+) -> ProviderFactory<Arc<TempDatabase<DatabaseEnv>>> {
     // Create a single temp directory that contains all data dirs (db, static_files, rocksdb).
     // TempDatabase will clean up the entire directory on drop.
     let datadir_path = reth_db::test_utils::tempdir_path();
@@ -106,7 +106,7 @@ fn create_test_provider_factory_with_genesis(
 pub fn create_test_provider_factory_with_chain_spec_and_db_args(
     chain_spec: Arc<ChainSpec>,
     db_args: DatabaseArguments,
-) -> ProviderFactory<MockNodeTypesWithDB> {
+) -> ProviderFactory<MockNodeDatabase> {
     let datadir_path = reth_db::test_utils::tempdir_path();
 
     let db_path = datadir_path.join("db");
@@ -132,8 +132,8 @@ pub fn create_test_provider_factory_with_chain_spec_and_db_args(
 }
 
 /// Inserts the provider's genesis allocation into the trie.
-pub fn insert_genesis<N: NodeTypesWithDB>(
-    provider_factory: &ProviderFactory<N>,
+pub fn insert_genesis<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    provider_factory: &ProviderFactory<DB>,
 ) -> ProviderResult<B256> {
     let provider = provider_factory.provider_rw()?;
 

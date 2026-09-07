@@ -6,7 +6,6 @@ use clap::ValueEnum;
 use reth_db::{DatabaseEnv, tables};
 use reth_db_api::table::Table;
 use reth_db_common::DbTool;
-use reth_node_builder::NodeTypesWithDBAdapter;
 use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::RocksDBProviderFactory;
 use tracing::info;
@@ -37,7 +36,7 @@ impl RocksDbTable {
 
 /// Computes a checksum for a RocksDB table.
 pub fn checksum_rocksdb(
-    tool: &DbTool<NodeTypesWithDBAdapter<DatabaseEnv>>,
+    tool: &DbTool<DatabaseEnv>,
     table: RocksDbTable,
     limit: Option<usize>,
 ) -> eyre::Result<()> {

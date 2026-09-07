@@ -5,9 +5,11 @@ use std::{
 
 use alloy_primitives::{Address, B256, BlockNumber, U256, keccak256};
 use clap::Parser;
-use reth_db_api::{cursor::DbDupCursorRO, database::Database, tables, transaction::DbTx};
+use reth_db_api::{
+    cursor::DbDupCursorRO, database::Database, database_metrics::DatabaseMetrics, tables,
+    transaction::DbTx,
+};
 use reth_db_common::DbTool;
-use reth_node_builder::NodeTypesWithDB;
 use reth_provider::StaticFileProviderFactory;
 use reth_storage_api::{BlockNumReader, StateProvider};
 use tracing::info;
@@ -36,7 +38,10 @@ pub struct Command {
 
 impl Command {
     /// Execute `db state` command
-    pub fn execute<N: NodeTypesWithDB>(self, tool: &DbTool<N>) -> eyre::Result<()> {
+    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+        self,
+        tool: &DbTool<DB>,
+    ) -> eyre::Result<()> {
         let address = self.address;
         let limit = self.limit;
 
@@ -47,9 +52,9 @@ impl Command {
         }
     }
 
-    fn execute_current<N: NodeTypesWithDB>(
+    fn execute_current<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
         &self,
-        tool: &DbTool<N>,
+        tool: &DbTool<DB>,
         address: Address,
         limit: usize,
     ) -> eyre::Result<()> {
@@ -92,9 +97,9 @@ impl Command {
         Ok(())
     }
 
-    fn execute_historical<N: NodeTypesWithDB>(
+    fn execute_historical<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
         &self,
-        tool: &DbTool<N>,
+        tool: &DbTool<DB>,
         address: Address,
         block: BlockNumber,
         limit: usize,
@@ -157,9 +162,9 @@ impl Command {
     }
 
     /// Collects storage keys from static file StorageChangeSets (storage_v2).
-    fn collect_staticfile_storage_keys<N: NodeTypesWithDB>(
+    fn collect_staticfile_storage_keys<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
         &self,
-        tool: &DbTool<N>,
+        tool: &DbTool<DB>,
         address: Address,
         keys: &mut BTreeSet<B256>,
     ) -> eyre::Result<()> {

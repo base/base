@@ -1,8 +1,8 @@
 //! `reth db stage-checkpoints` command for viewing and setting stage checkpoint values.
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_db_common::DbTool;
-use reth_node_api::NodeTypesWithDB;
 use reth_provider::{
     DBProvider, DatabaseProviderFactory, StageCheckpointReader, StageCheckpointWriter,
 };
@@ -27,14 +27,20 @@ impl Command {
     }
 
     /// Execute the command
-    pub fn execute<N: NodeTypesWithDB>(self, tool: &DbTool<N>) -> eyre::Result<()> {
+    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+        self,
+        tool: &DbTool<DB>,
+    ) -> eyre::Result<()> {
         match self.command {
             Subcommands::Get { stage } => Self::get(tool, stage),
             Subcommands::Set(args) => Self::set(tool, args),
         }
     }
 
-    fn get<N: NodeTypesWithDB>(tool: &DbTool<N>, stage: Option<StageArg>) -> eyre::Result<()> {
+    fn get<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+        tool: &DbTool<DB>,
+        stage: Option<StageArg>,
+    ) -> eyre::Result<()> {
         let provider = tool.provider_factory.provider()?;
 
         match stage {
@@ -55,7 +61,10 @@ impl Command {
         Ok(())
     }
 
-    fn set<N: NodeTypesWithDB>(tool: &DbTool<N>, args: SetArgs) -> eyre::Result<()> {
+    fn set<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+        tool: &DbTool<DB>,
+        args: SetArgs,
+    ) -> eyre::Result<()> {
         let stage_id: StageId = args.stage.into();
         let provider_rw = tool.provider_factory.database_provider_rw()?;
 

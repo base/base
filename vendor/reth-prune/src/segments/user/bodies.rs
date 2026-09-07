@@ -135,7 +135,7 @@ mod tests {
     use reth_provider::{
         DBProvider, DatabaseProviderFactory, ProviderFactory, PruneCheckpointWriter,
         StaticFileWriter,
-        test_utils::{MockNodeTypesWithDB, create_test_provider_factory},
+        test_utils::{MockNodeDatabase, create_test_provider_factory},
     };
     use reth_prune_types::{PruneMode, PruneProgress, PruneSegment};
     use reth_static_file_types::{
@@ -230,7 +230,7 @@ mod tests {
     }
 
     fn run_prune_test(
-        factory: &ProviderFactory<MockNodeTypesWithDB>,
+        factory: &ProviderFactory<MockNodeDatabase>,
         test_case: TestCase,
         tip: BlockNumber,
     ) {

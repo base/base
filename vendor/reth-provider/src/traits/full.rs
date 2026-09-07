@@ -6,7 +6,7 @@ use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use reth_chain_state::{
     CanonStateSubscriptions, ForkChoiceSubscriptions, PersistedBlockSubscriptions,
 };
-use reth_node_types::NodeTypesWithDB;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_storage_api::{
     StorageChangeSetReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
@@ -18,9 +18,9 @@ use crate::{
 };
 
 /// Helper trait to unify all provider traits for simplicity.
-pub trait FullProvider<N: NodeTypesWithDB>:
+pub trait FullProvider<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>:
     DatabaseProviderFactory<
-        DB = N::DB,
+        DB = DB,
         Provider: BlockReader
                       + StageCheckpointReader
                       + PruneCheckpointReader
@@ -55,9 +55,9 @@ pub trait FullProvider<N: NodeTypesWithDB>:
 {
 }
 
-impl<T, N: NodeTypesWithDB> FullProvider<N> for T where
+impl<T, DB: Database + DatabaseMetrics + Clone + Unpin + 'static> FullProvider<DB> for T where
     T: DatabaseProviderFactory<
-            DB = N::DB,
+            DB = DB,
             Provider: BlockReader
                           + StageCheckpointReader
                           + PruneCheckpointReader

@@ -16,9 +16,9 @@ use base_execution_trie::{
 use derive_more::Constructor;
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN_TRANSACTION_GAS};
 use reth_db::Database;
+use reth_db_api::database_metrics::DatabaseMetrics;
 use reth_db_common::init::init_genesis;
 use reth_evm::{BaseEvmConfig, execute::Executor};
-use reth_node_api::NodeTypesWithDB;
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
 use reth_provider::{
     BlockWriter as _, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef,
@@ -151,13 +151,13 @@ fn create_block_from_spec(
 }
 
 /// Executes a block and returns the updated block with correct state root
-fn execute_block<N>(
+fn execute_block<DB>(
     block: &mut RecoveredBlock<Block>,
-    provider_factory: &ProviderFactory<N>,
+    provider_factory: &ProviderFactory<DB>,
     chain_spec: &Arc<ChainSpec>,
 ) -> eyre::Result<reth_evm::execute::BlockExecutionOutput<Receipt>>
 where
-    N: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     let provider = provider_factory.provider()?;
     let db = StateProviderDatabase::new(LatestStateProviderRef::new(&provider));
@@ -177,13 +177,13 @@ where
 }
 
 /// Commits a block and its execution output to the database
-fn commit_block_to_database<N>(
+fn commit_block_to_database<DB>(
     block: &RecoveredBlock<Block>,
     execution_output: &reth_evm::execute::BlockExecutionOutput<Receipt>,
-    provider_factory: &ProviderFactory<N>,
+    provider_factory: &ProviderFactory<DB>,
 ) -> eyre::Result<()>
 where
-    N: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     let execution_outcome = ExecutionOutcome {
         bundle: execution_output.state.clone(),
@@ -211,15 +211,15 @@ where
 }
 
 /// Runs a test scenario with the given configuration
-fn run_test_scenario<N>(
+fn run_test_scenario<DB>(
     scenario: TestScenario,
-    provider_factory: ProviderFactory<N>,
+    provider_factory: ProviderFactory<DB>,
     chain_spec: Arc<ChainSpec>,
     key_pair: Keypair,
     storage: BaseProofsStorage<Arc<RocksdbProofsStorage>>,
 ) -> eyre::Result<()>
 where
-    N: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     let genesis_hash = chain_spec.genesis_hash();
     let mut nonce_counter = 0u64;

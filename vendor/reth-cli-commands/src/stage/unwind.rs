@@ -10,10 +10,10 @@ use reth_cli::chainspec::ChainSpecParser;
 use reth_config::Config;
 use reth_consensus::noop::NoopConsensus;
 use reth_db::DatabaseEnv;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_evm::BaseEvmConfig;
 use reth_exex::ExExManagerHandle;
-use reth_node_api::NodeTypesWithDB;
 use reth_provider::{BlockNumReader, ProviderFactory};
 use reth_stages::{
     ExecutionStageThresholds, Pipeline, StageSet,
@@ -75,19 +75,19 @@ impl<C: ChainSpecParser> Command<C> {
         Ok(())
     }
 
-    fn build_pipeline<N: NodeTypesWithDB>(
+    fn build_pipeline<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
         self,
         config: Config,
-        provider_factory: ProviderFactory<N>,
+        provider_factory: ProviderFactory<DB>,
         evm_config: BaseEvmConfig,
-    ) -> Result<Pipeline<N>, eyre::Error> {
+    ) -> Result<Pipeline<DB>, eyre::Error> {
         let stage_conf = &config.stages;
         let prune_modes = config.prune.segments.clone();
 
         let (tip_tx, tip_rx) = watch::channel(B256::ZERO);
 
         let builder = if self.offline {
-            Pipeline::<N>::builder().add_stages(
+            Pipeline::<DB>::builder().add_stages(
                 OfflineStages::new(
                     evm_config,
                     NoopConsensus::arc(),
@@ -98,7 +98,7 @@ impl<C: ChainSpecParser> Command<C> {
                 .disable(reth_stages::StageId::SenderRecovery),
             )
         } else {
-            Pipeline::<N>::builder().with_tip_sender(tip_tx).add_stages(
+            Pipeline::<DB>::builder().with_tip_sender(tip_tx).add_stages(
                 DefaultStages::new(
                     provider_factory.clone(),
                     tip_rx,
@@ -154,10 +154,7 @@ enum Subcommands {
 
 impl Subcommands {
     /// Returns the block to unwind to. The returned block will stay in database.
-    fn unwind_target<N: NodeTypesWithDB<DB = DatabaseEnv>>(
-        &self,
-        factory: ProviderFactory<N>,
-    ) -> eyre::Result<u64> {
+    fn unwind_target(&self, factory: ProviderFactory<DatabaseEnv>) -> eyre::Result<u64> {
         let provider = factory.provider()?;
         let last = provider.last_block_number()?;
         let target = match self {

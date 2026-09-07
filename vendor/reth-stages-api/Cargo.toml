@@ -21,6 +21,7 @@ auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 reth-prune = { workspace = true }
 aquamarine = { workspace = true }
+reth-db-api = { workspace = true }
 reth-codecs = { workspace = true }
 reth-errors = { workspace = true }
 futures-util = { workspace = true }

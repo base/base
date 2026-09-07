@@ -3,11 +3,11 @@ use reth_db::static_file::iter_static_files;
 use reth_db_api::{
     TableViewer, Tables,
     database::Database,
+    database_metrics::DatabaseMetrics,
     table::Table,
     transaction::{DbTx, DbTxMut},
 };
 use reth_db_common::DbTool;
-use reth_node_builder::NodeTypesWithDB;
 use reth_provider::StaticFileProviderFactory;
 use reth_static_file_types::StaticFileSegment;
 
@@ -20,7 +20,10 @@ pub struct Command {
 
 impl Command {
     /// Execute `db clear` command
-    pub fn execute<N: NodeTypesWithDB>(self, tool: &DbTool<N>) -> eyre::Result<()> {
+    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+        self,
+        tool: &DbTool<DB>,
+    ) -> eyre::Result<()> {
         match self.subcommand {
             Subcommands::Mdbx { table } => {
                 table.view(&ClearViewer { db: tool.provider_factory.db_ref() })?

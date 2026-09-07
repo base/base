@@ -12,7 +12,7 @@ use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
     AccountReader, BlockHashReader, BlockWriter, DBProvider, DatabaseProviderFactory,
     ExecutionOutcome, ProviderFactory, StorageSettingsCache,
-    test_utils::{MockNodeTypesWithDB, create_test_provider_factory},
+    test_utils::{MockNodeDatabase, create_test_provider_factory},
 };
 use reth_trie::{HashedPostState, KeccakKeyHasher};
 use revm::{database::BundleState, state::AccountInfo};
@@ -26,7 +26,7 @@ const STORAGE_QUERY_POSITIONS: [(usize, usize); 5] =
 const QUERY_BLOCKS: [u64; 6] = [1, 16, 32, 64, 96, 127];
 
 struct HistoricalReadFixture {
-    factory: ProviderFactory<MockNodeTypesWithDB>,
+    factory: ProviderFactory<MockNodeDatabase>,
     account_queries: Vec<(Address, u64)>,
     storage_queries: Vec<(Address, B256, u64)>,
 }

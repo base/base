@@ -9,22 +9,22 @@ use reth_db_api::{
     DatabaseError, RawTable, TableRawRow,
     cursor::{DbCursorRO, DbDupCursorRO},
     database::Database,
+    database_metrics::DatabaseMetrics,
     table::{Decode, Decompress, DupSort, Table, TableRow},
     transaction::{DbTx, DbTxMut},
 };
 use reth_fs_util as fs;
-use reth_node_types::NodeTypesWithDB;
 use reth_provider::{ChainSpecProvider, DBProvider, ProviderFactory};
 use tracing::info;
 
 /// Wrapper over DB that implements many useful DB queries.
 #[derive(Debug)]
-pub struct DbTool<N: NodeTypesWithDB> {
+pub struct DbTool<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
     /// The provider factory that the db tool will use.
-    pub provider_factory: ProviderFactory<N>,
+    pub provider_factory: ProviderFactory<DB>,
 }
 
-impl<N: NodeTypesWithDB> DbTool<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> DbTool<DB> {
     /// Get an [`Arc`] to the underlying chainspec.
     pub fn chain(&self) -> Arc<BaseChainSpec> {
         self.provider_factory.chain_spec()
@@ -110,9 +110,9 @@ impl<N: NodeTypesWithDB> DbTool<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> DbTool<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> DbTool<DB> {
     /// Takes a DB where the tables have already been created.
-    pub fn new(provider_factory: ProviderFactory<N>) -> eyre::Result<Self> {
+    pub fn new(provider_factory: ProviderFactory<DB>) -> eyre::Result<Self> {
         // Disable timeout because we are entering a TUI which might read for a long time. We
         // disable on the [`DbTool`] level since it's only used in the CLI.
         provider_factory.provider()?.disable_long_read_transaction_safety();

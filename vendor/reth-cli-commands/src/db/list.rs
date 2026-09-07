@@ -6,7 +6,6 @@ use eyre::WrapErr;
 use reth_db::{DatabaseEnv, transaction::DbTx};
 use reth_db_api::{RawValue, TableViewer, Tables, database::Database, table::Table};
 use reth_db_common::{DbTool, ListFilter};
-use reth_node_builder::NodeTypesWithDBAdapter;
 use tracing::error;
 
 use super::tui::DbListTUI;
@@ -54,7 +53,7 @@ pub struct Command {
 
 impl Command {
     /// Execute `db list` command
-    pub fn execute(self, tool: &DbTool<NodeTypesWithDBAdapter<DatabaseEnv>>) -> eyre::Result<()> {
+    pub fn execute(self, tool: &DbTool<DatabaseEnv>) -> eyre::Result<()> {
         self.table.view(&ListTableViewer { tool, args: &self })
     }
 
@@ -87,7 +86,7 @@ impl Command {
 }
 
 struct ListTableViewer<'a> {
-    tool: &'a DbTool<NodeTypesWithDBAdapter<DatabaseEnv>>,
+    tool: &'a DbTool<DatabaseEnv>,
     args: &'a Command,
 }
 

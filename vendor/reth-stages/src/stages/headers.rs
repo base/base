@@ -403,7 +403,7 @@ mod tests {
             ReverseHeadersDownloader, ReverseHeadersDownloaderBuilder,
         };
         use reth_network_p2p::test_utils::{TestHeaderDownloader, TestHeadersClient};
-        use reth_provider::{BlockNumReader, HeaderProvider, test_utils::MockNodeTypesWithDB};
+        use reth_provider::{BlockNumReader, HeaderProvider, test_utils::MockNodeDatabase};
         use tokio::sync::watch;
 
         use super::*;
@@ -434,7 +434,7 @@ mod tests {
         impl<D: HeaderDownloader<Header = alloy_consensus::Header> + 'static> StageTestRunner
             for HeadersTestRunner<D>
         {
-            type S = HeaderStage<ProviderFactory<MockNodeTypesWithDB>, D>;
+            type S = HeaderStage<ProviderFactory<MockNodeDatabase>, D>;
 
             fn db(&self) -> &TestStageDB {
                 &self.db

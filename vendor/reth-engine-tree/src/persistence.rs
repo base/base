@@ -9,8 +9,8 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use crossbeam_channel::Sender as CrossbeamSender;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_errors::ProviderError;
-use reth_node_types::NodeTypesWithDB;
 use reth_primitives_traits::FastInstant as Instant;
 use reth_provider::{
     BalProvider, BlockExecutionWriter, BlockHashReader, ChainStateBlockWriter, DBProvider,
@@ -43,16 +43,16 @@ pub struct PersistenceResult {
 /// This should be spawned in its own thread with [`std::thread::spawn`], since this performs
 /// blocking I/O operations in an endless loop.
 #[derive(Debug)]
-pub struct PersistenceService<N>
+pub struct PersistenceService<DB>
 where
-    N: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     /// The provider factory to use
-    provider: ProviderFactory<N>,
+    provider: ProviderFactory<DB>,
     /// Incoming requests
     incoming: Receiver<PersistenceAction>,
     /// The pruner
-    pruner: PrunerWithFactory<ProviderFactory<N>>,
+    pruner: PrunerWithFactory<ProviderFactory<DB>>,
     /// metrics
     metrics: PersistenceMetrics,
     /// Sender for sync metrics - we only submit sync metrics for persisted blocks
@@ -65,15 +65,15 @@ where
     pending_safe_block: Option<u64>,
 }
 
-impl<N> PersistenceService<N>
+impl<DB> PersistenceService<DB>
 where
-    N: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     /// Create a new persistence service
     pub fn new(
-        provider: ProviderFactory<N>,
+        provider: ProviderFactory<DB>,
         incoming: Receiver<PersistenceAction>,
-        pruner: PrunerWithFactory<ProviderFactory<N>>,
+        pruner: PrunerWithFactory<ProviderFactory<DB>>,
         sync_metrics_tx: MetricEventsSender,
     ) -> Self {
         Self {
@@ -88,9 +88,9 @@ where
     }
 }
 
-impl<N> PersistenceService<N>
+impl<DB> PersistenceService<DB>
 where
-    N: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     /// This is the main loop, that will listen to database events and perform the requested
     /// database actions
@@ -306,13 +306,13 @@ impl PersistenceHandle {
     /// The returned handle can be cloned and shared. When all clones are dropped, the service
     /// thread will be joined, ensuring graceful shutdown before resources (like `RocksDB`) are
     /// released.
-    pub fn spawn_service<N>(
-        provider_factory: ProviderFactory<N>,
-        pruner: PrunerWithFactory<ProviderFactory<N>>,
+    pub fn spawn_service<DB>(
+        provider_factory: ProviderFactory<DB>,
+        pruner: PrunerWithFactory<ProviderFactory<DB>>,
         sync_metrics_tx: MetricEventsSender,
     ) -> PersistenceHandle
     where
-        N: NodeTypesWithDB,
+        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     {
         // create the initial channels
         let (db_service_tx, db_service_rx) = std::sync::mpsc::channel();

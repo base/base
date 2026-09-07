@@ -18,9 +18,7 @@ use reth_network::{
         config::{AnnouncementFilteringPolicy, StrictEthAnnouncementFilter},
     },
 };
-use reth_node_api::{
-    FullNodeComponents, FullNodeTypes, FullNodeTypesAdapter, NodeAddOns, NodeTypesWithDBAdapter,
-};
+use reth_node_api::{FullNodeComponents, FullNodeTypes, FullNodeTypesAdapter, NodeAddOns};
 use reth_node_core::{
     cli::config::{PayloadBuilderConfig, RethTransactionPoolConfig},
     dirs::{ChainPath, DataDirPath},
@@ -51,8 +49,7 @@ pub use states::*;
 
 /// The adapter type for a reth node with the builtin provider type
 // Note: we need to hardcode this because custom components might depend on it in associated types.
-pub type RethFullAdapter<DB> =
-    FullNodeTypesAdapter<DB, BlockchainProvider<NodeTypesWithDBAdapter<DB>>>;
+pub type RethFullAdapter<DB> = FullNodeTypesAdapter<DB, BlockchainProvider<DB>>;
 
 #[expect(clippy::doc_markdown)]
 #[cfg_attr(doc, aquamarine::aquamarine)]
@@ -265,7 +262,7 @@ where
     /// Configures a custom state provider.
     pub fn with_custom_provider<P>(self) -> NodeBuilderWithProvider<FullNodeTypesAdapter<DB, P>>
     where
-        P: FullProvider<NodeTypesWithDBAdapter<DB>>,
+        P: FullProvider<DB>,
     {
         NodeBuilderWithProvider::new(self.config, self.database, self.rocksdb_provider)
     }
@@ -322,7 +319,7 @@ where
         self,
     ) -> WithLaunchContext<NodeBuilderWithProvider<FullNodeTypesAdapter<DB, P>>>
     where
-        P: FullProvider<NodeTypesWithDBAdapter<DB>>,
+        P: FullProvider<DB>,
     {
         WithLaunchContext {
             builder: self.builder.with_custom_provider(),

@@ -39,7 +39,7 @@ use reth_provider::{
     StateProviderFactory, StateRangeProviderFactory, StateRootProvider, StorageRootProvider,
     providers::{BlockchainProvider, SNAPSHOT_STATE_RETENTION},
     test_utils::{
-        ExtendedAccount, MockEthProvider, MockNodeTypesWithDB, create_test_provider_factory,
+        ExtendedAccount, MockEthProvider, MockNodeDatabase, create_test_provider_factory,
     },
 };
 use reth_stages_types::{StageCheckpoint, StageId};
@@ -111,7 +111,7 @@ async fn spawn_snap_testnet_with_protocols<C: SnapTestProvider>(
 
 /// A fresh temp-database provider factory with a genesis block and a `StageId::Finish` checkpoint
 /// at block 0.
-fn genesis_provider_factory() -> ProviderFactory<MockNodeTypesWithDB> {
+fn genesis_provider_factory() -> ProviderFactory<MockNodeDatabase> {
     let factory = create_test_provider_factory();
     let provider_rw = factory.provider_rw().unwrap();
     let mut rng = generators::rng();
@@ -131,7 +131,7 @@ fn genesis_provider_factory() -> ProviderFactory<MockNodeTypesWithDB> {
 ///
 /// Snap requests are keyed by a header-committed root. Writing hashed tables without advancing the
 /// chain would make a request for the genesis empty root accidentally serve newer state.
-fn persist_fixture_state_root(factory: &ProviderFactory<MockNodeTypesWithDB>) -> B256 {
+fn persist_fixture_state_root(factory: &ProviderFactory<MockNodeDatabase>) -> B256 {
     let state_root = factory.latest().unwrap().state_root(HashedPostState::default()).unwrap();
     let genesis_hash = factory.sealed_header(0).unwrap().unwrap().hash();
     let mut block = reth_testing_utils::BaseTestData::random_block(

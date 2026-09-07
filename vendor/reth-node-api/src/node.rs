@@ -10,7 +10,6 @@ use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
 use reth_evm::BaseEvmConfig;
 use reth_network_api::FullNetwork;
 use reth_node_core::node_config::NodeConfig;
-use reth_node_types::NodeTypesWithDBAdapter;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_provider::FullProvider;
 use reth_tasks::TaskExecutor;
@@ -24,7 +23,7 @@ pub trait FullNodeTypes: Clone + Debug + Send + Sync + Unpin + 'static {
     /// Underlying database type used by the node to store and retrieve data.
     type DB: Database + DatabaseMetrics + Clone + Unpin + 'static;
     /// The provider type used to interact with the node.
-    type Provider: FullProvider<NodeTypesWithDBAdapter<Self::DB>>;
+    type Provider: FullProvider<Self::DB>;
 }
 
 /// An adapter type that adds the builtin provider type to the user configured node types.
@@ -34,7 +33,7 @@ pub struct FullNodeTypesAdapter<DB, Provider>(PhantomData<(DB, Provider)>);
 impl<DB, Provider> FullNodeTypes for FullNodeTypesAdapter<DB, Provider>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
-    Provider: FullProvider<NodeTypesWithDBAdapter<DB>>,
+    Provider: FullProvider<DB>,
 {
     type DB = DB;
     type Provider = Provider;

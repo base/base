@@ -7,7 +7,7 @@ use base_common_consensus::BaseBlock;
 use futures::StreamExt;
 use reth_config::Config;
 use reth_consensus::FullConsensus;
-use reth_db_api::{tables, transaction::DbTx};
+use reth_db_api::{Database, database_metrics::DatabaseMetrics, tables, transaction::DbTx};
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
     file_client::{ChunkedFileReader, DEFAULT_BYTE_LEN_CHUNK_CHAIN_FILE, FileClient},
@@ -18,7 +18,6 @@ use reth_network_p2p::{
     bodies::downloader::BodyDownloader,
     headers::downloader::{HeaderDownloader, SyncTarget},
 };
-use reth_node_api::NodeTypesWithDB;
 use reth_node_events::node::NodeEvent;
 use reth_provider::{
     BlockNumReader, HeaderProvider, ProviderError, ProviderFactory, RocksDBProviderFactory,
@@ -82,17 +81,17 @@ impl ImportResult {
 /// This function reads RLP-encoded blocks from a file in chunks and imports them
 /// using the pipeline infrastructure. It's designed to be used both from the CLI
 /// and from test code.
-pub async fn import_blocks_from_file<N>(
+pub async fn import_blocks_from_file<DB>(
     path: &Path,
     import_config: ImportConfig,
-    provider_factory: ProviderFactory<N>,
+    provider_factory: ProviderFactory<DB>,
     config: &Config,
     executor: BaseEvmConfig,
     consensus: Arc<impl FullConsensus + 'static>,
     runtime: reth_tasks::Runtime,
 ) -> eyre::Result<ImportResult>
 where
-    N: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     if import_config.no_state {
         info!(target: "reth::import", "Disabled stages requiring state");
@@ -275,18 +274,18 @@ where
 /// If configured to execute, all stages will run. Otherwise, only stages that don't require state
 /// will run.
 #[expect(clippy::too_many_arguments)]
-pub fn build_import_pipeline_impl<N, C>(
+pub fn build_import_pipeline_impl<DB, C>(
     config: &Config,
-    provider_factory: ProviderFactory<N>,
+    provider_factory: ProviderFactory<DB>,
     consensus: &Arc<C>,
     file_client: Arc<FileClient<BaseBlock>>,
-    static_file_producer: StaticFileProducer<ProviderFactory<N>>,
+    static_file_producer: StaticFileProducer<ProviderFactory<DB>>,
     disable_exec: bool,
     evm_config: BaseEvmConfig,
     runtime: reth_tasks::Runtime,
-) -> eyre::Result<(Pipeline<N>, impl futures::Stream<Item = NodeEvent> + use<N, C>)>
+) -> eyre::Result<(Pipeline<DB>, impl futures::Stream<Item = NodeEvent> + use<DB, C>)>
 where
-    N: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     C: FullConsensus + 'static,
 {
     if !file_client.has_canonical_blocks() {
@@ -320,7 +319,7 @@ where
 
     let max_block = file_client.max_block().unwrap_or(0);
 
-    let pipeline = Pipeline::<N>::builder()
+    let pipeline = Pipeline::<DB>::builder()
         .with_tip_sender(tip_tx)
         // we want to sync all blocks the file client provides or 0 if empty
         .with_max_block(max_block)

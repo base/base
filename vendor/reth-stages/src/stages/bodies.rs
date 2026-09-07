@@ -498,7 +498,7 @@ mod tests {
         use reth_primitives_traits::{SealedBlock, SealedHeader};
         use reth_provider::{
             HeaderProvider, ProviderFactory, StaticFileProviderFactory, TransactionsProvider,
-            providers::StaticFileWriter, test_utils::MockNodeTypesWithDB,
+            providers::StaticFileWriter, test_utils::MockNodeDatabase,
         };
         use reth_stages_api::{ExecInput, ExecOutput, UnwindInput};
         use reth_static_file_types::StaticFileSegment;
@@ -743,7 +743,7 @@ mod tests {
         /// A [`BodyDownloader`] that is backed by an internal [`B256Map`] for testing.
         #[derive(Debug)]
         pub(crate) struct TestBodyDownloader {
-            provider_factory: ProviderFactory<MockNodeTypesWithDB>,
+            provider_factory: ProviderFactory<MockNodeDatabase>,
             responses: B256Map<BlockBody>,
             headers: VecDeque<SealedHeader>,
             batch_size: u64,
@@ -751,7 +751,7 @@ mod tests {
 
         impl TestBodyDownloader {
             pub(crate) fn new(
-                provider_factory: ProviderFactory<MockNodeTypesWithDB>,
+                provider_factory: ProviderFactory<MockNodeDatabase>,
                 responses: B256Map<BlockBody>,
                 batch_size: u64,
             ) -> Self {

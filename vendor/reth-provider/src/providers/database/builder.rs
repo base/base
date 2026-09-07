@@ -11,7 +11,6 @@ use reth_db::{
     mdbx::{DatabaseArguments, MaxReadTransactionDuration},
     open_db_read_only,
 };
-use reth_node_types::NodeTypesWithDBAdapter;
 
 use crate::{
     ProviderFactory,
@@ -93,7 +92,7 @@ impl ProviderFactoryBuilder {
         chainspec: Arc<BaseChainSpec>,
         config: impl Into<ReadOnlyConfig>,
         runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<ProviderFactory<NodeTypesWithDBAdapter<DatabaseEnv>>> {
+    ) -> eyre::Result<ProviderFactory<DatabaseEnv>> {
         let ReadOnlyConfig { db_dir, db_args, static_files_dir, rocksdb_dir, watch } =
             config.into();
         let db = open_db_read_only(db_dir, db_args)?;

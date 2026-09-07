@@ -26,7 +26,7 @@
 //! # use reth_evm::BaseEvmConfig;
 //! # use reth_provider::ProviderFactory;
 //! # use reth_provider::StaticFileProviderFactory;
-//! # use reth_provider::test_utils::{create_test_provider_factory, MockNodeTypesWithDB};
+//! # use reth_provider::test_utils::{create_test_provider_factory, MockNodeDatabase};
 //! # use reth_static_file::StaticFileProducer;
 //! # use reth_config::config::StageConfig;
 //! # use reth_consensus::Consensus;
@@ -53,7 +53,7 @@
 //! # );
 //! // Create a pipeline that can fully sync
 //! # let pipeline =
-//! Pipeline::<MockNodeTypesWithDB>::builder()
+//! Pipeline::<MockNodeDatabase>::builder()
 //!     .with_tip_sender(tip_tx)
 //!     .add_stages(DefaultStages::new(
 //!         provider_factory.clone(),

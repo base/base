@@ -15,9 +15,12 @@ use reth_chain_state::{
     MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
 };
 use reth_chainspec::ChainInfo;
-use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
+use reth_db_api::{
+    Database,
+    database_metrics::DatabaseMetrics,
+    models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices},
+};
 use reth_execution_types::ExecutionOutcome;
-use reth_node_types::NodeTypesWithDB;
 use reth_primitives_traits::{
     Account, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
 };
@@ -68,9 +71,9 @@ type HistoricalStateRangeProvider<N> = OverlayStateProvider<StateRangeDbProvider
 /// from database storage and from the blockchain tree (pending state etc.) It is a simple wrapper
 /// type that holds an instance of the database and the blockchain tree.
 #[derive(Debug)]
-pub struct BlockchainProvider<N: NodeTypesWithDB> {
+pub struct BlockchainProvider<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
     /// Provider factory used to access the database.
-    pub(crate) database: ProviderFactory<N>,
+    pub(crate) database: ProviderFactory<DB>,
     /// Tracks the chain info wrt forkchoice updates and in memory canonical
     /// state.
     pub(crate) canonical_in_memory_state: CanonicalInMemoryState,
@@ -78,7 +81,7 @@ pub struct BlockchainProvider<N: NodeTypesWithDB> {
     pub(crate) bal_store: BalStoreHandle,
 }
 
-impl<N: NodeTypesWithDB> Clone for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> Clone for BlockchainProvider<DB> {
     fn clone(&self) -> Self {
         Self {
             database: self.database.clone(),
@@ -88,10 +91,10 @@ impl<N: NodeTypesWithDB> Clone for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockchainProvider<DB> {
     /// Create a new [`BlockchainProvider`] using only the storage, fetching the latest
     /// header from the database to initialize the provider.
-    pub fn new(storage: ProviderFactory<N>) -> ProviderResult<Self> {
+    pub fn new(storage: ProviderFactory<DB>) -> ProviderResult<Self> {
         let provider = storage.provider()?;
         let best = provider.chain_info()?;
         match provider.header_by_number(best.best_number)? {
@@ -109,7 +112,7 @@ impl<N: NodeTypesWithDB> BlockchainProvider<N> {
     /// This returns a `ProviderResult` since it tries the retrieve the last finalized header from
     /// `database`.
     pub fn with_latest(
-        storage: ProviderFactory<N>,
+        storage: ProviderFactory<DB>,
         latest: SealedHeader<alloy_consensus::Header>,
     ) -> ProviderResult<Self> {
         let provider = storage.provider()?;
@@ -150,7 +153,7 @@ impl<N: NodeTypesWithDB> BlockchainProvider<N> {
     /// database using different types of providers. Example: [`HeaderProvider`]
     /// [`BlockHashReader`]. This may fail if the inner read database transaction fails to open.
     #[track_caller]
-    pub fn consistent_provider(&self) -> ProviderResult<ConsistentProvider<N>> {
+    pub fn consistent_provider(&self) -> ProviderResult<ConsistentProvider<DB>> {
         ConsistentProvider::new(self.database.clone(), self.canonical_in_memory_state())
     }
 
@@ -180,7 +183,7 @@ impl<N: NodeTypesWithDB> BlockchainProvider<N> {
     fn block_state_range_provider(
         &self,
         state_root: B256,
-    ) -> ProviderResult<Option<HistoricalStateRangeProvider<N>>> {
+    ) -> ProviderResult<Option<HistoricalStateRangeProvider<DB>>> {
         let Some(matched) = self
             .canonical_in_memory_state
             .canonical_chain()
@@ -215,7 +218,7 @@ impl<N: NodeTypesWithDB> BlockchainProvider<N> {
     fn historical_state_range_provider(
         &self,
         state_root: B256,
-    ) -> ProviderResult<Option<HistoricalStateRangeProvider<N>>> {
+    ) -> ProviderResult<Option<HistoricalStateRangeProvider<DB>>> {
         let provider = self.database.provider()?;
         let Some(finish) = provider.get_stage_checkpoint(StageId::Finish)? else { return Ok(None) };
         let oldest = finish.block_number.saturating_sub(SNAPSHOT_STATE_RETENTION - 1);
@@ -240,18 +243,22 @@ impl<N: NodeTypesWithDB> BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BalProvider for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BalProvider
+    for BlockchainProvider<DB>
+{
     fn bal_store(&self) -> &BalStoreHandle {
         &self.bal_store
     }
 }
 
 /// State range view backed by one resolved historical overlay.
-struct HistoricalStateRangeView<N: NodeTypesWithDB> {
-    provider: HistoricalStateRangeProvider<N>,
+struct HistoricalStateRangeView<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
+    provider: HistoricalStateRangeProvider<DB>,
 }
 
-impl<N: NodeTypesWithDB> StateRangeProviderFactory for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StateRangeProviderFactory
+    for BlockchainProvider<DB>
+{
     /// Resolves a retained canonical state root into a pinned range view, preferring a still
     /// in-memory block over the persisted-history fallback.
     fn state_range_provider(&self, state_root: B256) -> ProviderResult<Option<StateRangeView>> {
@@ -259,12 +266,15 @@ impl<N: NodeTypesWithDB> StateRangeProviderFactory for BlockchainProvider<N> {
             Some(provider) => Some(provider),
             None => self.historical_state_range_provider(state_root)?,
         };
-        Ok(provider
-            .map(|provider| Box::new(HistoricalStateRangeView::<N> { provider }) as StateRangeView))
+        Ok(provider.map(|provider| {
+            Box::new(HistoricalStateRangeView::<DB> { provider }) as StateRangeView
+        }))
     }
 }
 
-impl<N: NodeTypesWithDB> StateRangeProvider for HistoricalStateRangeView<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StateRangeProvider
+    for HistoricalStateRangeView<DB>
+{
     fn account_range(
         &self,
         start: B256,
@@ -377,10 +387,12 @@ impl<N: NodeTypesWithDB> StateRangeProvider for HistoricalStateRangeView<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> DatabaseProviderFactory for BlockchainProvider<N> {
-    type DB = N::DB;
-    type Provider = <ProviderFactory<N> as DatabaseProviderFactory>::Provider;
-    type ProviderRW = <ProviderFactory<N> as DatabaseProviderFactory>::ProviderRW;
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> DatabaseProviderFactory
+    for BlockchainProvider<DB>
+{
+    type DB = DB;
+    type Provider = <ProviderFactory<DB> as DatabaseProviderFactory>::Provider;
+    type ProviderRW = <ProviderFactory<DB> as DatabaseProviderFactory>::ProviderRW;
 
     fn database_provider_ro(&self) -> ProviderResult<Self::Provider> {
         DatabaseProviderFactory::database_provider_ro(&self.database)
@@ -391,7 +403,9 @@ impl<N: NodeTypesWithDB> DatabaseProviderFactory for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> StaticFileProviderFactory for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StaticFileProviderFactory
+    for BlockchainProvider<DB>
+{
     fn static_file_provider(&self) -> StaticFileProvider {
         self.database.static_file_provider()
     }
@@ -405,7 +419,9 @@ impl<N: NodeTypesWithDB> StaticFileProviderFactory for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> RocksDBProviderFactory for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> RocksDBProviderFactory
+    for BlockchainProvider<DB>
+{
     fn rocksdb_provider(&self) -> RocksDBProvider {
         self.database.rocksdb_provider()
     }
@@ -423,7 +439,9 @@ impl<N: NodeTypesWithDB> RocksDBProviderFactory for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> HeaderProvider for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
+    for BlockchainProvider<DB>
+{
     type Header = alloy_consensus::Header;
 
     fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
@@ -464,7 +482,9 @@ impl<N: NodeTypesWithDB> HeaderProvider for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BlockHashReader for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockHashReader
+    for BlockchainProvider<DB>
+{
     fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
         self.consistent_provider()?.block_hash(number)
     }
@@ -478,7 +498,9 @@ impl<N: NodeTypesWithDB> BlockHashReader for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BlockNumReader for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockNumReader
+    for BlockchainProvider<DB>
+{
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         Ok(self.canonical_in_memory_state.chain_info())
     }
@@ -500,7 +522,9 @@ impl<N: NodeTypesWithDB> BlockNumReader for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BlockIdReader for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockIdReader
+    for BlockchainProvider<DB>
+{
     fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
         Ok(self.canonical_in_memory_state.pending_block_num_hash())
     }
@@ -514,7 +538,9 @@ impl<N: NodeTypesWithDB> BlockIdReader for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BlockReader for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader
+    for BlockchainProvider<DB>
+{
     type Block = BaseBlock;
 
     fn find_block_by_hash(
@@ -592,7 +618,9 @@ impl<N: NodeTypesWithDB> BlockReader for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> TransactionsProvider for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> TransactionsProvider
+    for BlockchainProvider<DB>
+{
     type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
@@ -654,7 +682,9 @@ impl<N: NodeTypesWithDB> TransactionsProvider for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> ReceiptProvider for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ReceiptProvider
+    for BlockchainProvider<DB>
+{
     type Receipt = BaseReceipt;
 
     fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
@@ -687,13 +717,17 @@ impl<N: NodeTypesWithDB> ReceiptProvider for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> ReceiptProviderIdExt for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ReceiptProviderIdExt
+    for BlockchainProvider<DB>
+{
     fn receipts_by_block_id(&self, block: BlockId) -> ProviderResult<Option<Vec<Self::Receipt>>> {
         self.consistent_provider()?.receipts_by_block_id(block)
     }
 }
 
-impl<N: NodeTypesWithDB> BlockBodyIndicesProvider for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockBodyIndicesProvider
+    for BlockchainProvider<DB>
+{
     fn block_body_indices(
         &self,
         number: BlockNumber,
@@ -709,7 +743,9 @@ impl<N: NodeTypesWithDB> BlockBodyIndicesProvider for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> StageCheckpointReader for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StageCheckpointReader
+    for BlockchainProvider<DB>
+{
     fn get_stage_checkpoint(&self, id: StageId) -> ProviderResult<Option<StageCheckpoint>> {
         self.consistent_provider()?.get_stage_checkpoint(id)
     }
@@ -723,7 +759,9 @@ impl<N: NodeTypesWithDB> StageCheckpointReader for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> PruneCheckpointReader for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> PruneCheckpointReader
+    for BlockchainProvider<DB>
+{
     fn get_prune_checkpoint(
         &self,
         segment: PruneSegment,
@@ -736,13 +774,17 @@ impl<N: NodeTypesWithDB> PruneCheckpointReader for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> ChainSpecProvider for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ChainSpecProvider
+    for BlockchainProvider<DB>
+{
     fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.database.chain_spec()
     }
 }
 
-impl<N: NodeTypesWithDB> StateProviderFactory for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StateProviderFactory
+    for BlockchainProvider<DB>
+{
     /// Storage provider for latest block
     fn latest(&self) -> ProviderResult<StateProviderBox> {
         trace!(target: "providers::blockchain", "Getting latest block state provider");
@@ -852,7 +894,9 @@ impl<N: NodeTypesWithDB> StateProviderFactory for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> CanonChainTracker for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> CanonChainTracker
+    for BlockchainProvider<DB>
+{
     type Header = alloy_consensus::Header;
 
     fn on_forkchoice_update_received(&self, _update: &ForkchoiceState) {
@@ -877,7 +921,8 @@ impl<N: NodeTypesWithDB> CanonChainTracker for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BlockReaderIdExt for BlockchainProvider<N>
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReaderIdExt
+    for BlockchainProvider<DB>
 where
     Self: ReceiptProviderIdExt,
 {
@@ -911,13 +956,17 @@ where
     }
 }
 
-impl<N: NodeTypesWithDB> CanonStateSubscriptions for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> CanonStateSubscriptions
+    for BlockchainProvider<DB>
+{
     fn subscribe_to_canonical_state(&self) -> CanonStateNotifications {
         self.canonical_in_memory_state.subscribe_canon_state()
     }
 }
 
-impl<N: NodeTypesWithDB> ForkChoiceSubscriptions for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ForkChoiceSubscriptions
+    for BlockchainProvider<DB>
+{
     type Header = alloy_consensus::Header;
 
     fn subscribe_safe_block(&self) -> ForkChoiceNotifications<Self::Header> {
@@ -931,14 +980,18 @@ impl<N: NodeTypesWithDB> ForkChoiceSubscriptions for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> PersistedBlockSubscriptions for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> PersistedBlockSubscriptions
+    for BlockchainProvider<DB>
+{
     fn subscribe_persisted_block(&self) -> PersistedBlockNotifications {
         let receiver = self.canonical_in_memory_state.subscribe_persisted_block();
         PersistedBlockNotifications(receiver)
     }
 }
 
-impl<N: NodeTypesWithDB> StorageChangeSetReader for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StorageChangeSetReader
+    for BlockchainProvider<DB>
+{
     fn storage_changeset(
         &self,
         block_number: BlockNumber,
@@ -963,7 +1016,9 @@ impl<N: NodeTypesWithDB> StorageChangeSetReader for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> ChangeSetReader for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ChangeSetReader
+    for BlockchainProvider<DB>
+{
     fn account_block_changeset(
         &self,
         block_number: BlockNumber,
@@ -987,7 +1042,9 @@ impl<N: NodeTypesWithDB> ChangeSetReader for BlockchainProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> StateReader for BlockchainProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StateReader
+    for BlockchainProvider<DB>
+{
     type Receipt = BaseReceipt;
 
     /// Re-constructs the [`ExecutionOutcome`] from in-memory and database state, if necessary.
@@ -1054,7 +1111,7 @@ mod tests {
         StaticFileProviderFactory, StaticFileWriter,
         providers::BlockchainProvider,
         test_utils::{
-            MockNodeTypesWithDB, create_test_provider_factory,
+            MockNodeDatabase, create_test_provider_factory,
             create_test_provider_factory_with_chain_spec,
         },
     };
@@ -1104,7 +1161,7 @@ mod tests {
         in_memory_blocks: usize,
         block_range_params: BlockRangeParams,
     ) -> eyre::Result<(
-        BlockchainProvider<MockNodeTypesWithDB>,
+        BlockchainProvider<MockNodeDatabase>,
         Vec<SealedBlock<BaseBlock>>,
         Vec<SealedBlock<BaseBlock>>,
         Vec<Vec<BaseReceipt>>,
@@ -1214,7 +1271,7 @@ mod tests {
         in_memory_blocks: usize,
         block_range_params: BlockRangeParams,
     ) -> eyre::Result<(
-        BlockchainProvider<MockNodeTypesWithDB>,
+        BlockchainProvider<MockNodeDatabase>,
         Vec<SealedBlock<BaseBlock>>,
         Vec<SealedBlock<BaseBlock>>,
         Vec<Vec<BaseReceipt>>,
@@ -1234,7 +1291,7 @@ mod tests {
     /// This simulates a RPC method having a different view than when its database transaction was
     /// created.
     fn persist_block_after_db_tx_creation(
-        provider: BlockchainProvider<MockNodeTypesWithDB>,
+        provider: BlockchainProvider<MockNodeDatabase>,
         block_number: BlockNumber,
     ) {
         let hook_provider = provider.clone();
@@ -2866,7 +2923,7 @@ mod tests {
     }
 
     /// [`BlockchainProvider::new`] needs a genesis header to initialize its chain tracker.
-    fn test_provider_factory_with_genesis() -> eyre::Result<ProviderFactory<MockNodeTypesWithDB>> {
+    fn test_provider_factory_with_genesis() -> eyre::Result<ProviderFactory<MockNodeDatabase>> {
         let factory = create_test_provider_factory();
         let provider_rw = factory.provider_rw()?;
         let mut rng = generators::rng();

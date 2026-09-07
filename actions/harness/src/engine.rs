@@ -47,7 +47,6 @@ use reth_basic_payload_builder::{
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_db_common::init::init_genesis;
 use reth_execution_types::ExecutionOutcome;
-use reth_node_api::NodeTypesWithDBAdapter;
 use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
@@ -62,7 +61,7 @@ use reth_trie_common::HashedStorage;
 use crate::{SharedBlockHashRegistry, SharedL1Chain};
 
 /// Type alias for the node type adapter used in tests.
-pub type TestNodeTypes = NodeTypesWithDBAdapter<Arc<TempDatabase<DatabaseEnv>>>;
+pub type TestNodeTypes = Arc<TempDatabase<DatabaseEnv>>;
 
 /// Type alias for the test provider factory used by the engine client.
 pub type TestProviderFactory = ProviderFactory<TestNodeTypes>;

@@ -12,7 +12,6 @@ use reth_db::{DatabaseEnv, init_db, open_db_read_only};
 use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_evm::BaseEvmConfig;
-use reth_node_builder::NodeTypesWithDBAdapter;
 use reth_node_core::{
     args::{DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs},
     dirs::{ChainPath, DataDirPath},
@@ -182,7 +181,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         rocksdb_provider: RocksDBProvider,
         access: AccessRights,
         runtime: reth_tasks::Runtime,
-    ) -> eyre::Result<ProviderFactory<NodeTypesWithDBAdapter<DatabaseEnv>>>
+    ) -> eyre::Result<ProviderFactory<DatabaseEnv>>
     where
         C: ChainSpecParser,
     {
@@ -191,7 +190,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
         let bal_store = BalStoreHandle::new(InMemoryBalStore::new(
             BalConfig::with_in_memory_retention_distance(balstore_cache_size),
         ));
-        let factory = ProviderFactory::<NodeTypesWithDBAdapter<DatabaseEnv>>::new(
+        let factory = ProviderFactory::<DatabaseEnv>::new(
             db,
             self.chain.clone(),
             static_file_provider,
@@ -225,7 +224,7 @@ impl<C: ChainSpecParser> EnvironmentArgs<C> {
             let (_tip_tx, tip_rx) = watch::channel(B256::ZERO);
 
             // Builds and executes an unwind-only pipeline
-            let mut pipeline = Pipeline::<NodeTypesWithDBAdapter<DatabaseEnv>>::builder()
+            let mut pipeline = Pipeline::<DatabaseEnv>::builder()
                 .add_stages(DefaultStages::new(
                     factory.clone(),
                     tip_rx,
@@ -254,7 +253,7 @@ pub struct Environment {
     /// Configuration for reth node
     pub config: Config,
     /// Provider factory.
-    pub provider_factory: ProviderFactory<NodeTypesWithDBAdapter<DatabaseEnv>>,
+    pub provider_factory: ProviderFactory<DatabaseEnv>,
     /// Datadir path.
     pub data_dir: ChainPath<DataDirPath>,
 }

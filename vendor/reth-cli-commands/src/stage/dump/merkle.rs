@@ -5,11 +5,13 @@ use eyre::Result;
 use reth_config::config::EtlConfig;
 use reth_consensus::FullConsensus;
 use reth_db::DatabaseEnv;
-use reth_db_api::{database::Database, models::BlockNumberAddress, table::TableImporter, tables};
+use reth_db_api::{
+    database::Database, database_metrics::DatabaseMetrics, models::BlockNumberAddress,
+    table::TableImporter, tables,
+};
 use reth_db_common::DbTool;
 use reth_evm::BaseEvmConfig;
 use reth_exex::ExExManagerHandle;
-use reth_node_api::NodeTypesWithDB;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{
     DatabaseProviderFactory, ProviderFactory,
@@ -27,8 +29,8 @@ use tracing::info;
 use super::setup;
 
 #[expect(clippy::too_many_arguments)]
-pub(crate) async fn dump_merkle_stage<N>(
-    db_tool: &DbTool<N>,
+pub(crate) async fn dump_merkle_stage(
+    db_tool: &DbTool<DatabaseEnv>,
     from: BlockNumber,
     to: BlockNumber,
     output_datadir: ChainPath<DataDirPath>,
@@ -36,10 +38,7 @@ pub(crate) async fn dump_merkle_stage<N>(
     evm_config: BaseEvmConfig,
     consensus: impl FullConsensus + 'static,
     runtime: reth_tasks::Runtime,
-) -> Result<()>
-where
-    N: NodeTypesWithDB<DB = DatabaseEnv>,
-{
+) -> Result<()> {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
 
     output_db.update(|tx| {
@@ -62,7 +61,7 @@ where
 
     if should_run {
         dry_run(
-            ProviderFactory::<N>::new(
+            ProviderFactory::<DatabaseEnv>::new(
                 output_db,
                 db_tool.chain(),
                 StaticFileProvider::read_write(output_datadir.static_files())?,
@@ -78,8 +77,8 @@ where
 }
 
 /// Dry-run an unwind to FROM block and copy the necessary table data to the new database.
-fn unwind_and_copy<N: NodeTypesWithDB>(
-    db_tool: &DbTool<N>,
+fn unwind_and_copy<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    db_tool: &DbTool<DB>,
     range: (u64, u64),
     tip_block_number: u64,
     output_db: &DatabaseEnv,
@@ -160,9 +159,9 @@ fn unwind_and_copy<N: NodeTypesWithDB>(
 }
 
 /// Try to re-execute the stage straight away
-fn dry_run<N>(output_provider_factory: ProviderFactory<N>, to: u64, from: u64) -> eyre::Result<()>
+fn dry_run<DB>(output_provider_factory: ProviderFactory<DB>, to: u64, from: u64) -> eyre::Result<()>
 where
-    N: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     info!(target: "reth::cli", "Executing stage.");
     let provider = output_provider_factory.database_provider_rw()?;

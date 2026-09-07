@@ -9,10 +9,10 @@ use std::sync::Arc;
 use base_common_consensus::BaseBlock;
 use futures::Stream;
 use reth_consensus::FullConsensus;
+use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_primitives::BeaconEngineMessage;
 use reth_evm::BaseEvmConfig;
 use reth_network_p2p::BlockClient;
-use reth_node_types::NodeTypesWithDB;
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_provider::{ProviderFactory, providers::BlockchainProvider};
 use reth_prune::PrunerWithFactory;
@@ -48,16 +48,16 @@ use crate::{
 ///
 /// [`ChainEvent`]: crate::chain::ChainEvent
 #[expect(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn build_engine_orchestrator<N, Client, S, V>(
+pub fn build_engine_orchestrator<DB, Client, S, V>(
     engine_kind: EngineApiKind,
     consensus: Arc<dyn FullConsensus>,
     client: Client,
     incoming_requests: S,
-    pipeline: Pipeline<N>,
+    pipeline: Pipeline<DB>,
     pipeline_task_spawner: Runtime,
-    provider: ProviderFactory<N>,
-    blockchain_db: BlockchainProvider<N>,
-    pruner: PrunerWithFactory<ProviderFactory<N>>,
+    provider: ProviderFactory<DB>,
+    blockchain_db: BlockchainProvider<DB>,
+    pruner: PrunerWithFactory<ProviderFactory<DB>>,
     payload_builder: PayloadBuilderHandle,
     payload_validator: V,
     overlay_manager: OverlayManager,
@@ -71,10 +71,10 @@ pub fn build_engine_orchestrator<N, Client, S, V>(
         S,
         BasicBlockDownloader<Client, BaseBlock>,
     >,
-    PipelineSync<N>,
+    PipelineSync<DB>,
 >
 where
-    N: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     Client: BlockClient<Block = BaseBlock> + 'static,
     S: Stream<Item = BeaconEngineMessage> + Send + Sync + Unpin + 'static,
     V: EngineValidator + WaitForCaches,

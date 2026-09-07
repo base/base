@@ -243,7 +243,7 @@ mod tests {
     use reth_primitives_traits::Account;
     use reth_provider::{
         BlockWriter, ProviderFactory,
-        test_utils::{MockNodeTypesWithDB, create_test_provider_factory},
+        test_utils::{MockNodeDatabase, create_test_provider_factory},
     };
     use reth_stages_types::{FinishCheckpoint, StageCheckpoint, StageId};
     use reth_storage_api::StageCheckpointWriter;
@@ -291,7 +291,7 @@ mod tests {
     fn setup_frontiers(
         state_trie_tip_index: usize,
         finish_tip_index: usize,
-    ) -> (ProviderFactory<MockNodeTypesWithDB>, Vec<ExecutedBlock>) {
+    ) -> (ProviderFactory<MockNodeDatabase>, Vec<ExecutedBlock>) {
         let factory = create_test_provider_factory();
         let blocks = test_blocks();
         let provider_rw = factory.provider_rw().unwrap();

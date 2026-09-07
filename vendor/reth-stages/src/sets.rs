@@ -16,7 +16,7 @@
 //! # use reth_prune_types::PruneModes;
 //! # use reth_evm::BaseEvmConfig;
 //! # use reth_provider::StaticFileProviderFactory;
-//! # use reth_provider::test_utils::{create_test_provider_factory, MockNodeTypesWithDB};
+//! # use reth_provider::test_utils::{create_test_provider_factory, MockNodeDatabase};
 //! # use reth_static_file::StaticFileProducer;
 //! # use reth_config::config::StageConfig;
 //! # use std::sync::Arc;
@@ -28,7 +28,7 @@
 //! let static_file_producer =
 //!     StaticFileProducer::new(provider_factory.clone(), PruneModes::default());
 //! // Build a pipeline with all offline stages.
-//! let pipeline = Pipeline::<MockNodeTypesWithDB>::builder()
+//! let pipeline = Pipeline::<MockNodeDatabase>::builder()
 //!     .add_stages(OfflineStages::new(exec, Arc::new(consensus), StageConfig::default(), PruneModes::default()))
 //!     .build(provider_factory, static_file_producer);
 //!

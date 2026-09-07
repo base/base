@@ -10,9 +10,12 @@ use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_execution_chainspec::BaseChainSpec;
 use reth_chain_state::{BlockState, CanonicalInMemoryState};
 use reth_chainspec::ChainInfo;
-use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
+use reth_db_api::{
+    Database,
+    database_metrics::DatabaseMetrics,
+    models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices},
+};
 use reth_execution_types::ExecutionOutcome;
-use reth_node_types::NodeTypesWithDB;
 use reth_primitives_traits::{
     BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
 };
@@ -44,23 +47,23 @@ use crate::{
 /// time-out.
 #[derive(Debug)]
 #[doc(hidden)] // triggers ICE for `cargo docs`
-pub struct ConsistentProvider<N: NodeTypesWithDB> {
+pub struct ConsistentProvider<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
     /// Storage provider.
-    storage_provider: <ProviderFactory<N> as DatabaseProviderFactory>::Provider,
+    storage_provider: <ProviderFactory<DB> as DatabaseProviderFactory>::Provider,
     /// Head block at time of [`Self`] creation
     head_block: Option<Arc<BlockState>>,
     /// In-memory canonical state. This is not a snapshot, and can change! Use with caution.
     canonical_in_memory_state: CanonicalInMemoryState,
 }
 
-impl<N: NodeTypesWithDB> ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ConsistentProvider<DB> {
     /// Create a new provider using [`ProviderFactory`] and [`CanonicalInMemoryState`],
     ///
     /// Underneath it will take a snapshot by fetching [`CanonicalInMemoryState::head_state`] and
     /// [`ProviderFactory::database_provider_ro`] effectively maintaining one single snapshotted
     /// view of memory and database.
     pub fn new(
-        storage_provider_factory: ProviderFactory<N>,
+        storage_provider_factory: ProviderFactory<DB>,
         state: CanonicalInMemoryState,
     ) -> ProviderResult<Self> {
         // Each one provides a snapshot at the time of instantiation, but its order matters.
@@ -119,7 +122,7 @@ impl<N: NodeTypesWithDB> ConsistentProvider<N> {
     ) -> ProviderResult<Vec<T>>
     where
         F: FnOnce(
-            &DatabaseProviderRO<N::DB>,
+            &DatabaseProviderRO<DB>,
             RangeInclusive<BlockNumber>,
             &mut P,
         ) -> ProviderResult<Vec<T>>,
@@ -224,7 +227,7 @@ impl<N: NodeTypesWithDB> ConsistentProvider<N> {
         fetch_from_block_state: M,
     ) -> ProviderResult<Vec<R>>
     where
-        S: FnOnce(&DatabaseProviderRO<N::DB>, RangeInclusive<TxNumber>) -> ProviderResult<Vec<R>>,
+        S: FnOnce(&DatabaseProviderRO<DB>, RangeInclusive<TxNumber>) -> ProviderResult<Vec<R>>,
         M: Fn(RangeInclusive<usize>, &BlockState) -> ProviderResult<Vec<R>>,
     {
         let in_mem_chain = self.head_block.iter().flat_map(|b| b.chain()).collect::<Vec<_>>();
@@ -321,7 +324,7 @@ impl<N: NodeTypesWithDB> ConsistentProvider<N> {
         fetch_from_block_state: M,
     ) -> ProviderResult<Option<R>>
     where
-        S: FnOnce(&DatabaseProviderRO<N::DB>) -> ProviderResult<Option<R>>,
+        S: FnOnce(&DatabaseProviderRO<DB>) -> ProviderResult<Option<R>>,
         M: Fn(usize, TxNumber, &BlockState) -> ProviderResult<Option<R>>,
     {
         let in_mem_chain = self.head_block.iter().flat_map(|b| b.chain()).collect::<Vec<_>>();
@@ -388,7 +391,7 @@ impl<N: NodeTypesWithDB> ConsistentProvider<N> {
         fetch_from_block_state: M,
     ) -> ProviderResult<R>
     where
-        S: FnOnce(&DatabaseProviderRO<N::DB>) -> ProviderResult<R>,
+        S: FnOnce(&DatabaseProviderRO<DB>) -> ProviderResult<R>,
         M: Fn(&BlockState) -> ProviderResult<R>,
     {
         if let Some(Some(block_state)) = self.head_block.as_ref().map(|b| b.block_on_chain(id)) {
@@ -422,7 +425,7 @@ impl<N: NodeTypesWithDB> ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ConsistentProvider<DB> {
     /// Ensures that the given block number is canonical (synced)
     ///
     /// This is a helper for guarding the `HistoricalStateProvider` against block numbers that are
@@ -442,7 +445,9 @@ impl<N: NodeTypesWithDB> ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> StaticFileProviderFactory for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StaticFileProviderFactory
+    for ConsistentProvider<DB>
+{
     fn static_file_provider(&self) -> StaticFileProvider {
         self.storage_provider.static_file_provider()
     }
@@ -456,7 +461,9 @@ impl<N: NodeTypesWithDB> StaticFileProviderFactory for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> HeaderProvider for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
+    for ConsistentProvider<DB>
+{
     type Header = alloy_consensus::Header;
 
     fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
@@ -527,7 +534,9 @@ impl<N: NodeTypesWithDB> HeaderProvider for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BlockHashReader for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockHashReader
+    for ConsistentProvider<DB>
+{
     fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
         self.get_in_memory_or_storage_by_block(
             number.into(),
@@ -553,7 +562,9 @@ impl<N: NodeTypesWithDB> BlockHashReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BlockNumReader for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockNumReader
+    for ConsistentProvider<DB>
+{
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         let best_number = self.best_block_number()?;
         Ok(ChainInfo { best_hash: self.block_hash(best_number)?.unwrap_or_default(), best_number })
@@ -576,7 +587,9 @@ impl<N: NodeTypesWithDB> BlockNumReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BlockIdReader for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockIdReader
+    for ConsistentProvider<DB>
+{
     fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
         Ok(self.canonical_in_memory_state.pending_block_num_hash())
     }
@@ -590,7 +603,9 @@ impl<N: NodeTypesWithDB> BlockIdReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BlockReader for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReader
+    for ConsistentProvider<DB>
+{
     type Block = BaseBlock;
 
     fn find_block_by_hash(
@@ -742,7 +757,9 @@ impl<N: NodeTypesWithDB> BlockReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> TransactionsProvider for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> TransactionsProvider
+    for ConsistentProvider<DB>
+{
     type Transaction = BaseTxEnvelope;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
@@ -874,7 +891,9 @@ impl<N: NodeTypesWithDB> TransactionsProvider for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> ReceiptProvider for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ReceiptProvider
+    for ConsistentProvider<DB>
+{
     type Receipt = BaseReceipt;
 
     fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
@@ -943,7 +962,9 @@ impl<N: NodeTypesWithDB> ReceiptProvider for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> ReceiptProviderIdExt for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ReceiptProviderIdExt
+    for ConsistentProvider<DB>
+{
     fn receipts_by_block_id(&self, block: BlockId) -> ProviderResult<Option<Vec<Self::Receipt>>> {
         match block {
             BlockId::Hash(rpc_block_hash) => {
@@ -976,7 +997,9 @@ impl<N: NodeTypesWithDB> ReceiptProviderIdExt for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> BlockBodyIndicesProvider for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockBodyIndicesProvider
+    for ConsistentProvider<DB>
+{
     fn block_body_indices(
         &self,
         number: BlockNumber,
@@ -1020,7 +1043,9 @@ impl<N: NodeTypesWithDB> BlockBodyIndicesProvider for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> StageCheckpointReader for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StageCheckpointReader
+    for ConsistentProvider<DB>
+{
     fn get_stage_checkpoint(&self, id: StageId) -> ProviderResult<Option<StageCheckpoint>> {
         self.storage_provider.get_stage_checkpoint(id)
     }
@@ -1034,7 +1059,9 @@ impl<N: NodeTypesWithDB> StageCheckpointReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> PruneCheckpointReader for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> PruneCheckpointReader
+    for ConsistentProvider<DB>
+{
     fn get_prune_checkpoint(
         &self,
         segment: PruneSegment,
@@ -1047,13 +1074,17 @@ impl<N: NodeTypesWithDB> PruneCheckpointReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> ChainSpecProvider for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ChainSpecProvider
+    for ConsistentProvider<DB>
+{
     fn chain_spec(&self) -> Arc<BaseChainSpec> {
         ChainSpecProvider::chain_spec(&self.storage_provider)
     }
 }
 
-impl<N: NodeTypesWithDB> BlockReaderIdExt for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> BlockReaderIdExt
+    for ConsistentProvider<DB>
+{
     fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<Self::Block>> {
         match id {
             BlockId::Number(num) => self.block_by_number_or_tag(num),
@@ -1135,7 +1166,9 @@ impl<N: NodeTypesWithDB> BlockReaderIdExt for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> StorageChangeSetReader for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StorageChangeSetReader
+    for ConsistentProvider<DB>
+{
     fn storage_changeset(
         &self,
         block_number: BlockNumber,
@@ -1296,7 +1329,9 @@ impl<N: NodeTypesWithDB> StorageChangeSetReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> ChangeSetReader for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ChangeSetReader
+    for ConsistentProvider<DB>
+{
     fn account_block_changeset(
         &self,
         block_number: BlockNumber,
@@ -1444,7 +1479,9 @@ impl<N: NodeTypesWithDB> ChangeSetReader for ConsistentProvider<N> {
     }
 }
 
-impl<N: NodeTypesWithDB> StateReader for ConsistentProvider<N> {
+impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StateReader
+    for ConsistentProvider<DB>
+{
     type Receipt = BaseReceipt;
 
     /// Re-constructs the [`ExecutionOutcome`] from in-memory and database state, if necessary.

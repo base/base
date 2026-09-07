@@ -240,8 +240,8 @@ mod tests {
     use eyre::Result;
     use futures::StreamExt;
     use reth_chainspec::{ChainSpec, EthereumHardfork, MIN_TRANSACTION_GAS};
+    use reth_db_api::{Database, database_metrics::DatabaseMetrics};
     use reth_db_common::init::init_genesis;
-    use reth_node_api::NodeTypesWithDB;
     use reth_primitives_traits::{Block as _, crypto::secp256k1::public_key_to_address};
     use reth_provider::{
         ProviderFactory, providers::BlockchainProvider,
@@ -382,13 +382,13 @@ mod tests {
         Ok(blocks)
     }
 
-    fn execute_and_commit_blocks<N>(
-        provider_factory: &ProviderFactory<N>,
+    fn execute_and_commit_blocks<DB>(
+        provider_factory: &ProviderFactory<DB>,
         chain_spec: &Arc<ChainSpec>,
         blocks: &[RecoveredBlock<BaseBlock>],
     ) -> Result<()>
     where
-        N: NodeTypesWithDB,
+        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     {
         for block in blocks {
             execute_block_and_commit_to_database(provider_factory, chain_spec.clone(), block)?;

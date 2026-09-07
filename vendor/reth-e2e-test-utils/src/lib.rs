@@ -8,9 +8,7 @@ use node::NodeTestContext;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_network_api::test_utils::PeersHandleProvider;
 use reth_node_api::FullNodeComponents;
-use reth_node_builder::{
-    ComponentBuilder, FullNodeTypesAdapter, NodeAdapter, NodeTypesWithDBAdapter, rpc::RethRpcAddOns,
-};
+use reth_node_builder::{ComponentBuilder, FullNodeTypesAdapter, NodeAdapter, rpc::RethRpcAddOns};
 use reth_payload_primitives::BasePayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
 use wallet::Wallet;
@@ -142,7 +140,7 @@ where
 /// Testing database
 pub type TmpDB = Arc<TempDatabase<DatabaseEnv>>;
 /// Provider used by test nodes.
-pub type TestProvider = BlockchainProvider<NodeTypesWithDBAdapter<TmpDB>>;
+pub type TestProvider = BlockchainProvider<TmpDB>;
 
 /// Provider adapter used by test nodes.
 pub type TmpNodeAdapter<Provider = TestProvider> = FullNodeTypesAdapter<TmpDB, Provider>;

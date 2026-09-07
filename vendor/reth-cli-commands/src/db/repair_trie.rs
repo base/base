@@ -10,10 +10,10 @@ use reth_cli_util::parse_socket_address;
 use reth_db_api::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
     database::Database,
+    database_metrics::DatabaseMetrics,
     transaction::{DbTx, DbTxMut},
 };
 use reth_db_common::DbTool;
-use reth_node_api::NodeTypesWithDB;
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     version::version_metadata,
@@ -55,9 +55,9 @@ pub struct Command {
 
 impl Command {
     /// Execute `db repair-trie` command
-    pub fn execute<N: NodeTypesWithDB>(
+    pub fn execute<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
         self,
-        tool: &DbTool<N>,
+        tool: &DbTool<DB>,
         task_executor: TaskExecutor,
         data_dir: &ChainPath<DataDirPath>,
     ) -> eyre::Result<()> {
@@ -105,7 +105,9 @@ impl Command {
     }
 }
 
-fn verify_only<N: NodeTypesWithDB>(tool: &DbTool<N>) -> eyre::Result<()> {
+fn verify_only<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    tool: &DbTool<DB>,
+) -> eyre::Result<()> {
     // Log the database block tip from Finish stage checkpoint
     let finish_checkpoint = tool
         .provider_factory
@@ -205,7 +207,9 @@ fn verify_checkpoints(provider: impl StageCheckpointReader) -> eyre::Result<()> 
     Ok(())
 }
 
-fn verify_and_repair<N: NodeTypesWithDB>(tool: &DbTool<N>) -> eyre::Result<()> {
+fn verify_and_repair<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    tool: &DbTool<DB>,
+) -> eyre::Result<()> {
     // Get a read-write database provider
     let mut provider_rw = tool.provider_factory.provider_rw()?;
 
@@ -217,7 +221,7 @@ fn verify_and_repair<N: NodeTypesWithDB>(tool: &DbTool<N>) -> eyre::Result<()> {
     verify_checkpoints(provider_rw.as_ref())?;
 
     let inconsistent_nodes = reth_trie_db::with_adapter!(tool.provider_factory, |A| {
-        do_verify_and_repair::<N, A>(&mut provider_rw, finish_checkpoint.block_number)?
+        do_verify_and_repair::<DB, A>(&mut provider_rw, finish_checkpoint.block_number)?
     });
 
     if inconsistent_nodes == 0 {
@@ -230,12 +234,15 @@ fn verify_and_repair<N: NodeTypesWithDB>(tool: &DbTool<N>) -> eyre::Result<()> {
     Ok(())
 }
 
-fn do_verify_and_repair<N: NodeTypesWithDB, A: TrieTableAdapter>(
-    provider_rw: &mut reth_provider::DatabaseProviderRW<N::DB>,
+fn do_verify_and_repair<
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
+    A: TrieTableAdapter,
+>(
+    provider_rw: &mut reth_provider::DatabaseProviderRW<DB>,
     block_number: u64,
 ) -> eyre::Result<usize>
 where
-    <N::DB as reth_db_api::database::Database>::TXMut: DbTxMut + DbTx,
+    <DB as reth_db_api::database::Database>::TXMut: DbTxMut + DbTx,
 {
     // Create cursors for making modifications with
     let tx = provider_rw.tx_mut();
@@ -338,18 +345,21 @@ where
     if inconsistent_nodes > 0 {
         // Refuse to commit repaired trie tables unless they reproduce the canonical tip state
         // root.
-        verify_repaired_state_root::<N, A>(provider_rw, block_number)?;
+        verify_repaired_state_root::<DB, A>(provider_rw, block_number)?;
     }
 
     Ok(inconsistent_nodes as usize)
 }
 
-fn verify_repaired_state_root<N: NodeTypesWithDB, A: TrieTableAdapter>(
-    provider_rw: &reth_provider::DatabaseProviderRW<N::DB>,
+fn verify_repaired_state_root<
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
+    A: TrieTableAdapter,
+>(
+    provider_rw: &reth_provider::DatabaseProviderRW<DB>,
     block_number: u64,
 ) -> eyre::Result<()>
 where
-    <N::DB as reth_db_api::database::Database>::TXMut: DbTxMut + DbTx,
+    <DB as reth_db_api::database::Database>::TXMut: DbTxMut + DbTx,
 {
     type DbStateRoot<'a, TX, A> = reth_trie::StateRoot<
         DatabaseTrieCursorFactory<&'a TX, A>,

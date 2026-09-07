@@ -52,7 +52,7 @@ use reth_evm::BaseEvmConfig;
 use reth_exex::ExExManagerHandle;
 use reth_fs_util as fs;
 use reth_network_p2p::headers::client::HeadersClient;
-use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypesWithDB, NodeTypesWithDBAdapter};
+use reth_node_api::{FullNodeComponents, FullNodeTypes};
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
@@ -455,14 +455,14 @@ where
     /// Returns the [`ProviderFactory`] for the attached storage after executing a consistent check
     /// between the database and static files. **It may execute a pipeline unwind if it fails this
     /// check.**
-    pub async fn create_provider_factory<N>(
+    pub async fn create_provider_factory(
         &self,
         overlay_manager: OverlayManager,
         rocksdb_provider: Option<RocksDBProvider>,
         disabled_stages: &[StageId],
-    ) -> eyre::Result<ProviderFactory<N>>
+    ) -> eyre::Result<ProviderFactory<DB>>
     where
-        N: NodeTypesWithDB<DB = DB>,
+        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     {
         // Validate static files configuration
         let static_files_config = &self.toml_config().static_files;
@@ -646,17 +646,17 @@ where
     }
 
     /// Creates a new [`ProviderFactory`] and attaches it to the launch context.
-    pub async fn with_provider_factory<N>(
+    pub async fn with_provider_factory(
         self,
         overlay_manager: OverlayManager,
         rocksdb_provider: Option<RocksDBProvider>,
         disabled_stages: &[StageId],
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, ProviderFactory<N>>>>
+    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, ProviderFactory<DB>>>>
     where
-        N: NodeTypesWithDB<DB = DB>,
+        DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     {
         let factory = self
-            .create_provider_factory::<N>(overlay_manager, rocksdb_provider, disabled_stages)
+            .create_provider_factory(overlay_manager, rocksdb_provider, disabled_stages)
             .await?;
         let ctx = LaunchContextWith {
             inner: self.inner,
@@ -667,17 +667,17 @@ where
     }
 }
 
-impl<T> LaunchContextWith<Attached<WithConfigs, ProviderFactory<T>>>
+impl<DB> LaunchContextWith<Attached<WithConfigs, ProviderFactory<DB>>>
 where
-    T: NodeTypesWithDB,
+    DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     /// Returns access to the underlying database.
-    pub const fn database(&self) -> &T::DB {
+    pub const fn database(&self) -> &DB {
         self.right().db_ref()
     }
 
     /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(&self) -> &ProviderFactory<T> {
+    pub const fn provider_factory(&self) -> &ProviderFactory<DB> {
         self.right()
     }
 
@@ -767,7 +767,7 @@ where
     /// prometheus.
     pub fn with_metrics_task(
         self,
-    ) -> LaunchContextWith<Attached<WithConfigs, WithMeteredProvider<T>>> {
+    ) -> LaunchContextWith<Attached<WithConfigs, WithMeteredProvider<DB>>> {
         let (metrics_sender, metrics_receiver) = unbounded_channel();
 
         let with_metrics =
@@ -785,12 +785,12 @@ where
     }
 }
 
-impl<DB> LaunchContextWith<Attached<WithConfigs, WithMeteredProvider<NodeTypesWithDBAdapter<DB>>>>
+impl<DB> LaunchContextWith<Attached<WithConfigs, WithMeteredProvider<DB>>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
     /// Returns the configured `ProviderFactory`.
-    const fn provider_factory(&self) -> &ProviderFactory<NodeTypesWithDBAdapter<DB>> {
+    const fn provider_factory(&self) -> &ProviderFactory<DB> {
         &self.right().provider_factory
     }
 
@@ -807,7 +807,7 @@ where
     ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithMeteredProviders<T>>>>
     where
         T: FullNodeTypes<DB = DB>,
-        F: FnOnce(ProviderFactory<NodeTypesWithDBAdapter<DB>>) -> eyre::Result<T::Provider>,
+        F: FnOnce(ProviderFactory<DB>) -> eyre::Result<T::Provider>,
     {
         let blockchain_db = create_blockchain_provider(self.provider_factory().clone())?;
 
@@ -838,7 +838,7 @@ where
     }
 
     /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(&self) -> &ProviderFactory<NodeTypesWithDBAdapter<T::DB>> {
+    pub const fn provider_factory(&self) -> &ProviderFactory<T::DB> {
         &self.right().db_provider_container.provider_factory
     }
 
@@ -920,7 +920,7 @@ where
     NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
 {
     /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(&self) -> &ProviderFactory<NodeTypesWithDBAdapter<T::DB>> {
+    pub const fn provider_factory(&self) -> &ProviderFactory<T::DB> {
         &self.right().db_provider_container.provider_factory
     }
 
@@ -939,9 +939,7 @@ where
     }
 
     /// Creates a new [`StaticFileProducer`] with the attached database.
-    pub fn static_file_producer(
-        &self,
-    ) -> StaticFileProducer<ProviderFactory<NodeTypesWithDBAdapter<T::DB>>> {
+    pub fn static_file_producer(&self) -> StaticFileProducer<ProviderFactory<T::DB>> {
         StaticFileProducer::new(self.provider_factory().clone(), self.prune_modes())
     }
 
@@ -1265,8 +1263,8 @@ impl Clone for WithConfigs {
 /// Helper container type to bundle the [`ProviderFactory`] and the metrics
 /// sender.
 #[derive(Debug, Clone)]
-pub struct WithMeteredProvider<N: NodeTypesWithDB> {
-    provider_factory: ProviderFactory<N>,
+pub struct WithMeteredProvider<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> {
+    provider_factory: ProviderFactory<DB>,
     metrics_sender: UnboundedSender<MetricEvent>,
 }
 
@@ -1277,7 +1275,7 @@ pub struct WithMeteredProviders<T>
 where
     T: FullNodeTypes,
 {
-    db_provider_container: WithMeteredProvider<NodeTypesWithDBAdapter<T::DB>>,
+    db_provider_container: WithMeteredProvider<T::DB>,
     blockchain_db: T::Provider,
 }
 
@@ -1289,13 +1287,15 @@ where
     CB: Clone + std::fmt::Debug + Send + Sync + Unpin + 'static,
     NodeAdapter<T, CB>: FullNodeComponents<Provider = T::Provider, DB = T::DB>,
 {
-    db_provider_container: WithMeteredProvider<NodeTypesWithDBAdapter<T::DB>>,
+    db_provider_container: WithMeteredProvider<T::DB>,
     node_adapter: NodeAdapter<T, CB>,
     head: Head,
 }
 
 /// Returns the metrics hooks for the node.
-pub fn metrics_hooks<N: NodeTypesWithDB>(provider_factory: &ProviderFactory<N>) -> Hooks {
+pub fn metrics_hooks<DB: Database + DatabaseMetrics + Clone + Unpin + 'static>(
+    provider_factory: &ProviderFactory<DB>,
+) -> Hooks {
     Hooks::builder()
         .with_hook({
             let db = provider_factory.db_ref().clone();

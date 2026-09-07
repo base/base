@@ -70,9 +70,7 @@ fn create_file_client_from_blocks(blocks: Vec<SealedBlock<Block>>) -> Arc<FileCl
 ///
 /// Verifies account and storage changesets can be read from static files.
 fn assert_changesets_queryable(
-    provider_factory: &reth_provider::ProviderFactory<
-        reth_provider::test_utils::MockNodeTypesWithDB,
-    >,
+    provider_factory: &reth_provider::ProviderFactory<reth_provider::test_utils::MockNodeDatabase>,
     block_range: std::ops::RangeInclusive<u64>,
 ) -> eyre::Result<()> {
     // Verify storage changesets
@@ -106,9 +104,7 @@ fn build_downloaders_from_file_client(
     genesis: reth_primitives_traits::SealedHeader<Header>,
     stages_config: StageConfig,
     consensus: Arc<NoopConsensus>,
-    provider_factory: reth_provider::ProviderFactory<
-        reth_provider::test_utils::MockNodeTypesWithDB,
-    >,
+    provider_factory: reth_provider::ProviderFactory<reth_provider::test_utils::MockNodeDatabase>,
 ) -> (impl HeaderDownloader<Header = Header>, impl BodyDownloader<Block = Block>, reth_tasks::Runtime)
 {
     let tip = file_client.tip().expect("file client should have tip");
@@ -133,14 +129,12 @@ fn build_downloaders_from_file_client(
 
 /// Builds a pipeline with `DefaultStages`.
 fn build_pipeline<H, B>(
-    provider_factory: reth_provider::ProviderFactory<
-        reth_provider::test_utils::MockNodeTypesWithDB,
-    >,
+    provider_factory: reth_provider::ProviderFactory<reth_provider::test_utils::MockNodeDatabase>,
     header_downloader: H,
     body_downloader: B,
     max_block: u64,
     tip: B256,
-) -> Pipeline<reth_provider::test_utils::MockNodeTypesWithDB>
+) -> Pipeline<reth_provider::test_utils::MockNodeDatabase>
 where
     H: HeaderDownloader<Header = Header> + 'static,
     B: BodyDownloader<Block = Block> + 'static,
@@ -169,7 +163,7 @@ where
         PruneModes::default(),
     );
 
-    let pipeline = Pipeline::<reth_provider::test_utils::MockNodeTypesWithDB>::builder()
+    let pipeline = Pipeline::<reth_provider::test_utils::MockNodeDatabase>::builder()
         .with_tip_sender(tip_tx)
         .with_max_block(max_block)
         .with_fail_on_unwind(true)

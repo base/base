@@ -1113,7 +1113,7 @@ mod tests {
     };
     use reth_provider::{
         ProviderFactory, RocksDBProviderFactory,
-        test_utils::{MockNodeTypesWithDB, create_test_provider_factory_with_chain_spec},
+        test_utils::{MockNodeDatabase, create_test_provider_factory_with_chain_spec},
     };
 
     use super::*;
@@ -1353,7 +1353,7 @@ mod tests {
 
         // Try to init db with a different genesis block
         let genesis_hash = init_genesis(
-            &ProviderFactory::<MockNodeTypesWithDB>::new(
+            &ProviderFactory::<MockNodeDatabase>::new(
                 factory.into_db(),
                 Arc::new(MAINNET.as_ref().clone().into()),
                 static_file_provider,
@@ -1380,7 +1380,7 @@ mod tests {
         init_genesis(&factory).unwrap();
 
         let result = init_genesis_with_settings_and_validate(
-            &ProviderFactory::<MockNodeTypesWithDB>::new(
+            &ProviderFactory::<MockNodeDatabase>::new(
                 factory.into_db(),
                 Arc::new(MAINNET.as_ref().clone().into()),
                 static_file_provider,
@@ -1440,7 +1440,7 @@ mod tests {
             IntegerList::new([0]).unwrap(),
         )];
 
-        let _collect_from_mdbx = |factory: &ProviderFactory<MockNodeTypesWithDB>| {
+        let _collect_from_mdbx = |factory: &ProviderFactory<MockNodeDatabase>| {
             let provider = factory.provider().unwrap();
             let tx = provider.tx_ref();
             (
