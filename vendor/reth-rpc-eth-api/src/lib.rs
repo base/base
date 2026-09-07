@@ -52,3 +52,6 @@ mod base_time;
 pub use base_time::BaseTimeCache;
 mod base_tx_info;
 pub use base_tx_info::BaseTxInfoMapper;
+
+mod base_rpc_converter;
+pub use base_rpc_converter::BaseRpcConverter;

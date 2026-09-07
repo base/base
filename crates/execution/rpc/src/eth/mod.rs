@@ -26,8 +26,7 @@ mod context;
 pub use context::EthApiCtx;
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
-    EthApiTypes, FromEvmError, FullEthApiServer, RpcConvert, RpcConverter, RpcNodeCore,
-    RpcNodeCoreExt,
+    EthApiTypes, FromEvmError, FullEthApiServer, RpcConvert, RpcNodeCore, RpcNodeCoreExt,
     helpers::{
         EthApiSpec, EthFees, EthState, GetBlockAccessList, LoadFee, LoadPendingBlock, LoadState,
         SpawnBlocking, Trace,
@@ -40,10 +39,7 @@ use reth_tasks::{
     pool::{BlockingTaskGuard, BlockingTaskPool},
 };
 
-use crate::{
-    BaseEthApiError, SequencerClient,
-    eth::{receipt::BaseReceiptConverter, transaction::BaseTxInfoMapper},
-};
+use crate::{BaseEthApiError, SequencerClient};
 
 /// Adapter for [`EthApiInner`], which holds all the data required to serve core `eth_` API.
 pub type EthApiNodeBackend<N, Rpc> = EthApiInner<N, Rpc>;
@@ -309,11 +305,7 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApiInner<N, Rpc> {
 }
 
 /// Converter for Base RPC types.
-pub type BaseRpcConvert<N> = RpcConverter<
-    BaseReceiptConverter<<N as FullNodeTypes>::Provider>,
-    (),
-    BaseTxInfoMapper<<N as FullNodeTypes>::Provider>,
->;
+pub type BaseRpcConvert<N> = reth_rpc_eth_api::BaseRpcConverter<<N as FullNodeTypes>::Provider>;
 
 /// The Base eth API for a node provider, transaction pool, and network.
 pub type BaseNodeEthApi<N> = BaseEthApi<N, BaseRpcConvert<N>>;
@@ -380,9 +372,7 @@ impl BaseEthApiBuilder {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
         let provider = ctx.components.provider().clone();
         let base_time = BaseTimeCache::default();
-        let rpc_converter =
-            RpcConverter::new(BaseReceiptConverter::new(provider.clone(), base_time.clone()))
-                .with_mapper(BaseTxInfoMapper::new(provider, base_time.clone()));
+        let rpc_converter = reth_rpc_eth_api::BaseRpcConverter::new(provider, base_time.clone());
 
         let sequencer_client = if let Some(url) = sequencer_url {
             Some(
