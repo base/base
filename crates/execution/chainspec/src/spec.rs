@@ -726,8 +726,6 @@ mod tests {
     #[test]
     fn base_mainnet_forkids() {
         let base_mainnet_spec = BaseChainSpec::mainnet();
-        let mut base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
-        base_mainnet.genesis_header.set_hash(base_mainnet_spec.genesis_hash());
         test_fork_ids(
             &base_mainnet_spec,
             &[
