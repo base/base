@@ -1,9 +1,9 @@
 use base_evm_context::{ContextSetters, ContextTr, Evm, FrameStack, JournalTr};
-use base_state_api::DatabaseCommit;
-use revm_handler::{
-    EthFrame, EvmTr, EvmTrError, Handler, MainnetHandler, PrecompileProvider,
-    instructions::InstructionProvider, system_call::SystemCallTx,
+use base_evm_handler::{
+    EthFrame, EvmTr, EvmTrError, Handler, InstructionProvider, MainnetHandler, PrecompileProvider,
+    SystemCallTx,
 };
+use base_state_api::DatabaseCommit;
 use revm_interpreter::{InterpreterResult, interpreter::EthInterpreter};
 use revm_primitives::{Address, Bytes};
 use revm_state::EvmState;

@@ -336,6 +336,7 @@ dependencies = [
  "alloy-sol-types",
  "auto_impl",
  "base-evm-context",
+ "base-evm-handler",
  "derive_more",
  "revm",
  "serde_json",
@@ -3234,6 +3235,7 @@ dependencies = [
  "base-common-l1-fees",
  "base-common-precompiles",
  "base-evm-context",
+ "base-evm-handler",
  "base-execution-eip8130",
  "base-metrics",
  "base-precompile-storage",
@@ -3333,6 +3335,7 @@ dependencies = [
  "base-common-chains",
  "base-common-genesis",
  "base-evm-context",
+ "base-evm-handler",
  "base-precompile-macros",
  "base-precompile-storage",
  "criterion 0.8.2",
@@ -3844,6 +3847,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-evm-handler"
+version = "0.0.0"
+dependencies = [
+ "alloy-signer",
+ "alloy-signer-local",
+ "auto_impl",
+ "base-evm-context",
+ "base-state-api",
+ "derive-where",
+ "either",
+ "revm-bytecode",
+ "revm-database",
+ "revm-interpreter",
+ "revm-precompile",
+ "revm-primitives",
+ "revm-state",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "base-execution-chainspec"
 version = "0.0.0"
 dependencies = [
@@ -4059,6 +4083,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-rpc-types-engine",
  "base-evm-context",
+ "base-evm-handler",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-payload-types",
@@ -17729,11 +17754,10 @@ name = "revm"
 version = "0.0.0"
 dependencies = [
  "base-evm-context",
+ "base-evm-handler",
  "base-state-api",
  "revm-bytecode",
  "revm-database",
- "revm-handler",
- "revm-inspector",
  "revm-interpreter",
  "revm-precompile",
  "revm-primitives",
@@ -17775,42 +17799,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "revm-handler"
-version = "0.0.0"
-dependencies = [
- "alloy-signer",
- "alloy-signer-local",
- "auto_impl",
- "base-evm-context",
- "base-state-api",
- "derive-where",
- "revm-bytecode",
- "revm-database",
- "revm-interpreter",
- "revm-precompile",
- "revm-primitives",
- "revm-state",
- "serde",
-]
-
-[[package]]
-name = "revm-inspector"
-version = "0.0.0"
-dependencies = [
- "auto_impl",
- "base-evm-context",
- "base-state-api",
- "either",
- "revm-database",
- "revm-handler",
- "revm-interpreter",
- "revm-primitives",
- "revm-state",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "revm-inspectors"
 version = "0.0.0"
 dependencies = [
@@ -17821,6 +17809,7 @@ dependencies = [
  "alloy-sol-types",
  "anstyle",
  "base-evm-context",
+ "base-evm-handler",
  "boa_engine",
  "boa_gc",
  "colorchoice",

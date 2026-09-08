@@ -378,10 +378,10 @@ mod tests {
     };
     use base_common_genesis::BaseUpgrade;
     use base_evm_context::BlockEnv;
+    use base_evm_handler::NoOpInspector;
     use revm::{
         Context,
         database::{CacheDB, EmptyDB, InMemoryDB},
-        inspector::NoOpInspector,
         primitives::HashMap,
         state::AccountInfo,
     };

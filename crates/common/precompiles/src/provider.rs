@@ -2,9 +2,9 @@ use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
 use base_common_chains::BaseUpgradeExt;
 use base_common_genesis::BaseUpgrade;
+use base_evm_handler::EthPrecompiles;
 use base_precompile_storage::StorageFeatures;
 use revm::{
-    handler::EthPrecompiles,
     precompile,
     precompile::{Precompiles, bn254, modexp, secp256r1},
     primitives::{OnceLock, hardfork::SpecId},
@@ -19,7 +19,7 @@ use crate::{
 /// Static Base precompile table for a [`BasePrecompileSpec`].
 ///
 /// This type selects the fork's Ethereum-style precompiles. It is not a
-/// [`revm::handler::PrecompileProvider`]. Call [`Self::install`] or
+/// [`base_evm_handler::PrecompileProvider`]. Call [`Self::install`] or
 /// [`Self::install_with_observer`] to build the executable [`PrecompilesMap`].
 #[derive(Debug, Clone)]
 pub struct BasePrecompiles<S = BaseUpgrade> {

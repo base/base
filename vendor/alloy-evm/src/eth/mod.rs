@@ -9,11 +9,12 @@ use alloy_primitives::{Address, Bytes};
 use base_evm_context::{
     BlockEnv, CfgEnv, DBErrorMarker, EVMError, Evm as RevmEvm, HaltReason, ResultAndState, TxEnv,
 };
+use base_evm_handler::{
+    EthFrame, EthInstructions, EthPrecompiles, NoOpInspector, PrecompileProvider,
+};
 pub use env::NextEvmEnvAttributes;
 use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext, SystemCallEvm,
-    handler::{EthFrame, EthPrecompiles, PrecompileProvider, instructions::EthInstructions},
-    inspector::NoOpInspector,
     interpreter::{InterpreterResult, interpreter::EthInterpreter},
     precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,

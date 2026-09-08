@@ -1,6 +1,6 @@
 [package]
-name = "revm-handler"
-description = "Revm handler crates"
+name = "base-evm-handler"
+description = "Base EVM execution handlers and inspection"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,12 +11,6 @@ exclude.workspace = true
 authors.workspace = true
 keywords.workspace = true
 categories.workspace = true
-build = false
-autolib = false
-autobins = false
-autoexamples = false
-autotests = false
-autobenches = false
 readme = "README.md"
 
 [package.metadata.docs.rs]
@@ -26,11 +20,8 @@ rustdoc-args = [
     "docsrs",
 ]
 
-[lib]
-name = "revm_handler"
-path = "src/lib.rs"
-
 [dependencies]
+either = { workspace = true }
 auto_impl = { workspace = true }
 revm-state = { workspace = true }
 derive-where = { workspace = true }
@@ -40,14 +31,15 @@ revm-precompile = { workspace = true }
 revm-primitives = { workspace = true }
 base-evm-context = { workspace = true }
 revm-interpreter = { workspace = true }
-serde = { workspace = true, features = [
-    "derive",
-    "rc",
+serde = { workspace = true, features = ["derive", "rc"], optional = true }
+serde_json = { workspace = true, features = [
+    "alloc",
+    "preserve_order",
 ], optional = true }
 [dev-dependencies]
 alloy-signer = { workspace = true }
-revm-database = { workspace = true }
 alloy-signer-local = { workspace = true }
+revm-database = { workspace = true, features = ["serde"]}
 [lints]
 workspace = true
 
@@ -59,17 +51,16 @@ serde = [
     "revm-state/serde",
     "base-evm-context/serde",
     "revm-bytecode/serde",
-    "base-evm-context/serde",
     "revm-database/serde",
     "base-state-api/serde",
     "revm-interpreter/serde",
     "derive-where/serde",
+    "either/serde",
 ]
-serde-json = ["serde"]
+serde-json = ["serde", "tracer"]
 std = [
     "serde?/std",
     "revm-bytecode/std",
-    "base-evm-context/std",
     "base-evm-context/std",
     "revm-database/std",
     "base-state-api/std",
@@ -77,4 +68,8 @@ std = [
     "revm-precompile/std",
     "revm-primitives/std",
     "revm-state/std",
+    "serde_json?/std",
+    "serde_json?/preserve_order",
+    "either/std",
 ]
+tracer = ["std", "serde", "dep:serde", "dep:serde_json"]

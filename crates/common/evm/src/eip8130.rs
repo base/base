@@ -55,6 +55,9 @@ use base_evm_context::{
     Block, Cfg, ContextTr, EVMError, ExecutionResult, JournalTr, JournaledAccountTr,
     LocalContextTr, Output, ResultGas, SuccessReason, take_error,
 };
+use base_evm_handler::{
+    EvmTr, FrameResult, Handler, InspectorEvmTr, InspectorHandler, PrecompileProvider,
+};
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationEvents, AccountConfigurationStorage, ApplyError,
     DelegationEffect, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
@@ -63,8 +66,6 @@ use base_execution_eip8130::{
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
     Inspector,
-    handler::{EvmTr, FrameResult, Handler, PrecompileProvider},
-    inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{
         CallInput, CallInputs, CallOutcome, CallScheme, CallValue, FrameInput, Gas,
         InstructionResult, InterpreterResult, SharedMemory, interpreter_action::FrameInit,
@@ -1728,12 +1729,13 @@ mod tests {
     };
     use base_common_precompiles::INonceManager;
     use base_evm_context::{BlockEnv, CfgEnv, Context};
+    use base_evm_handler::NoOpInspector;
     use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey;
     use revm::{
         Database, bytecode::Bytecode, database::InMemoryDB, database_interface::DBErrorMarker,
-        inspector::NoOpInspector, state::AccountInfo,
+        state::AccountInfo,
     };
 
     use super::*;

@@ -400,6 +400,7 @@ mod tests {
     use base_common_evm::BaseSpecId;
     use base_common_genesis::BaseUpgrade;
     use base_evm_context::{BlockEnv, CfgEnv};
+    use base_evm_handler::NoOpInspector;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_execution_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
@@ -408,7 +409,6 @@ mod tests {
     use revm::{
         database::{BundleState, CacheDB},
         database_interface::EmptyDBTyped,
-        inspector::NoOpInspector,
         primitives::Log,
         state::AccountInfo,
     };

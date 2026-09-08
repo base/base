@@ -1,19 +1,16 @@
 use auto_impl::auto_impl;
-use base_evm_context::{ContextError, ContextTr, Database, Evm, FrameStack};
+use base_evm_context::{ContextError, ContextTr, Evm, FrameStack};
 use revm_interpreter::{
     InterpreterResult, interpreter::EthInterpreter, interpreter_action::FrameInit,
 };
 
 use crate::{
-    EthFrame, FrameResult, ItemOrResult, PrecompileProvider, instructions::InstructionProvider,
-    item_or_result::FrameInitOrResult,
+    ContextTrDbError, EthFrame, FrameResult, ItemOrResult, PrecompileProvider,
+    instructions::InstructionProvider, item_or_result::FrameInitOrResult,
 };
 
 /// Type alias for database error within a context
 pub type ContextDbError<CTX> = ContextError<ContextTrDbError<CTX>>;
-
-/// Type alias for frame error within a context
-pub type ContextTrDbError<CTX> = <<CTX as ContextTr>::Db as Database>::Error;
 
 /// Type alias for frame init result
 pub type FrameInitResult<'a, F> = ItemOrResult<&'a mut F, <F as FrameTr>::FrameResult>;

@@ -26,7 +26,8 @@ impl DefaultBase for BaseContext<EmptyDB> {
 
 #[cfg(test)]
 mod tests {
-    use revm::{ExecuteEvm, InspectEvm, inspector::NoOpInspector};
+    use base_evm_handler::NoOpInspector;
+    use revm::{ExecuteEvm, InspectEvm};
 
     use super::*;
     use crate::Builder;

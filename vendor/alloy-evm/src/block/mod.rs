@@ -5,7 +5,8 @@ use alloc::vec::Vec;
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::{eip2718::WithEncoded, eip7685::Requests};
 use base_evm_context::{ResultAndState, either::Either};
-use revm::{Inspector, inspector::NoOpInspector};
+use base_evm_handler::NoOpInspector;
+use revm::Inspector;
 
 use crate::{Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded, RecoveredTx, ToTxEnv};
 

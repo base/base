@@ -8,10 +8,9 @@ use alloy_rpc_types_trace::geth::{
     mux::{MuxConfig, MuxFrame},
 };
 use base_evm_context::{ContextTr, HaltReasonTr, ResultAndState};
+use base_evm_handler::{FrameResult, JournalExt};
 use revm::{
     DatabaseRef, Inspector,
-    handler::FrameResult,
-    inspector::JournalExt,
     interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter},
 };
 use thiserror::Error;

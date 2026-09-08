@@ -14,9 +14,11 @@ use alloy_primitives::{
     map::{AddressMap, AddressSet},
 };
 use base_evm_context::ContextTr;
+use base_evm_handler::{
+    EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result,
+};
 use revm::{
     Context, Journal,
-    handler::{EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result},
     interpreter::{CallInputs, InterpreterResult},
     precompile::{PrecompileFn, PrecompileId, PrecompileResult, Precompiles},
 };

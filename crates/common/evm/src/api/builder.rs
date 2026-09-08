@@ -2,11 +2,8 @@
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
 use base_evm_context::FrameStack;
-use revm::{
-    Database,
-    handler::{EthFrame, instructions::EthInstructions},
-    interpreter::interpreter::EthInterpreter,
-};
+use base_evm_handler::{EthFrame, EthInstructions};
+use revm::{Database, interpreter::interpreter::EthInterpreter};
 
 use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId, BerylPrecompileMetricsObserver};
 
@@ -139,11 +136,10 @@ mod tests {
         IActivationRegistry, PolicyRegistryStorage,
     };
     use base_evm_context::{CfgEnv, TxEnv};
+    use base_evm_handler::{EvmTr, NoOpInspector};
     use revm::{
         Context, DatabaseRef, ExecuteEvm,
         bytecode::Bytecode,
-        handler::EvmTr,
-        inspector::NoOpInspector,
         primitives::{Bytes, StorageKey, StorageValue, TxKind},
         state::AccountInfo,
     };

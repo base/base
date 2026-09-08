@@ -12,13 +12,13 @@ use base_evm_context::{
     Block, ContextTr, ExecutionResult, HaltReasonTr, JournalTr, Output, ResultAndState, TransactTo,
     Transaction,
 };
+use base_evm_handler::JournalExt;
 pub use boa_engine::vm::RuntimeLimits;
 use boa_engine::{Context, JsError, JsObject, JsResult, JsValue, Source, js_string};
 use revm::{
     DatabaseRef, Inspector,
     bytecode::OpCode,
     database::WrapDatabaseRef,
-    inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
         Interpreter, InterpreterAction, InterpreterResult, Stack,
@@ -759,15 +759,15 @@ fn js_error_to_revert(err: JsError) -> InterpreterResult {
 mod tests {
     use alloy_primitives::{Address, bytes, hex};
     use base_evm_context::TxEnv;
+    use base_evm_handler::InspectorEvmTr;
     use revm::{
         InspectEvm, MainBuilder, MainContext,
         database::CacheDB,
         database_interface::EmptyDB,
-        inspector::InspectorEvmTr,
         primitives::hardfork::SpecId,
         state::{AccountInfo, Bytecode},
     };
-    //use revm_inspector::{inspector_handler, InspectorContext, InspectorMainEvm};
+    //use base_evm_handler::{inspector_handler, InspectorContext, InspectorMainEvm};
     use serde_json::json;
 
     use super::*;

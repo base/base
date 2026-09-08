@@ -204,8 +204,8 @@ impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for CountInspector {
 #[cfg(test)]
 mod tests {
     use base_evm_context::Context;
+    use base_evm_handler::{MainBuilder, MainContext};
     use revm_database::BenchmarkDB;
-    use revm_handler::{MainBuilder, MainContext};
     use revm_primitives::{Bytes, TxKind};
     use revm_state::bytecode::{Bytecode, opcode};
 

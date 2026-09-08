@@ -1,7 +1,6 @@
 use base_evm_context::{ContextTr, ExecutionResult, JournalCheckpoint, JournalEntry, JournalTr};
-use revm_handler::{
-    EvmTr, FrameResult, Handler, ItemOrResult, evm::FrameTr, execution::runtime_oog_unwind,
-    post_execution::build_result_gas,
+use base_evm_handler::{
+    EvmTr, FrameResult, FrameTr, Handler, ItemOrResult, build_result_gas, runtime_oog_unwind,
 };
 use revm_interpreter::{
     FrameInput, GasTracker, Host, InitialAndFloorGas, InstructionResult, Interpreter,
@@ -311,7 +310,7 @@ where
 /// instructions journal no log at all.
 #[inline(never)]
 #[cold]
-pub(crate) fn inspect_logs<CTX, IT>(
+pub fn inspect_logs<CTX, IT>(
     interpreter: Option<&mut Interpreter<IT>>,
     context: &mut CTX,
     inspector: &mut impl Inspector<CTX, IT>,

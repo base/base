@@ -32,13 +32,12 @@ path = "src/lib.rs"
 
 [dependencies]
 revm-state = { workspace = true }
-revm-handler = { workspace = true }
 revm-bytecode = { workspace = true }
 revm-database = { workspace = true }
-revm-inspector = { workspace = true }
 base-state-api = { workspace = true }
 revm-precompile = { workspace = true }
 revm-primitives = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 revm-interpreter = { workspace = true }
 [dev-dependencies]
@@ -92,29 +91,29 @@ serde = [
     "revm-interpreter/serde",
     "base-state-api/serde",
     "revm-primitives/serde",
-    "revm-handler/serde",
+    "base-evm-handler/serde",
     "base-evm-context/serde",
     "revm-bytecode/serde",
     "base-evm-context/serde",
     "revm-database/serde",
-    "revm-inspector/serde",
+    "base-evm-handler/serde",
     "revm-state/serde",
 ]
-serde-json = ["serde", "revm-inspector/tracer"]
+serde-json = ["serde", "base-evm-handler/tracer"]
 sha3-keccak = ["revm-primitives/sha3-keccak"]
 std = [
     "revm-interpreter/std",
     "revm-precompile/std",
-    "revm-handler/std",
+    "base-evm-handler/std",
     "base-evm-context/std",
     "base-evm-context/std",
     "revm-bytecode/std",
     "revm-database/std",
     "base-state-api/std",
-    "revm-inspector/std",
+    "base-evm-handler/std",
     "revm-primitives/std",
     "revm-state/std",
     "serde/std",
     "serde_json/std",
 ]
-tracer = ["revm-inspector/tracer"]
+tracer = ["base-evm-handler/tracer"]

@@ -6,10 +6,10 @@ use alloy_primitives::{
 };
 use alloy_rpc_types_eth::{AccessList, AccessListItem};
 use base_evm_context::{AuthorizationTr, ContextTr, JournalTr, Transaction};
+use base_evm_handler::JournalExt;
 use revm::{
     Inspector,
     bytecode::opcode,
-    inspector::JournalExt,
     interpreter::{
         Interpreter,
         interpreter_types::{InputsTr, Jumps},

@@ -1,8 +1,7 @@
 use base_evm_context::{ContextTr, FrameStack, JournalTr};
-use revm_handler::{
-    EthFrame, EvmTr, FrameInitOrResult, FrameResult, ItemOrResult,
-    evm::{ContextDbError, FrameInitResult, FrameTr},
-    instructions::InstructionProvider,
+use base_evm_handler::{
+    ContextDbError, EthFrame, EvmTr, FrameInitOrResult, FrameInitResult, FrameResult, FrameTr,
+    InstructionProvider, ItemOrResult,
 };
 use revm_interpreter::{
     CallOutcome, FrameInput, InterpreterTypes, interpreter::EthInterpreter,
@@ -10,9 +9,8 @@ use revm_interpreter::{
 };
 
 use crate::{
-    Inspector, JournalExt,
-    handler::{frame_end, frame_start, inspect_logs},
-    inspect_instructions,
+    Inspector, JournalExt, inspect_instructions,
+    inspector_handler::{frame_end, frame_start, inspect_logs},
 };
 
 /// Inspector EVM trait. Extends the [`EvmTr`] trait with inspector related methods.

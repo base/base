@@ -1,6 +1,6 @@
 use auto_impl::auto_impl;
 use base_evm_context::{Database, Journal, JournalEntry, JournalTr};
-use revm_handler::FrameResult;
+use base_evm_handler::FrameResult;
 use revm_interpreter::{
     CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter,
     InterpreterTypes, interpreter::EthInterpreter,
@@ -233,5 +233,52 @@ impl<DB: Database> JournalExt for Journal<DB> {
     #[inline]
     fn journal(&self) -> &[JournalEntry] {
         &self.journal
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ::base_evm_handler::{InspectEvm, MainBuilder, MainContext};
+    use base_evm_context::{BlockEnv, CfgEnv, Context, Journal, TxEnv};
+    use revm_database::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
+    use revm_interpreter::{InstructionResult, InterpreterTypes, interpreter::EthInterpreter};
+    use revm_primitives::TxKind;
+    use revm_state::{Bytecode, bytecode::opcode};
+
+    use super::*;
+
+    struct HaltInspector;
+    impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for HaltInspector {
+        fn step(&mut self, interp: &mut revm_interpreter::Interpreter<INTR>, _context: &mut CTX) {
+            interp.halt(InstructionResult::Stop);
+        }
+    }
+
+    #[test]
+    fn test_step_halt() {
+        let bytecode = [opcode::INVALID];
+        let r = run(&bytecode, HaltInspector);
+        assert!(r.is_success());
+    }
+
+    fn run(
+        bytecode: &[u8],
+        inspector: impl Inspector<
+            Context<BlockEnv, TxEnv, CfgEnv, BenchmarkDB, Journal<BenchmarkDB>, ()>,
+            EthInterpreter,
+        >,
+    ) -> base_evm_context::ExecutionResult {
+        let bytecode = Bytecode::new_raw(bytecode.to_vec().into());
+        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
+        let mut evm = ctx.build_mainnet_with_inspector(inspector);
+        evm.inspect_one_tx(
+            TxEnv::builder()
+                .caller(BENCH_CALLER)
+                .kind(TxKind::Call(BENCH_TARGET))
+                .gas_limit(21100)
+                .build()
+                .unwrap(),
+        )
+        .unwrap()
     }
 }

@@ -31,6 +31,7 @@ auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-hardforks = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }

@@ -8,10 +8,9 @@ use alloy_rpc_types_trace::geth::{
     erc7562::Erc7562Config, mux::MuxConfig,
 };
 use base_evm_context::{Block, ContextTr, HaltReasonTr, ResultAndState, Transaction};
+use base_evm_handler::{FrameResult, JournalExt};
 use revm::{
     DatabaseRef, Inspector,
-    handler::FrameResult,
-    inspector::JournalExt,
     interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter},
     primitives::{Address, Log, U256},
 };
@@ -38,7 +37,7 @@ pub enum DebugInspector {
     /// PreStateTracer
     PreStateTracer(TracingInspector, PreStateConfig),
     /// Noop tracer
-    Noop(revm::inspector::NoOpInspector),
+    Noop(base_evm_handler::NoOpInspector),
     /// Mux tracer
     Mux(MuxInspector, MuxConfig),
     /// FlatCallTracer
@@ -109,7 +108,7 @@ impl DebugInspector {
                         )
                     }
                     GethDebugBuiltInTracerType::NoopTracer => {
-                        Self::Noop(revm::inspector::NoOpInspector)
+                        Self::Noop(base_evm_handler::NoOpInspector)
                     }
                     GethDebugBuiltInTracerType::MuxTracer => {
                         let config = tracer_config

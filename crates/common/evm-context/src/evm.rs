@@ -15,10 +15,10 @@ pub struct Evm<CTX, INSP, I, P, F> {
     /// Its trait are defined in revm-inspector crate.
     pub inspector: INSP,
     /// Instructions provider of the EVM it is used to execute instructions.
-    /// `InstructionProvider` trait is defined in revm-handler crate.
+    /// `InstructionProvider` trait is defined in base-evm-handler crate.
     pub instruction: I,
     /// Precompile provider of the EVM it is used to execute precompiles.
-    /// `PrecompileProvider` trait is defined in revm-handler crate.
+    /// `PrecompileProvider` trait is defined in base-evm-handler crate.
     pub precompiles: P,
     /// Frame that is going to be executed.
     pub frame_stack: FrameStack<F>,

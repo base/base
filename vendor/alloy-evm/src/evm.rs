@@ -7,11 +7,9 @@ use alloy_primitives::{Address, B256, Bytes};
 use base_evm_context::{
     CfgEnv, ContextTr, DBErrorMarker, ExecutionResult, HaltReasonTr, ResultAndState,
 };
+use base_evm_handler::{JournalExt, NoOpInspector};
 pub use revm::Database;
-use revm::{
-    DatabaseCommit, Inspector,
-    inspector::{JournalExt, NoOpInspector},
-};
+use revm::{DatabaseCommit, Inspector};
 
 use crate::{EvmEnv, EvmError, IntoTxEnv, env::BlockEnvironment, tracing::TxTracer};
 

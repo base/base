@@ -10,7 +10,7 @@ use revm_primitives::{B256, HashMap, U256, hex};
 use revm_state::bytecode::opcode::OpCode;
 use serde::Serialize;
 
-use crate::{Inspector, inspectors::GasInspector};
+use crate::{GasInspector, Inspector};
 
 /// [EIP-3155](https://eips.ethereum.org/EIPS/eip-3155) tracer [Inspector].
 pub struct TracerEip3155 {

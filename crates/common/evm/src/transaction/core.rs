@@ -6,10 +6,8 @@ use alloy_eips::Encodable2718;
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, tx::IntoTxEnv};
 use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_evm_context::{Transaction, TxEnv};
-use revm::{
-    handler::SystemCallTx,
-    primitives::{Address, B256, Bytes, TxKind, U256},
-};
+use base_evm_handler::SystemCallTx;
+use revm::primitives::{Address, B256, Bytes, TxKind, U256};
 
 use crate::{
     BaseTransactionBuilder, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,

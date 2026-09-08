@@ -20,6 +20,7 @@ auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-consensus = { workspace = true }
 base-common-flz = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-l1-fees = { workspace = true }

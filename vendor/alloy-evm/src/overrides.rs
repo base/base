@@ -372,10 +372,10 @@ mod tests {
     fn test_create2_state_diff_inspect_bug() {
         use alloy_primitives::{Bytes, TxKind};
         use base_evm_context::{Context, ContextTr, Journal, JournalTr, TxEnv};
+        use base_evm_handler::Inspector;
         use revm::{
             ExecuteEvm, InspectEvm, MainBuilder,
             database_interface::EmptyDB,
-            inspector::Inspector,
             interpreter::{CreateInputs, CreateOutcome},
             primitives::hardfork::SpecId,
             state::AccountInfo,
@@ -652,9 +652,9 @@ mod tests {
     fn test_create2_state_diff_eth_evm_factory() {
         use alloy_primitives::{Bytes, TxKind};
         use base_evm_context::{CfgEnv, ContextTr, JournalTr, TxEnv};
+        use base_evm_handler::Inspector;
         use revm::{
             database_interface::EmptyDB,
-            inspector::Inspector,
             interpreter::{CreateInputs, CreateOutcome},
             primitives::hardfork::SpecId,
             state::AccountInfo,
@@ -779,10 +779,10 @@ mod tests {
     fn test_create2_delegatecall_state_diff_inspect() {
         use alloy_primitives::{Bytes, TxKind};
         use base_evm_context::{Context, ContextTr, Journal, JournalTr, TxEnv};
+        use base_evm_handler::Inspector;
         use revm::{
             ExecuteEvm, InspectEvm, MainBuilder,
             database_interface::EmptyDB,
-            inspector::Inspector,
             interpreter::{CreateInputs, CreateOutcome},
             primitives::hardfork::SpecId,
             state::AccountInfo,

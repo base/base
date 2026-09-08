@@ -8,14 +8,13 @@ use base_evm_context::{
     InvalidTransaction, JournalCheckpoint, JournalTr, JournaledAccountTr, LocalContextTr,
     ResultGas, Transaction, take_error,
 };
+use base_evm_handler as post_execution;
+use base_evm_handler::{
+    EthFrame, EvmTr, FrameResult, Handler, Inspector, InspectorHandler, MainnetHandler,
+    calculate_caller_fee, handle_reservoir_remaining_gas, reimburse_caller,
+    validate_account_nonce_and_code_with_components,
+};
 use revm::{
-    handler::{
-        EthFrame, EvmTr, FrameResult, Handler, MainnetHandler, handle_reservoir_remaining_gas,
-        post_execution,
-        post_execution::reimburse_caller,
-        pre_execution::{calculate_caller_fee, validate_account_nonce_and_code_with_components},
-    },
-    inspector::{Inspector, InspectorHandler},
     interpreter::{GasTracker, interpreter::EthInterpreter},
     primitives::U256,
 };
@@ -62,7 +61,7 @@ impl<DB: Database, I, P> Default for BaseHandler<DB, I, P> {
 
 impl<DB: Database, I, P> Handler for BaseHandler<DB, I, P>
 where
-    P: revm::handler::PrecompileProvider<
+    P: base_evm_handler::PrecompileProvider<
             BaseContext<DB>,
             Output = revm::interpreter::InterpreterResult,
         >,
@@ -378,7 +377,7 @@ where
 impl<DB: Database, I, P> InspectorHandler for BaseHandler<DB, I, P>
 where
     I: Inspector<BaseContext<DB>, EthInterpreter>,
-    P: revm::handler::PrecompileProvider<
+    P: base_evm_handler::PrecompileProvider<
             BaseContext<DB>,
             Output = revm::interpreter::InterpreterResult,
         >,
@@ -392,13 +391,12 @@ mod tests {
     use alloy_primitives::uint;
     use base_common_consensus::Predeploys;
     use base_evm_context::{BlockEnv, CfgEnv, Context, TxEnv};
+    use base_evm_handler::{Handler, NoOpInspector};
     use revm::{
         InspectEvm,
         bytecode::Bytecode,
         database::InMemoryDB,
         database_interface::EmptyDB,
-        handler::Handler,
-        inspector::NoOpInspector,
         interpreter::{CallOutcome, Gas, InstructionResult, InterpreterResult},
         primitives::{Address, B256, Bytes, TxKind, bytes, hardfork::SpecId},
         state::AccountInfo,

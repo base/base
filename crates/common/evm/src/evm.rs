@@ -6,14 +6,13 @@ use base_evm_context::{
     BlockEnv, CfgEnv, ContextError, ContextSetters, ContextTr, EVMError, Evm as RevmEvm,
     ExecResultAndState, ExecutionResult, FrameStack, JournalTr, ResultAndState,
 };
+use base_evm_handler::{
+    EthFrame, EthInstructions, EvmTr, FrameInitOrResult, FrameTr, Handler, InspectorEvmTr,
+    InspectorHandler, ItemOrResult, PrecompileProvider, SystemCallTx,
+};
 use revm::{
     Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
     InspectEvm, InspectSystemCallEvm, Inspector, SystemCallEvm,
-    handler::{
-        EthFrame, EvmTr, FrameInitOrResult, Handler, ItemOrResult, PrecompileProvider,
-        SystemCallTx, evm::FrameTr, instructions::EthInstructions,
-    },
-    inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{InterpreterResult, interpreter::EthInterpreter},
     state::EvmState,
 };

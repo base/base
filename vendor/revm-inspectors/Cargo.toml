@@ -34,6 +34,7 @@ revm = { workspace = true }
 thiserror = { workspace = true }
 colorchoice = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-trace = { workspace = true }

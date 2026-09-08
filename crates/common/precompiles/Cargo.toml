@@ -16,6 +16,7 @@ workspace = true
 revm = { workspace = true }
 alloy-evm = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-genesis = { workspace = true }
