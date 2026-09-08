@@ -25,7 +25,6 @@ use futures::Future;
 use reth_primitives_traits::Recovered;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, StateCacheDb,
-    cache::db::StateProviderTraitObjWrapper,
     error::{AsEthApiError, FromEthApiError},
     simulate::{self, EthSimulateError},
 };
@@ -83,7 +82,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
             let max_simulate_blocks = self.max_simulate_blocks();
 
             self.spawn_with_state_at_block(block, move |this, db| {
-                let state_provider = db.database.0;
+                let state_provider = db.database;
                 let mut db = State::builder()
                     .with_database(state_provider.as_ref())
                     .with_bundle_update()
@@ -559,7 +558,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
         let at = at.into();
         self.spawn_blocking_io_fut(async move |this| {
             let state = this.state_at_block_id(at).await?;
-            let db = State::builder().with_database(StateProviderTraitObjWrapper(state)).build();
+            let db = State::builder().with_database(state).build();
             f(this, db)
         })
     }

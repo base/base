@@ -22,7 +22,6 @@ tokio = { workspace = true }
 metrics = { workspace = true }
 thiserror = { workspace = true }
 itertools = { workspace = true }
-reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
 alloy-serde = { workspace = true }

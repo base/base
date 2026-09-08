@@ -4,9 +4,7 @@ use alloy_eip7928::{BlockAccessList, bal::DecodedBal};
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::BlockId;
 use base_execution_evm::{BlockExecutor, Evm};
-use reth_rpc_eth_types::{
-    BaseEthApiError, EthApiError, cache::db::StateProviderTraitObjWrapper, error::FromEthApiError,
-};
+use reth_rpc_eth_types::{BaseEthApiError, EthApiError, error::FromEthApiError};
 use reth_storage_api::StateProviderFactory;
 use revm::database::State;
 
@@ -40,10 +38,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
                     .state_by_block_id(block.parent_hash().into())
                     .map_err(BaseEthApiError::from_eth_err)?;
 
-                let mut db = State::builder()
-                    .with_database(StateProviderTraitObjWrapper(state))
-                    .with_bal_builder()
-                    .build();
+                let mut db = State::builder().with_database(state).with_bal_builder().build();
 
                 let block_txs = block.transactions_recovered();
                 let mut executor = RpcNodeCore::evm_config(&eth_api)

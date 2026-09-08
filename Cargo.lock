@@ -17069,7 +17069,6 @@ dependencies = [
  "reth-storage-api",
  "reth-storage-errors",
  "reth-tasks",
- "reth-trie",
  "revm",
  "revm-inspectors",
  "schnellru",
