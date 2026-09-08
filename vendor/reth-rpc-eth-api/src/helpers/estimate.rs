@@ -23,7 +23,7 @@ use reth_storage_errors::provider::ProviderError;
 use revm::{
     context::Block,
     context_interface::{Cfg, Transaction, result::ExecutionResult},
-    database::{State, bal::EvmDatabaseError},
+    database::{EvmDatabaseError, State},
     primitives::KECCAK_EMPTY,
 };
 use tracing::trace;

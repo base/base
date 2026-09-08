@@ -1,10 +1,9 @@
 use std::{borrow::Cow, boxed::Box, sync::Arc};
 
-use revm_bytecode::Bytecode;
-use revm_database_interface::{
-    Database, DatabaseCommit, DatabaseRef, EmptyDB, OnStateHook,
-    bal::{BalState, EvmDatabaseError},
+use base_state_api::{
+    BalState, Database, DatabaseCommit, DatabaseRef, EmptyDB, EvmDatabaseError, OnStateHook,
 };
+use revm_bytecode::Bytecode;
 use revm_primitives::{Address, AddressMap, B256, HashMap, StorageKey, StorageValue, hash_map};
 use revm_state::{
     Account, AccountId, AccountInfo, EvmStorage,
@@ -238,7 +237,7 @@ impl<DB: Database> State<DB> {
 
     /// Set whether reads not covered by the BAL fall back to the underlying database.
     ///
-    /// See [`BalState::allow_db_fallback`](revm_database_interface::bal::BalState).
+    /// See [`BalState::allow_db_fallback`](base_state_api::BalState).
     #[inline]
     pub const fn set_allow_bal_db_fallback(&mut self, allow: bool) {
         self.bal_state.allow_db_fallback = allow;

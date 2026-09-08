@@ -19,8 +19,8 @@
 //! ```
 //!
 //! See the book section on [External State Transitions](../../book/src/external_state_transitions.md) for more details.
+use base_state_api::DatabaseCommit;
 use revm_context::{ContextSetters, ContextTr, Evm, JournalTr, TxEnv, result::ExecResultAndState};
-use revm_database_interface::DatabaseCommit;
 use revm_interpreter::{InterpreterResult, interpreter::EthInterpreter};
 use revm_primitives::{Address, Bytes, TxKind, address, eip8037};
 use revm_state::EvmState;

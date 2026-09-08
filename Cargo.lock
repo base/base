@@ -5537,6 +5537,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-state-api"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-trie",
+ "arbitrary",
+ "auto_impl",
+ "byteorder",
+ "bytes",
+ "derive_more",
+ "either",
+ "modular-bitfield",
+ "proptest",
+ "proptest-arbitrary-interop",
+ "reth-codecs",
+ "revm-bytecode",
+ "revm-primitives",
+ "revm-state",
+ "serde",
+ "thiserror 2.0.19",
+ "tokio",
+]
+
+[[package]]
 name = "base-system-tests"
 version = "0.0.0"
 dependencies = [
@@ -16654,6 +16680,7 @@ dependencies = [
  "alloy-trie",
  "arbitrary",
  "base-common-consensus",
+ "base-state-api",
  "byteorder",
  "bytes",
  "dashmap",
@@ -16667,9 +16694,6 @@ dependencies = [
  "rand 0.9.5",
  "rayon",
  "reth-codecs",
- "revm-bytecode",
- "revm-primitives",
- "revm-state",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
@@ -17657,11 +17681,11 @@ dependencies = [
 name = "revm"
 version = "0.0.0"
 dependencies = [
+ "base-state-api",
  "revm-bytecode",
  "revm-context",
  "revm-context-interface",
  "revm-database",
- "revm-database-interface",
  "revm-handler",
  "revm-inspector",
  "revm-interpreter",
@@ -17690,13 +17714,13 @@ dependencies = [
 name = "revm-context"
 version = "0.0.0"
 dependencies = [
+ "base-state-api",
  "bitvec",
  "cfg-if",
  "derive-where",
  "revm-bytecode",
  "revm-context-interface",
  "revm-database",
- "revm-database-interface",
  "revm-primitives",
  "revm-state",
  "serde",
@@ -17709,8 +17733,8 @@ dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
  "auto_impl",
+ "base-state-api",
  "either",
- "revm-database-interface",
  "revm-primitives",
  "revm-state",
  "serde",
@@ -17723,27 +17747,14 @@ dependencies = [
  "alloy-eips",
  "alloy-provider",
  "alloy-transport",
+ "base-state-api",
  "derive_more",
  "either",
  "revm-bytecode",
- "revm-database-interface",
  "revm-primitives",
  "revm-state",
  "serde",
  "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "revm-database-interface"
-version = "0.0.0"
-dependencies = [
- "auto_impl",
- "either",
- "revm-primitives",
- "revm-state",
- "serde",
- "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -17754,12 +17765,12 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "auto_impl",
+ "base-state-api",
  "derive-where",
  "revm-bytecode",
  "revm-context",
  "revm-context-interface",
  "revm-database",
- "revm-database-interface",
  "revm-interpreter",
  "revm-precompile",
  "revm-primitives",
@@ -17772,10 +17783,10 @@ name = "revm-inspector"
 version = "0.0.0"
 dependencies = [
  "auto_impl",
+ "base-state-api",
  "either",
  "revm-context",
  "revm-database",
- "revm-database-interface",
  "revm-handler",
  "revm-interpreter",
  "revm-primitives",

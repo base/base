@@ -36,9 +36,9 @@ auto_impl = { workspace = true }
 revm-state = { workspace = true }
 revm-context = { workspace = true }
 revm-handler = { workspace = true }
+base-state-api = { workspace = true }
 revm-primitives = { workspace = true }
 revm-interpreter = { workspace = true }
-revm-database-interface = { workspace = true }
 serde_json = { workspace = true, features = [
     "alloc",
     "preserve_order",
@@ -56,7 +56,28 @@ workspace = true
 
 [features]
 default = ["std"]
-serde = ["revm-context/serde", "revm-database/serde", "revm-database-interface/serde", "revm-handler/serde", "revm-interpreter/serde", "revm-primitives/serde", "revm-state/serde", "either/serde"]
+serde = [
+    "revm-context/serde",
+    "revm-database/serde",
+    "base-state-api/serde",
+    "revm-handler/serde",
+    "revm-interpreter/serde",
+    "revm-primitives/serde",
+    "revm-state/serde",
+    "either/serde",
+]
 serde-json = ["tracer"]
-std = ["serde?/std", "serde_json?/std", "serde_json?/preserve_order", "revm-context/std", "revm-database/std", "revm-database-interface/std", "revm-handler/std", "revm-interpreter/std", "revm-primitives/std", "revm-state/std", "either/std"]
+std = [
+    "serde?/std",
+    "serde_json?/std",
+    "serde_json?/preserve_order",
+    "revm-context/std",
+    "revm-database/std",
+    "base-state-api/std",
+    "revm-handler/std",
+    "revm-interpreter/std",
+    "revm-primitives/std",
+    "revm-state/std",
+    "either/std",
+]
 tracer = ["std", "serde", "dep:serde", "dep:serde_json"]

@@ -8,6 +8,7 @@ pub mod warm_addresses;
 use core::ops::{Deref, DerefMut};
 use std::vec::Vec;
 
+use base_state_api::Database;
 pub use inner::{JournalCfg, JournalInner};
 use revm_bytecode::Bytecode;
 pub use revm_context_interface::journaled_state::entry::{JournalEntry, JournalEntryTr};
@@ -18,7 +19,6 @@ use revm_context_interface::{
         TransferError, account::JournaledAccount,
     },
 };
-use revm_database_interface::Database;
 use revm_primitives::{
     Address, AddressMap, AddressSet, B256, HashSet, Log, StorageKey, StorageValue, U256,
     hardfork::SpecId,

@@ -1,5 +1,6 @@
 use std::vec::Vec;
 
+use base_state_api::DatabaseCommit;
 use revm_context::{
     Block, ContextSetters, ContextTr, Database, Evm, JournalTr, Transaction,
     result::{
@@ -7,7 +8,6 @@ use revm_context::{
         ResultAndState, ResultVecAndState, TransactionIndexedError,
     },
 };
-use revm_database_interface::DatabaseCommit;
 use revm_interpreter::{InterpreterResult, interpreter::EthInterpreter};
 use revm_state::EvmState;
 

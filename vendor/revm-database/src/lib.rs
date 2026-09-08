@@ -7,9 +7,9 @@ extern crate alloc as std;
 #[cfg(feature = "alloydb")]
 mod alloydb;
 
+pub use base_state_api as database_interface;
+pub use base_state_api::*;
 pub use revm_bytecode as bytecode;
-pub use revm_database_interface as database_interface;
-pub use revm_database_interface::*;
 pub use revm_primitives as primitives;
 pub use revm_state as state;
 

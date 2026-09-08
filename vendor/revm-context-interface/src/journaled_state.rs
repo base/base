@@ -6,7 +6,7 @@ pub mod entry;
 use core::ops::{Deref, DerefMut};
 use std::{borrow::Cow, vec::Vec};
 
-use revm_database_interface::Database;
+use base_state_api::Database;
 use revm_primitives::{
     Address, AddressMap, AddressSet, B256, Bytes, HashSet, Log, StorageKey, StorageValue, U256,
     hardfork::SpecId,

@@ -1,0 +1,83 @@
+[package]
+name = "base-state-api"
+description = "Shared Base storage and execution state interfaces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--cfg",
+    "docsrs",
+]
+
+[dependencies]
+either = { workspace = true }
+thiserror = { workspace = true }
+auto_impl = { workspace = true }
+revm-state = { workspace = true }
+revm-primitives = { workspace = true }
+tokio = { workspace = true, optional = true, features = ["default"] }
+serde = { workspace = true, features = [
+    "derive",
+    "rc",
+    "derive",
+    "rc",
+], optional = true }
+alloy-trie = {workspace = true}
+alloy-genesis = {workspace = true}
+revm-bytecode = {workspace = true}
+alloy-consensus = {workspace = true}
+alloy-primitives = {workspace = true}
+bytes = {workspace = true, optional = true}
+byteorder = {workspace = true, optional = true}
+derive_more = {workspace = true, features = ["deref"]}
+modular-bitfield = {workspace = true, optional = true}
+arbitrary = {workspace = true, optional = true, features = ["derive"]}
+reth-codecs = {workspace = true, optional = true, features = ["alloy"]}
+[dev-dependencies]
+proptest = {workspace = true}
+proptest-arbitrary-interop = { workspace = true }
+serde = {workspace = true, features = ["derive"]}
+arbitrary = {workspace = true, features = ["derive"]}
+
+[lints]
+workspace = true
+
+[features]
+asyncdb = ["dep:tokio", "tokio/rt-multi-thread"]
+default = ["std"]
+serde = [
+    "dep:serde",
+    "revm-primitives/serde",
+    "revm-state/serde",
+    "either/serde",
+    "alloy-primitives/serde",
+    "revm-bytecode/serde",
+]
+std = [
+    "serde?/std",
+    "revm-primitives/std",
+    "revm-state/std",
+    "either/std",
+    "thiserror/std",
+    "alloy-consensus/std",
+    "alloy-genesis/std",
+    "alloy-primitives/std",
+    "alloy-trie/std",
+    "revm-bytecode/std",
+    "derive_more/std",
+    "reth-codecs?/std",
+]
+arbitrary = ["dep:arbitrary", "alloy-primitives/arbitrary"]
+reth-codec = ["dep:reth-codecs", "dep:bytes", "dep:byteorder", "dep:modular-bitfield"]
+test-utils = ["arbitrary", "reth-codecs?/test-utils"]

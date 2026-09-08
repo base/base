@@ -2,6 +2,7 @@
 use core::mem;
 use std::vec::Vec;
 
+use base_state_api::Database;
 use revm_bytecode::Bytecode;
 use revm_context_interface::{
     context::{SStoreResult, SelfDestructResult, StateLoad},
@@ -11,7 +12,6 @@ use revm_context_interface::{
         entry::{JournalEntryTr, SelfdestructionRevertStatus},
     },
 };
-use revm_database_interface::Database;
 use revm_primitives::{
     Address, B256, Bytes, HashMap, KECCAK_EMPTY, Log, LogData, StorageKey, StorageValue, U256,
     eip7708::{ETH_TRANSFER_LOG_ADDRESS, ETH_TRANSFER_LOG_TOPIC},
@@ -1117,8 +1117,8 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
 #[cfg(test)]
 mod tests {
+    use base_state_api::EmptyDB;
     use revm_context_interface::journaled_state::entry::JournalEntry;
-    use revm_database_interface::EmptyDB;
     use revm_primitives::{HashSet, U256, address};
     use revm_state::AccountInfo;
 

@@ -33,6 +33,7 @@ pub mod validation;
 
 // Public exports
 pub use api::{ExecuteCommitEvm, ExecuteEvm};
+pub use base_state_api as database_interface;
 pub use evm::{EvmTr, FrameTr};
 pub use frame::{ContextTrDbError, EthFrame, handle_reservoir_remaining_gas, return_create};
 pub use frame_data::{CallFrame, CreateFrame, FrameData, FrameResult};
@@ -47,7 +48,6 @@ pub use precompile_provider::{
 pub use revm_bytecode as bytecode;
 pub use revm_context as context;
 pub use revm_context_interface as context_interface;
-pub use revm_database_interface as database_interface;
 pub use revm_interpreter as interpreter;
 pub use revm_precompile as precompile;
 pub use revm_primitives as primitives;

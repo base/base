@@ -4,6 +4,9 @@
 
 // reexport dependencies
 #[doc(inline)]
+pub use base_state_api as database_interface;
+pub use base_state_api::{Database, DatabaseCommit, DatabaseRef, NoopHook, OnStateHook};
+#[doc(inline)]
 pub use revm_bytecode as bytecode;
 #[doc(inline)]
 pub use revm_context as context;
@@ -16,9 +19,6 @@ pub use revm_context::{
 pub use revm_context_interface as context_interface;
 #[doc(inline)]
 pub use revm_database as database;
-#[doc(inline)]
-pub use revm_database_interface as database_interface;
-pub use revm_database_interface::{Database, DatabaseCommit, DatabaseRef, NoopHook, OnStateHook};
 #[doc(inline)]
 pub use revm_handler as handler;
 pub use revm_handler::{

@@ -1,5 +1,5 @@
+use base_state_api::DatabaseCommit;
 use revm_context::{ContextSetters, ContextTr, Evm, FrameStack, JournalTr};
-use revm_database_interface::DatabaseCommit;
 use revm_handler::{
     EthFrame, EvmTr, EvmTrError, Handler, MainnetHandler, PrecompileProvider,
     instructions::InstructionProvider, system_call::SystemCallTx,

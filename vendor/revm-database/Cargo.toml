@@ -34,8 +34,8 @@ path = "src/lib.rs"
 either = { workspace = true }
 revm-state = { workspace = true }
 revm-bytecode = { workspace = true }
+base-state-api = { workspace = true }
 revm-primitives = { workspace = true }
-revm-database-interface = { workspace = true }
 alloy-eips = { workspace = true, optional = true }
 alloy-provider = { workspace = true, optional = true }
 alloy-transport = { workspace = true, optional = true }
@@ -53,8 +53,33 @@ serde_json = { workspace = true, features = ["alloc"] }
 workspace = true
 
 [features]
-alloydb = ["std", "revm-database-interface/asyncdb", "dep:tokio", "dep:alloy-provider", "dep:alloy-eips", "dep:alloy-transport"]
+alloydb = [
+    "std",
+    "base-state-api/asyncdb",
+    "dep:tokio",
+    "dep:alloy-provider",
+    "dep:alloy-eips",
+    "dep:alloy-transport",
+]
 default = ["std"]
 map-foldhash = ["revm-primitives/map-foldhash", "revm-state/map-foldhash"]
-serde = ["dep:serde", "alloy-eips?/serde", "revm-bytecode/serde", "revm-database-interface/serde", "revm-primitives/serde", "revm-state/serde", "either/serde"]
-std = ["serde?/std", "alloy-eips?/std", "revm-bytecode/std", "revm-database-interface/std", "derive_more/std", "either/std", "revm-primitives/std", "revm-state/std", "serde_json/std"]
+serde = [
+    "dep:serde",
+    "alloy-eips?/serde",
+    "revm-bytecode/serde",
+    "base-state-api/serde",
+    "revm-primitives/serde",
+    "revm-state/serde",
+    "either/serde",
+]
+std = [
+    "serde?/std",
+    "alloy-eips?/std",
+    "revm-bytecode/std",
+    "base-state-api/std",
+    "derive_more/std",
+    "either/std",
+    "revm-primitives/std",
+    "revm-state/std",
+    "serde_json/std",
+]

@@ -35,8 +35,8 @@ either = { workspace = true }
 auto_impl = { workspace = true }
 revm-state = { workspace = true }
 alloy-eip2930 = { workspace = true }
+base-state-api = { workspace = true }
 revm-primitives = { workspace = true }
-revm-database-interface = { workspace = true }
 alloy-eip7702 = { workspace = true, features = ["k256"] }
 serde = { workspace = true, features = [
     "derive",
@@ -47,6 +47,22 @@ workspace = true
 
 [features]
 default = ["std"]
-serde = ["dep:serde", "revm-primitives/serde", "revm-state/serde", "alloy-eip7702/serde", "alloy-eip2930/serde", "revm-database-interface/serde", "either/serde"]
+serde = [
+    "dep:serde",
+    "revm-primitives/serde",
+    "revm-state/serde",
+    "alloy-eip7702/serde",
+    "alloy-eip2930/serde",
+    "base-state-api/serde",
+    "either/serde",
+]
 serde-json = ["serde"]
-std = ["serde?/std", "alloy-eip7702/std", "alloy-eip2930/std", "revm-database-interface/std", "revm-primitives/std", "revm-state/std", "either/std"]
+std = [
+    "serde?/std",
+    "alloy-eip7702/std",
+    "alloy-eip2930/std",
+    "base-state-api/std",
+    "revm-primitives/std",
+    "revm-state/std",
+    "either/std",
+]

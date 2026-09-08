@@ -26,7 +26,7 @@ use revm::{
     context_interface::result::{
         EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError,
     },
-    database::bal::EvmDatabaseError,
+    database::EvmDatabaseError,
     state::bal::BalError,
 };
 use revm_inspectors::tracing::{DebugInspectorError, MuxError};

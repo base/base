@@ -481,6 +481,7 @@ impl TryFrom<EthereumTxEnvelope<TxEip4844Variant<alloy_eips::eip4844::BlobTransa
     alloy_consensus = crate,
     tx_type_name = TxType,
     typed = EthereumTypedTransaction,
+    serde_cfg(feature = "serde"),
     arbitrary_cfg(feature = "arbitrary")
 )]
 #[doc(alias = "TransactionEnvelope")]

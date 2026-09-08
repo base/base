@@ -36,9 +36,9 @@ cfg-if = { workspace = true }
 revm-state = { workspace = true }
 derive-where = { workspace = true }
 revm-bytecode = { workspace = true }
+base-state-api = { workspace = true }
 revm-primitives = { workspace = true }
 revm-context-interface = { workspace = true }
-revm-database-interface = { workspace = true }
 serde = { workspace = true, features = [
     "derive",
     "rc",
@@ -52,7 +52,17 @@ workspace = true
 
 [features]
 default = ["std"]
-dev = ["memory_limit", "optional_balance_check", "optional_block_gas_limit", "optional_eip3541", "optional_eip3607", "optional_eip7623", "optional_no_base_fee", "optional_priority_fee_check", "optional_fee_charge"]
+dev = [
+    "memory_limit",
+    "optional_balance_check",
+    "optional_block_gas_limit",
+    "optional_eip3541",
+    "optional_eip3607",
+    "optional_eip7623",
+    "optional_no_base_fee",
+    "optional_priority_fee_check",
+    "optional_fee_charge",
+]
 map-foldhash = ["revm-primitives/map-foldhash", "revm-state/map-foldhash"]
 memory_limit = []
 optional_balance_check = []
@@ -63,5 +73,24 @@ optional_eip7623 = []
 optional_fee_charge = []
 optional_no_base_fee = []
 optional_priority_fee_check = []
-serde = ["dep:serde", "revm-primitives/serde", "revm-state/serde", "revm-context-interface/serde", "revm-bytecode/serde", "revm-database/serde", "revm-database-interface/serde", "derive-where/serde", "bitvec/serde"]
-std = ["serde?/std", "revm-bytecode/std", "revm-context-interface/std", "revm-database/std", "revm-database-interface/std", "revm-primitives/std", "revm-state/std", "bitvec/std"]
+serde = [
+    "dep:serde",
+    "revm-primitives/serde",
+    "revm-state/serde",
+    "revm-context-interface/serde",
+    "revm-bytecode/serde",
+    "revm-database/serde",
+    "base-state-api/serde",
+    "derive-where/serde",
+    "bitvec/serde",
+]
+std = [
+    "serde?/std",
+    "revm-bytecode/std",
+    "revm-context-interface/std",
+    "revm-database/std",
+    "base-state-api/std",
+    "revm-primitives/std",
+    "revm-state/std",
+    "bitvec/std",
+]

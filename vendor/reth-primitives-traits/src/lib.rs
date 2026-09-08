@@ -124,11 +124,9 @@ pub use quanta::Instant as FastInstant;
 
 /// Common constants.
 pub mod constants;
-pub use constants::gas_units::{format_gas, format_gas_throughput};
-
 /// Minimal account
-pub mod account;
-pub use account::{Account, Bytecode};
+pub use base_state_api::{Account, Bytecode};
+pub use constants::gas_units::{format_gas, format_gas_throughput};
 
 pub mod receipt;
 pub use receipt::Receipt;

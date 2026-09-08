@@ -1,6 +1,6 @@
+use base_state_api::EmptyDB;
 use revm_context::{BlockEnv, Cfg, CfgEnv, Context, Evm, FrameStack, Journal, TxEnv};
 use revm_context_interface::{Block, Database, JournalTr, Transaction};
-use revm_database_interface::EmptyDB;
 use revm_interpreter::interpreter::EthInterpreter;
 use revm_primitives::hardfork::SpecId;
 

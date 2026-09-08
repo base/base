@@ -1,4 +1,5 @@
 //! This module contains [`Context`] struct and implements [`ContextTr`] trait for it.
+use base_state_api::{Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
 use derive_where::derive_where;
 use revm_context_interface::{
     Block, Cfg, ContextTr, Host, JournalTr, LocalContextTr, Transaction, TransactionType,
@@ -7,7 +8,6 @@ use revm_context_interface::{
     host::LoadError,
     journaled_state::AccountInfoLoad,
 };
-use revm_database_interface::{Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
 use revm_primitives::{
     Address, B256, Log, StorageKey, StorageValue, U256, hardfork::SpecId, hints_util::cold_path,
 };

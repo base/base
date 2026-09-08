@@ -32,13 +32,13 @@ pub mod inspectors {
     pub use super::gas::GasInspector;
 }
 
+pub use base_state_api as database_interface;
 pub use count_inspector::CountInspector;
 pub use handler::{InspectorHandler, inspect_instructions};
 pub use inspect::{InspectCommitEvm, InspectEvm, InspectSystemCallEvm};
 pub use inspector::*;
 pub use noop::NoOpInspector;
 pub use revm_context as context;
-pub use revm_database_interface as database_interface;
 pub use revm_handler as evm_handler;
 pub use revm_interpreter as interpreter;
 pub use revm_primitives as primitives;

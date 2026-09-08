@@ -1,16 +1,11 @@
-//! Database interface.
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(not(feature = "std"), no_std)]
-
-#[cfg(not(feature = "std"))]
-extern crate alloc as std;
-
 use core::convert::Infallible;
 use std::vec::Vec;
 
 use auto_impl::auto_impl;
 use revm_primitives::{Address, AddressMap, B256, StorageKey, StorageValue, U256, address};
 use revm_state::{Account, AccountId, AccountInfo, Bytecode, TransactionId};
+
+use crate::ErasedError;
 
 /// Address with all `0xff..ff` in it. Used for testing.
 pub const FFADDRESS: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
@@ -26,25 +21,6 @@ pub const EEADDRESS: Address = address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 pub const BENCH_CALLER: Address = EEADDRESS;
 /// BENCH_CALLER_BALANCE balance
 pub const BENCH_CALLER_BALANCE: U256 = TEST_BALANCE;
-
-pub use revm_primitives as primitives;
-pub use revm_state as state;
-
-#[cfg(feature = "asyncdb")]
-pub mod async_db;
-pub mod bal;
-pub mod either;
-pub mod empty_db;
-pub mod erased_error;
-pub mod state_hook;
-pub mod try_commit;
-
-#[cfg(feature = "asyncdb")]
-pub use async_db::{DatabaseAsync, WrapDatabaseAsync};
-pub use empty_db::{EmptyDB, EmptyDBTyped};
-pub use erased_error::ErasedError;
-pub use state_hook::{NoopHook, OnStateHook};
-pub use try_commit::{ArcUpgradeError, TryDatabaseCommit};
 
 /// Database error marker is needed to implement From conversion for Error type.
 pub trait DBErrorMarker: core::error::Error + Send + Sync + 'static {
@@ -458,7 +434,7 @@ mod tests {
         let mut account = Account::default();
         account.mark_touch();
 
-        let mut db = bal::BalDatabase::new(MockDb::default()).with_bal_builder();
+        let mut db = crate::BalDatabase::new(MockDb::default()).with_bal_builder();
         db.commit_iter(&mut [(address, account)].into_iter());
         assert_eq!(db.db.commits, 0);
         assert_eq!(db.db.commit_iters, 1);

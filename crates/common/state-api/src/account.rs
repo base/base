@@ -1,28 +1,23 @@
-use alloy_consensus::constants::KECCAK_EMPTY;
+use alloy_consensus::{InMemorySize, constants::KECCAK_EMPTY};
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{B256, Bytes, U256, keccak256};
 use alloy_trie::TrieAccount;
+#[cfg(feature = "reth-codec")]
+use byteorder::ReadBytesExt;
+#[cfg(feature = "reth-codec")]
+use bytes::Buf;
 use derive_more::Deref;
 use revm_bytecode::{Bytecode as RevmBytecode, BytecodeDecodeError};
 use revm_state::AccountInfo;
 
-use crate::InMemorySize;
-
-#[cfg(feature = "reth-codec")]
-/// Identifiers used in [`Compact`](reth_codecs::Compact) encoding of [`Bytecode`].
-pub mod compact_ids {
-    /// Identifier for legacy raw bytecode.
-    pub const LEGACY_RAW_BYTECODE_ID: u8 = 0;
-
-    /// Identifier for removed bytecode variant.
-    pub const REMOVED_BYTECODE_ID: u8 = 1;
-
-    /// Identifier for legacy analyzed bytecode.
-    pub const LEGACY_ANALYZED_BYTECODE_ID: u8 = 2;
-
-    /// Identifier for EIP-7702 bytecode.
-    pub const EIP7702_BYTECODE_ID: u8 = 4;
-}
+/// Identifier for legacy raw bytecode in the persisted encoding.
+pub const LEGACY_RAW_BYTECODE_ID: u8 = 0;
+/// Identifier for a removed bytecode variant in the persisted encoding.
+pub const REMOVED_BYTECODE_ID: u8 = 1;
+/// Identifier for analyzed legacy bytecode in the persisted encoding.
+pub const LEGACY_ANALYZED_BYTECODE_ID: u8 = 2;
+/// Identifier for EIP-7702 bytecode in the persisted encoding.
+pub const EIP7702_BYTECODE_ID: u8 = 4;
 
 /// An Ethereum account.
 #[cfg_attr(any(test, feature = "serde"), derive(serde::Serialize, serde::Deserialize))]
@@ -151,8 +146,6 @@ impl reth_codecs::Compact for Bytecode {
     where
         B: bytes::BufMut + AsMut<[u8]>,
     {
-        use compact_ids::{EIP7702_BYTECODE_ID, LEGACY_ANALYZED_BYTECODE_ID};
-
         let bytecode = self.0.bytes_ref();
         buf.put_u32(bytecode.len() as u32);
         buf.put_slice(bytecode.as_ref());
@@ -179,10 +172,6 @@ impl reth_codecs::Compact for Bytecode {
     // A panic will be triggered if a bytecode variant of 1 or greater than 2 is passed from the
     // database.
     fn from_compact(mut buf: &[u8], _: usize) -> (Self, &[u8]) {
-        use byteorder::ReadBytesExt;
-        use bytes::Buf;
-        use compact_ids::*;
-
         let len = buf.read_u32::<byteorder::BigEndian>().expect("could not read bytecode length")
             as usize;
         let bytes = Bytes::from(buf.copy_to_bytes(len));

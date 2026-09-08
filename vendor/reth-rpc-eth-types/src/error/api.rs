@@ -6,7 +6,7 @@ use base_execution_evm::{EvmErrorFor, HaltReasonFor};
 use reth_storage_errors::provider::ProviderError;
 use revm::{
     context::result::ExecutionResult, context_interface::result::HaltReason,
-    database::bal::EvmDatabaseError,
+    database::EvmDatabaseError,
 };
 
 use super::RpcInvalidTransactionError;

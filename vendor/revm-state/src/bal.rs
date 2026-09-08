@@ -238,7 +238,7 @@ impl Bal {
 /// Produced by [`Bal`] read paths ([`Bal::populate_account_info`],
 /// [`Bal::populate_storage_slot`], [`Bal::populate_storage_slot_by_account_id`],
 /// [`Bal::account_storage`], [`StorageBal::get`], [`StorageBal::get_bal_writes`])
-/// and surfaced through `BalState` / `BalDatabase` in `revm-database-interface`,
+/// and surfaced through `BalState` / `BalDatabase` in `base-state-api`,
 /// where it is wrapped into `EvmDatabaseError::Bal` before reaching the EVM.
 ///
 /// [EIP-7928]: https://eips.ethereum.org/EIPS/eip-7928

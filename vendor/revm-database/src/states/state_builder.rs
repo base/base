@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use revm_database_interface::{
-    DBErrorMarker, Database, DatabaseRef, EmptyDB, WrapDatabaseRef, bal::BalState,
-};
+use base_state_api::{BalState, DBErrorMarker, Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
 use revm_state::bal::Bal;
 
 use super::{BundleState, State, TransitionState, cache::CacheState, state::DBBox};

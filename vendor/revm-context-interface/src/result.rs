@@ -10,7 +10,7 @@
 use core::fmt::{self, Debug};
 use std::{borrow::Cow, boxed::Box, string::String, sync::Arc, vec::Vec};
 
-use revm_database_interface::DBErrorMarker;
+use base_state_api::DBErrorMarker;
 use revm_primitives::{Address, Bytes, Log, U256};
 use revm_state::EvmState;
 

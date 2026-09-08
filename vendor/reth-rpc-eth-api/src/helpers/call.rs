@@ -36,7 +36,7 @@ use revm::{
     Database, DatabaseCommit,
     context::Block,
     context_interface::{Cfg, Transaction, result::ResultAndState},
-    database::{State, bal::EvmDatabaseError},
+    database::{EvmDatabaseError, State},
 };
 use revm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};
 use tracing::{trace, warn};

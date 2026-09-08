@@ -2,6 +2,7 @@
 use core::fmt::Debug;
 use std::{vec, vec::Vec};
 
+use base_state_api::{BENCH_CALLER, BENCH_TARGET};
 use revm_context_interface::{
     either::Either,
     transaction::{
@@ -9,7 +10,6 @@ use revm_context_interface::{
         SignedAuthorization, Transaction,
     },
 };
-use revm_database_interface::{BENCH_CALLER, BENCH_TARGET};
 use revm_primitives::{Address, B256, Bytes, TxKind, U256, eip7825};
 
 use crate::TransactionType;

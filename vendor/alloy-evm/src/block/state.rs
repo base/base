@@ -1,8 +1,7 @@
 //! State database abstraction.
 
 use revm::{
-    DatabaseCommit, database::State, database_interface::bal::BalDatabase,
-    state::bal::BlockAccessIndex,
+    DatabaseCommit, database::State, database_interface::BalDatabase, state::bal::BlockAccessIndex,
 };
 
 use crate::Database;

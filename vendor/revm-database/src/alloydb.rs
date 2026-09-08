@@ -9,7 +9,7 @@ use alloy_provider::{
     network::{BlockResponse, revm_primitives::HeaderResponse},
 };
 use alloy_transport::TransportError;
-use revm_database_interface::{DBErrorMarker, async_db::DatabaseAsyncRef};
+use base_state_api::{DBErrorMarker, DatabaseAsyncRef};
 use revm_primitives::{Address, B256, StorageKey, StorageValue};
 use revm_state::{AccountInfo, Bytecode};
 
@@ -52,7 +52,7 @@ impl From<TransportError> for AlloyDBError {
     }
 }
 
-/// An alloy-powered REVM [Database][revm_database_interface::Database].
+/// An alloy-powered REVM [Database][base_state_api::Database].
 ///
 /// When accessing the database, it'll use the given provider to fetch the corresponding account's data.
 #[derive(Debug)]
@@ -124,7 +124,7 @@ impl<N: Network, P: Provider<N>> DatabaseAsyncRef for AlloyDB<N, P> {
 #[cfg(test)]
 mod tests {
     use alloy_provider::ProviderBuilder;
-    use revm_database_interface::{DatabaseRef, WrapDatabaseAsync};
+    use base_state_api::{DatabaseRef, WrapDatabaseAsync};
 
     use super::*;
 
