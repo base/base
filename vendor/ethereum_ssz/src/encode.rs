@@ -5,7 +5,7 @@ pub use impls::{sequence_ssz_append, sequence_ssz_bytes_len};
 
 /// Provides SSZ encoding (serialization) via the `as_ssz_bytes(&self)` method.
 ///
-/// See `examples/` for manual implementations or the crate root for implementations using
+/// See the crate root for implementations using
 /// `#[derive(Encode)]`.
 pub trait Encode {
     /// Returns `true` if this object has a fixed-length.

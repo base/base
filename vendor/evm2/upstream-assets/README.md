@@ -38,8 +38,6 @@ fn main() -> Result<()> {
 }
 ```
 
-See [`crates/evm2/examples/custom_evm`](crates/evm2/examples/custom_evm) for the complete version.
-
 ## Benchmarks
 
 ```sh

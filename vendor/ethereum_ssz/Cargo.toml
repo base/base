@@ -24,18 +24,6 @@ readme = "README.md"
 name = "ssz"
 path = "src/lib.rs"
 
-[[example]]
-name = "large_list"
-path = "examples/large_list.rs"
-
-[[example]]
-name = "large_list_of_structs"
-path = "examples/large_list_of_structs.rs"
-
-[[example]]
-name = "struct_definition"
-path = "examples/struct_definition.rs"
-
 [[test]]
 name = "tests"
 path = "tests/tests.rs"

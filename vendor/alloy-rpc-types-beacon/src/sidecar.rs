@@ -123,7 +123,7 @@ mod tests {
     /// Should deserialize json containing 6 blobs
     #[test]
     fn serde_sidecar_bundle() {
-        let s = include_str!("examples/sidecar.json");
+        let s = include_str!("testdata/sidecar.json");
         let resp: BeaconBlobBundle = serde_json::from_str(s).unwrap();
         let json: serde_json::Value = serde_json::from_str(s).unwrap();
         assert_eq!(json, serde_json::to_value(resp.clone()).unwrap());

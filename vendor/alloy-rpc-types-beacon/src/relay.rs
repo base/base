@@ -823,7 +823,7 @@ mod tests {
 
     #[test]
     fn electra_bid_submission() {
-        let s = include_str!("examples/relay_builder_block_validation_request_v4.json");
+        let s = include_str!("testdata/relay_builder_block_validation_request_v4.json");
 
         let bid = serde_json::from_str::<SignedBidSubmissionV4>(s).unwrap();
         let json: serde_json::Value = serde_json::from_str(s).unwrap();
@@ -832,7 +832,7 @@ mod tests {
 
     fn amsterdam_bid_submission_v6() -> SignedBidSubmissionV6 {
         let bid_submission_v4_json =
-            include_str!("examples/relay_builder_block_validation_request_v4.json");
+            include_str!("testdata/relay_builder_block_validation_request_v4.json");
         let bid_submission_v4: SignedBidSubmissionV4 =
             serde_json::from_str(bid_submission_v4_json).unwrap();
 
@@ -868,7 +868,7 @@ mod tests {
     fn capella_bid_submission_ssz() {
         use ssz::{Decode, Encode};
 
-        let bytes = include_bytes!("examples/relay_signed_bid_submission_capella.ssz").to_vec();
+        let bytes = include_bytes!("testdata/relay_signed_bid_submission_capella.ssz").to_vec();
         let bid = SignedBidSubmissionV2::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(bytes, bid.as_ssz_bytes());
     }
@@ -898,7 +898,7 @@ mod tests {
 
     #[test]
     fn test_can_parse_validation_request_body() {
-        const VALIDATION_REQUEST_BODY: &str = include_str!("examples/relay_single_payload.json");
+        const VALIDATION_REQUEST_BODY: &str = include_str!("testdata/relay_single_payload.json");
 
         let _validation_request_body: BuilderBlockValidationRequest =
             serde_json::from_str(VALIDATION_REQUEST_BODY).unwrap();
@@ -930,7 +930,7 @@ mod tests {
     fn test_builder_block_validation_request_v4_to_execution_data() {
         // Use the existing test data for SignedBidSubmissionV4 and wrap it in a validation request
         let bid_submission_json =
-            include_str!("examples/relay_builder_block_validation_request_v4.json");
+            include_str!("testdata/relay_builder_block_validation_request_v4.json");
         let bid_submission: SignedBidSubmissionV4 =
             serde_json::from_str(bid_submission_json).unwrap();
 
@@ -973,7 +973,7 @@ mod tests {
     #[test]
     fn test_builder_block_validation_request_v4_from_trait() {
         let bid_submission_json =
-            include_str!("examples/relay_builder_block_validation_request_v4.json");
+            include_str!("testdata/relay_builder_block_validation_request_v4.json");
         let bid_submission: SignedBidSubmissionV4 =
             serde_json::from_str(bid_submission_json).unwrap();
 
@@ -998,7 +998,7 @@ mod tests {
     fn test_builder_block_validation_request_v5_to_execution_data() {
         // Create a test SignedBidSubmissionV5 based on the V4 test data structure
         let bid_submission_v4_json =
-            include_str!("examples/relay_builder_block_validation_request_v4.json");
+            include_str!("testdata/relay_builder_block_validation_request_v4.json");
         let bid_submission_v4: SignedBidSubmissionV4 =
             serde_json::from_str(bid_submission_v4_json).unwrap();
 
@@ -1057,7 +1057,7 @@ mod tests {
     fn test_builder_block_validation_request_v5_from_trait() {
         // Create a test SignedBidSubmissionV5 based on the V4 test data structure
         let bid_submission_v4_json =
-            include_str!("examples/relay_builder_block_validation_request_v4.json");
+            include_str!("testdata/relay_builder_block_validation_request_v4.json");
         let bid_submission_v4: SignedBidSubmissionV4 =
             serde_json::from_str(bid_submission_v4_json).unwrap();
 

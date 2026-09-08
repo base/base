@@ -31,8 +31,6 @@
 //! }
 //!
 //! ```
-//!
-//! See `examples/` for manual implementations of the `Encode` and `Decode` traits.
 
 mod bitfield;
 pub use bitfield::{BitIter, BitfieldBehaviour, SMALLVEC_LEN};

@@ -48,7 +48,6 @@ rand_xorshift = { workspace = true }
 rand_0_7 = { workspace = true, features = ["default"] }
 quickcheck = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
-clap = { workspace = true, features = ["default", "derive"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }
 [lints]
 workspace = true

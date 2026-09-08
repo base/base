@@ -23,22 +23,6 @@ readme = "README.md"
 name = "discv5"
 path = "src/lib.rs"
 
-[[example]]
-name = "custom_executor"
-path = "examples/custom_executor.rs"
-
-[[example]]
-name = "find_nodes"
-path = "examples/find_nodes.rs"
-
-[[example]]
-name = "request_enr"
-path = "examples/request_enr.rs"
-
-[[example]]
-name = "simple_server"
-path = "examples/simple_server.rs"
-
 [dependencies]
 aes = { workspace = true }
 ctr = { workspace = true }
@@ -74,7 +58,6 @@ rand_xorshift = { workspace = true }
 rand_0_7 = { workspace = true, features = ["default"] }
 quickcheck = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
-clap = { workspace = true, features = ["default", "derive"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }
 [lints]
 workspace = true

@@ -99,7 +99,7 @@ pub fn sanitize_offset(
 
 /// Provides SSZ decoding (de-serialization) via the `from_ssz_bytes(&bytes)` method.
 ///
-/// See `examples/` for manual implementations or the crate root for implementations using
+/// See the crate root for implementations using
 /// `#[derive(Decode)]`.
 pub trait Decode: Sized {
     /// Returns `true` if this object has a fixed-length.
