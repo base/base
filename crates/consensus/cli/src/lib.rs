@@ -20,10 +20,7 @@ mod config;
 pub use config::{ConfigError, L1ConfigFile, L2ConfigFile};
 
 mod follow;
-pub use follow::{
-    ConsensusFollowNodeArgs, ConsensusFollowNodeCommand, ConsensusFollowNodeConfigArgs,
-    EmbeddedFollowArgs,
-};
+pub use follow::{ConsensusFollowNodeArgs, ConsensusFollowNodeConfigArgs, EmbeddedFollowArgs};
 
 mod l1;
 pub use l1::L1ClientArgs;
@@ -36,9 +33,8 @@ pub use metrics::CliMetrics;
 
 mod node;
 pub use node::{
-    ConsensusNodeArgs, ConsensusNodeCommand, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
-    ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
-    EmbeddedSequencerConsensusNodeConfigArgs,
+    ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides, ConsensusNodeStartOptions,
+    EmbeddedConsensusNodeConfigArgs, EmbeddedSequencerConsensusNodeConfigArgs,
 };
 
 mod rpc;

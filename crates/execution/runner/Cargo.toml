@@ -21,6 +21,7 @@ jsonrpsee = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 reth-tasks = { workspace = true, optional = true }
 eyre = { workspace = true, features = ["default"] }
+reth-network = { workspace = true, optional = true }
 reth-db = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, optional = true }
@@ -62,6 +63,7 @@ harness = false
 
 [features]
 test-utils = [
+    "dep:reth-network",
     "dep:tokio",
     "base-node-core/test-utils",
     "dep:alloy-eips",

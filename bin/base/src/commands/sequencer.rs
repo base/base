@@ -1,5 +1,4 @@
 //! Integrated execution, builder, and consensus sequencer command.
-
 use std::sync::Arc;
 
 use base_builder_cli::Args as BuilderArgs;
@@ -10,6 +9,8 @@ use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
     ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
 };
+use base_consensus_engine::LocalEngineClient;
+use base_consensus_providers::{L1RpcProvider, LocalL2Provider};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
@@ -20,7 +21,7 @@ use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use tokio_util::sync::CancellationToken;
 
-use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
+use crate::config::ResolvedChainConfig;
 
 /// Arguments for `base sequencer`.
 #[derive(Args, Clone, Debug)]
@@ -94,9 +95,7 @@ impl SequencerCommand {
 
             let upgrade_signal_l1_rpc =
                 rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
-            let execution =
-                execution.into_runtime_config(execution_chain).with_unified_auth_endpoint();
-            let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
+            let execution = execution.into_runtime_config(execution_chain);
 
             let task_executor = ctx.task_executor.clone();
             let builder = execution.into_default_node_builder(ctx)?;
@@ -123,12 +122,25 @@ impl SequencerCommand {
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
+            let execution_client = LocalEngineClient {
+                l1: L1RpcProvider::new_http_with_timeout(
+                    consensus_args.config.l1_rpc_args.l1_eth_rpc.clone(),
+                    consensus_args.config.l1_rpc_args.l1_rpc_timeout,
+                ),
+                l2: LocalL2Provider {
+                    provider: execution_node.provider.clone(),
+                    rollup_config: Arc::new(rollup_config.clone()),
+                },
+                execution: execution_node.execution.clone(),
+                network: execution_node.network.clone(),
+                proofs_progress: execution_node.proofs_progress.get().cloned(),
+            };
 
             let consensus_cancellation = CancellationToken::new();
             let consensus_exit = consensus_args.start_with_options(
                 ConsensusNodeStartOptions::new(rollup_config)
                     .with_overrides(ConsensusNodeOverrides::embedded_execution(
-                        l2_engine_rpc,
+                        execution_client,
                         upgrade_signal_l1_rpc,
                     ))
                     .with_cancellation(consensus_cancellation.clone())

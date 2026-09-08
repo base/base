@@ -22,8 +22,9 @@ base-txpool-rpc = { workspace = true }
 base-builder-cli = { workspace = true }
 base-node-runner = { workspace = true }
 reth-cli-commands = { workspace = true }
+base-consensus-engine = { workspace = true }
 base-builder-metering = { workspace = true }
-url = { workspace = true, features = ["default"] }
+base-consensus-providers = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
@@ -40,5 +41,6 @@ base-upgrade-signal = { workspace = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default"] }
 [dev-dependencies]
+url = { workspace = true }
 base-common-genesis = { workspace = true }
 figment = { workspace = true, features = ["test"] }

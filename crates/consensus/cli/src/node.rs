@@ -1,10 +1,8 @@
 //! Reusable consensus node arguments and launch helpers.
 
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use alloy_primitives::Address;
-use alloy_rpc_types_engine::JwtSecret;
-use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{
@@ -17,7 +15,6 @@ use base_upgrade_signal::{
 };
 use clap::Args;
 use eyre::Context;
-use reth_node_core::args::TraceArgs;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -25,17 +22,14 @@ use url::Url;
 
 use crate::{
     ConsensusChainArgs, EmbeddedL2ClientArgs, EmbeddedP2PArgs, EmbeddedRpcArgs, L1ClientArgs,
-    L1ConfigFile, L2ClientArgs, L2ConfigFile, LogArgs, MetricsArgs, P2PArgs, RpcArgs,
-    SequencerArgs, metrics::CliMetrics,
+    L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
 
 /// Overrides supplied by callers that embed consensus alongside another service.
 #[derive(Clone, Debug, Default)]
 pub struct ConsensusNodeOverrides {
-    /// Override for the L2 Engine API endpoint.
-    pub l2_engine_rpc: Option<Url>,
-    /// Override for the L2 Engine API JWT secret.
-    pub l2_engine_jwt_secret: Option<JwtSecret>,
+    /// Execution services supplied by the unified node.
+    pub execution: Option<base_consensus_engine::LocalEngineClient>,
     /// Override for the L1 RPC endpoint used by consensus upgrade-signal reads.
     pub upgrade_signal_l1_rpc: Option<Url>,
 }
@@ -45,73 +39,10 @@ impl ConsensusNodeOverrides {
     ///
     /// Consensus uses the same upgrade-signal L1 RPC as execution when one is configured.
     pub const fn embedded_execution(
-        l2_engine_rpc: Url,
+        execution: base_consensus_engine::LocalEngineClient,
         upgrade_signal_l1_rpc: Option<Url>,
     ) -> Self {
-        Self {
-            l2_engine_rpc: Some(l2_engine_rpc),
-            l2_engine_jwt_secret: None,
-            upgrade_signal_l1_rpc,
-        }
-    }
-}
-
-/// Standalone consensus node command.
-#[derive(Args, Clone, Debug)]
-pub struct ConsensusNodeCommand {
-    /// Logging configuration.
-    #[command(flatten)]
-    pub logging: LogArgs,
-
-    /// Metrics configuration.
-    #[command(flatten)]
-    pub metrics: MetricsArgs,
-
-    /// `OpenTelemetry` tracing export configuration.
-    #[command(flatten)]
-    pub traces: TraceArgs,
-
-    /// Consensus node arguments.
-    #[command(flatten)]
-    pub args: ConsensusNodeConfigArgs,
-}
-
-impl ConsensusNodeCommand {
-    /// Runs the standalone consensus node command.
-    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
-            base_cli_utils::register_version_metrics!();
-        })?;
-
-        let args = ConsensusNodeArgs::new(chain, self.args);
-        let cfg = args.load_rollup_config()?;
-        if self.metrics.enabled {
-            CliMetrics::init_rollup_config(&cfg);
-            CliMetrics::init_p2p(&args.config.p2p_flags);
-        }
-
-        let metrics_enabled = self.metrics.enabled;
-        let rt = RuntimeManager::new().tokio_runtime()?;
-        // Build the subscriber — including the gRPC OTLP layer — inside the main runtime
-        // so tonic's transport channel lives for the full program lifetime (reth pattern).
-        rt.block_on(async {
-            LogConfig::from(self.logging.clone())
-                .init_with_trace_args(&self.traces, &["libp2p_gossipsub=error"])
-        })?;
-        rt.block_on(async move {
-            tokio::select! {
-                biased;
-                _ = tokio::signal::ctrl_c() => {
-                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
-                    Ok(())
-                }
-                res = async move {
-                    let _upgrade_countdown_metrics = metrics_enabled
-                        .then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
-                    args.start_with_overrides(cfg, Default::default()).await
-                } => res,
-            }
-        })
+        Self { execution: Some(execution), upgrade_signal_l1_rpc }
     }
 }
 
@@ -500,15 +431,9 @@ impl ConsensusNodeArgs {
             da_batcher_sender_override: self.config.l1_rpc_args.l1_da_batcher_sender_override,
         };
 
-        let l2_engine_rpc = overrides
-            .l2_engine_rpc
-            .unwrap_or_else(|| self.config.l2_client_args.l2_engine_rpc.clone());
-        let jwt_secret = match overrides.l2_engine_jwt_secret {
-            Some(secret) => secret,
-            None => {
-                self.config.l2_client_args.resolve_jwt_secret_for_endpoint(&l2_engine_rpc).await?
-            }
-        };
+        let execution = overrides
+            .execution
+            .ok_or_else(|| eyre::eyre!("consensus requires in-process execution services"))?;
 
         self.config.p2p_flags.check_ports()?;
         let genesis_signer = self.genesis_signer().ok();
@@ -526,28 +451,15 @@ impl ConsensusNodeArgs {
             .await?;
         let rpc_config = self.config.rpc_flags.clone().into();
 
-        let engine_config = EngineConfig {
-            config: Arc::new(cfg.clone()),
-            l2_url: l2_engine_rpc,
-            l2_jwt_secret: jwt_secret,
-            l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
-            l1_rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
-            mode: self.config.node_mode,
-        };
+        let engine_config = EngineConfig { client: execution, mode: self.config.node_mode };
 
-        let mut builder = RollupNodeBuilder::new(
-            cfg,
-            l1_config,
-            self.config.l2_client_args.l2_trust_rpc,
-            engine_config,
-            p2p_config,
-            rpc_config,
-        )
-        .with_sequencer_config(self.config.sequencer_flags.config())
-        .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
-            metrics_config: upgrade_signal_config,
-            l1_rpc: upgrade_signal_l1_rpc,
-        });
+        let mut builder =
+            RollupNodeBuilder::new(cfg, l1_config, engine_config, p2p_config, rpc_config)
+                .with_sequencer_config(self.config.sequencer_flags.config())
+                .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
+                    metrics_config: upgrade_signal_config,
+                    l1_rpc: upgrade_signal_l1_rpc,
+                });
 
         if let Some(interval) = self.config.l1_rpc_args.l1_finalized_poll_interval {
             builder = builder.with_finalized_poll_interval(interval);
@@ -853,19 +765,6 @@ mod tests {
 
         assert_eq!(applied, 0);
         assert_eq!(cfg.upgrades.activation_timestamp(BaseUpgrade::Azul), None);
-    }
-
-    #[test]
-    fn embedded_execution_overrides_preserve_upgrade_signal_context() {
-        let overrides = ConsensusNodeOverrides::embedded_execution(
-            Url::parse("http://localhost:8551").unwrap(),
-            Some(Url::parse("http://localhost:8545").unwrap()),
-        );
-
-        assert_eq!(
-            overrides.upgrade_signal_l1_rpc.as_ref().map(Url::as_str),
-            Some("http://localhost:8545/")
-        );
     }
 
     #[test]

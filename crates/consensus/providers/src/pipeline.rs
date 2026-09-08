@@ -15,7 +15,7 @@ use base_consensus_derive::{
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{
-    AlloyChainProvider, AlloyL2ChainProvider, ConfDepthProvider, L1HeadNumber, OnlineBeaconClient,
+    AlloyChainProvider, ConfDepthProvider, L1HeadNumber, LocalL2Provider, OnlineBeaconClient,
     OnlineBlobProvider,
 };
 
@@ -24,10 +24,10 @@ type OnlinePolledDerivationPipeline = DerivationPipeline<
     PolledAttributesQueueStage<
         OnlineDataProvider,
         ConfDepthProvider,
-        AlloyL2ChainProvider,
+        LocalL2Provider,
         OnlineAttributesBuilder,
     >,
-    AlloyL2ChainProvider,
+    LocalL2Provider,
 >;
 
 /// An RPC-backed Ethereum data source.
@@ -36,7 +36,7 @@ type OnlineDataProvider =
 
 /// An RPC-backed payload attributes builder for the `AttributesQueue` stage of the derivation
 /// pipeline.
-type OnlineAttributesBuilder = StatefulAttributesBuilder<ConfDepthProvider, AlloyL2ChainProvider>;
+type OnlineAttributesBuilder = StatefulAttributesBuilder<ConfDepthProvider, LocalL2Provider>;
 
 /// An online derivation pipeline.
 #[derive(Debug)]
@@ -54,7 +54,7 @@ impl OnlinePipeline {
         l2_safe_head: L2BlockInfo,
         blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
         chain_provider: AlloyChainProvider,
-        l2_chain_provider: AlloyL2ChainProvider,
+        l2_chain_provider: LocalL2Provider,
         l1_head_number: L1HeadNumber,
         verifier_l1_confs: u64,
     ) -> PipelineResult<Self> {
@@ -88,7 +88,7 @@ impl OnlinePipeline {
         l1_cfg: Arc<ChainConfig>,
         blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
         chain_provider: AlloyChainProvider,
-        l2_chain_provider: AlloyL2ChainProvider,
+        l2_chain_provider: LocalL2Provider,
         l1_head_number: L1HeadNumber,
         verifier_l1_confs: u64,
     ) -> Self {
@@ -112,7 +112,7 @@ impl OnlinePipeline {
         l1_cfg: Arc<ChainConfig>,
         blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
         chain_provider: AlloyChainProvider,
-        l2_chain_provider: AlloyL2ChainProvider,
+        l2_chain_provider: LocalL2Provider,
         l1_head_number: L1HeadNumber,
         verifier_l1_confs: u64,
         da_batcher_sender_override: Option<Address>,

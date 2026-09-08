@@ -2,30 +2,24 @@
 
 use std::{num::ParseIntError, sync::Arc, time::Duration};
 
-use alloy_provider::{Provider, RootProvider};
-use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::Base;
-use base_consensus_node::{
-    EngineConfig, FollowNode, FollowNodeConfig, L1Config, NodeMode, RemoteL2Client,
-};
+use base_consensus_engine::LocalEngineClient;
+use base_consensus_node::{FollowNode, FollowNodeConfig, L1Config, RemoteL2Client};
 use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use clap::Args;
-use reth_node_core::args::TraceArgs;
 use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
-    ConsensusChainArgs, ConsensusNodeConfigArgs, L1ClientArgs, L1ConfigFile, L2ClientArgs,
-    L2ConfigFile, LogArgs, MetricsArgs, RpcArgs, metrics::CliMetrics,
+    ConsensusChainArgs, ConsensusNodeConfigArgs, L1ClientArgs, L1ConfigFile, L2ConfigFile, RpcArgs,
 };
 
 /// Follow-mode options for an integrated RPC node.
 #[derive(Args, Clone, Debug)]
 pub struct EmbeddedFollowArgs {
     /// Follow this node instead of deriving blocks from L1.
-    #[arg(long = "source-l2-rpc", env = "BASE_NODE_SOURCE_L2_RPC", requires = "http")]
+    #[arg(long = "source-l2-rpc", env = "BASE_NODE_SOURCE_L2_RPC")]
     pub source_l2_rpc: Option<Url>,
 
     /// Gate sync behind the local proofs history progress.
@@ -53,15 +47,9 @@ impl EmbeddedFollowArgs {
     pub fn into_config(
         self,
         consensus: ConsensusNodeConfigArgs,
-        l2_rpc_url: Url,
-        l2_engine_rpc: Url,
     ) -> Option<ConsensusFollowNodeConfigArgs> {
-        let mut l2_client_args = consensus.l2_client_args;
-        l2_client_args.l2_engine_rpc = l2_engine_rpc;
         Some(ConsensusFollowNodeConfigArgs {
             source_l2_rpc: self.source_l2_rpc?,
-            l2_rpc_url,
-            l2_client_args,
             proofs: self.proofs,
             proofs_max_blocks_ahead: self.proofs_max_blocks_ahead,
             insert_delay: self.insert_delay,
@@ -69,64 +57,6 @@ impl EmbeddedFollowArgs {
             l2_config: consensus.l2_config,
             l1_config: consensus.l1_config,
             l1_rpc_args: consensus.l1_rpc_args,
-        })
-    }
-}
-
-/// Standalone consensus follow-node command.
-#[derive(Args, Clone, Debug)]
-pub struct ConsensusFollowNodeCommand {
-    /// Logging configuration.
-    #[command(flatten)]
-    pub logging: LogArgs,
-
-    /// Metrics configuration.
-    #[command(flatten)]
-    pub metrics: MetricsArgs,
-
-    /// `OpenTelemetry` tracing export configuration.
-    #[command(flatten)]
-    pub traces: TraceArgs,
-
-    /// Follow-node arguments.
-    #[command(flatten)]
-    pub args: ConsensusFollowNodeConfigArgs,
-}
-
-impl ConsensusFollowNodeCommand {
-    /// Runs the standalone consensus follow-node command.
-    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
-            base_cli_utils::register_version_metrics!();
-        })?;
-
-        let args = ConsensusFollowNodeArgs::new(chain, self.args);
-        let metrics_config = if self.metrics.enabled {
-            let cfg = args.load_rollup_config()?;
-            CliMetrics::init_rollup_config(&cfg);
-            Some(cfg)
-        } else {
-            None
-        };
-
-        let rt = RuntimeManager::new().tokio_runtime()?;
-        rt.block_on(async {
-            LogConfig::from(self.logging.clone())
-                .init_with_trace_args(&self.traces, &["libp2p_gossipsub=error"])
-        })?;
-        rt.block_on(async move {
-            tokio::select! {
-                biased;
-                _ = tokio::signal::ctrl_c() => {
-                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
-                    Ok(())
-                }
-                res = async move {
-                    let _upgrade_countdown_metrics =
-                        metrics_config.map(CliMetrics::spawn_upgrade_countdown_recorder);
-                    args.start().await
-                } => res,
-            }
         })
     }
 }
@@ -157,18 +87,6 @@ pub struct ConsensusFollowNodeConfigArgs {
     /// The URL of the node to follow.
     #[arg(long = "source-l2-rpc", env = "BASE_NODE_SOURCE_L2_RPC")]
     pub source_l2_rpc: Url,
-
-    /// Local L2 execution RPC URL (non-engine, e.g. port 8545).
-    #[arg(
-        long = "l2-rpc-url",
-        default_value = "http://localhost:8545",
-        env = "BASE_NODE_L2_RPC_URL"
-    )]
-    pub l2_rpc_url: Url,
-
-    /// L2 engine CLI arguments.
-    #[clap(flatten)]
-    pub l2_client_args: L2ClientArgs,
 
     /// Gate sync behind proofs progress via `debug_proofsSyncStatus`.
     #[arg(long = "proofs", default_value_t = false, env = "BASE_NODE_PROOFS")]
@@ -220,34 +138,16 @@ impl ConsensusFollowNodeArgs {
         Ok(config)
     }
 
-    /// Builds a follow node with default external endpoint configuration.
-    pub async fn build_follow_node(&self) -> eyre::Result<FollowNode> {
-        let cfg = self.load_rollup_config()?;
-        let local_l2_provider = self.local_l2_provider();
-        self.follow_node(cfg, local_l2_provider).await
-    }
-
     /// Builds a follow node from explicit runtime dependencies.
     async fn follow_node(
         &self,
         cfg: RollupConfig,
-        local_l2_provider: RootProvider<Base>,
+        engine_client: LocalEngineClient,
     ) -> eyre::Result<FollowNode> {
-        let l2_engine_rpc = self.config.l2_client_args.l2_engine_rpc.clone();
-        let jwt_secret =
-            self.config.l2_client_args.resolve_jwt_secret_for_endpoint(&l2_engine_rpc).await?;
         let rollup_config = Arc::new(cfg.clone());
-
-        let engine_config = EngineConfig {
-            config: Arc::clone(&rollup_config),
-            l2_url: l2_engine_rpc,
-            l2_jwt_secret: jwt_secret,
-            l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
-            l1_rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
-            mode: NodeMode::Validator,
-        };
-        let engine_client =
-            Arc::new(engine_config.build_engine_client().await.map_err(|e| eyre::eyre!(e))?);
+        let local_l2_provider = engine_client.l2.clone();
+        let proofs_progress = engine_client.proofs_progress.clone();
+        let engine_client = Arc::new(engine_client);
         let l1_provider = L1RpcProvider::new_http_with_timeout(
             self.config.l1_rpc_args.l1_eth_rpc.clone(),
             self.config.l1_rpc_args.l1_rpc_timeout,
@@ -262,19 +162,19 @@ impl ConsensusFollowNodeArgs {
             local_l2_provider,
             l2_source,
             rpc_builder,
+            proofs_progress,
             proofs_enabled: self.config.proofs,
             proofs_max_blocks_ahead: self.config.proofs_max_blocks_ahead,
             insert_delay: self.config.insert_delay,
         }))
     }
 
-    /// Starts a follow node.
-    pub async fn start(&self) -> eyre::Result<()> {
-        self.start_with_rollup_config(self.load_rollup_config()?).await
-    }
-
     /// Starts following with the integrated node's resolved upgrade schedule.
-    pub async fn start_with_rollup_config(&self, cfg: RollupConfig) -> eyre::Result<()> {
+    pub async fn start_with_rollup_config(
+        &self,
+        cfg: RollupConfig,
+        engine_client: LocalEngineClient,
+    ) -> eyre::Result<()> {
         if !self.config.proofs {
             warn!(
                 target: "rollup_node",
@@ -289,34 +189,15 @@ impl ConsensusFollowNodeArgs {
             "Starting follow node"
         );
 
-        let local_l2_provider = self.local_l2_provider();
-        if self.config.proofs {
-            self.check_proofs_rpc(&local_l2_provider).await?;
+        if self.config.proofs && engine_client.proofs_progress.is_none() {
+            return Err(eyre::eyre!("follow proof gating requires the proofs-history extension"));
         }
 
-        self.follow_node(cfg, local_l2_provider).await?.start().await.map_err(|e| {
+        self.follow_node(cfg, engine_client).await?.start().await.map_err(|e| {
             error!(target: "rollup_node", error = %e, "Failed to start follow node");
             eyre::eyre!(e)
         })?;
 
-        Ok(())
-    }
-
-    /// Builds the local L2 RPC provider from CLI arguments.
-    pub fn local_l2_provider(&self) -> RootProvider<Base> {
-        RootProvider::<Base>::new_http(self.config.l2_rpc_url.clone())
-    }
-
-    /// Checks that the local execution node exposes the proofs sync RPC.
-    pub async fn check_proofs_rpc(&self, provider: &RootProvider<Base>) -> eyre::Result<()> {
-        provider
-            .raw_request::<_, serde_json::Value>("debug_proofsSyncStatus".into(), ())
-            .await
-            .map_err(|e| {
-                error!(target: "rollup_node", error = %e, "debug_proofsSyncStatus call failed; is the Proofs ExEx enabled on the node?");
-                eyre::eyre!("debug_proofsSyncStatus call failed: {e}")
-            })?;
-        info!(target: "rollup_node", "Proofs ExEx confirmed available via debug_proofsSyncStatus");
         Ok(())
     }
 
@@ -364,8 +245,6 @@ mod tests {
             "test",
             "--source-l2-rpc",
             "http://localhost:8545",
-            "--l2-engine-rpc",
-            "http://localhost:8551",
             "--l1-eth-rpc",
             "http://localhost:8545",
             "--l1-beacon",

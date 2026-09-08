@@ -27,6 +27,10 @@ pub type LocalNodeProvider = BaseProvider;
 
 /// Handle to a launched local node along with the resources required to keep it alive.
 pub struct LocalNode {
+    /// In-process execution services.
+    pub execution: base_execution_payload_builder::BaseExecutionHandle,
+    /// Execution network and synchronization status.
+    pub network: reth_network::NetworkHandle,
     /// HTTP API address of the local node.
     pub http_api_addr: SocketAddr,
     engine_ipc_path: String,
@@ -127,6 +131,8 @@ impl LocalNode {
         let provider = node_handle.provider().clone();
 
         Ok(Self {
+            execution: node_handle.execution.clone(),
+            network: node_handle.network.clone(),
             http_api_addr,
             ws_api_addr,
             engine_ipc_path,

@@ -4,11 +4,8 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Address;
-use alloy_provider::RootProvider;
 use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::Base;
-use base_consensus_engine::BaseEngineClient;
 use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::UpgradeSignalConfig;
@@ -71,8 +68,6 @@ pub struct RollupNodeBuilder {
     pub config: RollupConfig,
     /// The L1 chain configuration.
     pub l1_config_builder: L1ConfigBuilder,
-    /// Whether to trust the L2 RPC.
-    pub l2_trust_rpc: bool,
     /// Engine builder configuration.
     pub engine_config: EngineConfig,
     /// The [`NetworkConfig`].
@@ -103,25 +98,10 @@ pub struct RollupNodeBuilder {
 }
 
 impl RollupNodeBuilder {
-    fn derivation_l2_provider_url(mut url: Url) -> Url {
-        match url.scheme() {
-            "ws" => {
-                let _ = url.set_scheme("http");
-            }
-            "wss" => {
-                let _ = url.set_scheme("https");
-            }
-            _ => {}
-        }
-
-        url
-    }
-
     /// Creates a new [`RollupNodeBuilder`] with the given [`RollupConfig`].
     pub const fn new(
         config: RollupConfig,
         l1_config_builder: L1ConfigBuilder,
-        l2_trust_rpc: bool,
         engine_config: EngineConfig,
         p2p_config: NetworkConfig,
         rpc_config: Option<RpcBuilder>,
@@ -129,7 +109,6 @@ impl RollupNodeBuilder {
         Self {
             config,
             l1_config_builder,
-            l2_trust_rpc,
             engine_config,
             p2p_config,
             rpc_config,
@@ -231,16 +210,13 @@ impl RollupNodeBuilder {
             l1_config.engine_provider.clone()
         };
 
-        let l2_provider_url = Self::derivation_l2_provider_url(self.engine_config.l2_url.clone());
-        let l2_provider = BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(
-            l2_provider_url,
-            self.engine_config.l2_jwt_secret,
-        )
-        .await?;
+        let l2_provider = self.engine_config.client.l2.clone();
 
         let rollup_config = Arc::new(self.config);
         let checkpoint_path = self.checkpoint_path.unwrap_or_else(|| {
-            Self::default_checkpoint_path(self.engine_config.config.l2_chain_id.id())
+            Self::default_checkpoint_path(
+                self.engine_config.client.l2.rollup_config.l2_chain_id.id(),
+            )
         });
 
         let p2p_config = self.p2p_config;
@@ -271,7 +247,6 @@ impl RollupNodeBuilder {
             l1_config,
             sequencer_l1_provider,
             l2_provider,
-            l2_trust_rpc: self.l2_trust_rpc,
             engine_config: self.engine_config,
             rpc_builder: self.rpc_config,
             p2p_config,
@@ -300,16 +275,22 @@ mod tests {
         sync::Arc,
     };
 
-    use alloy_primitives::Address;
-    use alloy_rpc_types_engine::JwtSecret;
-    use base_consensus_disc::LocalNode;
+    use alloy_primitives::{Address, B256};
+    use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
+    use base_common_chains::Upgrades;
+    use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_consensus_disc::LocalNode as DiscoveryNode;
+    use base_consensus_engine::{EngineClient, LocalEngineClient};
+    use base_consensus_providers::LocalL2Provider;
+    use base_execution_chainspec::BaseChainSpec;
+    use base_node_runner::test_utils::LocalNode;
     use discv5::enr::k256::ecdsa::SigningKey;
     use libp2p::Multiaddr;
 
     use super::*;
     use crate::NodeMode;
 
-    fn test_builder(l2_url: Url) -> RollupNodeBuilder {
+    async fn test_builder() -> (RollupNodeBuilder, LocalNode) {
         let rollup_config = RollupConfig::default();
         let l1_config_builder = L1ConfigBuilder {
             chain_config: ChainConfig::default(),
@@ -321,15 +302,24 @@ mod tests {
             verifier_l1_confs: 0,
             da_batcher_sender_override: None,
         };
+        let node = LocalNode::new(vec![], Arc::new(BaseChainSpec::sepolia())).await.unwrap();
         let engine_config = EngineConfig {
-            config: Arc::new(rollup_config.clone()),
-            l2_url,
-            l2_jwt_secret: JwtSecret::random(),
-            l1_url: Url::parse("http://127.0.0.1:8545").unwrap(),
-            l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
+            client: LocalEngineClient {
+                l1: L1RpcProvider::new_http_with_timeout(
+                    l1_config_builder.rpc_url.clone(),
+                    l1_config_builder.rpc_timeout,
+                ),
+                l2: LocalL2Provider {
+                    provider: node.blockchain_provider(),
+                    rollup_config: Arc::new(rollup_config.clone()),
+                },
+                execution: node.execution.clone(),
+                network: node.network.clone(),
+                proofs_progress: None,
+            },
             mode: NodeMode::Validator,
         };
-        let discovery_listen = LocalNode::new(
+        let discovery_listen = DiscoveryNode::new(
             SigningKey::from_bytes((&[7_u8; 32]).into()).unwrap(),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             0,
@@ -342,45 +332,76 @@ mod tests {
             Address::ZERO,
         );
 
-        RollupNodeBuilder::new(
-            rollup_config,
-            l1_config_builder,
-            true,
-            engine_config,
-            p2p_config,
-            None,
+        (
+            RollupNodeBuilder::new(
+                rollup_config,
+                l1_config_builder,
+                engine_config,
+                p2p_config,
+                None,
+            ),
+            node,
         )
     }
 
-    #[test]
-    fn derivation_l2_provider_url_normalizes_websocket_schemes() {
-        let ws_url = RollupNodeBuilder::derivation_l2_provider_url(
-            Url::parse("ws://127.0.0.1:8551/path?query=value").unwrap(),
-        );
-        assert_eq!(ws_url.as_str(), "http://127.0.0.1:8551/path?query=value");
-
-        let wss_url = RollupNodeBuilder::derivation_l2_provider_url(
-            Url::parse("wss://127.0.0.1:8551/path?query=value").unwrap(),
-        );
-        assert_eq!(wss_url.as_str(), "https://127.0.0.1:8551/path?query=value");
-
-        let file_url = Url::parse("file:///tmp/base-engine.ipc").unwrap();
-        let normalized_file_url = RollupNodeBuilder::derivation_l2_provider_url(file_url.clone());
-        assert_eq!(normalized_file_url, file_url);
-    }
-
     #[tokio::test]
-    async fn build_keeps_ws_startup_lazy_for_derivation_provider() {
-        let rollup_node =
-            test_builder(Url::parse("ws://127.0.0.1:8551").unwrap()).build().await.unwrap();
-
-        assert_eq!(rollup_node.engine_config.l2_url.scheme(), "ws");
+    async fn native_execution_builds_imports_and_canonicalizes_without_rpc() {
+        let (builder, _node) = test_builder().await;
+        let client = builder.engine_config.client;
+        let head =
+            client.l2.block(alloy_eips::BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+        let head_hash = head.header.hash_slow();
+        let timestamp = head.header.timestamp + 2;
+        let chain = client.execution.validator.chain_spec();
+        let attributes = BasePayloadAttributes {
+            payload_attributes: PayloadAttributes {
+                timestamp,
+                withdrawals: chain.is_canyon_active_at_timestamp(timestamp).then(Vec::new),
+                parent_beacon_block_root: chain
+                    .is_ecotone_active_at_timestamp(timestamp)
+                    .then_some(B256::ZERO),
+                ..Default::default()
+            },
+            gas_limit: Some(head.header.gas_limit),
+            eip_1559_params: chain
+                .is_holocene_active_at_timestamp(timestamp)
+                .then_some(Default::default()),
+            min_base_fee: chain.is_jovian_active_at_timestamp(timestamp).then_some(0),
+            no_tx_pool: Some(true),
+            ..Default::default()
+        };
+        let update = client
+            .update_forkchoice(ForkchoiceState::same_hash(head_hash), Some(attributes.clone()))
+            .await
+            .unwrap();
+        assert!(update.payload_status.is_valid());
+        let payload =
+            client.resolve_payload(update.payload_id.unwrap(), &attributes).await.unwrap();
+        let hash = payload.execution_payload.block_hash();
+        let inserted = client.submit_payload(payload).await.unwrap();
+        assert!(inserted.is_valid());
+        let update = client
+            .update_forkchoice(
+                ForkchoiceState {
+                    head_block_hash: hash,
+                    safe_block_hash: head_hash,
+                    finalized_block_hash: head_hash,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(update.payload_status.is_valid());
+        let canonical =
+            client.l2.block(alloy_eips::BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+        assert_eq!(canonical.header.hash_slow(), hash);
+        assert_eq!(canonical.header.number, head.header.number + 1);
     }
 
     #[tokio::test]
     async fn build_applies_l1_request_timeout_to_upgrade_signal_reads() {
         let request_timeout = Duration::from_millis(2_500);
-        let mut builder = test_builder(Url::parse("ws://127.0.0.1:8551").unwrap());
+        let (mut builder, _node) = test_builder().await;
         builder.l1_config_builder.rpc_timeout = request_timeout;
         let builder = builder.with_upgrade_signal_config(UpgradeSignalBuilderConfig {
             metrics_config: Some(UpgradeSignalConfig::new(Address::ZERO)),
@@ -395,11 +416,11 @@ mod tests {
 
     #[tokio::test]
     async fn build_returns_error_for_unsupported_upgrade_signal_rpc() {
-        let builder = test_builder(Url::parse("ws://127.0.0.1:8551").unwrap())
-            .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
-                metrics_config: Some(UpgradeSignalConfig::new(Address::ZERO)),
-                l1_rpc: Some(Url::parse("ws://127.0.0.1:8545").unwrap()),
-            });
+        let (builder, _node) = test_builder().await;
+        let builder = builder.with_upgrade_signal_config(UpgradeSignalBuilderConfig {
+            metrics_config: Some(UpgradeSignalConfig::new(Address::ZERO)),
+            l1_rpc: Some(Url::parse("ws://127.0.0.1:8545").unwrap()),
+        });
 
         let error = builder.build().await.expect_err("unsupported URL should fail");
 

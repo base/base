@@ -3,9 +3,10 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::Base;
-use base_consensus_engine::{BaseEngineClient, EngineClient};
+use base_consensus_engine::{EngineClient, LocalEngineClient};
+use base_consensus_providers::LocalL2Provider;
 use base_consensus_rpc::RpcBuilder;
+use base_execution_trie::ProofsProgress;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -25,15 +26,16 @@ use crate::{
 /// A lightweight node that follows another L2 node by fetching source L2
 /// payloads and inserting them into the local execution engine.
 #[derive(Debug)]
-pub struct FollowNode<E = BaseEngineClient<RootProvider, RootProvider<Base>>>
+pub struct FollowNode<E = LocalEngineClient>
 where
     E: EngineClient + Debug + 'static,
 {
     config: Arc<RollupConfig>,
     engine_client: Arc<E>,
     l1_provider: RootProvider,
-    local_l2_provider: RootProvider<Base>,
+    local_l2_provider: LocalL2Provider,
     l2_source: RemoteL2Client,
+    proofs_progress: Option<ProofsProgress>,
     proofs_enabled: bool,
     proofs_max_blocks_ahead: u64,
     insert_delay: Duration,
@@ -42,7 +44,7 @@ where
 
 /// Runtime dependencies and options for a [`FollowNode`].
 #[derive(Debug)]
-pub struct FollowNodeConfig<E = BaseEngineClient<RootProvider, RootProvider<Base>>>
+pub struct FollowNodeConfig<E = LocalEngineClient>
 where
     E: EngineClient + Debug + 'static,
 {
@@ -51,13 +53,15 @@ where
     /// Client used to insert payloads into the local execution engine.
     pub engine_client: Arc<E>,
     /// Provider for reading local L2 state.
-    pub local_l2_provider: RootProvider<Base>,
+    pub local_l2_provider: LocalL2Provider,
     /// Provider used to check L2 block origins against canonical L1.
     pub l1_provider: RootProvider,
     /// Source L2 client used to fetch payloads to follow.
     pub l2_source: RemoteL2Client,
     /// Optional RPC server configuration.
     pub rpc_builder: Option<RpcBuilder>,
+    /// Shared progress from the local proofs-history extension.
+    pub proofs_progress: Option<ProofsProgress>,
     /// Whether to gate sync behind proofs progress.
     pub proofs_enabled: bool,
     /// Maximum blocks the follow node may advance beyond proofs progress.
@@ -79,6 +83,7 @@ where
             local_l2_provider: config.local_l2_provider,
             l2_source: config.l2_source,
             rpc_builder: config.rpc_builder,
+            proofs_progress: config.proofs_progress,
             proofs_enabled: config.proofs_enabled,
             proofs_max_blocks_ahead: config.proofs_max_blocks_ahead,
             insert_delay: config.insert_delay,
@@ -91,7 +96,7 @@ where
         let local = Arc::new(LocalL2Client::new(
             self.local_l2_provider.clone(),
             self.l1_provider.clone(),
-            Arc::clone(&self.config),
+            self.proofs_progress.clone(),
         ));
         let latest = local
             .block_info(BlockNumberOrTag::Latest)

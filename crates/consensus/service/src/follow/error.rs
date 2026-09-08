@@ -19,7 +19,7 @@ pub enum FollowError {
         /// Requested local block tag.
         tag: BlockNumberOrTag,
         /// Underlying transport error.
-        source: alloy_transport::TransportError,
+        source: base_consensus_providers::LocalL2Error,
     },
 
     /// Converting a local L2 block into block info failed.
@@ -56,7 +56,11 @@ pub enum FollowError {
 
     /// Fetching the local proofs sync status failed.
     #[error("failed to fetch proofs sync status: {0}")]
-    ProofsStatus(alloy_transport::TransportError),
+    ProofsStatus(base_execution_trie::ProofsProgressError),
+
+    /// Proof gating was requested without the proofs-history extension.
+    #[error("proof gating requires the proofs-history extension")]
+    ProofsUnavailable,
 
     /// Fetching data from the remote L2 source failed.
     #[error(transparent)]

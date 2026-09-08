@@ -1,20 +1,14 @@
-use std::{fmt::Debug, sync::Arc};
+use std::fmt::Debug;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
-use base_common_rpc_types::Base;
+use base_consensus_providers::LocalL2Provider;
+use base_execution_trie::ProofsProgress;
 use base_protocol::L2BlockInfo;
-use serde::Deserialize;
 
 use crate::follow::error::FollowError;
-
-#[derive(Debug, Deserialize)]
-struct ProofsSyncStatus {
-    latest: Option<u64>,
-}
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -28,42 +22,28 @@ pub(super) trait FollowLocalClient: Debug + Send + Sync {
 
 #[derive(Clone, Debug)]
 pub(super) struct LocalL2Client {
-    provider: RootProvider<Base>,
+    provider: LocalL2Provider,
     l1_provider: RootProvider,
-    rollup_config: Arc<RollupConfig>,
+    proofs_progress: Option<ProofsProgress>,
 }
 
 impl LocalL2Client {
     pub(super) const fn new(
-        provider: RootProvider<Base>,
+        provider: LocalL2Provider,
         l1_provider: RootProvider,
-        rollup_config: Arc<RollupConfig>,
+        proofs_progress: Option<ProofsProgress>,
     ) -> Self {
-        Self { provider, l1_provider, rollup_config }
+        Self { provider, l1_provider, proofs_progress }
     }
 }
 
 #[async_trait]
 impl FollowLocalClient for LocalL2Client {
     async fn block_info(&self, tag: BlockNumberOrTag) -> Result<Option<L2BlockInfo>, FollowError> {
-        let block = self
-            .provider
-            .get_block_by_number(tag)
-            .full()
+        self.provider
+            .block_info(tag.into())
             .await
-            .map_err(|source| FollowError::LocalBlockFetch { tag, source })?;
-        let Some(block) = block else {
-            return Ok(None);
-        };
-        L2BlockInfo::from_block_and_genesis(
-            &block
-                .map_header(|header| header.into_inner())
-                .into_consensus()
-                .map_transactions(|tx| tx.inner.inner.into_inner()),
-            &self.rollup_config.genesis,
-        )
-        .map(Some)
-        .map_err(FollowError::from)
+            .map_err(|source| FollowError::LocalBlockFetch { tag, source })
     }
 
     async fn l1_block_hash(&self, number: u64) -> Result<Option<B256>, FollowError> {
@@ -75,10 +55,11 @@ impl FollowLocalClient for LocalL2Client {
     }
 
     async fn proofs_latest(&self) -> Result<Option<u64>, FollowError> {
-        self.provider
-            .raw_request::<_, ProofsSyncStatus>("debug_proofsSyncStatus".into(), ())
+        self.proofs_progress
+            .as_ref()
+            .ok_or(FollowError::ProofsUnavailable)?
+            .latest()
             .await
-            .map(|status| status.latest)
             .map_err(FollowError::ProofsStatus)
     }
 }

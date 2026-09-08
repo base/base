@@ -12,12 +12,10 @@ use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
 use base_consensus_providers::{
-    AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
-    OnlinePipeline,
+    AlloyChainProvider, LocalL2Provider, OnlineBeaconClient, OnlineBlobProvider, OnlinePipeline,
 };
 use base_consensus_rpc::{BaseRpc, RpcBuilder};
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
@@ -116,9 +114,7 @@ pub struct RollupNode {
     /// L1 execution JSON-RPC provider dedicated to the sequencer block-production hot path.
     pub sequencer_l1_provider: RootProvider,
     /// The L2 EL provider.
-    pub l2_provider: RootProvider<Base>,
-    /// Whether to trust the L2 RPC.
-    pub l2_trust_rpc: bool,
+    pub l2_provider: LocalL2Provider,
     /// The [`EngineConfig`] for the node.
     pub engine_config: EngineConfig,
     /// The [`RpcBuilder`] for the node.
@@ -195,11 +191,6 @@ impl RollupNode {
         NetworkBuilder::from(self.p2p_config.clone())
     }
 
-    /// Returns an engine builder for the node.
-    fn engine_config(&self) -> EngineConfig {
-        self.engine_config.clone()
-    }
-
     /// Returns an rpc builder for the node.
     fn rpc_builder(&self) -> Option<RpcBuilder> {
         self.rpc_builder.clone()
@@ -209,19 +200,14 @@ impl RollupNode {
     fn create_attributes_builder(
         &self,
         origin_rx: watch::Receiver<Option<PreparedL1Origin>>,
-    ) -> StatefulAttributesBuilder<PrefetchedChainProvider, AlloyL2ChainProvider> {
+    ) -> StatefulAttributesBuilder<PrefetchedChainProvider, LocalL2Provider> {
         let l1_fallback_provider = AlloyChainProvider::new_with_trust(
             self.sequencer_l1_provider.clone(),
             DERIVATION_PROVIDER_CACHE_SIZE,
             self.l1_config.trust_rpc,
         );
         let l1_derivation_provider = PrefetchedChainProvider::new(origin_rx, l1_fallback_provider);
-        let l2_derivation_provider = AlloyL2ChainProvider::new_with_trust(
-            self.l2_provider.clone(),
-            Arc::clone(&self.config),
-            DERIVATION_PROVIDER_CACHE_SIZE,
-            self.l2_trust_rpc,
-        );
+        let l2_derivation_provider = self.l2_provider.clone();
 
         StatefulAttributesBuilder::new(
             Arc::clone(&self.config),
@@ -241,12 +227,7 @@ impl RollupNode {
             DERIVATION_PROVIDER_CACHE_SIZE,
             self.l1_config.trust_rpc,
         );
-        let l2_derivation_provider = AlloyL2ChainProvider::new_with_trust(
-            self.l2_provider.clone(),
-            Arc::clone(&self.config),
-            DERIVATION_PROVIDER_CACHE_SIZE,
-            self.l2_trust_rpc,
-        );
+        let l2_derivation_provider = self.l2_provider.clone();
 
         OnlinePipeline::new_polled_with_da_batcher_sender_override(
             Arc::clone(&self.config),
@@ -350,8 +331,7 @@ impl RollupNode {
     ) -> Result<(), String> {
         let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
-        let engine_client =
-            Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
+        let engine_client = Arc::new(self.engine_config.client.clone());
         self.start_inner(engine_client, pipeline, l1_head_number, cancellation).await
     }
 
@@ -375,8 +355,7 @@ impl RollupNode {
             NodeActor<StartData = (), Error = DerivationError>,
     {
         let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
-        let engine_client =
-            Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
+        let engine_client = Arc::new(self.engine_config.client.clone());
         self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
     }
 

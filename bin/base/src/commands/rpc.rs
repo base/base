@@ -1,6 +1,6 @@
 //! Integrated RPC node command.
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use base_cli_utils::CliRunner;
 use base_consensus_cli::{
@@ -8,12 +8,13 @@ use base_consensus_cli::{
     ConsensusNodeOverrides, ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
     EmbeddedFollowArgs,
 };
+use base_consensus_engine::LocalEngineClient;
+use base_consensus_providers::{L1RpcProvider, LocalL2Provider};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use tokio_util::sync::CancellationToken;
-use url::Url;
 
 use crate::config::ResolvedChainConfig;
 
@@ -95,43 +96,34 @@ impl RpcCommand {
                 execution.standard.rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
             let execution = execution
                 .into_launch_config(execution_chain)
-                .with_unified_auth_endpoint()
+
                 .with_upgrade_signal_startup_already_applied();
-            let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
             let task_executor = ctx.task_executor.clone();
             let launched = execution.launch_default(ctx).await?;
             let handle = launched.handle;
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
+            let execution_client = LocalEngineClient {
+                l1: L1RpcProvider::new_http_with_timeout(
+                    consensus_args.config.l1_rpc_args.l1_eth_rpc.clone(),
+                    consensus_args.config.l1_rpc_args.l1_rpc_timeout,
+                ),
+                l2: LocalL2Provider { provider: execution_node.provider.clone(), rollup_config: Arc::new(rollup_config.clone()) },
+                execution: execution_node.execution.clone(),
+                network: execution_node.network.clone(),
+                proofs_progress: execution_node.proofs_progress.get().cloned(),
+            };
+
 
             let consensus_cancellation = CancellationToken::new();
-            let follow_config = if self.follow.source_l2_rpc.is_some() {
-                let mut address = execution_node
-                    .rpc_server_handle()
-                    .http_local_addr()
-                    .ok_or_else(|| eyre::eyre!("follow mode requires the local HTTP RPC"))?;
-                if address.ip().is_unspecified() {
-                    address.set_ip(if address.is_ipv4() {
-                        std::net::Ipv4Addr::LOCALHOST.into()
-                    } else {
-                        std::net::Ipv6Addr::LOCALHOST.into()
-                    });
-                }
-                self.follow.into_config(
-                    consensus_args.config.clone(),
-                    Url::parse(&format!("http://{address}"))?,
-                    l2_engine_rpc.clone(),
-                )
-            } else {
-                None
-            };
+            let follow_config = self.follow.into_config(consensus_args.config.clone());
             let consensus_exit = async {
                 if let Some(config) = follow_config {
                     let follow_args =
                         ConsensusFollowNodeArgs::new(consensus_args.chain.clone(), config);
                     return tokio::select! {
-                        result = follow_args.start_with_rollup_config(rollup_config) => result,
+                        result = follow_args.start_with_rollup_config(rollup_config, execution_client.clone()) => result,
                         _ = consensus_cancellation.cancelled() => Ok(()),
                     };
                 }
@@ -139,7 +131,7 @@ impl RpcCommand {
                     .start_with_options(
                         ConsensusNodeStartOptions::new(rollup_config)
                             .with_overrides(ConsensusNodeOverrides::embedded_execution(
-                                l2_engine_rpc,
+                                execution_client,
                                 upgrade_signal_l1_rpc,
                             ))
                             .with_cancellation(consensus_cancellation.clone())
@@ -178,15 +170,6 @@ impl RpcCommand {
     }
 }
 
-pub(super) fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
-    let path = Path::new(path);
-    let path =
-        if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) };
-    Url::from_file_path(&path).map_err(|()| {
-        eyre::eyre!("failed to convert auth IPC path to file URL: {}", path.display())
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::process::Command;
@@ -210,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn follow_mode_uses_embedded_endpoints_and_proofs_options() {
+    fn follow_mode_preserves_source_and_proofs_options() {
         let cli = BaseCli::parse_from(rpc_args(&[
             "base",
             "rpc",
@@ -223,31 +206,20 @@ mod tests {
         let BaseCommand::Rpc(rpc) = cli.command else {
             panic!("expected rpc command");
         };
-        let config = rpc
-            .follow
-            .into_config(
-                rpc.consensus.into(),
-                "http://127.0.0.1:12345".parse().unwrap(),
-                "file:///tmp/embedded-engine.ipc".parse().unwrap(),
-            )
-            .unwrap();
+        let config = rpc.follow.into_config(rpc.consensus.into()).unwrap();
         assert_eq!(config.source_l2_rpc.as_str(), "http://source:8545/");
-        assert_eq!(config.l2_rpc_url.as_str(), "http://127.0.0.1:12345/");
-        assert_eq!(config.l2_client_args.l2_engine_rpc.as_str(), "file:///tmp/embedded-engine.ipc");
         assert!(config.proofs);
         assert_eq!(config.proofs_max_blocks_ahead, 8);
         assert_eq!(config.insert_delay.as_millis(), 25);
     }
 
     #[test]
-    fn follow_mode_requires_local_http_and_proofs_requires_source() {
-        for args in [
-            &["base", "rpc", "--source-l2-rpc=http://source:8545"][..],
-            &["base", "rpc", "--http", "--follow.proofs"][..],
-        ] {
-            let error = BaseCli::try_parse_from(rpc_args(args)).unwrap_err();
-            assert_eq!(error.kind(), clap::error::ErrorKind::MissingRequiredArgument);
-        }
+    fn follow_mode_uses_native_execution_and_proofs_require_source() {
+        BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--source-l2-rpc=http://source:8545"]))
+            .unwrap();
+        let error =
+            BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--follow.proofs"])).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 
     #[test]
