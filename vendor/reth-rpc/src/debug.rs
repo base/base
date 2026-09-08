@@ -4,6 +4,7 @@ use alloy_consensus::{BlockHeader, constants::KECCAK_EMPTY, transaction::TxHashR
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_evm::{Evm, env::BlockEnvironment};
 use alloy_genesis::ChainConfig;
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, B256, Bytes, U64, hex::decode, uint};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::BlockTransactionsKind;
@@ -20,7 +21,6 @@ use base_execution_chainspec::ChainSpecProvider;
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
-use reth_chainspec::EthereumHardforks;
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_errors::RethError;
 use reth_evm::{EvmEnvFor, block::BlockExecutor, execute::Executor};

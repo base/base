@@ -13,8 +13,8 @@
 
 extern crate alloc;
 
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::Bytes;
-use reth_chainspec::EthereumHardforks;
 
 mod base;
 pub use base::{
@@ -655,8 +655,9 @@ pub fn validate_execution_requests(requests: &[Bytes]) -> Result<(), EngineObjec
 
 #[cfg(test)]
 mod tests {
+    use alloy_hardforks::ForkCondition;
     use assert_matches::assert_matches;
-    use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
+    use base_execution_chainspec::BaseChainSpecBuilder;
 
     use super::*;
 
@@ -669,9 +670,12 @@ mod tests {
     fn validate_osaka_get_payload_restrictions() {
         // Osaka activates at timestamp 1000
         let osaka_activation = 1000;
-        let chain_spec = ChainSpecBuilder::mainnet()
-            .with_fork(EthereumHardfork::Prague, ForkCondition::Timestamp(0))
-            .with_fork(EthereumHardfork::Osaka, ForkCondition::Timestamp(osaka_activation))
+        let chain_spec = BaseChainSpecBuilder::base_mainnet()
+            .with_fork(base_common_genesis::BaseUpgrade::Isthmus, ForkCondition::Timestamp(0))
+            .with_fork(
+                base_common_genesis::BaseUpgrade::Azul,
+                ForkCondition::Timestamp(osaka_activation),
+            )
             .build();
 
         // Osaka is Active + V4 + GetPayload
@@ -695,7 +699,10 @@ mod tests {
 
     #[test]
     fn validate_amsterdam_staggered_version_restrictions() {
-        let chain_spec = ChainSpecBuilder::mainnet().amsterdam_activated().build();
+        let chain_spec = alloy_hardforks::EthereumChainHardforks::new([(
+            alloy_hardforks::EthereumHardfork::Amsterdam,
+            ForkCondition::Timestamp(0),
+        )]);
 
         let res = validate_payload_timestamp(
             &chain_spec,
@@ -732,7 +739,10 @@ mod tests {
 
     #[test]
     fn validate_amsterdam_slot_and_bal_presence() {
-        let chain_spec = ChainSpecBuilder::mainnet().amsterdam_activated().build();
+        let chain_spec = alloy_hardforks::EthereumChainHardforks::new([(
+            alloy_hardforks::EthereumHardfork::Amsterdam,
+            ForkCondition::Timestamp(0),
+        )]);
 
         let res = validate_slot_number_presence(
             &chain_spec,

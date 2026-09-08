@@ -24,8 +24,8 @@ reth-codecs = { workspace = true }
 pin-project = { workspace = true }
 alloy-chains = { workspace = true }
 reth-metrics = { workspace = true }
+alloy-eip2124 = { workspace = true }
 reth-network-peers = { workspace = true }
-reth-ethereum-forks = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
@@ -68,7 +68,6 @@ arbitrary = [
     "reth-codecs/arbitrary",
     "alloy-chains/arbitrary",
     "reth-primitives-traits/arbitrary",
-    "reth-ethereum-forks/arbitrary",
     "alloy-consensus/arbitrary",
 ]
 serde = [
@@ -82,7 +81,6 @@ serde = [
     "reth-codecs/serde",
     "alloy-chains/serde",
     "reth-primitives-traits/serde",
-    "reth-ethereum-forks/serde",
     "alloy-consensus/serde",
     "rand_08/serde",
 ]

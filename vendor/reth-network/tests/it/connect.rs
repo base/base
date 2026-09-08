@@ -1,10 +1,9 @@
 //! Connection tests
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use alloy_primitives::map::HashSet;
 use futures::StreamExt;
-use reth_chainspec::{MAINNET, SEPOLIA};
 use reth_discv4::Discv4Config;
 use reth_eth_wire::{DisconnectReason, HeadersDirection};
 use reth_network::{
@@ -650,7 +649,9 @@ async fn new_random_peer(max_in_bound: usize, trusted_nodes: Vec<TrustedPeer>) -
         .listener_port(0)
         .disable_discovery()
         .peer_config(peers_config)
-        .build_with_noop_provider(Arc::new((*MAINNET).as_ref().clone().into()));
+        .build_with_noop_provider(std::sync::Arc::new(
+            base_execution_chainspec::BaseChainSpec::mainnet(),
+        ));
 
     NetworkManager::new(config).await.unwrap()
 }
@@ -722,7 +723,9 @@ async fn test_connect_peer_in_different_network_should_fail() {
         .listener_port(0)
         .disable_discovery()
         .peer_config(peers_config)
-        .build_with_noop_provider(Arc::new(SEPOLIA.as_ref().clone().into()));
+        .build_with_noop_provider(std::sync::Arc::new(
+            base_execution_chainspec::BaseChainSpec::sepolia(),
+        ));
 
     let network = NetworkManager::new(config).await.unwrap();
     let handle = network.handle().clone();

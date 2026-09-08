@@ -35,9 +35,9 @@ rand = { workspace = true, optional = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["dashmap", "std"] }
 reth-trie-sparse = { workspace = true, features = ["trie-debug"], optional = true }
 [dev-dependencies]
-reth-chainspec = { workspace = true }
 reth-storage-overlay = { workspace = true }
 reth-primitives-traits = { workspace = true }
+base-execution-chainspec = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
@@ -56,7 +56,6 @@ test-utils = [
     "reth-provider/test-utils",
     "reth-trie/test-utils",
     "reth-tasks/test-utils",
-    "reth-chainspec/test-utils",
     "reth-trie-sparse?/test-utils",
     "reth-ethereum-primitives/test-utils",
 ]

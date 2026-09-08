@@ -13,6 +13,7 @@ use std::{
 };
 
 use alloy_consensus::BlockHeader;
+use alloy_eip2124::ForkId;
 use alloy_primitives::{
     B256,
     map::{FbBuildHasher, HashMap},
@@ -23,7 +24,6 @@ use reth_eth_wire::{
     BlockHashNumber, Capabilities, DisconnectReason, GetReceipts70, NewBlockHashes,
     NewBlockPayload, UnifiedStatus,
 };
-use reth_ethereum_forks::ForkId;
 use reth_network_api::{DiscoveredEvent, DiscoveryEvent, PeerRequest, PeerRequestSender};
 use reth_network_p2p::receipts::client::ReceiptsResponse;
 use reth_network_peers::PeerId;

@@ -3,8 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
-use base_execution_chainspec::BaseChainSpec;
-use reth_chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
+use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use reth_db::{DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase};
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_errors::ProviderResult;
@@ -35,35 +34,27 @@ pub type MockNodeDatabase = Arc<TempDatabase<DatabaseEnv>>;
 
 /// Creates test provider factory with mainnet chain spec.
 pub fn create_test_provider_factory() -> ProviderFactory<MockNodeDatabase> {
-    create_test_provider_factory_with_chain_spec(MAINNET.clone())
+    create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
+        base_execution_chainspec::BaseChainSpec::mainnet(),
+    ))
 }
 
 /// Creates test provider factory with provided chain spec.
 pub fn create_test_provider_factory_with_chain_spec(
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
 ) -> ProviderFactory<MockNodeDatabase> {
     let genesis_block_number = chain_spec.genesis.number.unwrap_or_default();
-    create_test_provider_factory_with_genesis(
-        Arc::new((*chain_spec).clone().into()),
-        genesis_block_number,
-    )
+    create_test_provider_factory_with_genesis(chain_spec, genesis_block_number)
 }
 
 /// Creates a test provider factory whose chain starts at `genesis_block_number`.
 pub fn create_test_provider_factory_with_genesis_block_number(
     genesis_block_number: u64,
 ) -> ProviderFactory<MockNodeDatabase> {
-    let mut genesis = MAINNET.genesis.clone();
+    let mut genesis = BaseChainSpec::mainnet().genesis;
     genesis.number = Some(genesis_block_number);
-    let chain_spec = Arc::new(ChainSpecBuilder::mainnet().genesis(genesis).build());
+    let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).build());
     create_test_provider_factory_with_chain_spec(chain_spec)
-}
-
-/// Creates test provider factory with provided chain spec.
-pub fn create_test_provider_factory_with_base_chain_spec(
-    chain_spec: Arc<BaseChainSpec>,
-) -> ProviderFactory<Arc<TempDatabase<DatabaseEnv>>> {
-    create_test_provider_factory_with_genesis(chain_spec, 0)
 }
 
 fn create_test_provider_factory_with_genesis(
@@ -85,7 +76,7 @@ fn create_test_provider_factory_with_genesis(
 
     ProviderFactory::new(
         db,
-        Arc::new((*chain_spec).clone().into()),
+        chain_spec,
         StaticFileProviderBuilder::read_write(static_files_path)
             .with_genesis_block_number(genesis_block_number)
             .build()
@@ -104,7 +95,7 @@ fn create_test_provider_factory_with_genesis(
 /// Same as [`create_test_provider_factory_with_chain_spec`] but allows overriding the default
 /// test database arguments (e.g. to increase the MDBX geometry for heavy benchmarks).
 pub fn create_test_provider_factory_with_chain_spec_and_db_args(
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     db_args: DatabaseArguments,
 ) -> ProviderFactory<MockNodeDatabase> {
     let datadir_path = reth_db::test_utils::tempdir_path();
@@ -120,7 +111,7 @@ pub fn create_test_provider_factory_with_chain_spec_and_db_args(
 
     ProviderFactory::new(
         db,
-        Arc::new((*chain_spec).clone().into()),
+        chain_spec,
         StaticFileProvider::read_write(static_files_path).expect("static file provider"),
         RocksDBBuilder::new(&rocksdb_path)
             .with_default_tables()

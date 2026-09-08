@@ -30,7 +30,6 @@ base-common-precompiles = { workspace = true }
 base-execution-chainspec = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 reth-evm = { workspace = true, features = ["default"] }
-reth-chainspec = { workspace = true, features = ["default"] }
 alloy-rpc-types = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }

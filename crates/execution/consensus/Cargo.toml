@@ -34,9 +34,9 @@ base-execution-chainspec = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true }
 alloy-chains = { workspace = true }
 reth-db-common = { workspace = true }
+alloy-hardforks = { workspace = true }
 base-common-genesis = { workspace = true }
 reth-revm = { workspace = true, features = ["default"] }
-reth-chainspec = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 [features]
 default = [ "std" ]

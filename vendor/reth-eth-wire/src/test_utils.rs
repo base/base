@@ -5,8 +5,8 @@
 use std::net::SocketAddr;
 
 use alloy_chains::Chain;
+use alloy_eip2124::{ForkFilter, Head};
 use alloy_primitives::{B256, U256};
-use reth_ethereum_forks::{ForkFilter, Head};
 use reth_network_peers::pk2id;
 use secp256k1::{SECP256K1, SecretKey};
 use tokio::net::TcpStream;

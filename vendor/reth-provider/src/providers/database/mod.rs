@@ -13,11 +13,10 @@ use std::{
 use alloy_consensus::transaction::TransactionMeta;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo};
 use base_execution_chainspec::BaseChainSpec;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
-use reth_chainspec::ChainInfo;
 use reth_db::{DatabaseEnv, init_db, mdbx::DatabaseArguments};
 use reth_db_api::{
     database::Database, database_metrics::DatabaseMetrics, models::StoredBlockBodyIndices, tables,
@@ -1045,7 +1044,7 @@ mod tests {
 
     use alloy_primitives::{B256, TxNumber};
     use assert_matches::assert_matches;
-    use reth_chainspec::ChainSpecBuilder;
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_db::{
         mdbx::DatabaseArguments,
         test_utils::{ERROR_TEMPDIR, create_test_rocksdb_dir, create_test_static_files_dir},
@@ -1129,13 +1128,13 @@ mod tests {
 
     #[test]
     fn provider_factory_with_database_path() {
-        let chain_spec = ChainSpecBuilder::mainnet().build();
+        let chain_spec = BaseChainSpecBuilder::base_mainnet().build();
         let (_static_dir, static_dir_path) = create_test_static_files_dir();
         let (_rocksdb_dir, rocksdb_path) = create_test_rocksdb_dir();
         let _db_tempdir = tempfile::TempDir::new().expect(ERROR_TEMPDIR);
         let factory = ProviderFactory::<DatabaseEnv>::new_with_database_path(
             _db_tempdir.path(),
-            Arc::new(chain_spec.into()),
+            Arc::new(chain_spec),
             DatabaseArguments::new(Default::default()),
             StaticFileProvider::read_write(static_dir_path).unwrap(),
             RocksDBProvider::builder(&rocksdb_path).build().unwrap(),

@@ -1,4 +1,4 @@
-//! Keys of ENR [`ForkId`](reth_ethereum_forks::ForkId) kv-pair. Identifies which network stack a
+//! Keys of ENR [`ForkId`](alloy_eip2124::ForkId) kv-pair. Identifies which network stack a
 //! node belongs to.
 
 /// Identifies which Ethereum network stack a node belongs to, on the discovery network.

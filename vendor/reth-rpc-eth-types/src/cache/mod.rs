@@ -1265,8 +1265,8 @@ mod tests {
     }
 
     impl BlockNumReader for TestBalProvider {
-        fn chain_info(&self) -> ProviderResult<reth_chainspec::ChainInfo> {
-            Ok(reth_chainspec::ChainInfo::default())
+        fn chain_info(&self) -> ProviderResult<base_common_consensus::ChainInfo> {
+            Ok(base_common_consensus::ChainInfo::default())
         }
 
         fn best_block_number(&self) -> ProviderResult<BlockNumber> {

@@ -4,7 +4,6 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_consensus::BlockHeader;
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
-use reth_chainspec::EthereumHardforks;
 use reth_db::{Database, database_metrics::DatabaseMetrics};
 use reth_engine_tree::{
     chain::{ChainEvent, FromOrchestrator},
@@ -220,11 +219,7 @@ impl EngineNodeLauncher {
             // during this run.
             .maybe_store_messages(node_config.debug.engine_api_store.clone());
 
-        let engine_kind = if ctx.chain_spec().is_optimism() {
-            EngineApiKind::OpStack
-        } else {
-            EngineApiKind::Ethereum
-        };
+        let engine_kind = EngineApiKind::OpStack;
 
         let mut orchestrator = build_engine_orchestrator(
             engine_kind,
@@ -287,7 +282,6 @@ impl EngineNodeLauncher {
             .into_built_payload_stream()
             .fuse();
 
-        let chainspec = ctx.chain_spec();
         let provider = ctx.blockchain_db().clone();
         let (exit, rx) = oneshot::channel();
         let terminate_after_backfill = ctx.terminate_after_initial_backfill();
@@ -341,9 +335,7 @@ impl EngineNodeLauncher {
                                         hash: head.hash(),
                                         difficulty: head.difficulty(),
                                         timestamp: head.timestamp(),
-                                        total_difficulty: chainspec.final_paris_total_difficulty()
-                                            .filter(|_| chainspec.is_paris_active_at_block(head.number()))
-                                            .unwrap_or_default(),
+                                        total_difficulty: Default::default(),
                                     };
                                     network_handle.update_status(head_block);
 

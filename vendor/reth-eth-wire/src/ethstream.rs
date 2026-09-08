@@ -11,11 +11,11 @@ use std::{
     time::Duration,
 };
 
+use alloy_eip2124::ForkFilter;
 use alloy_primitives::bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, ready};
 use pin_project::pin_project;
 use reth_eth_wire_types::{EthMessageID, RawCapabilityMessage};
-use reth_ethereum_forks::ForkFilter;
 use tokio::time::timeout;
 use tokio_stream::Stream;
 use tracing::{debug, trace};
@@ -346,12 +346,12 @@ mod tests {
     use std::time::Duration;
 
     use alloy_chains::NamedChain;
+    use alloy_eip2124::{ForkFilter, Head};
     use alloy_primitives::{B256, U256, bytes::Bytes};
     use alloy_rlp::Decodable;
     use futures::{SinkExt, StreamExt};
     use reth_ecies::stream::ECIESStream;
     use reth_eth_wire_types::UnifiedStatus;
-    use reth_ethereum_forks::{ForkFilter, Head};
     use reth_network_peers::pk2id;
     use secp256k1::{SECP256K1, SecretKey};
     use tokio::net::{TcpListener, TcpStream};

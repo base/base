@@ -26,10 +26,10 @@ alloy-eips = { workspace = true }
 reth-codecs = { workspace = true }
 reth-errors = { workspace = true }
 reth-db-api = { workspace = true }
+alloy-chains = { workspace = true }
 reth-fs-util = { workspace = true }
 reth-metrics = { workspace = true }
 alloy-genesis = { workspace = true }
-reth-chainspec = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-tokio-util = { workspace = true }
 reth-prune-types = { workspace = true }
@@ -61,7 +61,9 @@ reth-primitives-traits = { workspace = true, features = ["reth-codec", "secp256k
 libc = { workspace = true, features = ["default"] }
 [dev-dependencies]
 assert_matches = { workspace = true }
+alloy-hardforks = { workspace = true }
 reth-testing-utils = { workspace = true }
+base-common-genesis = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
@@ -84,7 +86,6 @@ test-utils = [
     "reth-nippy-jar/test-utils",
     "reth-trie/test-utils",
     "reth-chain-state/test-utils",
-    "reth-chainspec/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-codecs/test-utils",
     "reth-db-api/test-utils",

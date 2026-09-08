@@ -6,6 +6,7 @@ use std::{
     },
 };
 
+use alloy_eip2124::{ForkFilter, Head};
 use alloy_primitives::B256;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use enr::Enr;
@@ -17,7 +18,6 @@ use reth_eth_wire::{
     BlockRangeUpdate, BroadcastPoolTransactions, DisconnectReason, NewPooledTransactionHashes,
     SharedTransactions,
 };
-use reth_ethereum_forks::{ForkFilter, Head};
 use reth_network_api::{
     BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,
     NetworkEventListenerProvider, NetworkInfo, NetworkStatus, PeerInfo, PeerRequest, Peers,
@@ -116,7 +116,7 @@ impl NetworkHandle {
     }
 
     /// Replaces the network's active [`ForkFilter`] with `fork_filter`, re-deriving the advertised
-    /// [`ForkId`](reth_ethereum_forks::ForkId) for future handshakes and updating the discovery
+    /// [`ForkId`](alloy_eip2124::ForkId) for future handshakes and updating the discovery
     /// ENR entry.
     ///
     /// This lets a running node adopt a fork schedule that changed at runtime (e.g. an

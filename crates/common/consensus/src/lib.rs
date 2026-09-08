@@ -73,3 +73,6 @@ pub mod serde_bincode_compat {
         pub use crate::transaction::serde_bincode_compat::*;
     }
 }
+
+mod chain_info;
+pub use chain_info::ChainInfo;

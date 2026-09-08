@@ -9,8 +9,7 @@ use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes};
 use base_common_consensus::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseTypedTransaction as Transaction,
 };
-use base_execution_chainspec::ChainSpecProvider;
-use reth_chainspec::{ChainSpecBuilder, MAINNET};
+use base_execution_chainspec::{BaseChainSpecBuilder, ChainSpecProvider};
 use reth_config::config::StageConfig;
 use reth_consensus::noop::NoopConsensus;
 use reth_db_common::init::init_genesis;
@@ -140,9 +139,7 @@ where
 {
     let consensus = NoopConsensus::arc();
     let stages_config = StageConfig::default();
-    let evm_config = BaseEvmConfig::new(std::sync::Arc::new(
-        (std::sync::Arc::new(provider_factory.chain_spec().clone())).as_ref().clone().into(),
-    ));
+    let evm_config = BaseEvmConfig::new(provider_factory.chain_spec());
 
     let (tip_tx, tip_rx) = watch::channel(B256::ZERO);
     let static_file_producer =
@@ -196,8 +193,8 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
     // - Counter contract pre-deployed at CONTRACT_ADDRESS
     let initial_balance = U256::from(ETH_TO_WEI) * U256::from(1000);
     let chain_spec = Arc::new(
-        ChainSpecBuilder::default()
-            .chain(MAINNET.chain)
+        BaseChainSpecBuilder::default()
+            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [
                     (
@@ -213,9 +210,11 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
                     ),
                 ]
                 .into(),
-                ..MAINNET.genesis.clone()
+                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    .genesis
+                    .clone()
             })
-            .shanghai_activated()
+            .canyon_activated()
             .build(),
     );
 
@@ -223,8 +222,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
     init_genesis(&provider_factory).expect("init genesis");
 
     let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-    let evm_config =
-        BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
+    let evm_config = BaseEvmConfig::new(chain_spec.clone());
 
     // Build blocks by actually executing transactions to get correct state roots
     let mut blocks: Vec<SealedBlock> = Vec::new();
@@ -241,7 +239,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
         let eth_transfer_tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
             key_pair,
             Transaction::Eip1559(TxEip1559 {
-                chain_id: chain_spec.chain.id(),
+                chain_id: chain_spec.chain().id(),
                 nonce: base_nonce,
                 gas_limit: 21_000,
                 max_fee_per_gas: gas_price,
@@ -257,7 +255,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
         let counter_tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
             key_pair,
             Transaction::Eip1559(TxEip1559 {
-                chain_id: chain_spec.chain.id(),
+                chain_id: chain_spec.chain().id(),
                 nonce: base_nonce + 1,
                 gas_limit: 100_000, // Enough gas for SSTORE operations
                 max_fee_per_gas: gas_price,

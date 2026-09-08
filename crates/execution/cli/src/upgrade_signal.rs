@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use alloy_consensus::BlockHeader;
+use alloy_eip2124::{EnrForkIdEntry, ForkFilter, ForkId, Head};
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
@@ -11,9 +12,7 @@ use base_upgrade_signal::{
     UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
-use reth_chainspec::{ForkFilter, ForkId, Head};
 use reth_discv5::NetworkStackId;
-use reth_ethereum_forks::EnrForkIdEntry;
 use reth_network::NetworkHandle;
 use reth_network_p2p::sync::NetworkSyncUpdater;
 use reth_provider::{BlockNumReader, HeaderProvider};
@@ -73,7 +72,7 @@ impl ExecutionUpgradeSignal {
         Ok(summary.applied_upgrades)
     }
 
-    /// Rebuilds the runtime-aware P2P [`ForkFilter`](reth_chainspec::ForkFilter) for `head` and
+    /// Rebuilds the runtime-aware P2P [`ForkFilter`](alloy_eip2124::ForkFilter) for `head` and
     /// installs it on the network, returning the freshly advertised [`ForkId`].
     ///
     /// reth builds its `ForkFilter` once at startup and only advances its head, so a node that adopts
@@ -500,10 +499,12 @@ impl FromExtensionConfig for ExecutionUpgradeSignalRuntimeExtension {
 
 #[cfg(test)]
 mod tests {
+    use alloy_chains::Chain;
+    use alloy_hardforks::{EthereumHardfork, ForkCondition};
     use alloy_primitives::Address;
     use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
+    use base_execution_chainspec::BaseChainSpec;
     use base_upgrade_signal::UpgradeSignalDefaults;
-    use reth_chainspec::{ChainSpec, EthereumHardfork, ForkCondition};
 
     use super::*;
 
@@ -545,9 +546,9 @@ mod tests {
     fn applies_positive_schedule_to_chain_spec() {
         let mut chain_spec = BaseChainSpec::devnet();
 
-        chain_spec.set_fork(EthereumHardfork::Shanghai, ForkCondition::Never);
+        chain_spec.set_fork(base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Canyon, ForkCondition::Never);
-        chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
+        chain_spec.set_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
 
         let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
@@ -567,9 +568,9 @@ mod tests {
     fn zero_signal_clears_existing_chain_spec_forks() {
         let mut chain_spec = BaseChainSpec::devnet();
 
-        chain_spec.set_fork(EthereumHardfork::Shanghai, ForkCondition::Timestamp(40));
+        chain_spec.set_fork(base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Timestamp(40));
         chain_spec.set_fork(BaseUpgrade::Canyon, ForkCondition::Timestamp(40));
-        chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Timestamp(42));
+        chain_spec.set_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Timestamp(42));
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Timestamp(42));
 
         let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
@@ -589,7 +590,7 @@ mod tests {
     fn ignores_unsupported_signal_for_chain_spec() {
         let mut chain_spec = BaseChainSpec::devnet();
 
-        chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
+        chain_spec.set_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
 
         let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
@@ -605,7 +606,7 @@ mod tests {
 
     #[test]
     fn rejects_beryl_schedule_without_activation_admin() {
-        let mut chain_spec = BaseChainSpec::from(ChainSpec::default());
+        let mut chain_spec = BaseChainSpec::default();
 
         let error = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
             &mut chain_spec,
@@ -677,7 +678,6 @@ mod tests {
     #[test]
     fn refresh_advertised_fork_filter_tracks_runtime_schedule_changes() {
         use base_execution_chainspec::BaseChainSpecBuilder;
-        use reth_chainspec::Chain;
 
         // A unique chain id keeps this test's runtime-registry mutation from racing the sibling
         // chain-spec tests, which read fork conditions through the same process-global registry
@@ -692,7 +692,7 @@ mod tests {
         let spec = BaseChainSpecBuilder::default()
             .chain(Chain::from_id(chain_id))
             .genesis(Default::default())
-            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never)
             .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
             .build();
 
@@ -755,7 +755,6 @@ mod tests {
     #[test]
     fn refresh_advertised_fork_filter_forces_initial_install_when_uninstalled() {
         use base_execution_chainspec::BaseChainSpecBuilder;
-        use reth_chainspec::Chain;
 
         let chain_id = 9_100_101;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
@@ -763,7 +762,7 @@ mod tests {
         let spec = BaseChainSpecBuilder::default()
             .chain(Chain::from_id(chain_id))
             .genesis(Default::default())
-            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never)
             .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
             .build();
 
@@ -805,7 +804,6 @@ mod tests {
     #[test]
     fn refresh_advertised_fork_filter_retries_after_failed_install() {
         use base_execution_chainspec::BaseChainSpecBuilder;
-        use reth_chainspec::Chain;
 
         let chain_id = 9_100_102;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
@@ -813,7 +811,7 @@ mod tests {
         let spec = BaseChainSpecBuilder::default()
             .chain(Chain::from_id(chain_id))
             .genesis(Default::default())
-            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never)
             .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
             .build();
 
@@ -869,20 +867,20 @@ mod tests {
     async fn install_fork_filter_refreshes_opel_discovery_enr() {
         use std::net::Ipv4Addr;
 
-        use reth_chainspec::ChainSpecBuilder;
+        use base_execution_chainspec::BaseChainSpecBuilder;
         use reth_discv5::discv5::{ConfigBuilder as Discv5ConfigBuilder, ListenConfig};
         use reth_network::{NetworkConfigBuilder, NetworkManager};
         use reth_tasks::Runtime;
 
         // Use a scheduled fork so startup and the later runtime update advertise different IDs.
         // Concrete Base specs always use the opel discovery entry, including custom chain IDs.
-        let chain_spec = std::sync::Arc::new(BaseChainSpec::from(
-            ChainSpecBuilder::default()
-                .chain(reth_chainspec::Chain::from_id(9_100_200))
+        let chain_spec = std::sync::Arc::new(
+            BaseChainSpecBuilder::default()
+                .chain(alloy_chains::Chain::from_id(9_100_200))
                 .genesis(Default::default())
-                .with_fork(EthereumHardfork::Shanghai, ForkCondition::Timestamp(10))
+                .with_fork(base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Timestamp(10))
                 .build(),
-        ));
+        );
         let startup_fork_id = chain_spec.fork_filter(Head::default()).current();
 
         // Only discv5 is enabled, on ephemeral 127.0.0.1 ports so parallel/repeated runs never

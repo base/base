@@ -12,28 +12,25 @@ description = "EVM chain spec implementation for Base."
 workspace = true
 
 [dependencies]
-alloy-trie = { workspace = true }
 auto_impl = { workspace = true }
 thiserror = { workspace = true }
+alloy-trie = { workspace = true }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 alloy-chains = { workspace = true }
+alloy-eip2124 = { workspace = true }
 alloy-genesis = { workspace = true }
 base-protocol = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
-reth-ethereum-forks = { workspace = true }
 base-common-consensus = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
-reth-chainspec = { workspace = true, features = ["default"] }
 base-common-genesis = { workspace = true, features = ["std"] }
 reth-network-peers = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-common-rpc-types = { workspace = true, features = ["default"] }
-[dev-dependencies]
-reth-chainspec = { workspace = true, features = ["default", "test-utils"] }
 [features]
 default = [ "std" ]
 std = [
@@ -47,8 +44,6 @@ std = [
 	"base-common-genesis/std",
 	"base-common-rpc-types/std",
 	"base-protocol/std",
-	"reth-chainspec/std",
-	"reth-ethereum-forks/std",
 	"reth-network-peers/std",
 	"reth-primitives-traits/std",
 	"serde?/std",
@@ -66,6 +61,5 @@ serde = [
 	"base-common-genesis/serde",
 	"base-common-rpc-types/serde",
 	"base-protocol/serde",
-	"reth-ethereum-forks/serde",
 	"reth-primitives-traits/serde",
 ]

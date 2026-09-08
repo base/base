@@ -6,6 +6,7 @@ use alloy_consensus::{
 };
 use alloy_eip7928::{bal::DecodedBal, compute_block_access_list_hash};
 use alloy_eips::eip7685::RequestsOrHash;
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, B256, U256, map::AddressSet};
 use alloy_rpc_types_beacon::relay::{
     BidTrace, BuilderBlockValidationRequest, BuilderBlockValidationRequestV2,
@@ -21,7 +22,6 @@ use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::ChainSpecProvider;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
-use reth_chainspec::EthereumHardforks;
 use reth_consensus::{Consensus, FullConsensus};
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_engine_primitives::PayloadValidator;

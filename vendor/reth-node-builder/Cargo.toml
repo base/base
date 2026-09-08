@@ -27,12 +27,12 @@ aquamarine = { workspace = true }
 reth-config = { workspace = true }
 reth-db-api = { workspace = true }
 reth-stages = { workspace = true }
+alloy-chains = { workspace = true }
 reth-fs-util = { workspace = true }
 reth-network = { workspace = true }
 reth-rpc-api = { workspace = true }
 reth-node-api = { workspace = true }
 reth-provider = { workspace = true }
-reth-chainspec = { workspace = true }
 reth-consensus = { workspace = true }
 reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
@@ -100,7 +100,6 @@ js-tracer = [
 test-utils = [
     "reth-db/test-utils",
     "reth-chain-state/test-utils",
-    "reth-chainspec/test-utils",
     "reth-consensus/test-utils",
     "reth-engine-tree/test-utils",
     "reth-evm/test-utils",

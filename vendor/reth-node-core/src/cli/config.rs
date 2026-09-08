@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
+use alloy_chains::{Chain, ChainKind, NamedChain};
 use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_36M;
 use alloy_primitives::Bytes;
-use reth_chainspec::{Chain, ChainKind, NamedChain};
 use reth_network::protocol::IntoRlpxSubProtocol;
 use reth_transaction_pool::PoolConfig;
 

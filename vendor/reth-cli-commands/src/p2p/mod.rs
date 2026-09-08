@@ -224,29 +224,29 @@ impl<C: ChainSpecParser> DownloadArgs<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::EthereumChainSpecParser;
+    use crate::test_utils::BaseTestChainSpecParser;
 
     #[test]
     fn parse_header_cmd() {
-        let _args: Command<EthereumChainSpecParser> =
-            Command::parse_from(["reth", "header", "--chain", "mainnet", "1000"]);
+        let _args: Command<BaseTestChainSpecParser> =
+            Command::parse_from(["reth", "header", "--chain", "base", "1000"]);
     }
 
     #[test]
     fn parse_body_cmd() {
-        let _args: Command<EthereumChainSpecParser> =
-            Command::parse_from(["reth", "body", "--chain", "mainnet", "1000"]);
+        let _args: Command<BaseTestChainSpecParser> =
+            Command::parse_from(["reth", "body", "--chain", "base", "1000"]);
     }
 
     #[test]
     fn parse_enode_cmd() {
-        let _args: Command<EthereumChainSpecParser> =
+        let _args: Command<BaseTestChainSpecParser> =
             Command::parse_from(["reth", "enode", "/tmp/secret"]);
     }
 
     #[test]
     fn parse_enode_cmd_with_ip() {
-        let _args: Command<EthereumChainSpecParser> =
+        let _args: Command<BaseTestChainSpecParser> =
             Command::parse_from(["reth", "enode", "/tmp/secret", "--ip", "192.168.1.1"]);
     }
 }

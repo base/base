@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::Path};
 
-use reth_chainspec::{EthereumHardfork, EthereumHardforks};
+use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use reth_config::config::{BlocksPerFileConfig, Config, PruneConfig, StaticFilesConfig};
 use reth_db::tables;
 use reth_db_api::transaction::{DbTx, DbTxMut};
@@ -312,7 +312,7 @@ mod tests {
             &selections,
             &empty_manifest(),
             None,
-            None::<&reth_chainspec::ChainSpec>,
+            None::<&base_execution_chainspec::BaseChainSpec>,
         );
         let snapshot_block = 21_000_000;
 
@@ -356,7 +356,7 @@ mod tests {
             &selections,
             &empty_manifest(),
             None,
-            None::<&reth_chainspec::ChainSpec>,
+            None::<&base_execution_chainspec::BaseChainSpec>,
         );
 
         {
@@ -384,7 +384,7 @@ mod tests {
             &selections,
             &empty_manifest(),
             None,
-            None::<&reth_chainspec::ChainSpec>,
+            None::<&base_execution_chainspec::BaseChainSpec>,
         );
         // Archive node — nothing pruned
         assert_eq!(config.prune.segments.transaction_lookup, None);
@@ -404,7 +404,7 @@ mod tests {
             &selections,
             &empty_manifest(),
             None,
-            None::<&reth_chainspec::ChainSpec>,
+            None::<&base_execution_chainspec::BaseChainSpec>,
         );
         assert_eq!(config.prune.segments.transaction_lookup, Some(PruneMode::Full));
         assert_eq!(config.prune.segments.sender_recovery, Some(PruneMode::Full));
@@ -443,7 +443,7 @@ mod tests {
             &selections,
             &empty_manifest(),
             None,
-            None::<&reth_chainspec::ChainSpec>,
+            None::<&base_execution_chainspec::BaseChainSpec>,
         );
 
         assert_eq!(config.prune.segments.transaction_lookup, Some(PruneMode::Full));
@@ -479,7 +479,7 @@ mod tests {
             &selections,
             &empty_manifest(),
             None,
-            None::<&reth_chainspec::ChainSpec>,
+            None::<&base_execution_chainspec::BaseChainSpec>,
         );
 
         assert_eq!(config.prune.segments.bodies_history, Some(PruneMode::Before(15_537_394)));
@@ -497,7 +497,7 @@ mod tests {
             .insert(SnapshotComponentType::Transactions, ComponentSelection::Distance(500_000));
         selections.insert(SnapshotComponentType::Receipts, ComponentSelection::Distance(10_064));
 
-        let chain_spec = reth_chainspec::MAINNET.clone();
+        let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
         let config = config_for_selections(
             &selections,
             &empty_manifest(),
@@ -537,7 +537,7 @@ mod tests {
             &selections,
             &empty_manifest(),
             None,
-            None::<&reth_chainspec::ChainSpec>,
+            None::<&base_execution_chainspec::BaseChainSpec>,
         );
         let desc = describe_prune_config(&config);
         // Archive node — no prune segments described
@@ -556,7 +556,7 @@ mod tests {
             &selections,
             &empty_manifest(),
             None,
-            None::<&reth_chainspec::ChainSpec>,
+            None::<&base_execution_chainspec::BaseChainSpec>,
         );
         let desc = describe_prune_config(&config);
         assert!(desc.contains(&"sender_recovery=\"full\"".to_string()));

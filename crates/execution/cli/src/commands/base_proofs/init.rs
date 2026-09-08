@@ -2,6 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use base_common_consensus::ChainInfo;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,
@@ -9,7 +10,6 @@ use base_execution_trie::{
 };
 use base_node_core::args::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
-use reth_chainspec::ChainInfo;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_node_core::version::version_metadata;

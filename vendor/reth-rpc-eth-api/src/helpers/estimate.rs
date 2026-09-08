@@ -6,7 +6,6 @@ use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types_eth::{BlockId, state::EvmOverrides};
 use base_common_rpc_types::BaseTransactionRequest;
 use futures::Future;
-use reth_chainspec::MIN_TRANSACTION_GAS;
 use reth_errors::ProviderError;
 use reth_evm::{
     Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor, env::BlockEnvironment,
@@ -150,17 +149,17 @@ pub trait EstimateCall: Call {
         if is_basic_transfer {
             // If the tx is a simple transfer (call to an account with no code) we can
             // shortcircuit. But simply returning
-            // `MIN_TRANSACTION_GAS` is dangerous because there might be additional
+            // `21_000u64` is dangerous because there might be additional
             // field combos that bump the price up, so we try executing the function
             // with the minimum gas limit to make sure.
             let mut min_tx_env = tx_env.clone();
-            min_tx_env.set_gas_limit(MIN_TRANSACTION_GAS);
+            min_tx_env.set_gas_limit(21_000u64);
 
             // Reuse the same EVM instance
             if let Ok(res) = evm.transact(min_tx_env).map_err(BaseEthApiError::from_evm_err)
                 && res.result.is_success()
             {
-                return Ok(U256::from(MIN_TRANSACTION_GAS));
+                return Ok(U256::from(21_000u64));
             }
         }
 

@@ -7,6 +7,7 @@ use std::{
 };
 
 use alloy_consensus::BlockHeader;
+use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut, map::AddressSet};
 use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
@@ -30,7 +31,6 @@ use base_execution_txpool::{
     maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
-use reth_chainspec::BaseFeeParams;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
@@ -258,7 +258,7 @@ impl BaseNode {
     /// fn demo(runtime: reth_tasks::Runtime) {
     ///     let factory = BaseNode::provider_factory_builder()
     ///         .open_read_only(
-    ///             BaseChainSpecBuilder::base_mainnet().build().into(),
+    ///             BaseChainSpecBuilder::base_mainnet().build(),
     ///             ReadOnlyConfig::from_datadir("datadir").no_watch(),
     ///             runtime,
     ///         )

@@ -375,7 +375,6 @@ reth-eth-wire = { path = "vendor/reth-eth-wire", default-features = false }
 reth-provider = { path = "vendor/reth-provider", default-features = false }
 reth-mdbx-sys = { path = "vendor/reth-mdbx-sys", default-features = false }
 reth-node-core = { path = "vendor/reth-node-core", default-features = false }
-reth-chainspec = { path = "vendor/reth-chainspec", default-features = false }
 reth-rpc-layer = { path = "vendor/reth-rpc-layer", default-features = false }
 reth-db-common = { path = "vendor/reth-db-common", default-features = false }
 reth-consensus = { path = "vendor/reth-consensus", default-features = false }
@@ -421,7 +420,6 @@ reth-e2e-test-utils = { path = "vendor/reth-e2e-test-utils", default-features = 
 reth-rpc-engine-api = { path = "vendor/reth-rpc-engine-api", default-features = false }
 reth-eth-wire-types = { path = "vendor/reth-eth-wire-types", default-features = false }
 reth-storage-errors = { path = "vendor/reth-storage-errors", default-features = false }
-reth-ethereum-forks = { path = "vendor/reth-ethereum-forks", default-features = false }
 reth-payload-builder = { path = "vendor/reth-payload-builder", default-features = false }
 reth-exex-test-utils = { path = "vendor/reth-exex-test-utils", default-features = false }
 reth-execution-types = { path = "vendor/reth-execution-types", default-features = false }

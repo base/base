@@ -9,6 +9,7 @@ use std::{
 
 use alloy_consensus::{BlockHeader, Typed2718, transaction::TxHashRef};
 use alloy_eips::{BlockNumberOrTag, Decodable2718, Encodable2718};
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{
     Address, BlockHash, BlockNumber, Bytes,
     map::{AddressSet, HashSet},
@@ -21,7 +22,6 @@ use futures_util::{
     future::{BoxFuture, Fuse, FusedFuture},
 };
 use reth_chain_state::CanonStateNotification;
-use reth_chainspec::EthereumHardforks;
 use reth_execution_types::ChangedAccount;
 use reth_fs_util::FsPathError;
 use reth_primitives_traits::{SealedHeader, transaction::signed::SignedTransaction};

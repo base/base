@@ -50,9 +50,10 @@ reth-exex-types = { workspace = true, features = ["default", "serde", "serde-bin
 [dev-dependencies]
 reth-db-api = { workspace = true }
 alloy-genesis = { workspace = true }
-reth-chainspec = { workspace = true }
 reth-db-common = { workspace = true }
+alloy-hardforks = { workspace = true }
 reth-testing-utils = { workspace = true }
+base-execution-chainspec = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 reth-evm = { workspace = true, features = ["test-utils"] }

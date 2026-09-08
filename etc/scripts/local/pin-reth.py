@@ -409,7 +409,7 @@ def run_cargo(root: Path, args: list[str]) -> None:
 def update_lockfile(root: Path, deps: list[GitDep]) -> None:
     """Refresh Cargo.lock from any git-based Reth workspace crate."""
     names = {dep.name for dep in deps}
-    package = "reth-chainspec" if "reth-chainspec" in names else deps[0].name
+    package = "reth-primitives-traits" if "reth-primitives-traits" in names else deps[0].name
     run_cargo(root, ["cargo", "update", "-p", package])
 
 

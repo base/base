@@ -17,12 +17,12 @@ use std::{
 };
 
 use ::enr::Enr;
+use alloy_eip2124::{EnrForkIdEntry, ForkId};
 use alloy_primitives::bytes::Bytes;
 use enr::{EnrCombinedKeyWrapper, discv4_id_to_discv5_id};
 use futures::future::join_all;
 use itertools::Itertools;
 use rand::{Rng, RngCore};
-use reth_ethereum_forks::{EnrForkIdEntry, ForkId};
 use reth_network_peers::{NodeRecord, PeerId};
 use secp256k1::SecretKey;
 use tokio::{sync::mpsc, task};
@@ -726,7 +726,6 @@ mod test {
     use discv5_reth::ListenConfig;
     use futures::FutureExt;
     use rand_08::thread_rng;
-    use reth_chainspec::MAINNET;
     use tracing::trace;
 
     use super::*;
@@ -1008,7 +1007,8 @@ mod test {
     #[test]
     fn build_enr_from_config() {
         const TCP_PORT: u16 = 30303;
-        let fork_id = MAINNET.latest_fork_id();
+        let fork_id = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+            .latest_fork_id();
 
         let config = Config::builder((Ipv4Addr::UNSPECIFIED, TCP_PORT).into())
             .fork(NetworkStackId::ETH, fork_id)
@@ -1029,7 +1029,8 @@ mod test {
 
     #[test]
     fn get_fork_id_with_different_network_stack_ids() {
-        let fork_id = MAINNET.latest_fork_id();
+        let fork_id = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+            .latest_fork_id();
         let sk = SecretKey::new(&mut thread_rng());
 
         // Test 1: ENR with OPEL fork ID, Discv5 configured for OPEL

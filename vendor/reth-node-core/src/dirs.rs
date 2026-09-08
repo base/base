@@ -7,7 +7,7 @@ use std::{
     str::FromStr,
 };
 
-use reth_chainspec::Chain;
+use alloy_chains::Chain;
 
 use crate::{args::DatadirArgs, utils::parse_path};
 

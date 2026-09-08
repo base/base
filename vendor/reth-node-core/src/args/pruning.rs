@@ -2,10 +2,10 @@
 
 use std::{collections::BTreeMap, ops::Not, sync::OnceLock};
 
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, BlockNumber};
 use base_execution_chainspec::BaseChainSpec;
 use clap::{Args, builder::RangedU64ValueParser};
-use reth_chainspec::EthereumHardforks;
 use reth_config::config::PruneConfig;
 use reth_prune_types::{
     MINIMUM_DISTANCE, MINIMUM_UNWIND_SAFE_DISTANCE, PruneMode, PruneModes, ReceiptsLogPruneConfig,

@@ -17,7 +17,7 @@
 //! # use reth_downloaders::headers::reverse_headers::ReverseHeadersDownloaderBuilder;
 //! # use reth_network_p2p::test_utils::{TestBodiesClient, TestHeadersClient};
 //! # use alloy_primitives::B256;
-//! # use reth_chainspec::MAINNET;
+//! #
 //! # use reth_prune_types::PruneModes;
 //! # use reth_network_peers::PeerId;
 //! # use reth_stages::Pipeline;
@@ -33,7 +33,7 @@
 //! # use reth_consensus::test_utils::TestConsensus;
 //! # use reth_consensus::FullConsensus;
 //! #
-//! # let chain_spec = MAINNET.clone();
+//! # let chain_spec = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
 //! # let consensus: Arc<dyn FullConsensus> = Arc::new(TestConsensus::default());
 //! # let headers_downloader = ReverseHeadersDownloaderBuilder::default().build(
 //! #    Arc::new(TestHeadersClient::default()),

@@ -8,6 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use alloy_eip2124::ForkId;
 use base_common_consensus::BaseReceipt;
 use reth_eth_wire_types::{
     BlockAccessLists, BlockBodies, BlockHeaders, Capabilities, Cells, DisconnectReason, EthMessage,
@@ -15,7 +16,6 @@ use reth_eth_wire_types::{
     GetPooledTransactions, GetReceipts, GetReceipts70, NodeData, PooledTransactions, Receipts,
     Receipts69, Receipts70, UnifiedStatus, message::RequestPair, snap::SnapProtocolMessage,
 };
-use reth_ethereum_forks::ForkId;
 use reth_network_p2p::{
     error::{RequestError, RequestResult},
     snap::client::SnapResponse,

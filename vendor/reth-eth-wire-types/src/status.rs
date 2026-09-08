@@ -1,11 +1,10 @@
 use core::fmt::{Debug, Display};
 
-use alloy_chains::{Chain, NamedChain};
-use alloy_hardforks::{EthereumHardfork, ForkId, Head};
+use alloy_chains::Chain;
+use alloy_hardforks::{ForkId, Head};
 use alloy_primitives::{B256, U256, hex};
 use alloy_rlp::{BufMut, Encodable, RlpDecodable, RlpEncodable};
 use base_execution_chainspec::BaseChainSpec;
-use reth_chainspec::MAINNET;
 use reth_codecs_derive::add_arbitrary_tests;
 
 use crate::{BlockRangeUpdate, EthVersion};
@@ -36,16 +35,15 @@ pub struct UnifiedStatus {
 
 impl Default for UnifiedStatus {
     fn default() -> Self {
-        let mainnet_genesis = MAINNET.genesis_hash();
+        let spec = BaseChainSpec::mainnet();
+        let genesis = spec.genesis_hash();
         Self {
             version: EthVersion::Eth68,
-            chain: Chain::from_named(NamedChain::Mainnet),
-            genesis: mainnet_genesis,
-            forkid: MAINNET
-                .hardfork_fork_id(EthereumHardfork::Frontier)
-                .expect("Frontier must exist"),
-            blockhash: mainnet_genesis,
-            total_difficulty: Some(U256::from(17_179_869_184u64)),
+            chain: spec.chain(),
+            genesis,
+            forkid: spec.fork_id(&Head { timestamp: spec.genesis.timestamp, ..Default::default() }),
+            blockhash: genesis,
+            total_difficulty: Some(U256::ZERO),
             earliest_block: Some(0),
             latest_block: Some(0),
         }
@@ -254,20 +252,10 @@ pub struct Status {
     pub forkid: ForkId,
 }
 
-// <https://etherscan.io/block/0>
+// Base mainnet genesis status.
 impl Default for Status {
     fn default() -> Self {
-        let mainnet_genesis = MAINNET.genesis_hash();
-        Self {
-            version: EthVersion::Eth68,
-            chain: Chain::from_named(NamedChain::Mainnet),
-            total_difficulty: U256::from(17_179_869_184u64),
-            blockhash: mainnet_genesis,
-            genesis: mainnet_genesis,
-            forkid: MAINNET
-                .hardfork_fork_id(EthereumHardfork::Frontier)
-                .expect("The Frontier hardfork should always exist"),
-        }
+        UnifiedStatus::default().into_legacy()
     }
 }
 
@@ -484,14 +472,13 @@ impl Display for StatusMessage {
 mod tests {
     use std::str::FromStr;
 
+    use alloy_chains::{Chain, NamedChain};
     use alloy_consensus::constants::MAINNET_GENESIS_HASH;
     use alloy_genesis::Genesis;
-    use alloy_hardforks::{EthereumHardfork, ForkHash, ForkId, Head};
+    use alloy_hardforks::{ForkCondition, ForkHash, ForkId, Head};
     use alloy_primitives::{B256, U256, b256, hex};
     use alloy_rlp::{Decodable, Encodable};
-    use base_execution_chainspec::BaseChainSpec;
     use rand::Rng;
-    use reth_chainspec::{Chain, ChainSpec, ForkCondition, NamedChain};
 
     use crate::{BlockRangeUpdate, EthVersion, Status, StatusEth69, StatusMessage, UnifiedStatus};
 
@@ -787,17 +774,19 @@ mod tests {
             timestamp: u64::MAX,
         };
 
-        // add a few hardforks
+        // Exercise both block-based and timestamp-based Base activations.
         let hardforks = vec![
-            (EthereumHardfork::Tangerine, ForkCondition::Block(1)),
-            (EthereumHardfork::SpuriousDragon, ForkCondition::Block(2)),
-            (EthereumHardfork::Byzantium, ForkCondition::Block(3)),
-            (EthereumHardfork::MuirGlacier, ForkCondition::Block(5)),
-            (EthereumHardfork::London, ForkCondition::Block(8)),
-            (EthereumHardfork::Shanghai, ForkCondition::Timestamp(13)),
+            (base_common_genesis::BaseUpgrade::Bedrock, ForkCondition::Block(1)),
+            (base_common_genesis::BaseUpgrade::Regolith, ForkCondition::Timestamp(2)),
+            (base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Timestamp(3)),
+            (base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(5)),
+            (base_common_genesis::BaseUpgrade::Fjord, ForkCondition::Timestamp(8)),
+            (base_common_genesis::BaseUpgrade::Granite, ForkCondition::Timestamp(13)),
         ];
 
-        let mut chainspec = ChainSpec::builder().genesis(genesis).chain(Chain::from_id(1337));
+        let mut chainspec = base_execution_chainspec::BaseChainSpecBuilder::default()
+            .genesis(genesis)
+            .chain(Chain::from_id(1337));
 
         for (fork, condition) in &hardforks {
             chainspec = chainspec.with_fork(*fork, *condition);
@@ -817,7 +806,7 @@ mod tests {
 
         let forkid = ForkId { hash: forkhash, next: 0 };
 
-        let status = UnifiedStatus::spec_builder(&BaseChainSpec::from(spec), &head);
+        let status = UnifiedStatus::spec_builder(&spec, &head);
 
         assert_eq!(status.chain, Chain::from_id(1337));
         assert_eq!(status.forkid, forkid);

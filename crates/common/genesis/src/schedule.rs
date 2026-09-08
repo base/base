@@ -60,10 +60,8 @@ impl ChainUpgrades {
     }
 
     /// Updates a Base upgrade, including the corresponding Ethereum rule.
-    pub fn insert(&mut self, fork: impl Into<ExecutionFork>, condition: ForkCondition) {
-        if let Some(upgrade) = fork.into().base_upgrade() {
-            self.forks[upgrade as usize] = condition;
-        }
+    pub fn insert(&mut self, fork: BaseUpgrade, condition: ForkCondition) {
+        self.forks[fork as usize] = condition;
     }
 
     /// Removes a configured Base activation.

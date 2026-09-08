@@ -2,6 +2,7 @@
 
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
+use alloy_eip2124::{ForkFilter, Head};
 use alloy_eips::BlockNumHash;
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
@@ -13,7 +14,6 @@ use reth_eth_wire::{
     handshake::{EthHandshake, EthRlpxHandshake},
 };
 use reth_eth_wire_types::message::MAX_MESSAGE_SIZE;
-use reth_ethereum_forks::{ForkFilter, Head};
 use reth_network_peers::{PeerId, TrustedPeer, mainnet_nodes, pk2id, sepolia_nodes};
 use reth_network_types::{PeersConfig, SessionsConfig};
 use reth_storage_api::{
@@ -755,12 +755,13 @@ impl NetworkMode {
 mod tests {
     use std::{net::Ipv4Addr, sync::Arc};
 
+    use alloy_chains::Chain;
+    use alloy_eip2124::ForkId;
     use alloy_eips::eip2124::ForkHash;
     use alloy_genesis::Genesis;
+    use alloy_hardforks::ForkCondition;
     use alloy_primitives::U256;
-    use reth_chainspec::{
-        Chain, ChainSpecBuilder, EthereumHardfork, ForkCondition, ForkId, MAINNET,
-    };
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_discv5::build_local_enr;
     use reth_storage_api::noop::NoopProvider;
 
@@ -811,16 +812,17 @@ mod tests {
 
     #[test]
     fn test_network_fork_filter_default() {
-        let mut chain_spec = Arc::clone(&MAINNET);
+        let mut chain_spec =
+            Arc::clone(&std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
 
         // remove any `next` fields we would have by removing all hardforks
-        Arc::make_mut(&mut chain_spec).hardforks = Default::default();
+        Arc::make_mut(&mut chain_spec).config.upgrades = Default::default();
 
         // check that the forkid is initialized with the genesis and no other forks
         let genesis_fork_hash = ForkHash::from(chain_spec.genesis_hash());
 
         // enforce that the fork_id set in the status is consistent with the generated fork filter
-        let config = builder().build_with_noop_provider(Arc::new((*chain_spec).clone().into()));
+        let config = builder().build_with_noop_provider(chain_spec.clone());
 
         let status = config.status;
         let fork_filter = config.fork_filter;
@@ -842,10 +844,12 @@ mod tests {
 
         let genesis = Genesis::default().with_timestamp(GENESIS_TIME);
 
-        let active_fork = (EthereumHardfork::Shanghai, ForkCondition::Timestamp(GENESIS_TIME));
-        let future_fork = (EthereumHardfork::Cancun, ForkCondition::Timestamp(GENESIS_TIME + 1));
+        let active_fork =
+            (base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Timestamp(GENESIS_TIME));
+        let future_fork =
+            (base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(GENESIS_TIME + 1));
 
-        let chain_spec = ChainSpecBuilder::default()
+        let chain_spec = BaseChainSpecBuilder::default()
             .chain(Chain::dev())
             .genesis(genesis)
             .with_fork(active_fork.0, active_fork.1)
@@ -872,7 +876,7 @@ mod tests {
         let fork_key = NetworkStackId::OPEL;
         let config = builder()
             .discovery_v5(reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 30303).into()))
-            .build_with_noop_provider(Arc::new(chain_spec.into()));
+            .build_with_noop_provider(Arc::new(chain_spec));
 
         let (local_enr, _, _, _) = build_local_enr(
             &config.secret_key,
@@ -896,10 +900,13 @@ mod tests {
 
         let genesis = Genesis::default().with_timestamp(GENESIS_TIME);
 
-        let chain_spec = ChainSpecBuilder::default()
+        let chain_spec = BaseChainSpecBuilder::default()
             .chain(Chain::from_id(3151908))
             .genesis(genesis)
-            .with_fork(EthereumHardfork::Shanghai, ForkCondition::Timestamp(GENESIS_TIME))
+            .with_fork(
+                base_common_genesis::BaseUpgrade::Canyon,
+                ForkCondition::Timestamp(GENESIS_TIME),
+            )
             .build();
 
         let fork_id = chain_spec.fork_id(&Head {
@@ -912,7 +919,7 @@ mod tests {
 
         let config = builder()
             .discovery_v5(reth_discv5::Config::builder((Ipv4Addr::LOCALHOST, 30303).into()))
-            .build_with_noop_provider(Arc::new(chain_spec.into()));
+            .build_with_noop_provider(Arc::new(chain_spec));
 
         let (local_enr, _, _, _) = build_local_enr(
             &config.secret_key,

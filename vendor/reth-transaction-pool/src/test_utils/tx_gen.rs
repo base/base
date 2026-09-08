@@ -2,7 +2,6 @@ use alloy_consensus::{SignableTransaction, TxEip1559, TxEip4844, TxLegacy};
 use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, eip2930::AccessList};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use rand::{Rng, RngCore};
-use reth_chainspec::MAINNET;
 use reth_ethereum_primitives::{Transaction, TransactionSigned};
 use reth_primitives_traits::{SignedTransaction, crypto::secp256k1::sign_message};
 
@@ -347,7 +346,7 @@ impl Default for TransactionBuilder {
     fn default() -> Self {
         Self {
             signer: B256::random(),
-            chain_id: MAINNET.chain.id(),
+            chain_id: 8453,
             nonce: 0,
             gas_limit: 0,
             max_fee_per_gas: 0,

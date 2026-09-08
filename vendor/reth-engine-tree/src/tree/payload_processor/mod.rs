@@ -620,12 +620,11 @@ impl<R> Drop for CacheTaskHandle<R> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use alloy_consensus::constants::KECCAK_EMPTY;
     use alloy_eips::eip1898::{BlockNumHash, BlockWithParent};
     use alloy_primitives::{Address, B256, U256};
-    use reth_chainspec::ChainSpec;
+    use base_execution_chainspec::BaseChainSpec;
     use reth_evm::BaseEvmConfig;
     use reth_execution_cache::CachedStatus;
     use reth_revm::db::BundleState;
@@ -721,9 +720,7 @@ mod tests {
     fn on_inserted_executed_block_populates_cache() {
         let payload_processor = PayloadProcessor::new(
             reth_tasks::Runtime::test(),
-            BaseEvmConfig::new(std::sync::Arc::new(
-                (Arc::new(ChainSpec::default())).as_ref().clone().into(),
-            )),
+            BaseEvmConfig::new(std::sync::Arc::new(BaseChainSpec::default())),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),
         );
@@ -752,9 +749,7 @@ mod tests {
     fn on_inserted_executed_block_skips_on_parent_mismatch() {
         let payload_processor = PayloadProcessor::new(
             reth_tasks::Runtime::test(),
-            BaseEvmConfig::new(std::sync::Arc::new(
-                (Arc::new(ChainSpec::default())).as_ref().clone().into(),
-            )),
+            BaseEvmConfig::new(std::sync::Arc::new(BaseChainSpec::default())),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),
         );
@@ -789,9 +784,7 @@ mod tests {
     fn on_inserted_executed_block_does_not_mutate_checked_out_parent_cache() {
         let payload_processor = PayloadProcessor::new(
             reth_tasks::Runtime::test(),
-            BaseEvmConfig::new(std::sync::Arc::new(
-                (Arc::new(ChainSpec::default())).as_ref().clone().into(),
-            )),
+            BaseEvmConfig::new(std::sync::Arc::new(BaseChainSpec::default())),
             &TreeConfig::default(),
             PrecompileCacheMap::default(),
         );

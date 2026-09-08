@@ -16,13 +16,12 @@ use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, StorageKey, StorageValue, TxHash, TxNumber, keccak256,
     map::{AddressSet, B256Map, HashMap, hash_map},
 };
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use rayon::slice::ParallelSliceMut;
 use reth_chain_state::ExecutedBlock;
-use reth_chainspec::ChainInfo;
 use reth_db_api::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
     database::{Database, ReaderTxnTracker},
@@ -3506,12 +3505,13 @@ mod tests {
     use std::{sync::mpsc, time::Duration};
 
     use alloy_consensus::Header;
+    use alloy_hardforks::ForkCondition;
     use alloy_primitives::{U256, map::B256Map};
     use base_common_consensus::BaseReceipt;
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
     use reth_chain_state::test_utils::TestBlockBuilder;
-    use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
     use reth_db_api::models::StorageSettings;
     use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_primitives_traits::SealedBlock;
@@ -3550,8 +3550,8 @@ mod tests {
 
     #[test]
     fn base_body_roundtrip_across_withdrawals_activation() {
-        let chain_spec = ChainSpecBuilder::mainnet()
-            .with_fork(EthereumHardfork::Shanghai, ForkCondition::Timestamp(100))
+        let chain_spec = BaseChainSpecBuilder::base_mainnet()
+            .with_fork(base_common_genesis::BaseUpgrade::Canyon, ForkCondition::Timestamp(100))
             .build();
         let factory =
             crate::test_utils::create_test_provider_factory_with_chain_spec(Arc::new(chain_spec));

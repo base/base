@@ -1,45 +1,43 @@
-//! Ethereum chain parser used by CLI command tests.
+//! Base chain parser used by CLI command tests.
 
 use std::sync::Arc;
 
 use base_execution_chainspec::BaseChainSpec;
-use reth_chainspec::{ChainSpec, DEV, HOLESKY, HOODI, MAINNET, SEPOLIA};
 use reth_cli::chainspec::{ChainSpecParser, parse_genesis};
 
 /// Chains supported by reth. First value should be used as the default.
-pub const SUPPORTED_CHAINS: &[&str] = &["mainnet", "sepolia", "holesky", "hoodi", "dev"];
+pub const SUPPORTED_CHAINS: &[&str] = &["base", "base-sepolia", "base-devnet", "base-zeronet"];
 
-/// Ethereum chain specification parser.
+/// Base chain specification parser.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
-pub struct EthereumChainSpecParser;
+pub struct BaseTestChainSpecParser;
 
-impl ChainSpecParser for EthereumChainSpecParser {
+impl ChainSpecParser for BaseTestChainSpecParser {
     const SUPPORTED_CHAINS: &'static [&'static str] = SUPPORTED_CHAINS;
 
     fn parse(s: &str) -> eyre::Result<Arc<BaseChainSpec>> {
-        let spec: Arc<ChainSpec> = match s {
-            "mainnet" => MAINNET.clone(),
-            "sepolia" => SEPOLIA.clone(),
-            "holesky" => HOLESKY.clone(),
-            "hoodi" => HOODI.clone(),
-            "dev" => DEV.clone(),
-            _ => Arc::new(parse_genesis(s)?.into()),
+        let spec = match s {
+            "base" => BaseChainSpec::mainnet(),
+            "base-sepolia" => BaseChainSpec::sepolia(),
+            "base-devnet" | "dev" => BaseChainSpec::devnet(),
+            "base-zeronet" => BaseChainSpec::zeronet(),
+            _ => BaseChainSpec::from_genesis(parse_genesis(s)?),
         };
-        Ok(Arc::new(spec.as_ref().clone().into()))
+        Ok(Arc::new(spec))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use reth_chainspec::EthereumHardforks;
+    use alloy_hardforks::EthereumHardforks;
 
     use super::*;
 
     #[test]
     fn parse_known_chain_spec() {
-        for &chain in EthereumChainSpecParser::SUPPORTED_CHAINS {
-            assert!(<EthereumChainSpecParser as ChainSpecParser>::parse(chain).is_ok());
+        for &chain in BaseTestChainSpecParser::SUPPORTED_CHAINS {
+            assert!(<BaseTestChainSpecParser as ChainSpecParser>::parse(chain).is_ok());
         }
     }
 
@@ -84,14 +82,14 @@ mod tests {
     "berlinBlock": 0,
     "londonBlock": 0,
     "terminalTotalDifficulty": 0,
-    "shanghaiTime": 0,
-    "cancunTime": 0,
-    "pragueTime": 0,
-    "osakaTime": 0
+    "canyonTime": 0,
+    "ecotoneTime": 0,
+    "isthmusTime": 0,
+    "base": { "azul": 0 }
   }
 }"#;
 
-        let spec = <EthereumChainSpecParser as ChainSpecParser>::parse(s).unwrap();
+        let spec = <BaseTestChainSpecParser as ChainSpecParser>::parse(s).unwrap();
         assert!(spec.is_shanghai_active_at_timestamp(0));
         assert!(spec.is_cancun_active_at_timestamp(0));
         assert!(spec.is_prague_active_at_timestamp(0));

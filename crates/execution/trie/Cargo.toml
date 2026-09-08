@@ -47,16 +47,17 @@ test-case = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-node-api = { workspace = true }
 reth-db-common = { workspace = true }
+alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-storage-errors = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
+base-execution-chainspec = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 serial_test = { workspace = true, features = ["default"] }
 reth-evm = { workspace = true, features = ["test-utils"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
-reth-chainspec = { workspace = true, features = ["default"] }
 reth-db-api = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["reth"] }

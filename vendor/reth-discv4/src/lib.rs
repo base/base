@@ -36,6 +36,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use alloy_eip2124::ForkId;
 use alloy_primitives::{B256, bytes::Bytes, hex};
 use discv5_reth::{
     ConnectionDirection, ConnectionState, kbucket,
@@ -48,7 +49,6 @@ use enr::Enr;
 use itertools::Itertools;
 use parking_lot::Mutex;
 use proto::{EnrRequest, EnrResponse};
-use reth_ethereum_forks::ForkId;
 use reth_network_peers::{PeerId, pk2id};
 use secp256k1::SecretKey;
 use tokio::{
@@ -2568,10 +2568,10 @@ pub enum DiscoveryUpdate {
 mod tests {
     use std::future::poll_fn;
 
+    use alloy_eip2124::{EnrForkIdEntry, ForkHash};
     use alloy_primitives::hex;
     use alloy_rlp::{Decodable, Encodable};
     use rand_08::Rng;
-    use reth_ethereum_forks::{EnrForkIdEntry, ForkHash};
     use reth_network_peers::mainnet_nodes;
 
     use super::*;

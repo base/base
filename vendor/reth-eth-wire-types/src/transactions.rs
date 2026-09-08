@@ -154,7 +154,6 @@ mod tests {
     use alloy_consensus::{TxEip1559, TxLegacy, transaction::PooledTransaction};
     use alloy_primitives::{Signature, TxKind, U256, hex};
     use alloy_rlp::{Decodable, Encodable};
-    use reth_chainspec::MIN_TRANSACTION_GAS;
     use reth_ethereum_primitives::{Transaction, TransactionSigned};
 
     use crate::{GetPooledTransactions, PooledTransactions, message::RequestPair};
@@ -366,7 +365,7 @@ mod tests {
                     nonce: 26u64,
                     max_priority_fee_per_gas: 1500000000,
                     max_fee_per_gas: 1500000013,
-                    gas_limit: MIN_TRANSACTION_GAS,
+                    gas_limit: 21_000u64,
                     to: TxKind::Call(hex!("61815774383099e24810ab832a5b2a5425c154d5").into()),
                     value: U256::from(3000000000000000000u64),
                     input: Default::default(),
@@ -505,7 +504,7 @@ mod tests {
                     nonce: 26u64,
                     max_priority_fee_per_gas: 1500000000,
                     max_fee_per_gas: 1500000013,
-                    gas_limit: MIN_TRANSACTION_GAS,
+                    gas_limit: 21_000u64,
                     to: TxKind::Call(hex!("61815774383099e24810ab832a5b2a5425c154d5").into()),
                     value: U256::from(3000000000000000000u64),
                     input: Default::default(),

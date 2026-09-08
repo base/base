@@ -12,13 +12,13 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use alloy_eip2124::ForkFilter;
 use alloy_primitives::bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use reth_eth_wire_types::{
     RawCapabilityMessage,
     snap::{SnapProtocolMessage, SnapVersion},
 };
-use reth_ethereum_forks::ForkFilter;
 
 use crate::{
     Capability, EthMessage, EthStreamInner, EthVersion, HANDSHAKE_TIMEOUT, P2PStream,

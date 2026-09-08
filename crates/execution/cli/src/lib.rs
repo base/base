@@ -148,10 +148,7 @@ mod tests {
         let chain = BaseChainSpec::devnet();
         assert_eq!(cmd.chain.chain(), chain.chain());
         assert_eq!(cmd.chain.genesis_hash(), chain.genesis_hash());
-        assert_eq!(
-            cmd.chain.paris_block_and_final_difficulty,
-            chain.paris_block_and_final_difficulty
-        );
+
         assert_eq!(cmd.chain.config.upgrades, chain.config.upgrades);
 
         assert!(cmd.rpc.http);

@@ -3,9 +3,8 @@
 use core::cmp::max;
 
 use alloy_consensus::BlockHeader;
-use alloy_eips::calc_next_block_base_fee;
+use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
-use reth_chainspec::BaseFeeParams;
 
 fn base_fee_params_from_extra_data(
     chain_spec: &crate::BaseChainSpec,
@@ -86,10 +85,10 @@ where
 mod tests {
     use alloc::sync::Arc;
 
+    use alloy_hardforks::ForkCondition;
     use alloy_primitives::Bytes;
     use base_common_consensus::JovianExtraData;
     use base_common_genesis::BaseUpgrade;
-    use reth_chainspec::{ChainSpec, ForkCondition};
 
     use super::*;
     use crate::BaseChainSpec;
@@ -102,12 +101,15 @@ mod tests {
             .config
             .upgrades
             .insert(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
-        Arc::new(BaseChainSpec::from(ChainSpec {
-            chain: base_sepolia_spec.chain(),
+        Arc::new(BaseChainSpec {
+            config: base_common_chains::ChainConfig {
+                chain_id: base_sepolia_spec.chain().id(),
+                ..Default::default()
+            },
             genesis: base_sepolia_spec.genesis,
             genesis_header: base_sepolia_spec.genesis_header,
             ..Default::default()
-        }))
+        })
     }
 
     #[test]

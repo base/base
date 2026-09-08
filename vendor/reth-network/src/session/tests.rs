@@ -4,13 +4,11 @@ use std::sync::Mutex;
 
 use alloy_primitives::bytes::BytesMut;
 use futures::{StreamExt, stream::Pending};
-use reth_chainspec::MAINNET;
 use reth_eth_wire::{
     Capability, StatusBuilder, UnauthedEthStream, capability::SharedCapabilities,
     handshake::EthHandshake, multiplex::ProtocolConnection, protocol::Protocol,
 };
 use reth_eth_wire_types::message::MAX_MESSAGE_SIZE;
-use reth_ethereum_forks::EthereumHardfork;
 use reth_network_peers::pk2id;
 use secp256k1::SECP256K1;
 use tokio::net::TcpListener;
@@ -90,9 +88,8 @@ fn status() -> UnifiedStatus {
 }
 
 fn fork_filter() -> ForkFilter {
-    MAINNET
-        .hardfork_fork_filter(EthereumHardfork::Frontier)
-        .expect("The Frontier fork filter should exist on mainnet")
+    std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+        .fork_filter(Default::default())
 }
 
 /// The hello a remote sends us, announcing `id` and the spy protocol.

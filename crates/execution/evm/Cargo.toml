@@ -23,7 +23,7 @@ reth-execution-errors = { workspace = true, features = ["default"] }
 [dev-dependencies]
 alloy-eips = { workspace = true }
 base-protocol = { workspace = true }
-reth-chainspec = { workspace = true, features = ["default"] }
+alloy-hardforks = { workspace = true }
 reth-evm = { workspace = true, features = ["default", "test-utils"] }
 base-common-consensus = { workspace = true, features = ["arbitrary"] }
 reth-revm = { workspace = true, features = ["default", "test-utils"] }
@@ -40,7 +40,6 @@ std = [
     "base-common-consensus/std",
     "base-common-evm/std",
     "base-execution-chainspec/std",
-    "reth-chainspec/std",
     "reth-evm/std",
     "reth-execution-errors/std",
     "reth-primitives-traits/std",

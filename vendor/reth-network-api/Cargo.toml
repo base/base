@@ -18,11 +18,11 @@ workspace = true
 [dependencies]
 thiserror = { workspace = true }
 auto_impl = { workspace = true }
+alloy-eip2124 = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-tokio-util = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-network-types = { workspace = true }
-reth-ethereum-forks = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
@@ -42,7 +42,6 @@ serde = [
     "reth-network-types/serde",
     "alloy-primitives/serde",
     "enr/serde",
-    "reth-ethereum-forks/serde",
     "alloy-consensus/serde",
     "alloy-rpc-types-eth/serde",
 ]

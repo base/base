@@ -7,8 +7,7 @@ use std::{
 use alloy_consensus::transaction::TransactionMeta;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
-use reth_chainspec::ChainInfo;
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, ChainInfo};
 use reth_db::static_file::{
     BlockHashMask, HeaderMask, HeaderWithHashMask, ReceiptMask, StaticFileCursor, TransactionMask,
     TransactionSenderMask,

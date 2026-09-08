@@ -273,9 +273,11 @@ mod tests {
 
     use alloy_consensus::{BlockBody, Eip658Value, Header, Receipt, TxEip7702, TxReceipt};
     use alloy_eips::{
+        eip1559::BaseFeeParams,
         eip4895::Withdrawals,
         eip7685::{EMPTY_REQUESTS_HASH, Requests},
     };
+    use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B256, Bytes, Log, Signature, U256};
     use base_common_consensus::{
         BaseReceipt, BaseTransactionSigned, BaseTypedTransaction, HoloceneExtraData,
@@ -283,7 +285,6 @@ mod tests {
     };
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use reth_chainspec::{BaseFeeParams, ForkCondition};
     use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
     use reth_provider::BlockExecutionResult;
@@ -313,7 +314,7 @@ mod tests {
         let base_mainnet = BaseChainSpec::mainnet();
         BaseChainSpecBuilder::default()
             .genesis(base_mainnet.genesis.clone())
-            .chain(base_mainnet.chain)
+            .chain(base_mainnet.chain())
     }
 
     #[test]

@@ -4,17 +4,18 @@ use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader, Header, SignableTransaction, TxEip2930, constants::ETH_TO_WEI};
 use alloy_genesis::{Genesis, GenesisAccount};
+use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
 use base_common_consensus::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseReceipt as Receipt,
     BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction,
 };
+use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_trie::{
     BaseProofsStorage, BaseProofsStorageError, RocksdbProofsStorage, initialize::InitializationJob,
     live::LiveTrieCollector,
 };
 use derive_more::Constructor;
-use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN_TRANSACTION_GAS};
 use reth_db::Database;
 use reth_db_api::database_metrics::DatabaseMetrics;
 use reth_db_common::init::init_genesis;
@@ -77,19 +78,21 @@ struct TestScenario {
 }
 
 /// Helper to create a chain spec with a genesis account funded
-fn chain_spec_with_address(address: Address) -> Arc<ChainSpec> {
+fn chain_spec_with_address(address: Address) -> Arc<BaseChainSpec> {
     Arc::new(
-        ChainSpecBuilder::default()
-            .chain(MAINNET.chain)
+        BaseChainSpecBuilder::default()
+            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [(
                     address,
                     GenesisAccount { balance: U256::from(10 * ETH_TO_WEI), ..Default::default() },
                 )]
                 .into(),
-                ..MAINNET.genesis.clone()
+                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    .genesis
+                    .clone()
             })
-            .paris_activated()
+            .bedrock_activated()
             .build(),
     )
 }
@@ -99,7 +102,7 @@ fn create_block_from_spec(
     spec: &BlockSpec,
     block_number: u64,
     parent_hash: B256,
-    chain_spec: &Arc<ChainSpec>,
+    chain_spec: &Arc<BaseChainSpec>,
     key_pair: Keypair,
     nonce_counter: &mut u64,
 ) -> RecoveredBlock {
@@ -116,9 +119,9 @@ fn create_block_from_spec(
             sign_tx_with_key_pair(
                 key_pair,
                 TxEip2930 {
-                    chain_id: chain_spec.chain.id(),
+                    chain_id: chain_spec.chain().id(),
                     nonce,
-                    gas_limit: MIN_TRANSACTION_GAS,
+                    gas_limit: 21_000u64,
                     gas_price: 1_500_000_000,
                     to: TxKind::Call(tx_spec.to),
                     value: tx_spec.value,
@@ -129,7 +132,7 @@ fn create_block_from_spec(
         })
         .collect();
 
-    let gas_total = transactions.len() as u64 * MIN_TRANSACTION_GAS;
+    let gas_total = transactions.len() as u64 * 21_000u64;
 
     Block {
         header: Header {
@@ -139,7 +142,7 @@ fn create_block_from_spec(
             ),
             difficulty: chain_spec.fork(EthereumHardfork::Paris).ttd().expect("Paris TTD"),
             number: block_number,
-            gas_limit: gas_total.max(MIN_TRANSACTION_GAS),
+            gas_limit: gas_total.max(21_000u64),
             gas_used: gas_total,
             state_root: B256::ZERO, // Will be calculated by executor
             ..Default::default()
@@ -154,7 +157,7 @@ fn create_block_from_spec(
 fn execute_block<DB>(
     block: &mut RecoveredBlock,
     provider_factory: &ProviderFactory<DB>,
-    chain_spec: &Arc<ChainSpec>,
+    chain_spec: &Arc<BaseChainSpec>,
 ) -> eyre::Result<reth_evm::execute::BlockExecutionOutput<Receipt>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
@@ -214,7 +217,7 @@ where
 fn run_test_scenario<DB>(
     scenario: TestScenario,
     provider_factory: ProviderFactory<DB>,
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     key_pair: Keypair,
     storage: BaseProofsStorage<Arc<RocksdbProofsStorage>>,
 ) -> eyre::Result<()>

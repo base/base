@@ -2,7 +2,7 @@ use std::{collections::VecDeque, ops::Range, sync::Arc};
 
 use alloy_primitives::B256;
 use base_common_consensus::BaseBlockBody as BlockBody;
-use reth_chainspec::ChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use reth_network_p2p::test_utils::TestFullBlockClient;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::test_utils::{MockNodeDatabase, create_test_provider_factory_with_chain_spec};
@@ -46,7 +46,7 @@ impl TestPipelineBuilder {
     }
 
     /// Builds the pipeline.
-    pub fn build(self, chain_spec: Arc<ChainSpec>) -> Pipeline<MockNodeDatabase> {
+    pub fn build(self, chain_spec: Arc<BaseChainSpec>) -> Pipeline<MockNodeDatabase> {
         reth_tracing::init_test_tracing();
 
         // Setup pipeline

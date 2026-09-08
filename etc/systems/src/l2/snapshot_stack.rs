@@ -5,6 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use alloy_hardforks::ForkCondition;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_chains::ChainConfig;
@@ -13,7 +14,6 @@ use base_common_network::Base;
 use base_consensus_node::StandalonePrefund;
 use base_execution_chainspec::BaseChainSpec;
 use eyre::{Result, WrapErr, ensure};
-use reth_ethereum_forks::ForkCondition;
 use url::Url;
 
 use super::{
@@ -358,9 +358,9 @@ impl SnapshotL2Stack {
 
 #[cfg(test)]
 mod tests {
+    use alloy_hardforks::ForkCondition;
     use base_common_chains::Upgrades;
     use base_common_genesis::BaseUpgrade;
-    use reth_ethereum_forks::ForkCondition;
 
     use super::SnapshotL2Stack;
     use crate::DevnetBlockInterval;

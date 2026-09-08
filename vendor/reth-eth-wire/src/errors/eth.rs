@@ -3,9 +3,9 @@
 use std::io;
 
 use alloy_chains::Chain;
+use alloy_eip2124::ValidationError;
 use alloy_primitives::B256;
 use reth_eth_wire_types::{EthVersion, snap::SnapProtocolError};
-use reth_ethereum_forks::ValidationError;
 use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
 
 use crate::{

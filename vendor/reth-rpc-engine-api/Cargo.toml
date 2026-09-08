@@ -24,7 +24,7 @@ reth-tasks = { workspace = true }
 async-trait = { workspace = true }
 reth-rpc-api = { workspace = true }
 reth-metrics = { workspace = true }
-reth-chainspec = { workspace = true }
+alloy-hardforks = { workspace = true }
 jsonrpsee-types = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-network-api = { workspace = true }

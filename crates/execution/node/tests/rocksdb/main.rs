@@ -80,7 +80,7 @@ async fn poll_tx_in_rocksdb<P: RocksDBProviderFactory>(provider: &P, tx_hash: B2
 fn test_chain_spec() -> Arc<BaseChainSpec> {
     Arc::new(
         BaseChainSpecBuilder::default()
-            .chain(BaseChainSpec::mainnet().chain)
+            .chain(BaseChainSpec::mainnet().chain())
             .genesis(
                 serde_json::from_str(include_str!("../assets/genesis.json"))
                     .expect("failed to parse genesis.json"),

@@ -34,6 +34,7 @@ alloy-network = { workspace = true }
 reth-rpc-layer = { workspace = true }
 alloy-contract = { workspace = true }
 alloy-json-rpc = { workspace = true }
+alloy-hardforks = { workspace = true }
 base-common-flz = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
@@ -91,7 +92,6 @@ parking_lot = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, features = ["otlp"] }
 clap_builder = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
-reth-chainspec = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
@@ -181,7 +181,6 @@ test-utils = [
 	"hyper-util",
 	"nanoid",
 	"reth-chain-state/test-utils",
-	"reth-chainspec/test-utils",
 	"reth-db/test-utils",
 	"reth-evm/test-utils",
 	"reth-execution-cache/test-utils",

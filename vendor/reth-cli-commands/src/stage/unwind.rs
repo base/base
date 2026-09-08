@@ -177,14 +177,13 @@ impl Subcommands {
 
 #[cfg(test)]
 mod tests {
-    use reth_chainspec::SEPOLIA;
 
     use super::*;
-    use crate::test_utils::EthereumChainSpecParser;
+    use crate::test_utils::BaseTestChainSpecParser;
 
     #[test]
     fn parse_unwind() {
-        let cmd = Command::<EthereumChainSpecParser>::parse_from([
+        let cmd = Command::<BaseTestChainSpecParser>::parse_from([
             "reth",
             "--datadir",
             "dir",
@@ -193,7 +192,7 @@ mod tests {
         ]);
         assert_eq!(cmd.command, Subcommands::ToBlock { target: BlockHashOrNumber::Number(100) });
 
-        let cmd = Command::<EthereumChainSpecParser>::parse_from([
+        let cmd = Command::<BaseTestChainSpecParser>::parse_from([
             "reth",
             "--datadir",
             "dir",
@@ -205,10 +204,17 @@ mod tests {
 
     #[test]
     fn parse_unwind_chain() {
-        let cmd = Command::<EthereumChainSpecParser>::parse_from([
-            "reth", "--chain", "sepolia", "to-block", "100",
+        let cmd = Command::<BaseTestChainSpecParser>::parse_from([
+            "reth",
+            "--chain",
+            "base-sepolia",
+            "to-block",
+            "100",
         ]);
         assert_eq!(cmd.command, Subcommands::ToBlock { target: BlockHashOrNumber::Number(100) });
-        assert_eq!(cmd.env.chain.chain_id(), SEPOLIA.chain_id());
+        assert_eq!(
+            cmd.env.chain.chain_id(),
+            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::sepolia()).chain_id()
+        );
     }
 }

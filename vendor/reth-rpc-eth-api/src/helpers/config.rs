@@ -3,15 +3,16 @@
 use std::collections::BTreeMap;
 
 use alloy_consensus::BlockHeader;
+use alloy_eip2124::Head;
 use alloy_eips::{
     eip7840::BlobParams,
     eip7910::{EthConfig, EthForkConfig, SystemContract},
 };
 use alloy_evm::precompiles::Precompile;
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::Address;
 use base_execution_chainspec::ChainSpecProvider;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_chainspec::{EthereumHardforks, Head};
 use reth_errors::{ProviderError, RethError};
 use reth_evm::{BaseEvmConfig, Evm, precompiles::PrecompilesMap};
 use reth_primitives_traits::header::HeaderMut;
@@ -61,8 +62,7 @@ where
         }
 
         if chain_spec.is_prague_active_at_timestamp(timestamp) {
-            system_contracts
-                .extend(SystemContract::prague(chain_spec.deposit_contract().map(|c| c.address)));
+            system_contracts.extend(SystemContract::prague(None));
         }
 
         // Fork config only exists for timestamp-based hardforks.

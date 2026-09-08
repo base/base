@@ -1,11 +1,11 @@
 use std::{fmt::Debug, future::Future, pin::Pin, time::Duration};
 
+use alloy_eip2124::ForkFilter;
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream};
 use reth_eth_wire_types::{
     DisconnectReason, EthMessage, ProtocolMessage, StatusMessage, UnifiedStatus,
 };
-use reth_ethereum_forks::ForkFilter;
 use reth_primitives_traits::GotExpected;
 use tokio::time::timeout;
 use tokio_stream::StreamExt;

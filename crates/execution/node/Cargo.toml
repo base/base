@@ -14,6 +14,7 @@ workspace = true
 tracing = { workspace = true }
 alloy-rlp = { workspace = true }
 humantime = { workspace = true }
+alloy-eips = { workspace = true }
 reth-tasks = { workspace = true }
 reth-discv5 = { workspace = true }
 reth-db-api = { workspace = true }
@@ -43,7 +44,6 @@ futures = { workspace = true, features = ["default"] }
 reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-e2e-test-utils = { workspace = true, optional = true }
-reth-chainspec = { workspace = true, features = ["default"] }
 reth-node-builder = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-network-peers = { workspace = true, features = ["default"] }
@@ -63,7 +63,6 @@ revm = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_lim
 [dev-dependencies]
 reth-rpc = { workspace = true }
 reth-trie = { workspace = true }
-alloy-eips = { workspace = true }
 reth-trie-db = { workspace = true }
 alloy-network = { workspace = true }
 reth-db-common = { workspace = true }
@@ -72,7 +71,6 @@ reth-prune-types = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
-reth-ethereum-forks = { workspace = true }
 base-common-rpc-types = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
@@ -134,7 +132,6 @@ test-utils = [
 	"base-execution-exex/test-utils",
 	"base-node-core/test-utils",
 	"reth-chain-state/test-utils",
-	"reth-chainspec/test-utils",
 	"reth-codec",
 	"reth-db-api/test-utils",
 	"reth-db/test-utils",

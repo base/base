@@ -6,17 +6,17 @@ use std::{
     sync::{Arc, atomic::AtomicU64, mpsc},
 };
 
+use alloy_chains::NamedChain;
 use alloy_consensus::{
     Header,
     transaction::{TransactionMeta, TxHashRef},
 };
 use alloy_eips::BlockHashOrNumber;
-use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber, b256};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo};
 use base_execution_chainspec::ChainSpecProvider;
 use parking_lot::RwLock;
 use reth_chain_state::ExecutedBlock;
-use reth_chainspec::{ChainInfo, NamedChain};
 use reth_db::{
     lockfile::StorageLock,
     static_file::{
@@ -1271,26 +1271,6 @@ impl StaticFileProvider {
             + ChainSpecProvider
             + StorageSettingsCache,
     {
-        // OVM historical import is broken and does not work with this check. It's importing
-        // duplicated receipts resulting in having more receipts than the expected transaction
-        // range.
-        //
-        // If we detect an OVM import was done (block #1 <https://optimistic.etherscan.io/block/1>), skip it.
-        // More on [#11099](https://github.com/paradigmxyz/reth/pull/11099).
-        if provider.chain_spec().is_optimism()
-            && reth_chainspec::Chain::optimism_mainnet() == provider.chain_spec().chain_id()
-        {
-            // check whether we have the first OVM block: <https://optimistic.etherscan.io/block/0xbee7192e575af30420cae0c7776304ac196077ee72b048970549e4f08e875453>
-            const OVM_HEADER_1_HASH: B256 =
-                b256!("0xbee7192e575af30420cae0c7776304ac196077ee72b048970549e4f08e875453");
-            if provider.block_number(OVM_HEADER_1_HASH)?.is_some() {
-                info!(target: "reth::cli",
-                    "Skipping storage verification for OP mainnet, expected inconsistency in OVM chain"
-                );
-                return Ok(None);
-            }
-        }
-
         info!(target: "reth::cli", "Verifying storage consistency.");
 
         let mut unwind_target: Option<BlockNumber> = None;

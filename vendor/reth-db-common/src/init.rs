@@ -1096,11 +1096,8 @@ struct GenesisAccountWithAddress {
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
-    use alloy_consensus::constants::{
-        HOLESKY_GENESIS_HASH, MAINNET_GENESIS_HASH, SEPOLIA_GENESIS_HASH,
-    };
     use alloy_genesis::Genesis;
-    use reth_chainspec::{Chain, ChainSpec, HOLESKY, MAINNET, SEPOLIA};
+    use base_execution_chainspec::BaseChainSpec;
     use reth_db::DatabaseEnv;
     use reth_db_api::{
         Database,
@@ -1166,7 +1163,9 @@ mod tests {
 "#;
 
         let collector = parse_accounts(&input[..], EtlConfig::new(None, 128)).unwrap();
-        let factory = create_test_provider_factory_with_chain_spec(MAINNET.clone());
+        let factory = create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
+            base_execution_chainspec::BaseChainSpec::mainnet(),
+        ));
         factory.set_storage_settings_cache(StorageSettings::v2());
         let block = 10;
 
@@ -1239,7 +1238,9 @@ mod tests {
 "#;
 
         let collector = parse_accounts(&input[..], EtlConfig::new(None, 128)).unwrap();
-        let factory = create_test_provider_factory_with_chain_spec(MAINNET.clone());
+        let factory = create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
+            base_execution_chainspec::BaseChainSpec::mainnet(),
+        ));
         factory.set_storage_settings_cache(StorageSettings::v2());
         let static_files = factory.static_file_provider();
 
@@ -1319,34 +1320,42 @@ mod tests {
 
     #[test]
     fn success_init_genesis_mainnet() {
-        let genesis_hash =
-            init_genesis(&create_test_provider_factory_with_chain_spec(MAINNET.clone())).unwrap();
+        let genesis_hash = init_genesis(&create_test_provider_factory_with_chain_spec(
+            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
+        ))
+        .unwrap();
 
         // actual, expected
-        assert_eq!(genesis_hash, MAINNET_GENESIS_HASH);
+        assert_eq!(genesis_hash, base_common_chains::ChainConfig::mainnet().genesis.l2.hash);
     }
 
     #[test]
     fn success_init_genesis_sepolia() {
-        let genesis_hash =
-            init_genesis(&create_test_provider_factory_with_chain_spec(SEPOLIA.clone())).unwrap();
+        let genesis_hash = init_genesis(&create_test_provider_factory_with_chain_spec(
+            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::sepolia()),
+        ))
+        .unwrap();
 
         // actual, expected
-        assert_eq!(genesis_hash, SEPOLIA_GENESIS_HASH);
+        assert_eq!(genesis_hash, base_common_chains::ChainConfig::sepolia().genesis.l2.hash);
     }
 
     #[test]
-    fn success_init_genesis_holesky() {
-        let genesis_hash =
-            init_genesis(&create_test_provider_factory_with_chain_spec(HOLESKY.clone())).unwrap();
+    fn success_init_genesis_zeronet() {
+        let genesis_hash = init_genesis(&create_test_provider_factory_with_chain_spec(
+            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::zeronet()),
+        ))
+        .unwrap();
 
         // actual, expected
-        assert_eq!(genesis_hash, HOLESKY_GENESIS_HASH);
+        assert_eq!(genesis_hash, base_common_chains::ChainConfig::zeronet().genesis.l2.hash);
     }
 
     #[test]
     fn fail_init_inconsistent_db() {
-        let factory = create_test_provider_factory_with_chain_spec(SEPOLIA.clone());
+        let factory = create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
+            base_execution_chainspec::BaseChainSpec::sepolia(),
+        ));
         let static_file_provider = factory.static_file_provider();
         let rocksdb_provider = factory.rocksdb_provider();
         init_genesis(&factory).unwrap();
@@ -1355,7 +1364,7 @@ mod tests {
         let genesis_hash = init_genesis(
             &ProviderFactory::<MockNodeDatabase>::new(
                 factory.into_db(),
-                Arc::new(MAINNET.as_ref().clone().into()),
+                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
                 static_file_provider,
                 rocksdb_provider,
                 reth_tasks::Runtime::test(),
@@ -1366,15 +1375,17 @@ mod tests {
         assert!(matches!(
             genesis_hash.unwrap_err(),
             InitStorageError::GenesisHashMismatch {
-                chainspec_hash: MAINNET_GENESIS_HASH,
-                storage_hash: SEPOLIA_GENESIS_HASH
-            }
+                chainspec_hash, storage_hash
+            } if chainspec_hash == base_common_chains::ChainConfig::mainnet().genesis.l2.hash
+                && storage_hash == base_common_chains::ChainConfig::sepolia().genesis.l2.hash
         ))
     }
 
     #[test]
     fn skip_genesis_hash_validation_accepts_mismatched_db() {
-        let factory = create_test_provider_factory_with_chain_spec(SEPOLIA.clone());
+        let factory = create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
+            base_execution_chainspec::BaseChainSpec::sepolia(),
+        ));
         let static_file_provider = factory.static_file_provider();
         let rocksdb_provider = factory.rocksdb_provider();
         init_genesis(&factory).unwrap();
@@ -1382,7 +1393,7 @@ mod tests {
         let result = init_genesis_with_settings_and_validate(
             &ProviderFactory::<MockNodeDatabase>::new(
                 factory.into_db(),
-                Arc::new(MAINNET.as_ref().clone().into()),
+                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
                 static_file_provider,
                 rocksdb_provider,
                 reth_tasks::Runtime::test(),
@@ -1394,7 +1405,8 @@ mod tests {
 
         let returned = result.expect("skip_genesis_validation should suppress mismatch error");
         assert_eq!(
-            returned, SEPOLIA_GENESIS_HASH,
+            returned,
+            base_common_chains::ChainConfig::sepolia().genesis.l2.hash,
             "bypass returns the DB-resident hash, not the chainspec hash",
         );
     }
@@ -1404,8 +1416,8 @@ mod tests {
         let address_with_balance = Address::with_last_byte(1);
         let address_with_storage = Address::with_last_byte(2);
         let storage_key = B256::with_last_byte(1);
-        let chain_spec = Arc::new(ChainSpec {
-            chain: Chain::from_id(1),
+        let chain_spec = Arc::new(BaseChainSpec {
+            config: base_common_chains::ChainConfig { chain_id: 1, ..Default::default() },
             genesis: Genesis {
                 alloc: BTreeMap::from([
                     (
@@ -1422,9 +1434,6 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            hardforks: Default::default(),
-            paris_block_and_final_difficulty: None,
-            deposit_contract: None,
             ..Default::default()
         });
 
@@ -1476,7 +1485,9 @@ mod tests {
 
     #[test]
     fn allow_same_storage_settings() {
-        let factory = create_test_provider_factory_with_chain_spec(MAINNET.clone());
+        let factory = create_test_provider_factory_with_chain_spec(std::sync::Arc::new(
+            base_execution_chainspec::BaseChainSpec::mainnet(),
+        ));
         let settings = StorageSettings::v2();
         init_genesis_with_settings(&factory, settings).unwrap();
 

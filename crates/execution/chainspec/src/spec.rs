@@ -1,18 +1,19 @@
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloc::{sync::Arc, vec::Vec};
 
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, EMPTY_ROOT_HASH, Header, proofs::storage_root_unhashed};
-use alloy_eips::{eip1559::INITIAL_BASE_FEE, eip7840::BlobParams, eip7892::BlobScheduleBlobParams};
+use alloy_eip2124::{ForkFilter, ForkId, Head};
+use alloy_eips::{
+    eip1559::{BaseFeeParams, INITIAL_BASE_FEE},
+    eip7840::BlobParams,
+};
 use alloy_genesis::Genesis;
-use alloy_primitives::{Address, B256, U256};
+use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
+use alloy_primitives::{Address, B256};
 use base_common_chains::{ChainConfig, ChainUpgrades, ExecutionFork, Upgrades};
 use base_common_consensus::Predeploys;
 use base_common_genesis::{BaseUpgrade, FeeConfig, UpgradeActivation, UpgradeActivationSink};
 use base_protocol::OutputRoot;
-use reth_chainspec::{
-    BaseFeeParams, ChainSpec, DepositContract, EthereumHardforks, ForkFilter, ForkId, Head,
-};
-use reth_ethereum_forks::{EthereumHardfork, ForkCondition};
 use reth_network_peers::{NodeRecord, parse_nodes};
 use reth_primitives_traits::SealedHeader;
 
@@ -86,16 +87,6 @@ pub struct BaseChainSpec {
 
     /// The header corresponding to the genesis block.
     pub genesis_header: SealedHeader,
-
-    /// The block at which [`EthereumHardfork::Paris`] was activated and the final difficulty at
-    /// this block.
-    pub paris_block_and_final_difficulty: Option<(u64, U256)>,
-
-    /// The deposit contract deployed for `PoS`
-    pub deposit_contract: Option<DepositContract>,
-
-    /// The settings passed for blob configurations for specific hardforks.
-    pub blob_params: BlobScheduleBlobParams,
 }
 
 impl Default for BaseChainSpec {
@@ -104,9 +95,6 @@ impl Default for BaseChainSpec {
             config: ChainConfig::default(),
             genesis: Genesis::default(),
             genesis_header: Default::default(),
-            paris_block_and_final_difficulty: None,
-            deposit_contract: None,
-            blob_params: Default::default(),
         }
     }
 }
@@ -114,18 +102,6 @@ impl Default for BaseChainSpec {
 impl BaseChainSpec {
     pub fn chain(&self) -> Chain {
         Chain::from_id(self.config.chain_id)
-    }
-
-    pub fn is_ethereum(&self) -> bool {
-        self.chain().is_ethereum()
-    }
-
-    pub fn is_optimism_mainnet(&self) -> bool {
-        self.config.chain_id == 10
-    }
-
-    pub fn paris_block(&self) -> Option<u64> {
-        self.paris_block_and_final_difficulty.map(|(block, _)| block)
     }
 
     pub const fn genesis(&self) -> &Genesis {
@@ -159,18 +135,6 @@ impl BaseChainSpec {
 
     pub const fn genesis_timestamp(&self) -> u64 {
         self.genesis.timestamp
-    }
-
-    pub fn get_final_paris_total_difficulty(&self) -> Option<U256> {
-        self.paris_block_and_final_difficulty.map(|(_, final_difficulty)| final_difficulty)
-    }
-
-    pub fn deposit_contract(&self) -> Option<&DepositContract> {
-        self.deposit_contract.as_ref()
-    }
-
-    pub fn final_paris_total_difficulty(&self) -> Option<U256> {
-        self.get_final_paris_total_difficulty()
     }
 
     pub fn chain_id(&self) -> u64 {
@@ -300,57 +264,15 @@ impl BaseChainSpec {
                         hash: genesis_header.hash(),
                     },
                     l2_time: genesis.timestamp,
-                    ..Default::default()
+                    ..ChainConfig::by_chain_id(chain_id)
+                        .map(|config| config.genesis)
+                        .unwrap_or_default()
                 },
                 ..ChainConfig::by_chain_id(chain_id).cloned().unwrap_or_default()
             },
             genesis_header,
             genesis,
-            paris_block_and_final_difficulty: Some((0, U256::ZERO)),
             ..Default::default()
-        })
-    }
-
-    /// Tries to convert the given [`ChainSpec`] into a [`BaseChainSpec`].
-    pub fn try_from_chainspec(
-        value: ChainSpec,
-        activation_admin_address: Option<Address>,
-    ) -> Result<Self, BaseChainSpecError> {
-        Self::validate_beryl_activation_admin(
-            &ChainUpgrades::new(
-                BaseUpgrade::EXECUTION_VARIANTS
-                    .into_iter()
-                    .map(|fork| (fork, value.hardforks.fork(fork))),
-            ),
-            activation_admin_address,
-            value.chain.id(),
-        )?;
-        let config = ChainConfig {
-            chain_id: value.chain.id(),
-            upgrades: ChainUpgrades::new(
-                BaseUpgrade::EXECUTION_VARIANTS
-                    .into_iter()
-                    .map(|fork| (fork, value.hardforks.fork(fork))),
-            ),
-            fee_config: FeeConfig {
-                eip1559_elasticity: value.base_fee_params_at_timestamp(0).elasticity_multiplier
-                    as u64,
-                eip1559_denominator: value.base_fee_params_at_timestamp(0).max_change_denominator
-                    as u64,
-                eip1559_denominator_canyon: value
-                    .base_fee_params_at_timestamp(u64::MAX)
-                    .max_change_denominator as u64,
-            },
-            activation_admin_address,
-            ..Default::default()
-        };
-        Ok(Self {
-            config,
-            genesis: value.genesis,
-            genesis_header: value.genesis_header,
-            paris_block_and_final_difficulty: value.paris_block_and_final_difficulty,
-            deposit_contract: value.deposit_contract,
-            blob_params: value.blob_params,
         })
     }
 
@@ -376,8 +298,7 @@ impl BaseChainSpec {
 
     /// Builds a [`Header`] for the genesis block of a Base chain.
     ///
-    /// Extends [`reth_chainspec::make_genesis_header`] with Isthmus-specific withdrawals root
-    /// logic: if Isthmus is active at the genesis timestamp, the withdrawals root is set to the
+    /// Applies the Base execution rules, including Isthmus withdrawals-root logic: if Isthmus is active at the genesis timestamp, the withdrawals root is set to the
     /// storage root of the `L2ToL1MessagePasser` predeploy.
     pub fn make_genesis_header(genesis: &Genesis, upgrades: &ChainUpgrades) -> Header {
         let timestamp = genesis.timestamp;
@@ -454,7 +375,7 @@ impl BaseChainSpec {
     }
 
     /// Activates or updates the given upgrade condition in-place.
-    pub fn set_fork<H: Into<ExecutionFork>>(&mut self, fork: H, condition: ForkCondition) {
+    pub fn set_fork(&mut self, fork: BaseUpgrade, condition: ForkCondition) {
         self.config.upgrades.insert(fork, condition);
     }
 
@@ -488,10 +409,10 @@ impl BaseChainSpec {
         let schedule = self.schedule();
         let forks = schedule.forks_iter().filter_map(|(_, condition)| match condition {
             ForkCondition::Block(block) | ForkCondition::TTD { fork_block: Some(block), .. } => {
-                Some(reth_ethereum_forks::ForkFilterKey::Block(block))
+                Some(alloy_eip2124::ForkFilterKey::Block(block))
             }
             ForkCondition::Timestamp(timestamp) => {
-                Some(reth_ethereum_forks::ForkFilterKey::Time(timestamp))
+                Some(alloy_eip2124::ForkFilterKey::Time(timestamp))
             }
             _ => None,
         });
@@ -519,6 +440,11 @@ impl BaseChainSpec {
             &self.genesis,
             &self.config.upgrades,
         ));
+        self.config.genesis.l2 = alloy_eips::BlockNumHash {
+            number: self.genesis_header.number,
+            hash: self.genesis_header.hash(),
+        };
+        self.config.genesis.l2_time = self.genesis.timestamp;
     }
 
     /// Clears all timestamp-based Base hardfork activation conditions.
@@ -599,20 +525,11 @@ impl BaseChainSpec {
         hardfork_id: BaseUpgrade,
         condition: ForkCondition,
     ) -> bool {
-        let mut inserted = false;
-
-        if let Some(execution_hardfork) = hardfork_id.execution_hardfork() {
-            hardforks.insert(execution_hardfork, condition);
-            inserted = true;
+        if !hardfork_id.is_execution() {
+            return false;
         }
-        // Only execution-ladder upgrades enter the reth hardfork schedule; contract-only
-        // upgrades (Delta, PectraBlobSchedule) and genesis-only Zenith are ignored here.
-        if hardfork_id.is_execution() {
-            hardforks.insert(hardfork_id, condition);
-            inserted = true;
-        }
-
-        inserted
+        hardforks.insert(hardfork_id, condition);
+        true
     }
 }
 
@@ -648,7 +565,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
 impl BaseChainSpec {
     /// Derives execution metadata once from canonical configuration and a parsed genesis boundary.
     pub fn try_from_config_and_genesis(
-        cfg: ChainConfig,
+        mut cfg: ChainConfig,
         genesis: Genesis,
     ) -> Result<Self, BaseChainSpecError> {
         let upgrades = &cfg.upgrades;
@@ -659,13 +576,10 @@ impl BaseChainSpec {
             hash => SealedHeader::new(Self::make_genesis_header(&genesis, &upgrades), hash),
         };
 
-        Ok(Self {
-            config: cfg,
-            genesis_header,
-            genesis,
-            paris_block_and_final_difficulty: Some((0, U256::ZERO)),
-            ..Default::default()
-        })
+        cfg.genesis.l2 =
+            alloy_eips::BlockNumHash { number: genesis_header.number, hash: genesis_header.hash() };
+        cfg.genesis.l2_time = genesis_header.timestamp;
+        Ok(Self { config: cfg, genesis_header, genesis, ..Default::default() })
     }
 }
 
@@ -682,33 +596,26 @@ impl BaseChainSpec {
     /// Get the [`BlobParams`] for the given timestamp
     pub fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
         let schedule = self.schedule();
-        if let Some(params) = self.blob_params.active_scheduled_params_at_timestamp(timestamp) {
-            Some(*params)
-        } else if schedule.fork(BaseUpgrade::Azul).active_at_timestamp(timestamp) {
-            Some(self.blob_params.osaka)
+        if schedule.fork(BaseUpgrade::Azul).active_at_timestamp(timestamp) {
+            Some(BlobParams::osaka())
         } else if schedule.fork(BaseUpgrade::Isthmus).active_at_timestamp(timestamp) {
-            Some(self.blob_params.prague)
+            Some(BlobParams::prague())
         } else if schedule.fork(BaseUpgrade::Ecotone).active_at_timestamp(timestamp) {
-            Some(self.blob_params.cancun)
+            Some(BlobParams::cancun())
         } else {
             None
         }
     }
 
     /// Returns a string representation of the hardforks.
-    pub fn display_hardforks(&self) -> Box<dyn core::fmt::Display> {
-        Box::new(crate::UpgradeDisplay(self.schedule()))
+    pub fn display_hardforks(&self) -> crate::UpgradeDisplay {
+        crate::UpgradeDisplay(self.schedule())
     }
 
     /// The bootnodes for the chain, if any.
     pub fn bootnodes(&self) -> Option<Vec<NodeRecord>> {
         (!self.config.bootnodes.execution.is_empty())
             .then(|| parse_nodes(self.config.bootnodes.execution))
-    }
-
-    /// Returns `true` if this chain contains Optimism configuration.
-    pub fn is_optimism(&self) -> bool {
-        true
     }
 
     /// Computes the next block base fee using the active Base upgrade rules.
@@ -745,13 +652,6 @@ impl From<Genesis> for BaseChainSpec {
     }
 }
 
-impl From<ChainSpec> for BaseChainSpec {
-    fn from(value: ChainSpec) -> Self {
-        Self::try_from_chainspec(value, None)
-            .expect("Beryl-enabled chain spec requires activation admin")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::{
@@ -763,14 +663,13 @@ mod tests {
 
     use alloy_chains::Chain;
     use alloy_consensus::proofs::storage_root_unhashed;
+    use alloy_eip2124::{ForkHash, ForkId, Head};
     use alloy_genesis::{ChainConfig as AlloyChainConfig, Genesis};
-    use alloy_hardforks::Hardfork;
+    use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
     use alloy_primitives::{Address, B256, U256, address, b256};
     use base_common_chains::{ChainConfig, Upgrades};
     use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
     use base_common_rpc_types::FeeInfo;
-    use reth_chainspec::{ChainSpec, EthereumHardforks};
-    use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
 
     use crate::{BaseChainSpec, BaseChainSpecBuilder, BaseChainSpecError, GenesisInfo};
 
@@ -982,7 +881,7 @@ mod tests {
         let spec = BaseChainSpecBuilder::default()
             .chain(Chain::from_id(chain_id))
             .genesis(Genesis::default())
-            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never)
             .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
             .build();
         let chain_id = spec.chain().id();
@@ -1046,7 +945,7 @@ mod tests {
         let spec = BaseChainSpecBuilder::default()
             .chain(Chain::from_id(chain_id))
             .genesis(Genesis::default())
-            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never)
             .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
             .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
             .build();
@@ -1275,14 +1174,12 @@ mod tests {
     #[test]
     fn beryl_chainspec_can_be_built_with_activation_admin() {
         let admin = address!("0xcb00000000000000000000000000000000000000");
-        let inner = ChainSpec::builder()
+        let chain_spec = BaseChainSpecBuilder::default()
             .chain(987_654.into())
             .genesis(Genesis::default())
             .with_fork(BaseUpgrade::Beryl, ForkCondition::Timestamp(0))
+            .activation_admin_address(admin)
             .build();
-
-        let chain_spec = BaseChainSpec::try_from_chainspec(inner, Some(admin))
-            .expect("Beryl chain spec with activation admin should build");
 
         assert_eq!(chain_spec.config.activation_admin_address, Some(admin));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 0));
@@ -1414,7 +1311,8 @@ mod tests {
 
     #[test]
     fn el_bootnodes_unknown_chain_returns_none() {
-        let unknown = BaseChainSpecBuilder::base_mainnet()
+        let unknown = BaseChainSpecBuilder::default()
+            .genesis(Genesis::default())
             .chain(alloy_chains::Chain::from_id(99_999))
             .build();
         assert!(unknown.bootnodes().is_none());
@@ -1515,7 +1413,7 @@ mod tests {
     fn set_hardfork_activation_timestamp_updates_matching_eth_fork() {
         let mut chain_spec = BaseChainSpec::devnet();
 
-        chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
+        chain_spec.set_fork(base_common_genesis::BaseUpgrade::Azul, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Cobalt, ForkCondition::Never);
         assert!(chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Azul, 42));
@@ -1549,7 +1447,7 @@ mod tests {
 
     #[test]
     fn set_beryl_activation_timestamp_without_activation_admin_is_rejected() {
-        let mut chain_spec = BaseChainSpec::from(ChainSpec::default());
+        let mut chain_spec = BaseChainSpec::default();
 
         let err = chain_spec
             .try_set_hardfork_activation_timestamp(BaseUpgrade::Beryl, 42)
@@ -1670,7 +1568,7 @@ mod tests {
     }
     "#;
         let genesis: Genesis = serde_json::from_str(geth_genesis).unwrap();
-        let chainspec = BaseChainSpec::from(genesis.clone());
+        let chainspec = BaseChainSpec::from_genesis(genesis.clone());
 
         let actual_chain_id = genesis.config.chain_id;
         assert_eq!(actual_chain_id, 8453);
@@ -1763,41 +1661,41 @@ mod tests {
         let chain_spec: BaseChainSpec = genesis.into();
 
         let upgrades: Vec<_> = chain_spec.config.upgrades.forks_iter().map(|(h, _)| h).collect();
-        let expected_upgrades = vec![
-            EthereumHardfork::Frontier.boxed(),
-            EthereumHardfork::Homestead.boxed(),
-            EthereumHardfork::Tangerine.boxed(),
-            EthereumHardfork::SpuriousDragon.boxed(),
-            EthereumHardfork::Byzantium.boxed(),
-            EthereumHardfork::Constantinople.boxed(),
-            EthereumHardfork::Petersburg.boxed(),
-            EthereumHardfork::Istanbul.boxed(),
-            EthereumHardfork::MuirGlacier.boxed(),
-            EthereumHardfork::Berlin.boxed(),
-            EthereumHardfork::London.boxed(),
-            EthereumHardfork::ArrowGlacier.boxed(),
-            EthereumHardfork::GrayGlacier.boxed(),
-            EthereumHardfork::Paris.boxed(),
-            BaseUpgrade::Bedrock.boxed(),
-            BaseUpgrade::Regolith.boxed(),
-            EthereumHardfork::Shanghai.boxed(),
-            BaseUpgrade::Canyon.boxed(),
-            EthereumHardfork::Cancun.boxed(),
-            BaseUpgrade::Ecotone.boxed(),
-            BaseUpgrade::Fjord.boxed(),
-            BaseUpgrade::Granite.boxed(),
-            BaseUpgrade::Holocene.boxed(),
-            EthereumHardfork::Prague.boxed(),
-            BaseUpgrade::Isthmus.boxed(),
-            BaseUpgrade::Jovian.boxed(),
-            EthereumHardfork::Osaka.boxed(),
-            BaseUpgrade::Azul.boxed(),
-            BaseUpgrade::Beryl.boxed(),
-            BaseUpgrade::Cobalt.boxed(),
+        let expected_upgrades: Vec<base_common_chains::ExecutionFork> = vec![
+            EthereumHardfork::Frontier.into(),
+            EthereumHardfork::Homestead.into(),
+            EthereumHardfork::Tangerine.into(),
+            EthereumHardfork::SpuriousDragon.into(),
+            EthereumHardfork::Byzantium.into(),
+            EthereumHardfork::Constantinople.into(),
+            EthereumHardfork::Petersburg.into(),
+            EthereumHardfork::Istanbul.into(),
+            EthereumHardfork::MuirGlacier.into(),
+            EthereumHardfork::Berlin.into(),
+            EthereumHardfork::London.into(),
+            EthereumHardfork::ArrowGlacier.into(),
+            EthereumHardfork::GrayGlacier.into(),
+            EthereumHardfork::Paris.into(),
+            BaseUpgrade::Bedrock.into(),
+            BaseUpgrade::Regolith.into(),
+            EthereumHardfork::Shanghai.into(),
+            BaseUpgrade::Canyon.into(),
+            EthereumHardfork::Cancun.into(),
+            BaseUpgrade::Ecotone.into(),
+            BaseUpgrade::Fjord.into(),
+            BaseUpgrade::Granite.into(),
+            BaseUpgrade::Holocene.into(),
+            EthereumHardfork::Prague.into(),
+            BaseUpgrade::Isthmus.into(),
+            BaseUpgrade::Jovian.into(),
+            EthereumHardfork::Osaka.into(),
+            BaseUpgrade::Azul.into(),
+            BaseUpgrade::Beryl.into(),
+            BaseUpgrade::Cobalt.into(),
         ];
 
         for (expected, actual) in expected_upgrades.iter().zip(upgrades.iter()) {
-            assert_eq!(expected.name(), actual.to_string());
+            assert_eq!(expected, actual);
         }
         assert_eq!(expected_upgrades.len(), upgrades.len());
     }
@@ -1934,5 +1832,28 @@ mod tests {
         for eth_hf in EthereumHardfork::VARIANTS {
             assert!(!content.contains(eth_hf.name()));
         }
+    }
+
+    #[test]
+    fn genesis_boundary_preserves_consensus_anchor() {
+        let configured = ChainConfig::mainnet();
+        let spec =
+            BaseChainSpec::from_genesis(serde_json::from_str(configured.genesis_json).unwrap());
+        assert_eq!(spec.config.genesis, configured.genesis);
+        assert_eq!(spec.genesis_hash(), configured.genesis.l2.hash);
+    }
+
+    #[test]
+    fn configured_upgrade_refreshes_canonical_genesis() {
+        let mut spec =
+            BaseChainSpecBuilder::default().genesis(Genesis::default()).bedrock_activated().build();
+        let before = spec.genesis_hash();
+        spec.set_fork(BaseUpgrade::Canyon, ForkCondition::Timestamp(0));
+        spec.refresh_genesis_header();
+        assert_ne!(spec.genesis_hash(), before);
+        assert_eq!(spec.config.genesis.l2.hash, spec.genesis_hash());
+        assert_eq!(spec.config.genesis.l2.number, spec.genesis_header.number);
+        assert_eq!(spec.config.genesis.l2_time, spec.genesis.timestamp);
+        assert!(spec.genesis_header.withdrawals_root.is_some());
     }
 }

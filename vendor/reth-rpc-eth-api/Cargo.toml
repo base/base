@@ -16,7 +16,6 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-reth-network = { workspace = true }
 tokio = { workspace = true }
 reth-evm = { workspace = true }
 reth-revm = { workspace = true }
@@ -26,10 +25,12 @@ alloy-eips = { workspace = true }
 alloy-serde = { workspace = true }
 reth-errors = { workspace = true }
 async-trait = { workspace = true }
+reth-network = { workspace = true }
+alloy-eip2124 = { workspace = true }
 alloy-network = { workspace = true }
 reth-node-api = { workspace = true }
-reth-chainspec = { workspace = true }
 alloy-json-rpc = { workspace = true }
+alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-prune-types = { workspace = true }

@@ -2355,7 +2355,6 @@ mod tests {
         BaseTypedTransaction as Transaction,
     };
     use futures::FutureExt;
-    use reth_chainspec::MIN_TRANSACTION_GAS;
     use reth_network_api::{NetworkInfo, PeerKind};
     use reth_network_p2p::{
         error::{RequestError, RequestResult},
@@ -2990,7 +2989,7 @@ mod tests {
                     nonce: 26u64,
                     max_priority_fee_per_gas: 1500000000,
                     max_fee_per_gas: 1500000013,
-                    gas_limit: MIN_TRANSACTION_GAS,
+                    gas_limit: 21_000u64,
                     to: TxKind::Call(hex!("61815774383099e24810ab832a5b2a5425c154d5").into()),
                     value: U256::from(3000000000000000000u64),
                     input: Default::default(),

@@ -7,6 +7,7 @@ use std::{
 };
 
 use alloy_consensus::BlockHeader;
+use alloy_eip2124::Head;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockNumber, U256};
 use base_execution_chainspec::BaseChainSpec;
@@ -17,7 +18,6 @@ use reth_engine_primitives::TreeConfig;
 pub use reth_engine_primitives::{
     DEFAULT_MEMORY_BLOCK_BUFFER_TARGET, DEFAULT_PERSISTENCE_THRESHOLD, DEFAULT_RESERVED_CPU_CORES,
 };
-use reth_ethereum_forks::Head;
 use reth_network_p2p::headers::client::HeadersClient;
 use reth_primitives_traits::SealedHeader;
 use reth_stages_types::StageId;

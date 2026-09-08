@@ -1178,7 +1178,7 @@ enum AccountWorkerJob {
 mod tests {
     use std::sync::Arc;
 
-    use reth_chainspec::ChainSpec;
+    use base_execution_chainspec::BaseChainSpec;
     use reth_provider::test_utils::create_test_provider_factory_with_chain_spec;
 
     use super::*;
@@ -1190,7 +1190,7 @@ mod tests {
     /// Ensures `ProofWorkerHandle::new` spawns workers correctly.
     #[test]
     fn spawn_proof_workers_creates_handle() {
-        let chain_spec = Arc::new(ChainSpec::default());
+        let chain_spec = Arc::new(BaseChainSpec::default());
         let anchor_hash = chain_spec.genesis_hash();
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec);
         let factory = reth_storage_overlay::OverlayStateProviderFactory::new(

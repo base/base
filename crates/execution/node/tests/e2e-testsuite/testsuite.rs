@@ -20,10 +20,9 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
     let setup = Setup::default()
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
-                .chain(BaseChainSpec::mainnet().chain)
+                .chain(BaseChainSpec::mainnet().chain())
                 .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
-                .build()
-                .inner,
+                .build(),
         ))
         .with_network(NetworkSetup::single_node());
 
@@ -70,11 +69,10 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
     let setup = Setup::default()
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
-                .chain(BaseChainSpec::mainnet().chain)
+                .chain(BaseChainSpec::mainnet().chain())
                 .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
                 .isthmus_activated()
-                .build()
-                .inner,
+                .build(),
         ))
         .with_network(NetworkSetup::single_node());
 

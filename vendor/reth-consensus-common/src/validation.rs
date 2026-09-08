@@ -2,9 +2,9 @@
 
 use alloy_consensus::{BlockHeader as _, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip7840::BlobParams};
+use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use alloy_primitives::B256;
 use base_execution_chainspec::BaseChainSpec;
-use reth_chainspec::{EthereumHardfork, EthereumHardforks};
 use reth_consensus::ConsensusError;
 use reth_primitives_traits::{
     BlockBody, BlockHeader, GotExpected, SealedBlock, SealedHeader,
@@ -435,8 +435,7 @@ mod tests {
     use alloy_consensus::{BlockBody, Header};
     use alloy_eips::eip4895::Withdrawals;
     use alloy_primitives::{Bytes, Signature, U256};
-    use base_execution_chainspec::BaseChainSpec;
-    use reth_chainspec::ChainSpecBuilder;
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_primitives_traits::proofs;
 
     use super::*;
@@ -450,8 +449,7 @@ mod tests {
 
     #[test]
     fn cancun_block_incorrect_blob_gas_used() {
-        let chain_spec =
-            BaseChainSpec::from(ChainSpecBuilder::mainnet().cancun_activated().build());
+        let chain_spec = BaseChainSpecBuilder::base_mainnet().ecotone_activated().build();
 
         // Base transactions do not carry blob gas.
         let transaction = mock_tx(1);
@@ -502,8 +500,7 @@ mod tests {
 
     #[test]
     fn precomputed_tx_root_correct_passes() {
-        let chain_spec =
-            BaseChainSpec::from(ChainSpecBuilder::mainnet().cancun_activated().build());
+        let chain_spec = BaseChainSpecBuilder::base_mainnet().ecotone_activated().build();
 
         let transaction = mock_tx(1);
         let tx_root = proofs::calculate_transaction_root(std::slice::from_ref(&transaction));
@@ -533,8 +530,7 @@ mod tests {
 
     #[test]
     fn precomputed_tx_root_wrong_fails() {
-        let chain_spec =
-            BaseChainSpec::from(ChainSpecBuilder::mainnet().cancun_activated().build());
+        let chain_spec = BaseChainSpecBuilder::base_mainnet().ecotone_activated().build();
 
         let transaction = mock_tx(1);
         let tx_root = proofs::calculate_transaction_root(std::slice::from_ref(&transaction));

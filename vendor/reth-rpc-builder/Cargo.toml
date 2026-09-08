@@ -55,7 +55,6 @@ tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws", "ipc"] }
 [dev-dependencies]
 alloy-eips = { workspace = true }
-reth-chainspec = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-network-peers = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }

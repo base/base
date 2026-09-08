@@ -23,7 +23,6 @@ reth-tasks = { workspace = true }
 reth-config = { workspace = true }
 futures-util = { workspace = true }
 reth-network = { workspace = true }
-reth-chainspec = { workspace = true }
 reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
 reth-execution-types = { workspace = true }

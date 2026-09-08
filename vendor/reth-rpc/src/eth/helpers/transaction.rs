@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use alloy_consensus::BlobTransactionValidationError;
 use alloy_eips::{BlockId, Typed2718, eip7594::BlobTransactionSidecarVariant};
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, hex};
 use base_execution_chainspec::ChainSpecProvider;
-use reth_chainspec::EthereumHardforks;
 use reth_primitives_traits::{AlloyBlockHeader, WithEncoded};
 use reth_rpc_eth_api::{
     FromEvmError, RpcNodeCore,
@@ -134,7 +134,7 @@ mod tests {
     use alloy_consensus::{Block, Header, Transaction};
     use alloy_primitives::{Address, Bytes, U256, map::AddressMap};
     use alloy_rpc_types_eth::request::TransactionRequest;
-    use reth_chainspec::ChainSpecBuilder;
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_evm::BaseEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_provider::{
@@ -157,7 +157,7 @@ mod tests {
         send_raw_transaction_sync_timeout: Duration,
     ) -> EthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>> {
         let mock_provider = MockEthProvider::default()
-            .with_chain_spec(ChainSpecBuilder::mainnet().cancun_activated().build());
+            .with_chain_spec(BaseChainSpecBuilder::base_mainnet().ecotone_activated().build());
         mock_provider.extend_accounts(accounts);
 
         let evm_config = BaseEvmConfig::new(mock_provider.chain_spec());

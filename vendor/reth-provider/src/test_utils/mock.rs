@@ -19,11 +19,10 @@ use alloy_primitives::{
     keccak256,
     map::{AddressMap, B256Map, HashMap},
 };
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo};
 use base_execution_chainspec::BaseChainSpec;
 use parking_lot::Mutex;
 use reth_chain_state::{CanonStateNotifications, CanonStateSubscriptions};
-use reth_chainspec::ChainInfo;
 use reth_db::transaction::DbTx;
 use reth_db_api::{
     mock::{DatabaseMock, TxMock},
@@ -154,7 +153,9 @@ impl MockEthProvider {
             headers: Default::default(),
             receipts: Default::default(),
             accounts: Default::default(),
-            chain_spec: Arc::new(reth_chainspec::ChainSpecBuilder::mainnet().build().into()),
+            chain_spec: Arc::new(
+                base_execution_chainspec::BaseChainSpecBuilder::base_mainnet().build(),
+            ),
             state_roots: Default::default(),
             block_body_indices: Default::default(),
             stage_checkpoints: Default::default(),

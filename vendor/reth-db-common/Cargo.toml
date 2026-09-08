@@ -36,7 +36,8 @@ tracing = { workspace = true, features = ["attributes"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 reth-tasks = { workspace = true }
-reth-chainspec = { workspace = true }
+alloy-chains = { workspace = true }
+base-common-chains = { workspace = true }
 reth-db = { workspace = true, features = ["mdbx"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 [lints]

@@ -6,10 +6,9 @@ use std::{
 use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag, HashOrNumber};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo};
 use base_execution_chainspec::BaseChainSpec;
 use reth_chain_state::{BlockState, CanonicalInMemoryState};
-use reth_chainspec::ChainInfo;
 use reth_db_api::{
     Database,
     database_metrics::DatabaseMetrics,

@@ -21,11 +21,11 @@ use alloy_eips::{
     BlockId, eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M, eip4844::env_settings::EnvKzgSettings,
     eip7840::BlobParams,
 };
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::U256;
 use alloy_rlp::Encodable;
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
-use reth_chainspec::EthereumHardforks;
 use reth_evm::BaseEvmConfig;
 use reth_primitives_traits::{
     Account, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,

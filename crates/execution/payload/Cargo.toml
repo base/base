@@ -25,6 +25,7 @@ base-metrics = { workspace = true }
 base-bundles = { workspace = true }
 base-protocol = { workspace = true }
 reth-consensus = { workspace = true }
+alloy-hardforks = { workspace = true }
 base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
@@ -41,7 +42,6 @@ base-observability-events = { workspace = true }
 reth-basic-payload-builder = { workspace = true }
 reth-payload-builder-primitives = { workspace = true }
 reth-evm = { workspace = true, features = ["default"] }
-reth-chainspec = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
@@ -56,7 +56,6 @@ reth-payload-validator = { workspace = true, features = ["default"] }
 reth-payload-primitives = { workspace = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 [dev-dependencies]
-reth-ethereum-forks = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["default"] }

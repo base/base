@@ -37,7 +37,6 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 alloy-eips = { workspace = true }
-reth-chainspec = { workspace = true }
 reth-testing-utils = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }

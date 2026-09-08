@@ -10,11 +10,11 @@ use std::{
     time::Duration,
 };
 
+use alloy_eip2124::ForkId;
 use alloy_primitives::map::{FbBuildHasher, HashMap, HashSet, hash_map::Entry};
 use futures::StreamExt;
 use rand::Rng;
 use reth_eth_wire::{DisconnectReason, errors::EthStreamError};
-use reth_ethereum_forks::ForkId;
 use reth_net_banlist::BanList;
 use reth_network_api::test_utils::{PeerCommand, PeersHandle};
 use reth_network_peers::{NodeRecord, PeerId, TrustedPeer};
@@ -1511,12 +1511,12 @@ mod tests {
         time::Duration,
     };
 
+    use alloy_eip2124::{ForkHash, ForkId};
     use alloy_primitives::B512;
     use reth_eth_wire::{
         DisconnectReason,
         errors::{EthHandshakeError, EthStreamError, P2PHandshakeError, P2PStreamError},
     };
-    use reth_ethereum_forks::{ForkHash, ForkId};
     use reth_net_banlist::BanList;
     use reth_network_api::Direction;
     use reth_network_peers::{NodeRecord, PeerId, TrustedPeer};

@@ -466,7 +466,6 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{Address, B256};
-    use reth_chainspec::MAINNET;
     use reth_db::cursor::{DbCursorRO, DbCursorRW};
     use reth_db_api::{
         models::{StorageSettings, storage_sharded_key::StorageShardedKey},
@@ -692,7 +691,8 @@ mod tests {
     fn test_check_consistency_storages_history_preserves_genesis_entries_at_checkpoint_zero()
     -> eyre::Result<()> {
         // Modify mainnet chainspec to include a single genesis storage slot
-        let mut chain_spec = MAINNET.clone();
+        let mut chain_spec =
+            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
         Arc::make_mut(&mut chain_spec).genesis.alloc.first_entry().unwrap().get_mut().storage =
             Some(From::from([(B256::random(), B256::random())]));
 

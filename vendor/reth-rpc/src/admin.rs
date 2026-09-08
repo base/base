@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use alloy_genesis::ChainConfig;
+use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::keccak256;
 use alloy_rpc_types_admin::{
     EthInfo, EthPeerInfo, EthProtocolInfo, NodeInfo, PeerInfo, PeerNetworkInfo, PeerProtocolInfo,
@@ -9,7 +10,6 @@ use alloy_rpc_types_admin::{
 use async_trait::async_trait;
 use base_execution_chainspec::BaseChainSpec;
 use jsonrpsee::core::RpcResult;
-use reth_chainspec::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use reth_network_api::{NetworkInfo, Peers};
 use reth_network_peers::{AnyNode, NodeRecord};
 use reth_network_types::PeerKind;
@@ -125,15 +125,9 @@ where
         let status = self.network.network_status().await.to_rpc_result()?;
         let mut config = ChainConfig {
             chain_id: self.chain_spec.chain().id(),
-            terminal_total_difficulty_passed: self
-                .chain_spec
-                .final_paris_total_difficulty()
-                .is_some(),
-            terminal_total_difficulty: self
-                .chain_spec
-                .ethereum_fork_activation(EthereumHardfork::Paris)
-                .ttd(),
-            deposit_contract_address: self.chain_spec.deposit_contract().map(|dc| dc.address),
+            terminal_total_difficulty_passed: true,
+            terminal_total_difficulty: Some(alloy_primitives::U256::ZERO),
+            deposit_contract_address: None,
             ..self.chain_spec.genesis().config.clone()
         };
 

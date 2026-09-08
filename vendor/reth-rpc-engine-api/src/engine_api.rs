@@ -9,6 +9,7 @@ use alloy_eips::{
     eip4895::Withdrawals,
     eip7685::RequestsOrHash,
 };
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B128, B256, BlockHash, BlockNumber, Bytes, U64};
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadBodiesV2,
@@ -24,7 +25,6 @@ use base_common_rpc_types_engine::{
 };
 use base_execution_chainspec::BaseChainSpec;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
-use reth_chainspec::EthereumHardforks;
 use reth_engine_primitives::{ConsensusEngineHandle, EngineApiValidator};
 use reth_network_api::{CellCustody, NetworkInfo};
 use reth_payload_builder::PayloadStore;
@@ -1579,8 +1579,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use base_common_consensus::BaseBlock as Block;
-    use base_execution_chainspec::BaseChainSpec;
-    use reth_chainspec::{ChainSpecBuilder, MAINNET};
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_engine_primitives::{
         BeaconEngineMessage, OnForkChoiceUpdated, test_utils::TestEngineValidator,
     };
@@ -1606,7 +1605,8 @@ mod tests {
             commit: "defa64b2".to_string(),
         };
 
-        let chain_spec: Arc<BaseChainSpec> = Arc::new(MAINNET.as_ref().clone().into());
+        let chain_spec: Arc<BaseChainSpec> =
+            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, engine_rx) = unbounded_channel();
@@ -1673,7 +1673,8 @@ mod tests {
             version: "v0.2.0-beta.5".to_string(),
             commit: "defa64b2".to_string(),
         };
-        let chain_spec: Arc<BaseChainSpec> = Arc::new(MAINNET.as_ref().clone().into());
+        let chain_spec: Arc<BaseChainSpec> =
+            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel();
         let api = EngineApi::<_, _, _>::new(
@@ -1728,7 +1729,8 @@ mod tests {
             version: "v0.2.0-beta.5".to_string(),
             commit: "defa64b2".to_string(),
         };
-        let chain_spec: Arc<BaseChainSpec> = Arc::new(MAINNET.as_ref().clone().into());
+        let chain_spec: Arc<BaseChainSpec> =
+            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet());
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel();
         let api = EngineApi::<_, _, _>::new(
@@ -1811,9 +1813,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_amsterdam_payload_without_slot_number() {
+    async fn rejects_block_access_list_before_forwarding() {
         let chain_spec: Arc<BaseChainSpec> =
-            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build().into());
+            Arc::new(BaseChainSpecBuilder::base_mainnet().denim_activated().build());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, mut engine_rx) = unbounded_channel();
@@ -1862,7 +1864,7 @@ mod tests {
         };
 
         assert_matches!(api.new_payload_v5(execution_data).await, Err(EngineApiError::EngineObjectValidationError(
-            reth_payload_primitives::EngineObjectValidationError::Payload(reth_payload_primitives::VersionSpecificValidationError::NoSlotNumberPostAmsterdam)
+            reth_payload_primitives::EngineObjectValidationError::Payload(reth_payload_primitives::VersionSpecificValidationError::HasBlockAccessListPreAmsterdam)
         )));
         assert!(matches!(engine_rx.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Empty)));
     }
@@ -1914,7 +1916,7 @@ mod tests {
     #[tokio::test]
     async fn get_blobs_v3_returns_null_when_syncing() {
         let chain_spec: Arc<BaseChainSpec> =
-            Arc::new(ChainSpecBuilder::mainnet().osaka_activated().build().into());
+            Arc::new(BaseChainSpecBuilder::base_mainnet().azul_activated().build());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage>();
@@ -1943,9 +1945,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_blobs_v4_returns_null_when_syncing() {
+    async fn get_blobs_v4_rejects_unsupported_fork_even_when_syncing() {
         let chain_spec: Arc<BaseChainSpec> =
-            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build().into());
+            Arc::new(BaseChainSpecBuilder::base_mainnet().denim_activated().build());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, _engine_rx) = unbounded_channel::<BeaconEngineMessage>();
@@ -1970,13 +1972,18 @@ mod tests {
         );
 
         let res = api.get_blobs_v4_metered(vec![B256::ZERO], B128::from(1u128));
-        assert_matches!(res, Ok(None));
+        assert_matches!(
+            res,
+            Err(EngineApiError::EngineObjectValidationError(
+                reth_payload_primitives::EngineObjectValidationError::UnsupportedFork
+            ))
+        );
     }
 
     #[tokio::test]
     async fn fcu_v4_updates_shared_cell_custody_before_forkchoice_result() {
         let chain_spec: Arc<BaseChainSpec> =
-            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build().into());
+            Arc::new(BaseChainSpecBuilder::base_mainnet().denim_activated().build());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, mut engine_rx) = unbounded_channel();
@@ -2042,7 +2049,7 @@ mod tests {
     #[tokio::test]
     async fn fcu_v4_updates_shared_cell_custody_when_payload_attrs_invalid() {
         let chain_spec: Arc<BaseChainSpec> =
-            Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build().into());
+            Arc::new(BaseChainSpecBuilder::base_mainnet().denim_activated().build());
         let provider = Arc::new(MockEthProvider::default());
         let payload_store = spawn_test_payload_service();
         let (to_engine, mut engine_rx) = unbounded_channel();

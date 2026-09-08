@@ -3,6 +3,7 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use alloy_consensus::{Block, BlockBody, Header, SignableTransaction, TxEip1559};
+use alloy_hardforks::ForkCondition;
 use alloy_primitives::{Address, Signature, StorageKey, StorageValue, U256, address, b256, bytes};
 use base_common_chains::BaseUpgrade;
 use base_common_consensus::{
@@ -12,7 +13,6 @@ use base_common_evm::BaseTime;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::BaseEvmConfig;
 use base_protocol::BaseTimeUpdateTx;
-use reth_chainspec::{ForkCondition, MIN_TRANSACTION_GAS};
 use reth_evm::execute::{BasicBlockExecutor, Executor};
 use reth_primitives_traits::{Account, RecoveredBlock};
 use reth_revm::{database::StateProviderDatabase, test_utils::StateProviderTest};
@@ -103,7 +103,7 @@ fn execute_same_block_base_time_read(getter_selector: [u8; 4]) -> U256 {
     let base_time_tx = BaseTimeUpdateTx::new(CURRENT_MILLIS_PART).unwrap().into_deposit_tx(1);
     let base_time_tx: BaseTransactionSigned = base_time_tx.into();
     let user_tx: BaseTransactionSigned = TxEip1559 {
-        chain_id: chain_spec.chain.id(),
+        chain_id: chain_spec.chain().id(),
         nonce: 0,
         gas_limit: 100_000,
         to: BASE_TIME_READER.into(),
@@ -177,22 +177,18 @@ fn base_deposit_fields_pre_canyon() {
     let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().regolith_activated().build());
 
     let tx: BaseTransactionSigned = TxEip1559 {
-        chain_id: chain_spec.chain.id(),
+        chain_id: chain_spec.chain().id(),
         nonce: 0,
-        gas_limit: MIN_TRANSACTION_GAS,
+        gas_limit: 21_000u64,
         to: addr.into(),
         ..Default::default()
     }
     .into_signed(Signature::test_signature())
     .into();
 
-    let tx_deposit: BaseTransactionSigned = TxDeposit {
-        from: addr,
-        to: addr.into(),
-        gas_limit: MIN_TRANSACTION_GAS,
-        ..Default::default()
-    }
-    .into();
+    let tx_deposit: BaseTransactionSigned =
+        TxDeposit { from: addr, to: addr.into(), gas_limit: 21_000u64, ..Default::default() }
+            .into();
 
     let provider = evm_config(chain_spec);
     let mut executor = BasicBlockExecutor::new(provider, StateProviderDatabase::new(&db));
@@ -241,22 +237,18 @@ fn base_deposit_fields_post_canyon() {
     let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().canyon_activated().build());
 
     let tx: BaseTransactionSigned = TxEip1559 {
-        chain_id: chain_spec.chain.id(),
+        chain_id: chain_spec.chain().id(),
         nonce: 0,
-        gas_limit: MIN_TRANSACTION_GAS,
+        gas_limit: 21_000u64,
         to: addr.into(),
         ..Default::default()
     }
     .into_signed(Signature::test_signature())
     .into();
 
-    let tx_deposit: BaseTransactionSigned = TxDeposit {
-        from: addr,
-        to: addr.into(),
-        gas_limit: MIN_TRANSACTION_GAS,
-        ..Default::default()
-    }
-    .into();
+    let tx_deposit: BaseTransactionSigned =
+        TxDeposit { from: addr, to: addr.into(), gas_limit: 21_000u64, ..Default::default() }
+            .into();
 
     let provider = evm_config(chain_spec);
     let mut executor = BasicBlockExecutor::new(provider, StateProviderDatabase::new(&db));

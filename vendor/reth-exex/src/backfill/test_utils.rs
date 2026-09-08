@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader, Header, TxEip2930, constants::ETH_TO_WEI};
 use alloy_genesis::{Genesis, GenesisAccount};
+use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, TxKind, U256, b256};
 use base_common_consensus::{BaseBlock, BaseBlockBody, BaseReceipt, BaseTypedTransaction};
-use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN_TRANSACTION_GAS};
+use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_evm::{
     BaseEvmConfig,
@@ -28,28 +29,30 @@ pub(crate) fn to_execution_outcome(
     }
 }
 
-pub(crate) fn chain_spec(address: Address) -> Arc<ChainSpec> {
+pub(crate) fn chain_spec(address: Address) -> Arc<BaseChainSpec> {
     // Create a chain spec with a genesis state that contains the
     // provided sender
     Arc::new(
-        ChainSpecBuilder::default()
-            .chain(MAINNET.chain)
+        BaseChainSpecBuilder::default()
+            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [(
                     address,
                     GenesisAccount { balance: U256::from(ETH_TO_WEI), ..Default::default() },
                 )]
                 .into(),
-                ..MAINNET.genesis.clone()
+                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    .genesis
+                    .clone()
             })
-            .paris_activated()
+            .bedrock_activated()
             .build(),
     )
 }
 
 pub(crate) fn execute_block_and_commit_to_database<DB>(
     provider_factory: &ProviderFactory<DB>,
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     block: &RecoveredBlock,
 ) -> eyre::Result<BlockExecutionOutput<BaseReceipt>>
 where
@@ -58,10 +61,9 @@ where
     let provider = provider_factory.provider()?;
 
     // Execute the block to produce a block execution output
-    let mut block_execution_output =
-        BaseEvmConfig::new(std::sync::Arc::new((chain_spec).as_ref().clone().into()))
-            .batch_executor(StateProviderDatabase::new(LatestStateProvider::new(provider)))
-            .execute(block)?;
+    let mut block_execution_output = BaseEvmConfig::new(chain_spec)
+        .batch_executor(StateProviderDatabase::new(LatestStateProvider::new(provider)))
+        .execute(block)?;
     block_execution_output.state.reverts.sort();
 
     // Convert the block execution output to an execution outcome for committing to the database
@@ -77,7 +79,7 @@ where
 }
 
 fn blocks(
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     key_pair: Keypair,
 ) -> eyre::Result<(RecoveredBlock, RecoveredBlock)> {
     // First block has a transaction that transfers some ETH to zero address
@@ -89,17 +91,17 @@ fn blocks(
             ),
             difficulty: chain_spec.fork(EthereumHardfork::Paris).ttd().expect("Paris TTD"),
             number: 1,
-            gas_limit: MIN_TRANSACTION_GAS,
-            gas_used: MIN_TRANSACTION_GAS,
+            gas_limit: 21_000u64,
+            gas_used: 21_000u64,
             ..Default::default()
         },
         body: BaseBlockBody {
             transactions: vec![reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 BaseTypedTransaction::Eip2930(TxEip2930 {
-                    chain_id: chain_spec.chain.id(),
+                    chain_id: chain_spec.chain().id(),
                     nonce: 0,
-                    gas_limit: MIN_TRANSACTION_GAS,
+                    gas_limit: 21_000u64,
                     gas_price: 1_500_000_000,
                     to: TxKind::Call(Address::ZERO),
                     value: U256::from(0.1 * ETH_TO_WEI as f64),
@@ -120,17 +122,17 @@ fn blocks(
             ),
             difficulty: chain_spec.fork(EthereumHardfork::Paris).ttd().expect("Paris TTD"),
             number: 2,
-            gas_limit: MIN_TRANSACTION_GAS,
-            gas_used: MIN_TRANSACTION_GAS,
+            gas_limit: 21_000u64,
+            gas_used: 21_000u64,
             ..Default::default()
         },
         body: BaseBlockBody {
             transactions: vec![reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 BaseTypedTransaction::Eip2930(TxEip2930 {
-                    chain_id: chain_spec.chain.id(),
+                    chain_id: chain_spec.chain().id(),
                     nonce: 1,
-                    gas_limit: MIN_TRANSACTION_GAS,
+                    gas_limit: 21_000u64,
                     gas_price: 1_500_000_000,
                     to: TxKind::Call(Address::ZERO),
                     value: U256::from(0.1 * ETH_TO_WEI as f64),
@@ -147,7 +149,7 @@ fn blocks(
 
 pub(crate) fn blocks_and_execution_outputs<DB>(
     provider_factory: ProviderFactory<DB>,
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     key_pair: Keypair,
 ) -> eyre::Result<Vec<(RecoveredBlock, BlockExecutionOutput<BaseReceipt>)>>
 where
@@ -165,7 +167,7 @@ where
 
 pub(crate) fn blocks_and_execution_outcome<DB>(
     provider_factory: ProviderFactory<DB>,
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     key_pair: Keypair,
 ) -> eyre::Result<(Vec<RecoveredBlock>, ExecutionOutcome<BaseReceipt>)>
 where
@@ -175,7 +177,7 @@ where
 
     let provider = provider_factory.provider()?;
 
-    let evm_config = BaseEvmConfig::new(std::sync::Arc::new((chain_spec).as_ref().clone().into()));
+    let evm_config = BaseEvmConfig::new(chain_spec);
     let executor =
         evm_config.batch_executor(StateProviderDatabase::new(LatestStateProvider::new(provider)));
 

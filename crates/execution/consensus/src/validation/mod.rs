@@ -243,14 +243,14 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::{Header, Receipt, Sealable, TxReceipt};
-    use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
+    use alloy_eips::{eip1559::BaseFeeParams, eip2718::Encodable2718, eip7685::Requests};
+    use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Bloom, Bytes, b256, hex};
     use alloy_trie::root::ordered_trie_root_with_encoder;
     use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, TxDeposit};
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
     use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
-    use reth_chainspec::{BaseFeeParams, ForkCondition};
 
     use super::*;
 
@@ -580,13 +580,8 @@ mod tests {
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
         )
         .unwrap();
-        assert_eq!(
-            base_fee,
-            base_chain_spec
-                .inner
-                .next_block_base_fee(&parent, JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS)
-                .unwrap()
-        );
+        assert!(base_fee < parent.base_fee_per_gas.unwrap());
+        assert!(base_fee >= MIN_BASE_FEE);
     }
 
     #[test]

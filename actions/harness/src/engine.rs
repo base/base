@@ -52,7 +52,7 @@ use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory, StateProvider,
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
-    test_utils::create_test_provider_factory_with_base_chain_spec,
+    test_utils::create_test_provider_factory_with_chain_spec,
 };
 use reth_revm::{cached::CachedReads, cancelled::CancelOnDrop};
 use reth_transaction_pool::noop::NoopTransactionPool;
@@ -271,7 +271,7 @@ impl ActionEngineClient {
         let chain_spec =
             Arc::new(BaseChainSpec::from_genesis(Self::build_genesis_for_rollup(&rollup_config)));
         let provider_factory =
-            create_test_provider_factory_with_base_chain_spec(Arc::clone(&chain_spec));
+            create_test_provider_factory_with_chain_spec(Arc::clone(&chain_spec));
         init_genesis(&provider_factory).expect("failed to initialize genesis in action engine");
         let blockchain_provider = BlockchainProvider::new(provider_factory.clone())
             .expect("failed to create blockchain provider");

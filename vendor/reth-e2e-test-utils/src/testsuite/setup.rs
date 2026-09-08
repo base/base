@@ -8,7 +8,6 @@ use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use eyre::{Result, eyre};
-use reth_chainspec::ChainSpec;
 use reth_node_api::TreeConfig;
 use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 use reth_node_core::primitives::RecoveredBlock;
@@ -26,7 +25,7 @@ use crate::{E2ETestSetupBuilder, testsuite::Environment};
 #[derive(Debug)]
 pub struct Setup {
     /// Chain specification to use
-    pub chain_spec: Option<Arc<ChainSpec>>,
+    pub chain_spec: Option<Arc<BaseChainSpec>>,
     /// Genesis block to use
     pub genesis: Option<Genesis>,
     /// Blocks to replay during setup
@@ -83,7 +82,7 @@ impl Setup {
     }
 
     /// Set the chain specification
-    pub fn with_chain_spec(mut self, chain_spec: Arc<ChainSpec>) -> Self {
+    pub fn with_chain_spec(mut self, chain_spec: Arc<BaseChainSpec>) -> Self {
         self.chain_spec = Some(chain_spec);
         self
     }
@@ -170,16 +169,12 @@ impl Setup {
                 .map_or_else(|| attributes.clone().into(), |convert| convert(attributes.clone()))
         };
 
-        let builder = E2ETestSetupBuilder::new(
-            node_count,
-            Arc::<BaseChainSpec>::new((*chain_spec).clone().into()),
-            attributes_generator,
-        )
-        .with_tree_config_modifier(move |base| {
-            tree_config.clone().with_cross_block_cache_size(base.cross_block_cache_size())
-        })
-        .with_node_config_modifier(move |config| config.set_dev(is_dev))
-        .with_connect_nodes(self.network.connect_nodes);
+        let builder = E2ETestSetupBuilder::new(node_count, chain_spec, attributes_generator)
+            .with_tree_config_modifier(move |base| {
+                tree_config.clone().with_cross_block_cache_size(base.cross_block_cache_size())
+            })
+            .with_node_config_modifier(move |config| config.set_dev(is_dev))
+            .with_connect_nodes(self.network.connect_nodes);
 
         let result = builder.build(node_factory).await;
 

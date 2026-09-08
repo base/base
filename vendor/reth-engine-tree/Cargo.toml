@@ -37,7 +37,6 @@ reth-execution-cache = { workspace = true }
 reth-payload-builder = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 reth-stages = { workspace = true, optional = true }
-reth-chainspec = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
 reth-evm = { workspace = true, features = ["metrics"] }
 derive_more = { workspace = true, features = ["full"] }
@@ -53,6 +52,7 @@ parking_lot = { workspace = true, features = ["default"] }
 reth-metrics = { workspace = true, features = ["common"] }
 moka = { workspace = true, features = ["default", "sync"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
+base-execution-chainspec = { workspace = true, optional = true }
 crossbeam-channel = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-engine-primitives = { workspace = true, features = ["std"] }
@@ -68,7 +68,6 @@ reth-primitives-traits = { workspace = true, features = ["rayon", "dashmap"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros"] }
 reth-revm = { workspace = true, features = ["optional-balance-check", "optional-no-base-fee"] }
 [dev-dependencies]
-reth-chainspec = { workspace = true }
 reth-db-common = { workspace = true }
 assert_matches = { workspace = true }
 base-common-evm = { workspace = true }
@@ -95,8 +94,8 @@ reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 
 [features]
 test-utils = [
+    "dep:base-execution-chainspec",
     "reth-chain-state/test-utils",
-    "reth-chainspec/test-utils",
     "reth-consensus/test-utils",
     "reth-db/test-utils",
     "reth-evm/test-utils",

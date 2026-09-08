@@ -48,7 +48,7 @@ mod tests {
     };
     use alloy_rlp::Decodable;
     use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
-    use reth_chainspec::ChainSpecBuilder;
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_consensus_common::test_utils::TestConsensus;
     use reth_db::mdbx::{RW, cursor::Cursor};
     use reth_db_api::{
@@ -154,13 +154,13 @@ mod tests {
             // configuration
             let mut execution_stage = ExecutionStage::new(
                 BaseEvmConfig::new(std::sync::Arc::new(
-                    (Arc::new(ChainSpecBuilder::mainnet().berlin_activated().build()))
+                    (Arc::new(BaseChainSpecBuilder::base_mainnet().bedrock_activated().build()))
                         .as_ref()
                         .clone()
                         .into(),
                 )),
                 Arc::new(TestConsensus::new(Arc::new(
-                    ChainSpecBuilder::mainnet().berlin_activated().build().into(),
+                    BaseChainSpecBuilder::base_mainnet().bedrock_activated().build(),
                 ))),
                 ExecutionStageThresholds {
                     max_blocks: Some(100),

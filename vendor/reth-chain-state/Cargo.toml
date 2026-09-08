@@ -23,12 +23,13 @@ alloy-eips = { workspace = true }
 reth-errors = { workspace = true }
 pin-project = { workspace = true }
 reth-metrics = { workspace = true }
-reth-chainspec = { workspace = true }
+alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
+base-execution-chainspec = { workspace = true }
 alloy-signer = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -65,7 +66,6 @@ test-utils = [
     "alloy-signer",
     "alloy-signer-local",
     "rand",
-    "reth-chainspec/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-trie/test-utils",
     "reth-trie-sparse/test-utils",

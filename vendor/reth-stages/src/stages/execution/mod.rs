@@ -8,11 +8,11 @@ use std::{
 };
 
 use alloy_consensus::BlockHeader;
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::BlockNumber;
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::ChainSpecProvider;
 use num_traits::Zero;
-use reth_chainspec::EthereumHardforks;
 use reth_config::config::ExecutionConfig;
 use reth_consensus::FullConsensus;
 use reth_db::{static_file::HeaderMask, tables};
@@ -731,10 +731,11 @@ pub fn calculate_gas_used_from_headers(
 mod tests {
     use std::collections::BTreeMap;
 
+    use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B256, U256, address, hex_literal::hex, keccak256};
     use alloy_rlp::Decodable;
     use assert_matches::assert_matches;
-    use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_consensus_common::test_utils::TestConsensus;
     use reth_db_api::{
         models::metadata::StorageSettings,
@@ -756,14 +757,11 @@ mod tests {
     use crate::stages::MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD;
 
     fn stage() -> ExecutionStage {
-        let evm_config = BaseEvmConfig::new(std::sync::Arc::new(
-            (Arc::new(ChainSpecBuilder::mainnet().berlin_activated().build()))
-                .as_ref()
-                .clone()
-                .into(),
+        let evm_config = BaseEvmConfig::new(Arc::new(
+            BaseChainSpecBuilder::base_mainnet().bedrock_activated().build(),
         ));
         let consensus = Arc::new(TestConsensus::new(Arc::new(
-            ChainSpecBuilder::mainnet().berlin_activated().build().into(),
+            BaseChainSpecBuilder::base_mainnet().bedrock_activated().build(),
         )));
         ExecutionStage::new(
             evm_config,
@@ -1067,7 +1065,9 @@ mod tests {
                     Account { balance: U256::ZERO, nonce: 0x00, bytecode_hash: Some(code_hash) };
                 let account2 = address!("0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba");
                 let account2_info = Account {
-                    balance: U256::from(0x1bc16d674ece94bau128),
+                    // Base pays transaction tips, without a proof-of-work block reward.
+                    balance: U256::from(0x1bc16d674ece94bau128)
+                        - U256::from(2_000_000_000_000_000_000u64),
                     nonce: 0x00,
                     bytecode_hash: None,
                 };
@@ -1233,9 +1233,9 @@ mod tests {
     #[test]
     fn unwind_from_cancun_to_pre_cancun_is_rejected() {
         let chain_spec = Arc::new(
-            ChainSpecBuilder::mainnet()
-                .berlin_activated()
-                .with_fork(EthereumHardfork::Cancun, ForkCondition::Timestamp(15))
+            BaseChainSpecBuilder::base_mainnet()
+                .bedrock_activated()
+                .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(15))
                 .build(),
         );
         let factory = create_test_provider_factory_with_chain_spec(chain_spec);

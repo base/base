@@ -2,6 +2,7 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 
+use alloy_eip2124::{EnrForkIdEntry, ForkId};
 use alloy_primitives::{
     B256,
     bytes::{Buf, BufMut, Bytes, BytesMut},
@@ -12,7 +13,6 @@ use alloy_rlp::{
     RlpEncodableWrapper,
 };
 use enr::Enr;
-use reth_ethereum_forks::{EnrForkIdEntry, ForkId};
 use reth_network_peers::{NodeRecord, PeerId, pk2id};
 use secp256k1::{
     SECP256K1, SecretKey,
@@ -589,11 +589,11 @@ impl Decodable for Pong {
 
 #[cfg(test)]
 mod tests {
+    use alloy_eip2124::ForkHash;
     use alloy_primitives::hex;
     use assert_matches::assert_matches;
     use enr::EnrPublicKey;
     use rand_08::{Rng, RngCore, thread_rng as rng};
-    use reth_ethereum_forks::ForkHash;
 
     use super::*;
     use crate::{

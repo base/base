@@ -31,13 +31,13 @@
 
 use std::{num::NonZeroUsize, sync::Arc, thread::available_parallelism, time::Duration};
 
+use alloy_chains::Chain;
 use alloy_eips::eip2124::Head;
 use alloy_primitives::{B256, BlockNumber};
 use base_execution_chainspec::BaseChainSpec;
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
-use reth_chainspec::Chain;
 use reth_config::{PruneConfig, config::EtlConfig};
 use reth_consensus::noop::NoopConsensus;
 use reth_db_api::{
@@ -70,10 +70,10 @@ use reth_node_metrics::{
     version::VersionInfo,
 };
 use reth_provider::{
-    BalConfig, BalStoreHandle, BlockHashReader, BlockNumReader, DBProvider,
-    DatabaseProviderFactory, InMemoryBalStore, MetadataProvider, MetadataWriter, ProviderError,
-    ProviderFactory, ProviderResult, RocksDBProviderFactory, StageCheckpointReader,
-    StaticFileProviderBuilder, StaticFileProviderFactory, StorageSettingsCache,
+    BalConfig, BalStoreHandle, BlockHashReader, DBProvider, DatabaseProviderFactory,
+    InMemoryBalStore, MetadataProvider, MetadataWriter, ProviderError, ProviderFactory,
+    ProviderResult, RocksDBProviderFactory, StageCheckpointReader, StaticFileProviderBuilder,
+    StaticFileProviderFactory, StorageSettingsCache,
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
 use reth_prune::{PruneMode, PruneModes, PrunerBuilder};
@@ -244,9 +244,9 @@ impl LaunchContext {
 /// are only available when their prerequisites are met.
 ///
 /// For example:
-/// - Config methods when `T = WithConfigs<ChainSpec>`
-/// - Database operations when `T = Attached<WithConfigs<ChainSpec>, DB>`
-/// - Provider operations when `T = Attached<WithConfigs<ChainSpec>, ProviderFactory<N>>`
+/// - Config methods when `T = WithConfigs<BaseChainSpec>`
+/// - Database operations when `T = Attached<WithConfigs<BaseChainSpec>, DB>`
+/// - Provider operations when `T = Attached<WithConfigs<BaseChainSpec>, ProviderFactory<N>>`
 #[derive(Debug, Clone)]
 pub struct LaunchContextWith<T> {
     /// The wrapped launch context.
@@ -982,28 +982,6 @@ where
         self.node_config().debug.terminate || self.node_config().debug.max_block.is_some()
     }
 
-    /// Ensures that the database matches chain-specific requirements.
-    ///
-    /// This checks for OP-Mainnet and ensures we have all the necessary data to progress (past
-    /// bedrock height)
-    fn ensure_chain_specific_db_checks(&self) -> ProviderResult<()> {
-        if self.chain_spec().is_optimism()
-            && !self.is_dev()
-            && self.chain_id() == Chain::optimism_mainnet()
-        {
-            let latest = self.blockchain_db().last_block_number()?;
-            // bedrock height
-            if latest < 105235063 {
-                error!(
-                    "Op-mainnet has been launched without importing the pre-Bedrock state. The chain can't progress without this. See also https://reth.rs/run/sync-op-mainnet.html?minimal-bootstrap-recommended"
-                );
-                return Err(ProviderError::BestBlockNotFound);
-            }
-        }
-
-        Ok(())
-    }
-
     /// Check if the pipeline is consistent (all stages have the checkpoint block numbers no less
     /// than the checkpoint of the first stage).
     ///
@@ -1062,8 +1040,6 @@ where
                 return self.blockchain_db().block_hash(first_stage_checkpoint);
             }
         }
-
-        self.ensure_chain_specific_db_checks()?;
 
         Ok(None)
     }

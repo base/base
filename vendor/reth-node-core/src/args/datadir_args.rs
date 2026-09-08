@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
+use alloy_chains::Chain;
 use clap::Args;
-use reth_chainspec::Chain;
 
 use crate::dirs::{ChainPath, DataDirPath, MaybePlatformPath};
 

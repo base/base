@@ -140,16 +140,16 @@ impl<C: ChainSpecParser> ImportCommand<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{EthereumChainSpecParser, SUPPORTED_CHAINS};
+    use crate::test_utils::{BaseTestChainSpecParser, SUPPORTED_CHAINS};
 
     #[test]
     fn parse_common_import_command_chain_args() {
-        for chain in SUPPORTED_CHAINS {
-            let args: ImportCommand<EthereumChainSpecParser> =
+        for (chain, expected_id) in SUPPORTED_CHAINS.iter().zip([8453, 84532, 84538453, 763360]) {
+            let args: ImportCommand<BaseTestChainSpecParser> =
                 ImportCommand::parse_from(["reth", "--chain", chain, "."]);
             assert_eq!(
-                Ok(args.env.chain.chain),
-                chain.parse::<reth_chainspec::Chain>(),
+                Ok(args.env.chain.chain()),
+                Ok::<_, ()>(alloy_chains::Chain::from_id(expected_id)),
                 "failed to parse chain {chain}"
             );
         }
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn parse_import_command_with_multiple_paths() {
-        let args: ImportCommand<EthereumChainSpecParser> =
+        let args: ImportCommand<BaseTestChainSpecParser> =
             ImportCommand::parse_from(["reth", "file1.rlp", "file2.rlp", "file3.rlp"]);
         assert_eq!(args.paths.len(), 3);
         assert_eq!(args.paths[0], PathBuf::from("file1.rlp"));
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn parse_import_command_with_fail_on_invalid_block() {
-        let args: ImportCommand<EthereumChainSpecParser> =
+        let args: ImportCommand<BaseTestChainSpecParser> =
             ImportCommand::parse_from(["reth", "--fail-on-invalid-block", "chain.rlp"]);
         assert!(args.fail_on_invalid_block);
         assert_eq!(args.paths.len(), 1);
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn parse_import_command_default_stops_on_invalid_block() {
-        let args: ImportCommand<EthereumChainSpecParser> =
+        let args: ImportCommand<BaseTestChainSpecParser> =
             ImportCommand::parse_from(["reth", "chain.rlp"]);
         assert!(!args.fail_on_invalid_block);
     }

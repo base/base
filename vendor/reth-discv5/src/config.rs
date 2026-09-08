@@ -6,13 +6,13 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
 };
 
+use alloy_eip2124::{EnrForkIdEntry, ForkId};
 use alloy_primitives::Bytes;
 use derive_more::Display;
 use discv5_reth::{
     ListenConfig,
     multiaddr::{Multiaddr, Protocol},
 };
-use reth_ethereum_forks::{EnrForkIdEntry, ForkId};
 use reth_network_peers::NodeRecord;
 use tracing::debug;
 

@@ -1,7 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use alloy_rpc_types_engine::{ClientCode, ClientVersionV1};
-use reth_chainspec::MAINNET;
 use reth_consensus::noop::NoopConsensus;
 use reth_engine_primitives::{ConsensusEngineHandle, test_utils::TestEngineValidator};
 use reth_evm::BaseEvmConfig;
@@ -51,14 +50,16 @@ where
 
     let engine_api = EngineApi::<_, _, _>::new(
         NoopProvider::default(),
-        std::sync::Arc::new(MAINNET.as_ref().clone().into()),
+        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
         beacon_engine_handle,
         spawn_test_payload_service().into(),
         NoopTransactionPool::default(),
         Runtime::test(),
         client,
         EngineCapabilities::default(),
-        TestEngineValidator::new(std::sync::Arc::new(MAINNET.as_ref().clone().into())),
+        TestEngineValidator::new(std::sync::Arc::new(
+            base_execution_chainspec::BaseChainSpec::mainnet(),
+        )),
         false,
         NoopNetwork::default(),
     );

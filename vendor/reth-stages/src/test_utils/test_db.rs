@@ -1,8 +1,7 @@
-use std::{collections::BTreeMap, fmt::Debug, path::Path, sync::Arc};
+use std::{collections::BTreeMap, fmt::Debug, path::Path};
 
 use alloy_primitives::{Address, B256, BlockNumber, TxHash, TxNumber, keccak256};
 use base_common_consensus::{BaseReceipt as Receipt, BaseTxEnvelope};
-use reth_chainspec::MAINNET;
 use reth_db::{
     DatabaseEnv,
     test_utils::{
@@ -52,7 +51,7 @@ impl Default for TestStageDB {
             temp_rocksdb_dir: rocksdb_dir,
             factory: ProviderFactory::new(
                 create_test_rw_db(),
-                Arc::new(MAINNET.as_ref().clone().into()),
+                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
                 StaticFileProvider::read_write(static_dir_path).unwrap(),
                 RocksDBProvider::builder(rocksdb_dir_path).with_default_tables().build().unwrap(),
                 reth_tasks::Runtime::test(),
@@ -72,7 +71,7 @@ impl TestStageDB {
             temp_rocksdb_dir: rocksdb_dir,
             factory: ProviderFactory::new(
                 create_test_rw_db_with_path(path),
-                Arc::new(MAINNET.as_ref().clone().into()),
+                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
                 StaticFileProvider::read_write(static_dir_path).unwrap(),
                 RocksDBProvider::builder(rocksdb_dir_path).with_default_tables().build().unwrap(),
                 reth_tasks::Runtime::test(),

@@ -42,16 +42,16 @@ impl<C: ChainSpecParser> DumpGenesisCommand<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{EthereumChainSpecParser, SUPPORTED_CHAINS};
+    use crate::test_utils::{BaseTestChainSpecParser, SUPPORTED_CHAINS};
 
     #[test]
     fn parse_dump_genesis_command_chain_args() {
-        for chain in SUPPORTED_CHAINS {
-            let args: DumpGenesisCommand<EthereumChainSpecParser> =
+        for (chain, expected_id) in SUPPORTED_CHAINS.iter().zip([8453, 84532, 84538453, 763360]) {
+            let args: DumpGenesisCommand<BaseTestChainSpecParser> =
                 DumpGenesisCommand::parse_from(["reth", "--chain", chain]);
             assert_eq!(
-                Ok(args.chain.chain),
-                chain.parse::<reth_chainspec::Chain>(),
+                Ok(args.chain.chain()),
+                Ok::<_, ()>(alloy_chains::Chain::from_id(expected_id)),
                 "failed to parse chain {chain}"
             );
         }

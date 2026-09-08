@@ -17,9 +17,9 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use alloy_eip2124::ForkFilter;
 use bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream, StreamExt, TryStream, TryStreamExt};
-use reth_ethereum_forks::ForkFilter;
 use tokio::sync::{mpsc, mpsc::UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 

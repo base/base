@@ -46,7 +46,6 @@ alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 async-compression = { workspace = true, features = ["gzip", "tokio"], optional = true }
 [dev-dependencies]
 itertools = { workspace = true }
-reth-chainspec = { workspace = true }
 assert_matches = { workspace = true }
 reth-testing-utils = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
@@ -67,7 +66,6 @@ test-utils = [
     "reth-consensus/test-utils",
     "reth-network-p2p/test-utils",
     "reth-testing-utils",
-    "reth-chainspec/test-utils",
     "reth-provider/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-tasks/test-utils",

@@ -196,13 +196,13 @@
 //! Listen for new transactions and print them:
 //!
 //! ```
-//! use reth_chainspec::MAINNET;
+//!
 //! use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 //! use reth_tasks::Runtime;
 //! use base_execution_chainspec::ChainSpecProvider;
 //! use reth_transaction_pool::{TransactionValidationTaskExecutor, Pool, TransactionPool};
 //! use reth_transaction_pool::blobstore::InMemoryBlobStore;
-//! use reth_chainspec::EthereumHardforks;
+//! use alloy_hardforks::{EthereumHardforks};
 //! use reth_evm::BaseEvmConfig;
 //! use alloy_consensus::Header;
 //! async fn t<C>(client: C, evm_config: BaseEvmConfig)
@@ -412,14 +412,14 @@ where
     /// # Example
     ///
     /// ```
-    /// use reth_chainspec::MAINNET;
+    ///
     /// use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
     /// use reth_tasks::Runtime;
     /// use base_execution_chainspec::ChainSpecProvider;
     /// use reth_transaction_pool::{
     ///     blobstore::InMemoryBlobStore, Pool, TransactionValidationTaskExecutor,
     /// };
-    /// use reth_chainspec::EthereumHardforks;
+    /// use alloy_hardforks::{EthereumHardforks};
     /// use reth_evm::BaseEvmConfig;
     /// use alloy_consensus::Header;
     /// # fn t<C>(client: C, evm_config: BaseEvmConfig, runtime: Runtime)

@@ -18,8 +18,8 @@ workspace = true
 [dependencies]
 enr = { workspace = true }
 thiserror = { workspace = true }
+alloy-eip2124 = { workspace = true }
 linked_hash_set = { workspace = true }
-reth-ethereum-forks = { workspace = true }
 serde = { workspace = true, optional = true }
 dashmap = { workspace = true, features = ["inline"] }
 schnellru = { workspace = true, features = ["default"] }
@@ -35,7 +35,8 @@ serde_with = { workspace = true, features = ["macros"], optional = true }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "serde"] }
 [dev-dependencies]
 alloy-chains = { workspace = true }
-reth-chainspec = { workspace = true }
+alloy-hardforks = { workspace = true }
+base-execution-chainspec = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 reth-tracing = { workspace = true, features = ["default"] }
@@ -52,6 +53,5 @@ serde = [
     "rand/serde",
     "secp256k1/serde",
     "hickory-resolver/serde",
-    "reth-ethereum-forks/serde",
     "dashmap/serde",
 ]

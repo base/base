@@ -22,7 +22,7 @@ thiserror = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 reth-errors = { workspace = true }
-reth-chainspec = { workspace = true }
+alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-execution-types = { workspace = true }
@@ -35,12 +35,13 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 [dev-dependencies]
 assert_matches = { workspace = true }
+base-common-genesis = { workspace = true }
+base-execution-chainspec = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 [features]
 default = ["std"]
 std = [
     "base-common-rpc-types-engine/std",
-    "reth-chainspec/std",
     "reth-execution-types/std",
     "reth-trie-common/std",
     "alloy-eips/std",

@@ -21,10 +21,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use alloy_eip2124::{EnrForkIdEntry, ForkId};
 pub use config::DnsDiscoveryConfig;
 use enr::Enr;
 pub use error::ParseDnsEntryError;
-use reth_ethereum_forks::{EnrForkIdEntry, ForkId};
 use reth_network_peers::NodeRecord;
 use schnellru::{ByLength, LruMap};
 use secp256k1::SecretKey;
@@ -408,12 +408,12 @@ mod tests {
     };
 
     use alloy_chains::Chain;
+    use alloy_eip2124::ForkHash;
+    use alloy_hardforks::EthereumHardfork;
     use alloy_primitives::keccak256;
     use alloy_rlp::{Decodable, Encodable};
     use data_encoding::BASE32_NOPAD;
     use enr::EnrKey;
-    use reth_chainspec::MAINNET;
-    use reth_ethereum_forks::{EthereumHardfork, ForkHash};
     use secp256k1::rand::thread_rng;
 
     use super::*;
@@ -431,7 +431,13 @@ mod tests {
             .ip("127.0.0.1".parse().unwrap())
             .udp4(9000)
             .tcp4(30303)
-            .add_value(b"eth", &EnrForkIdEntry::from(MAINNET.latest_fork_id()))
+            .add_value(
+                b"eth",
+                &EnrForkIdEntry::from(
+                    std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                        .latest_fork_id(),
+                ),
+            )
             .build(&secret_key)
             .unwrap();
 
@@ -441,7 +447,13 @@ mod tests {
         assert_eq!(node_record_update.node_record.address, "127.0.0.1".parse::<IpAddr>().unwrap());
         assert_eq!(node_record_update.node_record.tcp_port, 30303);
         assert_eq!(node_record_update.node_record.udp_port, 9000);
-        assert_eq!(node_record_update.fork_id, Some(MAINNET.latest_fork_id()));
+        assert_eq!(
+            node_record_update.fork_id,
+            Some(
+                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    .latest_fork_id()
+            )
+        );
         assert_eq!(node_record_update.enr, enr);
     }
 
@@ -454,7 +466,13 @@ mod tests {
             .ip("127.0.0.1".parse().unwrap())
             .udp4(9000)
             .tcp4(30303)
-            .add_value(b"eth", &EnrForkIdEntry::from(MAINNET.latest_fork_id()))
+            .add_value(
+                b"eth",
+                &EnrForkIdEntry::from(
+                    std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                        .latest_fork_id(),
+                ),
+            )
             .add_value(b"opstack", &ForkId { hash: ForkHash(rand::random()), next: rand::random() })
             .build(&secret_key)
             .unwrap();
@@ -470,7 +488,13 @@ mod tests {
         assert_eq!(node_record_update.node_record.address, "127.0.0.1".parse::<IpAddr>().unwrap());
         assert_eq!(node_record_update.node_record.tcp_port, 30303);
         assert_eq!(node_record_update.node_record.udp_port, 9000);
-        assert_eq!(node_record_update.fork_id, Some(MAINNET.latest_fork_id()));
+        assert_eq!(
+            node_record_update.fork_id,
+            Some(
+                std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    .latest_fork_id()
+            )
+        );
         assert_eq!(node_record_update.enr, enr);
     }
 
@@ -515,7 +539,9 @@ mod tests {
             LinkEntry { domain: "nodes.example.org".to_string(), pubkey: secret_key.public() };
 
         let mut builder = Enr::builder();
-        let fork_id = MAINNET.hardfork_fork_id(EthereumHardfork::Frontier).unwrap();
+        let fork_id = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+            .hardfork_fork_id(EthereumHardfork::Frontier)
+            .unwrap();
         builder
             .ip4(Ipv4Addr::LOCALHOST)
             .udp4(30303)

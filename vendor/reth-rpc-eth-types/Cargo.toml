@@ -34,7 +34,6 @@ reth-metrics = { workspace = true }
 base-protocol = { workspace = true }
 alloy-network = { workspace = true }
 alloy-json-rpc = { workspace = true }
-reth-chainspec = { workspace = true }
 base-common-flz = { workspace = true }
 base-common-evm = { workspace = true }
 alloy-consensus = { workspace = true }

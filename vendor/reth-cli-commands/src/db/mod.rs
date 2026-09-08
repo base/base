@@ -266,18 +266,21 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::test_utils::{EthereumChainSpecParser, SUPPORTED_CHAINS};
+    use crate::test_utils::{BaseTestChainSpecParser, SUPPORTED_CHAINS};
 
     #[test]
     fn parse_stats_globals() {
         let path = format!("../{}", SUPPORTED_CHAINS[0]);
-        let cmd = Command::<EthereumChainSpecParser>::try_parse_from([
+        let cmd = Command::<BaseTestChainSpecParser>::try_parse_from([
             "reth",
             "--datadir",
             &path,
             "stats",
         ])
         .unwrap();
-        assert_eq!(cmd.env.datadir.resolve_datadir(cmd.env.chain.chain).as_ref(), Path::new(&path));
+        assert_eq!(
+            cmd.env.datadir.resolve_datadir(cmd.env.chain.chain()).as_ref(),
+            Path::new(&path)
+        );
     }
 }

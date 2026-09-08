@@ -235,11 +235,12 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::{Header, TxEip2930, constants::ETH_TO_WEI};
+    use alloy_hardforks::EthereumHardfork;
     use alloy_primitives::{Address, TxKind, U256, b256};
     use base_common_consensus::{BaseBlock, BaseBlockBody, BaseTypedTransaction};
+    use base_execution_chainspec::BaseChainSpec;
     use eyre::Result;
     use futures::StreamExt;
-    use reth_chainspec::{ChainSpec, EthereumHardfork, MIN_TRANSACTION_GAS};
     use reth_db_api::{Database, database_metrics::DatabaseMetrics};
     use reth_db_common::init::init_genesis;
     use reth_primitives_traits::{Block as _, crypto::secp256k1::public_key_to_address};
@@ -270,8 +271,7 @@ mod tests {
 
         let chain_spec = chain_spec(address);
 
-        let executor =
-            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
+        let executor = BaseEvmConfig::new(chain_spec.clone());
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
         init_genesis(&provider_factory)?;
         let blockchain_db = BlockchainProvider::new(provider_factory.clone())?;
@@ -308,8 +308,7 @@ mod tests {
 
         let chain_spec = chain_spec(address);
 
-        let executor =
-            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
+        let executor = BaseEvmConfig::new(chain_spec.clone());
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
         init_genesis(&provider_factory)?;
         let blockchain_db = BlockchainProvider::new(provider_factory.clone())?;
@@ -336,7 +335,7 @@ mod tests {
     }
 
     fn create_blocks(
-        chain_spec: &Arc<ChainSpec>,
+        chain_spec: &Arc<BaseChainSpec>,
         key_pair: Keypair,
         n: u64,
     ) -> Result<Vec<RecoveredBlock>> {
@@ -353,17 +352,17 @@ mod tests {
                     ),
                     difficulty: chain_spec.fork(EthereumHardfork::Paris).ttd().expect("Paris TTD"),
                     number: i,
-                    gas_limit: MIN_TRANSACTION_GAS,
-                    gas_used: MIN_TRANSACTION_GAS,
+                    gas_limit: 21_000u64,
+                    gas_used: 21_000u64,
                     ..Default::default()
                 },
                 body: BaseBlockBody {
                     transactions: vec![reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                         key_pair,
                         BaseTypedTransaction::Eip2930(TxEip2930 {
-                            chain_id: chain_spec.chain.id(),
+                            chain_id: chain_spec.chain().id(),
                             nonce,
-                            gas_limit: MIN_TRANSACTION_GAS,
+                            gas_limit: 21_000u64,
                             gas_price: 1_500_000_000,
                             to: TxKind::Call(Address::ZERO),
                             value: U256::from(0.1 * ETH_TO_WEI as f64),
@@ -384,7 +383,7 @@ mod tests {
 
     fn execute_and_commit_blocks<DB>(
         provider_factory: &ProviderFactory<DB>,
-        chain_spec: &Arc<ChainSpec>,
+        chain_spec: &Arc<BaseChainSpec>,
         blocks: &[RecoveredBlock],
     ) -> Result<()>
     where
@@ -406,8 +405,7 @@ mod tests {
 
         let chain_spec = chain_spec(address);
 
-        let executor =
-            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
+        let executor = BaseEvmConfig::new(chain_spec.clone());
         let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
         init_genesis(&provider_factory)?;
         let blockchain_db = BlockchainProvider::new(provider_factory.clone())?;

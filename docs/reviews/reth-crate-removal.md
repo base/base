@@ -56,7 +56,7 @@ These are opportunities to eliminate standalone packages, **not to delete their 
 | --- | --- |
 | `reth-cli`, `reth-cli-commands`, `reth-cli-runner`, `reth-cli-util` | Move the Base parser, selected maintenance commands, runtime setup, and CLI utilities into Base CLI libraries. Specialize `ChainSpecParser` and generic command parameters. Keep database init, stage maintenance, prune, and re-execute: `bin/base/src/commands/reth.rs` dispatches them today. |
 | `reth-node-api`, `reth-node-types` | Consolidate node type bundles and adapters in a lower-level Base execution API crate; remove arbitrary-network type builders after concrete Base types are wired through. Do not move them into an upper-level node crate that already consumes provider/engine crates. |
-| `reth-chainspec`, `reth-ethereum-forks` | Remove Ethereum mainnet/Sepolia/Holesky/Hoodi presets and adopt a Base-oriented chain-spec implementation. Retain fork IDs/filtering, activation rules, fee parameters, and required traits. `BaseChainSpec` currently wraps `reth_chainspec::ChainSpec`, so these crates cannot simply be dropped. |
+| `reth-chainspec`, `reth-ethereum-forks` | Deleted after consolidating configuration in `ChainConfig` and execution metadata in `BaseChainSpec`. Base upgrades use a typed schedule; fork IDs, Ethereum rule traits, and fee parameters come directly from Alloy. |
 | `reth-ethereum-primitives` | Replace wrapper aliases with direct Alloy types where appropriate and replace `EthPrimitives` defaults with Base primitives in execution code. Preserve ordinary Ethereum transaction compatibility and L1 use. This small crate is largely aliases, but many storage/network/default/test types still reference it. |
 | `reth-payload-builder-primitives`, `reth-payload-util` | Fold payload events and transaction iteration helpers into a compatible payload library. Base's payload builder and debug RPC use the iteration helpers. |
 | `reth-rpc-traits` | Fold conversion traits into an appropriate lower-level RPC conversion/types crate if its `no_std` consumers remain supported. |
@@ -82,7 +82,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | --- | --- |
 | [reth-basic-payload-builder](../../vendor/reth-basic-payload-builder/Cargo.toml) | Retain shared infrastructure |
 | [reth-chain-state](../../vendor/reth-chain-state/Cargo.toml) | Retain shared infrastructure |
-| [reth-chainspec](../../vendor/reth-chainspec/Cargo.toml) | Consolidate; retain required code |
+| `reth-chainspec` | Deleted after Base configuration consolidation |
 | [reth-cli](../../vendor/reth-cli/Cargo.toml) | Consolidate; retain required code |
 | [reth-cli-commands](../../vendor/reth-cli-commands/Cargo.toml) | Consolidate; retain required code |
 | [reth-cli-runner](../../vendor/reth-cli-runner/Cargo.toml) | Consolidate; retain required code |
@@ -115,7 +115,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-eth-wire-types](../../vendor/reth-eth-wire-types/Cargo.toml) | Retain shared infrastructure |
 | `reth-ethereum-consensus` | Deleted after fixture migration |
 | `reth-ethereum-engine-primitives` | Deleted; test payload fixtures retained behind test-utils |
-| [reth-ethereum-forks](../../vendor/reth-ethereum-forks/Cargo.toml) | Consolidate; retain required code |
+| `reth-ethereum-forks` | Deleted after Base configuration consolidation |
 | `reth-ethereum-payload-builder` | Deleted after fixture migration |
 | [reth-ethereum-primitives](../../vendor/reth-ethereum-primitives/Cargo.toml) | Consolidate; retain required code |
 | [reth-etl](../../vendor/reth-etl/Cargo.toml) | Retain shared infrastructure |

@@ -235,8 +235,8 @@ mod tests {
     use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M;
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use futures::poll;
-    use reth_chainspec::{ChainSpecBuilder, MAINNET};
     use reth_network_p2p::test_utils::TestFullBlockClient;
     use reth_primitives_traits::SealedHeader;
     use reth_provider::test_utils::MockNodeDatabase;
@@ -255,10 +255,17 @@ mod tests {
     impl TestHarness {
         fn new(total_blocks: usize, pipeline_done_after: u64) -> Self {
             let chain_spec = Arc::new(
-                ChainSpecBuilder::default()
-                    .chain(MAINNET.chain)
-                    .genesis(MAINNET.genesis.clone())
-                    .paris_activated()
+                BaseChainSpecBuilder::default()
+                    .chain(
+                        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                            .chain(),
+                    )
+                    .genesis(
+                        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                            .genesis
+                            .clone(),
+                    )
+                    .bedrock_activated()
                     .build(),
             );
 

@@ -319,6 +319,7 @@ pub fn validate_withdrawals_presence(
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{BlockBody, EMPTY_ROOT_HASH, Header, Sealable};
+    use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B64, B256, U256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::{BaseUpgrade, ChainConfig};
@@ -326,7 +327,6 @@ mod tests {
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
-    use reth_ethereum_forks::ForkCondition;
     use reth_payload_primitives::BasePayloadBuilderAttributes;
     use reth_primitives_traits::WithEncoded;
     use reth_provider::{

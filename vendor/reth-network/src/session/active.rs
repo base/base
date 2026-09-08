@@ -1308,7 +1308,6 @@ mod tests {
     use alloy_eips::eip2124::ForkFilter;
     use alloy_primitives::B256;
     use futures::task::noop_waker;
-    use reth_chainspec::MAINNET;
     use reth_ecies::stream::ECIESStream;
     use reth_eth_wire::{
         EthStream, GetBlockAccessLists, GetBlockBodies, HelloMessageWithProtocols, P2PStream,
@@ -1323,7 +1322,6 @@ mod tests {
             GetBlockAccessListsMessage,
         },
     };
-    use reth_ethereum_forks::EthereumHardfork;
     use reth_network_p2p::error::RequestResult;
     use reth_network_peers::pk2id;
     use reth_network_types::session::config::PROTOCOL_BREACH_REQUEST_TIMEOUT;
@@ -1497,9 +1495,9 @@ mod tests {
                 secret_key,
                 local_peer_id,
                 status: StatusBuilder::default().build(),
-                fork_filter: MAINNET
-                    .hardfork_fork_filter(EthereumHardfork::Frontier)
-                    .expect("The Frontier fork filter should exist on mainnet"),
+                fork_filter:
+                    std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                        .fork_filter(Default::default()),
             }
         }
     }

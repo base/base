@@ -27,10 +27,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use alloy_eip2124::EnrForkIdEntry;
 use base_common_consensus::BaseBlock;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
-use reth_chainspec::EnrForkIdEntry;
 use reth_eth_wire::DisconnectReason;
 use reth_fs_util::{self as fs, FsPathError};
 use reth_metrics::common::mpsc::MemoryBoundedSender;
@@ -158,11 +158,11 @@ impl NetworkManager {
     ///
     /// ```no_run
     /// # async fn f() {
-    /// use reth_chainspec::MAINNET;
+    ///
     /// use reth_network::{NetworkConfig, NetworkManager};
     /// use reth_tasks::Runtime;
     /// let config = NetworkConfig::builder_with_rng_secret_key(Runtime::test())
-    ///     .build_with_noop_provider(MAINNET.clone());
+    ///     .build_with_noop_provider(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()));
     /// let manager = NetworkManager::eth(config).await;
     /// # }
     /// ```

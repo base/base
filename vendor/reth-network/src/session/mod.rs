@@ -16,6 +16,7 @@ use std::{
 };
 
 use active::QueuedOutgoingMessages;
+use alloy_eip2124::{ForkFilter, ForkId, ForkTransition, Head};
 use alloy_primitives::map::{FbBuildHasher, HashMap};
 pub use conn::EthRlpxConnection;
 use counter::SessionCounter;
@@ -31,7 +32,6 @@ use reth_eth_wire::{
     HANDSHAKE_TIMEOUT, HelloMessageWithProtocols, UnauthedP2PStream, UnifiedStatus,
     errors::EthStreamError, handshake::EthRlpxHandshake, multiplex::RlpxProtocolMultiplexer,
 };
-use reth_ethereum_forks::{ForkFilter, ForkId, ForkTransition, Head};
 use reth_metrics::common::mpsc::MeteredPollSender;
 pub use reth_network_api::{Direction, PeerInfo};
 use reth_network_api::{PeerRequest, PeerRequestSender};

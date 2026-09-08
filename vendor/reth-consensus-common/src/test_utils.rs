@@ -5,10 +5,10 @@
 use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader as _, TxReceipt, proofs::calculate_receipt_root};
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bloom};
 use base_common_consensus::BaseReceipt;
 use base_execution_chainspec::BaseChainSpec;
-use reth_chainspec::EthereumHardforks;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{

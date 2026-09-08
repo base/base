@@ -1306,9 +1306,9 @@ fn write_trie_debug_recorders(block_number: u64, recorders: &[(Option<B256>, Tri
 mod tests {
     use alloy_consensus::constants::KECCAK_EMPTY;
     use alloy_primitives::{Address, U256, map::HashMap};
+    use base_execution_chainspec::BaseChainSpec;
     use rand::Rng;
     use reth_chain_state::test_utils::TestBlockBuilder;
-    use reth_chainspec::ChainSpec;
     use reth_db_common::init::init_genesis;
     use reth_evm::OnStateHook;
     use reth_primitives_traits::{Account, StorageEntry};
@@ -1424,7 +1424,8 @@ mod tests {
     fn state_root_task_matches_serial_root() {
         reth_tracing::init_test_tracing();
 
-        let factory = create_test_provider_factory_with_chain_spec(Arc::new(ChainSpec::default()));
+        let factory =
+            create_test_provider_factory_with_chain_spec(Arc::new(BaseChainSpec::default()));
         let genesis_hash = init_genesis(&factory).unwrap();
         let state_updates = create_mock_state_updates(10, 10);
         let mut accumulated_state: HashMap<Address, (Account, HashMap<B256, U256>)> =

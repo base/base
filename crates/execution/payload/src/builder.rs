@@ -1263,6 +1263,7 @@ mod tests {
 
     use alloy_consensus::{Header, SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
+    use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxKind, U256};
     use alloy_rpc_types_engine::PayloadId;
     use base_common_chains::BaseUpgrade;
@@ -1273,8 +1274,6 @@ mod tests {
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
-    use reth_chainspec::ChainSpec;
-    use reth_ethereum_forks::ForkCondition;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction};
     use reth_provider::noop::NoopProvider;
@@ -1324,7 +1323,7 @@ mod tests {
     }
 
     fn build_empty_payload(state_root_handle: PayloadStateRootHandle) -> B256 {
-        let chain_spec = Arc::new(BaseChainSpec::from(ChainSpec::default()));
+        let chain_spec = Arc::new(BaseChainSpec::default());
         let parent = Arc::new(SealedHeader::seal_slow(Header {
             gas_limit: 30_000_000,
             ..Default::default()

@@ -8,9 +8,9 @@ use std::{
 use alloy_consensus::EMPTY_ROOT_HASH;
 use alloy_primitives::{Address, B256, Bytes, U256, address, b256, keccak256};
 use alloy_rlp::EMPTY_STRING_CODE;
-use reth_chainspec::{Chain, ChainSpec};
+use base_execution_chainspec::BaseChainSpec;
 use reth_primitives_traits::Account;
-use reth_provider::test_utils::{create_test_provider_factory, insert_genesis};
+use reth_provider::test_utils::{create_test_provider_factory_with_chain_spec, insert_genesis};
 use reth_trie::{AccountProof, Nibbles, StorageProof, proof::Proof};
 use reth_trie_db::{DatabaseHashedCursorFactory, DatabaseProof, DatabaseTrieCursorFactory};
 
@@ -28,9 +28,9 @@ type DbProof<'a, TX, A> =
 
     All expected testspec results were obtained from querying proof RPC on the running geth instance `geth init crates/trie/testdata/proof-genesis.json && geth --http`.
 */
-static TEST_SPEC: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
-    ChainSpec {
-        chain: Chain::from_id(12345),
+static TEST_SPEC: LazyLock<Arc<BaseChainSpec>> = LazyLock::new(|| {
+    BaseChainSpec {
+        config: base_common_chains::ChainConfig { chain_id: 12345, ..Default::default() },
         genesis: serde_json::from_str(include_str!("../../reth-trie/testdata/proof-genesis.json"))
             .expect("Can't deserialize test genesis json"),
         ..Default::default()
@@ -45,7 +45,7 @@ fn convert_to_proof<'a>(path: impl IntoIterator<Item = &'a str>) -> Vec<Bytes> {
 #[test]
 fn testspec_proofs() {
     // Create test database and insert genesis accounts.
-    let factory = create_test_provider_factory();
+    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&TEST_SPEC));
     let root = insert_genesis(&factory).unwrap();
 
     let data = Vec::from([
@@ -106,7 +106,7 @@ fn testspec_proofs() {
 #[test]
 fn testspec_empty_storage_proof() {
     // Create test database and insert genesis accounts.
-    let factory = create_test_provider_factory();
+    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&TEST_SPEC));
     let root = insert_genesis(&factory).unwrap();
 
     let target = address!("0x1ed9b1dd266b607ee278726d324b855a093394a6");
@@ -141,7 +141,7 @@ fn empty_state_trie_account_proof() {
     // still emits the empty-root node, so the raw proof is the lone `0x80` sentinel. The
     // empty-array (geth) normalization happens only at the EIP-1186 response layer
     // (`AccountProof::into_eip1186_response`), keeping this internal proof unchanged.
-    let factory = create_test_provider_factory();
+    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&TEST_SPEC));
 
     let target = address!("0x1ed9b1dd266b607ee278726d324b855a093394a6");
 
@@ -164,7 +164,7 @@ fn empty_state_trie_account_proof() {
 #[test]
 fn mainnet_genesis_account_proof() {
     // Create test database and insert genesis accounts.
-    let factory = create_test_provider_factory();
+    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&TEST_SPEC));
     let root = insert_genesis(&factory).unwrap();
 
     // Address from mainnet genesis allocation.
@@ -192,7 +192,7 @@ fn mainnet_genesis_account_proof() {
 #[test]
 fn mainnet_genesis_account_proof_nonexistent() {
     // Create test database and insert genesis accounts.
-    let factory = create_test_provider_factory();
+    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&TEST_SPEC));
     let root = insert_genesis(&factory).unwrap();
 
     // Address that does not exist in mainnet genesis allocation.
@@ -218,7 +218,7 @@ fn mainnet_genesis_account_proof_nonexistent() {
 #[test]
 fn holesky_deposit_contract_proof() {
     // Create test database and insert genesis accounts.
-    let factory = create_test_provider_factory();
+    let factory = create_test_provider_factory_with_chain_spec(Arc::clone(&TEST_SPEC));
     let root = insert_genesis(&factory).unwrap();
 
     let target = address!("0x4242424242424242424242424242424242424242");

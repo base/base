@@ -99,6 +99,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use archive::run_modular_downloads;
 use clap::{Parser, builder::RangedU64ValueParser};
 use config_gen::{config_for_selections, write_config};
@@ -108,7 +109,6 @@ use manifest::{ComponentSelection, SnapshotComponentType, SnapshotManifest};
 pub use planning::{DownloadPlan, DownloadPlanArchive};
 use planning::{PlannedDownloads, collect_planned_archives, summarize_download_startup};
 use progress::{DownloadProgress, DownloadRequestLimiter};
-use reth_chainspec::{EthereumHardfork, EthereumHardforks, MAINNET};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_util::cancellation::CancellationToken;
 use reth_db::{Database, init_db};
@@ -837,7 +837,9 @@ impl<C: ChainSpecParser> DownloadCommand<C> {
             Some(url) => Ok(url.clone()),
             None => {
                 let defaults = DownloadDefaults::get_global();
-                if defaults.mainnet_only_discovery() && chain_id != MAINNET.chain.id() {
+                if defaults.mainnet_only_discovery()
+                    && chain_id != alloy_chains::Chain::mainnet().id()
+                {
                     eyre::bail!(
                         "Snapshots are only auto-discovered for Ethereum mainnet.\n\n\
                          Chain {chain_id} requires an explicit source:\n\
@@ -1045,14 +1047,12 @@ const RETRY_BACKOFF_SECS: u64 = 5;
 
 #[cfg(test)]
 mod tests {
-    use base_execution_chainspec::BaseChainSpec;
     use clap::{Args, Parser};
     use extract::CompressionFormat;
     use manifest::{ComponentManifest, SingleArchive};
-    use reth_chainspec::{HOLESKY, MAINNET};
 
     use super::*;
-    use crate::test_utils::EthereumChainSpecParser;
+    use crate::test_utils::BaseTestChainSpecParser;
 
     #[derive(Parser)]
     struct CommandParser<T: Args> {
@@ -1204,14 +1204,14 @@ mod tests {
     #[test]
     fn test_download_resumable_defaults_to_true() {
         let args =
-            CommandParser::<DownloadCommand<EthereumChainSpecParser>>::parse_from(["reth"]).args;
+            CommandParser::<DownloadCommand<BaseTestChainSpecParser>>::parse_from(["reth"]).args;
 
         assert!(args.resumable);
     }
 
     #[test]
     fn test_download_resumable_implicit_true() {
-        let args = CommandParser::<DownloadCommand<EthereumChainSpecParser>>::parse_from([
+        let args = CommandParser::<DownloadCommand<BaseTestChainSpecParser>>::parse_from([
             "reth",
             "--resumable",
         ])
@@ -1222,7 +1222,7 @@ mod tests {
 
     #[test]
     fn test_download_resumable_explicit_false() {
-        let args = CommandParser::<DownloadCommand<EthereumChainSpecParser>>::parse_from([
+        let args = CommandParser::<DownloadCommand<BaseTestChainSpecParser>>::parse_from([
             "reth",
             "--resumable=false",
         ])
@@ -1233,7 +1233,7 @@ mod tests {
 
     #[test]
     fn test_download_print_plan_json_parses() {
-        let args = CommandParser::<DownloadCommand<EthereumChainSpecParser>>::parse_from([
+        let args = CommandParser::<DownloadCommand<BaseTestChainSpecParser>>::parse_from([
             "reth",
             "--manifest-path",
             "manifest.json",
@@ -1247,7 +1247,7 @@ mod tests {
 
     #[test]
     fn test_download_print_plan_json_rejects_single_archive() {
-        let result = CommandParser::<DownloadCommand<EthereumChainSpecParser>>::try_parse_from([
+        let result = CommandParser::<DownloadCommand<BaseTestChainSpecParser>>::try_parse_from([
             "reth",
             "--url",
             "https://example.com/snapshot.tar.zst",
@@ -1259,14 +1259,18 @@ mod tests {
 
     #[test]
     fn resolve_manifest_source_requires_explicit_source_for_non_mainnet_defaults() {
-        let args = CommandParser::<DownloadCommand<EthereumChainSpecParser>>::parse_from([
-            "reth", "--chain", "holesky",
+        let args = CommandParser::<DownloadCommand<BaseTestChainSpecParser>>::parse_from([
+            "reth",
+            "--chain",
+            "base-sepolia",
         ])
         .args;
 
         let err = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(args.resolve_manifest_source(HOLESKY.chain.id()))
+            .block_on(args.resolve_manifest_source(
+                base_execution_chainspec::BaseChainSpec::sepolia().chain_id(),
+            ))
             .unwrap_err();
 
         let message = err.to_string();
@@ -1277,10 +1281,10 @@ mod tests {
 
     #[test]
     fn resolve_manifest_source_allows_manifest_path_for_non_mainnet_defaults() {
-        let args = CommandParser::<DownloadCommand<EthereumChainSpecParser>>::parse_from([
+        let args = CommandParser::<DownloadCommand<BaseTestChainSpecParser>>::parse_from([
             "reth",
             "--chain",
-            "holesky",
+            "base-sepolia",
             "--manifest-path",
             "./manifest.json",
         ])
@@ -1288,7 +1292,9 @@ mod tests {
 
         let source = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(args.resolve_manifest_source(HOLESKY.chain.id()))
+            .block_on(args.resolve_manifest_source(
+                base_execution_chainspec::BaseChainSpec::sepolia().chain_id(),
+            ))
             .unwrap();
 
         assert_eq!(source, "./manifest.json");
@@ -1366,9 +1372,9 @@ mod tests {
 
     #[test]
     fn startup_node_command_omits_default_chain_arg() {
-        let command = startup_node_command_for_binary::<EthereumChainSpecParser>(
+        let command = startup_node_command_for_binary::<BaseTestChainSpecParser>(
             "reth",
-            &BaseChainSpec::from(MAINNET.as_ref().clone()),
+            &base_execution_chainspec::BaseChainSpec::mainnet(),
         );
 
         assert_eq!(command, "reth node");
@@ -1376,22 +1382,22 @@ mod tests {
 
     #[test]
     fn startup_node_command_includes_non_default_chain_arg() {
-        let command = startup_node_command_for_binary::<EthereumChainSpecParser>(
+        let command = startup_node_command_for_binary::<BaseTestChainSpecParser>(
             "reth",
-            &BaseChainSpec::from(HOLESKY.as_ref().clone()),
+            &base_execution_chainspec::BaseChainSpec::sepolia(),
         );
 
-        assert_eq!(command, "reth node --chain holesky");
+        assert_eq!(command, "reth node --chain base-sepolia");
     }
 
     #[test]
     fn startup_node_command_uses_running_binary_name() {
-        let command = startup_node_command_for_binary::<EthereumChainSpecParser>(
+        let command = startup_node_command_for_binary::<BaseTestChainSpecParser>(
             "tempo",
-            &BaseChainSpec::from(HOLESKY.as_ref().clone()),
+            &base_execution_chainspec::BaseChainSpec::sepolia(),
         );
 
-        assert_eq!(command, "tempo node --chain holesky");
+        assert_eq!(command, "tempo node --chain base-sepolia");
     }
 
     #[test]

@@ -23,11 +23,10 @@ fn default_engine_tree_setup() -> Setup {
         .with_payload_attributes_converter(BaseTestPayload::attributes)
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
-                .chain(BaseChainSpec::mainnet().chain)
+                .chain(BaseChainSpec::mainnet().chain())
                 .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
                 .ecotone_activated()
-                .build()
-                .inner,
+                .build(),
         ))
         .with_network(NetworkSetup::single_node())
         .with_tree_config(TreeConfig::default().with_has_enough_parallelism(true))

@@ -12,7 +12,7 @@
 //! ```no_run
 //! # use reth_stages::Pipeline;
 //! # use reth_stages::sets::{OfflineStages};
-//! # use reth_chainspec::MAINNET;
+//! #
 //! # use reth_prune_types::PruneModes;
 //! # use reth_evm::BaseEvmConfig;
 //! # use reth_provider::StaticFileProviderFactory;

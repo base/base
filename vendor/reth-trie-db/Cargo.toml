@@ -27,9 +27,11 @@ reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 revm = { workspace = true }
-reth-chainspec = { workspace = true }
+alloy-chains = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-stages-types = { workspace = true }
+base-common-chains = { workspace = true }
+base-execution-chainspec = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 triehash = { workspace = true, features = ["default"] }
@@ -57,7 +59,6 @@ serde = [
 test-utils = [
     "reth-trie-common/test-utils",
     "reth-primitives-traits/test-utils",
-    "reth-chainspec/test-utils",
     "reth-db/test-utils",
     "reth-db-api/test-utils",
     "reth-provider/test-utils",

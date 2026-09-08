@@ -133,14 +133,14 @@ mod tests {
     use alloy_primitives::b256;
 
     use super::*;
-    use crate::test_utils::EthereumChainSpecParser;
+    use crate::test_utils::BaseTestChainSpecParser;
 
     #[test]
     fn parse_init_state_command_with_without_evm() {
-        let cmd: InitStateCommand<EthereumChainSpecParser> = InitStateCommand::parse_from([
+        let cmd: InitStateCommand<BaseTestChainSpecParser> = InitStateCommand::parse_from([
             "reth",
             "--chain",
-            "sepolia",
+            "base-sepolia",
             "--without-evm",
             "--header",
             "header.rlp",

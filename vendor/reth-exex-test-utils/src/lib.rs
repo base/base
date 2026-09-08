@@ -16,9 +16,8 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
-use base_execution_chainspec::ChainSpecProvider;
+use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use futures_util::FutureExt;
-use reth_chainspec::{ChainSpec, MAINNET};
 use reth_db::{
     DatabaseEnv,
     test_utils::{
@@ -122,7 +121,7 @@ impl TestExExHandle {
 ///
 /// This is a convenience function that does the following:
 /// 1. Sets up an [`ExExContext`] with all dependencies.
-/// 2. Inserts the genesis block of the provided (chain spec)[`ChainSpec`] into the storage.
+/// 2. Inserts the genesis block of the provided (chain spec)[`BaseChainSpec`] into the storage.
 /// 3. Creates a channel for receiving events from the Execution Extension.
 /// 4. Creates a channel for sending notifications to the Execution Extension.
 ///
@@ -130,14 +129,14 @@ impl TestExExHandle {
 /// The genesis block is not sent to the notifications channel. The caller is responsible for
 /// doing this.
 pub async fn test_exex_context_with_chain_spec(
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
 ) -> eyre::Result<(ExExContext<Adapter>, TestExExHandle)> {
     let (static_dir, _) = create_test_static_files_dir();
     let (rocksdb_dir, _) = create_test_rocksdb_dir();
     let db = create_test_rw_db();
     let provider_factory = ProviderFactory::<_>::new(
         db,
-        Arc::new(chain_spec.as_ref().clone().into()),
+        chain_spec,
         StaticFileProvider::read_write(static_dir.keep()).expect("static file provider"),
         RocksDBProvider::builder(rocksdb_dir.keep()).with_default_tables().build().unwrap(),
         reth_tasks::Runtime::test(),
@@ -237,11 +236,14 @@ pub async fn test_exex_context_with_chain_spec(
     ))
 }
 
-/// Creates a new [`ExExContext`] with (mainnet)[`MAINNET`] chain spec.
+/// Creates a new [`ExExContext`] with (mainnet)[`std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())`] chain spec.
 ///
 /// For more information see [`test_exex_context_with_chain_spec`].
 pub async fn test_exex_context() -> eyre::Result<(ExExContext<Adapter>, TestExExHandle)> {
-    test_exex_context_with_chain_spec(MAINNET.clone()).await
+    test_exex_context_with_chain_spec(std::sync::Arc::new(
+        base_execution_chainspec::BaseChainSpec::mainnet(),
+    ))
+    .await
 }
 
 /// An extension trait for polling an Execution Extension future.

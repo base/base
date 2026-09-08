@@ -183,7 +183,7 @@ impl BlockDownloaderProvider for NoopNetwork {
 }
 
 impl NetworkSyncUpdater for NoopNetwork {
-    fn update_status(&self, _head: reth_ethereum_forks::Head) {}
+    fn update_status(&self, _head: alloy_eip2124::Head) {}
 
     fn update_sync_state(&self, _state: reth_network_p2p::sync::SyncState) {}
 

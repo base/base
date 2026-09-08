@@ -628,7 +628,7 @@ mod tests {
         insert_funded(&mut pre_block_db, bob, sender_balance);
 
         // Sign txs.
-        let chain_id = evm_config.chain_spec().chain.id();
+        let chain_id = evm_config.chain_spec().chain().id();
         let gas_price = 1u128; // flat low price; block has no base fee in our test header.
         let tx1 = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
             alice_kp,
@@ -864,7 +864,7 @@ mod tests {
         insert_funded(&mut db, alice, sender_balance);
         insert_funded(&mut db, bob, sender_balance);
 
-        let chain_id = evm_config.chain_spec().chain.id();
+        let chain_id = evm_config.chain_spec().chain().id();
         let make_tx = |kp, to, value, nonce: u64| {
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 kp,
@@ -914,7 +914,7 @@ mod tests {
         insert_funded(&mut pre_block_db, alice, sender_balance);
         insert_funded(&mut pre_block_db, bob, sender_balance);
 
-        let chain_id = evm_config.chain_spec().chain.id();
+        let chain_id = evm_config.chain_spec().chain().id();
         let make_tx = |kp, value| {
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 kp,
@@ -1007,7 +1007,7 @@ mod tests {
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 alice_kp,
                 Transaction::Legacy(TxLegacy {
-                    chain_id: Some(evm_config.chain_spec().chain.id()),
+                    chain_id: Some(evm_config.chain_spec().chain().id()),
                     nonce: 0,
                     gas_price: 1,
                     gas_limit: 50_000,
@@ -1065,7 +1065,7 @@ mod tests {
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 alice_kp,
                 Transaction::Legacy(TxLegacy {
-                    chain_id: Some(evm_config.chain_spec().chain.id()),
+                    chain_id: Some(evm_config.chain_spec().chain().id()),
                     nonce: 0,
                     gas_price: 1,
                     gas_limit: 100_000,

@@ -55,9 +55,9 @@ impl From<EnrCombinedKeyWrapper> for Enr<SecretKey> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_hardforks::EthereumHardfork;
     use alloy_rlp::Encodable;
     use discv5_reth::enr::{CombinedKey, EnrKey};
-    use reth_chainspec::{EthereumHardfork, MAINNET};
     use reth_network_peers::NodeRecord;
 
     use super::*;
@@ -85,7 +85,8 @@ mod tests {
         let key = CombinedKey::generate_secp256k1();
 
         let mut buf = Vec::new();
-        let fork_id = MAINNET.hardfork_fork_id(EthereumHardfork::Frontier);
+        let fork_id = std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+            .hardfork_fork_id(EthereumHardfork::Frontier);
         fork_id.unwrap().encode(&mut buf);
 
         let enr = Enr::builder()

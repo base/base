@@ -19,7 +19,7 @@ pub mod version;
 
 /// Re-exported primitive types
 pub mod primitives {
-    pub use reth_ethereum_forks::*;
+    pub use alloy_hardforks::*;
     pub use reth_primitives_traits::*;
 }
 

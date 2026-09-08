@@ -3,6 +3,7 @@ use std::sync::Arc;
 use alloy_consensus::BlockHeader as _;
 use alloy_eips::BlockId;
 use alloy_evm::block::calc::{base_block_reward_pre_merge, block_reward, ommer_reward};
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{
     Address, B256, BlockHash, Bytes, U256,
     map::{HashMap, HashSet},
@@ -22,7 +23,6 @@ use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::ChainSpecProvider;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
-use reth_chainspec::EthereumHardforks;
 use reth_primitives_traits::{BlockBody, BlockHeader};
 use reth_rpc_api::TraceApiServer;
 use reth_rpc_eth_api::{

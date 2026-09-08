@@ -20,7 +20,6 @@ bytes = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
-reth-chainspec = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-codecs-derive = { workspace = true }
@@ -40,6 +39,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash", "map"] }
 [dev-dependencies]
 test-case = { workspace = true }
 alloy-genesis = { workspace = true }
+base-common-genesis = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
@@ -67,7 +67,6 @@ std = [
     "reth-primitives-traits/std",
     "serde?/std",
     "thiserror/std",
-    "reth-chainspec/std",
     "alloy-trie/std",
 ]
 arbitrary = [
@@ -79,7 +78,6 @@ arbitrary = [
     "dep:arbitrary",
     "dep:proptest",
     "dep:proptest-arbitrary-interop",
-    "reth-chainspec/arbitrary",
     "alloy-consensus/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",

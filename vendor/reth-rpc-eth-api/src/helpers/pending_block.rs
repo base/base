@@ -8,12 +8,12 @@ use std::{
 
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_eips::eip7840::BlobParams;
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_execution_chainspec::ChainSpecProvider;
 use futures::Future;
 use reth_chain_state::{BlockState, ExecutedBlock};
-use reth_chainspec::EthereumHardforks;
 use reth_errors::{BlockExecutionError, BlockValidationError, ProviderError, RethError};
 use reth_evm::{
     BaseNextBlockEnvAttributes, Evm, EvmEnvFor,

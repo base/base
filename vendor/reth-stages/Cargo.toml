@@ -30,8 +30,8 @@ reth-config = { workspace = true }
 reth-db-api = { workspace = true }
 futures-util = { workspace = true }
 reth-provider = { workspace = true }
-reth-chainspec = { workspace = true }
 reth-consensus = { workspace = true }
+alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-prune-types = { workspace = true }
@@ -58,14 +58,15 @@ tempfile = { workspace = true, optional = true, features = ["default"] }
 [dev-dependencies]
 paste = { workspace = true }
 alloy-eips = { workspace = true }
+alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
-reth-chainspec = { workspace = true }
 reth-db-common = { workspace = true }
 assert_matches = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-static-file = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-testing-utils = { workspace = true }
+base-common-genesis = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 reth-evm = { workspace = true, features = ["test-utils"] }
@@ -88,7 +89,6 @@ test-utils = [
     "reth-stages-api/test-utils",
     "dep:reth-testing-utils",
     "dep:tempfile",
-    "reth-chainspec/test-utils",
     "reth-consensus/test-utils",
     "reth-evm/test-utils",
     "reth-downloaders/test-utils",

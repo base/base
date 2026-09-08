@@ -16,8 +16,8 @@ workspace = true
 
 [dependencies]
 alloy-eips = { workspace = true }
-reth-chainspec = { workspace = true }
 reth-consensus = { workspace = true }
+alloy-hardforks = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-chainspec = { workspace = true }
@@ -35,7 +35,6 @@ default = ["std"]
 std = [
     "alloy-consensus/std",
     "alloy-eips/std",
-    "reth-chainspec/std",
     "reth-consensus/std",
     "reth-primitives-traits/std",
     "reth-ethereum-primitives/std",

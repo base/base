@@ -4,15 +4,16 @@ use std::{io::Write, path::Path};
 
 use alloy_consensus::{BlockHeader, Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip4895::Withdrawals;
+use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, B64, B256, U256};
 use alloy_rlp::Encodable;
 use base_common_consensus::{BaseBlock as Block, BaseBlockBody as BlockBody};
-use reth_chainspec::{ChainSpec, EthereumHardforks};
+use base_execution_chainspec::BaseChainSpec;
 use reth_primitives_traits::{Block as BlockTrait, SealedBlock};
 use tracing::debug;
 
 /// Generate test blocks for a given chain spec
-pub fn generate_test_blocks(chain_spec: &ChainSpec, count: u64) -> Vec<SealedBlock> {
+pub fn generate_test_blocks(chain_spec: &BaseChainSpec, count: u64) -> Vec<SealedBlock> {
     let mut blocks: Vec<SealedBlock> = Vec::new();
     let genesis_header = chain_spec.sealed_genesis_header();
     let mut parent_hash = genesis_header.hash();

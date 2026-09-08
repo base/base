@@ -325,9 +325,7 @@ impl<Provider, S: Stage<Provider> + ?Sized> StageExt<Provider> for S {}
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
-    use reth_chainspec::MAINNET;
     use reth_db::test_utils::{
         create_test_rocksdb_dir, create_test_rw_db, create_test_static_files_dir,
     };
@@ -346,7 +344,7 @@ mod tests {
         let mut rng = generators::rng();
         let provider_factory = ProviderFactory::<MockNodeDatabase>::new(
             create_test_rw_db(),
-            Arc::new(MAINNET.as_ref().clone().into()),
+            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
             StaticFileProviderBuilder::read_write(create_test_static_files_dir().0.keep())
                 .with_blocks_per_file(1)
                 .build()

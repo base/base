@@ -308,7 +308,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M;
     use assert_matches::assert_matches;
-    use reth_chainspec::{ChainSpecBuilder, MAINNET};
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_consensus_common::test_utils::TestConsensus;
     use reth_network_p2p::test_utils::TestFullBlockClient;
     use reth_primitives_traits::SealedHeader;
@@ -324,10 +324,17 @@ mod tests {
     impl TestHarness {
         fn new(total_blocks: usize) -> Self {
             let chain_spec = Arc::new(
-                ChainSpecBuilder::default()
-                    .chain(MAINNET.chain)
-                    .genesis(MAINNET.genesis.clone())
-                    .paris_activated()
+                BaseChainSpecBuilder::default()
+                    .chain(
+                        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                            .chain(),
+                    )
+                    .genesis(
+                        std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                            .genesis
+                            .clone(),
+                    )
+                    .bedrock_activated()
                     .build(),
             );
 
@@ -340,8 +347,7 @@ mod tests {
             let header = SealedHeader::seal_slow(header);
 
             insert_headers_into_client(&client, header, 0..total_blocks);
-            let consensus =
-                Arc::new(TestConsensus::new(Arc::new(chain_spec.as_ref().clone().into())));
+            let consensus = Arc::new(TestConsensus::new(chain_spec));
 
             let block_downloader = BasicBlockDownloader::new(client.clone(), consensus);
             Self { block_downloader, client }

@@ -27,7 +27,6 @@ alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 [dev-dependencies]
 reth-trie = { workspace = true }
 alloy-consensus = { workspace = true }
-reth-ethereum-forks = { workspace = true }
 [features]
 default = ["std"]
 std = [
@@ -36,7 +35,6 @@ std = [
     "alloy-rlp?/std",
     "revm/std",
     "alloy-consensus/std",
-    "reth-ethereum-forks/std",
     "reth-storage-api/std",
     "reth-storage-errors/std",
 ]
@@ -51,7 +49,6 @@ serde = [
     "alloy-primitives/serde",
     "alloy-consensus/serde",
     "reth-trie?/serde",
-    "reth-ethereum-forks/serde",
     "reth-primitives-traits/serde",
     "reth-storage-api/serde",
 ]

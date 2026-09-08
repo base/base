@@ -8,13 +8,13 @@ use alloy_consensus::{
 };
 use alloy_eips::eip1559::INITIAL_BASE_FEE;
 use alloy_genesis::{Genesis, GenesisAccount};
+use alloy_hardforks::ForkCondition;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, keccak256};
 use base_common_consensus::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseTxEnvelope as TransactionSigned,
     BaseTypedTransaction as Transaction,
 };
-use base_execution_chainspec::ChainSpecProvider;
-use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition, MAINNET};
+use base_execution_chainspec::{BaseChainSpecBuilder, ChainSpecProvider};
 use reth_config::config::StageConfig;
 use reth_consensus::noop::NoopConsensus;
 use reth_db::tables;
@@ -386,14 +386,14 @@ async fn test_pipeline_v2_single_block_intra_block_and_intra_tx_wipes_use_plain_
 }
 
 struct SelfdestructScenario {
-    chain_spec: Arc<reth_chainspec::ChainSpec>,
+    chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
     blocks: Vec<SealedBlock>,
     selfdestruct_contract: Address,
     expected_slots: [B256; 2],
 }
 
 struct Create2SelfdestructScenario {
-    chain_spec: Arc<reth_chainspec::ChainSpec>,
+    chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
     block: SealedBlock,
     child_contract: Address,
     child_was_destroyed: bool,
@@ -413,8 +413,7 @@ fn setup_selfdestruct_scenario() -> eyre::Result<SelfdestructScenario> {
         init_genesis(&provider_factory).expect("init genesis");
 
         let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-        let evm_config =
-            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
+        let evm_config = BaseEvmConfig::new(chain_spec.clone());
         let mut blocks = Vec::new();
         let mut parent_hash = genesis.hash();
         let gas_price = INITIAL_BASE_FEE as u128;
@@ -455,7 +454,7 @@ fn setup_selfdestruct_scenario() -> eyre::Result<SelfdestructScenario> {
             let tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
-                    chain_id: chain_spec.chain.id(),
+                    chain_id: chain_spec.chain().id(),
                     nonce,
                     gas_limit,
                     max_fee_per_gas: gas_price,
@@ -498,8 +497,8 @@ fn setup_create2_selfdestruct_scenario() -> eyre::Result<Create2SelfdestructScen
     let child_init = CREATE2_SELFDESTRUCT_INIT_CODE;
     let child_contract = create2_address(factory_contract, TEST_CREATE2_SALT, &child_init);
     let chain_spec = Arc::new(
-        ChainSpecBuilder::default()
-            .chain(MAINNET.chain)
+        BaseChainSpecBuilder::default()
+            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [
                     (
@@ -519,22 +518,23 @@ fn setup_create2_selfdestruct_scenario() -> eyre::Result<Create2SelfdestructScen
                     (child_contract, GenesisAccount { balance: U256::ONE, ..Default::default() }),
                 ]
                 .into(),
-                ..MAINNET.genesis.clone()
+                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    .genesis
+                    .clone()
             })
-            .shanghai_activated()
-            .with_fork(EthereumHardfork::Cancun, ForkCondition::Timestamp(30))
+            .canyon_activated()
+            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     );
 
     let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
     init_genesis(&provider_factory)?;
     let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-    let evm_config =
-        BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
+    let evm_config = BaseEvmConfig::new(chain_spec.clone());
     let tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
         key_pair,
         Transaction::Eip1559(TxEip1559 {
-            chain_id: chain_spec.chain.id(),
+            chain_id: chain_spec.chain().id(),
             nonce: 0,
             gas_limit: 400_000,
             max_fee_per_gas: INITIAL_BASE_FEE as u128,
@@ -581,21 +581,21 @@ fn setup_create2_selfdestruct_scenario() -> eyre::Result<Create2SelfdestructScen
 }
 
 struct RevertedSlotSelfdestructScenario {
-    chain_spec: Arc<reth_chainspec::ChainSpec>,
+    chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
     blocks: Vec<SealedBlock>,
     selfdestruct_contract: Address,
     expected_slot: (B256, U256),
 }
 
 struct SameAddressDoubleWipeScenario {
-    chain_spec: Arc<reth_chainspec::ChainSpec>,
+    chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
     blocks: Vec<SealedBlock>,
     child_contract: Address,
     expected_slots: [(B256, U256); 2],
 }
 
 struct SameAddressDifferentSlotsDoubleWipeScenario {
-    chain_spec: Arc<reth_chainspec::ChainSpec>,
+    chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
     blocks: Vec<SealedBlock>,
     child_contract: Address,
     expected_slots_first_wipe: [(B256, U256); 2],
@@ -604,7 +604,7 @@ struct SameAddressDifferentSlotsDoubleWipeScenario {
 }
 
 struct IntraBlockAndIntraTxSelfdestructScenario {
-    chain_spec: Arc<reth_chainspec::ChainSpec>,
+    chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
     blocks: Vec<SealedBlock>,
     multi_tx_contract: Address,
     intra_tx_contract: Address,
@@ -620,8 +620,8 @@ fn setup_reverted_slot_selfdestruct_scenario() -> eyre::Result<RevertedSlotSelfd
     let original_value = B256::with_last_byte(0x07);
 
     let chain_spec = Arc::new(
-        ChainSpecBuilder::default()
-            .chain(MAINNET.chain)
+        BaseChainSpecBuilder::default()
+            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [
                     (
@@ -641,10 +641,12 @@ fn setup_reverted_slot_selfdestruct_scenario() -> eyre::Result<RevertedSlotSelfd
                     ),
                 ]
                 .into(),
-                ..MAINNET.genesis.clone()
+                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    .genesis
+                    .clone()
             })
-            .shanghai_activated()
-            .with_fork(EthereumHardfork::Cancun, ForkCondition::Timestamp(30))
+            .canyon_activated()
+            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     );
 
@@ -653,8 +655,7 @@ fn setup_reverted_slot_selfdestruct_scenario() -> eyre::Result<RevertedSlotSelfd
         init_genesis(&provider_factory).expect("init genesis");
 
         let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-        let evm_config =
-            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
+        let evm_config = BaseEvmConfig::new(chain_spec.clone());
         let mut blocks = Vec::new();
         let mut parent_hash = genesis.hash();
         let gas_price = INITIAL_BASE_FEE as u128;
@@ -667,7 +668,7 @@ fn setup_reverted_slot_selfdestruct_scenario() -> eyre::Result<RevertedSlotSelfd
             let tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
-                    chain_id: chain_spec.chain.id(),
+                    chain_id: chain_spec.chain().id(),
                     nonce,
                     gas_limit: 120_000,
                     max_fee_per_gas: gas_price,
@@ -711,8 +712,8 @@ fn setup_same_address_double_wipe_scenario() -> eyre::Result<SameAddressDoubleWi
     let child_contract = create2_address(factory_contract, TEST_CREATE2_SALT, &child_init);
 
     let chain_spec = Arc::new(
-        ChainSpecBuilder::default()
-            .chain(MAINNET.chain)
+        BaseChainSpecBuilder::default()
+            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [
                     (
@@ -731,10 +732,12 @@ fn setup_same_address_double_wipe_scenario() -> eyre::Result<SameAddressDoubleWi
                     ),
                 ]
                 .into(),
-                ..MAINNET.genesis.clone()
+                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    .genesis
+                    .clone()
             })
-            .shanghai_activated()
-            .with_fork(EthereumHardfork::Cancun, ForkCondition::Timestamp(30))
+            .canyon_activated()
+            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     );
 
@@ -743,8 +746,7 @@ fn setup_same_address_double_wipe_scenario() -> eyre::Result<SameAddressDoubleWi
         init_genesis(&provider_factory).expect("init genesis");
 
         let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-        let evm_config =
-            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
+        let evm_config = BaseEvmConfig::new(chain_spec.clone());
         let mut blocks = Vec::new();
         let mut parent_hash = genesis.hash();
         let gas_price = INITIAL_BASE_FEE as u128;
@@ -760,7 +762,7 @@ fn setup_same_address_double_wipe_scenario() -> eyre::Result<SameAddressDoubleWi
             let tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
-                    chain_id: chain_spec.chain.id(),
+                    chain_id: chain_spec.chain().id(),
                     nonce,
                     gas_limit: 400_000,
                     max_fee_per_gas: gas_price,
@@ -808,8 +810,8 @@ fn setup_same_address_recreate_and_write_same_block_then_wipe_scenario()
     let child_contract = create2_address(factory_contract, TEST_CREATE2_SALT, &child_init);
 
     let chain_spec = Arc::new(
-        ChainSpecBuilder::default()
-            .chain(MAINNET.chain)
+        BaseChainSpecBuilder::default()
+            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [
                     (
@@ -828,10 +830,12 @@ fn setup_same_address_recreate_and_write_same_block_then_wipe_scenario()
                     ),
                 ]
                 .into(),
-                ..MAINNET.genesis.clone()
+                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    .genesis
+                    .clone()
             })
-            .shanghai_activated()
-            .with_fork(EthereumHardfork::Cancun, ForkCondition::Timestamp(30))
+            .canyon_activated()
+            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     );
 
@@ -840,8 +844,7 @@ fn setup_same_address_recreate_and_write_same_block_then_wipe_scenario()
         init_genesis(&provider_factory).expect("init genesis");
 
         let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-        let evm_config =
-            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
+        let evm_config = BaseEvmConfig::new(chain_spec.clone());
         let gas_price = INITIAL_BASE_FEE as u128;
 
         let mut parent_hash = genesis.hash();
@@ -849,7 +852,7 @@ fn setup_same_address_recreate_and_write_same_block_then_wipe_scenario()
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
-                    chain_id: chain_spec.chain.id(),
+                    chain_id: chain_spec.chain().id(),
                     nonce,
                     gas_limit: 400_000,
                     max_fee_per_gas: gas_price,
@@ -953,8 +956,8 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
     let intra_tx_contract = Address::new([0x55; 20]);
 
     let chain_spec = Arc::new(
-        ChainSpecBuilder::default()
-            .chain(MAINNET.chain)
+        BaseChainSpecBuilder::default()
+            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [
                     (
@@ -980,10 +983,12 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
                     ),
                 ]
                 .into(),
-                ..MAINNET.genesis.clone()
+                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    .genesis
+                    .clone()
             })
-            .shanghai_activated()
-            .with_fork(EthereumHardfork::Cancun, ForkCondition::Timestamp(30))
+            .canyon_activated()
+            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     );
 
@@ -992,8 +997,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
         init_genesis(&provider_factory).expect("init genesis");
 
         let genesis = provider_factory.sealed_header(0)?.expect("genesis should exist");
-        let evm_config =
-            BaseEvmConfig::new(std::sync::Arc::new((chain_spec.clone()).as_ref().clone().into()));
+        let evm_config = BaseEvmConfig::new(chain_spec.clone());
         let gas_price = INITIAL_BASE_FEE as u128;
 
         // Single pre-Cancun block with three txs:
@@ -1004,7 +1008,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
-                    chain_id: chain_spec.chain.id(),
+                    chain_id: chain_spec.chain().id(),
                     nonce: 0,
                     gas_limit: 120_000,
                     max_fee_per_gas: gas_price,
@@ -1018,7 +1022,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
-                    chain_id: chain_spec.chain.id(),
+                    chain_id: chain_spec.chain().id(),
                     nonce: 1,
                     gas_limit: 120_000,
                     max_fee_per_gas: gas_price,
@@ -1032,7 +1036,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
             reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 Transaction::Eip1559(TxEip1559 {
-                    chain_id: chain_spec.chain.id(),
+                    chain_id: chain_spec.chain().id(),
                     nonce: 2,
                     gas_limit: 120_000,
                     max_fee_per_gas: gas_price,
@@ -1068,7 +1072,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
 }
 
 fn init_v2_pipeline_provider_factory(
-    chain_spec: Arc<reth_chainspec::ChainSpec>,
+    chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
 ) -> eyre::Result<(TestProviderFactory, reth_primitives_traits::SealedHeader)> {
     let pipeline_provider_factory = create_test_provider_factory_with_chain_spec(chain_spec);
     init_genesis_with_settings(&pipeline_provider_factory, StorageSettings::v2())?;
@@ -1155,12 +1159,12 @@ fn execute_and_commit_block(
 fn build_selfdestruct_chain_spec(
     signer_address: Address,
     selfdestruct_contract: Address,
-) -> Arc<reth_chainspec::ChainSpec> {
+) -> Arc<base_execution_chainspec::BaseChainSpec> {
     let initial_balance = U256::from(ETH_TO_WEI) * U256::from(1000);
 
     Arc::new(
-        ChainSpecBuilder::default()
-            .chain(MAINNET.chain)
+        BaseChainSpecBuilder::default()
+            .chain(std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()).chain())
             .genesis(Genesis {
                 alloc: [
                     (
@@ -1176,10 +1180,12 @@ fn build_selfdestruct_chain_spec(
                     ),
                 ]
                 .into(),
-                ..MAINNET.genesis.clone()
+                ..std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet())
+                    .genesis
+                    .clone()
             })
-            .shanghai_activated()
-            .with_fork(EthereumHardfork::Cancun, ForkCondition::Timestamp(30))
+            .canyon_activated()
+            .with_fork(base_common_genesis::BaseUpgrade::Ecotone, ForkCondition::Timestamp(30))
             .build(),
     )
 }
@@ -1299,9 +1305,7 @@ where
 {
     let consensus = NoopConsensus::arc();
     let stages_config = StageConfig::default();
-    let evm_config = BaseEvmConfig::new(std::sync::Arc::new(
-        (std::sync::Arc::new(provider_factory.chain_spec().clone())).as_ref().clone().into(),
-    ));
+    let evm_config = BaseEvmConfig::new(provider_factory.chain_spec());
 
     let (tip_tx, tip_rx) = watch::channel(B256::ZERO);
     let static_file_producer =

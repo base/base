@@ -30,11 +30,10 @@ fn default_engine_tree_setup() -> Setup {
         .with_payload_attributes_converter(BaseTestPayload::attributes)
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
-                .chain(BaseChainSpec::mainnet().chain)
+                .chain(BaseChainSpec::mainnet().chain())
                 .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
                 .ecotone_activated()
-                .build()
-                .inner,
+                .build(),
         ))
         .with_network(NetworkSetup::single_node())
         .with_tree_config(TreeConfig::default().with_has_enough_parallelism(true))
@@ -233,13 +232,12 @@ async fn test_engine_tree_buffered_blocks_are_eventually_connected_e2e() -> Resu
                 .with_payload_attributes_converter(BaseTestPayload::attributes)
                 .with_chain_spec(Arc::new(
                     BaseChainSpecBuilder::default()
-                        .chain(BaseChainSpec::mainnet().chain)
+                        .chain(BaseChainSpec::mainnet().chain())
                         .genesis(
                             serde_json::from_str(include_str!("../assets/genesis.json")).unwrap(),
                         )
                         .ecotone_activated()
-                        .build()
-                        .inner,
+                        .build(),
                 ))
                 .with_network(NetworkSetup::multi_node_unconnected(2)) // Need 2 disconnected nodes
                 .with_tree_config(TreeConfig::default().with_has_enough_parallelism(true)),
@@ -320,13 +318,12 @@ async fn test_engine_tree_live_sync_transition_eventually_canonical_e2e() -> Res
                 .with_payload_attributes_converter(BaseTestPayload::attributes)
                 .with_chain_spec(Arc::new(
                     BaseChainSpecBuilder::default()
-                        .chain(BaseChainSpec::mainnet().chain)
+                        .chain(BaseChainSpec::mainnet().chain())
                         .genesis(
                             serde_json::from_str(include_str!("../assets/genesis.json")).unwrap(),
                         )
                         .ecotone_activated()
-                        .build()
-                        .inner,
+                        .build(),
                 ))
                 .with_network(NetworkSetup::multi_node(2)) // Two connected nodes
                 .with_tree_config(TreeConfig::default().with_has_enough_parallelism(true)),
@@ -439,11 +436,10 @@ fn disk_reorg_setup() -> Setup {
         .with_payload_attributes_converter(BaseTestPayload::attributes)
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
-                .chain(BaseChainSpec::mainnet().chain)
+                .chain(BaseChainSpec::mainnet().chain())
                 .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
                 .ecotone_activated()
-                .build()
-                .inner,
+                .build(),
         ))
         .with_network(NetworkSetup::multi_node_unconnected(2))
         .with_tree_config(TreeConfig::default().with_has_enough_parallelism(true));

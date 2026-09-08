@@ -8,13 +8,12 @@ use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, Bytes, TxHash, TxNumber};
 use alloy_rpc_types_engine::ForkchoiceState;
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo};
 use base_execution_chainspec::BaseChainSpec;
 use reth_chain_state::{
     BlockState, CanonicalInMemoryState, ForkChoiceNotifications, ForkChoiceSubscriptions,
     MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
 };
-use reth_chainspec::ChainInfo;
 use reth_db_api::{
     Database,
     database_metrics::DatabaseMetrics,
@@ -1066,13 +1065,13 @@ mod tests {
     use alloy_eips::{BlockHashOrNumber, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, BlockNumber, TxNumber, U256, keccak256};
     use base_common_consensus::BaseReceipt;
+    use base_execution_chainspec::BaseChainSpec;
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{
         CanonStateNotification, CanonStateSubscriptions, ExecutedBlock, NewCanonicalChain,
         test_utils::TestBlockBuilder,
     };
-    use reth_chainspec::{ChainSpec, MAINNET};
     use reth_db_api::models::{AccountBeforeTx, StoredBlockBodyIndices};
     use reth_execution_types::{
         BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
@@ -1146,7 +1145,7 @@ mod tests {
     #[expect(clippy::type_complexity)]
     fn provider_with_chain_spec_and_random_blocks(
         rng: &mut impl Rng,
-        chain_spec: Arc<ChainSpec>,
+        chain_spec: Arc<BaseChainSpec>,
         database_blocks: usize,
         in_memory_blocks: usize,
         block_range_params: BlockRangeParams,
@@ -1268,7 +1267,7 @@ mod tests {
     )> {
         provider_with_chain_spec_and_random_blocks(
             rng,
-            MAINNET.clone(),
+            std::sync::Arc::new(base_execution_chainspec::BaseChainSpec::mainnet()),
             database_blocks,
             in_memory_blocks,
             block_range_params,

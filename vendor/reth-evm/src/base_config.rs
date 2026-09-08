@@ -400,7 +400,6 @@ mod tests {
     use base_common_evm::BaseSpecId;
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use reth_chainspec::ChainSpec;
     use reth_execution_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
     };
@@ -442,25 +441,23 @@ mod tests {
         // Create a default header
         let header = Header::default();
 
-        // Build the ChainSpec for Ethereum mainnet, activating London, Paris, and Shanghai
+        // Build the BaseChainSpec for Ethereum mainnet, activating London, Paris, and Shanghai
         // upgrades
-        let chain_spec = ChainSpec::builder()
+        let chain_spec = base_execution_chainspec::BaseChainSpecBuilder::default()
             .chain(0.into())
             .genesis(Genesis::default())
-            .london_activated()
-            .paris_activated()
-            .shanghai_activated()
+            .bedrock_activated()
+            .bedrock_activated()
+            .canyon_activated()
             .build();
 
-        // Use the `BaseEvmConfig` to create the `cfg_env` and `block_env` based on the ChainSpec,
+        // Use the `BaseEvmConfig` to create the `cfg_env` and `block_env` based on the BaseChainSpec,
         // Header, and total difficulty
         let EvmEnv { cfg_env, .. } =
-            BaseEvmConfig::new(Arc::new(BaseChainSpec::from(chain_spec.clone())))
-                .evm_env(&header)
-                .unwrap();
+            BaseEvmConfig::new(Arc::new(chain_spec.clone())).evm_env(&header).unwrap();
 
         // Assert that the chain ID in the `cfg_env` is correctly set to the chain ID of the
-        // ChainSpec
+        // BaseChainSpec
         assert_eq!(cfg_env.chain_id, chain_spec.chain().id());
     }
 

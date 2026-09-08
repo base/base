@@ -8,9 +8,10 @@ strings.
 
 ## How it works
 
-`BaseChainSpec` wraps reth's `ChainSpec` and adds Base-specific upgrade awareness via the
-`BaseUpgrades` trait. Network specs are converted from `base-common-chains` configs, which own the
-genesis JSON, upgrade schedule, base fee params, and other chain constants.
+`ChainConfig` owns the network identity, typed Base upgrade schedule, consensus genesis metadata,
+fee parameters, and activation admin. `BaseChainSpec` combines that configuration with the parsed
+genesis and its derived execution header. Ethereum execution rules are derived from Base upgrades;
+execution, consensus, and fork IDs resolve the same runtime activation overrides.
 
 The genesis header is derived at startup from the genesis JSON using
 `BaseChainSpec::make_genesis_header`, which computes the correct state root, storage root, and

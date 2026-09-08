@@ -40,16 +40,15 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 reth-tasks = { workspace = true }
 reth-db-api = { workspace = true }
-reth-chainspec = { workspace = true }
 assert_matches = { workspace = true }
 reth-testing-utils = { workspace = true }
+base-execution-chainspec = { workspace = true }
 reth-db = { workspace = true, features = ["test-utils"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["sync", "rt-multi-thread"] }
 [features]
 test-utils = [
-    "reth-chainspec/test-utils",
     "reth-consensus/test-utils",
     "reth-db-api/test-utils",
     "reth-db/test-utils",
