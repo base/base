@@ -22,7 +22,6 @@ tracing = { workspace = true, features = ["std"] }
 reth-tasks = { workspace = true, optional = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-types = { workspace = true }
-tokio = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, optional = true }
@@ -38,6 +37,7 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 url = { workspace = true, optional = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true, optional = true }
 base-execution-txpool = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
 chrono = { workspace = true, optional = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
@@ -62,6 +62,7 @@ harness = false
 
 [features]
 test-utils = [
+    "dep:tokio",
     "base-node-core/test-utils",
     "dep:alloy-eips",
     "dep:alloy-genesis",

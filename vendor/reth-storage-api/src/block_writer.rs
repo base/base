@@ -99,7 +99,7 @@ pub trait BlockWriter {
     fn append_blocks_with_state(
         &self,
         blocks: Vec<RecoveredBlock>,
-        execution_outcome: &ExecutionOutcome<Self::Receipt>,
+        execution_outcome: &ExecutionOutcome,
         hashed_state: HashedPostStateSorted,
     ) -> ProviderResult<()>;
 }

@@ -1205,12 +1205,7 @@ impl StorageChangeSetReader for MockEthProvider {
 }
 
 impl StateReader for MockEthProvider {
-    type Receipt = BaseReceipt;
-
-    fn get_state(
-        &self,
-        _block: BlockNumber,
-    ) -> ProviderResult<Option<ExecutionOutcome<Self::Receipt>>> {
+    fn get_state(&self, _block: BlockNumber) -> ProviderResult<Option<ExecutionOutcome>> {
         Ok(None)
     }
 }

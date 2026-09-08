@@ -5,7 +5,7 @@ use std::{
 };
 
 use alloy_primitives::BlockNumber;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseBlock;
 use base_execution_evm::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput};
 use futures::{
     StreamExt,
@@ -39,7 +39,7 @@ struct BackfillTaskOutput<T> {
 /// Ordered queue of [`JoinHandle`]s that yield [`BackfillTaskOutput`]s.
 type BackfillTasks<T> = FuturesOrdered<JoinHandle<BackfillTaskOutput<T>>>;
 
-type SingleBlockStreamItem = (RecoveredBlock, BlockExecutionOutput<BaseReceipt>);
+type SingleBlockStreamItem = (RecoveredBlock, BlockExecutionOutput);
 type BatchBlockStreamItem = Chain;
 
 /// Stream for processing backfill jobs asynchronously.

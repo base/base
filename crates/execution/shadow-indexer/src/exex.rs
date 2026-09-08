@@ -295,7 +295,7 @@ mod tests {
             blocks.push(mk_block(number, variant));
             receipts.push(vec![BaseReceipt::Eip1559(Receipt::default())]);
         }
-        let execution_outcome: ExecutionOutcome<BaseReceipt> = ExecutionOutcome {
+        let execution_outcome: ExecutionOutcome = ExecutionOutcome {
             bundle: Default::default(),
             receipts,
             requests: Vec::new(),

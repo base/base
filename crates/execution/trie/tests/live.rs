@@ -7,8 +7,8 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
 use base_common_consensus::{
-    BaseBlock as Block, BaseBlockBody as BlockBody, BaseReceipt as Receipt,
-    BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction,
+    BaseBlock as Block, BaseBlockBody as BlockBody, BaseTxEnvelope as TransactionSigned,
+    BaseTypedTransaction as Transaction,
 };
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::{BaseEvmConfig, Executor};
@@ -157,7 +157,7 @@ fn execute_block<DB>(
     block: &mut RecoveredBlock,
     provider_factory: &ProviderFactory<DB>,
     chain_spec: &Arc<BaseChainSpec>,
-) -> eyre::Result<base_execution_evm::BlockExecutionOutput<Receipt>>
+) -> eyre::Result<base_execution_evm::BlockExecutionOutput>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
@@ -181,7 +181,7 @@ where
 /// Commits a block and its execution output to the database
 fn commit_block_to_database<DB>(
     block: &RecoveredBlock,
-    execution_output: &base_execution_evm::BlockExecutionOutput<Receipt>,
+    execution_output: &base_execution_evm::BlockExecutionOutput,
     provider_factory: &ProviderFactory<DB>,
 ) -> eyre::Result<()>
 where

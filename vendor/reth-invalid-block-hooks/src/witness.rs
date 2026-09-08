@@ -3,7 +3,6 @@ use std::{collections::BTreeMap, fmt::Debug, fs::File, io::Write, path::PathBuf}
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
-use base_common_consensus::BaseReceipt;
 use base_execution_evm::{BaseEvmConfig, Executor};
 use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;
@@ -343,7 +342,7 @@ where
         &self,
         parent_header: &SealedHeader,
         block: &RecoveredBlock,
-        output: &BlockExecutionOutput<BaseReceipt>,
+        output: &BlockExecutionOutput,
         trie_updates: Option<(&TrieUpdates, B256)>,
     ) -> eyre::Result<()> {
         // TODO(alexey): unify with `DebugApi::debug_execution_witness`
@@ -396,7 +395,7 @@ where
         &self,
         parent_header: &SealedHeader,
         block: &RecoveredBlock,
-        output: &BlockExecutionOutput<BaseReceipt>,
+        output: &BlockExecutionOutput,
         trie_updates: Option<(&TrieUpdates, B256)>,
     ) {
         if let Err(err) = self.on_invalid_block(parent_header, block, output, trie_updates) {

@@ -7,7 +7,7 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, Log, Signature, TxKind, U256, b256, hex_literal::hex,
     map::HashMap,
 };
-use base_common_consensus::{BaseBlockBody, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction};
+use base_common_consensus::{BaseBlockBody, BaseTxEnvelope, BaseTypedTransaction};
 use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables};
 use reth_primitives_traits::{Account, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_trie::root::{state_root_unhashed, storage_root_unhashed};
@@ -118,7 +118,7 @@ pub struct BlockchainTestData {
     /// Genesis
     pub genesis: SealedBlock,
     /// Blocks with its execution result
-    pub blocks: Vec<(RecoveredBlock, ExecutionOutcome<BaseReceipt>)>,
+    pub blocks: Vec<(RecoveredBlock, ExecutionOutcome)>,
 }
 
 impl BlockchainTestData {
@@ -163,7 +163,7 @@ pub fn genesis() -> SealedBlock {
     )
 }
 
-fn bundle_state_root(execution_outcome: &ExecutionOutcome<BaseReceipt>) -> B256 {
+fn bundle_state_root(execution_outcome: &ExecutionOutcome) -> B256 {
     state_root_unhashed(execution_outcome.bundle_accounts_iter().filter_map(
         |(address, account)| {
             account.info.as_ref().map(|info| {
@@ -183,7 +183,7 @@ fn bundle_state_root(execution_outcome: &ExecutionOutcome<BaseReceipt>) -> B256 
 }
 
 /// Block one that points to genesis
-fn block1(number: BlockNumber) -> (RecoveredBlock, ExecutionOutcome<BaseReceipt>) {
+fn block1(number: BlockNumber) -> (RecoveredBlock, ExecutionOutcome) {
     // block changes
     let account1: Address = [0x60; 20].into();
     let account2: Address = [0x61; 20].into();
@@ -231,8 +231,8 @@ fn block1(number: BlockNumber) -> (RecoveredBlock, ExecutionOutcome<BaseReceipt>
 fn block2(
     number: BlockNumber,
     parent_hash: B256,
-    prev_execution_outcome: &ExecutionOutcome<BaseReceipt>,
-) -> (RecoveredBlock, ExecutionOutcome<BaseReceipt>) {
+    prev_execution_outcome: &ExecutionOutcome,
+) -> (RecoveredBlock, ExecutionOutcome) {
     // block changes
     let account: Address = [0x60; 20].into();
     let slot = U256::from(5);
@@ -288,8 +288,8 @@ fn block2(
 fn block3(
     number: BlockNumber,
     parent_hash: B256,
-    prev_execution_outcome: &ExecutionOutcome<BaseReceipt>,
-) -> (RecoveredBlock, ExecutionOutcome<BaseReceipt>) {
+    prev_execution_outcome: &ExecutionOutcome,
+) -> (RecoveredBlock, ExecutionOutcome) {
     let address_range = 1..=20;
     let slot_range = 1..=100;
 
@@ -345,8 +345,8 @@ fn block3(
 fn block4(
     number: BlockNumber,
     parent_hash: B256,
-    prev_execution_outcome: &ExecutionOutcome<BaseReceipt>,
-) -> (RecoveredBlock, ExecutionOutcome<BaseReceipt>) {
+    prev_execution_outcome: &ExecutionOutcome,
+) -> (RecoveredBlock, ExecutionOutcome) {
     let address_range = 1..=20;
     let slot_range = 1..=100;
 
@@ -427,8 +427,8 @@ fn block4(
 fn block5(
     number: BlockNumber,
     parent_hash: B256,
-    prev_execution_outcome: &ExecutionOutcome<BaseReceipt>,
-) -> (RecoveredBlock, ExecutionOutcome<BaseReceipt>) {
+    prev_execution_outcome: &ExecutionOutcome,
+) -> (RecoveredBlock, ExecutionOutcome) {
     let address_range = 1..=20;
     let slot_range = 1..=100;
 

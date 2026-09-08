@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 
 use alloy_consensus::transaction::Either;
 use alloy_primitives::BlockNumber;
+use base_common_consensus::BaseReceipt;
 use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};
 use reth_storage_errors::provider::ProviderResult;
 use reth_trie_common::HashedPostStateSorted;
@@ -13,19 +14,19 @@ use revm::database::{
 /// A helper type used as input to [`StateWriter`] for writing execution outcome for one or many
 /// blocks.
 #[derive(Debug)]
-pub enum WriteStateInput<'a, R> {
+pub enum WriteStateInput<'a> {
     /// A single block execution outcome.
     Single {
         /// The execution outcome.
-        outcome: &'a BlockExecutionOutput<R>,
+        outcome: &'a BlockExecutionOutput,
         /// Block number
         block: BlockNumber,
     },
     /// Multiple block execution outcomes.
-    Multiple(&'a ExecutionOutcome<R>),
+    Multiple(&'a ExecutionOutcome),
 }
 
-impl<'a, R> WriteStateInput<'a, R> {
+impl<'a> WriteStateInput<'a> {
     /// Number of blocks in the execution outcome.
     pub const fn len(&self) -> usize {
         match self {
@@ -67,7 +68,7 @@ impl<'a, R> WriteStateInput<'a, R> {
     }
 
     /// Returns an iterator over receipt sets for each block.
-    pub fn receipts(&self) -> impl Iterator<Item = &Vec<R>> {
+    pub fn receipts(&self) -> impl Iterator<Item = &Vec<BaseReceipt>> {
         match self {
             Self::Single { outcome, .. } => {
                 Either::Left(core::iter::once(&outcome.result.receipts))
@@ -77,23 +78,20 @@ impl<'a, R> WriteStateInput<'a, R> {
     }
 }
 
-impl<'a, R> From<&'a ExecutionOutcome<R>> for WriteStateInput<'a, R> {
-    fn from(outcome: &'a ExecutionOutcome<R>) -> Self {
+impl<'a> From<&'a ExecutionOutcome> for WriteStateInput<'a> {
+    fn from(outcome: &'a ExecutionOutcome) -> Self {
         Self::Multiple(outcome)
     }
 }
 
 /// A trait specifically for writing state changes or reverts
 pub trait StateWriter {
-    /// Receipt type included into [`ExecutionOutcome`].
-    type Receipt: 'static;
-
     /// Write the state and optionally receipts to the database.
     ///
     /// Use `config` to skip writing certain data types when they are written elsewhere.
     fn write_state<'a>(
         &self,
-        execution_outcome: impl Into<WriteStateInput<'a, Self::Receipt>>,
+        execution_outcome: impl Into<WriteStateInput<'a>>,
         is_value_known: OriginalValuesKnown,
         config: StateWriteConfig,
     ) -> ProviderResult<()>;
@@ -122,10 +120,7 @@ pub trait StateWriter {
 
     /// Take the block range of state, recreating the [`ExecutionOutcome`]. The state of the passed
     /// block is not removed.
-    fn take_state_above(
-        &self,
-        block: BlockNumber,
-    ) -> ProviderResult<ExecutionOutcome<Self::Receipt>>;
+    fn take_state_above(&self, block: BlockNumber) -> ProviderResult<ExecutionOutcome>;
 }
 
 /// Configuration for what to write to the database (MDBX) when calling

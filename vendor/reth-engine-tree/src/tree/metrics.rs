@@ -48,9 +48,9 @@ impl EngineApiMetrics {
     ///
     /// This method updates metrics for execution time, gas usage, and the number
     /// of accounts, storage slots and bytecodes updated.
-    pub fn record_block_execution<R>(
+    pub fn record_block_execution(
         &self,
-        output: &BlockExecutionOutput<R>,
+        output: &BlockExecutionOutput,
         execution_duration: Duration,
     ) {
         let execution_secs = execution_duration.as_secs_f64();
@@ -634,7 +634,6 @@ pub(crate) struct BlockBufferMetrics {
 #[cfg(test)]
 mod tests {
     use alloy_eips::eip7685::Requests;
-    use base_common_consensus::BaseReceipt;
     use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
     use reth_execution_types::BlockExecutionResult;
     use revm::database::BundleState;
@@ -658,7 +657,7 @@ mod tests {
         metrics.executor.gas_per_second.set(0.0);
         metrics.executor.gas_used_histogram.record(0.0);
 
-        let output = BlockExecutionOutput::<BaseReceipt> {
+        let output = BlockExecutionOutput {
             state: BundleState::default(),
             result: BlockExecutionResult {
                 receipts: vec![],

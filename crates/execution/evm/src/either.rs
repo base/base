@@ -40,10 +40,7 @@ where
         }
     }
 
-    fn execute(
-        self,
-        block: &RecoveredBlock,
-    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error> {
+    fn execute(self, block: &RecoveredBlock) -> Result<BlockExecutionOutput, Self::Error> {
         match self {
             Self::Left(a) => a.execute(block),
             Self::Right(b) => b.execute(block),
@@ -54,7 +51,7 @@ where
         self,
         block: &RecoveredBlock,
         state: F,
-    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
+    ) -> Result<BlockExecutionOutput, Self::Error>
     where
         F: FnMut(&revm::database::State<DB>),
     {

@@ -4,7 +4,7 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::BlockId;
 use alloy_primitives::{U64, U256, map::AddressMap};
 use async_trait::async_trait;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseBlock;
 use base_execution_evm::{BaseEvmConfig, Executor};
 use futures::{Stream, StreamExt};
 use jsonrpsee::{PendingSubscriptionSink, SubscriptionMessage, SubscriptionSink, core::RpcResult};
@@ -118,7 +118,7 @@ where
         &self,
         block_id: BlockId,
         count: Option<U64>,
-    ) -> EthResult<Option<ExecutionOutcome<BaseReceipt>>> {
+    ) -> EthResult<Option<ExecutionOutcome>> {
         const MAX_BLOCK_COUNT: u64 = 128;
 
         let block_count = count.map(|c| c.to::<u64>()).unwrap_or(1);
@@ -146,7 +146,7 @@ where
         &self,
         block_id: BlockId,
         block_count: u64,
-    ) -> EthResult<Option<ExecutionOutcome<BaseReceipt>>> {
+    ) -> EthResult<Option<ExecutionOutcome>> {
         let Some(start_block) = self.provider().block_number_for_id(block_id)? else {
             return Ok(None);
         };

@@ -366,7 +366,7 @@ impl TestBlockBuilder {
     /// Returns the execution outcome for a block created with this builder.
     /// In order to properly include the bundle state, the signer balance is
     /// updated.
-    pub fn get_execution_outcome(&mut self, block: RecoveredBlock) -> ExecutionOutcome<Receipt> {
+    pub fn get_execution_outcome(&mut self, block: RecoveredBlock) -> ExecutionOutcome {
         let num_txs = block.body().transactions.len() as u64;
         let single_cost = Self::single_tx_cost();
 

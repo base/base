@@ -6,7 +6,7 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseBlock;
 use base_execution_evm::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor};
 use reth_primitives_traits::{Block as _, BlockBody as _, RecoveredBlock, format_gas_throughput};
 use reth_provider::{
@@ -166,7 +166,7 @@ impl<P> Iterator for SingleBlockBackfillJob<P>
 where
     P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
 {
-    type Item = BackfillJobResult<(RecoveredBlock, BlockExecutionOutput<BaseReceipt>)>;
+    type Item = BackfillJobResult<(RecoveredBlock, BlockExecutionOutput)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.range.next().map(|block_number| self.execute_block(block_number))
@@ -178,9 +178,7 @@ where
     P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
 {
     /// Converts the single block backfill job into a stream.
-    pub fn into_stream(
-        self,
-    ) -> StreamBackfillJob<P, (RecoveredBlock, BlockExecutionOutput<BaseReceipt>)> {
+    pub fn into_stream(self) -> StreamBackfillJob<P, (RecoveredBlock, BlockExecutionOutput)> {
         self.into()
     }
 
@@ -188,7 +186,7 @@ where
     pub(crate) fn execute_block(
         &self,
         block_number: u64,
-    ) -> BackfillJobResult<(RecoveredBlock, BlockExecutionOutput<BaseReceipt>)> {
+    ) -> BackfillJobResult<(RecoveredBlock, BlockExecutionOutput)> {
         // Fetch the block with senders for execution.
         let block_with_senders = self
             .provider

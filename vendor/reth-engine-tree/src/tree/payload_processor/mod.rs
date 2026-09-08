@@ -11,7 +11,6 @@ use std::{
 
 use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
-use base_common_consensus::BaseReceipt;
 use base_execution_evm::{
     BaseEvmConfig, ConvertTx, ExecutableTxFor, ExecutableTxIterator, ExecutableTxParts,
     ExecutableTxTuple, SpecFor, TxEnvFor, WithTxEnv,
@@ -55,8 +54,7 @@ pub const SMALL_BLOCK_TX_THRESHOLD: usize = 5;
 /// Type alias for [`PayloadHandle`] returned by payload processor spawn methods.
 type IteratorTx<I> = RecoveredTx<TxEnvFor, <I as ExecutableTxIterator>::Recovered>;
 
-type IteratorPayloadHandle<I> =
-    PayloadHandle<IteratorTx<I>, <I as ExecutableTxTuple>::Error, BaseReceipt>;
+type IteratorPayloadHandle<I> = PayloadHandle<IteratorTx<I>, <I as ExecutableTxTuple>::Error>;
 
 type IteratorPrewarmTxReceiver<I> =
     PrewarmTxReceiver<TxEnvFor, <I as ExecutableTxIterator>::Recovered>;
@@ -334,7 +332,7 @@ impl PayloadProcessor {
         hint_stream: Option<StateRootHintStream>,
         hashed_update_stream: Option<StateRootUpdateStream>,
         parallel_bal_execution: bool,
-    ) -> CacheTaskHandle<BaseReceipt>
+    ) -> CacheTaskHandle
     where
         P: DatabaseProviderFactory + Clone + 'static,
         P::Provider: BlockNumReader
@@ -495,18 +493,17 @@ fn convert_serial<RawTx, Tx, TxEnv, InnerTx, Recovered, Err, C>(
 
 /// Handle to all the spawned tasks.
 ///
-/// Generic over `R` (receipt type) to allow sharing `Arc<ExecutionOutcome<R>>` with the
-/// caching task without cloning the expensive `BundleState`.
+/// Shares the final execution outcome with the caching task through `Arc`.
 #[derive(Debug)]
-pub struct PayloadHandle<Tx, Err, R> {
-    prewarm_handle: CacheTaskHandle<R>,
+pub struct PayloadHandle<Tx, Err> {
+    prewarm_handle: CacheTaskHandle,
     /// Stream of block transactions and their indices in the block.
     transactions: IndexedTxReceiver<Tx, Err>,
     /// Span for tracing
     _span: Span,
 }
 
-impl<Tx, Err, R: Send + Sync + 'static> PayloadHandle<Tx, Err, R> {
+impl<Tx, Err> PayloadHandle<Tx, Err> {
     /// Returns a clone of the caches used by prewarming
     pub fn caches(&self) -> Option<ExecutionCache> {
         self.prewarm_handle.saved_cache.as_ref().map(|cache| cache.cache().clone())
@@ -541,7 +538,7 @@ impl<Tx, Err, R: Send + Sync + 'static> PayloadHandle<Tx, Err, R> {
     /// Returns a sender for the channel that should be notified on block validation success.
     pub fn terminate_caching(
         &mut self,
-        execution_outcome: Option<Arc<BlockExecutionOutput<R>>>,
+        execution_outcome: Option<Arc<BlockExecutionOutput>>,
     ) -> Option<mpsc::Sender<()>> {
         self.prewarm_handle.terminate_caching(execution_outcome)
     }
@@ -559,14 +556,13 @@ impl<Tx, Err, R: Send + Sync + 'static> PayloadHandle<Tx, Err, R> {
 
 /// Access to the spawned [`PrewarmCacheTask`].
 ///
-/// Generic over `R` (receipt type) to allow sharing `Arc<ExecutionOutcome<R>>` with the
-/// prewarm task without cloning the expensive `BundleState`.
+/// Shares the final execution outcome with the prewarm task through `Arc`.
 #[derive(Debug)]
-pub struct CacheTaskHandle<R> {
+pub struct CacheTaskHandle {
     /// The shared cache the task operates with.
     saved_cache: Option<SavedCache>,
     /// Channel to the spawned prewarm task if any
-    to_prewarm_task: Option<std::sync::mpsc::Sender<PrewarmTaskEvent<R>>>,
+    to_prewarm_task: Option<std::sync::mpsc::Sender<PrewarmTaskEvent>>,
     /// Shared counter tracking the next transaction index to be executed by the main execution
     /// loop. Prewarm workers skip transactions below this index.
     executed_tx_index: Arc<AtomicUsize>,
@@ -574,7 +570,7 @@ pub struct CacheTaskHandle<R> {
     cache_metrics: Option<CachedStateMetrics>,
 }
 
-impl<R: Send + Sync + 'static> CacheTaskHandle<R> {
+impl CacheTaskHandle {
     /// Terminates the pre-warming transaction processing.
     ///
     /// Note: This does not terminate the task yet.
@@ -591,7 +587,7 @@ impl<R: Send + Sync + 'static> CacheTaskHandle<R> {
     #[must_use = "sender must be used and notified on block validation success"]
     pub fn terminate_caching(
         &mut self,
-        execution_outcome: Option<Arc<BlockExecutionOutput<R>>>,
+        execution_outcome: Option<Arc<BlockExecutionOutput>>,
     ) -> Option<mpsc::Sender<()>> {
         if let Some(tx) = self.to_prewarm_task.take() {
             let (valid_block_tx, valid_block_rx) = mpsc::channel();
@@ -605,7 +601,7 @@ impl<R: Send + Sync + 'static> CacheTaskHandle<R> {
     }
 }
 
-impl<R> Drop for CacheTaskHandle<R> {
+impl Drop for CacheTaskHandle {
     fn drop(&mut self) {
         // Ensure we always terminate on drop - send None without needing Send + Sync bounds
         if let Some(tx) = self.to_prewarm_task.take() {

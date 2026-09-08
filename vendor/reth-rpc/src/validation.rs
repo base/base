@@ -18,7 +18,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadSidecar, PraguePayloadFields,
 };
 use async_trait::async_trait;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseBlock;
 use base_evm_handler::BlockExecutionError;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, MAX_RLP_BLOCK_SIZE};
@@ -271,7 +271,7 @@ where
     fn ensure_payment(
         &self,
         block: &SealedBlock,
-        output: &BlockExecutionOutput<BaseReceipt>,
+        output: &BlockExecutionOutput,
         message: &BidTrace,
     ) -> Result<(), ValidationApiError> {
         let (mut balance_before, balance_after) = if let Some(acc) =

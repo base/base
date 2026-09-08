@@ -856,7 +856,6 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, b256, keccak256};
-    use base_common_consensus::BaseReceipt;
     use reth_db_api::{
         BlockNumberList,
         models::{AccountBeforeTx, ShardedKey, storage_sharded_key::StorageShardedKey},
@@ -1344,7 +1343,7 @@ mod tests {
                     .into_iter()
                     .map(|b| b.try_recover().expect("failed to seal block with senders"))
                     .collect(),
-                &ExecutionOutcome::<BaseReceipt> { bundle, first_block: 0, ..Default::default() },
+                &ExecutionOutcome { bundle, first_block: 0, ..Default::default() },
                 Default::default(),
             )
             .unwrap();
@@ -1473,7 +1472,7 @@ mod tests {
                     .into_iter()
                     .map(|block| block.try_recover().expect("failed to seal block with senders"))
                     .collect(),
-                &ExecutionOutcome::<BaseReceipt> { bundle, first_block: 0, ..Default::default() },
+                &ExecutionOutcome { bundle, first_block: 0, ..Default::default() },
                 Default::default(),
             )
             .unwrap();

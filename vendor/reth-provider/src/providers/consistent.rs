@@ -1476,8 +1476,6 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ChangeSetReader
 impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StateReader
     for ConsistentProvider<DB>
 {
-    type Receipt = BaseReceipt;
-
     /// Re-constructs the [`ExecutionOutcome`] from in-memory and database state, if necessary.
     ///
     /// If data for the block does not exist, this will return [`None`].
@@ -1487,10 +1485,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StateReader
     /// inconsistent. Currently this can safely be called within the blockchain tree thread,
     /// because the tree thread is responsible for modifying the [`CanonicalInMemoryState`] in the
     /// first place.
-    fn get_state(
-        &self,
-        block: BlockNumber,
-    ) -> ProviderResult<Option<ExecutionOutcome<Self::Receipt>>> {
+    fn get_state(&self, block: BlockNumber) -> ProviderResult<Option<ExecutionOutcome>> {
         if let Some(state) = self.head_block.as_ref().and_then(|b| b.block_on_chain(block.into())) {
             let state = state.block_ref().execution_outcome().clone();
             Ok(Some(ExecutionOutcome::from((state, block))))
@@ -1509,7 +1504,6 @@ mod tests {
 
     use alloy_eips::BlockHashOrNumber;
     use alloy_primitives::B256;
-    use base_common_consensus::BaseReceipt;
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
@@ -1829,7 +1823,7 @@ mod tests {
                 .into_iter()
                 .map(|b| b.try_recover().expect("failed to seal block with senders"))
                 .collect(),
-            &ExecutionOutcome::<BaseReceipt> {
+            &ExecutionOutcome {
                 bundle: BundleState::new(
                     database_state.into_iter().map(|(address, (account, _))| {
                         (address, None, Some(account.into()), Default::default())

@@ -756,7 +756,7 @@ pub struct ExecutedBlock {
     /// Recovered Block
     pub recovered_block: Arc<RecoveredBlock>,
     /// Block's execution outcome.
-    pub execution_output: Arc<BlockExecutionOutput<BaseReceipt>>,
+    pub execution_output: Arc<BlockExecutionOutput>,
     /// Deferred trie data produced by execution.
     ///
     /// This allows deferring the computation of the trie data which can be expensive.
@@ -797,7 +797,7 @@ impl ExecutedBlock {
     /// payload builders). This is the safe default path.
     pub fn new(
         recovered_block: Arc<RecoveredBlock>,
-        execution_output: Arc<BlockExecutionOutput<BaseReceipt>>,
+        execution_output: Arc<BlockExecutionOutput>,
         trie_data: ComputedTrieData,
     ) -> Self {
         Self { recovered_block, execution_output, trie_data: LazyTrieData::ready(trie_data) }
@@ -818,7 +818,7 @@ impl ExecutedBlock {
     /// Use [`Self::new()`] instead when trie data is already computed and available immediately.
     pub const fn with_deferred_trie_data(
         recovered_block: Arc<RecoveredBlock>,
-        execution_output: Arc<BlockExecutionOutput<BaseReceipt>>,
+        execution_output: Arc<BlockExecutionOutput>,
         trie_data: LazyTrieData,
     ) -> Self {
         Self { recovered_block, execution_output, trie_data }
@@ -838,7 +838,7 @@ impl ExecutedBlock {
 
     /// Returns a reference to the block's execution outcome
     #[inline]
-    pub fn execution_outcome(&self) -> &BlockExecutionOutput<BaseReceipt> {
+    pub fn execution_outcome(&self) -> &BlockExecutionOutput {
         &self.execution_output
     }
 

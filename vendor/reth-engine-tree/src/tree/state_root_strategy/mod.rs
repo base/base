@@ -53,7 +53,6 @@
 //! `eth_getProof` and anything else that reads the stored trie will not work for new blocks.
 //! Sparse-trie cache pruning uses node epochs to retain the in-memory block range.
 
-use base_common_consensus::BaseReceipt;
 mod sparse_trie;
 
 use std::{
@@ -407,7 +406,7 @@ impl PreparedStateRootJob {
     pub fn finish(
         &mut self,
         block: &RecoveredBlock,
-        output: Arc<BlockExecutionOutput<BaseReceipt>>,
+        output: Arc<BlockExecutionOutput>,
         hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {
         self.job.finish(block, output, hashed_state)
@@ -425,7 +424,7 @@ pub trait StateRootJob: Send {
     fn finish(
         &mut self,
         block: &RecoveredBlock,
-        output: Arc<BlockExecutionOutput<BaseReceipt>>,
+        output: Arc<BlockExecutionOutput>,
         hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome>;
 }
@@ -944,7 +943,7 @@ impl StateRootJob for SkippedStateRootJob {
     fn finish(
         &mut self,
         block: &RecoveredBlock,
-        _output: Arc<BlockExecutionOutput<BaseReceipt>>,
+        _output: Arc<BlockExecutionOutput>,
         _hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {
         Ok(StateRootJobOutcome::new(block.header().state_root(), Arc::new(TrieUpdates::default())))
@@ -973,7 +972,7 @@ where
     fn finish(
         &mut self,
         _block: &RecoveredBlock,
-        _output: Arc<BlockExecutionOutput<BaseReceipt>>,
+        _output: Arc<BlockExecutionOutput>,
         hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {
         let provider = self.provider_builder.clone().build()?;
@@ -1010,7 +1009,7 @@ where
     fn serial_fallback(
         executor: &reth_tasks::Runtime,
         provider_builder: StateProviderBuilder<P>,
-        output: Arc<BlockExecutionOutput<BaseReceipt>>,
+        output: Arc<BlockExecutionOutput>,
     ) -> ProviderResult<SerialFallbackRx> {
         let provider = provider_builder.build()?;
         let (fallback_tx, fallback_rx) = mpsc::channel();
@@ -1031,10 +1030,7 @@ where
     ///
     /// Used when the state-root task failed or produced a wrong root, so the recomputed hashed
     /// post state is returned in the outcome for validation to re-check against.
-    fn compute_serial(
-        &self,
-        output: &BlockExecutionOutput<BaseReceipt>,
-    ) -> ProviderResult<StateRootJobOutcome> {
+    fn compute_serial(&self, output: &BlockExecutionOutput) -> ProviderResult<StateRootJobOutcome> {
         let provider = self.provider_builder.clone().build()?;
         let hashed_state = Arc::new(provider.hashed_post_state(&output.state)?);
         let (state_root, trie_updates) =
@@ -1051,7 +1047,7 @@ where
     fn verified_sparse_outcome(
         &self,
         block: &RecoveredBlock,
-        output: &BlockExecutionOutput<BaseReceipt>,
+        output: &BlockExecutionOutput,
         outcome: StateRootComputeOutcome,
     ) -> ProviderResult<StateRootJobOutcome> {
         let outcome = self.sparse_outcome(block, output, outcome);
@@ -1070,7 +1066,7 @@ where
     fn sparse_outcome(
         &self,
         _block: &RecoveredBlock,
-        output: &BlockExecutionOutput<BaseReceipt>,
+        output: &BlockExecutionOutput,
         outcome: StateRootComputeOutcome,
     ) -> StateRootJobOutcome {
         let StateRootComputeOutcome {
@@ -1123,7 +1119,7 @@ where
     fn finish(
         &mut self,
         block: &RecoveredBlock,
-        output: Arc<BlockExecutionOutput<BaseReceipt>>,
+        output: Arc<BlockExecutionOutput>,
         _hashed_state: &LazyHashedPostState,
     ) -> ProviderResult<StateRootJobOutcome> {
         if self.timeout.is_none() {
@@ -1205,7 +1201,7 @@ where
 fn compare_trie_updates_with_serial<P>(
     state_provider_builder: StateProviderBuilder<P>,
     overlay_factory: OverlayStateProviderFactory<P>,
-    output: &BlockExecutionOutput<BaseReceipt>,
+    output: &BlockExecutionOutput,
     task_trie_updates: TrieUpdates,
 ) -> bool
 where

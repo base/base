@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
+use base_common_consensus::BaseReceipt;
 pub use base_evm_handler::BlockExecutionResult;
 use reth_primitives_traits::{Account, Bytecode};
 use revm::database::{BundleAccount, states::BundleState};
@@ -14,18 +15,18 @@ use revm::database::{BundleAccount, states::BundleState};
     derive_more::Deref,
     derive_more::DerefMut,
 )]
-pub struct BlockExecutionOutput<T> {
+pub struct BlockExecutionOutput {
     /// All the receipts of the transactions in the block.
     #[as_ref]
     #[as_mut]
     #[deref]
     #[deref_mut]
-    pub result: BlockExecutionResult<T>,
+    pub result: BlockExecutionResult<BaseReceipt>,
     /// The changed state of the block after execution.
     pub state: BundleState,
 }
 
-impl<T> BlockExecutionOutput<T> {
+impl BlockExecutionOutput {
     /// Return bytecode if known.
     pub fn bytecode(&self, code_hash: &B256) -> Option<Bytecode> {
         self.state.bytecode(code_hash).map(Bytecode)
@@ -49,7 +50,7 @@ impl<T> BlockExecutionOutput<T> {
     }
 }
 
-impl<T> Default for BlockExecutionOutput<T> {
+impl Default for BlockExecutionOutput {
     fn default() -> Self {
         Self {
             result: BlockExecutionResult {

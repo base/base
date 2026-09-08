@@ -945,15 +945,10 @@ where
         state_provider: S,
         env: ExecutionEnv,
         input: &BlockOrPayload,
-        handle: &mut PayloadHandle<impl ExecutableTxFor, Err, BaseReceipt>,
+        handle: &mut PayloadHandle<impl ExecutableTxFor, Err>,
         state_hook: Option<Box<dyn OnStateHook + 'static>>,
     ) -> Result<
-        (
-            BlockExecutionOutput<BaseReceipt>,
-            Vec<Address>,
-            ReceiptRootReceiver,
-            Option<BlockAccessList>,
-        ),
+        (BlockExecutionOutput, Vec<Address>, ReceiptRootReceiver, Option<BlockAccessList>),
         InsertBlockErrorKind,
     >
     where
@@ -1033,7 +1028,7 @@ where
             .in_scope(|| db.merge_transitions(BundleRetention::Reverts));
 
         let built_bal = if has_bal { db.take_built_alloy_bal() } else { None };
-        let output = BlockExecutionOutput::<BaseReceipt> { result, state: db.take_bundle() };
+        let output = BlockExecutionOutput { result, state: db.take_bundle() };
 
         let execution_duration = execution_start.elapsed();
         self.metrics.record_block_execution(&output, execution_duration);
@@ -1079,15 +1074,10 @@ where
         &self,
         env: ExecutionEnv,
         input: &BlockOrPayload,
-        handle: &PayloadHandle<Tx, Err, BaseReceipt>,
+        handle: &PayloadHandle<Tx, Err>,
         make_state_provider: &MakeStateProvider,
     ) -> Result<
-        (
-            BlockExecutionOutput<BaseReceipt>,
-            Vec<Address>,
-            ReceiptRootReceiver,
-            Option<BlockAccessList>,
-        ),
+        (BlockExecutionOutput, Vec<Address>, ReceiptRootReceiver, Option<BlockAccessList>),
         InsertBlockErrorKind,
     >
     where
@@ -1261,7 +1251,7 @@ where
         &self,
         block: &RecoveredBlock,
         parent_block: &SealedHeader,
-        output: &BlockExecutionOutput<BaseReceipt>,
+        output: &BlockExecutionOutput,
         ctx: &mut TreeCtx<'_>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
         built_bal: Option<BlockAccessList>,
@@ -1327,7 +1317,6 @@ where
         PayloadHandle<
             impl ExecutableTxFor + use<P, V, T>,
             impl core::error::Error + Send + Sync + 'static + use<P, V, T>,
-            BaseReceipt,
         >,
         InsertBlockErrorKind,
     > {
@@ -1371,7 +1360,7 @@ where
         &self,
         parent_header: &SealedHeader,
         block: &RecoveredBlock,
-        output: &BlockExecutionOutput<BaseReceipt>,
+        output: &BlockExecutionOutput,
         trie_updates: Option<(&TrieUpdates, B256)>,
         state: &mut EngineApiTreeState,
     ) {
@@ -1448,7 +1437,7 @@ where
     fn spawn_deferred_trie_task(
         &self,
         block: Arc<RecoveredBlock>,
-        execution_outcome: Arc<BlockExecutionOutput<BaseReceipt>>,
+        execution_outcome: Arc<BlockExecutionOutput>,
         hashed_state: LazyHashedPostState,
         trie_output: Arc<TrieUpdates>,
     ) -> ExecutedBlock {
@@ -1501,7 +1490,7 @@ where
         block: &RecoveredBlock,
         provider_stats: Arc<StateProviderStats>,
         cache_stats: Option<Arc<CacheStats>>,
-        output: &BlockExecutionOutput<BaseReceipt>,
+        output: &BlockExecutionOutput,
         execution_duration: Duration,
         state_hash_duration: Duration,
     ) -> Box<ExecutionTimingStats> {

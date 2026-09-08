@@ -56,20 +56,14 @@ pub trait Executor<DB: Database>: Sized {
     ///
     /// # Returns
     /// The output of the block execution.
-    fn execute(
-        mut self,
-        block: &RecoveredBlock,
-    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error> {
+    fn execute(mut self, block: &RecoveredBlock) -> Result<BlockExecutionOutput, Self::Error> {
         let result = self.execute_one(block)?;
         let mut state = self.into_state();
         Ok(BlockExecutionOutput { state: state.take_bundle(), result })
     }
 
     /// Executes multiple inputs in the batch, and returns an aggregated [`ExecutionOutcome`].
-    fn execute_batch<'a, I>(
-        mut self,
-        blocks: I,
-    ) -> Result<ExecutionOutcome<BaseReceipt>, Self::Error>
+    fn execute_batch<'a, I>(mut self, blocks: I) -> Result<ExecutionOutcome, Self::Error>
     where
         I: IntoIterator<Item = &'a RecoveredBlock>,
     {
@@ -97,7 +91,7 @@ pub trait Executor<DB: Database>: Sized {
         mut self,
         block: &RecoveredBlock,
         mut f: F,
-    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
+    ) -> Result<BlockExecutionOutput, Self::Error>
     where
         F: FnMut(&State<DB>),
     {
@@ -113,7 +107,7 @@ pub trait Executor<DB: Database>: Sized {
         mut self,
         block: &RecoveredBlock,
         mut f: F,
-    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
+    ) -> Result<BlockExecutionOutput, Self::Error>
     where
         F: FnMut(&State<DB>),
     {
@@ -130,7 +124,7 @@ pub trait Executor<DB: Database>: Sized {
         mut self,
         block: &RecoveredBlock,
         state_hook: F,
-    ) -> Result<BlockExecutionOutput<BaseReceipt>, Self::Error>
+    ) -> Result<BlockExecutionOutput, Self::Error>
     where
         F: OnStateHook + 'static,
     {

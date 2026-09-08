@@ -130,10 +130,10 @@ impl SlotPreimagesReader {
 ///
 /// This eliminates the need for the changeset writer to read from `HashedStorages` during
 /// storage wipes, keeping all changeset keys in plain format.
-pub(super) fn inject_plain_wipe_slots<P: DBProvider, R>(
+pub(super) fn inject_plain_wipe_slots<P: DBProvider>(
     slot_preimages_path: &Path,
     provider: &P,
-    state: &mut ExecutionOutcome<R>,
+    state: &mut ExecutionOutcome,
 ) -> Result<(), StageError> {
     // Collect preimage entries from bundle state and reverts.
     // StorageKey in revm is U256, representing a plain EVM slot index.

@@ -35,7 +35,7 @@ pub struct Chain {
     /// chain, ranging from the [`Chain::first`] block to the [`Chain::tip`] block, inclusive.
     ///
     /// Additionally, it includes the individual state changes that led to the current state.
-    execution_outcome: ExecutionOutcome<BaseReceipt>,
+    execution_outcome: ExecutionOutcome,
     /// Lazy trie data for each block in the chain, keyed by block number.
     ///
     /// Contains handles to lazily-initialized sorted trie updates and hashed state.
@@ -63,7 +63,7 @@ impl Chain {
     /// A chain of blocks should not be empty.
     pub fn new(
         blocks: impl IntoIterator<Item: Into<Arc<RecoveredBlock>>>,
-        execution_outcome: ExecutionOutcome<BaseReceipt>,
+        execution_outcome: ExecutionOutcome,
         trie_data: BTreeMap<BlockNumber, LazyTrieData>,
     ) -> Self {
         let blocks = blocks
@@ -81,7 +81,7 @@ impl Chain {
     /// Create new Chain from a single block and its state.
     pub fn from_block(
         block: impl Into<Arc<RecoveredBlock>>,
-        execution_outcome: ExecutionOutcome<BaseReceipt>,
+        execution_outcome: ExecutionOutcome,
         trie_data: LazyTrieData,
     ) -> Self {
         let block = block.into();
@@ -120,12 +120,12 @@ impl Chain {
     }
 
     /// Get execution outcome of this chain
-    pub const fn execution_outcome(&self) -> &ExecutionOutcome<BaseReceipt> {
+    pub const fn execution_outcome(&self) -> &ExecutionOutcome {
         &self.execution_outcome
     }
 
     /// Get mutable execution outcome of this chain
-    pub const fn execution_outcome_mut(&mut self) -> &mut ExecutionOutcome<BaseReceipt> {
+    pub const fn execution_outcome_mut(&mut self) -> &mut ExecutionOutcome {
         &mut self.execution_outcome
     }
 
@@ -150,7 +150,7 @@ impl Chain {
     pub fn execution_outcome_at_block(
         &self,
         block_number: BlockNumber,
-    ) -> Option<ExecutionOutcome<BaseReceipt>> {
+    ) -> Option<ExecutionOutcome> {
         if self.tip().number() == block_number {
             return Some(self.execution_outcome.clone());
         }
@@ -170,15 +170,14 @@ impl Chain {
     #[expect(clippy::type_complexity)]
     pub fn into_inner(
         self,
-    ) -> (ChainBlocks<'static>, ExecutionOutcome<BaseReceipt>, BTreeMap<BlockNumber, LazyTrieData>)
-    {
+    ) -> (ChainBlocks<'static>, ExecutionOutcome, BTreeMap<BlockNumber, LazyTrieData>) {
         (ChainBlocks { blocks: Cow::Owned(self.blocks) }, self.execution_outcome, self.trie_data)
     }
 
     /// Destructure the chain into its inner components:
     /// 1. A reference to the blocks contained in the chain.
     /// 2. A reference to the execution outcome representing the final state.
-    pub const fn inner(&self) -> (ChainBlocks<'_>, &ExecutionOutcome<BaseReceipt>) {
+    pub const fn inner(&self) -> (ChainBlocks<'_>, &ExecutionOutcome) {
         (ChainBlocks { blocks: Cow::Borrowed(&self.blocks) }, &self.execution_outcome)
     }
 
@@ -325,7 +324,7 @@ impl Chain {
     pub fn append_block(
         &mut self,
         block: impl Into<Arc<RecoveredBlock>>,
-        execution_outcome: ExecutionOutcome<BaseReceipt>,
+        execution_outcome: ExecutionOutcome,
         trie_data: LazyTrieData,
     ) {
         let block = block.into();
@@ -723,7 +722,7 @@ mod tests {
 
     #[test]
     fn test_number_split() {
-        let execution_outcome1: ExecutionOutcome<BaseReceipt> = ExecutionOutcome::new(
+        let execution_outcome1: ExecutionOutcome = ExecutionOutcome::new(
             BundleState::new(
                 vec![(
                     Address::new([2; 20]),

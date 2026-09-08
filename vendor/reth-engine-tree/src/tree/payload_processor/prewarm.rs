@@ -20,7 +20,6 @@ use std::sync::{
 use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, U256, keccak256};
-use base_common_consensus::BaseReceipt;
 use base_execution_evm::{BaseEvmConfig, Evm, EvmFor, ExecutableTxFor, RecoveredTx, SpecFor};
 use metrics::{Counter, Gauge, Histogram};
 use rayon::prelude::*;
@@ -81,7 +80,7 @@ pub struct PrewarmCacheTask<P> {
     /// Context provided to execution tasks
     ctx: PrewarmContext<P>,
     /// Receiver for events produced by tx execution
-    actions_rx: Receiver<PrewarmTaskEvent<BaseReceipt>>,
+    actions_rx: Receiver<PrewarmTaskEvent>,
     /// Parent span for tracing
     parent_span: Span,
 }
@@ -101,7 +100,7 @@ where
         executor: Runtime,
         execution_cache: PayloadExecutionCache,
         ctx: PrewarmContext<P>,
-    ) -> (Self, Sender<PrewarmTaskEvent<BaseReceipt>>) {
+    ) -> (Self, Sender<PrewarmTaskEvent>) {
         let (actions_tx, actions_rx) = channel();
 
         trace!(
@@ -126,7 +125,7 @@ where
     fn spawn_txs_prewarm<Tx>(
         &self,
         pending: mpsc::Receiver<(usize, Tx)>,
-        actions_tx: Sender<PrewarmTaskEvent<BaseReceipt>>,
+        actions_tx: Sender<PrewarmTaskEvent>,
         state_root_hint_stream: Option<StateRootHintStream>,
     ) where
         Tx: ExecutableTxFor + Send + 'static,
@@ -275,7 +274,7 @@ where
     #[instrument(level = "debug", target = "engine::tree::payload_processor::prewarm", skip_all)]
     fn save_cache(
         self,
-        execution_outcome: Arc<BlockExecutionOutput<BaseReceipt>>,
+        execution_outcome: Arc<BlockExecutionOutput>,
         valid_block_rx: mpsc::Receiver<()>,
     ) {
         let start = Instant::now();
@@ -336,7 +335,7 @@ where
     fn run_bal_prewarm(
         &self,
         decoded_bal: Arc<DecodedBal>,
-        actions_tx: Sender<PrewarmTaskEvent<BaseReceipt>>,
+        actions_tx: Sender<PrewarmTaskEvent>,
         hashed_update_stream: Option<StateRootUpdateStream>,
     ) {
         let bal = decoded_bal.as_bal();
@@ -450,7 +449,7 @@ where
         name = "prewarm and caching",
         skip_all
     )]
-    pub fn run<Tx>(self, mode: PrewarmMode<Tx>, actions_tx: Sender<PrewarmTaskEvent<BaseReceipt>>)
+    pub fn run<Tx>(self, mode: PrewarmMode<Tx>, actions_tx: Sender<PrewarmTaskEvent>)
     where
         Tx: ExecutableTxFor + Send + 'static,
     {
@@ -870,10 +869,9 @@ mod tests {
 
 /// The events the pre-warm task can handle.
 ///
-/// Generic over `R` (receipt type) to allow sharing `Arc<ExecutionOutcome<R>>` with the main
-/// execution path without cloning the expensive `BundleState`.
+/// Shares the final execution outcome with the main execution path through `Arc`.
 #[derive(Debug)]
-pub enum PrewarmTaskEvent<R> {
+pub enum PrewarmTaskEvent {
     /// Forcefully terminate all remaining transaction execution.
     TerminateTransactionExecution,
     /// Forcefully terminate the task on demand and update the shared cache with the given output
@@ -881,7 +879,7 @@ pub enum PrewarmTaskEvent<R> {
     Terminate {
         /// The final execution outcome. Using `Arc` allows sharing with the main execution
         /// path without cloning the expensive `BundleState`.
-        execution_outcome: Option<Arc<BlockExecutionOutput<R>>>,
+        execution_outcome: Option<Arc<BlockExecutionOutput>>,
         /// Receiver for the block validation result.
         ///
         /// Cache saving is racing the state root validation. We optimistically construct the

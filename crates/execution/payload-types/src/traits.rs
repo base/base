@@ -7,7 +7,6 @@ use alloy_eips::{eip4895::Withdrawal, eip7685::Requests};
 use alloy_primitives::{B256, Bytes, U256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::{PayloadAttributes as EthPayloadAttributes, PayloadId};
-use base_common_consensus::BaseReceipt;
 use either::Either;
 use reth_execution_types::BlockExecutionOutput;
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
@@ -24,7 +23,7 @@ pub struct BuiltPayloadExecutedBlock {
     /// Recovered Block
     pub recovered_block: Arc<RecoveredBlock>,
     /// Block's execution outcome.
-    pub execution_output: Arc<BlockExecutionOutput<BaseReceipt>>,
+    pub execution_output: Arc<BlockExecutionOutput>,
     /// Block's hashed state (unsorted).
     pub hashed_state: Arc<HashedPostState>,
     /// Trie updates that result from calculating the state root for the block (unsorted).

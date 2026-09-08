@@ -14,7 +14,7 @@ use alloy_primitives::{B256, map::B256Map};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
@@ -425,7 +425,7 @@ where
     P: DatabaseProviderFactory
         + BlockReader<Block = BaseBlock>
         + StateProviderFactory
-        + StateReader<Receipt = BaseReceipt>
+        + StateReader
         + BalProvider
         + Clone
         + 'static,
@@ -2417,7 +2417,7 @@ where
         let sorted_trie_updates = Arc::new(trie_updates);
         let trie_data = ComputedTrieData::new(sorted_hashed_state, sorted_trie_updates);
 
-        let execution_output = Arc::new(BlockExecutionOutput::<BaseReceipt> {
+        let execution_output = Arc::new(BlockExecutionOutput {
             state: execution_output.bundle,
             result: BlockExecutionResult {
                 receipts: execution_output.receipts.pop().unwrap_or_default(),

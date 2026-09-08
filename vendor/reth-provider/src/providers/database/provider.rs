@@ -1465,12 +1465,7 @@ impl<TX: DbTx> ChangeSetReader for DatabaseProvider<TX> {
 }
 
 impl<Tx: DbTx + 'static> StateReader for DatabaseProvider<Tx> {
-    type Receipt = BaseReceipt;
-
-    fn get_state(
-        &self,
-        block: BlockNumber,
-    ) -> ProviderResult<Option<ExecutionOutcome<Self::Receipt>>> {
+    fn get_state(&self, block: BlockNumber) -> ProviderResult<Option<ExecutionOutcome>> {
         let Some(block_body) = self.block_body_indices(block)? else { return Ok(None) };
 
         let from_transaction_num = block_body.first_tx_num();
@@ -2183,12 +2178,10 @@ impl<TX: DbTx + 'static> StorageReader for DatabaseProvider<TX> {
 }
 
 impl<TX: DbTxMut + DbTx + 'static> StateWriter for DatabaseProvider<TX> {
-    type Receipt = BaseReceipt;
-
     #[instrument(level = "debug", target = "providers::db", skip_all)]
     fn write_state<'a>(
         &self,
-        execution_outcome: impl Into<WriteStateInput<'a, Self::Receipt>>,
+        execution_outcome: impl Into<WriteStateInput<'a>>,
         is_value_known: OriginalValuesKnown,
         config: StateWriteConfig,
     ) -> ProviderResult<()> {
@@ -2538,10 +2531,7 @@ impl<TX: DbTxMut + DbTx + 'static> StateWriter for DatabaseProvider<TX> {
     ///     1. Take the old value from the changeset
     ///     2. Take the new value from the local state
     ///     3. Set the local state to the value in the changeset
-    fn take_state_above(
-        &self,
-        block: BlockNumber,
-    ) -> ProviderResult<ExecutionOutcome<Self::Receipt>> {
+    fn take_state_above(&self, block: BlockNumber) -> ProviderResult<ExecutionOutcome> {
         let range = block + 1..=self.last_block_number()?;
 
         if range.is_empty() {
@@ -2649,7 +2639,7 @@ impl<TX: DbTxMut + DbTx + 'static> StateWriter for DatabaseProvider<TX> {
                 },
                 |range, _| {
                     self.tx
-                        .cursor_read::<tables::Receipts<Self::Receipt>>()?
+                        .cursor_read::<tables::Receipts<BaseReceipt>>()?
                         .walk_range(range)?
                         .map(|r| r.map_err(Into::into))
                         .collect()
@@ -3066,7 +3056,7 @@ impl<TX: DbTxMut + DbTx + 'static> BlockWriter for DatabaseProvider<TX> {
         // Wrap block in ExecutedBlock with empty execution output (no receipts/state/trie)
         let executed_block = ExecutedBlock::new(
             Arc::new(block.clone()),
-            Arc::new(BlockExecutionOutput::<BaseReceipt> {
+            Arc::new(BlockExecutionOutput {
                 result: BlockExecutionResult {
                     receipts: Default::default(),
                     requests: Default::default(),
@@ -3238,7 +3228,7 @@ impl<TX: DbTxMut + DbTx + 'static> BlockWriter for DatabaseProvider<TX> {
     fn append_blocks_with_state(
         &self,
         blocks: Vec<RecoveredBlock>,
-        execution_outcome: &ExecutionOutcome<Self::Receipt>,
+        execution_outcome: &ExecutionOutcome,
         hashed_state: HashedPostStateSorted,
     ) -> ProviderResult<()> {
         if blocks.is_empty() {
@@ -3507,7 +3497,6 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{U256, map::B256Map};
-    use base_common_consensus::BaseReceipt;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
@@ -3655,11 +3644,7 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome::<BaseReceipt> {
-                    first_block: 0,
-                    receipts: vec![vec![]],
-                    ..Default::default()
-                },
+                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig {
                     write_receipts: true,
@@ -3700,11 +3685,7 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome::<BaseReceipt> {
-                    first_block: 0,
-                    receipts: vec![vec![]],
-                    ..Default::default()
-                },
+                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig {
                     write_receipts: true,
@@ -3749,11 +3730,7 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome::<BaseReceipt> {
-                    first_block: 0,
-                    receipts: vec![vec![]],
-                    ..Default::default()
-                },
+                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig {
                     write_receipts: true,
@@ -3799,11 +3776,7 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome::<BaseReceipt> {
-                    first_block: 0,
-                    receipts: vec![vec![]],
-                    ..Default::default()
-                },
+                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig {
                     write_receipts: true,
@@ -3884,11 +3857,7 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome::<BaseReceipt> {
-                    first_block: 0,
-                    receipts: vec![vec![]],
-                    ..Default::default()
-                },
+                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig {
                     write_receipts: true,
@@ -4372,11 +4341,7 @@ mod tests {
         provider_rw.insert_block(&data.genesis.try_recover().unwrap()).unwrap();
         provider_rw
             .write_state(
-                &ExecutionOutcome::<BaseReceipt> {
-                    first_block: 0,
-                    receipts: vec![vec![]],
-                    ..Default::default()
-                },
+                &ExecutionOutcome { first_block: 0, receipts: vec![vec![]], ..Default::default() },
                 crate::OriginalValuesKnown::No,
                 StateWriteConfig::default(),
             )
@@ -4572,7 +4537,7 @@ mod tests {
 
         let genesis_executed: ExecutedBlock = ExecutedBlock::new(
             Arc::new(genesis.try_recover().unwrap()),
-            Arc::new(BlockExecutionOutput::<BaseReceipt> {
+            Arc::new(BlockExecutionOutput {
                 result: BlockExecutionResult {
                     receipts: vec![],
                     requests: Default::default(),
@@ -4638,7 +4603,7 @@ mod tests {
 
             let executed = ExecutedBlock::new(
                 Arc::new(block.try_recover().unwrap()),
-                Arc::new(BlockExecutionOutput::<BaseReceipt> {
+                Arc::new(BlockExecutionOutput {
                     result: BlockExecutionResult {
                         receipts: vec![],
                         requests: Default::default(),

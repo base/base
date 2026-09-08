@@ -49,7 +49,7 @@ pub fn execute_block<'a, Tx, Err, DB, MakeDb>(
     transaction_count: usize,
     txs: Receiver<(usize, Result<Tx, Err>)>,
     receipt_tx: Sender<IndexedReceipt<BaseReceipt>>,
-) -> Result<(BlockExecutionOutput<BaseReceipt>, Vec<Address>, BlockAccessList), BalExecutionError>
+) -> Result<(BlockExecutionOutput, Vec<Address>, BlockAccessList), BalExecutionError>
 where
     Tx: ExecutableTxFor + Send + 'a,
     Err: core::error::Error + Send + Sync + 'static,
@@ -88,7 +88,7 @@ fn execute_block_inner<'scope, Tx, Err, DB, MakeDb>(
     txs: Receiver<(usize, Result<Tx, Err>)>,
     receipt_tx: Sender<IndexedReceipt<BaseReceipt>>,
     worker_count: usize,
-) -> Result<(BlockExecutionOutput<BaseReceipt>, Vec<Address>, BlockAccessList), BalExecutionError>
+) -> Result<(BlockExecutionOutput, Vec<Address>, BlockAccessList), BalExecutionError>
 where
     Tx: ExecutableTxFor + Send + 'scope,
     Err: core::error::Error + Send + Sync + 'static,
@@ -165,10 +165,7 @@ where
 
     canonical_state.merge_transitions(BundleRetention::Reverts);
     Ok((
-        BlockExecutionOutput::<BaseReceipt> {
-            state: canonical_state.take_bundle(),
-            result: block_result,
-        },
+        BlockExecutionOutput { state: canonical_state.take_bundle(), result: block_result },
         senders,
         built_bal,
     ))
@@ -506,7 +503,7 @@ mod tests {
         input_bal: Arc<DecodedBal>,
         block: &SealedBlock,
         txs: Vec<Tx>,
-    ) -> Result<BlockExecutionOutput<BaseReceipt>, BalExecutionError>
+    ) -> Result<BlockExecutionOutput, BalExecutionError>
     where
         Tx: ExecutableTxFor + Send,
         DB: Database + Send,
@@ -523,7 +520,7 @@ mod tests {
         input_bal: Arc<DecodedBal>,
         block: &SealedBlock,
         txs: Vec<Tx>,
-    ) -> Result<(BlockExecutionOutput<BaseReceipt>, BlockAccessList), BalExecutionError>
+    ) -> Result<(BlockExecutionOutput, BlockAccessList), BalExecutionError>
     where
         Tx: ExecutableTxFor + Send,
         DB: Database + Send,

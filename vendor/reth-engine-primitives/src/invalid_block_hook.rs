@@ -1,7 +1,6 @@
 use alloc::{boxed::Box, fmt, vec::Vec};
 
 use alloy_primitives::B256;
-use base_common_consensus::BaseReceipt;
 use reth_execution_types::BlockExecutionOutput;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_trie_common::updates::TrieUpdates;
@@ -13,26 +12,22 @@ pub trait InvalidBlockHook: Send + Sync {
         &self,
         parent_header: &SealedHeader,
         block: &RecoveredBlock,
-        output: &BlockExecutionOutput<BaseReceipt>,
+        output: &BlockExecutionOutput,
         trie_updates: Option<(&TrieUpdates, B256)>,
     );
 }
 
 impl<F> InvalidBlockHook for F
 where
-    F: Fn(
-            &SealedHeader,
-            &RecoveredBlock,
-            &BlockExecutionOutput<BaseReceipt>,
-            Option<(&TrieUpdates, B256)>,
-        ) + Send
+    F: Fn(&SealedHeader, &RecoveredBlock, &BlockExecutionOutput, Option<(&TrieUpdates, B256)>)
+        + Send
         + Sync,
 {
     fn on_invalid_block(
         &self,
         parent_header: &SealedHeader,
         block: &RecoveredBlock,
-        output: &BlockExecutionOutput<BaseReceipt>,
+        output: &BlockExecutionOutput,
         trie_updates: Option<(&TrieUpdates, B256)>,
     ) {
         self(parent_header, block, output, trie_updates)
@@ -49,7 +44,7 @@ impl InvalidBlockHook for NoopInvalidBlockHook {
         &self,
         _parent_header: &SealedHeader,
         _block: &RecoveredBlock,
-        _output: &BlockExecutionOutput<BaseReceipt>,
+        _output: &BlockExecutionOutput,
         _trie_updates: Option<(&TrieUpdates, B256)>,
     ) {
     }
@@ -69,7 +64,7 @@ impl InvalidBlockHook for InvalidBlockHooks {
         &self,
         parent_header: &SealedHeader,
         block: &RecoveredBlock,
-        output: &BlockExecutionOutput<BaseReceipt>,
+        output: &BlockExecutionOutput,
         trie_updates: Option<(&TrieUpdates, B256)>,
     ) {
         for hook in &self.0 {

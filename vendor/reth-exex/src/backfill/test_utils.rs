@@ -4,7 +4,7 @@ use alloy_consensus::{BlockHeader, Header, TxEip2930, constants::ETH_TO_WEI};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, TxKind, U256, b256};
-use base_common_consensus::{BaseBlock, BaseBlockBody, BaseReceipt, BaseTypedTransaction};
+use base_common_consensus::{BaseBlock, BaseBlockBody, BaseTypedTransaction};
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_evm::{BaseEvmConfig, BlockExecutionOutput, Executor};
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
@@ -15,9 +15,9 @@ use secp256k1::Keypair;
 
 pub(crate) fn to_execution_outcome(
     block_number: u64,
-    block_execution_output: &BlockExecutionOutput<BaseReceipt>,
-) -> ExecutionOutcome<BaseReceipt> {
-    ExecutionOutcome::<BaseReceipt> {
+    block_execution_output: &BlockExecutionOutput,
+) -> ExecutionOutcome {
+    ExecutionOutcome {
         bundle: block_execution_output.state.clone(),
         receipts: vec![block_execution_output.receipts.clone()],
         first_block: block_number,
@@ -50,7 +50,7 @@ pub(crate) fn execute_block_and_commit_to_database<DB>(
     provider_factory: &ProviderFactory<DB>,
     chain_spec: Arc<BaseChainSpec>,
     block: &RecoveredBlock,
-) -> eyre::Result<BlockExecutionOutput<BaseReceipt>>
+) -> eyre::Result<BlockExecutionOutput>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
@@ -147,7 +147,7 @@ pub(crate) fn blocks_and_execution_outputs<DB>(
     provider_factory: ProviderFactory<DB>,
     chain_spec: Arc<BaseChainSpec>,
     key_pair: Keypair,
-) -> eyre::Result<Vec<(RecoveredBlock, BlockExecutionOutput<BaseReceipt>)>>
+) -> eyre::Result<Vec<(RecoveredBlock, BlockExecutionOutput)>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
@@ -165,7 +165,7 @@ pub(crate) fn blocks_and_execution_outcome<DB>(
     provider_factory: ProviderFactory<DB>,
     chain_spec: Arc<BaseChainSpec>,
     key_pair: Keypair,
-) -> eyre::Result<(Vec<RecoveredBlock>, ExecutionOutcome<BaseReceipt>)>
+) -> eyre::Result<(Vec<RecoveredBlock>, ExecutionOutcome)>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {

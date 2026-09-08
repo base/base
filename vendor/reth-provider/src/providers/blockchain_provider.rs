@@ -1034,8 +1034,6 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> ChangeSetReader
 impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StateReader
     for BlockchainProvider<DB>
 {
-    type Receipt = BaseReceipt;
-
     /// Re-constructs the [`ExecutionOutcome`] from in-memory and database state, if necessary.
     ///
     /// If data for the block does not exist, this will return [`None`].
@@ -1045,10 +1043,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StateReader
     /// inconsistent. Currently this can safely be called within the blockchain tree thread,
     /// because the tree thread is responsible for modifying the [`CanonicalInMemoryState`] in the
     /// first place.
-    fn get_state(
-        &self,
-        block: BlockNumber,
-    ) -> ProviderResult<Option<ExecutionOutcome<Self::Receipt>>> {
+    fn get_state(&self, block: BlockNumber) -> ProviderResult<Option<ExecutionOutcome>> {
         self.consistent_provider()?.get_state(block)
     }
 }
@@ -1189,7 +1184,7 @@ mod tests {
         // Insert receipts into the database
         if let Some(first_block) = database_blocks.first() {
             provider_rw.write_state(
-                &ExecutionOutcome::<BaseReceipt> {
+                &ExecutionOutcome {
                     first_block: first_block.number,
                     receipts: receipts.iter().take(database_blocks.len()).cloned().collect(),
                     ..Default::default()
@@ -1215,7 +1210,7 @@ mod tests {
                 .map(|block| {
                     let senders = block.senders().expect("failed to recover senders");
                     let block_receipts = receipts.get(block.number as usize).unwrap().clone();
-                    let execution_outcome = BlockExecutionOutput::<BaseReceipt> {
+                    let execution_outcome = BlockExecutionOutput {
                         result: BlockExecutionResult {
                             receipts: block_receipts,
                             requests: Default::default(),
@@ -1981,7 +1976,7 @@ mod tests {
                 .into_iter()
                 .map(|b| b.try_recover().expect("failed to seal block with senders"))
                 .collect(),
-            &ExecutionOutcome::<BaseReceipt> {
+            &ExecutionOutcome {
                 bundle: BundleState::new(
                     database_state.into_iter().map(|(address, (account, _))| {
                         (address, None, Some(account.into()), Default::default())
@@ -3086,7 +3081,7 @@ mod tests {
             Arc::new(hashed_state.into_sorted()),
             Arc::new(TrieUpdates::default().into_sorted()),
         );
-        let execution_output = BlockExecutionOutput::<BaseReceipt> {
+        let execution_output = BlockExecutionOutput {
             result: BlockExecutionResult {
                 receipts: Default::default(),
                 requests: Default::default(),
@@ -3134,7 +3129,7 @@ mod tests {
             Arc::new(target_state.into_sorted()),
             Arc::new(TrieUpdates::default().into_sorted()),
         );
-        let execution_output = BlockExecutionOutput::<BaseReceipt> {
+        let execution_output = BlockExecutionOutput {
             result: BlockExecutionResult {
                 receipts: Default::default(),
                 requests: Default::default(),
@@ -3164,7 +3159,7 @@ mod tests {
         let provider_rw = provider.database.provider_rw()?;
         provider_rw.append_blocks_with_state(
             vec![noise_block],
-            &ExecutionOutcome::<BaseReceipt> {
+            &ExecutionOutcome {
                 bundle: BundleState::new(
                     [(noise_address, None, Some(noise_account.into()), Default::default())],
                     [[(noise_address, Some(None), [])]],
@@ -3264,7 +3259,7 @@ mod tests {
         let provider_rw = factory.provider_rw()?;
         provider_rw.append_blocks_with_state(
             vec![later_block],
-            &ExecutionOutcome::<BaseReceipt> {
+            &ExecutionOutcome {
                 bundle: BundleState::new(
                     [(address, Some(account_a.into()), Some(account_b.into()), storage)],
                     [[(address, Some(Some(account_a.into())), [(slot, value_a)])]],

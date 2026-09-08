@@ -10,7 +10,7 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::BlockNumber;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::BaseBlock;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, Executor, ExecutorMetrics};
@@ -264,7 +264,7 @@ where
         + StaticFileProviderFactory
         + StatsReader
         + BlockHashReader
-        + StateWriter<Receipt = BaseReceipt>
+        + StateWriter
         + StorageSettingsCache
         + StoragePath
         + ChainSpecProvider,
@@ -803,7 +803,7 @@ mod tests {
             )
             .unwrap();
 
-        let mut state = ExecutionOutcome::<()>::default();
+        let mut state = ExecutionOutcome::default();
         state.bundle.state.insert(
             address,
             BundleAccount::new(

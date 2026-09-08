@@ -701,7 +701,6 @@ mod tests {
 
     use alloy_consensus::private::alloy_primitives::B256;
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
-    use base_common_consensus::BaseReceipt as Receipt;
     use base_execution_trie::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
@@ -758,7 +757,7 @@ mod tests {
             trie_data.insert(n, data);
         }
 
-        let execution_outcome: ExecutionOutcome<Receipt> = ExecutionOutcome {
+        let execution_outcome: ExecutionOutcome = ExecutionOutcome {
             bundle: Default::default(),
             receipts: Vec::new(),
             requests: Vec::new(),

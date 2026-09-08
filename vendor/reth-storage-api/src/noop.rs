@@ -528,12 +528,7 @@ impl HashedPostStateProvider for NoopProvider {
 }
 
 impl StateReader for NoopProvider {
-    type Receipt = BaseReceipt;
-
-    fn get_state(
-        &self,
-        _block: BlockNumber,
-    ) -> ProviderResult<Option<ExecutionOutcome<Self::Receipt>>> {
+    fn get_state(&self, _block: BlockNumber) -> ProviderResult<Option<ExecutionOutcome>> {
         Ok(None)
     }
 }
