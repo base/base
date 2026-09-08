@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{BlockId, TransactionInfo};
+use base_common_consensus::{BlockHeader, transaction::TxHashRef};
 use base_evm_context::{Block, ResultAndState};
 use base_execution_evm::{
     BlockExecutor, Evm, EvmEnvFor, EvmFactoryExt, EvmFor, HaltReasonFor, InspectorFor, IntoTxEnv,

@@ -8,11 +8,11 @@ use alloc::{
 };
 use core::fmt::{self, Debug, Display};
 
-use alloy_consensus::transaction::Either;
 use alloy_primitives::{
     Address, U256,
     map::{AddressMap, AddressSet},
 };
+use base_common_consensus::transaction::Either;
 use base_evm_context::ContextTr;
 use base_evm_handler::{
     EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result,

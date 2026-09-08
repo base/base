@@ -343,10 +343,10 @@ where
 #[cfg(feature = "reqwest")]
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{SidecarBuilder, SimpleCoder, Transaction};
     use alloy_eips::eip4844::DATA_GAS_PER_BLOB;
     use alloy_primitives::{U256, address};
     use alloy_rpc_types_eth::TransactionRequest;
+    use base_common_consensus::{SidecarBuilder, SimpleCoder, Transaction};
     use base_common_network::Ethereum;
 
     use super::*;

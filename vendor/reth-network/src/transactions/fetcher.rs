@@ -31,15 +31,15 @@ use std::{
     time::Duration,
 };
 
-#[cfg(test)]
-use alloy_consensus::EthereumTxEnvelope;
-#[cfg(test)]
-use alloy_consensus::TxEip4844;
-use alloy_consensus::transaction::PooledTransaction;
 use alloy_primitives::{
     TxHash,
     map::{FbBuildHasher, HashMap},
 };
+#[cfg(test)]
+use base_common_consensus::EthereumTxEnvelope;
+#[cfg(test)]
+use base_common_consensus::TxEip4844;
+use base_common_consensus::transaction::PooledTransaction;
 use derive_more::{Constructor, Deref};
 use futures::{Future, FutureExt, Stream, StreamExt, stream::FuturesUnordered};
 use pin_project::pin_project;

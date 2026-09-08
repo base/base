@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::{BlockHash, BlockNumber};
+use base_common_consensus::BlockHeader;
 use indexmap::IndexSet;
 use reth_primitives_traits::SealedBlock;
 

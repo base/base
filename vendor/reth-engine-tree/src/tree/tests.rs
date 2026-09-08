@@ -2723,7 +2723,7 @@ mod forkchoice_updated_tests {
         let test_harness = TestHarness::new(chain_spec);
 
         let seal_header = |number: u64| {
-            SealedHeader::seal_slow(alloy_consensus::Header { number, ..Default::default() })
+            SealedHeader::seal_slow(base_common_consensus::Header { number, ..Default::default() })
         };
 
         // Set finalized=30, safe=50 to test all three commitment levels

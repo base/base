@@ -1,6 +1,5 @@
 //! Shared test environment for Base Beryl action tests.
 
-use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, uint};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_action_harness::{
@@ -9,7 +8,7 @@ use base_action_harness::{
     VerifierPipeline,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, TxReceipt};
 use base_common_precompiles::{
     ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
     IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,

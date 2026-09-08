@@ -56,12 +56,12 @@ tempfile = { workspace = true, features = ["default"] }
 base-test-utils = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 axum = { workspace = true, features = ["http1", "tokio"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }

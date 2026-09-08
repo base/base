@@ -1,8 +1,8 @@
 //! Shared test fixtures for the registrar crate.
 
-use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope};
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_eth::TransactionReceipt;
+use base_common_consensus::{Eip658Value, Receipt, ReceiptEnvelope};
 use base_tx_manager::{SendHandle, TxCandidate, TxManager};
 use hex_literal::hex;
 use k256::ecdsa::SigningKey;

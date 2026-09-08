@@ -2,11 +2,11 @@
 
 use alloc::{boxed::Box, vec::Vec};
 
-use alloy_consensus::{
-    Transaction, TxEip4844Variant, TxEnvelope, TxType, transaction::SignerRecoverable,
-};
 use alloy_primitives::{Address, B256, Bytes};
 use async_trait::async_trait;
+use base_common_consensus::{
+    Transaction, TxEip4844Variant, TxEnvelope, TxType, transaction::SignerRecoverable,
+};
 use base_protocol::BlockInfo;
 
 use crate::{
@@ -234,9 +234,9 @@ where
 pub(super) mod tests {
     use alloc::vec;
 
-    use alloy_consensus::{Blob, Signed, TxEip4844, TxEip4844Variant};
     use alloy_primitives::Signature;
     use base_common_chains::ChainConfig;
+    use base_common_consensus::{Blob, Signed, TxEip4844, TxEip4844Variant};
 
     use super::*;
     use crate::{
@@ -460,7 +460,7 @@ pub(super) mod tests {
         async fn header_by_hash(
             &mut self,
             _: alloy_primitives::B256,
-        ) -> Result<alloy_consensus::Header, Self::Error> {
+        ) -> Result<base_common_consensus::Header, Self::Error> {
             Err(ResetProviderError)
         }
 
@@ -471,7 +471,7 @@ pub(super) mod tests {
         async fn receipts_by_hash(
             &mut self,
             _: alloy_primitives::B256,
-        ) -> Result<alloc::vec::Vec<alloy_consensus::Receipt>, Self::Error> {
+        ) -> Result<alloc::vec::Vec<base_common_consensus::Receipt>, Self::Error> {
             Err(ResetProviderError)
         }
 

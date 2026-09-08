@@ -18,5 +18,5 @@ alloy-primitives = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 base-proof-contracts = { workspace = true }
 [dev-dependencies]
-alloy-consensus = { workspace = true }
+base-common-consensus = { workspace = true }
 tokio = { workspace = true, features = ["default", "macros", "rt", "test-util"] }

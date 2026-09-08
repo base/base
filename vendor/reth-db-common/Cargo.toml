@@ -17,15 +17,14 @@ reth-etl = { workspace = true }
 thiserror = { workspace = true }
 reth-trie = { workspace = true }
 reth-config = { workspace = true }
-reth-codecs = { workspace = true }
 reth-db-api = { workspace = true }
 reth-fs-util = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-provider = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-storage-errors = {workspace = true}
 boyer-moore-magiclen = { workspace = true }
+base-common-consensus = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 base-execution-chainspec = { workspace = true }

@@ -13,8 +13,8 @@ use crate::{MINIMUM_DISTANCE, MINIMUM_UNWIND_SAFE_DISTANCE};
 /// when writing to the `PruneCheckpoint` table, so changing the order here will corrupt the table.
 #[derive(Debug, Display, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, EnumIter)]
 #[cfg_attr(test, derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 #[cfg_attr(any(test, feature = "serde"), derive(serde::Serialize, serde::Deserialize))]
 pub enum PruneSegment {
     /// Prune segment responsible for the `TransactionSenders` table.

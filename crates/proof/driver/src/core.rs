@@ -3,10 +3,9 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
-use alloy_consensus::BlockBody;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope, OpTxType};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, BlockBody, OpTxType};
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
 use base_proof_executor::BlockBuildingOutcome;

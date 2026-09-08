@@ -5,12 +5,12 @@ use alloc::string::ToString;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::str::FromStr;
 
-use alloy_consensus::Blob;
 use alloy_eips::eip4844::FIELD_ELEMENTS_PER_BLOB;
 use alloy_primitives::{B256, keccak256};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, BigInteger256, Field, PrimeField};
 use async_trait::async_trait;
+use base_common_consensus::Blob;
 use base_consensus_derive::BlobProvider;
 use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use base_protocol::BlockInfo;

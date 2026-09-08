@@ -3,11 +3,11 @@
 use alloc::fmt;
 use core::hash::Hash;
 
-pub use alloy_consensus::crypto::RecoveryError;
-use alloy_consensus::transaction::{Recovered, SignerRecoverable, TxHashRef};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718, IsTyped2718};
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_rlp::{Decodable, Encodable};
+pub use base_common_consensus::crypto::RecoveryError;
+use base_common_consensus::transaction::{Recovered, SignerRecoverable, TxHashRef};
 
 use crate::{InMemorySize, MaybeSerde};
 
@@ -34,7 +34,7 @@ pub trait SignedTransaction:
     + Decodable
     + Encodable2718
     + Decodable2718
-    + alloy_consensus::Transaction
+    + base_common_consensus::Transaction
     + MaybeSerde
     + InMemorySize
     + SignerRecoverable
@@ -133,7 +133,7 @@ impl<T> SignedTransaction for T where
         + Decodable
         + Encodable2718
         + Decodable2718
-        + alloy_consensus::Transaction
+        + base_common_consensus::Transaction
         + MaybeSerde
         + InMemorySize
         + SignerRecoverable

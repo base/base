@@ -613,11 +613,11 @@ impl ChangesetCacheInner {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Header;
     use alloy_primitives::{
         Address, U256, keccak256,
         map::{B256Map, HashMap},
     };
+    use base_common_consensus::Header;
     use reth_db::{
         models::{AccountBeforeTx, BlockNumberAddress},
         tables,

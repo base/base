@@ -64,10 +64,11 @@ impl BatchComposer {
 mod tests {
     use std::vec;
 
-    use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{B256, Bytes, Sealed, Signature};
-    use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{
+        BaseBlock, BaseTxEnvelope, BlockBody, Header, SignableTransaction, TxDeposit, TxLegacy,
+    };
     use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};
     use rstest::rstest;
 

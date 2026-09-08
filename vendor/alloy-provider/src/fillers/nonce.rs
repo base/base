@@ -207,9 +207,9 @@ impl<M: NonceManager, N: Network> TxFiller<N> for NonceFiller<M> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Transaction;
     use alloy_primitives::{U256, address};
     use alloy_rpc_types_eth::TransactionRequest;
+    use base_common_consensus::Transaction;
 
     use super::*;
     use crate::{ProviderBuilder, WalletProvider};

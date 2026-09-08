@@ -59,10 +59,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::{
-    BlockHeader, EthereumTxEnvelope, Signed, TxEip4844, TxEip4844WithSidecar, Typed2718,
-    error::ValueError, transaction::TxHashRef,
-};
 use alloy_eips::{
     eip2718::{Decodable2718, Encodable2718, WithEncoded},
     eip2930::AccessList,
@@ -76,6 +72,10 @@ use alloy_eips::{
 use alloy_primitives::{
     Address, B128, B256, Bytes, TxHash, TxKind, U256,
     map::{AddressSet, B256Map},
+};
+use base_common_consensus::{
+    BlockHeader, EthereumTxEnvelope, Signed, TxEip4844, TxEip4844WithSidecar, Typed2718,
+    error::ValueError, transaction::TxHashRef,
 };
 use futures_util::{Stream, ready};
 use reth_eth_wire_types::HandleMempoolData;
@@ -1325,7 +1325,7 @@ impl BestTransactionsAttributes {
 ///   transactions, blob transactions without sidecars)
 /// - `Pooled` → `Consensus`: Always succeeds (pooled is a superset)
 pub trait PoolTransaction:
-    alloy_consensus::Transaction + InMemorySize + Debug + Send + Sync + Clone
+    base_common_consensus::Transaction + InMemorySize + Debug + Send + Sync + Clone
 {
     /// Associated error type for the `try_from_consensus` method.
     type TryFromConsensusError: fmt::Display;
@@ -1688,7 +1688,9 @@ impl<T: InMemorySize> InMemorySize for EthPooledTransaction<T> {
     }
 }
 
-impl<T: alloy_consensus::Transaction> alloy_consensus::Transaction for EthPooledTransaction<T> {
+impl<T: base_common_consensus::Transaction> base_common_consensus::Transaction
+    for EthPooledTransaction<T>
+{
     fn chain_id(&self) -> Option<alloy_primitives::ChainId> {
         self.transaction.chain_id()
     }
@@ -1968,12 +1970,12 @@ impl<Tx: PoolTransaction> Stream for NewSubpoolTransactionStream<Tx> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{
+    use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip7594::BlobCellMask};
+    use alloy_primitives::Signature;
+    use base_common_consensus::{
         EthereumTxEnvelope, SignableTransaction, TxEip1559, TxEip2930, TxEip4844, TxEip7702,
         TxEnvelope, TxLegacy,
     };
-    use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip7594::BlobCellMask};
-    use alloy_primitives::Signature;
 
     use super::*;
     use crate::blobstore::BlobCellAvailability;

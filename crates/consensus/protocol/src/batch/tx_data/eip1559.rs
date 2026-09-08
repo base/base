@@ -1,9 +1,9 @@
 //! This module contains the eip1559 transaction data type for a span batch.
 
-use alloy_consensus::{SignableTransaction, Signed, TxEip1559};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{Address, Signature, TxKind, U256};
 use alloy_rlp::{Bytes, RlpDecodable, RlpEncodable};
+use base_common_consensus::{SignableTransaction, Signed, TxEip1559};
 
 use crate::{SpanBatchError, SpanDecodingError};
 

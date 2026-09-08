@@ -45,9 +45,10 @@ tokio = { workspace = true, features = ["default", "rt", "sync", "net", "time", 
 [dev-dependencies]
 hex-literal = { workspace = true }
 async-trait = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
+base-common-consensus = { workspace = true }
 metrics-util = { workspace = true, features = ["debugging"] }
 tokio = { workspace = true, features = ["default", "rt", "macros", "test-util"] }
+
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]

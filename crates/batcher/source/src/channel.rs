@@ -47,7 +47,7 @@ mod tests {
     /// Helper to build a minimal [`BaseBlock`] with a given number.
     fn make_block(number: u64) -> BaseBlock {
         BaseBlock {
-            header: alloy_consensus::Header {
+            header: base_common_consensus::Header {
                 number,
                 parent_hash: B256::ZERO,
                 ..Default::default()

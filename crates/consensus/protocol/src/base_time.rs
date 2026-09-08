@@ -227,10 +227,10 @@ pub enum BaseTimeMetadataError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Sealable, TxLegacy};
     use alloy_primitives::{Address, B256, Signature, TxKind, U256};
     use base_common_consensus::{
-        BaseTransactionSigned, BaseTypedTransaction, Predeploys, SystemAddresses, TxDeposit,
+        BaseTransactionSigned, BaseTypedTransaction, Predeploys, Sealable, SystemAddresses,
+        TxDeposit, TxLegacy,
     };
 
     use super::{

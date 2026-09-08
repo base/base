@@ -1,8 +1,8 @@
-use alloy_consensus::SignableTransaction;
 use alloy_primitives::Address;
 use alloy_signer::{Signer, SignerSync};
 use async_trait::async_trait;
 use auto_impl::auto_impl;
+use base_common_consensus::SignableTransaction;
 use futures_utils_wasm::impl_future;
 
 use crate::{Network, NetworkTransactionBuilder, TransactionBuilder};

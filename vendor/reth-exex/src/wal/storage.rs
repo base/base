@@ -169,11 +169,11 @@ impl Storage {
 mod tests {
     use std::{collections::BTreeMap, fs::File, sync::Arc};
 
-    use alloy_consensus::BlockHeader;
     use alloy_primitives::{
         B256, U256,
         map::{HashMap, HashSet},
     };
+    use base_common_consensus::BlockHeader;
     use reth_exex_types::ExExNotification;
     use reth_primitives_traits::Account;
     use reth_provider::Chain;

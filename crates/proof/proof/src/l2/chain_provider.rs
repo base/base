@@ -2,12 +2,11 @@
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
-use alloy_consensus::{BlockBody, Header};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::Decodable;
 use async_trait::async_trait;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, BlockBody, Header};
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::L2ChainProvider;
 use base_proof_driver::PipelineCursor;

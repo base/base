@@ -1,9 +1,9 @@
 use alloc::boxed::Box;
 
-use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, StorageKey, StorageValue, U256};
 use auto_impl::auto_impl;
+use base_common_consensus::constants::KECCAK_EMPTY;
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::Bytecode;
 use reth_storage_errors::provider::ProviderResult;

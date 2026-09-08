@@ -84,9 +84,9 @@ where
 mod tests {
     use alloc::vec;
 
-    use alloy_consensus::TxEnvelope;
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, address};
+    use base_common_consensus::TxEnvelope;
     use base_common_genesis::{RollupConfig, SystemConfig, UpgradeConfig};
     use base_protocol::BlockInfo;
 

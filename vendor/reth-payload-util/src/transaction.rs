@@ -1,5 +1,5 @@
-use alloy_consensus::Transaction;
 use alloy_primitives::Address;
+use base_common_consensus::Transaction;
 use base_execution_txpool::PoolTransaction;
 
 use crate::PayloadTransactions;

@@ -31,7 +31,6 @@ base-execution-txpool = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 [dev-dependencies]
 alloy-signer = { workspace = true }
-alloy-consensus = { workspace = true }
 base-test-utils = { workspace = true }
 base-txpool-rpc = { workspace = true }
 base-common-network = { workspace = true }

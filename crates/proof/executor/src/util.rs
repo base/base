@@ -1,9 +1,10 @@
 //! Contains utilities for the L2 executor.
 
-use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Bytes;
-use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
+use base_common_consensus::{
+    BlockHeader, EIP1559ParamError, Header, HoloceneExtraData, JovianExtraData,
+};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 
@@ -99,9 +100,9 @@ pub(crate) fn encode_jovian_eip_1559_params(
 
 #[cfg(all(test, feature = "test-utils"))]
 mod test {
-    use alloy_consensus::Header;
     use alloy_primitives::{B64, b64, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
+    use base_common_consensus::Header;
     use base_common_genesis::{FeeConfig, RollupConfig};
     use base_common_rpc_types_engine::BasePayloadAttributes;
 

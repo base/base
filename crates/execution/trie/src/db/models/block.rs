@@ -1,8 +1,8 @@
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
+use base_common_consensus::DecompressError;
 use bytes::BufMut;
 use derive_more::{From, Into};
-use reth_codecs::DecompressError;
 use reth_db::{
     DatabaseError,
     table::{Compress, Decompress},

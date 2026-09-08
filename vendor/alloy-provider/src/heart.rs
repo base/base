@@ -8,13 +8,13 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_json_rpc::RpcError;
 use alloy_primitives::{
     B256, TxHash,
     map::{B256HashMap, B256HashSet},
 };
 use alloy_transport::{TransportError, utils::Spawnable};
+use base_common_consensus::BlockHeader;
 use base_common_network::{BlockResponse, Network};
 use futures::{FutureExt, Stream, future::pending, stream::StreamExt};
 use tokio::{

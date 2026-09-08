@@ -8,13 +8,13 @@
 
 use std::{num::NonZeroU64, path::PathBuf, time::Duration};
 
-use alloy_consensus::SignableTransaction;
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer::SignerSync;
+use base_common_consensus::SignableTransaction;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, PrivateKeySigner, TransactionBuilder};
 use base_common_rpc_types::{Base, BaseTransactionRequest};

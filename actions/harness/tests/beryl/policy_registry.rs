@@ -1,9 +1,8 @@
 //! Policy registry precompile action tests across the Base Beryl boundary.
 
-use alloy_consensus::TxReceipt;
 use alloy_primitives::{Bytes, TxKind, U256, hex};
 use alloy_sol_types::{SolCall, SolEvent};
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxReceipt};
 use base_common_precompiles::{IPolicyRegistry, PolicyRegistryStorage};
 
 use crate::env::BerylTestEnv;

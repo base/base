@@ -7,8 +7,8 @@ mod worker;
 
 use std::{fmt::Debug, sync::Arc};
 
-use alloy_consensus::transaction::Recovered;
 use alloy_primitives::{Address, B256};
+use base_common_consensus::transaction::Recovered;
 use base_execution_evm::EvmEnvFor;
 use reth_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,

@@ -17,7 +17,6 @@ workspace = true
 alloy-serde = { workspace = true }
 alloy-network-primitives = { workspace = true }
 async-trait = { workspace = true, optional = true}
-alloy-consensus = { workspace = true, features = []}
 alloy-transport = { workspace = true, optional = true}
 alloy-eips = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, features = ["alloc"] }
@@ -38,14 +37,14 @@ rand = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
 similar-asserts = { workspace = true, features = ["default"] }
-alloy-consensus = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
 alloy-rpc-types-eth = { workspace = true, features = ["arbitrary"] }
+base-common-consensus = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = ["std"]
 std = [
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "alloy-eips/std",
     "base-evm-handler?/std",
     "alloy-network-primitives/std",
@@ -61,7 +60,7 @@ std = [
     "base-common-rpc-types-engine?/std",
 ]
 arbitrary = [
-    "alloy-consensus/arbitrary",
+    "base-common-consensus/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
     "alloy-rpc-types-eth/arbitrary",
@@ -72,7 +71,7 @@ arbitrary = [
 ]
 k256 = ["alloy-rpc-types-eth/k256", "base-common-consensus/k256"]
 serde = [
-    "alloy-consensus/serde",
+    "base-common-consensus/serde",
     "alloy-eips/serde",
     "alloy-network-primitives/serde",
     "alloy-primitives/serde",

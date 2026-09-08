@@ -2,11 +2,11 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_primitives::{Address, Bytes};
 use alloy_serde::OtherFields;
 use base_common_consensus::{
-    BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom,
+    BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom, Receipt,
+    ReceiptWithBloom, TxReceipt,
 };
 use serde::{Deserialize, Serialize};
 

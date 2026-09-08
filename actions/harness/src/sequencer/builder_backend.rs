@@ -18,7 +18,6 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::transaction::SignerRecoverable;
 use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
 use alloy_provider::{Identity, ProviderBuilder};
 use alloy_rpc_types_engine::PayloadId;
@@ -30,7 +29,7 @@ use base_builder_core::{
         node_config_with_chain_spec,
     },
 };
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, transaction::SignerRecoverable};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};

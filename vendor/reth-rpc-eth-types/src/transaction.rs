@@ -2,10 +2,11 @@
 //!
 //! Transaction wrapper that labels transaction with its origin.
 
-use alloy_consensus::{EthereumTxEnvelope, TxEip4844, transaction::TxHashRef};
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::TransactionInfo;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{
+    BaseTxEnvelope, EthereumTxEnvelope, TxEip4844, transaction::TxHashRef,
+};
 use reth_primitives_traits::{Recovered, SignedTransaction};
 
 /// Represents from where a transaction was fetched.

@@ -2,13 +2,13 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::{
     Typed2718,
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
 };
 use alloy_primitives::{Bloom, Log, logs_bloom};
 use alloy_rlp::{BufMut, Decodable, Encodable, length_of_length};
+use base_common_consensus::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt};
 
 use crate::{DepositReceipt, DepositReceiptWithBloom, OpTxType};
 
@@ -371,10 +371,10 @@ mod tests {
     #[cfg(not(feature = "std"))]
     use alloc::vec;
 
-    use alloy_consensus::{Receipt, ReceiptWithBloom};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Log, LogData, address, b256, bytes, hex};
     use alloy_rlp::Encodable;
+    use base_common_consensus::{Receipt, ReceiptWithBloom};
 
     use super::*;
 

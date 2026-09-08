@@ -29,7 +29,7 @@
 //!
 //! ### Simple Indexer ExEx
 //! ```no_run
-//! use alloy_consensus::BlockHeader;
+//! use base_common_consensus::BlockHeader;
 //! use futures::StreamExt;
 //! use reth_exex::ExExContext;
 //! use base_node_context::FullNodeComponents;

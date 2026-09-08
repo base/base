@@ -1,11 +1,11 @@
 //! System contract call functions.
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::{
     eip7002::WITHDRAWAL_REQUEST_TYPE, eip7251::CONSOLIDATION_REQUEST_TYPE, eip7685::Requests,
 };
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bytes};
+use base_common_consensus::BlockHeader;
 use base_evm_context::Block;
 use revm::DatabaseCommit;
 

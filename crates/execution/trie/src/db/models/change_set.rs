@@ -1,5 +1,5 @@
 use alloy_primitives::B256;
-use reth_codecs::DecompressError;
+use base_common_consensus::DecompressError;
 use reth_db::{
     DatabaseError,
     table::{self, Decode, Encode},

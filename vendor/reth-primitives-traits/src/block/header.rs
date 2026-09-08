@@ -2,9 +2,9 @@
 
 use core::{fmt, hash::Hash};
 
-/// Re-exported alias
-pub use alloy_consensus::BlockHeader as AlloyBlockHeader;
 use alloy_primitives::Sealable;
+/// Re-exported alias
+pub use base_common_consensus::BlockHeader as AlloyBlockHeader;
 
 use crate::{InMemorySize, MaybeSerde};
 
@@ -21,7 +21,7 @@ pub trait BlockHeader:
     + Eq
     + alloy_rlp::Encodable
     + alloy_rlp::Decodable
-    + alloy_consensus::BlockHeader
+    + base_common_consensus::BlockHeader
     + Sealable
     + InMemorySize
     + MaybeSerde
@@ -30,4 +30,4 @@ pub trait BlockHeader:
 {
 }
 
-impl BlockHeader for alloy_consensus::Header {}
+impl BlockHeader for base_common_consensus::Header {}

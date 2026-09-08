@@ -1,11 +1,10 @@
 use std::pin::Pin;
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockId;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, BlockHeader};
 use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use base_execution_rpc::BaseEthApi;
 use base_node_context::FullNodeComponents;

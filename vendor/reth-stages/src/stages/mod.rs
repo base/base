@@ -42,12 +42,11 @@ use utils::*;
 mod tests {
     use std::{io::Write, sync::Arc};
 
-    use alloy_consensus::{SignableTransaction, TxLegacy};
     use alloy_primitives::{
         B256, BlockNumber, Signature, U256, address, hex_literal::hex, keccak256,
     };
     use alloy_rlp::Decodable;
-    use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+    use base_common_consensus::{BaseReceipt, BaseTxEnvelope, SignableTransaction, TxLegacy};
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_consensus::BaseBeaconConsensus;
     use base_execution_evm::BaseEvmConfig;

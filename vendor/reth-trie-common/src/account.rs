@@ -5,10 +5,10 @@ pub use alloy_trie::TrieAccount;
 mod tests {
     use std::collections::BTreeMap;
 
-    use alloy_consensus::constants::KECCAK_EMPTY;
     use alloy_genesis::GenesisAccount;
     use alloy_primitives::{B256, Bytes, U256, keccak256};
     use alloy_trie::EMPTY_ROOT_HASH;
+    use base_common_consensus::constants::KECCAK_EMPTY;
     use reth_primitives_traits::Account;
 
     use super::*;

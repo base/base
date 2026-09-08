@@ -5,7 +5,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_consensus::{BlockHeader, Header, Sealed};
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, BlockHash, Bytes, StorageKey, U256, hex};
@@ -20,7 +19,7 @@ use alloy_rpc_types_eth::{
 };
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
-use base_common_consensus::{BaseBlock, BaseReceipt, Predeploys};
+use base_common_consensus::{BaseBlock, BaseReceipt, BlockHeader, Header, Predeploys, Sealed};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
 use base_common_rpc_types::{Base, BaseEngineApi};

@@ -1,9 +1,11 @@
 //! Concrete Base transaction, receipt, log, and header conversion.
 
-use alloy_consensus::{SignableTransaction, error::ValueError, transaction::Recovered};
 use alloy_primitives::{Signature, U256};
 use alloy_rpc_types_eth::{Log, TransactionInfo};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{
+    BaseBlock, BaseReceipt, BaseTxEnvelope, SignableTransaction, error::ValueError,
+    transaction::Recovered,
+};
 use base_common_rpc_types::{
     BaseHeaderResponse, BaseLogResponse, BaseTransactionReceipt, BaseTransactionRequest,
 };

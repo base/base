@@ -41,7 +41,7 @@ use crate::{
 const PAYLOAD_BUILDER_THREAD_NAME: &str = "payload-builder";
 
 /// Header used by payload builders.
-pub type HeaderForPayload = alloy_consensus::Header;
+pub type HeaderForPayload = base_common_consensus::Header;
 
 /// The [`PayloadJobGenerator`] that creates [`BasicPayloadJob`]s.
 #[derive(Debug)]

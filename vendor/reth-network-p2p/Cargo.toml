@@ -28,9 +28,8 @@ futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 tracing = { workspace = true, features = ["attributes"] }
-alloy-consensus = { workspace = true, features = ["serde"]}
-base-common-consensus = { workspace = true, features = ["reth"] }
 reth-eth-wire-types = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth", "serde"] }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 [dev-dependencies]
@@ -56,7 +55,7 @@ std = [
     "alloy-eips/std",
     "alloy-primitives/std",
     "reth-primitives-traits/std",
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "derive_more/std",
     "reth-network-peers/std",
     "reth-storage-errors/std",

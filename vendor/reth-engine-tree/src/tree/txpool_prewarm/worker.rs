@@ -316,9 +316,8 @@ mod tests {
         thread::{self, JoinHandle},
     };
 
-    use alloy_consensus::{Signed, TxLegacy, transaction::Recovered};
     use alloy_primitives::{Address, Signature, TxKind, U256};
-    use base_common_consensus::BaseTxEnvelope;
+    use base_common_consensus::{BaseTxEnvelope, Signed, TxLegacy, transaction::Recovered};
     use crossbeam_channel::{Sender, unbounded};
     use parking_lot::{Mutex, RwLock};
     use reth_provider::test_utils::MockEthProvider;

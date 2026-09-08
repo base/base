@@ -8,13 +8,12 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent, merge::EPOCH_SLOTS};
 use alloy_primitives::{B256, map::B256Map};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, BlockHeader};
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
@@ -3451,7 +3450,7 @@ where
     fn process_payload_attributes(
         &mut self,
         attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        head: &alloy_consensus::Header,
+        head: &base_common_consensus::Header,
         state: ForkchoiceState,
     ) -> OnForkChoiceUpdated {
         if let Err(err) =

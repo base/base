@@ -9,10 +9,9 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eip7928::bal::RawBal;
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BlockHeader};
 use base_execution_consensus::BaseBeaconConsensus;
 use futures::FutureExt;
 use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
@@ -649,7 +648,7 @@ where
     fn poll(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<ResponseResult<alloy_consensus::Header, Client::Body>> {
+    ) -> Poll<ResponseResult<base_common_consensus::Header, Client::Body>> {
         if let Some(fut) = Pin::new(&mut self.header).as_pin_mut()
             && let Poll::Ready(res) = fut.poll(cx)
         {
@@ -814,7 +813,7 @@ where
         Some(valid_responses)
     }
 
-    fn on_headers_response(&mut self, headers: WithPeerId<Vec<alloy_consensus::Header>>) {
+    fn on_headers_response(&mut self, headers: WithPeerId<Vec<base_common_consensus::Header>>) {
         let (peer, mut headers_falling) =
             headers.map(|h| h.into_iter().map(SealedHeader::seal_slow).collect::<Vec<_>>()).split();
 
@@ -984,7 +983,7 @@ where
     fn poll(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<RangeResponseResult<alloy_consensus::Header, Client::Body>> {
+    ) -> Poll<RangeResponseResult<base_common_consensus::Header, Client::Body>> {
         if let Some(fut) = Pin::new(&mut self.headers).as_pin_mut()
             && let Poll::Ready(res) = fut.poll(cx)
         {
@@ -1066,7 +1065,7 @@ impl BodiesClient for NoopFullBlockClient {
 impl HeadersClient for NoopFullBlockClient {
     /// The output type representing a future containing a peer request result with a vector of
     /// headers.
-    type Output = futures::future::Ready<PeerRequestResult<Vec<alloy_consensus::Header>>>;
+    type Output = futures::future::Ready<PeerRequestResult<Vec<base_common_consensus::Header>>>;
 
     /// Retrieves headers with a specified priority level.
     ///
@@ -1212,9 +1211,8 @@ mod tests {
         },
     };
 
-    use alloy_consensus::Header;
     use alloy_primitives::{Bytes, keccak256, map::B256Map};
-    use base_common_consensus::BaseBlockBody as BlockBody;
+    use base_common_consensus::{BaseBlockBody as BlockBody, Header};
     use parking_lot::Mutex;
 
     use super::*;

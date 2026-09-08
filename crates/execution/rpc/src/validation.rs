@@ -1,9 +1,6 @@
 use core::fmt;
 use std::sync::Arc;
 
-use alloy_consensus::{
-    BlobTransactionValidationError, BlockHeader, EnvKzgSettings, Transaction, TxReceipt,
-};
 use alloy_eip7928::{bal::DecodedBal, compute_block_access_list_hash};
 use alloy_eips::eip7685::RequestsOrHash;
 use alloy_hardforks::EthereumHardforks;
@@ -18,7 +15,9 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadSidecar, PraguePayloadFields,
 };
 use async_trait::async_trait;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{
+    BaseBlock, BlobTransactionValidationError, BlockHeader, EnvKzgSettings, Transaction, TxReceipt,
+};
 use base_evm_handler::BlockExecutionError;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, MAX_RLP_BLOCK_SIZE};

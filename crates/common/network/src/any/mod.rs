@@ -6,26 +6,26 @@ mod either;
 mod error;
 use std::error::Error;
 
-use alloy_consensus::{
-    Sealed, Signed, TxEip1559, TxEip2930, TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy,
-};
 use alloy_eips::{Typed2718, eip7702::SignedAuthorization};
 use alloy_primitives::{B256, Bytes, ChainId, TxKind, U256};
+use base_common_consensus::{
+    Sealed, Signed, TxEip1559, TxEip2930, TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy,
+};
 pub use either::{AnyTxEnvelope, AnyTypedTransaction};
 pub use error::AnyConversionError;
 
 mod unknowns;
 use std::ops::{Deref, DerefMut};
 
-use alloy_consensus::{
-    error::ValueError,
-    transaction::{Either, Recovered},
-};
 pub use alloy_consensus_any::{AnyHeader, AnyReceiptEnvelope};
 use alloy_network_primitives::{BlockResponse, TransactionResponse};
 pub use alloy_rpc_types_any::{AnyRpcHeader, AnyTransactionReceipt};
 use alloy_rpc_types_eth::{AccessList, Block, BlockTransactions, Transaction, TransactionRequest};
 use alloy_serde::WithOtherFields;
+use base_common_consensus::{
+    error::ValueError,
+    transaction::{Either, Recovered},
+};
 use derive_more::From;
 use serde::{Deserialize, Serialize};
 pub use unknowns::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
@@ -58,7 +58,7 @@ use crate::Network;
 ///
 /// [`Decodable2718`]: alloy_eips::eip2718::Decodable2718
 /// [`Encodable2718`]: alloy_eips::eip2718::Encodable2718
-/// [`TxEnvelope`]: alloy_consensus::TxEnvelope
+/// [`TxEnvelope`]: base_common_consensus::TxEnvelope
 #[derive(Clone, Copy, Debug)]
 pub struct AnyNetwork {
     _private: (),
@@ -116,7 +116,7 @@ impl AnyRpcBlock {
     /// Returns an [`AnyConversionError`] if any of the conversions fail.
     pub fn try_into_consensus<T, H>(
         self,
-    ) -> Result<alloy_consensus::Block<T, H>, AnyConversionError>
+    ) -> Result<base_common_consensus::Block<T, H>, AnyConversionError>
     where
         T: TryFrom<AnyRpcTransaction, Error: Error + Send + Sync + 'static>,
         H: TryFrom<AnyHeader, Error: Error + Send + Sync + 'static>,
@@ -137,7 +137,7 @@ impl AnyRpcBlock {
     /// Returns an [`AnyConversionError`] if any of the conversions fail.
     pub fn try_into_sealed<T, H>(
         self,
-    ) -> Result<Sealed<alloy_consensus::Block<T, H>>, AnyConversionError>
+    ) -> Result<Sealed<base_common_consensus::Block<T, H>>, AnyConversionError>
     where
         T: TryFrom<AnyRpcTransaction, Error: Error + Send + Sync + 'static>,
         H: TryFrom<AnyHeader, Error: Error + Send + Sync + 'static>,
@@ -224,7 +224,7 @@ impl From<AnyRpcBlock> for WithOtherFields<Block<AnyRpcTransaction, AnyRpcHeader
     }
 }
 
-impl<T, H> TryFrom<AnyRpcBlock> for alloy_consensus::Block<T, H>
+impl<T, H> TryFrom<AnyRpcBlock> for base_common_consensus::Block<T, H>
 where
     T: TryFrom<AnyRpcTransaction, Error: Error + Send + Sync + 'static>,
     H: TryFrom<AnyHeader, Error: Error + Send + Sync + 'static>,
@@ -463,7 +463,7 @@ impl TryFrom<AnyRpcTransaction> for TxEnvelope {
     }
 }
 
-impl alloy_consensus::Transaction for AnyRpcTransaction {
+impl base_common_consensus::Transaction for AnyRpcTransaction {
     fn chain_id(&self) -> Option<ChainId> {
         self.inner.chain_id()
     }
@@ -477,11 +477,11 @@ impl alloy_consensus::Transaction for AnyRpcTransaction {
     }
 
     fn gas_price(&self) -> Option<u128> {
-        alloy_consensus::Transaction::gas_price(&self.0.inner)
+        base_common_consensus::Transaction::gas_price(&self.0.inner)
     }
 
     fn max_fee_per_gas(&self) -> u128 {
-        alloy_consensus::Transaction::max_fee_per_gas(&self.inner)
+        base_common_consensus::Transaction::max_fee_per_gas(&self.inner)
     }
 
     fn max_priority_fee_per_gas(&self) -> Option<u128> {
@@ -588,7 +588,7 @@ mod tests {
             .into(),
         );
 
-        let _block: alloy_consensus::Block<TxEnvelope, alloy_consensus::Header> =
+        let _block: base_common_consensus::Block<TxEnvelope, base_common_consensus::Header> =
             block.try_into().unwrap();
     }
 

@@ -110,7 +110,7 @@ impl<C: ChainSpecParser> Command<C> {
         match self.stage {
             StageEnum::Headers => {
                 tx.clear::<tables::CanonicalHeaders>()?;
-                tx.clear::<tables::Headers<alloy_consensus::Header>>()?;
+                tx.clear::<tables::Headers<base_common_consensus::Header>>()?;
                 tx.clear::<tables::HeaderNumbers>()?;
                 reset_stage_checkpoint(tx, StageId::Headers)?;
 
@@ -121,7 +121,7 @@ impl<C: ChainSpecParser> Command<C> {
                 tx.clear::<tables::Transactions<BaseTxEnvelope>>()?;
 
                 tx.clear::<tables::TransactionBlocks>()?;
-                tx.clear::<tables::BlockOmmers<alloy_consensus::Header>>()?;
+                tx.clear::<tables::BlockOmmers<base_common_consensus::Header>>()?;
                 tx.clear::<tables::BlockWithdrawals>()?;
                 reset_stage_checkpoint(tx, StageId::Bodies)?;
 

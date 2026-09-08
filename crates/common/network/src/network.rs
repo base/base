@@ -1,12 +1,12 @@
 use core::fmt::{Debug, Display};
 
-use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
 use alloy_eips::{
     Typed2718,
     eip2718::{Eip2718Envelope, Eip2718Error},
 };
 use alloy_json_rpc::RpcObject;
 use alloy_network_primitives::HeaderResponse;
+use base_common_consensus::{BlockHeader, Transaction, TxReceipt};
 
 use crate::{BlockResponse, NetworkTransactionBuilder, ReceiptResponse, TransactionResponse};
 

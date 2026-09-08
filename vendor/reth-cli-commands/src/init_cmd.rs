@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::BlockHeader;
 use base_cli_utils::ChainSpecParser;
+use base_common_consensus::BlockHeader;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use clap::Parser;
 use reth_provider::BlockHashReader;

@@ -1,8 +1,8 @@
 //! Base-specific implementation and utilities for the executor
 
-use alloy_consensus::Transaction;
 use alloy_primitives::{U16, U256, hex};
 use base_common_chains::Upgrades;
+use base_common_consensus::Transaction;
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_evm_handler::BlockExecutionError;
 use reth_primitives_traits::BlockBody;
@@ -366,11 +366,10 @@ impl RethL1BlockInfo for L1BlockInfo {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Block, BlockBody, Header};
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Bytes, hex_literal::hex, keccak256};
     use base_common_chains::Upgrades;
-    use base_common_consensus::BaseTransactionSigned;
+    use base_common_consensus::{BaseTransactionSigned, Block, BlockBody, Header};
     use base_execution_chainspec::BaseChainSpec;
 
     use super::*;

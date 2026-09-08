@@ -1363,10 +1363,9 @@ impl DenimReport {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_consensus::Sealable;
     use alloy_primitives::{B256, U256};
     use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
-    use base_common_consensus::{BaseTxEnvelope, Predeploys, TxDeposit};
+    use base_common_consensus::{BaseTxEnvelope, Predeploys, Sealable, TxDeposit};
     use base_common_evm::BaseTime;
     use base_common_genesis::RollupConfig;
     use serde_json::{Value, json};

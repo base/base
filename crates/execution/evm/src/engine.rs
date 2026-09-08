@@ -1,5 +1,4 @@
-use alloy_consensus::transaction::Either;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, transaction::Either};
 use base_evm_handler::{ExecutableTxParts, RecoveredTx};
 use rayon::prelude::*;
 

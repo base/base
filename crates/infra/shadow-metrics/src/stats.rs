@@ -1,7 +1,6 @@
 //! Statistics derived from persisted shadow blocks.
 
-use alloy_consensus::{Header, Transaction};
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, Header, Transaction};
 use base_shadow_indexer_db::ShadowBlockRow;
 
 /// Statistics for one shadow candidate block.

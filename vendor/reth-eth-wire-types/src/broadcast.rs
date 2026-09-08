@@ -3,7 +3,6 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::{fmt::Debug, mem};
 
-use alloy_consensus::{EthereumTxEnvelope, TxEip4844, transaction::TxHashRef};
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{
     B128, B256, Bytes, TxHash, U128,
@@ -14,6 +13,7 @@ use alloy_rlp::{
     Decodable, Encodable, Header, RlpDecodable, RlpDecodableWrapper, RlpEncodable,
     RlpEncodableWrapper, decode_append,
 };
+use base_common_consensus::{EthereumTxEnvelope, TxEip4844, transaction::TxHashRef};
 use derive_more::{Constructor, Deref, DerefMut, From, IntoIterator};
 use reth_codecs_derive::{add_arbitrary_tests, generate_tests};
 use reth_primitives_traits::{Block, InMemorySize, SignedTransaction, sync::OnceLock};
@@ -99,7 +99,7 @@ pub trait NewBlockPayload:
 #[derive(Clone, Debug, PartialEq, Eq, RlpEncodable, RlpDecodable, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-pub struct NewBlock<B = alloy_consensus::Block<EthereumTxEnvelope<TxEip4844>>> {
+pub struct NewBlock<B = base_common_consensus::Block<EthereumTxEnvelope<TxEip4844>>> {
     /// A new block.
     pub block: B,
     /// The current total difficulty.
@@ -114,7 +114,7 @@ impl NewBlockPayload for NewBlock<base_common_consensus::BaseBlock> {
     }
 }
 
-generate_tests!(#[rlp, 25] NewBlock<alloy_consensus::Block::<alloy_consensus::EthereumTxEnvelope::<alloy_consensus::TxEip4844>>>, EthNewBlockTests);
+generate_tests!(#[rlp, 25] NewBlock<base_common_consensus::Block::<base_common_consensus::EthereumTxEnvelope::<base_common_consensus::TxEip4844>>>, EthNewBlockTests);
 
 /// This informs peers of transactions that have appeared on the network and are not yet included
 /// in a block.
@@ -639,7 +639,7 @@ impl proptest::prelude::Arbitrary for NewPooledTransactionHashes68 {
             .prop_flat_map(|len| {
                 // Use the generated length to create vectors of TxType, usize, and B256
                 let types_vec = vec(
-                    proptest_arbitrary_interop::arb::<alloy_consensus::TxType>()
+                    proptest_arbitrary_interop::arb::<base_common_consensus::TxType>()
                         .prop_map(|ty| ty as u8),
                     len..=len,
                 );
@@ -812,7 +812,7 @@ impl proptest::prelude::Arbitrary for NewPooledTransactionHashes72 {
             .prop_flat_map(|len| {
                 // Use the generated length to create vectors of TxType, usize, and B256
                 let types_vec = vec(
-                    proptest_arbitrary_interop::arb::<alloy_consensus::TxType>()
+                    proptest_arbitrary_interop::arb::<base_common_consensus::TxType>()
                         .prop_map(|ty| ty as u8),
                     len..=len,
                 );
@@ -1373,10 +1373,10 @@ impl InMemorySize for NewPooledTransactionHashes {
 mod tests {
     use std::str::FromStr;
 
-    use alloy_consensus::{Typed2718, transaction::TxHashRef};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Bytes, Signature, U256, b256, hex};
     use alloy_rlp::{RlpDecodable, RlpEncodable};
+    use base_common_consensus::{Typed2718, transaction::TxHashRef};
     use proptest::prelude::*;
 
     use super::*;
@@ -1772,7 +1772,7 @@ mod tests {
 
     fn signed_transaction() -> impl SignedTransaction {
         EthereumTxEnvelope::<TxEip4844>::new_unhashed(
-            alloy_consensus::EthereumTypedTransaction::<TxEip4844>::Legacy(Default::default()),
+            base_common_consensus::EthereumTypedTransaction::<TxEip4844>::Legacy(Default::default()),
             Signature::new(
                 U256::from_str(
                     "0x64b1702d9298fee62dfeccc57d322a463ad55ca201256d01f62b45b2e1c21c12",

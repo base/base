@@ -2,9 +2,11 @@
 
 use alloc::{boxed::Box, collections::VecDeque};
 
-use alloy_consensus::{Transaction, TxEip4844Variant, TxEnvelope, transaction::SignerRecoverable};
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
+use base_common_consensus::{
+    Transaction, TxEip4844Variant, TxEnvelope, transaction::SignerRecoverable,
+};
 use base_protocol::BlockInfo;
 
 use crate::{ChainProvider, DataAvailabilityProvider, Metrics, PipelineError, PipelineResult};
@@ -111,8 +113,10 @@ impl<CP: ChainProvider + Send> DataAvailabilityProvider for CalldataSource<CP> {
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use alloy_consensus::{Signed, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702, TxLegacy};
     use alloy_primitives::{Address, Signature, TxKind, address};
+    use base_common_consensus::{
+        Signed, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702, TxLegacy,
+    };
 
     use super::*;
     use crate::{errors::PipelineErrorKind, test_utils::TestChainProvider};

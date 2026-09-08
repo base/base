@@ -1,7 +1,7 @@
 use std::{ffi::OsStr, sync::OnceLock, time::Duration};
 
-use alloy_consensus::constants::MAXIMUM_EXTRA_DATA_SIZE;
 use alloy_primitives::Bytes;
+use base_common_consensus::constants::MAXIMUM_EXTRA_DATA_SIZE;
 use clap::{
     Arg, Args, Command,
     builder::{RangedU64ValueParser, TypedValueParser},

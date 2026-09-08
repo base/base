@@ -1,7 +1,6 @@
-use alloy_consensus::SignableTransaction;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_signer::SignerSync;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, SignableTransaction};
 use base_common_network::PrivateKeySigner;
 
 /// Hardcoded private key for the test account used across all action tests.
@@ -50,7 +49,7 @@ impl TestAccount {
     /// transaction fields before calling this method.
     pub fn sign_tx(
         &mut self,
-        tx: alloy_consensus::TxEip1559,
+        tx: base_common_consensus::TxEip1559,
     ) -> Result<BaseTxEnvelope, alloy_signer::Error> {
         let sig = self.signer.sign_hash_sync(&tx.signature_hash())?;
         Ok(BaseTxEnvelope::Eip1559(tx.into_signed(sig)))
@@ -73,7 +72,7 @@ impl TestAccount {
         value: U256,
         gas_limit: u64,
     ) -> BaseTxEnvelope {
-        let tx = alloy_consensus::TxEip1559 {
+        let tx = base_common_consensus::TxEip1559 {
             chain_id,
             nonce: self.nonce,
             max_fee_per_gas: 1_000_000_000,

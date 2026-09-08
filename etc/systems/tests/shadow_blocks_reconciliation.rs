@@ -2,10 +2,11 @@
 
 use std::time::Duration;
 
-use alloy_consensus::{Block, BlockBody, Header, SignableTransaction, TxEip1559};
 use alloy_primitives::{Address, Signature};
 use anyhow::Result;
-use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+use base_common_consensus::{
+    BaseTxEnvelope, Block, BlockBody, Header, SignableTransaction, TxDeposit, TxEip1559,
+};
 use base_shadow_indexer_db::{
     PgConnectionParams, ShadowBlockPayload, ShadowBlockRepo, ShadowBlockRow, ShadowCanonicalRef,
     ShadowDbConfig, ShadowWrite,

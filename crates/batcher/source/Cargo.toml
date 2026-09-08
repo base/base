@@ -23,7 +23,7 @@ base-common-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "macros", "sync"] }
 [dev-dependencies]
 mockall = { workspace = true }
-alloy-consensus = { workspace = true }
+base-common-consensus = { workspace = true }
 tokio = { workspace = true, features = ["default", "rt"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["test-utils"] }

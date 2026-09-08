@@ -1,6 +1,6 @@
 //! Storage metadata models.
 
-use reth_codecs::{Compact, add_arbitrary_tests};
+use base_common_consensus::{Compact, add_arbitrary_tests};
 use serde::{Deserialize, Serialize};
 
 /// Persisted storage layout marker. Only the v2 layout is supported.

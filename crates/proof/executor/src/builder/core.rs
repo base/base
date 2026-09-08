@@ -7,8 +7,7 @@
 use alloc::{string::ToString, vec::Vec};
 use core::fmt::Debug;
 
-use alloy_consensus::{Header, Sealed, crypto::RecoveryError};
-use base_common_consensus::BaseReceiptEnvelope;
+use base_common_consensus::{BaseReceiptEnvelope, Header, Sealed, crypto::RecoveryError};
 use base_common_evm::{
     AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId,
     BaseTransaction,

@@ -53,10 +53,8 @@ alloy-rlp = { workspace = true, features = ["core-net"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-storage-api = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
-alloy-consensus = { workspace = true, features = ["kzg", "serde"]}
 reth-eth-wire-types = { workspace = true, features = ["default"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 reth-execution-types = { workspace = true, features = ["default"] }
@@ -65,6 +63,7 @@ rand = { workspace = true, optional = true, features = ["default"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
+base-common-consensus = { workspace = true, features = ["reth", "kzg", "serde"] }
 [dev-dependencies]
 paste = { workspace = true }
 reth-tasks = { workspace = true }
@@ -99,7 +98,7 @@ metrics = ["base-common-evm/metrics", "base-metrics/metrics", "base-observabilit
 serde = [
     "reth-execution-types/serde",
     "reth-eth-wire-types/serde",
-    "alloy-consensus/serde",
+    "base-common-consensus/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "bitflags/serde",
@@ -128,7 +127,7 @@ arbitrary = [
     "proptest-arbitrary-interop",
     "imbl/arbitrary",
     "reth-eth-wire-types/arbitrary",
-    "alloy-consensus/arbitrary",
+    "base-common-consensus/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
     "bitflags/arbitrary",

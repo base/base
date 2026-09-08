@@ -4,9 +4,6 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use alloy_consensus::{
-    BlobTransactionValidationError, Transaction, Typed2718, transaction::Recovered,
-};
 use alloy_eips::{
     eip2718::{Encodable2718, WithEncoded},
     eip2930::AccessList,
@@ -15,8 +12,9 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
 use base_common_consensus::{
-    BasePooledTransaction as BasePooledEnvelope, BaseTransactionSigned, Eip8130Constants,
-    Eip8130Signed,
+    BasePooledTransaction as BasePooledEnvelope, BaseTransactionSigned,
+    BlobTransactionValidationError, Eip8130Constants, Eip8130Signed, Transaction, Typed2718,
+    transaction::Recovered,
 };
 use base_execution_txpool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
 use c_kzg::KzgSettings;
@@ -169,7 +167,7 @@ impl PoolTransaction for BasePooledTransaction {
     }
 
     fn hash(&self) -> &TxHash {
-        alloy_consensus::transaction::TxHashRef::tx_hash(self.transaction.inner())
+        base_common_consensus::transaction::TxHashRef::tx_hash(self.transaction.inner())
     }
 
     fn sender(&self) -> Address {
@@ -220,7 +218,7 @@ impl InMemorySize for BasePooledTransaction {
     }
 }
 
-impl alloy_consensus::Transaction for BasePooledTransaction {
+impl base_common_consensus::Transaction for BasePooledTransaction {
     fn chain_id(&self) -> Option<u64> {
         self.transaction.chain_id()
     }
@@ -468,14 +466,13 @@ impl TimestampedTransaction for BasePooledTransaction {
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned,
-        Eip8130Constants, Eip8130Signed, TxDeposit, TxEip8130,
+        Eip8130Constants, Eip8130Signed, TxDeposit, TxEip8130, transaction::Recovered,
     };
     use base_common_network::PrivateKeySigner;
     use base_execution_chainspec::BaseChainSpec;

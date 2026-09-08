@@ -16,7 +16,6 @@ alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 base-protocol = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
 base-evm-handler = { workspace = true }
 base-proof-executor = { workspace = true }
@@ -28,7 +27,7 @@ spin = { workspace = true, features = ["default"] }
 
 [features]
 std = [
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "base-evm-handler/std",
     "alloy-primitives/std",
     "alloy-rlp/std",

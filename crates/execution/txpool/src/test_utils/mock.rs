@@ -2,15 +2,6 @@
 
 use std::{ops::Range, sync::Arc, time::Instant, vec::IntoIter};
 
-use alloy_consensus::{
-    EthereumTxEnvelope, EthereumTypedTransaction, Signed, TxEip1559, TxEip2930, TxEip4844,
-    TxEip4844Variant, TxEip4844WithSidecar, TxEip7702, TxLegacy, TxType, Typed2718,
-    constants::{
-        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
-        LEGACY_TX_TYPE_ID,
-    },
-    error::ValueError,
-};
 use alloy_eips::{
     eip1559::MIN_PROTOCOL_BASE_FEE,
     eip2930::AccessList,
@@ -22,6 +13,15 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxHash, TxKind, U256};
+use base_common_consensus::{
+    EthereumTxEnvelope, EthereumTypedTransaction, Signed, TxEip1559, TxEip2930, TxEip4844,
+    TxEip4844Variant, TxEip4844WithSidecar, TxEip7702, TxLegacy, TxType, Typed2718,
+    constants::{
+        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
+        LEGACY_TX_TYPE_ID,
+    },
+    error::ValueError,
+};
 use paste::paste;
 use rand::{
     distr::{Uniform, weighted::WeightedIndex},
@@ -779,7 +779,7 @@ impl Typed2718 for MockTransaction {
     }
 }
 
-impl alloy_consensus::Transaction for MockTransaction {
+impl base_common_consensus::Transaction for MockTransaction {
     fn chain_id(&self) -> Option<u64> {
         match self {
             Self::Legacy { chain_id, .. } => *chain_id,
@@ -1832,8 +1832,8 @@ fn test_mock_priority() {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Transaction;
     use alloy_primitives::U256;
+    use base_common_consensus::Transaction;
 
     use super::*;
 

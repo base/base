@@ -1,8 +1,7 @@
 use alloc::vec::Vec;
 
-use alloy_consensus::Header;
 use alloy_hardforks::EthereumHardforks;
-use base_common_consensus::{BaseBlockBody, BaseTxEnvelope};
+use base_common_consensus::{BaseBlockBody, BaseTxEnvelope, Header};
 use base_execution_chainspec::ChainSpecProvider;
 use reth_storage_errors::provider::ProviderResult;
 

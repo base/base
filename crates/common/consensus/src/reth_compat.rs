@@ -6,19 +6,17 @@
 
 use alloc::{borrow::Cow, vec::Vec};
 
-use alloy_consensus::{
-    Receipt, Sealed, Signed, TxEip1559, TxEip2930, TxEip7702, TxLegacy, TxReceipt,
-    constants::EIP7702_TX_TYPE_ID,
-};
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
-use bytes::{Buf, BufMut};
-use reth_codecs::{
-    Compact, CompactZstd, DecompressError,
+use base_common_consensus::{
+    Compact, CompactZstd, DecompressError, Receipt, Sealed, Signed, TxEip1559, TxEip2930,
+    TxEip7702, TxLegacy, TxReceipt,
+    constants::EIP7702_TX_TYPE_ID,
     txtype::{
         COMPACT_EXTENDED_IDENTIFIER_FLAG, COMPACT_IDENTIFIER_EIP1559, COMPACT_IDENTIFIER_EIP2930,
         COMPACT_IDENTIFIER_LEGACY,
     },
 };
+use bytes::{Buf, BufMut};
 
 use crate::{
     BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID, DepositReceipt,
@@ -34,7 +32,7 @@ use crate::{
 /// 1:1 with [`TxDeposit`] but uses `Option<u128>` for `mint` so the bitflag
 /// encoding can omit the zero case.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Compact)]
-#[reth_codecs(crate = "reth_codecs")]
+#[reth_codecs(crate = "base_common_consensus")]
 pub struct CompactTxDeposit {
     /// Hash that uniquely identifies the source of the deposit.
     pub source_hash: B256,
@@ -197,7 +195,7 @@ impl Compact for BaseTypedTransaction {
 // ToTxCompact / FromTxCompact – BaseTxEnvelope
 // ---------------------------------------------------------------------------
 
-impl reth_codecs::alloy::transaction::ToTxCompact for BaseTxEnvelope {
+impl base_common_consensus::alloy::transaction::ToTxCompact for BaseTxEnvelope {
     fn to_tx_compact(&self, buf: &mut (impl BufMut + AsMut<[u8]>)) {
         match self {
             Self::Legacy(tx) => {
@@ -222,7 +220,7 @@ impl reth_codecs::alloy::transaction::ToTxCompact for BaseTxEnvelope {
     }
 }
 
-impl reth_codecs::alloy::transaction::FromTxCompact for BaseTxEnvelope {
+impl base_common_consensus::alloy::transaction::FromTxCompact for BaseTxEnvelope {
     type TxType = OpTxType;
 
     fn from_tx_compact(buf: &[u8], tx_type: OpTxType, signature: Signature) -> (Self, &[u8]) {
@@ -271,7 +269,7 @@ impl reth_codecs::alloy::transaction::FromTxCompact for BaseTxEnvelope {
 /// Placeholder signature used for transaction types without an ECDSA signature.
 const PLACEHOLDER_SIGNATURE: Signature = Signature::new(U256::ZERO, U256::ZERO, false);
 
-impl reth_codecs::alloy::transaction::Envelope for BaseTxEnvelope {
+impl base_common_consensus::alloy::transaction::Envelope for BaseTxEnvelope {
     fn signature(&self) -> &Signature {
         match self {
             Self::Legacy(tx) => tx.signature(),
@@ -301,11 +299,11 @@ impl Compact for BaseTxEnvelope {
     where
         B: BufMut + AsMut<[u8]>,
     {
-        reth_codecs::alloy::transaction::CompactEnvelope::to_compact(self, buf)
+        base_common_consensus::alloy::transaction::CompactEnvelope::to_compact(self, buf)
     }
 
     fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
-        reth_codecs::alloy::transaction::CompactEnvelope::from_compact(buf, len)
+        base_common_consensus::alloy::transaction::CompactEnvelope::from_compact(buf, len)
     }
 }
 
@@ -354,7 +352,7 @@ impl Compact for CompactPhaseStatuses {
 }
 
 #[derive(CompactZstd)]
-#[reth_codecs(crate = "reth_codecs")]
+#[reth_codecs(crate = "base_common_consensus")]
 #[reth_zstd(
     compressor = reth_zstd_compressors::with_receipt_compressor,
     decompressor = reth_zstd_compressors::with_receipt_decompressor
@@ -449,7 +447,7 @@ impl Compact for BaseReceipt {
 // Compress / Decompress (reth-db-api)
 // ---------------------------------------------------------------------------
 
-impl reth_codecs::Compress for BaseTxEnvelope {
+impl base_common_consensus::Compress for BaseTxEnvelope {
     type Compressed = Vec<u8>;
 
     fn compress_to_buf<B: BufMut + AsMut<[u8]>>(&self, buf: &mut B) {
@@ -457,14 +455,14 @@ impl reth_codecs::Compress for BaseTxEnvelope {
     }
 }
 
-impl reth_codecs::Decompress for BaseTxEnvelope {
+impl base_common_consensus::Decompress for BaseTxEnvelope {
     fn decompress(value: &[u8]) -> Result<Self, DecompressError> {
         let (obj, _) = Compact::from_compact(value, value.len());
         Ok(obj)
     }
 }
 
-impl reth_codecs::Compress for BaseReceipt {
+impl base_common_consensus::Compress for BaseReceipt {
     type Compressed = Vec<u8>;
 
     fn compress_to_buf<B: BufMut + AsMut<[u8]>>(&self, buf: &mut B) {
@@ -472,7 +470,7 @@ impl reth_codecs::Compress for BaseReceipt {
     }
 }
 
-impl reth_codecs::Decompress for BaseReceipt {
+impl base_common_consensus::Decompress for BaseReceipt {
     fn decompress(value: &[u8]) -> Result<Self, DecompressError> {
         let (obj, _) = Compact::from_compact(value, value.len());
         Ok(obj)
@@ -481,8 +479,8 @@ impl reth_codecs::Decompress for BaseReceipt {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Receipt;
     use alloy_primitives::Log;
+    use base_common_consensus::Receipt;
 
     use super::*;
 

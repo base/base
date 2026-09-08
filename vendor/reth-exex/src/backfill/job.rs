@@ -4,9 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BlockHeader};
 use base_execution_evm::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor};
 use reth_primitives_traits::{Block as _, BlockBody as _, RecoveredBlock, format_gas_throughput};
 use reth_provider::{
@@ -223,7 +222,7 @@ impl<P> From<BackfillJob<P>> for SingleBlockBackfillJob<P> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::BlockHeader;
+    use base_common_consensus::BlockHeader;
     use base_execution_evm::BaseEvmConfig;
     use reth_db_common::init::init_genesis;
     use reth_primitives_traits::crypto::secp256k1::public_key_to_address;

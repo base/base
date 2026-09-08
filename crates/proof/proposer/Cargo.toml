@@ -45,8 +45,8 @@ base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }
 [dev-dependencies]
 serde_json = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
+base-common-consensus = { workspace = true }
 metrics-util = { workspace = true, features = ["debugging"] }
 base-common-genesis = { workspace = true, features = ["serde"] }
 tokio = { workspace = true, features = ["default", "test-util"] }

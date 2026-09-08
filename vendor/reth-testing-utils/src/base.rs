@@ -2,9 +2,11 @@
 
 use std::ops::RangeInclusive;
 
-use alloy_consensus::{SignableTransaction, Transaction as _};
 use alloy_primitives::{B256, BlockNumber};
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, OpTxType};
+use base_common_consensus::{
+    BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, OpTxType, SignableTransaction,
+    Transaction as _,
+};
 use rand::Rng;
 use reth_primitives_traits::{SealedBlock, crypto::secp256k1::sign_message};
 use secp256k1::Keypair;
@@ -24,9 +26,9 @@ impl BaseTestData {
 
     /// Generates a signed legacy transaction supported by Base.
     pub fn random_signed_tx<R: Rng>(rng: &mut R) -> BaseTxEnvelope {
-        BaseTxEnvelope::try_from(alloy_consensus::TxEnvelope::from(generators::random_signed_tx(
-            rng,
-        )))
+        BaseTxEnvelope::try_from(base_common_consensus::TxEnvelope::from(
+            generators::random_signed_tx(rng),
+        ))
         .unwrap()
     }
 
@@ -96,7 +98,7 @@ impl BaseTestData {
     ) -> BaseReceipt {
         let success = rng.random::<bool>();
         let logs_count = logs_count.unwrap_or_else(|| rng.random());
-        let receipt = alloy_consensus::Receipt {
+        let receipt = base_common_consensus::Receipt {
             status: success.into(),
             cumulative_gas_used: rng.random_range(0..=transaction.gas_limit()),
             logs: if success {

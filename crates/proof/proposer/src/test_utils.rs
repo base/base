@@ -104,7 +104,7 @@ impl L2Provider for MockL2 {
         unimplemented!()
     }
     async fn header_by_number(&self, _: BlockNumberOrTag) -> RpcResult<BaseHeader> {
-        Ok(Header::<alloy_consensus::Header> {
+        Ok(Header::<base_common_consensus::Header> {
             hash: B256::repeat_byte(0x30),
             ..Default::default()
         }
@@ -330,7 +330,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
 pub fn test_l1_header(hash: B256, number: u64) -> Header {
     Header {
         hash,
-        inner: alloy_consensus::Header { number, ..Default::default() },
+        inner: base_common_consensus::Header { number, ..Default::default() },
         ..Default::default()
     }
 }

@@ -17,7 +17,6 @@ revm = { workspace = true }
 thiserror = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
-alloy-consensus = { workspace = true }
 base-common-flz = { workspace = true }
 base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
@@ -45,7 +44,7 @@ serde_json = { workspace = true, features = ["alloc", "preserve_order"] }
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "alloy-eips/std",
     "base-evm-handler/std",
     "alloy-primitives/std",
@@ -63,7 +62,7 @@ std = [
     "thiserror/std",
 ]
 serde = [
-    "alloy-consensus/serde",
+    "base-common-consensus/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "base-common-chains/serde",

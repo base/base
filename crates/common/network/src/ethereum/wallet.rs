@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
-use alloy_consensus::{SignableTransaction, Signed};
 use alloy_primitives::{Address, Signature, map::AddressHashMap};
+use base_common_consensus::{SignableTransaction, Signed};
 
 use super::Ethereum;
 use crate::{Network, NetworkWallet, TxSigner};
@@ -47,7 +47,7 @@ impl EthereumWallet {
     /// signer's address in the `from` field.
     ///
     /// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
-    /// [`TypedTransaction`]: alloy_consensus::TypedTransaction
+    /// [`TypedTransaction`]: base_common_consensus::TypedTransaction
     pub fn register_signer<S>(&mut self, signer: S)
     where
         S: TxSigner<Signature> + Send + Sync + 'static,
@@ -61,7 +61,7 @@ impl EthereumWallet {
     /// `from` field.
     ///
     /// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
-    /// [`TypedTransaction`]: alloy_consensus::TypedTransaction
+    /// [`TypedTransaction`]: base_common_consensus::TypedTransaction
     pub fn register_default_signer<S>(&mut self, signer: S)
     where
         S: TxSigner<Signature> + Send + Sync + 'static,
@@ -81,7 +81,7 @@ impl EthereumWallet {
     /// [`EthereumWallet::register_default_signer`].
     ///
     /// [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
-    /// [`TypedTransaction`]: alloy_consensus::TypedTransaction
+    /// [`TypedTransaction`]: base_common_consensus::TypedTransaction
     pub fn set_default_signer(&mut self, address: Address) -> alloy_signer::Result<()> {
         if self.signers.contains_key(&address) {
             self.default = address;

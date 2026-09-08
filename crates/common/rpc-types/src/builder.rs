@@ -1,5 +1,4 @@
-use alloy_consensus::TxType;
-use base_common_consensus::{BaseTypedTransaction, OpTxType};
+use base_common_consensus::{BaseTypedTransaction, OpTxType, TxType};
 use base_common_network::{BuildResult, NetworkTransactionBuilder, TransactionBuilderError};
 
 use crate::{Base, BaseTransactionRequest};

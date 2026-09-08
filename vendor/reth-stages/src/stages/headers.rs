@@ -1,8 +1,8 @@
 use std::task::{Context, Poll, ready};
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use alloy_rlp::Decodable;
+use base_common_consensus::BlockHeader;
 use futures_util::StreamExt;
 use reth_config::config::EtlConfig;
 use reth_db_api::{
@@ -185,7 +185,7 @@ where
 impl<Provider, P, D> Stage<Provider> for HeaderStage<P, D>
 where
     Provider: DBProvider<Tx: DbTxMut> + StaticFileProviderFactory,
-    P: HeaderSyncGapProvider<Header = alloy_consensus::Header>,
+    P: HeaderSyncGapProvider<Header = base_common_consensus::Header>,
     D: HeaderDownloader,
 {
     /// Return the id of the stage
@@ -332,9 +332,9 @@ where
                 (input.unwind_to + 1)..,
             )?;
         provider.tx_ref().unwind_table_by_num::<tables::CanonicalHeaders>(input.unwind_to)?;
-        let unfinalized_headers_unwound = provider
-            .tx_ref()
-            .unwind_table_by_num::<tables::Headers<alloy_consensus::Header>>(input.unwind_to)?;
+        let unfinalized_headers_unwound = provider.tx_ref().unwind_table_by_num::<tables::Headers<
+            base_common_consensus::Header,
+        >>(input.unwind_to)?;
 
         // determine how many headers to unwind from the static files based on the highest block and
         // the unwind_to block

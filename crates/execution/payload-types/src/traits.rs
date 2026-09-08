@@ -130,7 +130,7 @@ impl PayloadAttributes for EthPayloadAttributes {
 ///
 /// Enables different strategies for generating payload attributes based on
 /// contextual information. Useful for testing and specialized building.
-pub trait PayloadAttributesBuilder<Attributes, Header = alloy_consensus::Header>:
+pub trait PayloadAttributesBuilder<Attributes, Header = base_common_consensus::Header>:
     Send + Sync + 'static
 {
     /// Constructs new payload attributes for the given timestamp.

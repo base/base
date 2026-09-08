@@ -21,9 +21,9 @@ itertools = { workspace = true }
 auto_impl = { workspace = true }
 alloy-trie = { workspace = true }
 reth-db-api = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-storage-errors = { workspace = true }
+base-common-consensus = { workspace = true }
 metrics = { workspace = true, optional = true }
 reth-metrics = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
@@ -38,9 +38,9 @@ parking_lot = { workspace = true, optional = true, features = ["default"] }
 [dev-dependencies]
 revm = { workspace = true }
 assert_matches = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-stages-types = { workspace = true }
 base-common-chains = { workspace = true }
+base-common-consensus = { workspace = true }
 base-execution-chainspec = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
@@ -66,7 +66,7 @@ harness = false
 metrics = ["reth-metrics", "dep:metrics"]
 serde = [
     "alloy-primitives/serde",
-    "alloy-consensus/serde",
+    "base-common-consensus/serde",
     "alloy-trie/serde",
     "reth-trie-common/serde",
     "reth-primitives-traits/serde",
@@ -88,4 +88,4 @@ test-utils = [
     "reth-db-api/test-utils",
     "reth-provider/test-utils",
 ]
-serde-bincode-compat = ["alloy-consensus/serde-bincode-compat", "reth-trie-common/serde-bincode-compat"]
+serde-bincode-compat = ["base-common-consensus/serde-bincode-compat", "reth-trie-common/serde-bincode-compat"]

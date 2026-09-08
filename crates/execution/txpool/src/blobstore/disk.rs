@@ -837,13 +837,13 @@ pub enum OpenDiskFileBlobStore {
 mod tests {
     use std::sync::atomic::Ordering;
 
-    use alloy_consensus::BlobTransactionSidecar;
     use alloy_eips::{
         eip4844::{Blob, BlobAndProofV2, Bytes48, kzg_to_versioned_hash},
         eip7594::{
             BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant, CELLS_PER_EXT_BLOB,
         },
     };
+    use base_common_consensus::BlobTransactionSidecar;
 
     use super::*;
 

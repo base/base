@@ -27,7 +27,6 @@ alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-cli-util = { workspace = true }
 alloy-hardforks = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-net-banlist = { workspace = true }
 reth-stages-types = { workspace = true }

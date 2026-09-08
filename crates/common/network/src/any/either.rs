@@ -1,8 +1,3 @@
-use alloy_consensus::{
-    SignableTransaction, Signed, Transaction as TransactionTrait, TxEip1559, TxEip2930,
-    TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, Typed2718, TypedTransaction,
-    error::ValueError, transaction::Either,
-};
 use alloy_eips::{
     eip2718::{Decodable2718, Encodable2718},
     eip7702::SignedAuthorization,
@@ -10,6 +5,11 @@ use alloy_eips::{
 use alloy_primitives::{B256, Bytes, ChainId, Signature, U256, bytes::BufMut};
 use alloy_rpc_types_eth::{AccessList, TransactionRequest};
 use alloy_serde::WithOtherFields;
+use base_common_consensus::{
+    SignableTransaction, Signed, Transaction as TransactionTrait, TxEip1559, TxEip2930,
+    TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, Typed2718, TypedTransaction,
+    error::ValueError, transaction::Either,
+};
 
 use crate::{UnknownTxEnvelope, UnknownTypedTransaction};
 
@@ -327,7 +327,7 @@ impl AnyTxEnvelope {
     ///
     /// ```no_run
     /// # use crate::any::AnyTxEnvelope;
-    /// # use alloy_consensus::transaction::Either;
+    /// # use base_common_consensus::transaction::Either;
     /// # // Assuming you have a custom type: struct CustomTx;
     /// # // impl TryFrom<crate::any::UnknownTxEnvelope> for CustomTx { ... }
     /// # fn example(envelope: AnyTxEnvelope) -> Result<(), Box<dyn std::error::Error>> {
@@ -365,7 +365,7 @@ impl AnyTxEnvelope {
     ///
     /// ```no_run
     /// # use crate::any::AnyTxEnvelope;
-    /// # use alloy_consensus::transaction::Either;
+    /// # use base_common_consensus::transaction::Either;
     /// # use alloy_primitives::B256;
     /// # fn example(envelope: AnyTxEnvelope) -> Result<(), Box<dyn std::error::Error>> {
     /// let result = envelope.try_map_unknown(|unknown| Ok::<B256, String>(unknown.hash))?;

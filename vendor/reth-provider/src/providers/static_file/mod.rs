@@ -89,9 +89,10 @@ impl Deref for LoadedJar {
 mod tests {
     use std::{collections::BTreeMap, fmt::Debug, fs, ops::Range, path::Path};
 
-    use alloy_consensus::{Header, SignableTransaction, Transaction, TxLegacy};
     use alloy_primitives::{Address, B256, BlockHash, Signature, TxNumber, U160, U256};
-    use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+    use base_common_consensus::{
+        BaseReceipt, BaseTxEnvelope, Header, SignableTransaction, Transaction, TxLegacy,
+    };
     use rand::seq::SliceRandom;
     use reth_db::{
         models::{AccountBeforeTx, StorageBeforeTx},

@@ -1,11 +1,11 @@
 use core::fmt;
 use std::sync::OnceLock;
 
-use alloy_consensus::{TxType, Typed2718};
 use alloy_eips::{eip2718::Eip2718Error, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, B256, Bytes, ChainId, TxKind, U8, U64, U128, U256};
 use alloy_rpc_types_eth::AccessList;
 use alloy_serde::OtherFields;
+use base_common_consensus::{TxType, Typed2718};
 
 /// Transaction type for a catch-all network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +109,7 @@ pub struct UnknownTypedTransaction {
     pub memo: DeserMemo,
 }
 
-impl alloy_consensus::Transaction for UnknownTypedTransaction {
+impl base_common_consensus::Transaction for UnknownTypedTransaction {
     #[inline]
     fn chain_id(&self) -> Option<ChainId> {
         self.fields.get_deserialized::<U64>("chainId").and_then(Result::ok).map(|v| v.to())
@@ -285,7 +285,7 @@ impl AsRef<UnknownTypedTransaction> for UnknownTxEnvelope {
     }
 }
 
-impl alloy_consensus::Transaction for UnknownTxEnvelope {
+impl base_common_consensus::Transaction for UnknownTxEnvelope {
     #[inline]
     fn chain_id(&self) -> Option<ChainId> {
         self.inner.chain_id()
@@ -373,7 +373,7 @@ impl alloy_consensus::Transaction for UnknownTxEnvelope {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Transaction;
+    use base_common_consensus::Transaction;
 
     use super::*;
     use crate::{AnyRpcTransaction, AnyTxEnvelope};

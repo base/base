@@ -1,5 +1,5 @@
-use alloy_consensus::BlockHeader;
 use alloy_primitives::{BlockNumber, U256};
+use base_common_consensus::BlockHeader;
 use reth_primitives_traits::{InMemorySize, SealedBlock, SealedHeader};
 /// The block response
 #[derive(PartialEq, Eq, Debug, Clone)]

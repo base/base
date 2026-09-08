@@ -91,7 +91,7 @@ mod tests {
 
     fn make_block(number: u64, parent_hash: B256) -> BaseBlock {
         BaseBlock {
-            header: alloy_consensus::Header { number, parent_hash, ..Default::default() },
+            header: base_common_consensus::Header { number, parent_hash, ..Default::default() },
             body: Default::default(),
         }
     }

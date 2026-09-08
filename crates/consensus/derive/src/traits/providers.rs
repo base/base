@@ -3,9 +3,9 @@
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::fmt::Display;
 
-use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_primitives::B256;
 use async_trait::async_trait;
+use base_common_consensus::{Header, Receipt, TxEnvelope};
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BatchValidationProvider, BlockInfo};
 

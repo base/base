@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 base-common-flz = { workspace = true }
-alloy-consensus = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["std", "derive"] }
 base-common-network = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["serde"] }

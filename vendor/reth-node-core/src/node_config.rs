@@ -6,10 +6,10 @@ use std::{
     sync::Arc,
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eip2124::Head;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockNumber, U256};
+use base_common_consensus::BlockHeader;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::TransactionPool;
 use eyre::eyre;

@@ -6,12 +6,13 @@ use core::{
     ops::{RangeBounds, RangeInclusive},
 };
 
-use alloy_consensus::transaction::TransactionMeta;
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumberOrTag};
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, TxNumber,
 };
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo};
+use base_common_consensus::{
+    BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
+};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 #[cfg(feature = "db-api")]
 use reth_db_api::mock::{DatabaseMock, TxMock};
@@ -183,7 +184,7 @@ impl BlockReaderIdExt for NoopProvider {
         Ok(None)
     }
 
-    fn header_by_id(&self, _id: BlockId) -> ProviderResult<Option<alloy_consensus::Header>> {
+    fn header_by_id(&self, _id: BlockId) -> ProviderResult<Option<base_common_consensus::Header>> {
         Ok(None)
     }
 }
@@ -350,18 +351,21 @@ impl ReceiptProvider for NoopProvider {
 impl ReceiptProviderIdExt for NoopProvider {}
 
 impl HeaderProvider for NoopProvider {
-    fn header(&self, _block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
+    fn header(
+        &self,
+        _block_hash: BlockHash,
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
         Ok(None)
     }
 
-    fn header_by_number(&self, _num: u64) -> ProviderResult<Option<alloy_consensus::Header>> {
+    fn header_by_number(&self, _num: u64) -> ProviderResult<Option<base_common_consensus::Header>> {
         Ok(None)
     }
 
     fn headers_range(
         &self,
         _range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
         Ok(Vec::new())
     }
 

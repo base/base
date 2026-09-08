@@ -35,7 +35,7 @@ pub fn maybe_generate_tests(
             let path = if is_crate {
                 quote! { use crate::Compact; }
             } else {
-                quote! { use reth_codecs::Compact; }
+                quote! { use base_common_consensus::Compact; }
             };
             traits.push(path);
             roundtrips.push(quote! {

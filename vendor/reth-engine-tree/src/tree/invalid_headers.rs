@@ -108,7 +108,7 @@ struct InvalidHeaderCacheMetrics {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Header;
+    use base_common_consensus::Header;
     use reth_primitives_traits::SealedHeader;
 
     use super::*;

@@ -34,7 +34,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-tasks = { workspace = true, features = ["rayon"], optional = true }
 reth-primitives-traits = { workspace = true, features = ["dashmap", "std"] }
 [dev-dependencies]
-alloy-consensus = { workspace = true }
+base-common-consensus = { workspace = true }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }

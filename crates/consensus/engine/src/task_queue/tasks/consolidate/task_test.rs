@@ -2,12 +2,11 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_consensus::transaction::Recovered;
 use alloy_eips::{BlockNumberOrTag, Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, b256};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
 use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
-use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+use base_common_consensus::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Transaction as BaseTransaction;
 use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};

@@ -5,9 +5,9 @@ mod tests {
     use alloy_eips::eip2930::{AccessList, AccessListItem};
     use alloy_primitives::{Address, B256};
     use alloy_rlp::{RlpDecodable, RlpDecodableWrapper, RlpEncodable, RlpEncodableWrapper};
+    use base_common_consensus::{Compact, add_arbitrary_tests};
     use proptest::proptest;
     use proptest_arbitrary_interop::arb;
-    use reth_codecs::{Compact, add_arbitrary_tests};
 
     /// This type is kept for compatibility tests after the codec support was added to alloy-eips
     /// `AccessList` type natively

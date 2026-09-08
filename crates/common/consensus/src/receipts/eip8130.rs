@@ -10,11 +10,11 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{
-    InMemorySize, Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt,
-};
 use alloy_primitives::Log;
 use alloy_rlp::{BufMut, Decodable, Encodable};
+use base_common_consensus::{
+    InMemorySize, Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt,
+};
 
 /// EIP-8130 account-abstraction receipt: a standard [`Receipt`] plus the
 /// per-phase execution statuses.
@@ -133,7 +133,7 @@ where
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         Ok(Self {
             inner: Receipt {
-                status: alloy_consensus::Eip658Value::arbitrary(u)?,
+                status: base_common_consensus::Eip658Value::arbitrary(u)?,
                 cumulative_gas_used: u64::arbitrary(u)?,
                 logs: Vec::<T>::arbitrary(u)?,
             },

@@ -3,8 +3,8 @@
 //! This module provides the [`TipCursor`] which encapsulates the L2 safe head state
 //! including block information, header, and output root for a specific derivation tip.
 
-use alloy_consensus::{Header, Sealed};
 use alloy_primitives::B256;
+use base_common_consensus::{Header, Sealed};
 use base_protocol::L2BlockInfo;
 
 /// A cursor that encapsulates the L2 safe head state at a specific derivation tip.

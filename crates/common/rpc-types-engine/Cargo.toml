@@ -18,7 +18,6 @@ sha2 = { workspace = true }
 alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-consensus = { workspace = true }
 snap = { workspace = true, optional = true }
@@ -33,42 +32,43 @@ arbtest = { workspace = true }
 serde_json = { workspace = true }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary", "getrandom"] }
+
 [features]
 default = [ "serde", "std" ]
 std = [
-	"alloy-consensus/std",
-	"alloy-eips/std",
-	"alloy-primitives/std",
-	"alloy-rlp/std",
-	"alloy-rpc-types-engine/ssz",
-	"alloy-rpc-types-engine/std",
-	"alloy-serde?/std",
-	"base-common-consensus/std",
-	"dep:ethereum_ssz",
-	"dep:ethereum_ssz_derive",
-	"dep:snap",
-	"serde?/std",
-	"sha2/std",
-	"thiserror/std",
+    "base-common-consensus/std",
+    "alloy-eips/std",
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "alloy-rpc-types-engine/ssz",
+    "alloy-rpc-types-engine/std",
+    "alloy-serde?/std",
+    "base-common-consensus/std",
+    "dep:ethereum_ssz",
+    "dep:ethereum_ssz_derive",
+    "dep:snap",
+    "serde?/std",
+    "sha2/std",
+    "thiserror/std",
 ]
 serde = [
-	"alloy-consensus/serde",
-	"alloy-eips/serde",
-	"alloy-primitives/serde",
-	"alloy-rpc-types-engine/serde",
-	"base-common-consensus/serde",
-	"dep:alloy-serde",
-	"dep:serde",
+    "base-common-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "alloy-rpc-types-engine/serde",
+    "base-common-consensus/serde",
+    "dep:alloy-serde",
+    "dep:serde",
 ]
 k256 = [ "base-common-consensus/k256" ]
 arbitrary = [
-	"alloy-consensus/arbitrary",
-	"alloy-eips/arbitrary",
-	"alloy-primitives/arbitrary",
-	"alloy-primitives/rand",
-	"alloy-rpc-types-engine/arbitrary",
-	"alloy-serde?/arbitrary",
-	"base-common-consensus/arbitrary",
-	"dep:arbitrary",
-	"std",
+    "base-common-consensus/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "alloy-primitives/rand",
+    "alloy-rpc-types-engine/arbitrary",
+    "alloy-serde?/arbitrary",
+    "base-common-consensus/arbitrary",
+    "dep:arbitrary",
+    "std",
 ]

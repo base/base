@@ -178,7 +178,7 @@ impl Command {
                     StaticFileSegment::Headers => (
                         table_key::<tables::Headers>(&key)?,
                         None,
-                        <HeaderWithHashMask<alloy_consensus::Header>>::MASK,
+                        <HeaderWithHashMask<base_common_consensus::Header>>::MASK,
                     ),
                     StaticFileSegment::Transactions => (
                         table_key::<tables::Transactions>(&key)?,
@@ -255,8 +255,9 @@ impl Command {
                         } else {
                             match segment {
                                 StaticFileSegment::Headers => {
-                                    let header =
-                                        alloy_consensus::Header::decompress(content[0].as_slice())?;
+                                    let header = base_common_consensus::Header::decompress(
+                                        content[0].as_slice(),
+                                    )?;
                                     let block_hash = BlockHash::decompress(content[1].as_slice())?;
                                     println!(
                                         "Header\n{}\n\nBlockHash\n{}",

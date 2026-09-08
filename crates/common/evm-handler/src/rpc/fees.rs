@@ -167,7 +167,7 @@ pub enum CallFeesError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::constants::GWEI_TO_WEI;
+    use base_common_consensus::constants::GWEI_TO_WEI;
 
     use super::*;
 

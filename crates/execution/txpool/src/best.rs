@@ -125,13 +125,13 @@ where
 mod tests {
     use std::{collections::VecDeque, time::Instant};
 
-    use alloy_consensus::{Transaction, transaction::Recovered};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Bytes, U256};
     use alloy_signer::SignerSync;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
+        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, Transaction, TxEip8130,
+        transaction::Recovered,
     };
     use base_common_network::PrivateKeySigner;
     use base_execution_txpool::{TransactionId, TransactionOrigin};

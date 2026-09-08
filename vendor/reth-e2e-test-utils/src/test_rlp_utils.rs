@@ -2,12 +2,14 @@
 
 use std::{io::Write, path::Path};
 
-use alloy_consensus::{BlockHeader, Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip4895::Withdrawals;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, B64, B256, U256};
 use alloy_rlp::Encodable;
-use base_common_consensus::{BaseBlock as Block, BaseBlockBody as BlockBody};
+use base_common_consensus::{
+    BaseBlock as Block, BaseBlockBody as BlockBody, BlockHeader, Header,
+    constants::EMPTY_WITHDRAWALS,
+};
 use base_execution_chainspec::BaseChainSpec;
 use reth_primitives_traits::{Block as BlockTrait, SealedBlock};
 use tracing::debug;
@@ -37,7 +39,7 @@ pub fn generate_test_blocks(chain_spec: &BaseChainSpec, count: u64) -> Vec<Seale
             gas_used: 0,                 // Empty blocks use no gas
             timestamp: genesis_header.timestamp() + i * 12, // 12 second blocks
             beneficiary: Address::ZERO,
-            receipts_root: alloy_consensus::constants::EMPTY_RECEIPTS,
+            receipts_root: base_common_consensus::constants::EMPTY_RECEIPTS,
             logs_bloom: Default::default(),
             difficulty: U256::from(1), // Will be overridden for post-merge
             // Use the same state root as parent for now (empty state changes)
@@ -46,8 +48,8 @@ pub fn generate_test_blocks(chain_spec: &BaseChainSpec, count: u64) -> Vec<Seale
             } else {
                 blocks.last().unwrap().state_root
             },
-            transactions_root: alloy_consensus::constants::EMPTY_TRANSACTIONS,
-            ommers_hash: alloy_consensus::constants::EMPTY_OMMER_ROOT_HASH,
+            transactions_root: base_common_consensus::constants::EMPTY_TRANSACTIONS,
+            ommers_hash: base_common_consensus::constants::EMPTY_OMMER_ROOT_HASH,
             mix_hash: B256::ZERO,
             nonce: B64::from(0u64),
             extra_data: Default::default(),

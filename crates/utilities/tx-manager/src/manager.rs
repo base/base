@@ -42,7 +42,6 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::TxEnvelope;
 use alloy_eips::{
     BlockNumberOrTag, Decodable2718, Encodable2718, eip7594::BlobTransactionSidecarEip7594,
 };
@@ -51,6 +50,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_transport::TransportError;
 use backon::{ConstantBuilder, Retryable};
+use base_common_consensus::TxEnvelope;
 use base_common_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
     TransactionBuilder, TransactionBuilderError,
@@ -1832,11 +1832,11 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_consensus::TxEip1559;
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
     use alloy_provider::{ProviderBuilder, RootProvider};
     use alloy_transport::mock::Asserter;
+    use base_common_consensus::TxEip1559;
     use base_common_network::{EthereumWallet, PrivateKeySigner};
     use base_runtime::{
         Clock,

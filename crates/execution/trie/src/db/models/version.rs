@@ -1,5 +1,5 @@
+use base_common_consensus::DecompressError;
 use bytes::{Buf, BufMut};
-use reth_codecs::DecompressError;
 use reth_db::{
     DatabaseError,
     table::{Compress, Decompress},

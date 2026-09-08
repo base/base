@@ -27,7 +27,6 @@ base-protocol = { workspace = true }
 base-state-api = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-evm = { workspace = true }
-alloy-consensus = { workspace = true }
 base-evm-context = { workspace = true }
 reth-chain-state = { workspace = true }
 base-evm-handler = { workspace = true }

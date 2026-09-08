@@ -1,6 +1,5 @@
 //! EIP-8130 transaction tests across the Base Cobalt boundary.
-use alloy_consensus::TxReceipt;
-use base_common_consensus::BaseReceipt;
+use base_common_consensus::{BaseReceipt, TxReceipt};
 
 use crate::env::CobaltTestEnv;
 

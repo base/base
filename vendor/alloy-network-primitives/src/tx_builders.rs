@@ -1,11 +1,11 @@
 use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 
-use alloy_consensus::{
-    BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
-};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_serde::WithOtherFields;
+use base_common_consensus::{
+    BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
+};
 
 /// Transaction builder type supporting EIP-4844 transaction fields with both EIP-4844 and EIP-7594
 /// sidecar variants.

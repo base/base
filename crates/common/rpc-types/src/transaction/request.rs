@@ -1,15 +1,12 @@
 use alloc::vec::Vec;
 
-use alloy_consensus::{
-    Sealed, SignableTransaction, Signed, TxEip1559, TxEip4844, TypedTransaction,
-};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,
-    TxDeposit,
+    Sealed, SignableTransaction, Signed, TxDeposit, TxEip1559, TxEip4844, TypedTransaction,
 };
 #[cfg(feature = "network")]
 use base_common_network::TransactionBuilder;

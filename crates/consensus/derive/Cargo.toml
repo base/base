@@ -25,7 +25,6 @@ base-consensus-upgrades = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-rpc-types-engine = { workspace = true }
 alloy-rlp = { workspace = true, features = ["derive"] }
-alloy-consensus = { workspace = true, features = ["k256"] }
 base-common-consensus = { workspace = true, features = ["k256"] }
 spin = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map"] }
@@ -57,16 +56,16 @@ required-features = ["test-utils"]
 default = []
 metrics = [ "base-metrics/metrics", "dep:metrics" ]
 serde = [
-	"alloy-consensus/serde",
-	"alloy-eips/serde",
-	"alloy-primitives/serde",
-	"alloy-rpc-types-engine/serde",
-	"base-common-consensus/serde",
-	"base-common-genesis/serde",
-	"base-common-rpc-types-engine/serde",
-	"base-protocol/serde",
-	"dep:serde",
-	"tracing-subscriber?/serde",
+    "base-common-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "alloy-rpc-types-engine/serde",
+    "base-common-consensus/serde",
+    "base-common-genesis/serde",
+    "base-common-rpc-types-engine/serde",
+    "base-protocol/serde",
+    "dep:serde",
+    "tracing-subscriber?/serde",
 ]
 test-utils = [
 	"base-common-genesis/test-utils",

@@ -2,10 +2,10 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::Block;
 use alloy_eips::Decodable2718;
 use alloy_primitives::{B256, Bytes, U256};
 use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3, PayloadError};
+use base_common_consensus::Block;
 
 /// The Base execution payload for `newPayloadV4` of the engine API introduced with isthmus.
 /// See also <https://specs.base.org/upgrades/isthmus/exec-engine#engine_newpayloadv4-api>

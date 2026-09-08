@@ -19,20 +19,21 @@ workspace = true
 reth-trie-common = { workspace = true }
 serde = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
-reth-codecs = { workspace = true, optional = true }
 modular-bitfield = { workspace = true, optional = true }
+base-common-consensus = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 [dev-dependencies]
 bytes = { workspace = true }
-reth-codecs = { workspace = true }
 modular-bitfield = { workspace = true }
+base-common-consensus = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
 reth-trie-common = { workspace = true, features = ["reth-codec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "arbitrary", "rand"] }
+
 [features]
 default = ["std"]
 partial-persistence = []
@@ -41,24 +42,24 @@ std = [
     "bytes?/std",
     "reth-trie-common/std",
     "serde?/std",
-    "reth-codecs?/std",
+    "base-common-consensus?/std",
 ]
 reth-codec = [
-    "dep:reth-codecs",
+    "dep:base-common-consensus",
     "dep:bytes",
     "dep:modular-bitfield",
     "reth-trie-common/reth-codec",
 ]
 test-utils = [
     "arbitrary",
-    "reth-codecs?/test-utils",
+    "base-common-consensus?/test-utils",
     "reth-trie-common/test-utils",
 ]
 arbitrary = [
     "std",
     "dep:arbitrary",
     "alloy-primitives/arbitrary",
-    "reth-codecs?/arbitrary",
+    "base-common-consensus?/arbitrary",
     "reth-trie-common/arbitrary",
 ]
 serde = [
@@ -66,6 +67,6 @@ serde = [
     "alloy-primitives/serde",
     "bytes?/serde",
     "rand/serde",
-    "reth-codecs?/serde",
+    "base-common-consensus?/serde",
     "reth-trie-common/serde",
 ]

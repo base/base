@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockId;
 use alloy_provider::{
     ConnectionConfig, Provider, ProviderBuilder, WebSocketConfig,
@@ -8,6 +7,7 @@ use alloy_provider::{
 };
 use alloy_rpc_types_engine::PayloadExtras;
 use alloy_transport::TransportResult;
+use base_common_consensus::BlockHeader;
 use base_execution_payload_types::ExecutionPayload;
 use futures::{Stream, StreamExt};
 use reth_tracing::tracing::{debug, warn};

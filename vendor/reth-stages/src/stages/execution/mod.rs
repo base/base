@@ -7,10 +7,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::BlockNumber;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BlockHeader};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, Executor, ExecutorMetrics};
@@ -716,7 +715,7 @@ pub fn calculate_gas_used_from_headers(
     for entry in provider.fetch_range_iter(
         StaticFileSegment::Headers,
         *range.start()..*range.end() + 1,
-        |cursor, number| cursor.get_one::<HeaderMask<alloy_consensus::Header>>(number.into()),
+        |cursor, number| cursor.get_one::<HeaderMask<base_common_consensus::Header>>(number.into()),
     )? {
         if let Some(entry) = entry? {
             gas_total += entry.gas_used();

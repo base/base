@@ -29,7 +29,6 @@ alloy-eips = { workspace = true }
 reth-ecies = { workspace = true }
 reth-prune = { workspace = true }
 reth-tasks = { workspace = true }
-reth-codecs = { workspace = true }
 reth-db-api = { workspace = true }
 reth-stages = { workspace = true }
 reth-discv5 = { workspace = true }
@@ -72,12 +71,10 @@ reth-network = { workspace = true, features = ["serde"] }
 reth-discv4 = { workspace = true, features = ["default"] }
 human_bytes = { workspace = true, features = ["default"] }
 comfy-table = { workspace = true, features = ["default"] }
-alloy-consensus = { workspace = true, features = ["serde"]}
 reth-net-nat = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
 reth-static-file-types = { workspace = true, features = ["clap"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
@@ -85,6 +82,7 @@ base-execution-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth", "serde"] }
 reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 backon = { workspace = true, features = ["std-blocking-sleep", "tokio-sleep"] }
@@ -107,14 +105,14 @@ arbitrary = [
     "reth-db/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
-    "reth-codecs/test-utils",
+    "base-common-consensus/test-utils",
     "reth-prune-types/test-utils",
     "reth-stages-types/test-utils",
     "reth-trie-common?/test-utils",
-    "reth-codecs/arbitrary",
+    "base-common-consensus/arbitrary",
     "reth-prune-types/arbitrary",
     "reth-stages-types/arbitrary",
     "reth-trie-common?/arbitrary",
-    "alloy-consensus/arbitrary",
+    "base-common-consensus/arbitrary",
     "reth-primitives-traits/arbitrary",
 ]

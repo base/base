@@ -1,13 +1,12 @@
 use core::fmt;
 use std::collections::BTreeMap;
 
-use alloy_consensus::Transaction;
 use alloy_primitives::Address;
 use alloy_rpc_types_txpool::{
     TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
 };
 use async_trait::async_trait;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, Transaction};
 use base_execution_txpool::{AllPoolTransactions, PoolTransaction, TransactionPool};
 use jsonrpsee::core::RpcResult;
 use reth_rpc_api::TxPoolApiServer;

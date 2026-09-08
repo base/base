@@ -24,7 +24,6 @@ async-trait = { workspace = true }
 base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
 base-proof-mpt = { workspace = true }
-alloy-consensus = { workspace = true }
 base-common-evm = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
@@ -52,7 +51,7 @@ tokio = { workspace = true, features = ["default", "full"] }
 
 [features]
 std = [
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "alloy-eips/kzg",
     "alloy-eips/std",
     "base-evm-handler/std",

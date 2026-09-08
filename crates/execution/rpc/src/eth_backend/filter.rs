@@ -10,14 +10,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::TxHash;
 use alloy_rpc_types_eth::{
     Filter, FilterBlockOption, FilterChanges, FilterId, PendingTransactionFilterKind,
 };
 use async_trait::async_trait;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, BlockHeader};
 use base_common_rpc_types::BaseLogResponse;
 use base_execution_txpool::{NewSubpoolTransactionStream, PoolTransaction, TransactionPool};
 use futures::{
@@ -1410,11 +1409,11 @@ mod tests {
 
         let headers = vec![
             SealedHeader::new(
-                alloy_consensus::Header { number: 100, ..Default::default() },
+                base_common_consensus::Header { number: 100, ..Default::default() },
                 FixedBytes::random(),
             ),
             SealedHeader::new(
-                alloy_consensus::Header { number: 101, ..Default::default() },
+                base_common_consensus::Header { number: 101, ..Default::default() },
                 FixedBytes::random(),
             ),
         ];
@@ -1424,17 +1423,17 @@ mod tests {
         let expected_block_hash_2 = FixedBytes::from([2u8; 32]);
 
         // create mock receipts to test receipt handling
-        let mock_receipt_1 = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let mock_receipt_1 = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 100_000,
             logs: vec![],
             status: (true).into(),
         });
-        let mock_receipt_2 = BaseReceipt::Eip1559(alloy_consensus::Receipt {
+        let mock_receipt_2 = BaseReceipt::Eip1559(base_common_consensus::Receipt {
             cumulative_gas_used: 200_000,
             logs: vec![],
             status: (true).into(),
         });
-        let mock_receipt_3 = BaseReceipt::Eip2930(alloy_consensus::Receipt {
+        let mock_receipt_3 = BaseReceipt::Eip2930(base_common_consensus::Receipt {
             cumulative_gas_used: 150_000,
             logs: vec![],
             status: (false).into(), // Different success status
@@ -1444,7 +1443,7 @@ mod tests {
             receipts: Arc::new(vec![mock_receipt_1.clone(), mock_receipt_2.clone()]),
             recovered_block: None,
             header: SealedHeader::new(
-                alloy_consensus::Header { number: 42, ..Default::default() },
+                base_common_consensus::Header { number: 42, ..Default::default() },
                 expected_block_hash_1,
             ),
         };
@@ -1453,7 +1452,7 @@ mod tests {
             receipts: Arc::new(vec![mock_receipt_3.clone()]),
             recovered_block: None,
             header: SealedHeader::new(
-                alloy_consensus::Header { number: 43, ..Default::default() },
+                base_common_consensus::Header { number: 43, ..Default::default() },
                 expected_block_hash_2,
             ),
         };
@@ -1530,7 +1529,7 @@ mod tests {
         let filter_inner = eth_filter.inner;
 
         let headers = vec![SealedHeader::new(
-            alloy_consensus::Header { number: 100, ..Default::default() },
+            base_common_consensus::Header { number: 100, ..Default::default() },
             FixedBytes::random(),
         )];
 
@@ -1550,9 +1549,9 @@ mod tests {
     async fn test_range_block_mode_provider_receipts() {
         let provider = MockEthProvider::default();
 
-        let header_1 = alloy_consensus::Header { number: 100, ..Default::default() };
-        let header_2 = alloy_consensus::Header { number: 101, ..Default::default() };
-        let header_3 = alloy_consensus::Header { number: 102, ..Default::default() };
+        let header_1 = base_common_consensus::Header { number: 100, ..Default::default() };
+        let header_2 = base_common_consensus::Header { number: 101, ..Default::default() };
+        let header_3 = base_common_consensus::Header { number: 102, ..Default::default() };
 
         let block_hash_1 = FixedBytes::random();
         let block_hash_2 = FixedBytes::random();
@@ -1568,17 +1567,17 @@ mod tests {
             data: alloy_primitives::LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
         };
 
-        let receipt_100_1 = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let receipt_100_1 = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 21_000,
             logs: vec![mock_log.clone()],
             status: (true).into(),
         });
-        let receipt_100_2 = BaseReceipt::Eip1559(alloy_consensus::Receipt {
+        let receipt_100_2 = BaseReceipt::Eip1559(base_common_consensus::Receipt {
             cumulative_gas_used: 42_000,
             logs: vec![mock_log.clone()],
             status: (true).into(),
         });
-        let receipt_101_1 = BaseReceipt::Eip2930(alloy_consensus::Receipt {
+        let receipt_101_1 = BaseReceipt::Eip2930(base_common_consensus::Receipt {
             cumulative_gas_used: 30_000,
             logs: vec![mock_log.clone()],
             status: (false).into(),
@@ -1667,8 +1666,8 @@ mod tests {
     async fn test_range_block_mode_iterator_exhaustion() {
         let provider = MockEthProvider::default();
 
-        let header_100 = alloy_consensus::Header { number: 100, ..Default::default() };
-        let header_101 = alloy_consensus::Header { number: 101, ..Default::default() };
+        let header_100 = base_common_consensus::Header { number: 100, ..Default::default() };
+        let header_101 = base_common_consensus::Header { number: 101, ..Default::default() };
 
         let block_hash_100 = FixedBytes::random();
         let block_hash_101 = FixedBytes::random();
@@ -1678,7 +1677,7 @@ mod tests {
         provider.add_header(block_hash_101, header_101.clone());
 
         // Add mock receipts so headers are actually processed
-        let mock_receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let mock_receipt = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 21_000,
             logs: vec![],
             status: (true).into(),
@@ -1730,7 +1729,7 @@ mod tests {
         let test_hash = FixedBytes::from([42u8; 32]);
         let test_block_number = 100u64;
         let test_header = SealedHeader::new(
-            alloy_consensus::Header {
+            base_common_consensus::Header {
                 number: test_block_number,
                 gas_used: 50_000,
                 ..Default::default()
@@ -1744,7 +1743,7 @@ mod tests {
             data: alloy_primitives::LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
         };
 
-        let mock_receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let mock_receipt = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 21_000,
             logs: vec![mock_log],
             status: (true).into(),
@@ -1807,8 +1806,7 @@ mod tests {
     async fn test_log_limit_retry_range_excludes_overflow_block() {
         let provider = MockEthProvider::default();
 
-        use alloy_consensus::TxLegacy;
-        use base_common_consensus::BaseTxEnvelope as TransactionSigned;
+        use base_common_consensus::{BaseTxEnvelope as TransactionSigned, TxLegacy};
         use reth_db_api::models::StoredBlockBodyIndices;
 
         let tx_inner = TxLegacy {
@@ -1828,7 +1826,7 @@ mod tests {
             data: alloy_primitives::LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
         };
 
-        let receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let receipt = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 21_000,
             logs: vec![mock_log],
             status: (true).into(),
@@ -1836,7 +1834,7 @@ mod tests {
 
         let mut prev_hash = alloy_primitives::B256::default();
         for (idx, block_number) in (100u64..=102).enumerate() {
-            let header = alloy_consensus::Header {
+            let header = base_common_consensus::Header {
                 number: block_number,
                 parent_hash: prev_hash,
                 logs_bloom: alloy_primitives::Bloom::from([1u8; 256]),
@@ -1892,8 +1890,7 @@ mod tests {
         let mut prev_hash = alloy_primitives::B256::default();
 
         // Create a transaction for blocks that will have receipts
-        use alloy_consensus::TxLegacy;
-        use base_common_consensus::BaseTxEnvelope as TransactionSigned;
+        use base_common_consensus::{BaseTxEnvelope as TransactionSigned, TxLegacy};
 
         let tx_inner = TxLegacy {
             chain_id: Some(1),
@@ -1908,7 +1905,7 @@ mod tests {
         let tx = TransactionSigned::new_unhashed(tx_inner.into(), signature);
 
         for i in 100u64..=103 {
-            let header = alloy_consensus::Header {
+            let header = base_common_consensus::Header {
                 number: i,
                 parent_hash: prev_hash,
                 // Set bloom to match filter only for blocks 100 and 102
@@ -1940,7 +1937,7 @@ mod tests {
             data: alloy_primitives::LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
         };
 
-        let receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let receipt = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 21_000,
             logs: vec![mock_log],
             status: (true).into(),

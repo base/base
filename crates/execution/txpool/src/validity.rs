@@ -321,10 +321,9 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::TxKind;
-    use base_common_consensus::{BaseTransactionSigned, TxDeposit};
+    use base_common_consensus::{BaseTransactionSigned, TxDeposit, transaction::Recovered};
     use revm::{database::InMemoryDB, state::AccountInfo};
     use serde_json::json;
 

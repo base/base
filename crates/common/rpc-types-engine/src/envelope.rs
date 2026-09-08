@@ -5,12 +5,12 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Block, BlockHeader, Sealable, Transaction};
 use alloy_eips::{Encodable2718, eip4895::Withdrawal, eip7685::Requests};
 use alloy_primitives::{B256, Bytes, Signature, keccak256};
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, ExecutionPayloadV3, PraguePayloadFields,
 };
+use base_common_consensus::{Block, BlockHeader, Sealable, Transaction};
 
 use crate::{BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4};
 
@@ -139,7 +139,7 @@ impl ExecutionData {
         Self { payload, sidecar, block_access_list }
     }
 
-    /// Conversion from [`alloy_consensus::Block`]. Also returns the [`BaseExecutionPayloadSidecar`]
+    /// Conversion from [`base_common_consensus::Block`]. Also returns the [`BaseExecutionPayloadSidecar`]
     /// extracted from the block.
     ///
     /// See also [`from_block_unchecked`](BaseExecutionPayload::from_block_slow).
@@ -155,7 +155,7 @@ impl ExecutionData {
         Self::new(payload, sidecar, None)
     }
 
-    /// Conversion from [`alloy_consensus::Block`]. Also returns the [`BaseExecutionPayloadSidecar`]
+    /// Conversion from [`base_common_consensus::Block`]. Also returns the [`BaseExecutionPayloadSidecar`]
     /// extracted from the block.
     ///
     /// See also [`BaseExecutionPayload::from_block_unchecked`].
@@ -167,7 +167,7 @@ impl ExecutionData {
         Self::from_block_unchecked_with_extras(block_hash, block, None)
     }
 
-    /// Conversion from [`alloy_consensus::Block`] with optional Amsterdam block access list RLP
+    /// Conversion from [`base_common_consensus::Block`] with optional Amsterdam block access list RLP
     /// bytes.
     pub fn from_block_unchecked_with_extras<T, H>(
         block_hash: B256,

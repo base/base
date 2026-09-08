@@ -42,7 +42,7 @@ libc = { workspace = true, features = ["default"] }
 [dev-dependencies]
 serde = { workspace = true }
 assert_matches = { workspace = true }
-alloy-consensus = { workspace = true }
+base-common-consensus = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 tempfile = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
@@ -75,7 +75,7 @@ test-utils = [
 arbitrary = [
     "reth-db-api/arbitrary",
     "alloy-primitives/arbitrary",
-    "alloy-consensus/arbitrary",
+    "base-common-consensus/arbitrary",
     "reth-primitives-traits/arbitrary",
 ]
 disable-lock = []

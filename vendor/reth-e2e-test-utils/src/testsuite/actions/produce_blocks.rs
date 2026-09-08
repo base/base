@@ -2,13 +2,12 @@
 
 use std::{collections::HashSet, time::Duration};
 
-use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadAttributes, PayloadStatusEnum, payload::ExecutionPayloadEnvelopeV3,
 };
 use alloy_rpc_types_eth::{Block, Header, Receipt, Transaction, TransactionRequest};
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, EthereumTxEnvelope, TxEip4844};
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_execution_rpc::EthApiClient;
 use eyre::Result;

@@ -28,7 +28,6 @@ auto_impl = { workspace = true }
 revm-state = { workspace = true }
 alloy-genesis = {workspace = true}
 revm-bytecode = {workspace = true}
-alloy-consensus = {workspace = true}
 alloy-primitives = {workspace = true}
 revm-primitives = { workspace = true }
 bytes = {workspace = true, optional = true}
@@ -36,8 +35,8 @@ derive_more = {workspace = true, features = ["deref"]}
 modular-bitfield = {workspace = true, optional = true}
 tokio = { workspace = true, optional = true, features = ["default"] }
 arbitrary = {workspace = true, optional = true, features = ["derive"]}
-reth-codecs = {workspace = true, optional = true, features = ["alloy"]}
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
+base-common-consensus = {workspace = true, optional = false, features = ["alloy"]}
 [dev-dependencies]
 proptest = {workspace = true}
 mockall = { workspace = true }
@@ -65,14 +64,14 @@ std = [
     "revm-state/std",
     "either/std",
     "thiserror/std",
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "alloy-genesis/std",
     "alloy-primitives/std",
     "alloy-trie/std",
     "revm-bytecode/std",
     "derive_more/std",
-    "reth-codecs?/std",
+    "base-common-consensus/std",
 ]
 arbitrary = ["dep:arbitrary", "alloy-primitives/arbitrary"]
-reth-codec = ["dep:reth-codecs", "dep:bytes", "dep:modular-bitfield"]
-test-utils = ["arbitrary", "reth-codecs?/test-utils"]
+reth-codec = ["dep:bytes", "dep:modular-bitfield"]
+test-utils = ["arbitrary", "base-common-consensus/test-utils"]

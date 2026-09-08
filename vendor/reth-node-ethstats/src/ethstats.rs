@@ -4,8 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::U256;
+use base_common_consensus::BlockHeader;
 use base_execution_txpool::TransactionPool;
 use chrono::Local;
 use reth_chain_state::{CanonStateNotification, CanonStateSubscriptions};

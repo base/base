@@ -613,9 +613,9 @@ impl Drop for CacheTaskHandle {
 #[cfg(test)]
 mod tests {
 
-    use alloy_consensus::constants::KECCAK_EMPTY;
     use alloy_eips::eip1898::{BlockNumHash, BlockWithParent};
     use alloy_primitives::{Address, B256, U256};
+    use base_common_consensus::constants::KECCAK_EMPTY;
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use reth_execution_cache::CachedStatus;

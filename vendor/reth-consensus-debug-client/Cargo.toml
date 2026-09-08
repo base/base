@@ -18,8 +18,8 @@ workspace = true
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-json-rpc = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-transport = { workspace = true }
+base-common-consensus = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 serde = { workspace = true, features = ["derive"] }

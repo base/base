@@ -14,7 +14,7 @@ pub struct StoredSubNode {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-impl reth_codecs::Compact for StoredSubNode {
+impl base_common_consensus::Compact for StoredSubNode {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -70,7 +70,7 @@ impl reth_codecs::Compact for StoredSubNode {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use reth_codecs::Compact;
+    use base_common_consensus::Compact;
 
     use super::*;
     use crate::TrieMask;

@@ -8,8 +8,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
+use base_common_consensus::BlockHeader;
 use base_execution_consensus::BaseBeaconConsensus;
 use futures::Stream;
 use futures_util::StreamExt;

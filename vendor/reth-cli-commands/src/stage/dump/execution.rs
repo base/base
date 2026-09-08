@@ -72,7 +72,7 @@ fn import_tables_with_range<DB: Database + DatabaseMetrics + Clone + Unpin + 'st
         )
     })??;
     output_db.update(|tx| {
-        tx.import_table_with_range::<tables::Headers<alloy_consensus::Header>, _>(
+        tx.import_table_with_range::<tables::Headers<base_common_consensus::Header>, _>(
             &db_tool.provider_factory.db_ref().tx()?,
             Some(from),
             to,
@@ -86,7 +86,7 @@ fn import_tables_with_range<DB: Database + DatabaseMetrics + Clone + Unpin + 'st
         )
     })??;
     output_db.update(|tx| {
-        tx.import_table_with_range::<tables::BlockOmmers<alloy_consensus::Header>, _>(
+        tx.import_table_with_range::<tables::BlockOmmers<base_common_consensus::Header>, _>(
             &db_tool.provider_factory.db_ref().tx()?,
             Some(from),
             to,

@@ -1,11 +1,10 @@
 use core::cmp::max;
 use std::{collections::VecDeque, sync::Arc};
 
-use alloy_consensus::TxEip1559;
 use alloy_eips::{BlockNumberOrTag, eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
-use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction};
+use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction, TxEip1559};
 use base_common_rpc_types::Base;
 use base_execution_txpool::{
     AllTransactionsEvents, BasePooledTransaction, FullTransactionEvent, TransactionEvent,

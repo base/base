@@ -2,10 +2,10 @@
 
 use core::ops::{Deref, DerefMut};
 
-use alloy_consensus::{BlockHeader, Header as ConsensusHeader};
 use alloy_network_primitives::HeaderResponse;
 use alloy_primitives::{Address, B64, B256, BlockHash, Bloom, Bytes, U256};
 use alloy_rpc_types_eth::{Block, Header};
+use base_common_consensus::{BlockHeader, Header as ConsensusHeader};
 
 use crate::Transaction;
 
@@ -175,8 +175,8 @@ impl<H: HeaderResponse> HeaderResponse for BaseHeaderResponse<H> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Header as ConsensusHeader;
     use alloy_rpc_types_eth::Header;
+    use base_common_consensus::Header as ConsensusHeader;
     use serde_json::json;
 
     use super::BaseHeaderResponse;

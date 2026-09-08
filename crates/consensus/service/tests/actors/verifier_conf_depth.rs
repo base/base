@@ -15,11 +15,11 @@ use std::{
     },
 };
 
-use alloy_consensus::Header;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, Bloom, U256};
 use alloy_rpc_types_eth::{Block, Filter, Header as RpcHeader, Log};
 use async_trait::async_trait;
+use base_common_consensus::Header;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{ChainProvider, PipelineErrorKind};
 use base_consensus_node::{

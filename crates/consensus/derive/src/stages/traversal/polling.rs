@@ -2,10 +2,10 @@
 
 use alloc::{boxed::Box, sync::Arc};
 
-use alloy_consensus::Receipt;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Address;
 use async_trait::async_trait;
+use base_common_consensus::Receipt;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
 use tracing::{info, warn};

@@ -16,7 +16,6 @@ thiserror = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 futures-util = { workspace = true }
-alloy-consensus = { workspace = true }
 base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 reth-storage-api = { workspace = true }
@@ -49,15 +48,14 @@ base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-genesis = { workspace = true }
-alloy-consensus = { workspace = true, features = ["serde"]}
-base-common-consensus = { workspace = true, features = ["arbitrary"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["arbitrary", "serde"] }
 
 [features]
 default = ["metrics", "std"]
 metrics = ["base-common-evm/metrics", "std", "dep:metrics", "dep:reth-metrics"]
 std = [
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "base-common-chains/std",
@@ -94,7 +92,7 @@ witness = ["dep:reth-trie", "dep:alloy-rlp", "dep:alloy-rpc-types-debug"]
 serde = [
     "revm/serde",
     "alloy-primitives/serde",
-    "alloy-consensus/serde",
+    "base-common-consensus/serde",
     "reth-trie?/serde",
     "reth-primitives-traits/serde",
     "reth-storage-api/serde",

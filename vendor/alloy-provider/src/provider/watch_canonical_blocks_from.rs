@@ -6,10 +6,10 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
 use alloy_network_primitives::HeaderResponse;
 use alloy_transport::{TransportError, TransportResult};
+use base_common_consensus::BlockHeader;
 use base_common_network::{BlockResponse as _, Network};
 use futures::{Stream, StreamExt as _, stream::Buffered};
 use pin_project::pin_project;

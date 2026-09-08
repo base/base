@@ -1,12 +1,13 @@
 //! Integration tests for the Builder RPC extension.
 
-use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use base_builder_core::{BuilderApiExtension, BuilderApiExtensionConfig};
-use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
+use base_common_consensus::{
+    BaseTransactionSigned, BaseTypedTransaction, SignableTransaction, TxDeposit, TxEip1559,
+};
 use base_common_network::TransactionBuilder;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{

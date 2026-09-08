@@ -1,9 +1,8 @@
 use std::path::Path;
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, BlockNumber};
 use alloy_rlp::Decodable;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BlockHeader};
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 use reth_provider::{
     BlockWriter, ProviderResult, StageCheckpointWriter, StaticFileProviderFactory,
@@ -40,7 +39,7 @@ pub fn setup_without_evm<Provider, F>(
 ) -> ProviderResult<()>
 where
     Provider: StaticFileProviderFactory + StageCheckpointWriter + BlockWriter<Block = BaseBlock>,
-    F: Fn(BlockNumber) -> alloy_consensus::Header + Send + Sync + 'static,
+    F: Fn(BlockNumber) -> base_common_consensus::Header + Send + Sync + 'static,
 {
     info!(target: "reth::cli", new_tip = ?header.num_hash(), "Setting up dummy EVM chain before importing state.");
 
@@ -102,7 +101,7 @@ fn append_dummy_chain<F>(
     header_factory: F,
 ) -> ProviderResult<()>
 where
-    F: Fn(BlockNumber) -> alloy_consensus::Header + Send + Sync + 'static,
+    F: Fn(BlockNumber) -> base_common_consensus::Header + Send + Sync + 'static,
 {
     let (tx, rx) = std::sync::mpsc::channel();
 
@@ -189,8 +188,8 @@ mod tests {
         },
     };
 
-    use alloy_consensus::Header;
     use alloy_primitives::{address, b256};
+    use base_common_consensus::Header;
     use reth_db_common::init::init_genesis;
     use reth_provider::{DatabaseProviderFactory, test_utils::create_test_provider_factory};
     use tempfile::NamedTempFile;

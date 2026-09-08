@@ -9,13 +9,13 @@ use std::{
     time::Instant,
 };
 
-use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
 use alloy_eips::{Typed2718, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
-    AccountChange, BaseBlock, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
-    Eip8130TimestampError, InitialActor, SignedChange,
+    AccountChange, BaseBlock, BlockHeader, ChangeType, Eip8130Constants, Eip8130Contracts,
+    Eip8130Signed, Eip8130TimestampError, InitialActor, SignedChange, Transaction,
+    constants::KECCAK_EMPTY,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
@@ -2159,7 +2159,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, hex::decode};
     use alloy_signer::SignerSync;
@@ -2167,7 +2166,8 @@ mod tests {
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, BaseTransactionSigned, BaseTxEnvelope, ChangeType,
         CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
-        SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
+        SignableTransaction, SignedAccountChanges, SignedChange, TxDeposit, TxEip1559, TxEip8130,
+        transaction::SignerRecoverable,
     };
     use base_common_network::PrivateKeySigner;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -2672,7 +2672,7 @@ mod tests {
         // default fixture sits at timestamp 0 where there is no way to express
         // "already expired".
         let validator = build_test_validator();
-        let header = alloy_consensus::Header { timestamp: 100, ..Default::default() };
+        let header = base_common_consensus::Header { timestamp: 100, ..Default::default() };
         validator.update_l1_block_info::<_, TxEip1559>(&header, None);
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
@@ -3481,7 +3481,7 @@ mod tests {
         let validator =
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
 
-        let header = alloy_consensus::Header {
+        let header = base_common_consensus::Header {
             timestamp: chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
                 .as_timestamp()
                 .unwrap_or_default(),
@@ -3549,7 +3549,7 @@ mod tests {
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
 
         let isthmus_data = decode(ISTHMUS_L1_INFO_DATA_HEX).expect("valid hex fixture");
-        let header = alloy_consensus::Header {
+        let header = base_common_consensus::Header {
             timestamp: chain_config.upgrades[base_common_chains::BaseUpgrade::Isthmus]
                 .as_timestamp()
                 .unwrap_or_default(),
@@ -3624,7 +3624,7 @@ mod tests {
             .build(InMemoryBlobStore::default());
         let validator: TestValidator =
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
-        let header = alloy_consensus::Header { timestamp: now, ..Default::default() };
+        let header = base_common_consensus::Header { timestamp: now, ..Default::default() };
         validator.update_l1_block_info::<_, TxEip1559>(&header, None);
 
         let state = validator.validate_eip8130_full(&signed).expect("valid nonce-free tx");

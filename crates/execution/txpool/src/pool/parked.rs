@@ -532,8 +532,8 @@ impl<T: PoolTransaction> Ord for QueuedOrd<T> {
 mod tests {
     use std::collections::HashSet;
 
-    use alloy_consensus::{Transaction, TxType};
     use alloy_primitives::address;
+    use base_common_consensus::{Transaction, TxType};
 
     use super::*;
     use crate::test_utils::{MockTransaction, MockTransactionFactory, MockTransactionSet};

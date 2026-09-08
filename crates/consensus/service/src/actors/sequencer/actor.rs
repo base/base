@@ -790,8 +790,8 @@ mod tests {
 
     fn valid_sealer() -> (PayloadSealer, L2BlockInfo, SystemConfig) {
         let block = BaseBlock {
-            header: alloy_consensus::Header { number: 1, ..Default::default() },
-            body: alloy_consensus::BlockBody {
+            header: base_common_consensus::Header { number: 1, ..Default::default() },
+            body: base_common_consensus::BlockBody {
                 transactions: vec![BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
                     input: L1BlockInfoBedrock::default().encode_calldata(),
                     ..Default::default()

@@ -6,16 +6,15 @@ use std::{
     sync::{Arc, atomic::Ordering::SeqCst},
 };
 
-#[cfg(test)]
-use alloy_consensus::EthereumTxEnvelope;
-#[cfg(test)]
-use alloy_consensus::EthereumTypedTransaction;
-#[cfg(test)]
-use alloy_consensus::TxEip4844;
-use alloy_consensus::{BlockHeader, Header, Transaction, TxReceipt};
 use alloy_eips::eip7840::BlobParams;
 use alloy_rpc_types_eth::TxGasAndReward;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+#[cfg(test)]
+use base_common_consensus::EthereumTxEnvelope;
+#[cfg(test)]
+use base_common_consensus::EthereumTypedTransaction;
+#[cfg(test)]
+use base_common_consensus::TxEip4844;
+use base_common_consensus::{BaseBlock, BaseReceipt, BlockHeader, Header, Transaction, TxReceipt};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use futures::{
     FutureExt, Stream, StreamExt,
@@ -409,8 +408,8 @@ impl FeeHistoryEntry {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{EthereumReceipt as Receipt, TxEip1559, TxType};
     use alloy_primitives::Signature;
+    use base_common_consensus::{EthereumReceipt as Receipt, TxEip1559, TxType};
 
     use super::*;
 

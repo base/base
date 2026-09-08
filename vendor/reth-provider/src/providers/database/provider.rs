@@ -7,16 +7,15 @@ use std::{
     sync::Arc,
 };
 
-use alloy_consensus::{
-    BlockHeader, TxReceipt,
-    transaction::{SignerRecoverable, TransactionMeta},
-};
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, StorageKey, StorageValue, TxHash, TxNumber, keccak256,
     map::{AddressSet, B256Map, HashMap, hash_map},
 };
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo};
+use base_common_consensus::{
+    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, TxReceipt,
+    transaction::{SignerRecoverable, TransactionMeta},
+};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -1048,11 +1047,11 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
         construct_block: BF,
     ) -> ProviderResult<Option<B>>
     where
-        H: AsRef<alloy_consensus::Header>,
+        H: AsRef<base_common_consensus::Header>,
         HF: FnOnce(BlockNumber) -> ProviderResult<Option<H>>,
         BF: FnOnce(
             H,
-            alloy_consensus::BlockBody<BaseTxEnvelope>,
+            base_common_consensus::BlockBody<BaseTxEnvelope>,
             Vec<Address>,
         ) -> ProviderResult<Option<B>>,
     {
@@ -1127,11 +1126,11 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
         mut assemble_block: F,
     ) -> ProviderResult<Vec<R>>
     where
-        H: AsRef<alloy_consensus::Header>,
+        H: AsRef<base_common_consensus::Header>,
         HF: FnOnce(RangeInclusive<BlockNumber>) -> ProviderResult<Vec<H>>,
         F: FnMut(
             H,
-            alloy_consensus::BlockBody<BaseTxEnvelope>,
+            base_common_consensus::BlockBody<BaseTxEnvelope>,
             Range<TxNumber>,
         ) -> ProviderResult<R>,
     {
@@ -1193,9 +1192,13 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
         assemble_block: BF,
     ) -> ProviderResult<Vec<B>>
     where
-        H: AsRef<alloy_consensus::Header>,
+        H: AsRef<base_common_consensus::Header>,
         HF: Fn(RangeInclusive<BlockNumber>) -> ProviderResult<Vec<H>>,
-        BF: Fn(H, alloy_consensus::BlockBody<BaseTxEnvelope>, Vec<Address>) -> ProviderResult<B>,
+        BF: Fn(
+            H,
+            base_common_consensus::BlockBody<BaseTxEnvelope>,
+            Vec<Address>,
+        ) -> ProviderResult<B>,
     {
         self.block_range(range, headers_range, |header, body, tx_range| {
             let senders = if tx_range.is_empty() {
@@ -1496,7 +1499,7 @@ impl<Tx: DbTx + 'static> StateReader for DatabaseProvider<Tx> {
 }
 
 impl<TX: DbTx + 'static> HeaderSyncGapProvider for DatabaseProvider<TX> {
-    type Header = alloy_consensus::Header;
+    type Header = base_common_consensus::Header;
 
     fn local_tip_header(
         &self,
@@ -1539,7 +1542,10 @@ impl<TX: DbTx + 'static> HeaderSyncGapProvider for DatabaseProvider<TX> {
 }
 
 impl<TX: DbTx + 'static> HeaderProvider for DatabaseProvider<TX> {
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
+    fn header(
+        &self,
+        block_hash: BlockHash,
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
         if let Some(num) = self.block_number(block_hash)? {
             Ok(self.header_by_number(num)?)
         } else {
@@ -1550,14 +1556,14 @@ impl<TX: DbTx + 'static> HeaderProvider for DatabaseProvider<TX> {
     fn header_by_number(
         &self,
         num: BlockNumber,
-    ) -> ProviderResult<Option<alloy_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
         self.static_file_provider.header_by_number(num)
     }
 
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
         self.static_file_provider.headers_range(range)
     }
 
@@ -3086,7 +3092,7 @@ impl<TX: DbTxMut + DbTx + 'static> BlockWriter for DatabaseProvider<TX> {
 
     fn append_block_bodies(
         &self,
-        bodies: Vec<(BlockNumber, Option<&alloy_consensus::BlockBody<BaseTxEnvelope>>)>,
+        bodies: Vec<(BlockNumber, Option<&base_common_consensus::BlockBody<BaseTxEnvelope>>)>,
     ) -> ProviderResult<()> {
         let Some(from_block) = bodies.first().map(|(block, _)| *block) else { return Ok(()) };
 
@@ -3497,9 +3503,9 @@ impl<TX: Send> StoragePath for DatabaseProvider<TX> {
 mod tests {
     use std::{sync::mpsc, time::Duration};
 
-    use alloy_consensus::Header;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{U256, map::B256Map};
+    use base_common_consensus::Header;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
@@ -4430,9 +4436,9 @@ mod tests {
         {
             let sf = factory.static_file_provider();
             let mut hw = sf.latest_writer(StaticFileSegment::Headers).unwrap();
-            let h0 = alloy_consensus::Header { number: 0, ..Default::default() };
+            let h0 = base_common_consensus::Header { number: 0, ..Default::default() };
             hw.append_header(&h0, &B256::ZERO).unwrap();
-            let h1 = alloy_consensus::Header { number: 1, ..Default::default() };
+            let h1 = base_common_consensus::Header { number: 1, ..Default::default() };
             hw.append_header(&h1, &B256::ZERO).unwrap();
             hw.commit().unwrap();
 
@@ -4755,9 +4761,9 @@ mod tests {
         {
             let sf = factory.static_file_provider();
             let mut hw = sf.latest_writer(StaticFileSegment::Headers).unwrap();
-            let h0 = alloy_consensus::Header { number: 0, ..Default::default() };
+            let h0 = base_common_consensus::Header { number: 0, ..Default::default() };
             hw.append_header(&h0, &B256::ZERO).unwrap();
-            let h1 = alloy_consensus::Header { number: 1, ..Default::default() };
+            let h1 = base_common_consensus::Header { number: 1, ..Default::default() };
             hw.append_header(&h1, &B256::ZERO).unwrap();
             hw.commit().unwrap();
 

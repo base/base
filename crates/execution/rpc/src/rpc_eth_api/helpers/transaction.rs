@@ -3,15 +3,14 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{
-    BlockHeader, Transaction,
-    transaction::{SignerRecoverable, TransactionMeta},
-};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::{TransactionInfo, state::EvmOverrides};
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{
+    BaseTxEnvelope, BlockHeader, Transaction,
+    transaction::{SignerRecoverable, TransactionMeta},
+};
 use base_common_network::{TransactionBuilder, TransactionBuilder4844};
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{
@@ -640,9 +639,9 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
 mod tests {
     use std::time::Duration;
 
-    use alloy_consensus::{Block, Header, Transaction};
     use alloy_primitives::{Address, Bytes, U256, hex, map::AddressMap};
     use alloy_rpc_types_eth::request::TransactionRequest;
+    use base_common_consensus::{Block, Header, Transaction};
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{TransactionOrigin, TransactionPool};

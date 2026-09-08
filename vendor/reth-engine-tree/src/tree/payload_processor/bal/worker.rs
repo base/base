@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use alloy_consensus::Transaction;
 use alloy_eip7928::BlockAccessIndex;
 use alloy_primitives::Address;
+use base_common_consensus::Transaction;
 use base_evm_handler::{BlockExecutionError, BlockExecutor, BlockExecutorFactory, Evm};
 use base_execution_evm::{
     BaseEvmConfig, BaseExecutorFactory, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor,

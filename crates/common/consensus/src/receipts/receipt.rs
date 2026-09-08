@@ -3,15 +3,15 @@
 use alloc::vec::Vec;
 use core::fmt::Debug;
 
-use alloy_consensus::{
-    Eip658Value, Eip2718DecodableReceipt, Eip2718EncodableReceipt, InMemorySize, Receipt,
-    ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt, Typed2718,
-};
 use alloy_eips::eip2718::{Eip2718Error, Eip2718Result, IsTyped2718};
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
 #[cfg(all(test, feature = "reth"))]
-use reth_codecs::Compact;
+use base_common_consensus::Compact;
+use base_common_consensus::{
+    Eip658Value, Eip2718DecodableReceipt, Eip2718EncodableReceipt, InMemorySize, Receipt,
+    ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt, Typed2718,
+};
 
 use super::{BaseTxReceipt, DepositReceipt, Eip8130Receipt};
 use crate::{BaseReceiptEnvelope, OpTxType};
@@ -564,19 +564,19 @@ pub(super) mod serde_bincode_compat {
     #[derive(Debug, Serialize, Deserialize)]
     pub enum BaseReceipt<'a> {
         /// Legacy receipt
-        Legacy(alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
+        Legacy(base_common_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
         /// EIP-2930 receipt
-        Eip2930(alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
+        Eip2930(base_common_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
         /// EIP-1559 receipt
-        Eip1559(alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
+        Eip1559(base_common_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
         /// EIP-7702 receipt
-        Eip7702(alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
+        Eip7702(base_common_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
         /// Deposit receipt
         Deposit(crate::serde_bincode_compat::DepositReceipt<'a, alloy_primitives::Log>),
         /// EIP-8130 Account Abstraction receipt
         Eip8130 {
             /// Standard receipt body.
-            inner: alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>,
+            inner: base_common_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>,
             /// Per-phase execution statuses.
             phase_statuses: Cow<'a, [u8]>,
         },

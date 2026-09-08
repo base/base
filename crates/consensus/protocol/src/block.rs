@@ -2,12 +2,11 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Block, Transaction};
 use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, Block, Transaction};
 use base_common_genesis::ChainGenesis;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BasePayloadError,
@@ -244,9 +243,8 @@ impl L2BlockInfo {
 mod tests {
     use alloc::{string::ToString, vec};
 
-    use alloy_consensus::{Header, TxEnvelope};
     use alloy_primitives::b256;
-    use base_common_consensus::BaseBlock;
+    use base_common_consensus::{BaseBlock, Header, TxEnvelope};
 
     use super::*;
     use crate::test_utils::RAW_BEDROCK_INFO_TX;
@@ -256,7 +254,7 @@ mod tests {
         let block: alloy_rpc_types_eth::Block<BaseTxEnvelope> = alloy_rpc_types_eth::Block {
             header: alloy_rpc_types_eth::Header {
                 hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
-                inner: alloy_consensus::Header {
+                inner: base_common_consensus::Header {
                     number: 1,
                     parent_hash: b256!(
                         "0202020202020202020202020202020202020202020202020202020202020202"
@@ -286,7 +284,7 @@ mod tests {
             ..Default::default()
         };
         let tx_env = alloy_rpc_types_eth::Transaction {
-            inner: alloy_consensus::transaction::Recovered::new_unchecked(
+            inner: base_common_consensus::transaction::Recovered::new_unchecked(
                 base_common_consensus::BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
                     base_common_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
@@ -305,7 +303,7 @@ mod tests {
             alloy_rpc_types_eth::Block {
                 header: alloy_rpc_types_eth::Header {
                     hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
-                    inner: alloy_consensus::Header {
+                    inner: base_common_consensus::Header {
                         number: 3,
                         parent_hash: b256!(
                             "0202020202020202020202020202020202020202020202020202020202020202"

@@ -4,10 +4,9 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_consensus::{BlockHeader, EthereumReceipt as Receipt};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, BlockHash, TxHash};
-use base_common_consensus::BaseReceipt;
+use base_common_consensus::{BaseReceipt, BlockHeader, EthereumReceipt as Receipt};
 use base_common_rpc_types::BaseTransactionReceipt;
 use base_execution_evm::EvmEnvFor;
 use derive_more::Constructor;

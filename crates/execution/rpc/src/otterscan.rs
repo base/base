@@ -1,4 +1,3 @@
-use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_eips::{BlockId, eip1898::LenientBlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::{BlockTransactions, TransactionReceipt};
@@ -10,6 +9,7 @@ use alloy_rpc_types_trace::{
     parity::{Action, CreateAction, CreateOutput, TraceOutput},
 };
 use async_trait::async_trait;
+use base_common_consensus::{BlockHeader, Typed2718};
 use base_common_network::{ReceiptResponse, TransactionResponse};
 use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse, BaseTransactionReceipt};
 use base_evm_context::ExecutionResult;

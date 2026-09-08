@@ -176,14 +176,14 @@ impl BasePayloadAttributes {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            alloy_consensus::transaction::Recovered<BaseTxEnvelope>,
-            alloy_consensus::crypto::RecoveryError,
+            base_common_consensus::transaction::Recovered<BaseTxEnvelope>,
+            base_common_consensus::crypto::RecoveryError,
         >,
     > + '_ {
-        use alloy_consensus::transaction::SignerRecoverable;
+        use base_common_consensus::transaction::SignerRecoverable;
 
         self.decoded_transactions().map(|res| {
-            res.map_err(alloy_consensus::crypto::RecoveryError::from_source)
+            res.map_err(base_common_consensus::crypto::RecoveryError::from_source)
                 .and_then(|tx| tx.try_into_recovered())
         })
     }
@@ -197,8 +197,8 @@ impl BasePayloadAttributes {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            WithEncoded<alloy_consensus::transaction::Recovered<BaseTxEnvelope>>,
-            alloy_consensus::crypto::RecoveryError,
+            WithEncoded<base_common_consensus::transaction::Recovered<BaseTxEnvelope>>,
+            base_common_consensus::crypto::RecoveryError,
         >,
     > + '_ {
         self.transactions

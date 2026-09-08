@@ -23,7 +23,6 @@ coins-bip32 = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
 rand_08 = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map"]}
-alloy-consensus = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std", "serde"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std", "serde"] }
@@ -49,19 +48,24 @@ alloy-consensus-any = { workspace = true, features = [
     "std",
     "serde",
 ] }
-base-common-consensus = {workspace = true, features = ["serde"]}
+base-common-consensus = {workspace = true, features = ["serde", "std"]}
 [dev-dependencies]
 alloy-node-bindings = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 serde = { workspace = true, features = [
     "derive",
     "alloc",
 ] }
+base-common-consensus = { workspace = true, features = ["std"] }
 
 [features]
 mnemonic = ["dep:coins-bip32", "dep:coins-bip39", "zeroize"]
 zeroize = ["dep:zeroize"]
-k256 = ["alloy-primitives/k256", "alloy-consensus/k256", "alloy-eips/k256", "alloy-rpc-types-eth/k256"]
+k256 = [
+    "alloy-primitives/k256",
+    "base-common-consensus/k256",
+    "alloy-eips/k256",
+    "alloy-rpc-types-eth/k256",
+]

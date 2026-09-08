@@ -20,9 +20,9 @@ humantime = { workspace = true }
 alloy-eips = { workspace = true }
 reth-stages = { workspace = true }
 pin-project = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-network-api = { workspace = true }
+base-common-consensus = { workspace = true }
 reth-static-file-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-engine-primitives = { workspace = true }

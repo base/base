@@ -6,16 +6,16 @@
 
 use alloc::sync::Arc;
 
-use alloy_consensus::{
-    EthereumTxEnvelope, Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702,
-    TxLegacy, crypto::secp256k1, transaction::Recovered,
-};
 use alloy_eips::{
     Typed2718,
     eip2718::WithEncoded,
     eip7702::{RecoveredAuthority, RecoveredAuthorization},
 };
 use alloy_primitives::{Address, Bytes, TxKind};
+use base_common_consensus::{
+    EthereumTxEnvelope, Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702,
+    TxLegacy, crypto::secp256k1, transaction::Recovered,
+};
 use base_evm_context::{TxEnv, either::Either};
 
 /// Trait marking types that can be converted into a transaction environment.

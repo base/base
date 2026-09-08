@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 
-use alloy_consensus::BlockHeader;
 use alloy_eip2124::Head;
 use alloy_eips::{
     eip7840::BlobParams,
@@ -10,6 +9,7 @@ use alloy_eips::{
 };
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::Address;
+use base_common_consensus::BlockHeader;
 use base_evm_handler::Precompile;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{BaseEvmConfig, Evm, PrecompilesMap};

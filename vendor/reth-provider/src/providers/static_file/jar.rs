@@ -4,10 +4,9 @@ use std::{
     sync::Arc,
 };
 
-use alloy_consensus::transaction::TransactionMeta;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope, ChainInfo};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta};
 use reth_db::static_file::{
     BlockHashMask, HeaderMask, HeaderWithHashMask, ReceiptMask, StaticFileCursor, TransactionMask,
     TransactionSenderMask,
@@ -137,10 +136,13 @@ impl<'a> StaticFileJarProvider<'a> {
 }
 
 impl HeaderProvider for StaticFileJarProvider<'_> {
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
+    fn header(
+        &self,
+        block_hash: BlockHash,
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
         Ok(self
             .cursor()?
-            .get_two::<HeaderWithHashMask<alloy_consensus::Header>>((&block_hash).into())?
+            .get_two::<HeaderWithHashMask<base_common_consensus::Header>>((&block_hash).into())?
             .filter(|(_, hash)| hash == &block_hash)
             .map(|(header, _)| header))
     }
@@ -148,20 +150,20 @@ impl HeaderProvider for StaticFileJarProvider<'_> {
     fn header_by_number(
         &self,
         num: BlockNumber,
-    ) -> ProviderResult<Option<alloy_consensus::Header>> {
-        self.cursor()?.get_one::<HeaderMask<alloy_consensus::Header>>(num.into())
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
+        self.cursor()?.get_one::<HeaderMask<base_common_consensus::Header>>(num.into())
     }
 
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
         let mut cursor = self.cursor()?;
         let mut headers = Vec::with_capacity(range_size_hint(&range).unwrap_or(1024));
 
         for num in to_range(range) {
             if let Some(header) =
-                cursor.get_one::<HeaderMask<alloy_consensus::Header>>(num.into())?
+                cursor.get_one::<HeaderMask<base_common_consensus::Header>>(num.into())?
             {
                 headers.push(header);
             }
@@ -173,7 +175,7 @@ impl HeaderProvider for StaticFileJarProvider<'_> {
     fn sealed_header(&self, number: BlockNumber) -> ProviderResult<Option<SealedHeader>> {
         Ok(self
             .cursor()?
-            .get_two::<HeaderWithHashMask<alloy_consensus::Header>>(number.into())?
+            .get_two::<HeaderWithHashMask<base_common_consensus::Header>>(number.into())?
             .map(|(header, hash)| SealedHeader::new(header, hash)))
     }
 
@@ -186,8 +188,8 @@ impl HeaderProvider for StaticFileJarProvider<'_> {
         let mut headers = Vec::with_capacity(range_size_hint(&range).unwrap_or(1024));
 
         for number in to_range(range) {
-            if let Some((header, hash)) =
-                cursor.get_two::<HeaderWithHashMask<alloy_consensus::Header>>(number.into())?
+            if let Some((header, hash)) = cursor
+                .get_two::<HeaderWithHashMask<base_common_consensus::Header>>(number.into())?
             {
                 let sealed = SealedHeader::new(header, hash);
                 if !predicate(&sealed) {

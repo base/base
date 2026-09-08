@@ -2,10 +2,10 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{SignableTransaction, Signed, TxEip7702};
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::{Bytes, RlpDecodable, RlpEncodable};
+use base_common_consensus::{SignableTransaction, Signed, TxEip7702};
 
 use crate::SpanBatchError;
 

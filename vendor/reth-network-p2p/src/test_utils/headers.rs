@@ -10,7 +10,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use alloy_consensus::Header;
+use base_common_consensus::Header;
 use futures::{Future, FutureExt, Stream, StreamExt};
 use reth_eth_wire_types::HeadersDirection;
 use reth_network_peers::{PeerId, WithPeerId};

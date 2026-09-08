@@ -5,7 +5,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_consensus::Header;
 use alloy_eips::{
     BlockId, BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB,
 };
@@ -14,7 +13,7 @@ use alloy_provider::Provider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
 use ark_ff::{BigInteger, PrimeField};
-use base_common_consensus::{HoloceneExtraData, JovianExtraData, Predeploys};
+use base_common_consensus::{Header, HoloceneExtraData, JovianExtraData, Predeploys};
 use base_common_network::Network;
 use base_common_rpc_types::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;

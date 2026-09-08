@@ -2,10 +2,9 @@
 
 use std::{future::Future, time::Duration};
 
-use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{B256, Bytes};
 use base_common_chains::Upgrades;
-use base_common_consensus::EIP8130_TX_TYPE_ID;
+use base_common_consensus::{BlockHeader, EIP8130_TX_TYPE_ID, Typed2718};
 use base_common_rpc_types::BaseTransactionReceipt;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_txpool::{

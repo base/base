@@ -1,9 +1,8 @@
 //! Asset B-20 precompile action tests across the Base Beryl boundary.
 
-use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, B256, Bytes, LogData, TxKind, U256, keccak256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxReceipt};
 use base_common_precompiles::{B20FactoryStorage, B20TokenRole, IB20, IB20Asset, IB20Factory};
 
 use crate::{

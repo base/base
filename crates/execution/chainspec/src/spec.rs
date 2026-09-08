@@ -1,7 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
 
 use alloy_chains::Chain;
-use alloy_consensus::{BlockHeader, EMPTY_ROOT_HASH, Header, proofs::storage_root_unhashed};
 use alloy_eip2124::{ForkFilter, ForkId, Head};
 use alloy_eips::{
     eip1559::{BaseFeeParams, INITIAL_BASE_FEE},
@@ -11,7 +10,9 @@ use alloy_genesis::Genesis;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::{Address, B256};
 use base_common_chains::{ChainConfig, ChainUpgrades, ExecutionFork, Upgrades};
-use base_common_consensus::Predeploys;
+use base_common_consensus::{
+    BlockHeader, EMPTY_ROOT_HASH, Header, Predeploys, proofs::storage_root_unhashed,
+};
 use base_common_genesis::{BaseUpgrade, FeeConfig, UpgradeActivation, UpgradeActivationSink};
 use base_protocol::OutputRoot;
 use reth_network_peers::{NodeRecord, parse_nodes};
@@ -320,7 +321,7 @@ impl BaseChainSpec {
             withdrawals_root: upgrades
                 .fork(BaseUpgrade::Canyon)
                 .active_at_timestamp(timestamp)
-                .then_some(alloy_consensus::constants::EMPTY_WITHDRAWALS),
+                .then_some(base_common_consensus::constants::EMPTY_WITHDRAWALS),
             parent_beacon_block_root: cancun.then_some(B256::ZERO),
             blob_gas_used: cancun.then_some(genesis.blob_gas_used.unwrap_or(0)),
             excess_blob_gas: cancun.then_some(genesis.excess_blob_gas.unwrap_or(0)),
@@ -662,12 +663,12 @@ mod tests {
     use core::str::FromStr;
 
     use alloy_chains::Chain;
-    use alloy_consensus::proofs::storage_root_unhashed;
     use alloy_eip2124::{ForkHash, ForkId, Head};
     use alloy_genesis::{ChainConfig as AlloyChainConfig, Genesis};
     use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
     use alloy_primitives::{Address, B256, U256, address, b256};
     use base_common_chains::{ChainConfig, Upgrades};
+    use base_common_consensus::proofs::storage_root_unhashed;
     use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
     use base_common_rpc_types::FeeInfo;
 

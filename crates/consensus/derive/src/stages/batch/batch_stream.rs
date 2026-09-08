@@ -267,10 +267,9 @@ where
 mod tests {
     use alloc::vec;
 
-    use alloy_consensus::{BlockBody, Header};
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::{FixedBytes, b256};
-    use base_common_consensus::BaseBlock;
+    use base_common_consensus::{BaseBlock, BlockBody, Header};
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, SystemConfig, UpgradeConfig};
     use base_protocol::{SingleBatch, SpanBatchElement};
 

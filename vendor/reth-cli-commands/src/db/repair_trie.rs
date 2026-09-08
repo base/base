@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::BlockHeader as AlloyBlockHeader;
+use base_common_consensus::BlockHeader as AlloyBlockHeader;
 use clap::Parser;
 use metrics::{self, Counter};
 use reth_cli_util::parse_socket_address;

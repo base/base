@@ -1,9 +1,9 @@
 use std::{collections::HashMap, io, ops::RangeInclusive, path::Path, sync::Arc};
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockHash, BlockNumber};
 use async_compression::tokio::bufread::GzipDecoder;
+use base_common_consensus::BlockHeader;
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
 use futures::Future;
 use itertools::{Either, Itertools};
@@ -48,7 +48,7 @@ pub const DEFAULT_BYTE_LEN_CHUNK_CHAIN_FILE: u64 = 1_000_000_000;
 #[derive(Debug, Clone)]
 pub struct FileClient {
     /// The buffered headers retrieved when fetching new bodies.
-    headers: HashMap<BlockNumber, alloy_consensus::Header>,
+    headers: HashMap<BlockNumber, base_common_consensus::Header>,
 
     /// A mapping between block hash and number.
     hash_to_number: HashMap<BlockHash, BlockNumber>,
@@ -179,7 +179,10 @@ impl FileClient {
     }
 
     /// Use the provided headers as the file client's block body buffer.
-    pub fn with_headers(mut self, headers: HashMap<BlockNumber, alloy_consensus::Header>) -> Self {
+    pub fn with_headers(
+        mut self,
+        headers: HashMap<BlockNumber, base_common_consensus::Header>,
+    ) -> Self {
         self.headers = headers;
         for (number, header) in &self.headers {
             self.hash_to_number.insert(header.hash_slow(), *number);
@@ -198,7 +201,7 @@ impl FileClient {
     }
 
     /// Returns an iterator over headers in the client.
-    pub fn headers_iter(&self) -> impl Iterator<Item = &alloy_consensus::Header> {
+    pub fn headers_iter(&self) -> impl Iterator<Item = &base_common_consensus::Header> {
         self.headers.values()
     }
 

@@ -3,10 +3,9 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::Header;
 use alloy_eips::NumHash;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
-use base_common_consensus::{BaseBlock as Block, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock as Block, BaseTxEnvelope, Header};
 use base_execution_txpool::test_utils::TransactionGenerator;
 use rand::Rng;
 use reth_eth_wire::{BlockAccessLists, EthVersion, GetBlockAccessLists, HeadersDirection};
@@ -61,7 +60,7 @@ async fn test_get_body() {
         let block_hash = rng.random();
         let mut block: Block = Block::default();
         block.body.transactions.push(
-            BaseTxEnvelope::try_from(alloy_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
+            BaseTxEnvelope::try_from(base_common_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
                 .unwrap(),
         );
 
@@ -108,7 +107,7 @@ async fn test_get_body_range() {
         let block_hash = rng.random();
         let mut block: Block = Block::default();
         block.body.transactions.push(
-            BaseTxEnvelope::try_from(alloy_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
+            BaseTxEnvelope::try_from(base_common_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
                 .unwrap(),
         );
 
@@ -333,12 +332,12 @@ async fn test_eth68_get_receipts() {
 
         // Create some test receipts
         let receipts = vec![
-            base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
+            base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
                 cumulative_gas_used: 21000,
                 status: true.into(),
                 ..Default::default()
             }),
-            base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
+            base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
                 cumulative_gas_used: 42000,
                 status: false.into(),
                 ..Default::default()
@@ -457,7 +456,7 @@ async fn test_eth69_get_bodies() {
         let block_hash = rng.random();
         let mut block: Block = Block::default();
         block.body.transactions.push(
-            BaseTxEnvelope::try_from(alloy_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
+            BaseTxEnvelope::try_from(base_common_consensus::TxEnvelope::from(tx_gen.gen_eip1559()))
                 .unwrap(),
         );
 
@@ -510,12 +509,12 @@ async fn test_eth69_get_receipts() {
 
         // Create some test receipts
         let receipts = vec![
-            base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
+            base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
                 cumulative_gas_used: 21000,
                 status: true.into(),
                 ..Default::default()
             }),
-            base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
+            base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
                 cumulative_gas_used: 42000,
                 status: false.into(),
                 ..Default::default()

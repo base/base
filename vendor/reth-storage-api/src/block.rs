@@ -380,7 +380,7 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
     fn header_by_number_or_tag(
         &self,
         id: BlockNumberOrTag,
-    ) -> ProviderResult<Option<alloy_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
         self.convert_block_number(id)?
             .map_or_else(|| Ok(None), |num| self.header_by_hash_or_number(num.into()))
     }
@@ -405,7 +405,7 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
     /// Returns the header with the matching `BlockId` from the database.
     ///
     /// Returns `None` if header is not found.
-    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<alloy_consensus::Header>>;
+    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<base_common_consensus::Header>>;
 }
 
 /// Functionality to read the last known chain blocks from the database.

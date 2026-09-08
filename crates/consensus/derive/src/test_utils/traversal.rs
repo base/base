@@ -2,8 +2,8 @@
 
 use alloc::{sync::Arc, vec};
 
-use alloy_consensus::Receipt;
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, address, hex};
+use base_common_consensus::Receipt;
 use base_common_genesis::{RollupConfig, SystemConfigUpdate};
 use base_protocol::BlockInfo;
 
@@ -34,8 +34,10 @@ impl TraversalTestHelper {
 
     /// Creates a new [`Receipt`] with the update batcher log and a bad log.
     pub fn new_receipts() -> alloc::vec::Vec<Receipt> {
-        let mut receipt =
-            Receipt { status: alloy_consensus::Eip658Value::Eip658(true), ..Receipt::default() };
+        let mut receipt = Receipt {
+            status: base_common_consensus::Eip658Value::Eip658(true),
+            ..Receipt::default()
+        };
         let bad = Log::new(
             Address::from([2; 20]),
             vec![SystemConfigUpdate::TOPIC, B256::default()],

@@ -305,7 +305,6 @@ alloy-transport = { path = "vendor/alloy-transport", default-features = false }
 alloy-rpc-types = { path = "vendor/alloy-rpc-types", default-features = false }
 alloy-hardforks = { path = "vendor/alloy-hardforks", default-features = false }
 alloy-sol-macro = { path = "vendor/alloy-sol-macro", default-features = false }
-alloy-consensus = { path = "vendor/alloy-consensus", default-features = false }
 alloy-sol-types = { path = "vendor/alloy-sol-types", default-features = false }
 alloy-tx-macros = { version = "=2.4.1", default-features = false }
 alloy-rpc-client = { path = "vendor/alloy-rpc-client", default-features = false }
@@ -343,7 +342,6 @@ reth-prune = { path = "vendor/reth-prune", default-features = false }
 reth-discv4 = { path = "vendor/reth-discv4", default-features = false }
 reth-discv5 = { path = "vendor/reth-discv5", default-features = false }
 reth-db-api = { path = "vendor/reth-db-api", default-features = false }
-reth-codecs = { path = "vendor/reth-codecs", default-features = false }
 reth-stages = { path = "vendor/reth-stages", default-features = false }
 reth-config = { path = "vendor/reth-config", default-features = false }
 reth-net-nat = { path = "vendor/reth-net-nat", default-features = false }

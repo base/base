@@ -2,13 +2,13 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use alloy_consensus::Header;
 use alloy_primitives::{B256, Bytes, Sealable};
 use alloy_provider::{Provider, RootProvider, network::primitives::BlockTransactions};
 use alloy_rlp::Decodable;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::PayloadAttributes;
 use alloy_transport_http::{Client, Http};
+use base_common_consensus::Header;
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;

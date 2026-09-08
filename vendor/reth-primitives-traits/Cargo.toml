@@ -30,18 +30,16 @@ alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
 serde = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
-reth-codecs = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-rpc-types-eth = { workspace = true, optional = true }
-base-common-consensus = { workspace = true, features = ["k256"] }
 once_cell = { workspace = true, features = ["critical-section"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 quanta = { workspace = true, optional = true, features = ["default"] }
 dashmap = { workspace = true, features = ["inline"], optional = true }
 proptest = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
+base-common-consensus = { workspace = true, features = ["k256"], optional = false}
 alloy-primitives = { workspace = true, features = [
     "map-foldhash",
     "k256",
@@ -54,7 +52,6 @@ secp256k1 = { workspace = true, features = [
 base-state-api = {workspace = true}
 [dev-dependencies]
 serde = { workspace = true }
-reth-codecs = { workspace = true }
 alloy-genesis = { workspace = true }
 modular-bitfield = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
@@ -64,11 +61,7 @@ serde_json = { workspace = true, features = ["alloc"] }
 proptest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
 byteorder = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["arbitrary"] }
-alloy-consensus = { workspace = true, features = [
-    "arbitrary",
-    "serde",
-] }
+base-common-consensus = { workspace = true, features = ["arbitrary", "serde"] }
 alloy-primitives = { workspace = true, features = [
     "map-foldhash",
     "arbitrary",
@@ -88,13 +81,13 @@ workspace = true
 arbitrary = [
     "base-common-consensus/arbitrary",
     "std",
-    "alloy-consensus/arbitrary",
+    "base-common-consensus/arbitrary",
     "alloy-primitives/arbitrary",
     "dep:arbitrary",
     "dep:proptest",
     "dep:proptest-arbitrary-interop",
     "alloy-eips/arbitrary",
-    "reth-codecs?/arbitrary",
+    "base-common-consensus/arbitrary",
     "secp256k1?/global-context",
     "secp256k1?/rand",
     "alloy-trie/arbitrary",
@@ -106,18 +99,18 @@ dashmap = ["dep:dashmap"]
 default = ["std", "quanta"]
 quanta = ["std", "dep:quanta"]
 rayon = ["dep:rayon"]
-reth-codec = ["base-common-consensus/reth", "dep:reth-codecs", "base-state-api/reth-codec"]
+reth-codec = ["base-common-consensus/reth", "base-state-api/reth-codec"]
 rpc-compat = ["alloy-rpc-types-eth"]
-secp256k1 = ["alloy-consensus/secp256k1"]
+secp256k1 = ["base-common-consensus/secp256k1"]
 serde = [
     "base-common-consensus/serde",
     "dep:serde",
-    "alloy-consensus/serde",
+    "base-common-consensus/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "bytes/serde",
     "rand/serde",
-    "reth-codecs?/serde",
+    "base-common-consensus/serde",
     "secp256k1?/serde",
     "alloy-trie/serde",
     "rand_08/serde",
@@ -127,7 +120,7 @@ serde = [
 ]
 std = [
     "base-common-consensus/std",
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "serde?/std",
@@ -142,4 +135,4 @@ std = [
     "alloy-rpc-types-eth?/std",
     "base-state-api/std",
 ]
-test-utils = ["arbitrary", "reth-codecs?/test-utils", "base-state-api/test-utils"]
+test-utils = ["arbitrary", "base-common-consensus/test-utils", "base-state-api/test-utils"]

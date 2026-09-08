@@ -668,8 +668,8 @@ impl Deref for DatabaseEnv {
 mod tests {
     use std::str::FromStr;
 
-    use alloy_consensus::Header;
     use alloy_primitives::{Address, B256, U256, address};
+    use base_common_consensus::Header;
     use reth_db_api::{
         cursor::{DbDupCursorRO, DbDupCursorRW, ReverseWalker, Walker},
         models::{AccountBeforeTx, IntegerList, ShardedKey},

@@ -11,8 +11,8 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
+use base_common_consensus::BlockHeader;
 use base_execution_evm::BaseEvmConfig;
 use futures::StreamExt;
 use itertools::Itertools;

@@ -1,9 +1,9 @@
 //! Loads fee history from database. Helper trait for `eth_` fee and transaction RPC methods.
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::U256;
 use alloy_rpc_types_eth::{BlockNumberOrTag, FeeHistory};
+use base_common_consensus::BlockHeader;
 use base_execution_chainspec::ChainSpecProvider;
 use futures::{Future, StreamExt};
 use reth_rpc_eth_types::{

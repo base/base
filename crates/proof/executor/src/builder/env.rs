@@ -1,8 +1,8 @@
 //! Environment utility functions for [`StatelessL2Builder`].
 
-use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_primitives::U256;
+use base_common_consensus::{BlockHeader, Header};
 use base_common_evm::{BaseSpecId, BaseUpgrade};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -160,9 +160,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Header;
     use alloy_eips::eip1559::BaseFeeParams;
     use alloy_primitives::Sealable;
+    use base_common_consensus::Header;
     use base_common_evm::{BaseEvmFactory, BaseSpecId, BaseUpgrade};
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::BasePayloadAttributes;

@@ -3,7 +3,6 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::{Deref, DerefMut};
 
-use alloy_consensus::{BlockBody, BlockHeader, Sealed, TxEnvelope, error::ValueError};
 pub use alloy_eips::{
     BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag, ForkBlock, RpcBlockHash,
     calc_blob_gasprice, calc_excess_blob_gas,
@@ -14,6 +13,7 @@ use alloy_network_primitives::{
 };
 use alloy_primitives::{Address, B64, B256, BlockHash, Bloom, Bytes, Sealable, U256};
 use alloy_rlp::Encodable;
+use base_common_consensus::{BlockBody, BlockHeader, Sealed, TxEnvelope, error::ValueError};
 
 use crate::Transaction;
 
@@ -70,7 +70,7 @@ impl<T, H> Block<T, H> {
     /// use alloy_network_primitives::BlockTransactions;
     /// use alloy_rpc_types_eth::{Block, Header, Transaction};
     /// let block = Block::new(
-    ///     Header::new(alloy_consensus::Header::default()),
+    ///     Header::new(base_common_consensus::Header::default()),
     ///     BlockTransactions::<Transaction>::Full(vec![]),
     /// )
     /// .with_withdrawals(Some(Withdrawals::default()));
@@ -164,18 +164,18 @@ impl<T, H> Block<T, H> {
         }
     }
 
-    /// Consumes the block and returns the [`alloy_consensus::Block`] with the current transaction
+    /// Consumes the block and returns the [`base_common_consensus::Block`] with the current transaction
     /// and header type.
     ///
     /// Note: Unlike [`Self::into_consensus`], this method returns the Header type `H` as-is without
-    /// converting it to [`alloy_consensus::Header`], See [`Header::into_consensus`].
+    /// converting it to [`base_common_consensus::Header`], See [`Header::into_consensus`].
     ///
     /// This has two caveats:
     ///  - The returned block will always have empty uncles.
     ///  - If the block's transaction is not [`BlockTransactions::Full`], the returned block will
     ///    have an empty transaction vec.
-    pub fn into_consensus_block(self) -> alloy_consensus::Block<T, H> {
-        alloy_consensus::BlockBody {
+    pub fn into_consensus_block(self) -> base_common_consensus::Block<T, H> {
+        base_common_consensus::BlockBody {
             transactions: self.transactions.into_transactions_vec(),
             ommers: vec![],
             withdrawals: self.withdrawals,
@@ -195,7 +195,7 @@ impl<T, H> Block<T, H> {
 
     /// Consumes the block and returns its header.
     ///
-    /// To obtain the underlying [`alloy_consensus::Header`] use [`Block::into_consensus_header`].
+    /// To obtain the underlying [`base_common_consensus::Header`] use [`Block::into_consensus_header`].
     pub fn into_header(self) -> H {
         self.header
     }
@@ -291,7 +291,7 @@ impl<T, H: Sealable + Encodable> Block<T, Header<H>> {
     /// This function creates a new [`Block`] structure for uncle blocks (ommer blocks),
     /// using the provided header.
     pub fn uncle_from_header(header: H) -> Self {
-        let block = alloy_consensus::Block::<TxEnvelope, H>::uncle(header);
+        let block = base_common_consensus::Block::<TxEnvelope, H>::uncle(header);
         let size = U256::from(block.length());
         Self {
             uncles: vec![],
@@ -309,30 +309,33 @@ impl<T> Block<T> {
     }
 
     /// Returns a sealed reference of the header using its stored RPC hash without verification.
-    pub const fn sealed_header(&self) -> Sealed<&alloy_consensus::Header> {
+    pub const fn sealed_header(&self) -> Sealed<&base_common_consensus::Header> {
         Sealed::new_unchecked(&self.header.inner, self.header.hash)
     }
 
-    /// Consumes the type and returns the sealed [`alloy_consensus::Header`].
-    pub fn into_sealed_header(self) -> Sealed<alloy_consensus::Header> {
+    /// Consumes the type and returns the sealed [`base_common_consensus::Header`].
+    pub fn into_sealed_header(self) -> Sealed<base_common_consensus::Header> {
         self.header.into_sealed()
     }
 
     /// Consumes the type, strips away the rpc context from the rpc [`Header`] type and just returns
-    /// the [`alloy_consensus::Header`].
-    pub fn into_consensus_header(self) -> alloy_consensus::Header {
+    /// the [`base_common_consensus::Header`].
+    pub fn into_consensus_header(self) -> base_common_consensus::Header {
         self.header.into_consensus()
     }
 
     /// Constructs block from a consensus block and `total_difficulty`.
-    pub fn from_consensus(block: alloy_consensus::Block<T>, total_difficulty: Option<U256>) -> Self
+    pub fn from_consensus(
+        block: base_common_consensus::Block<T>,
+        total_difficulty: Option<U256>,
+    ) -> Self
     where
         T: Encodable,
     {
         let size = U256::from(block.length());
-        let alloy_consensus::Block {
+        let base_common_consensus::Block {
             header,
-            body: alloy_consensus::BlockBody { transactions, ommers, withdrawals },
+            body: base_common_consensus::BlockBody { transactions, ommers, withdrawals },
         } = block;
 
         Self {
@@ -343,16 +346,16 @@ impl<T> Block<T> {
         }
     }
 
-    /// Consumes the block and returns the ethereum [`alloy_consensus::Block`] with the ethereum
+    /// Consumes the block and returns the ethereum [`base_common_consensus::Block`] with the ethereum
     /// header type.
     ///
     /// This has two caveats:
     ///  - The returned block will always have empty uncles.
     ///  - If the block's transaction is not [`BlockTransactions::Full`], the returned block will
     ///    have an empty transaction vec.
-    pub fn into_consensus(self) -> alloy_consensus::Block<T> {
+    pub fn into_consensus(self) -> base_common_consensus::Block<T> {
         let Self { header, transactions, withdrawals, .. } = self;
-        alloy_consensus::BlockBody {
+        base_common_consensus::BlockBody {
             transactions: transactions.into_transactions_vec(),
             ommers: vec![],
             withdrawals,
@@ -362,13 +365,13 @@ impl<T> Block<T> {
 
     /// Same as [`Self::into_consensus`] but returns the block as [`Sealed`] with its stored RPC
     /// hash, without verification or recomputation.
-    pub fn into_consensus_sealed(self) -> Sealed<alloy_consensus::Block<T>> {
+    pub fn into_consensus_sealed(self) -> Sealed<base_common_consensus::Block<T>> {
         let hash = self.header.hash;
         Sealed::new_unchecked(self.into_consensus(), hash)
     }
 }
 
-impl<T, S> From<Block<T>> for alloy_consensus::Block<S>
+impl<T, S> From<Block<T>> for base_common_consensus::Block<S>
 where
     S: From<T>,
 {
@@ -388,7 +391,7 @@ where
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct Header<H = alloy_consensus::Header> {
+pub struct Header<H = base_common_consensus::Header> {
     /// Hash of the block as received from RPC or a trusted seal.
     pub hash: BlockHash,
     /// Inner consensus header.
@@ -624,7 +627,7 @@ impl<H: BlockHeader> HeaderResponse for Header<H> {
     }
 }
 
-impl From<Header> for alloy_consensus::Header {
+impl From<Header> for base_common_consensus::Header {
     fn from(header: Header) -> Self {
         header.into_consensus()
     }
@@ -875,7 +878,7 @@ mod tests {
         let hash = B256::with_last_byte(1);
         let header = Header {
             hash,
-            inner: alloy_consensus::Header { number, ..Default::default() },
+            inner: base_common_consensus::Header { number, ..Default::default() },
             ..Default::default()
         };
 
@@ -911,7 +914,7 @@ mod tests {
         let block = Block {
             header: Header {
                 hash: B256::with_last_byte(1),
-                inner: alloy_consensus::Header {
+                inner: base_common_consensus::Header {
                     parent_hash: B256::with_last_byte(2),
                     ommers_hash: B256::with_last_byte(3),
                     beneficiary: Address::with_last_byte(4),
@@ -960,7 +963,7 @@ mod tests {
         let block = Block {
             header: Header {
                 hash: B256::with_last_byte(1),
-                inner: alloy_consensus::Header {
+                inner: base_common_consensus::Header {
                     parent_hash: B256::with_last_byte(2),
                     ommers_hash: B256::with_last_byte(3),
                     beneficiary: Address::with_last_byte(4),
@@ -1007,7 +1010,7 @@ mod tests {
         let block = Block {
             header: Header {
                 hash: B256::with_last_byte(1),
-                inner: alloy_consensus::Header {
+                inner: base_common_consensus::Header {
                     parent_hash: B256::with_last_byte(2),
                     ommers_hash: B256::with_last_byte(3),
                     beneficiary: Address::with_last_byte(4),
@@ -1316,7 +1319,7 @@ mod tests {
         // Setup a RPC header
         let rpc_header = Header {
             hash: B256::with_last_byte(1),
-            inner: alloy_consensus::Header {
+            inner: base_common_consensus::Header {
                 parent_hash: B256::with_last_byte(2),
                 ommers_hash: B256::with_last_byte(3),
                 beneficiary: Address::with_last_byte(4),
@@ -1349,7 +1352,7 @@ mod tests {
         let primitive_header = rpc_header.inner.clone();
 
         // Seal the primitive header
-        let sealed_header: Sealed<alloy_consensus::Header> =
+        let sealed_header: Sealed<base_common_consensus::Header> =
             primitive_header.seal(B256::with_last_byte(1));
 
         // Convert the sealed header back to a RPC header
@@ -1364,7 +1367,7 @@ mod tests {
         // Setup a RPC header
         let header = Header {
             hash: B256::with_last_byte(1),
-            inner: alloy_consensus::Header {
+            inner: base_common_consensus::Header {
                 parent_hash: B256::with_last_byte(2),
                 ommers_hash: B256::with_last_byte(3),
                 beneficiary: Address::with_last_byte(4),
@@ -1424,7 +1427,7 @@ mod tests {
         let block = Block {
             header: Header {
                 hash: B256::with_last_byte(1),
-                inner: alloy_consensus::Header {
+                inner: base_common_consensus::Header {
                     parent_hash: B256::with_last_byte(2),
                     ommers_hash: B256::with_last_byte(3),
                     beneficiary: Address::with_last_byte(4),

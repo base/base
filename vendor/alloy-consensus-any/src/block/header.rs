@@ -1,5 +1,5 @@
-use alloy_consensus::{BlockHeader, Header, error::ValueError};
 use alloy_primitives::{Address, B64, B256, BlockNumber, Bloom, Bytes, Sealed, U256};
+use base_common_consensus::{BlockHeader, Header, error::ValueError};
 
 /// Block header representation with certain fields made optional to account for possible
 /// differences in network implementations.

@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::BlockHeader;
 use alloy_eip2124::{EnrForkIdEntry, ForkFilter, ForkId, Head};
+use base_common_consensus::BlockHeader;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{

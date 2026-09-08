@@ -1,6 +1,5 @@
 use std::{sync::Arc, time::Duration};
 
-use alloy_consensus::Transaction;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Network, Provider, ProviderBuilder, network::TransactionResponse};
@@ -8,6 +7,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
+use base_common_consensus::Transaction;
 use base_common_rpc_types::Base;
 use futures::{StreamExt, stream};
 use tokio::sync::mpsc;

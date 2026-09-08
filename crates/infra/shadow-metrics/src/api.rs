@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 
-use alloy_consensus::{Transaction, TxReceipt, Typed2718};
 use alloy_primitives::{B256, hex};
 use axum::{
     Json, Router,
@@ -11,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, Transaction, TxReceipt, Typed2718};
 use base_shadow_indexer_db::{ShadowBlockRepo, ShadowBlockRow, ShadowSummaryRow};
 use serde::{Deserialize, Serialize};
 
@@ -403,9 +402,10 @@ fn tx_type_str(tx: &BaseTxEnvelope) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Block, BlockBody, Header, Receipt, Sealable};
     use alloy_primitives::{Address, TxKind, U256};
-    use base_common_consensus::{BaseReceipt, TxDeposit};
+    use base_common_consensus::{
+        BaseReceipt, Block, BlockBody, Header, Receipt, Sealable, TxDeposit,
+    };
     use base_shadow_indexer_db::ShadowBlockPayload;
     use chrono::Utc;
     use reth_primitives_traits::RecoveredBlock;

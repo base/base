@@ -8,8 +8,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, map::B256Set};
+use base_common_consensus::BlockHeader;
 use base_execution_consensus::BaseBeaconConsensus;
 use futures::FutureExt;
 use reth_network_p2p::{
@@ -305,9 +305,9 @@ impl BlockDownloader for NoopBlockDownloader<base_common_consensus::BaseBlock> {
 mod tests {
     use std::{future::poll_fn, sync::Arc};
 
-    use alloy_consensus::Header;
     use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M;
     use assert_matches::assert_matches;
+    use base_common_consensus::Header;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_consensus::BaseBeaconConsensus;
     use reth_network_p2p::test_utils::TestFullBlockClient;

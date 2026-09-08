@@ -7,7 +7,7 @@ use reth_primitives_traits::{Account, ValueWithSubKey};
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 pub struct AccountBeforeTx {
     /// Address for the account. Acts as `DupSort::SubKey`.
     pub address: Address,
@@ -27,7 +27,7 @@ impl ValueWithSubKey for AccountBeforeTx {
 // and compress second part of the value. If we have compression
 // over whole value (Even SubKey) that would mess up fetching of values with seek_by_key_subkey
 #[cfg(any(test, feature = "reth-codec"))]
-impl reth_codecs::Compact for AccountBeforeTx {
+impl base_common_consensus::Compact for AccountBeforeTx {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -55,4 +55,4 @@ impl reth_codecs::Compact for AccountBeforeTx {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-reth_codecs::impl_compression_for_compact!(AccountBeforeTx);
+base_common_consensus::impl_compression_for_compact!(AccountBeforeTx);

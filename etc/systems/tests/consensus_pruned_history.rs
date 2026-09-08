@@ -2,14 +2,13 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_consensus::transaction::Recovered;
 use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, PayloadStatus, PayloadStatusEnum};
 use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
 use async_trait::async_trait;
-use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+use base_common_consensus::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
 use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig};
 use base_common_rpc_types::Transaction as BaseTransaction;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};

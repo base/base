@@ -3,11 +3,10 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::Transaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes, Signature, U256, bytes};
 use alloy_rlp::{Buf, Decodable, Encodable};
-use base_common_consensus::{BaseTxEnvelope, OpTxType};
+use base_common_consensus::{BaseTxEnvelope, OpTxType, Transaction};
 
 use crate::{
     SpanBatchBits, SpanBatchEip8130TransactionData, SpanBatchElement, SpanBatchError,
@@ -470,11 +469,11 @@ impl SpanBatchTransactions {
 mod tests {
     use alloc::vec;
 
-    use alloy_consensus::{Signed, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy};
     use alloy_primitives::{B256, Signature, TxKind, address};
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, Call, ChangeType, CreateEntry, Delegation,
-        Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange, TxEip8130,
+        Eip8130Signed, InitialActor, Signed, SignedAccountChanges, SignedChange, TxEip1559,
+        TxEip2930, TxEip7702, TxEip8130, TxEnvelope, TxLegacy,
     };
 
     use super::*;

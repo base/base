@@ -293,8 +293,8 @@ impl BeaconClient for OnlineBeaconClient {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Blob;
     use alloy_primitives::{B256, FixedBytes, hex::FromHex};
+    use base_common_consensus::Blob;
     use httpmock::prelude::*;
     use serde_json::json;
 

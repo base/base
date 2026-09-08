@@ -681,9 +681,10 @@ impl BatchPipeline for BatchEncoder {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_primitives::{Bytes, Sealed, Signature};
-    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{
+        BaseTxEnvelope, BlockBody, Header, SignableTransaction, TxDeposit, TxLegacy,
+    };
     use base_protocol::{Frame, L1BlockInfoBedrock, L1BlockInfoTx};
     use rstest::rstest;
 

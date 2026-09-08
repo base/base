@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use alloy_consensus::BlockHeader as _;
 use alloy_eips::BlockId;
 use alloy_primitives::{
     Address, B256, BlockHash, Bytes,
@@ -17,6 +16,7 @@ use alloy_rpc_types_trace::{
     tracerequest::TraceCallRequest,
 };
 use async_trait::async_trait;
+use base_common_consensus::BlockHeader as _;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{PoolPooledTx, PoolTransaction, TransactionPool};
 use futures::StreamExt;

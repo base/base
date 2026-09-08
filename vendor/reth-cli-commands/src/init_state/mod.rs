@@ -2,9 +2,9 @@
 
 use std::{io::BufReader, path::PathBuf, sync::Arc};
 
-use alloy_consensus::BlockHeader as AlloyBlockHeader;
 use alloy_primitives::B256;
 use base_cli_utils::ChainSpecParser;
+use base_common_consensus::BlockHeader as AlloyBlockHeader;
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
 use reth_db_common::init::init_from_state_dump;
@@ -79,7 +79,8 @@ impl<C: ChainSpecParser> InitStateCommand<C> {
 
             // ensure header, total difficulty and header hash are provided
             let header = self.header.ok_or_else(|| eyre::eyre!("Header file must be provided"))?;
-            let header = without_evm::read_header_from_file::<alloy_consensus::Header>(&header)?;
+            let header =
+                without_evm::read_header_from_file::<base_common_consensus::Header>(&header)?;
 
             let header_hash = self.header_hash.unwrap_or_else(|| header.hash_slow());
 
@@ -90,7 +91,7 @@ impl<C: ChainSpecParser> InitStateCommand<C> {
                     &provider_rw,
                     SealedHeader::new(header, header_hash),
                     |number| {
-                        let mut header = <alloy_consensus::Header>::default();
+                        let mut header = <base_common_consensus::Header>::default();
                         header.set_number(number);
                         header
                     },

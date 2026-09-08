@@ -58,12 +58,12 @@ alloy-rpc-types-trace = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 reth-rpc-api = { workspace = true, features = ["client"] }
-alloy-consensus = { workspace = true, features = ["serde"]}
 reth-tracing = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["test-utils"] }
 clap = { workspace = true, features = ["default", "derive"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-common-consensus = { workspace = true, features = ["serde"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }

@@ -45,7 +45,7 @@ impl From<Vec<u8>> for StoredNibbles {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-impl reth_codecs::Compact for StoredNibbles {
+impl base_common_consensus::Compact for StoredNibbles {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -65,7 +65,7 @@ impl reth_codecs::Compact for StoredNibbles {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-reth_codecs::impl_compression_for_compact!(StoredNibbles);
+base_common_consensus::impl_compression_for_compact!(StoredNibbles);
 
 /// The representation of nibbles of the merkle trie stored in the database.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deref)]
@@ -111,7 +111,7 @@ impl StoredNibblesSubKey {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-impl reth_codecs::Compact for StoredNibblesSubKey {
+impl base_common_consensus::Compact for StoredNibblesSubKey {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -136,7 +136,7 @@ impl reth_codecs::Compact for StoredNibblesSubKey {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-reth_codecs::impl_compression_for_compact!(StoredNibblesSubKey);
+base_common_consensus::impl_compression_for_compact!(StoredNibblesSubKey);
 
 /// Packed representation of nibbles for the `AccountsTrie` (storage v2).
 ///
@@ -191,7 +191,7 @@ impl PackedStoredNibbles {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-impl reth_codecs::Compact for PackedStoredNibbles {
+impl base_common_consensus::Compact for PackedStoredNibbles {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -213,7 +213,7 @@ impl reth_codecs::Compact for PackedStoredNibbles {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-reth_codecs::impl_compression_for_compact!(PackedStoredNibbles);
+base_common_consensus::impl_compression_for_compact!(PackedStoredNibbles);
 
 /// Packed representation of nibbles as a `DupSort` subkey for `StoragesTrie` (storage v2).
 ///
@@ -275,7 +275,7 @@ impl PackedStoredNibblesSubKey {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-impl reth_codecs::Compact for PackedStoredNibblesSubKey {
+impl base_common_consensus::Compact for PackedStoredNibblesSubKey {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -297,12 +297,12 @@ impl reth_codecs::Compact for PackedStoredNibblesSubKey {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-reth_codecs::impl_compression_for_compact!(PackedStoredNibblesSubKey);
+base_common_consensus::impl_compression_for_compact!(PackedStoredNibblesSubKey);
 
 #[cfg(test)]
 mod tests {
+    use base_common_consensus::Compact;
     use bytes::BytesMut;
-    use reth_codecs::Compact;
 
     use super::*;
 

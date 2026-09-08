@@ -3,8 +3,8 @@
 use core::cmp::Ordering;
 
 use alloy_primitives::{B256, BlockNumber, Bytes, keccak256};
+use base_common_consensus::DecompressError;
 use bytes::BufMut;
-use reth_codecs::DecompressError;
 use serde::{Deserialize, Serialize};
 
 use crate::{

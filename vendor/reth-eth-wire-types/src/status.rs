@@ -473,11 +473,11 @@ mod tests {
     use std::str::FromStr;
 
     use alloy_chains::{Chain, NamedChain};
-    use alloy_consensus::constants::MAINNET_GENESIS_HASH;
     use alloy_genesis::Genesis;
     use alloy_hardforks::{ForkCondition, ForkHash, ForkId, Head};
     use alloy_primitives::{B256, U256, b256, hex};
     use alloy_rlp::{Decodable, Encodable};
+    use base_common_consensus::constants::MAINNET_GENESIS_HASH;
     use rand::Rng;
 
     use crate::{BlockRangeUpdate, EthVersion, Status, StatusEth69, StatusMessage, UnifiedStatus};

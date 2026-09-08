@@ -3,9 +3,9 @@ use std::{
     collections::{BinaryHeap, HashSet},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, BlockNumber, map::FbHashMap};
+use base_common_consensus::BlockHeader;
 use reth_exex_types::ExExNotification;
 
 /// The block cache of the WAL.

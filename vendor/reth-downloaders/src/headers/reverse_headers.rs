@@ -9,9 +9,9 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockNumber};
+use base_common_consensus::BlockHeader;
 use base_execution_consensus::BaseBeaconConsensus;
 use futures::{FutureExt, stream::Stream};
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -101,7 +101,7 @@ pub struct ReverseHeadersDownloader<H: HeadersClient> {
     /// requests in progress
     in_progress_queue: FuturesUnordered<HeadersRequestFuture<H::Output>>,
     /// Buffered, unvalidated responses
-    buffered_responses: BinaryHeap<OrderedHeadersResponse<alloy_consensus::Header>>,
+    buffered_responses: BinaryHeap<OrderedHeadersResponse<base_common_consensus::Header>>,
     /// Buffered, _sorted_ and validated headers ready to be returned.
     ///
     /// Note: headers are sorted from high to low
@@ -255,7 +255,7 @@ where
     fn process_next_headers(
         &mut self,
         request: HeadersRequest,
-        headers: Vec<alloy_consensus::Header>,
+        headers: Vec<base_common_consensus::Header>,
         peer_id: PeerId,
     ) -> Result<(), ReverseHeadersDownloaderError> {
         let mut validated = Vec::with_capacity(headers.len());
@@ -376,7 +376,7 @@ where
     /// Handles the response for the request for the sync target
     fn on_sync_target_outcome(
         &mut self,
-        response: HeadersRequestOutcome<alloy_consensus::Header>,
+        response: HeadersRequestOutcome<base_common_consensus::Header>,
     ) -> Result<(), ReverseHeadersDownloaderError> {
         let sync_target = self.existing_sync_target();
         let HeadersRequestOutcome { request, outcome } = response;
@@ -454,7 +454,7 @@ where
     /// Invoked when we received a response
     fn on_headers_outcome(
         &mut self,
-        response: HeadersRequestOutcome<alloy_consensus::Header>,
+        response: HeadersRequestOutcome<base_common_consensus::Header>,
     ) -> Result<(), ReverseHeadersDownloaderError> {
         let requested_block_number = response.block_number();
         let HeadersRequestOutcome { request, outcome } = response;
@@ -1281,9 +1281,9 @@ mod tests {
         atomic::{AtomicU64, Ordering as AtomicOrdering},
     };
 
-    use alloy_consensus::Header;
     use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
     use assert_matches::assert_matches;
+    use base_common_consensus::Header;
     use base_execution_consensus::BaseBeaconConsensus;
     use reth_network_p2p::{
         download::DownloadClient, error::PeerRequestResult, test_utils::TestHeadersClient,

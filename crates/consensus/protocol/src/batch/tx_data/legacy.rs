@@ -1,8 +1,8 @@
 //! This module contains the legacy transaction data type for a span batch.
 
-use alloy_consensus::{SignableTransaction, Signed, TxLegacy};
 use alloy_primitives::{Address, Signature, TxKind, U256};
 use alloy_rlp::{Bytes, RlpDecodable, RlpEncodable};
+use base_common_consensus::{SignableTransaction, Signed, TxLegacy};
 
 use crate::{SpanBatchError, SpanDecodingError};
 

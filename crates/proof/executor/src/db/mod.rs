@@ -3,10 +3,10 @@
 
 use alloc::{string::ToString, vec::Vec};
 
-use alloy_consensus::{EMPTY_ROOT_HASH, Header, Sealed};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_trie::{Nibbles, TrieAccount};
+use base_common_consensus::{EMPTY_ROOT_HASH, Header, Sealed};
 use base_proof_mpt::{TrieHinter, TrieNode, TrieNodeError};
 use revm::{
     Database,
@@ -359,8 +359,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Sealable;
     use alloy_primitives::{U256, b256};
+    use base_common_consensus::Sealable;
     use base_proof_mpt::NoopTrieHinter;
     use revm::database::{AccountStatus, BundleAccount, states::StorageSlot as RvmStorageSlot};
 

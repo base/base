@@ -7,11 +7,6 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(test)]
-use alloy_consensus::EthereumTxEnvelope;
-#[cfg(test)]
-use alloy_consensus::TxEip4844WithSidecar;
-use alloy_consensus::{BlockHeader, Typed2718, transaction::TxHashRef};
 use alloy_eips::{
     BlockNumberOrTag, Decodable2718, Encodable2718, eip7594::BlobTransactionSidecarVariant,
 };
@@ -21,7 +16,13 @@ use alloy_primitives::{
     map::{AddressSet, HashSet},
 };
 use alloy_rlp::Encodable;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+#[cfg(test)]
+use base_common_consensus::EthereumTxEnvelope;
+#[cfg(test)]
+use base_common_consensus::TxEip4844WithSidecar;
+use base_common_consensus::{
+    BaseBlock, BaseTxEnvelope, BlockHeader, Typed2718, transaction::TxHashRef,
+};
 use base_execution_chainspec::ChainSpecProvider;
 use futures_util::{
     FutureExt, Stream, StreamExt,

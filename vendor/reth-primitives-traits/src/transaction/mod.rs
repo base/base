@@ -19,7 +19,7 @@ pub mod recover;
 
 use core::{fmt, hash::Hash};
 
-pub use alloy_consensus::transaction::{
+pub use base_common_consensus::transaction::{
     SignerRecoverable, TransactionInfo, TransactionMeta, TxHashRef,
 };
 
@@ -38,7 +38,7 @@ pub trait Transaction:
     + Eq
     + PartialEq
     + Hash
-    + alloy_consensus::Transaction
+    + base_common_consensus::Transaction
     + InMemorySize
     + MaybeSerde
 {
@@ -53,7 +53,7 @@ impl<T> Transaction for T where
         + Eq
         + PartialEq
         + Hash
-        + alloy_consensus::Transaction
+        + base_common_consensus::Transaction
         + InMemorySize
         + MaybeSerde
 {

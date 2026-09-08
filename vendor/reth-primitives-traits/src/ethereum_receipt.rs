@@ -1,6 +1,6 @@
-use alloy_consensus::{EthereumReceipt, TxTy};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
+use base_common_consensus::{EthereumReceipt, TxTy};
 
 use crate::proofs::ordered_trie_root_with_encoder;
 
@@ -14,16 +14,13 @@ impl EthereumReceiptRoot {
     /// Computes the root from receipts without memoized blooms.
     pub fn calculate<T: TxTy>(receipts: &[EthereumReceipt<T>]) -> B256 {
         ordered_trie_root_with_encoder(receipts, |r, buf| {
-            alloy_consensus::TxReceipt::with_bloom_ref(r).encode_2718(buf)
+            base_common_consensus::TxReceipt::with_bloom_ref(r).encode_2718(buf)
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #[cfg(all(feature = "rpc-compat", feature = "serde"))]
-    use alloy_consensus::{ReceiptEnvelope, TxReceipt};
-    use alloy_consensus::{EthereumTxEnvelope, ReceiptWithBloom, TxEip4844, TxType};
     use alloy_eips::eip2718::Encodable2718;
     #[cfg(feature = "reth-codec")]
     use alloy_primitives::Bytes;
@@ -32,7 +29,10 @@ mod tests {
     };
     use alloy_rlp::{Decodable, Encodable};
     #[cfg(feature = "reth-codec")]
-    use reth_codecs::Compact;
+    use base_common_consensus::Compact;
+    use base_common_consensus::{EthereumTxEnvelope, ReceiptWithBloom, TxEip4844, TxType};
+    #[cfg(all(feature = "rpc-compat", feature = "serde"))]
+    use base_common_consensus::{ReceiptEnvelope, TxReceipt};
 
     use super::*;
     use crate::proofs::{
@@ -42,7 +42,7 @@ mod tests {
     #[test]
     #[cfg(feature = "reth-codec")]
     fn test_decode_receipt() {
-        reth_codecs::test_utils::test_decode::<EthereumReceipt<TxType>>(&hex!(
+        base_common_consensus::test_utils::test_decode::<EthereumReceipt<TxType>>(&hex!(
             "c428b52ffd23fc42696156b10200f034792b6a94c3850215c2fef7aea361a0c31b79d9a32652eefc0d4e2e730036061cff7344b6fc6132b50cda0ed810a991ae58ef013150c12b2522533cb3b3a8b19b7786a8b5ff1d3cdc84225e22b02def168c8858df"
         ));
     }
@@ -184,7 +184,8 @@ mod tests {
         );
         let block_rlp = &mut data.as_slice();
         let block =
-            alloy_consensus::Block::<EthereumTxEnvelope<TxEip4844>>::decode(block_rlp).unwrap();
+            base_common_consensus::Block::<EthereumTxEnvelope<TxEip4844>>::decode(block_rlp)
+                .unwrap();
 
         let tx_root = calculate_transaction_root(&block.body.transactions);
         assert_eq!(block.transactions_root, tx_root, "Must be the same");
@@ -197,9 +198,10 @@ mod tests {
         let data = &hex!(
             "f90238f90219a0151934ad9b654c50197f37018ee5ee9bb922dec0a1b5e24a6d679cb111cdb107a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347942adc25665018aa1fe0e6bc666dac8fc2697ff9baa0046119afb1ab36aaa8f66088677ed96cd62762f6d3e65642898e189fbe702d51a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421b90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008001887fffffffffffffff8082079e42a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b42188000000000000000009a048a703da164234812273ea083e4ec3d09d028300cd325b46a6a75402e5a7ab95c0c0d9d8808094c94f5374fce5edbc8e2a8697c15331677e6ebf0b80"
         );
-        let block =
-            alloy_consensus::Block::<EthereumTxEnvelope<TxEip4844>>::decode(&mut data.as_slice())
-                .unwrap();
+        let block = base_common_consensus::Block::<EthereumTxEnvelope<TxEip4844>>::decode(
+            &mut data.as_slice(),
+        )
+        .unwrap();
         assert!(block.body.withdrawals.is_some());
         let withdrawals = block.body.withdrawals.as_ref().unwrap();
         assert_eq!(withdrawals.len(), 1);
@@ -211,9 +213,10 @@ mod tests {
         let data = &hex!(
             "f9028cf90219a0151934ad9b654c50197f37018ee5ee9bb922dec0a1b5e24a6d679cb111cdb107a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347942adc25665018aa1fe0e6bc666dac8fc2697ff9baa0ccf7b62d616c2ad7af862d67b9dcd2119a90cebbff8c3cd1e5d7fc99f8755774a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421b90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008001887fffffffffffffff8082079e42a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b42188000000000000000009a0a95b9a7b58a6b3cb4001eb0be67951c5517141cb0183a255b5cae027a7b10b36c0c0f86cda808094c94f5374fce5edbc8e2a8697c15331677e6ebf0b822710da028094c94f5374fce5edbc8e2a8697c15331677e6ebf0b822710da018094c94f5374fce5edbc8e2a8697c15331677e6ebf0b822710da028094c94f5374fce5edbc8e2a8697c15331677e6ebf0b822710"
         );
-        let block =
-            alloy_consensus::Block::<EthereumTxEnvelope<TxEip4844>>::decode(&mut data.as_slice())
-                .unwrap();
+        let block = base_common_consensus::Block::<EthereumTxEnvelope<TxEip4844>>::decode(
+            &mut data.as_slice(),
+        )
+        .unwrap();
         assert!(block.body.withdrawals.is_some());
         let withdrawals = block.body.withdrawals.as_ref().unwrap();
         assert_eq!(withdrawals.len(), 4);

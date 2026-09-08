@@ -15,7 +15,6 @@ workspace = true
 serde = { workspace = true }
 tracing = { workspace = true }
 jsonrpsee = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
 base-node-runner = { workspace = true }
 reth-rpc-eth-types = { workspace = true }

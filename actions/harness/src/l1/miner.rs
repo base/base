@@ -1,11 +1,11 @@
-use alloy_consensus::{
-    Header, Receipt, ReceiptEnvelope, SignableTransaction, Transaction, TxEip1559, TxEnvelope,
-    transaction::{SignerRecoverable, TransactionMeta},
-};
 use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData, TxKind, U256};
 use alloy_rpc_types_eth::{Log as RpcLog, TransactionReceipt};
 use alloy_signer::SignerSync;
+use base_common_consensus::{
+    Header, Receipt, ReceiptEnvelope, SignableTransaction, Transaction, TxEip1559, TxEnvelope,
+    transaction::{SignerRecoverable, TransactionMeta},
+};
 use base_common_genesis::SystemConfigUpdate;
 use base_common_network::PrivateKeySigner;
 use base_protocol::{BlockInfo, Deposits};
@@ -818,9 +818,9 @@ impl Action for L1Miner {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Transaction, transaction::SignerRecoverable};
     use alloy_eips::eip4844::Blob;
     use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData};
+    use base_common_consensus::{Transaction, transaction::SignerRecoverable};
     use base_common_network::PrivateKeySigner;
 
     use super::{L1Miner, L1TxBuilder, ReorgError};
@@ -837,7 +837,7 @@ mod tests {
             PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).expect("valid test signer")
         }
 
-        fn signed_tx(input: Bytes, nonce: u64, to: Address) -> alloy_consensus::TxEnvelope {
+        fn signed_tx(input: Bytes, nonce: u64, to: Address) -> base_common_consensus::TxEnvelope {
             L1TxBuilder::signed_calldata(&Self::signer(), 1, nonce, to, input)
                 .expect("test transaction signs")
         }

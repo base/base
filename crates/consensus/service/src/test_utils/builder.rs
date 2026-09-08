@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::Header as ConsensusHeader;
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
+use base_common_consensus::Header as ConsensusHeader;
 use base_common_genesis::{ChainGenesis, RollupConfig};
 use base_consensus_derive::test_utils::new_test_pipeline;
 use base_consensus_engine::{Engine, EngineState};

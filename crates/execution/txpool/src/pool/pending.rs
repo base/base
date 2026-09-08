@@ -684,8 +684,8 @@ impl<T: TransactionOrdering> Ord for PendingTransaction<T> {
 mod tests {
     use std::collections::HashSet;
 
-    use alloy_consensus::{Transaction, TxType};
     use alloy_primitives::address;
+    use base_common_consensus::{Transaction, TxType};
 
     use super::*;
     use crate::{

@@ -1,34 +1,53 @@
 //! Commonly used types that contain metadata about a transaction.
 
-use alloy_consensus::transaction::TransactionInfo;
+use alloy_primitives::{B256, BlockHash, TxHash};
 
-/// Additional receipt metadata required for deposit transactions.
+/// Additional fields in the context of a block that contains this _mined_ transaction.
 ///
-/// These fields are used to provide additional context for deposit transactions in RPC responses
+/// This contains mandatory block fields (block hash, number, timestamp, index).
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
-pub struct DepositInfo {
-    /// Nonce for deposit transactions. Only present in RPC responses.
-    pub deposit_nonce: Option<u64>,
-    /// Deposit receipt version for deposit transactions post-canyon
-    pub deposit_receipt_version: Option<u64>,
+pub struct TransactionMeta {
+    /// Hash of the transaction.
+    pub tx_hash: B256,
+    /// Index of the transaction in the block
+    pub index: u64,
+    /// Hash of the block.
+    pub block_hash: B256,
+    /// Number of the block.
+    pub block_number: u64,
+    /// Base fee of the block.
+    pub base_fee: Option<u64>,
+    /// The excess blob gas of the block.
+    pub excess_blob_gas: Option<u64>,
+    /// The block's timestamp.
+    pub timestamp: u64,
 }
 
-/// Additional fields in the context of a block that contains this transaction and its deposit
-/// metadata if the transaction is a deposit.
+/// Additional fields in the context of a (maybe) pending block that contains this transaction.
+///
+/// This is commonly used when dealing with transactions for rpc where the block context is not
+/// known.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BaseTransactionInfo {
-    /// Additional transaction information.
-    pub inner: TransactionInfo,
-    /// Additional metadata for deposit transactions.
-    pub deposit_meta: DepositInfo,
-    /// Full block timestamp in milliseconds when `BaseTime` metadata is available.
-    pub block_timestamp_ms: Option<u64>,
+#[doc(alias = "TxInfo")]
+pub struct TransactionInfo {
+    /// Hash of the transaction.
+    pub hash: Option<TxHash>,
+    /// Index of the transaction in the block
+    pub index: Option<u64>,
+    /// Hash of the block.
+    pub block_hash: Option<BlockHash>,
+    /// Number of the block.
+    pub block_number: Option<u64>,
+    /// Base fee of the block.
+    pub base_fee: Option<u64>,
+    /// Timestamp of the block.
+    pub block_timestamp: Option<u64>,
 }
 
-impl BaseTransactionInfo {
-    /// Creates a new [`BaseTransactionInfo`] with the given [`TransactionInfo`] and
-    /// [`DepositInfo`].
-    pub const fn new(inner: TransactionInfo, deposit_meta: DepositInfo) -> Self {
-        Self { inner, deposit_meta, block_timestamp_ms: None }
+impl TransactionInfo {
+    /// Returns a new [`TransactionInfo`] with the provided base fee.
+    pub const fn with_base_fee(mut self, base_fee: u64) -> Self {
+        self.base_fee = Some(base_fee);
+        self
     }
 }

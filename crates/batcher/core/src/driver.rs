@@ -623,7 +623,6 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_primitives::{Address, B256, Bloom, Bytes};
     use alloy_rpc_types_eth::TransactionReceipt;
     use base_batcher_encoder::{
@@ -633,6 +632,7 @@ mod tests {
         L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
     };
     use base_blobs::{BlobDecoder, BlobEncoder};
+    use base_common_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use base_protocol::{BlockInfo, Frame};
     use base_runtime::{
         Cancellation, Clock, Spawner,

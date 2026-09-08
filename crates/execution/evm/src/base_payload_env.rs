@@ -1,7 +1,7 @@
 //! Builds Base execution environments from payload attributes.
 
-use alloy_consensus::BlockHeader;
 use base_common_chains::Upgrades;
+use base_common_consensus::BlockHeader;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, BuildNextEnv, PayloadBuilderError,

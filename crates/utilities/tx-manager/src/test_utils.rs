@@ -1,8 +1,8 @@
 //! Shared test utilities for the tx-manager crate.
 
-use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
 use alloy_primitives::{Address, B256, Bloom};
 use alloy_rpc_types_eth::TransactionReceipt;
+use base_common_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
 
 /// Helpers for building test transaction receipts.
 #[derive(Debug)]

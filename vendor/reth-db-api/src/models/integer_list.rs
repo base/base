@@ -2,9 +2,9 @@
 
 use core::fmt;
 
+use base_common_consensus::DecompressError;
 use bytes::BufMut;
 use derive_more::Deref;
-use reth_codecs::DecompressError;
 use roaring::RoaringTreemap;
 
 use crate::table::{Compress, Decompress};

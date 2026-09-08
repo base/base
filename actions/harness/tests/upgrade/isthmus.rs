@@ -4,14 +4,13 @@
 //! activation, `L2ToL1MessagePasser` storage root at/after activation, and both
 //! paths with and without a withdrawal transaction.
 
-use alloy_consensus::{TxReceipt, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{Bytes, TxKind, U256};
 use base_action_harness::{
     ActionTestHarness, BatcherConfig, L1MinerConfig, L2Sequencer, SharedL1Chain,
     TestRollupConfigBuilder,
 };
-use base_common_consensus::Predeploys;
+use base_common_consensus::{Predeploys, TxReceipt, constants::EMPTY_WITHDRAWALS};
 
 const WITHDRAWAL_VALUE: u64 = 500;
 const WITHDRAWAL_GAS_LIMIT: u64 = 100_000;

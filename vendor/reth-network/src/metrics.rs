@@ -1,4 +1,4 @@
-use alloy_consensus::TxType;
+use base_common_consensus::TxType;
 use metrics::Histogram;
 use reth_eth_wire::DisconnectReason;
 use reth_metrics::{

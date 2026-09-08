@@ -238,14 +238,13 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::transaction::Recovered;
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, Sealed, b256};
     use alloy_provider::Network;
     use alloy_rpc_types_eth::{
         Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
     };
-    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
     use base_common_genesis::ChainGenesis;
     use base_common_rpc_types::{Base, Transaction as BaseTransaction};
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
@@ -259,7 +258,7 @@ mod tests {
     const BASE_SEPOLIA_GENESIS_RPC_RESPONSE: &str = "{\"hash\":\"0x0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4\",\"parentHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"sha3Uncles\":\"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347\",\"miner\":\"0x4200000000000000000000000000000000000011\",\"stateRoot\":\"0x907f339ca16b3e45a89a7f4cc29d4430c8d4178d73b370ec9180e04a0dd7fcf3\",\"transactionsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"receiptsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"logsBloom\":\"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\",\"difficulty\":\"0x0\",\"number\":\"0x0\",\"gasLimit\":\"0x17d7840\",\"gasUsed\":\"0x0\",\"timestamp\":\"0x65135ee0\",\"extraData\":\"0x424544524f434b\",\"mixHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"nonce\":\"0x0000000000000000\",\"baseFeePerGas\":\"0x3b9aca00\",\"size\":\"0x209\",\"uncles\":[],\"transactions\":[]}";
 
     /// Sanity regression test - `alloy_rpc_types`' `Block::into_consensus` failed to saturate the
-    /// header of the `alloy_consensus::Header` type on an old version. This test covers the
+    /// header of the `base_common_consensus::Header` type on an old version. This test covers the
     /// conversion to ensure a Base Sepolia genesis block's conversion to the consensus type works for
     /// the sake of `L2BlockInfo::from_block_and_genesis`.
     #[tokio::test]

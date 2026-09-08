@@ -1,7 +1,6 @@
 //! Pools using real Base transaction representations and the shared mock validator.
 
-use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, EthereumTxEnvelope, TxEip4844};
 use base_execution_txpool::{
     CoinbaseTipOrdering, InMemoryBlobStore, MockTransactionValidator, Pool, PoolTransaction,
     test_utils::BaseTestTransaction,
@@ -34,7 +33,7 @@ impl NetworkTestData {
         transaction: P,
     ) -> BaseTestTransaction {
         let transaction = transaction.into_consensus().map(|tx| {
-            BaseTxEnvelope::try_from(alloy_consensus::TxEnvelope::from(tx))
+            BaseTxEnvelope::try_from(base_common_consensus::TxEnvelope::from(tx))
                 .expect("network fixture must use a Base transaction")
         });
         BaseTestTransaction::try_from_consensus(transaction)

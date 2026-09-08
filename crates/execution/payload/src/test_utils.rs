@@ -7,10 +7,9 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::Block;
 use alloy_primitives::U256;
 use alloy_rpc_types::engine::PayloadId;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, Block};
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
 };

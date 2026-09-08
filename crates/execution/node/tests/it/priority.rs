@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{SignableTransaction, Transaction, TxEip1559, transaction::Recovered};
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, ChainId, TxKind};
+use base_common_consensus::{SignableTransaction, Transaction, TxEip1559, transaction::Recovered};
 use base_common_network::TxSignerSync;
 use base_execution_chainspec::BaseChainSpecBuilder;
 use base_execution_payload_builder::{

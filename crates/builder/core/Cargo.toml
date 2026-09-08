@@ -78,7 +78,6 @@ derive_more = { workspace = true, features = ["debug"] }
 secp256k1 = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
 serde_with = { workspace = true, features = ["default"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 base-common-evm = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, features = ["otlp"] }
@@ -92,7 +91,6 @@ alloy-rpc-client = { workspace = true, features = ["default"] }
 reth-tracing-otlp = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
 reth-network-peers = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
@@ -105,6 +103,7 @@ ctor = { workspace = true, optional = true, features = ["default"] }
 hyper = { workspace = true, optional = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth", "std"] }
 uuid = { workspace = true, features = ["default", "serde", "v5", "v4"] }
 hyper-util = { workspace = true, optional = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["default", "client"] }

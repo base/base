@@ -2,10 +2,9 @@
 
 use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 
-use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_primitives::{B256, map::HashMap};
 use async_trait::async_trait;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, Header, Receipt, TxEnvelope};
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
 use thiserror::Error;

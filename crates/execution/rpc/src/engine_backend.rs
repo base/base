@@ -1833,7 +1833,7 @@ mod tests {
                 blob_gas_used: 0,
                 excess_blob_gas: 0,
             },
-            withdrawals_root: alloy_consensus::constants::EMPTY_ROOT_HASH,
+            withdrawals_root: base_common_consensus::constants::EMPTY_ROOT_HASH,
         };
         let execution_data = ExecutionData {
             block_access_list: Some(Bytes::from_static(b"bal")),

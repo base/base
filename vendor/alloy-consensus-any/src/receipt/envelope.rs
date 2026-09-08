@@ -1,13 +1,13 @@
 use alloc::vec::Vec;
 use core::fmt;
 
-use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::{
     Typed2718,
     eip2718::{Decodable2718, Eip2718Result, Encodable2718},
 };
 use alloy_primitives::{Bloom, Log, bytes::BufMut};
 use alloy_rlp::{Decodable, Encodable};
+use base_common_consensus::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt};
 
 /// Receipt envelope, as defined in [EIP-2718].
 ///

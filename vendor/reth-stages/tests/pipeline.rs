@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{Header, TxEip1559, TxReceipt, constants::ETH_TO_WEI};
 use alloy_eips::eip1559::INITIAL_BASE_FEE;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes};
 use base_common_consensus::{
-    BaseBlock as Block, BaseBlockBody as BlockBody, BaseTypedTransaction as Transaction,
+    BaseBlock as Block, BaseBlockBody as BlockBody, BaseTypedTransaction as Transaction, Header,
+    TxEip1559, TxReceipt, constants::ETH_TO_WEI,
 };
 use base_execution_chainspec::{BaseChainSpecBuilder, ChainSpecProvider};
 use base_execution_consensus::BaseBeaconConsensus;

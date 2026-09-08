@@ -1,9 +1,8 @@
 //! This module contains the top level span batch transaction data type.
 
-use alloy_consensus::Transaction;
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::{Bytes, Decodable, Encodable};
-use base_common_consensus::{BaseTxEnvelope, OpTxType};
+use base_common_consensus::{BaseTxEnvelope, OpTxType, Transaction};
 
 use crate::{
     SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,

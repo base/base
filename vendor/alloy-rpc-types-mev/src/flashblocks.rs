@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use alloy_consensus::Receipt;
 use alloy_primitives::{Address, B64, B256, Bloom, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawal;
+use base_common_consensus::Receipt;
 use serde::{Deserialize, Serialize};
 
 /// Represents a Flashblock, a real-time block-like structure emitted by the Base L2 chain.

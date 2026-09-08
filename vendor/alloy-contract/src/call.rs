@@ -6,7 +6,6 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_network_primitives::ReceiptResponse;
@@ -18,6 +17,7 @@ use alloy_rpc_types_eth::{
 };
 use alloy_sol_types::SolCall;
 use alloy_transport::{BoxFuture, TransportResult};
+use base_common_consensus::SignableTransaction;
 use base_common_network::{
     Ethereum, IntoWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
     TransactionBuilder4844, TransactionBuilder7702, TransactionBuilderError, TxSigner,
@@ -778,12 +778,12 @@ impl<P, D: CallDecoder, N: Network> std::fmt::Debug for CallBuilder<P, D, N> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Transaction;
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{B256, address, b256, bytes, hex, utils::parse_units};
     use alloy_provider::{Provider, ProviderBuilder, WalletProvider};
     use alloy_rpc_types_eth::{AccessListItem, Authorization};
     use alloy_sol_types::sol;
+    use base_common_consensus::Transaction;
     use base_common_network::{EthereumWallet, PrivateKeySigner};
     use futures::Future;
 
@@ -1112,7 +1112,7 @@ mod tests {
 
     #[test]
     fn change_sidecar_7594() {
-        use alloy_consensus::Blob;
+        use base_common_consensus::Blob;
 
         let sidecar =
             BlobTransactionSidecarEip7594::new(vec![Blob::repeat_byte(0xAB)], vec![], vec![]);

@@ -2,11 +2,11 @@
 
 use std::{fmt::Debug, sync::Arc, time::Instant};
 
-use alloy_consensus::{Header, Receipt};
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use alloy_transport::TransportErrorKind;
 use async_trait::async_trait;
+use base_common_consensus::{Header, Receipt};
 use base_protocol::BlockInfo;
 use tokio::sync::watch;
 

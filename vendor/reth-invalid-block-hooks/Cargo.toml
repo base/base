@@ -20,8 +20,8 @@ serde = { workspace = true }
 reth-trie = { workspace = true }
 jsonrpsee = { workspace = true }
 reth-provider = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
+base-common-consensus = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
@@ -37,6 +37,6 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 alloy-eips = { workspace = true }
 reth-testing-utils = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
-alloy-consensus = {workspace = true, features = ["serde"]}
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-common-consensus = {workspace = true, features = ["serde"]}
 base-execution-evm = { workspace = true, features = ["test-utils"] }

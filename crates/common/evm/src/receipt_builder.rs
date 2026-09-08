@@ -4,8 +4,9 @@
 use alloc::boxed::Box;
 use core::fmt::Debug;
 
-use alloy_consensus::{Eip658Value, TransactionEnvelope};
-use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, DepositReceipt, OpTxType};
+use base_common_consensus::{
+    BaseReceiptEnvelope, BaseTxEnvelope, DepositReceipt, Eip658Value, OpTxType, TransactionEnvelope,
+};
 use base_evm_handler::{Evm, ReceiptBuilderCtx};
 
 /// Boxed receipt-builder context returned for deposit transactions.
@@ -51,7 +52,7 @@ impl BaseReceiptBuilder for AlloyReceiptBuilder {
         match ctx.tx_type {
             OpTxType::Deposit => Err(Box::new(ctx)),
             ty => {
-                let receipt = alloy_consensus::Receipt {
+                let receipt = base_common_consensus::Receipt {
                     status: Eip658Value::Eip658(ctx.result.is_success()),
                     cumulative_gas_used: ctx.cumulative_gas_used,
                     logs: ctx.result.into_logs(),

@@ -25,7 +25,6 @@ reth-config = { workspace = true }
 pin-project = { workspace = true }
 futures-util = { workspace = true }
 reth-metrics = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -51,9 +50,9 @@ reth-testing-utils = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-alloy-consensus = {workspace = true, features = ["serde"]}
 reth-tracing = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-common-consensus = {workspace = true, features = ["serde"]}
 async-compression = { workspace = true, features = ["gzip", "tokio"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 base-execution-consensus = { workspace = true, features = ["test-utils"] }

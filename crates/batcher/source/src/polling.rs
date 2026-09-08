@@ -113,7 +113,7 @@ mod tests {
 
     fn block(number: u64, parent_hash: B256, marker: u8) -> BaseBlock {
         BaseBlock {
-            header: alloy_consensus::Header {
+            header: base_common_consensus::Header {
                 number,
                 parent_hash,
                 extra_data: vec![marker].into(),

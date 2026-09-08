@@ -1,5 +1,5 @@
-use alloy_consensus::{TxType, TypedTransaction};
-use alloy_rpc_types_eth::{request::TransactionRequest};
+use alloy_rpc_types_eth::request::TransactionRequest;
+use base_common_consensus::{TxType, TypedTransaction};
 
 use crate::{
     BuildResult, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet, TransactionBuilder,
@@ -87,13 +87,13 @@ impl NetworkTransactionBuilder<Ethereum> for TransactionRequest {
 mod tests {
     use std::str::FromStr;
 
-    use alloy_consensus::{
-        BlobTransactionSidecar, SignableTransaction, TxEip1559, TxEnvelope, TxType,
-        TypedTransaction, transaction::Recovered,
-    };
     use alloy_eips::eip7702::Authorization;
     use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U160, U256};
     use alloy_rpc_types_eth::{AccessList, TransactionRequest};
+    use base_common_consensus::{
+        BlobTransactionSidecar, SignableTransaction, TxEip1559, TxEnvelope, TxType,
+        TypedTransaction, transaction::Recovered,
+    };
 
     use crate::{
         NetworkTransactionBuilder, TransactionBuilder, TransactionBuilder4844,

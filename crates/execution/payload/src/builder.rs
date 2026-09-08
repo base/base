@@ -5,13 +5,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::{BlockHeader, Transaction, Typed2718};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope, CoinbaseTip, Predeploys};
+use base_common_consensus::{
+    BaseReceipt, BaseTxEnvelope, BlockHeader, CoinbaseTip, Predeploys, Transaction, Typed2718,
+};
 use base_common_evm::L1BlockInfo;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_evm_context::{Block, BlockEnv};
@@ -1236,13 +1237,14 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_consensus::{Header, SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxKind, U256};
     use alloy_rpc_types_engine::PayloadId;
     use base_common_chains::BaseUpgrade;
-    use base_common_consensus::{BaseTxEnvelope, Predeploys};
+    use base_common_consensus::{
+        BaseTxEnvelope, Header, Predeploys, SignableTransaction, TxEip1559,
+    };
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::{BaseEvmConfig, CancelOnDrop, test_utils::StateProviderTest};

@@ -8,12 +8,12 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_consensus::{
+use alloy_primitives::{B256, BlockNumber};
+use alloy_rpc_types_engine::ForkchoiceState;
+use base_common_consensus::{
     BlockHeader,
     constants::{GWEI_TO_WEI, MGAS_TO_GAS},
 };
-use alloy_primitives::{B256, BlockNumber};
-use alloy_rpc_types_engine::ForkchoiceState;
 use futures::Stream;
 use reth_engine_primitives::{ConsensusEngineEvent, ForkchoiceStatus, SlowBlockInfo};
 use reth_network_api::PeersInfo;

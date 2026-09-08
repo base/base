@@ -231,10 +231,10 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> PipelineState<DB>
 mod tests {
     use std::{collections::VecDeque, future::poll_fn, sync::Arc};
 
-    use alloy_consensus::Header;
     use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M;
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
+    use base_common_consensus::Header;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use futures::poll;
     use reth_network_p2p::test_utils::TestFullBlockClient;

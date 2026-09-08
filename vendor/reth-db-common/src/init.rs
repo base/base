@@ -1,13 +1,12 @@
 //! Reth genesis initialization utility functions.
 
-use alloy_consensus::BlockHeader;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{
     Address, B256, U256, keccak256,
     map::{AddressMap, B256Map, B256Set, HashMap},
 };
+use base_common_consensus::{BlockHeader, Compact};
 use base_execution_chainspec::BaseChainSpec;
-use reth_codecs::Compact;
 use reth_config::config::EtlConfig;
 use reth_db_api::{
     DatabaseError,

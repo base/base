@@ -19,7 +19,6 @@ jsonrpsee = { workspace = true }
 alloy-eips = { workspace = true }
 reth-provider = { workspace = true }
 base-common-evm = { workspace = true }
-alloy-consensus = { workspace = true }
 jsonrpsee-types = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }

@@ -231,10 +231,11 @@ impl<P> From<BackfillJob<P>> for StreamBackfillJob<P, BatchBlockStreamItem> {
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{Header, TxEip2930, constants::ETH_TO_WEI};
     use alloy_hardforks::EthereumHardfork;
     use alloy_primitives::{Address, TxKind, U256, b256};
-    use base_common_consensus::{BaseBlock, BaseBlockBody, BaseTypedTransaction};
+    use base_common_consensus::{
+        BaseBlock, BaseBlockBody, BaseTypedTransaction, Header, TxEip2930, constants::ETH_TO_WEI,
+    };
     use base_execution_chainspec::BaseChainSpec;
     use eyre::Result;
     use futures::StreamExt;

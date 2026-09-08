@@ -649,12 +649,12 @@ mod tests {
         time::Instant,
     };
 
-    use alloy_consensus::{Transaction, transaction::Recovered};
     use alloy_primitives::Bytes;
     use alloy_signer::SignerSync;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
+        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, Transaction, TxEip8130,
+        transaction::Recovered,
     };
     use base_common_network::PrivateKeySigner;
     use base_execution_txpool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};

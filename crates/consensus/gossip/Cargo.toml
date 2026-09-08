@@ -30,11 +30,10 @@ tokio = { workspace = true, features = ["default"] }
 discv5 = { workspace = true, features = ["libp2p"] }
 alloy-eips = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 ipnet = { workspace = true, features = ["default", "serde"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-base-common-consensus = { workspace = true, features = ["k256"] }
+base-common-consensus = { workspace = true, features = ["k256", "std"] }
 alloy-primitives = { workspace = true, features = ["k256", "getrandom"] }
 derive_more = { workspace = true, features = ["display", "deref", "debug"] }
 base-common-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
@@ -48,8 +47,8 @@ tempfile = { workspace = true, features = ["default"] }
 multihash = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
 rand = { workspace = true, features = ["default", "thread_rng"] }
-base-common-consensus = { workspace = true, features = ["arbitrary", "k256"] }
-alloy-consensus = { workspace = true, features = ["arbitrary", "k256", "std"] }
+base-common-consensus = { workspace = true, features = ["arbitrary", "k256", "std"] }
+
 [features]
 default = []
 metrics = [

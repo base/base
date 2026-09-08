@@ -84,9 +84,9 @@ impl From<HeadersDirection> for bool {
 mod tests {
     use std::str::FromStr;
 
-    use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, EMPTY_ROOT_HASH, Header};
     use alloy_primitives::{B256, Bytes, U256, address, b256, bloom, bytes, hex};
     use alloy_rlp::{Decodable, Encodable};
+    use base_common_consensus::{EMPTY_OMMER_ROOT_HASH, EMPTY_ROOT_HASH, Header};
 
     use super::*;
 

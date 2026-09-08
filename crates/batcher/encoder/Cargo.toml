@@ -28,7 +28,8 @@ rand = { workspace = true, features = ["default", "std", "small_rng"] }
 clap = { workspace = true, features = ["default", "derive"], optional = true }
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }
-alloy-consensus = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["std"] }
+
 [features]
 clap = [ "dep:clap" ]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]

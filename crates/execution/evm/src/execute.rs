@@ -2,11 +2,10 @@
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
-use alloy_consensus::BlockHeader;
 use alloy_eip7928::{BlockAccessList, compute_block_access_list_hash};
 use alloy_eips::eip2718::WithEncoded;
 use alloy_primitives::{Address, B256};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader};
 pub use base_evm_handler::{
     BlockExecutionError, BlockExecutor, BlockExecutorFactory, BlockValidationError, GasOutput,
     InternalBlockExecutionError,

@@ -1,9 +1,9 @@
 use alloc::{vec, vec::Vec};
 use core::slice;
 
-use alloy_consensus::error::ValueError;
 use alloy_eips::Encodable2718;
 use alloy_primitives::B256;
+use base_common_consensus::error::ValueError;
 
 use crate::TransactionResponse;
 
@@ -106,7 +106,7 @@ impl<T> BlockTransactions<T> {
     where
         T: Encodable2718,
     {
-        self.as_transactions().map(alloy_consensus::proofs::calculate_transaction_root)
+        self.as_transactions().map(base_common_consensus::proofs::calculate_transaction_root)
     }
 
     /// Returns true if the enum variant is used for an uncle response.

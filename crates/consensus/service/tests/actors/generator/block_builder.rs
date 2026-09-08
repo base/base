@@ -1,10 +1,9 @@
 use std::time::SystemTime;
 
-use alloy_consensus::{Block, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::Encodable2718;
 use alloy_primitives::Bytes;
 use arbitrary::{Arbitrary, Unstructured};
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, Block, EMPTY_OMMER_ROOT_HASH};
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use libp2p::bytes::BufMut;
 
@@ -57,10 +56,10 @@ impl SeedGenerator {
         let transactions: Vec<Bytes> =
             block.body.transactions().map(|tx| tx.encoded_2718().into()).collect();
 
-        let transactions_root =
-            alloy_consensus::proofs::ordered_trie_root_with_encoder(&transactions, |item, buf| {
-                buf.put_slice(item)
-            });
+        let transactions_root = base_common_consensus::proofs::ordered_trie_root_with_encoder(
+            &transactions,
+            |item, buf| buf.put_slice(item),
+        );
 
         block.header.transactions_root = transactions_root;
 
@@ -96,7 +95,7 @@ impl SeedGenerator {
         let mut block = self.v1_valid_block();
 
         block.body.withdrawals = Some(vec![].into());
-        let withdrawals_root = alloy_consensus::proofs::calculate_withdrawals_root(
+        let withdrawals_root = base_common_consensus::proofs::calculate_withdrawals_root(
             &block.body.withdrawals.clone().unwrap_or_default(),
         );
 
@@ -110,7 +109,7 @@ impl SeedGenerator {
         let mut block = self.valid_block();
 
         block.body.withdrawals = Some(vec![].into());
-        let withdrawals_root = alloy_consensus::proofs::calculate_withdrawals_root(
+        let withdrawals_root = base_common_consensus::proofs::calculate_withdrawals_root(
             &block.body.withdrawals.clone().unwrap_or_default(),
         );
         block.header.withdrawals_root = Some(withdrawals_root);

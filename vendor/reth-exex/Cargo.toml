@@ -28,7 +28,6 @@ reth-fs-util = { workspace = true }
 reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-chain-state = { workspace = true }
@@ -65,7 +64,7 @@ reth-trie-common = { workspace = true, features = ["serde-bincode-compat"] }
 serde = [
     "reth-exex-types/serde",
     "base-execution-evm/serde",
-    "alloy-consensus/serde",
+    "base-common-consensus/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "parking_lot/serde",

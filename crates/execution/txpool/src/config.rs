@@ -1,8 +1,8 @@
 use std::{ops::Mul, time::Duration};
 
-use alloy_consensus::constants::EIP4844_TX_TYPE_ID;
 use alloy_eips::eip1559::{ETHEREUM_BLOCK_GAS_LIMIT_30M, MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::{Address, map::AddressSet};
+use base_common_consensus::constants::EIP4844_TX_TYPE_ID;
 
 use crate::{
     PoolSize, TransactionOrigin,

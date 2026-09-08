@@ -2,11 +2,10 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_rpc_types_engine::PayloadAttributes;
-use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+use base_common_consensus::{BaseTxEnvelope, BlockHeader, TxDeposit};
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_protocol::L1BlockInfoEcotone;
 use reth_e2e_test_utils::BaseNodeTestUtils;

@@ -159,7 +159,7 @@ impl<B, Pool> LocalMiner<B, Pool>
 where
     B: PayloadAttributesBuilder<
             BasePayloadBuilderAttributes<BaseTxEnvelope>,
-            alloy_consensus::Header,
+            base_common_consensus::Header,
         >,
     Pool: TransactionPool + Unpin,
 {

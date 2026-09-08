@@ -2,9 +2,8 @@
 
 use core::cmp::max;
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
-use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
+use base_common_consensus::{BlockHeader, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 
 fn base_fee_params_from_extra_data(
     chain_spec: &crate::BaseChainSpec,

@@ -16,13 +16,12 @@ alloy-eips = { workspace = true }
 alloy-signer = { workspace = true }
 base-common-evm = { workspace = true }
 base-common-network = { workspace = true }
-base-common-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }
 alloy-contract = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
+base-common-consensus = { workspace = true, features = ["std"]}
 base-common-rpc-types = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["std"], optional = true }
 alloy-sol-macro = { workspace = true, features = ["json"], optional = true }

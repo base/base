@@ -1,9 +1,8 @@
 //! Stablecoin B-20 precompile action tests across the Base Beryl boundary.
 
-use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxReceipt};
 use base_common_precompiles::{
     B20_MAX_SUPPLY_CAP, B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory,
     IB20Stablecoin,

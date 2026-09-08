@@ -1,8 +1,7 @@
 //! Compatibility functions for rpc `Transaction` type.
 use std::fmt::Debug;
 
-use alloy_consensus::transaction::Recovered;
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, transaction::Recovered};
 use reth_primitives_traits::TransactionMeta;
 
 /// Primitive receipt and transaction context used to construct a Base RPC receipt.

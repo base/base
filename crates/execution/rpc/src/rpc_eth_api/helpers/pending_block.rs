@@ -6,11 +6,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::{BlockHeader, Transaction};
 use alloy_eips::eip7840::BlobParams;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_eth::BlockNumberOrTag;
+use base_common_consensus::{BlockHeader, Transaction};
 use base_evm_context::{Block, Cfg as _};
 use base_evm_handler::{BlockExecutionError, BlockValidationError};
 use base_execution_chainspec::ChainSpecProvider;
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn pending_env_preserves_base_parent_beacon_root() {
         let beacon_root = B256::repeat_byte(0x42);
-        let header = alloy_consensus::Header {
+        let header = base_common_consensus::Header {
             parent_beacon_block_root: Some(beacon_root),
             timestamp: 100,
             gas_limit: 30_000_000,

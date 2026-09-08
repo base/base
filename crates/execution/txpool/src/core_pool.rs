@@ -123,7 +123,7 @@ where
     /// };
     /// use alloy_hardforks::{EthereumHardforks};
     /// use base_execution_evm::BaseEvmConfig;
-    /// use alloy_consensus::Header;
+    /// use base_common_consensus::Header;
     /// # fn t<C>(client: C, evm_config: BaseEvmConfig, runtime: Runtime)
     /// # where
     /// #     C: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt<Header = Header> + Clone + 'static,

@@ -12,13 +12,12 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eip2124::ForkId;
 use alloy_primitives::{
     B256,
     map::{FbBuildHasher, HashMap},
 };
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BlockHeader};
 use rand::seq::SliceRandom;
 use reth_eth_wire::{
     BlockHashNumber, Capabilities, DisconnectReason, GetReceipts70, NewBlockHashes,
@@ -689,9 +688,8 @@ mod tests {
         sync::{Arc, atomic::AtomicU64},
     };
 
-    use alloy_consensus::Header;
     use alloy_primitives::B256;
-    use base_common_consensus::BaseBlockBody as BlockBody;
+    use base_common_consensus::{BaseBlockBody as BlockBody, Header};
     use reth_eth_wire::{BlockBodies, Capabilities, Capability, EthVersion};
     use reth_network_api::PeerRequestSender;
     use reth_network_p2p::{bodies::client::BodiesClient, error::RequestError};

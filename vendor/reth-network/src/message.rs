@@ -8,9 +8,11 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use alloy_consensus::{BlockHeader, EthereumTxEnvelope, ReceiptWithBloom, TxEip4844};
 use alloy_primitives::{B256, Bytes};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{
+    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, EthereumTxEnvelope, ReceiptWithBloom,
+    TxEip4844,
+};
 use futures::FutureExt;
 use reth_eth_wire::{
     BlockBodies, BlockHeaders, BlockRangeUpdate, BroadcastPoolTransactions, Cells, EthMessage,
@@ -31,7 +33,9 @@ use crate::types::{BlockAccessLists, Receipts69, Receipts70};
 
 /// Internal form of a `NewBlock` message
 #[derive(Debug, Clone)]
-pub struct NewBlockMessage<P = NewBlock<alloy_consensus::Block<EthereumTxEnvelope<TxEip4844>>>> {
+pub struct NewBlockMessage<
+    P = NewBlock<base_common_consensus::Block<EthereumTxEnvelope<TxEip4844>>>,
+> {
     /// Hash of the block
     pub hash: B256,
     /// Raw received message
@@ -152,7 +156,7 @@ pub enum PeerResponse {
     /// Represents a response to a request for block headers.
     BlockHeaders {
         /// The receiver channel for the response to a block headers request.
-        response: oneshot::Receiver<RequestResult<BlockHeaders<alloy_consensus::Header>>>,
+        response: oneshot::Receiver<RequestResult<BlockHeaders<base_common_consensus::Header>>>,
     },
     /// Represents a response to a request for block bodies.
     BlockBodies {
@@ -267,7 +271,7 @@ impl PeerResponse {
 #[derive(Debug)]
 pub enum PeerResponseResult {
     /// Represents a result containing block headers or an error.
-    BlockHeaders(RequestResult<Vec<alloy_consensus::Header>>),
+    BlockHeaders(RequestResult<Vec<base_common_consensus::Header>>),
     /// Represents a result containing block bodies or an error.
     BlockBodies(RequestResult<Vec<base_common_consensus::BaseBlockBody>>),
     /// Represents a result containing pooled transactions or an error.

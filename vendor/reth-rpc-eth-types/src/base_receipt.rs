@@ -2,12 +2,14 @@
 
 use std::fmt::Debug;
 
-use alloy_consensus::{BlockHeader, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTransaction, BaseTxEnvelope};
+use base_common_consensus::{
+    BaseBlock, BaseReceipt, BaseTransaction, BaseTxEnvelope, BlockHeader, Receipt,
+    ReceiptWithBloom, TxReceipt,
+};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{
     BaseLogResponse, BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields,
@@ -340,7 +342,7 @@ impl BaseReceiptBuilder {
         };
 
         let mut core_receipt = build_receipt(input, None, |receipt, next_log_index, meta| {
-            let map_logs = move |receipt: alloy_consensus::Receipt| {
+            let map_logs = move |receipt: base_common_consensus::Receipt| {
                 let Receipt { status, cumulative_gas_used, logs } = receipt;
                 let logs = Log::collect_for_receipt(next_log_index, meta, logs)
                     .into_iter()
@@ -394,11 +396,13 @@ impl BaseReceiptBuilder {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Block, BlockBody, Eip658Value, TxEip7702, transaction::TransactionMeta};
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
     use base_common_chains::ChainConfig;
-    use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction};
+    use base_common_consensus::{
+        BaseTransactionSigned, BaseTypedTransaction, Block, BlockBody, Eip658Value, TxEip7702,
+        transaction::TransactionMeta,
+    };
     use base_execution_chainspec::BaseChainSpec;
     use reth_primitives_traits::Recovered;
 
@@ -591,7 +595,7 @@ mod tests {
         );
         let tx_0 = BaseTransactionSigned::decode_2718(&mut &system[..]).unwrap();
 
-        let block: alloy_consensus::Block<BaseTransactionSigned> = Block {
+        let block: base_common_consensus::Block<BaseTransactionSigned> = Block {
             body: BlockBody { transactions: vec![tx_0], ..Default::default() },
             ..Default::default()
         };

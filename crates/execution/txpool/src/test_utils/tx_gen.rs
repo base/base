@@ -1,9 +1,9 @@
-use alloy_consensus::{
+use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, eip2930::AccessList};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+use base_common_consensus::{
     EthereumTxEnvelope, EthereumTypedTransaction, SignableTransaction, TxEip1559, TxEip4844,
     TxLegacy,
 };
-use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, eip2930::AccessList};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use rand::{Rng, RngCore};
 use reth_primitives_traits::{SignedTransaction, crypto::secp256k1::sign_message};
 

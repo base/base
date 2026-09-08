@@ -660,7 +660,6 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::transaction::Recovered;
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
     use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
     use alloy_rpc_types_engine::{
@@ -670,7 +669,7 @@ mod tests {
         Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
     };
     use async_trait::async_trait;
-    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit, transaction::Recovered};
     use base_common_genesis::{
         BaseUpgradeConfig, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig,
     };

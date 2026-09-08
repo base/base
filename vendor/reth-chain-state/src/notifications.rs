@@ -246,9 +246,10 @@ pub trait PersistedBlockSubscriptions: Send + Sync {
 mod tests {
     use std::collections::BTreeMap;
 
-    use alloy_consensus::{BlockBody, SignableTransaction, TxLegacy};
     use alloy_primitives::{B256, Signature, b256};
-    use base_common_consensus::BaseTxEnvelope as TransactionSigned;
+    use base_common_consensus::{
+        BaseTxEnvelope as TransactionSigned, BlockBody, SignableTransaction, TxLegacy,
+    };
     use reth_execution_types::ExecutionOutcome;
     use reth_primitives_traits::SealedBlock;
 
@@ -345,7 +346,7 @@ mod tests {
         body.transactions.push(tx);
 
         let block = SealedBlock::from_sealed_parts(
-            SealedHeader::seal_slow(alloy_consensus::Header::default()),
+            SealedHeader::seal_slow(base_common_consensus::Header::default()),
             body,
         )
         .try_recover()
@@ -362,7 +363,7 @@ mod tests {
         block2.set_hash(block2_hash);
 
         // Create a receipt for the transaction in block1.
-        let receipt1 = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let receipt1 = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 12345,
             logs: vec![],
             status: true.into(),
@@ -414,7 +415,7 @@ mod tests {
         let mut body = BlockBody::<TransactionSigned>::default();
         body.transactions.push(TxLegacy::default().into_signed(Signature::test_signature()).into());
         let mut old_block1 = SealedBlock::from_sealed_parts(
-            SealedHeader::seal_slow(alloy_consensus::Header::default()),
+            SealedHeader::seal_slow(base_common_consensus::Header::default()),
             body,
         )
         .try_recover()
@@ -423,7 +424,7 @@ mod tests {
         old_block1.set_hash(B256::new([0x01; 32]));
 
         // Create a receipt for a transaction in the reverted block.
-        let old_receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let old_receipt = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 54321,
             logs: vec![],
             status: false.into(),
@@ -441,7 +442,7 @@ mod tests {
         let mut body = BlockBody::<TransactionSigned>::default();
         body.transactions.push(TxLegacy::default().into_signed(Signature::test_signature()).into());
         let mut new_block1 = SealedBlock::from_sealed_parts(
-            SealedHeader::seal_slow(alloy_consensus::Header::default()),
+            SealedHeader::seal_slow(base_common_consensus::Header::default()),
             body,
         )
         .try_recover()
@@ -450,7 +451,7 @@ mod tests {
         new_block1.set_hash(B256::new([0x02; 32]));
 
         // Create a receipt for a transaction in the new committed block.
-        let new_receipt = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let new_receipt = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 12345,
             logs: vec![],
             status: true.into(),

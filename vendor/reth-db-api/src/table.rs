@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-pub use reth_codecs::{Compress, Decompress};
+pub use base_common_consensus::{Compress, Decompress};
 use serde::{Deserialize, Serialize};
 
 use crate::{

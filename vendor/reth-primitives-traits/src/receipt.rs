@@ -3,10 +3,10 @@
 use alloc::vec::Vec;
 use core::fmt;
 
-use alloy_consensus::{
+use alloy_rlp::{Decodable, Encodable};
+use base_common_consensus::{
     Eip2718EncodableReceipt, RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt, Typed2718,
 };
-use alloy_rlp::{Decodable, Encodable};
 
 use crate::{InMemorySize, MaybeSerde};
 

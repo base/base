@@ -14,7 +14,6 @@ categories.workspace = true
 [dependencies]
 tokio = { workspace = true }
 futures-util = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }

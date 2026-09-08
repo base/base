@@ -2,12 +2,12 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_primitives::{
     Address, B256, U256,
     map::{HashMap, HashSet},
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
+use base_common_consensus::{BlockHeader, Transaction as _};
 use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
@@ -349,8 +349,8 @@ where
     Ok(state_provider.basic_account(address)?.as_ref().is_none_or(is_dead_provider_account))
 }
 
-fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
-    tx: &alloy_consensus::transaction::Recovered<T>,
+fn intrinsic_gas_entries<T: base_common_consensus::Transaction>(
+    tx: &base_common_consensus::transaction::Recovered<T>,
     recipient_is_dead: bool,
     tx_succeeded: bool,
     metered: &MeteredOpcodes,
@@ -760,12 +760,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::transaction::Recovered;
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use alloy_sol_types::{SolCall, SolValue};
     use base_bundles::{Bundle, ParsedBundle};
-    use base_common_consensus::BaseTransactionSigned;
+    use base_common_consensus::{BaseTransactionSigned, transaction::Recovered};
     use base_common_precompiles::{
         ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
     };

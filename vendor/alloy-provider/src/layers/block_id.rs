@@ -106,7 +106,10 @@ impl<P: Provider<N>, N: Network> Provider<N> for BlockIdProvider<P, N> {
         self.inner.get_account_info(address).block_id(self.block_id)
     }
 
-    fn get_account(&self, address: Address) -> RpcWithBlock<Address, alloy_consensus::TrieAccount> {
+    fn get_account(
+        &self,
+        address: Address,
+    ) -> RpcWithBlock<Address, base_common_consensus::TrieAccount> {
         self.inner.get_account(address).block_id(self.block_id)
     }
 

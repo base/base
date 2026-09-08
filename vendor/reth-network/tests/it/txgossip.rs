@@ -1,8 +1,8 @@
 //! Testing gossiping of transactions.
 use std::sync::Arc;
 
-use alloy_consensus::TxLegacy;
 use alloy_primitives::{Signature, U256};
+use base_common_consensus::TxLegacy;
 use base_execution_txpool::{
     AddedTransactionOutcome, PoolTransaction, TransactionPool, test_utils::TransactionGenerator,
 };

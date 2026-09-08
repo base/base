@@ -1,9 +1,8 @@
 //! B-20 factory precompile action tests across the Base Beryl boundary.
 
-use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, TxReceipt};
 use base_common_precompiles::{B20FactoryStorage, B20Variant, IB20Factory};
 
 use crate::env::BerylTestEnv;

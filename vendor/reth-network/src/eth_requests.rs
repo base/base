@@ -7,11 +7,12 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::{BlockHeader, ReceiptWithBloom, constants::KECCAK_EMPTY};
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Encodable;
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::{
+    BaseBlock, BaseReceipt, BlockHeader, ReceiptWithBloom, constants::KECCAK_EMPTY,
+};
 use base_execution_txpool::{BlobStore, NoopBlobStore};
 use futures::StreamExt;
 use reth_eth_wire::{
@@ -128,7 +129,7 @@ where
     C: BlockReader,
 {
     /// Returns the list of requested headers
-    fn get_headers_response(&self, request: GetBlockHeaders) -> Vec<alloy_consensus::Header> {
+    fn get_headers_response(&self, request: GetBlockHeaders) -> Vec<base_common_consensus::Header> {
         let GetBlockHeaders { start_block, limit, skip, direction } = request;
 
         let mut headers = Vec::new();
@@ -195,7 +196,7 @@ where
         &self,
         _peer_id: PeerId,
         request: GetBlockHeaders,
-        response: oneshot::Sender<RequestResult<BlockHeaders<alloy_consensus::Header>>>,
+        response: oneshot::Sender<RequestResult<BlockHeaders<base_common_consensus::Header>>>,
     ) {
         self.metrics.eth_headers_requests_received_total.increment(1);
         let headers = self.get_headers_response(request);
@@ -716,7 +717,7 @@ pub enum IncomingEthRequest {
         /// The specific block headers requested.
         request: GetBlockHeaders,
         /// The channel sender for the response containing block headers.
-        response: oneshot::Sender<RequestResult<BlockHeaders<alloy_consensus::Header>>>,
+        response: oneshot::Sender<RequestResult<BlockHeaders<base_common_consensus::Header>>>,
     },
     /// Request Block bodies from the peer.
     ///
@@ -815,12 +816,12 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
-    use alloy_consensus::constants::EMPTY_ROOT_HASH;
     use alloy_eips::{
         eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
         eip7594::{BlobTransactionSidecarVariant, Cell},
     };
     use alloy_primitives::{Address, B128, TxHash, U256, keccak256};
+    use base_common_consensus::constants::EMPTY_ROOT_HASH;
     use base_execution_txpool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
     use reth_network_api::test_utils::PeersHandle;
     use reth_primitives_traits::Account;

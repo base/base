@@ -31,7 +31,6 @@ alloy-genesis = { workspace = true }
 alloy-eip2124 = { workspace = true }
 alloy-json-rpc = { workspace = true }
 base-state-api = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
 alloy-hardforks = { workspace = true }
@@ -107,9 +106,9 @@ reth-testing-utils = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-alloy-consensus = {workspace = true, features = ["serde"]}
 reth-tasks = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-common-consensus = {workspace = true, features = ["serde"]}
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"]}

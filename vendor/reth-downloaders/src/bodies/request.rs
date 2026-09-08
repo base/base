@@ -5,8 +5,8 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
+use base_common_consensus::BlockHeader;
 use base_execution_consensus::BaseBeaconConsensus;
 use futures::{Future, FutureExt};
 use reth_network_p2p::{
@@ -28,7 +28,7 @@ use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};
 /// It then proceeds to verify the downloaded bodies. In case of a validation error,
 /// the future will start over.
 ///
-/// The future will filter out any empty headers (see [`alloy_consensus::Header::is_empty`]) from
+/// The future will filter out any empty headers (see [`base_common_consensus::Header::is_empty`]) from
 /// the request. If [`BodiesRequestFuture`] was initialized with all empty headers, no request will
 /// be dispatched and they will be immediately returned upon polling.
 ///

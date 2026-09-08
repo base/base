@@ -8,18 +8,17 @@ use std::{
     },
 };
 
-use alloy_consensus::{
-    BlockHeader,
-    constants::EMPTY_ROOT_HASH,
-    transaction::{TransactionMeta, TxHashRef},
-};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumberOrTag};
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, TxNumber, U256,
     keccak256,
     map::{AddressMap, B256Map, HashMap},
 };
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo};
+use base_common_consensus::{
+    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo,
+    constants::EMPTY_ROOT_HASH,
+    transaction::{TransactionMeta, TxHashRef},
+};
 use base_execution_chainspec::BaseChainSpec;
 use parking_lot::Mutex;
 use reth_chain_state::{CanonStateNotifications, CanonStateSubscriptions};
@@ -63,7 +62,7 @@ pub struct MockEthProvider {
     ///local block store
     pub blocks: Arc<Mutex<B256Map<BaseBlock>>>,
     /// Local header store
-    pub headers: Arc<Mutex<B256Map<alloy_consensus::Header>>>,
+    pub headers: Arc<Mutex<B256Map<base_common_consensus::Header>>>,
     /// Local receipt store indexed by block number
     pub receipts: Arc<Mutex<HashMap<BlockNumber, Vec<BaseReceipt>>>>,
     /// Local account store
@@ -262,12 +261,15 @@ impl MockEthProvider {
     }
 
     /// Add header to local header store
-    pub fn add_header(&self, hash: B256, header: alloy_consensus::Header) {
+    pub fn add_header(&self, hash: B256, header: base_common_consensus::Header) {
         self.headers.lock().insert(hash, header);
     }
 
     /// Add multiple headers to local header store
-    pub fn extend_headers(&self, iter: impl IntoIterator<Item = (B256, alloy_consensus::Header)>) {
+    pub fn extend_headers(
+        &self,
+        iter: impl IntoIterator<Item = (B256, base_common_consensus::Header)>,
+    ) {
         for (hash, header) in iter {
             self.add_header(hash, header)
         }
@@ -506,12 +508,15 @@ impl DBProvider for MockEthProvider {
 }
 
 impl HeaderProvider for MockEthProvider {
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
+    fn header(
+        &self,
+        block_hash: BlockHash,
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
         let lock = self.headers.lock();
         Ok(lock.get(&block_hash).cloned())
     }
 
-    fn header_by_number(&self, num: u64) -> ProviderResult<Option<alloy_consensus::Header>> {
+    fn header_by_number(&self, num: u64) -> ProviderResult<Option<base_common_consensus::Header>> {
         let lock = self.headers.lock();
         Ok(lock.values().find(|h| h.number() == num).cloned())
     }
@@ -519,7 +524,7 @@ impl HeaderProvider for MockEthProvider {
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
         let lock = self.headers.lock();
 
         let mut headers: Vec<_> =
@@ -903,7 +908,7 @@ impl BlockReaderIdExt for MockEthProvider {
         self.header_by_id(id)?.map_or_else(|| Ok(None), |h| Ok(Some(SealedHeader::seal_slow(h))))
     }
 
-    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<alloy_consensus::Header>> {
+    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<base_common_consensus::Header>> {
         match self.block_by_id(id)? {
             None => Ok(None),
             Some(block) => Ok(Some(block.into_header())),
@@ -1218,9 +1223,8 @@ impl CanonStateSubscriptions for MockEthProvider {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Header;
     use alloy_primitives::BlockHash;
-    use base_common_consensus::BaseReceipt;
+    use base_common_consensus::{BaseReceipt, Header};
 
     use super::*;
 
@@ -1232,12 +1236,12 @@ mod tests {
         let block_number = 1u64;
         let header = Header { number: block_number, ..Default::default() };
 
-        let receipt1 = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let receipt1 = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 21000,
             status: (true).into(),
             ..Default::default()
         });
-        let receipt2 = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let receipt2 = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 42000,
             status: (true).into(),
             ..Default::default()
@@ -1276,13 +1280,13 @@ mod tests {
         let header2 = Header { number: block2_number, ..Default::default() };
 
         let receipts1 =
-            vec![base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
+            vec![base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
                 cumulative_gas_used: 21000,
                 status: (true).into(),
                 ..Default::default()
             })];
         let receipts2 =
-            vec![base_common_consensus::BaseReceipt::Legacy(alloy_consensus::Receipt {
+            vec![base_common_consensus::BaseReceipt::Legacy(base_common_consensus::Receipt {
                 cumulative_gas_used: 42000,
                 status: (true).into(),
                 ..Default::default()

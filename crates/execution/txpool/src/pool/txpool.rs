@@ -10,10 +10,6 @@ use std::{
     sync::Arc,
 };
 
-use alloy_consensus::constants::{
-    EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID, KECCAK_EMPTY,
-    LEGACY_TX_TYPE_ID,
-};
 use alloy_eips::{
     eip1559::{ETHEREUM_BLOCK_GAS_LIMIT_30M, MIN_PROTOCOL_BASE_FEE},
     eip4844::BLOB_TX_MIN_BLOB_GASPRICE,
@@ -23,6 +19,10 @@ use alloy_primitives::Address;
 use alloy_primitives::{
     B256, TxHash, U256,
     map::{AddressSet, B256Map, B256Set},
+};
+use base_common_consensus::constants::{
+    EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID, KECCAK_EMPTY,
+    LEGACY_TX_TYPE_ID,
 };
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -2345,8 +2345,8 @@ impl SenderInfo {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Transaction, TxType};
     use alloy_primitives::address;
+    use base_common_consensus::{Transaction, TxType};
 
     use super::*;
     use crate::{

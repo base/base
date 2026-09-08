@@ -1,8 +1,8 @@
 //! Helpers for `eth_blockAccessList` RPC method.
-use alloy_consensus::BlockHeader;
 use alloy_eip7928::{BlockAccessList, bal::DecodedBal};
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::BlockId;
+use base_common_consensus::BlockHeader;
 use base_execution_evm::{BlockExecutor, Evm};
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, error::FromEthApiError};
 use reth_storage_api::StateProviderFactory;

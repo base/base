@@ -213,13 +213,13 @@ pub struct ReceiptWithBlockNumber<R> {
 
 #[cfg(test)]
 mod test {
-    use alloy_consensus::{EthereumReceipt as Receipt, TxType};
     use alloy_primitives::{
         Bytes, Log, LogData, address, b256,
         bytes::{Buf, BytesMut},
         hex,
     };
     use alloy_rlp::{Decodable, RlpDecodable};
+    use base_common_consensus::{EthereumReceipt as Receipt, TxType};
     use reth_tracing::init_test_tracing;
     use tokio_util::codec::Decoder;
 

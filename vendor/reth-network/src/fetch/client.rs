@@ -83,7 +83,7 @@ impl FetchClient {
 type HeadersClientFuture<T> = Either<FlattenedResponse<T>, future::Ready<T>>;
 
 impl HeadersClient for FetchClient {
-    type Output = HeadersClientFuture<PeerRequestResult<Vec<alloy_consensus::Header>>>;
+    type Output = HeadersClientFuture<PeerRequestResult<Vec<base_common_consensus::Header>>>;
 
     /// Sends a `GetBlockHeaders` request to an available peer.
     fn get_headers_with_priority(

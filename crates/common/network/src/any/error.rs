@@ -6,7 +6,7 @@ use core::{
     fmt::{Debug, Display},
 };
 
-use alloy_consensus::error::UnsupportedTransactionType;
+use base_common_consensus::error::UnsupportedTransactionType;
 
 use crate::{Network, TransactionBuilderError};
 
@@ -58,7 +58,7 @@ impl<N: Network, TxType: Display + Debug + Sync + Send + 'static>
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::TxType;
+    use base_common_consensus::TxType;
 
     use super::*;
     use crate::AnyNetwork;

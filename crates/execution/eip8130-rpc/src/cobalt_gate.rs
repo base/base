@@ -1,8 +1,8 @@
 //! Cobalt fork-activation gate for EIP-8130 RPC reads.
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use base_common_chains::Upgrades;
+use base_common_consensus::BlockHeader;
 use base_common_rpc_types::EIP8130_PRE_COBALT_RPC_ERROR;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_rpc::{BaseEthApi, RpcNodeCore};

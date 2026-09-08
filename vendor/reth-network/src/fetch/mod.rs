@@ -51,7 +51,8 @@ type InflightSnapRequest = Request<(), PeerRequestResult<SnapResponse>>;
 #[derive(Debug)]
 pub struct StateFetcher {
     /// Currently active [`GetBlockHeaders`] requests
-    inflight_headers_requests: HashMap<PeerId, InflightHeadersRequest<alloy_consensus::Header>>,
+    inflight_headers_requests:
+        HashMap<PeerId, InflightHeadersRequest<base_common_consensus::Header>>,
     /// Currently active [`GetBlockBodies`] requests
     inflight_bodies_requests:
         HashMap<PeerId, InflightBodiesRequest<base_common_consensus::BaseBlockBody>>,
@@ -383,7 +384,7 @@ impl StateFetcher {
     pub(crate) fn on_block_headers_response(
         &mut self,
         peer_id: PeerId,
-        res: RequestResult<Vec<alloy_consensus::Header>>,
+        res: RequestResult<Vec<base_common_consensus::Header>>,
     ) -> Option<BlockResponseOutcome> {
         let is_error = res.is_err();
         let maybe_reputation_change = res.reputation_change_err();
@@ -711,7 +712,7 @@ pub(crate) enum DownloadRequest {
     /// Download the requested headers and send response through channel
     GetBlockHeaders {
         request: HeadersRequest,
-        response: oneshot::Sender<PeerRequestResult<Vec<alloy_consensus::Header>>>,
+        response: oneshot::Sender<PeerRequestResult<Vec<base_common_consensus::Header>>>,
         priority: Priority,
     },
     /// Download the requested bodies and send response through channel
@@ -851,8 +852,8 @@ enum BestPeerRequirements {
 mod tests {
     use std::future::poll_fn;
 
-    use alloy_consensus::Header;
     use alloy_primitives::B512;
+    use base_common_consensus::Header;
     use reth_eth_wire::Capability;
     use reth_eth_wire_types::snap::{AccountRangeMessage, GetAccountRangeMessage};
 

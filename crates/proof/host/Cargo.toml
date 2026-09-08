@@ -28,17 +28,16 @@ alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
 base-common-network = { workspace = true }
-base-common-consensus = { workspace = true }
 alloy-rpc-types-beacon = { workspace = true }
 base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["default"] }
 base-proof = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 base-proof-client = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["default"] }
 base-proof-preimage = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["std"]}
 base-common-rpc-types = { workspace = true, features = ["network"]}
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 alloy-rpc-types = { workspace = true, features = ["default", "debug"] }

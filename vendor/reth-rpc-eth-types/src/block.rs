@@ -2,9 +2,8 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{BlockHeader, TxReceipt, transaction::TransactionMeta};
 use alloy_primitives::TxHash;
-use base_common_consensus::BaseReceipt;
+use base_common_consensus::{BaseReceipt, BlockHeader, TxReceipt, transaction::TransactionMeta};
 use base_common_rpc_types::BaseTransactionReceipt;
 use reth_primitives_traits::{BlockBody, IndexedTx, Recovered, RecoveredBlock, SealedBlock};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
@@ -65,7 +64,7 @@ impl<R> CachedTransaction<R> {
     /// Constructs a [`TransactionMeta`] for this cached transaction using the given tx hash.
     pub fn transaction_meta(&self, tx_hash: TxHash) -> TransactionMeta
     where
-        alloy_consensus::Header: BlockHeader,
+        base_common_consensus::Header: BlockHeader,
     {
         TransactionMeta {
             tx_hash,

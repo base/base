@@ -18,7 +18,6 @@ thiserror = { workspace = true }
 alloy-trie = { workspace = true }
 alloy-eips = { workspace = true }
 base-protocol = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -37,17 +36,16 @@ reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-genesis = { workspace = true }
 rand = { workspace = true, features = ["default"] }
-alloy-consensus = {workspace = true, features = ["serde"]}
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-consensus = { workspace = true, features = ["reth", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 
 [features]
 default = ["std"]
 std = [
     "alloy-chains/std",
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "alloy-trie/std",

@@ -1,6 +1,5 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use alloy_consensus::{BlockHeader, constants::KECCAK_EMPTY, transaction::TxHashRef};
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_genesis::ChainConfig;
 use alloy_hardforks::EthereumHardforks;
@@ -15,6 +14,7 @@ use alloy_rpc_types_trace::geth::{
     BlockTraceResult, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult,
 };
 use async_trait::async_trait;
+use base_common_consensus::{BlockHeader, constants::KECCAK_EMPTY, transaction::TxHashRef};
 use base_common_rpc_types::BaseTransactionRequest;
 use base_evm_handler::{BlockEnvironment, Evm};
 use base_execution_chainspec::ChainSpecProvider;

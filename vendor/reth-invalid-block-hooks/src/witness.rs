@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, fmt::Debug, fs::File, io::Write, path::PathBuf};
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
+use base_common_consensus::BlockHeader;
 use base_execution_evm::{BaseEvmConfig, Executor};
 use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;

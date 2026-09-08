@@ -3,10 +3,10 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
 use alloy_rlp::{RlpDecodable, RlpDecodableWrapper, RlpEncodable, RlpEncodableWrapper};
+use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
 use derive_more::{Deref, IntoIterator};
 use reth_codecs_derive::{add_arbitrary_tests, generate_tests};
 
@@ -56,12 +56,12 @@ pub struct GetBlockHeaders {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-pub struct BlockHeaders<H = alloy_consensus::Header>(
+pub struct BlockHeaders<H = base_common_consensus::Header>(
     /// The requested headers.
     pub Vec<H>,
 );
 
-generate_tests!(#[rlp, 10] BlockHeaders<alloy_consensus::Header>, EthBlockHeadersTests);
+generate_tests!(#[rlp, 10] BlockHeaders<base_common_consensus::Header>, EthBlockHeadersTests);
 
 impl<H> From<Vec<H>> for BlockHeaders<H> {
     fn from(headers: Vec<H>) -> Self {
@@ -110,12 +110,12 @@ impl From<Vec<B256>> for GetBlockBodies {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-pub struct BlockBodies<B = alloy_consensus::BlockBody<EthereumTxEnvelope<TxEip4844>>>(
+pub struct BlockBodies<B = base_common_consensus::BlockBody<EthereumTxEnvelope<TxEip4844>>>(
     /// The requested block bodies, each of which should correspond to a hash in the request.
     pub Vec<B>,
 );
 
-generate_tests!(#[rlp, 16] BlockBodies<alloy_consensus::BlockBody::<alloy_consensus::EthereumTxEnvelope::<alloy_consensus::TxEip4844>>>, EthBlockBodiesTests);
+generate_tests!(#[rlp, 16] BlockBodies<base_common_consensus::BlockBody::<base_common_consensus::EthereumTxEnvelope::<base_common_consensus::TxEip4844>>>, EthBlockBodiesTests);
 
 impl<B> From<Vec<B>> for BlockBodies<B> {
     fn from(bodies: Vec<B>) -> Self {
@@ -127,12 +127,12 @@ impl<B> From<Vec<B>> for BlockBodies<B> {
 mod tests {
     use std::str::FromStr;
 
-    use alloy_consensus::{
-        EthereumTxEnvelope, EthereumTypedTransaction, Header, TxEip4844, TxLegacy,
-    };
     use alloy_eips::BlockHashOrNumber;
     use alloy_primitives::{Signature, TxKind, U256, hex};
     use alloy_rlp::{Decodable, Encodable};
+    use base_common_consensus::{
+        EthereumTxEnvelope, EthereumTypedTransaction, Header, TxEip4844, TxLegacy,
+    };
 
     use crate::{
         BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HeadersDirection,
@@ -395,7 +395,7 @@ mod tests {
         let request = RequestPair {
             request_id: 1111,
             message: BlockBodies(vec![
-                alloy_consensus::BlockBody::<EthereumTxEnvelope::<TxEip4844>> {
+                base_common_consensus::BlockBody::<EthereumTxEnvelope::<TxEip4844>> {
                     transactions: vec![
                         EthereumTxEnvelope::<TxEip4844>::new_unhashed(EthereumTypedTransaction::<TxEip4844>::Legacy(TxLegacy {
                             chain_id: Some(1),
@@ -470,7 +470,7 @@ mod tests {
         let expected = RequestPair {
             request_id: 1111,
             message: BlockBodies(vec![
-                alloy_consensus::BlockBody::<EthereumTxEnvelope::<TxEip4844>> {
+                base_common_consensus::BlockBody::<EthereumTxEnvelope::<TxEip4844>> {
                     transactions: vec![
                         EthereumTxEnvelope::<TxEip4844>::new_unhashed(EthereumTypedTransaction::<TxEip4844>::Legacy(
                             TxLegacy {
@@ -546,7 +546,7 @@ mod tests {
         let mut buf = Vec::new();
         body.encode(&mut buf);
         let decoded =
-            BlockBodies::<alloy_consensus::BlockBody<EthereumTxEnvelope<TxEip4844>>>::decode(
+            BlockBodies::<base_common_consensus::BlockBody<EthereumTxEnvelope<TxEip4844>>>::decode(
                 &mut buf.as_slice(),
             )
             .unwrap();

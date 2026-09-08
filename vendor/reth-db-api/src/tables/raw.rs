@@ -1,4 +1,4 @@
-use reth_codecs::DecompressError;
+use base_common_consensus::DecompressError;
 use serde::{Deserialize, Serialize};
 
 use crate::{

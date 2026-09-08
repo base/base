@@ -1,9 +1,8 @@
 use std::{ops::RangeInclusive, sync::Arc};
 
-use alloy_consensus::Header;
 use alloy_eips::{BlockHashOrNumber, BlockNumHash};
 use alloy_primitives::{B256, Bytes, map::B256Map};
-use base_common_consensus::BaseBlockBody as BlockBody;
+use base_common_consensus::{BaseBlockBody as BlockBody, Header};
 use parking_lot::Mutex;
 use reth_eth_wire_types::{BlockAccessLists, HeadersDirection};
 use reth_network_peers::{PeerId, WithPeerId};

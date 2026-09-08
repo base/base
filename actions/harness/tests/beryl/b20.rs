@@ -1,11 +1,10 @@
 //! B-20 precompile action tests across the Base Beryl boundary.
 
-use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, TxKind, U256, keccak256};
 use alloy_signer::SignerSync;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_action_harness::TEST_ACCOUNT_KEY;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxReceipt};
 use base_common_network::PrivateKeySigner;
 use base_common_precompiles::{B20_MAX_SUPPLY_CAP, B20TokenRole, IB20};
 

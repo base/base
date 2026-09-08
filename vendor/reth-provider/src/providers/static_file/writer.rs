@@ -6,11 +6,9 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::{BlockHash, BlockNumber, TxNumber, U256};
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, BlockHeader, Compact};
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
-use reth_codecs::Compact;
 use reth_db::models::{AccountBeforeTx, StorageBeforeTx};
 use reth_db_api::models::CompactU256;
 use reth_nippy_jar::{NippyJar, NippyJarError, NippyJarWriter};
@@ -1132,7 +1130,7 @@ impl StaticFileProviderRW {
     /// blocks.
     pub fn append_header(
         &mut self,
-        header: &alloy_consensus::Header,
+        header: &base_common_consensus::Header,
         hash: &BlockHash,
     ) -> ProviderResult<()> {
         self.append_header_with_td(header, U256::ZERO, hash)
@@ -1144,7 +1142,7 @@ impl StaticFileProviderRW {
     /// blocks.
     pub fn append_header_with_td(
         &mut self,
-        header: &alloy_consensus::Header,
+        header: &base_common_consensus::Header,
         total_difficulty: U256,
         hash: &BlockHash,
     ) -> ProviderResult<()> {
@@ -1174,7 +1172,7 @@ impl StaticFileProviderRW {
     /// This is useful for genesis blocks with non-zero block numbers.
     pub fn append_header_direct(
         &mut self,
-        header: &alloy_consensus::Header,
+        header: &base_common_consensus::Header,
         total_difficulty: U256,
         hash: &BlockHash,
     ) -> ProviderResult<()> {

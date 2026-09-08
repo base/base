@@ -1,10 +1,9 @@
 use std::fmt::Debug;
 
-use alloy_consensus::Block;
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, Block};
 use base_common_rpc_types::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_protocol::BlockInfo;
@@ -112,7 +111,7 @@ impl RemoteClient for RemoteL2Client {
 
         let consensus_block: Block<BaseTxEnvelope> = Block {
             header: rpc_block.header.inner,
-            body: alloy_consensus::BlockBody {
+            body: base_common_consensus::BlockBody {
                 transactions: txs,
                 ommers: vec![],
                 withdrawals: rpc_block.withdrawals,

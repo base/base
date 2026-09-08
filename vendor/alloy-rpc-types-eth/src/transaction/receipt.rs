@@ -1,7 +1,7 @@
-use alloy_consensus::{ReceiptEnvelope, TxReceipt, TxType};
 use alloy_network_primitives::ReceiptResponse;
 use alloy_primitives::{Address, B256, BlockHash, TxHash};
 use alloy_sol_types::SolEvent;
+use base_common_consensus::{ReceiptEnvelope, TxReceipt, TxType};
 
 use crate::Log;
 
@@ -321,9 +321,9 @@ impl From<TransactionReceipt> for TransactionReceipt<ReceiptEnvelope<alloy_primi
 
 #[cfg(test)]
 mod test {
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
     use alloy_primitives::{Bloom, address, b256, bloom};
     use arbitrary::Arbitrary;
+    use base_common_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
     use rand_08::Rng;
     use similar_asserts::assert_eq;
 

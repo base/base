@@ -198,7 +198,7 @@ pub enum PeerRequest {
         /// The request for block headers.
         request: GetBlockHeaders,
         /// The channel to send the response for block headers.
-        response: oneshot::Sender<RequestResult<BlockHeaders<alloy_consensus::Header>>>,
+        response: oneshot::Sender<RequestResult<BlockHeaders<base_common_consensus::Header>>>,
     },
     /// Requests block bodies from the peer.
     ///

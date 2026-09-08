@@ -36,18 +36,18 @@ alloy-rlp = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-serde = { workspace = true, optional = true }
-alloy-consensus = { workspace = true, features = ["serde"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 serde = { workspace = true, features = [
     "derive",
     "alloc",
     "derive",
 ], optional = true }
+base-common-consensus = { workspace = true, features = ["serde"] }
 [dev-dependencies]
 serde_json = { workspace = true, features = ["alloc"] }
 arbitrary = { workspace = true, features = ["derive"] }
 bincode = { workspace = true, features = ["default", "serde"] }
-alloy-consensus = { workspace = true, features = ["arbitrary"] }
+base-common-consensus = { workspace = true, features = ["arbitrary"] }
 [lints]
 workspace = true
 
@@ -56,7 +56,7 @@ arbitrary = [
     "std",
     "dep:arbitrary",
     "alloy-eips/arbitrary",
-    "alloy-consensus/arbitrary",
+    "base-common-consensus/arbitrary",
     "alloy-primitives/arbitrary",
     "alloy-serde?/arbitrary",
 ]
@@ -66,11 +66,11 @@ serde = [
     "alloy-primitives/serde",
     "dep:alloy-serde",
     "alloy-eips/serde",
-    "alloy-consensus/serde",
+    "base-common-consensus/serde",
 ]
 std = [
     "alloy-eips/std",
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "alloy-serde?/std",
     "alloy-primitives/std",
     "alloy-rlp/std",

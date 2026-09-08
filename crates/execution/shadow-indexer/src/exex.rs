@@ -255,8 +255,8 @@ impl ShadowIndexerExEx {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use alloy_consensus::Receipt;
     use alloy_primitives::B256;
+    use base_common_consensus::Receipt;
     use base_execution_evm::BaseEvmConfig;
     use futures::TryStreamExt;
     use reth_chain_state::ForkChoiceStream;

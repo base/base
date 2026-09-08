@@ -82,9 +82,10 @@ impl BaseTimeCache {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{BlockBody, Header, Sealable};
     use alloy_primitives::B256;
-    use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{
+        BaseBlock, BaseTxEnvelope, BlockBody, Header, Sealable, TxDeposit,
+    };
     use base_protocol::BaseTimeUpdateTx;
     use reth_provider::test_utils::MockEthProvider;
 

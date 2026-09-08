@@ -6,10 +6,9 @@ use std::{
     time::Instant,
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::BlockNumber;
-use base_common_consensus::ChainInfo;
+use base_common_consensus::{BlockHeader, ChainInfo};
 use parking_lot::RwLock;
 use reth_primitives_traits::SealedHeader;
 use tokio::sync::watch;

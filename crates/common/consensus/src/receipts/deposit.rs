@@ -1,21 +1,21 @@
 //! Transaction receipt types for Base chains.
 
-use alloy_consensus::{
+use alloy_primitives::{Bloom, Log};
+use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
+use base_common_consensus::{
     Eip658Value, InMemorySize, Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt,
     TxReceipt,
 };
-use alloy_primitives::{Bloom, Log};
-use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
 
 use super::BaseTxReceipt;
-use crate::transaction::DepositInfo;
+use crate::base_transaction::DepositInfo;
 
 /// [`DepositReceipt`] with calculated bloom filter, modified for Base.
 ///
 /// This convenience type allows us to lazily calculate the bloom filter for a
 /// receipt, similar to [`Sealed`].
 ///
-/// [`Sealed`]: alloy_consensus::Sealed
+/// [`Sealed`]: base_common_consensus::Sealed
 pub type DepositReceiptWithBloom<T = Log> = ReceiptWithBloom<DepositReceipt<T>>;
 
 /// Receipt containing result of transaction execution.
@@ -273,7 +273,7 @@ where
 pub(super) mod serde_bincode_compat {
     use alloc::borrow::Cow;
 
-    use alloy_consensus::Receipt;
+    use base_common_consensus::Receipt;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
@@ -406,9 +406,9 @@ mod tests {
     #[cfg(not(feature = "std"))]
     use alloc::{vec, vec::Vec};
 
-    use alloy_consensus::Receipt;
     use alloy_primitives::{Bytes, Log, LogData, address, b256, bytes, hex};
     use alloy_rlp::{Decodable, Encodable};
+    use base_common_consensus::Receipt;
 
     use super::*;
 

@@ -2,9 +2,8 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_consensus::{BlockHeader, transaction::SignerRecoverable};
 use alloy_primitives::B256;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BlockHeader, transaction::SignerRecoverable};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder};
 use eyre::{Result as EyreResult, eyre};
@@ -72,7 +71,7 @@ where
             let signer = tx
                 .recover_signer()
                 .map_err(|e| eyre!("Failed to recover signer for tx {}: {}", tx_hash, e))?;
-            Ok(alloy_consensus::transaction::Recovered::new_unchecked(tx.clone(), signer))
+            Ok(base_common_consensus::transaction::Recovered::new_unchecked(tx.clone(), signer))
         })
         .collect::<EyreResult<Vec<_>>>()?;
     let tx_count = recovered_transactions.len();
@@ -124,9 +123,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Header, TxEip1559};
     use alloy_primitives::{Address, Signature};
-    use base_common_consensus::{BaseBlockBody, BaseTransactionSigned};
+    use base_common_consensus::{BaseBlockBody, BaseTransactionSigned, Header, TxEip1559};
     use base_execution_txpool::test_utils::TransactionBuilder;
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::Account;
@@ -400,7 +398,7 @@ mod tests {
             Signature::new(alloy_primitives::U256::ZERO, alloy_primitives::U256::ZERO, false);
 
         let signed_tx =
-            alloy_consensus::Signed::new_unchecked(tx, invalid_signature, B256::random());
+            base_common_consensus::Signed::new_unchecked(tx, invalid_signature, B256::random());
         let base_tx = BaseTransactionSigned::Eip1559(signed_tx);
 
         let block = create_block_with_transactions(&harness, vec![base_tx]);

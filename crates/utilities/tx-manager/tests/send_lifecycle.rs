@@ -11,9 +11,9 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::Transaction;
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
+use base_common_consensus::Transaction;
 use base_tx_manager::{SendState, SimpleTxManager, TxManager, TxManagerConfig, TxManagerError};
 use common::{
     SAFE_ABORT_DEPTH, mine_block, publish_simple_tx, setup_with_config, setup_with_failing_signer,

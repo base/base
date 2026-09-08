@@ -1,3 +1,3 @@
 //! Crypto utilities.
 
-pub use alloy_consensus::crypto::*;
+pub use base_common_consensus::crypto::*;

@@ -8,16 +8,16 @@ use std::{
     ops::{Range, RangeInclusive},
 };
 
-use alloy_consensus::{
-    EthereumReceipt as Receipt, EthereumTxEnvelope, EthereumTypedTransaction, Header,
-    SignableTransaction, Transaction as _, TxEip4844, TxLegacy,
-};
 use alloy_eips::{
     NumHash,
     eip1898::BlockWithParent,
     eip4895::{Withdrawal, Withdrawals},
 };
 use alloy_primitives::{Address, B64, B256, BlockNumber, Bytes, TxKind, U256};
+use base_common_consensus::{
+    EthereumReceipt as Receipt, EthereumTxEnvelope, EthereumTypedTransaction, Header,
+    SignableTransaction, Transaction as _, TxEip4844, TxLegacy,
+};
 pub use rand::Rng;
 use rand::{SeedableRng, distr::uniform::SampleRange, rngs::StdRng};
 use reth_primitives_traits::{
@@ -123,7 +123,7 @@ pub fn random_block_with_parent<R: Rng>(
 ///
 /// The header is assumed not to be correct if validated.
 pub fn random_header<R: Rng>(rng: &mut R, number: u64, parent: Option<B256>) -> SealedHeader {
-    let header = alloy_consensus::Header {
+    let header = base_common_consensus::Header {
         number,
         nonce: B64::random(),
         difficulty: U256::from(rng.random::<u32>()),
@@ -494,9 +494,9 @@ pub fn random_log<R: Rng>(rng: &mut R, address: Option<Address>, topics_count: O
 mod tests {
     use std::str::FromStr;
 
-    use alloy_consensus::TxEip1559;
     use alloy_eips::eip2930::AccessList;
     use alloy_primitives::{Signature, hex};
+    use base_common_consensus::TxEip1559;
     use reth_primitives_traits::{
         SignerRecoverable,
         crypto::secp256k1::{public_key_to_address, sign_message},

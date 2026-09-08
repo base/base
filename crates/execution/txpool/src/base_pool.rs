@@ -2,12 +2,12 @@
 
 use std::{collections::HashMap, fmt, sync::Arc};
 
-use alloy_consensus::Transaction;
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
     eip7594::BlobTransactionSidecarVariant,
 };
 use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
+use base_common_consensus::Transaction;
 use base_execution_txpool::{
     AddedTransactionOutcome, AddedTransactionState, AllPoolTransactions, AllTransactionsEvents,
     BestTransactions, BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo,
@@ -1777,17 +1777,14 @@ fn pooled_element<T: BasePooledTx>(
 mod tests {
     use std::time::{Duration, Instant};
 
-    use alloy_consensus::{
-        SignableTransaction, Transaction, TxEip1559,
-        transaction::{Recovered, SignerRecoverable},
-    };
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope,
-        Eip8130Constants, Eip8130Signed, TxEip8130,
+        Eip8130Constants, Eip8130Signed, SignableTransaction, Transaction, TxEip1559, TxEip8130,
+        transaction::{Recovered, SignerRecoverable},
     };
     use base_common_network::PrivateKeySigner;
     use base_execution_chainspec::BaseChainSpecBuilder;
@@ -2340,7 +2337,7 @@ mod tests {
         assert!(pool.guard.read().contains(&hash));
 
         let block = SealedBlock::seal_slow(BaseBlock {
-            header: alloy_consensus::Header { timestamp: 1, ..Default::default() },
+            header: base_common_consensus::Header { timestamp: 1, ..Default::default() },
             body: Default::default(),
         });
         pool.on_canonical_state_change(CanonicalStateUpdate {

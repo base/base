@@ -5,13 +5,14 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{BlobTransactionValidationError, Typed2718};
 use alloy_eips::{
     eip2718::Encodable2718, eip4844::env_settings::KzgSettings,
     eip7594::BlobTransactionSidecarVariant,
 };
 use alloy_primitives::{Address, TxHash, U256};
-use base_common_consensus::{BasePooledTransaction, BaseTxEnvelope};
+use base_common_consensus::{
+    BasePooledTransaction, BaseTxEnvelope, BlobTransactionValidationError, Typed2718,
+};
 use reth_primitives_traits::Recovered;
 
 use crate::{EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction};

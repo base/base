@@ -1,18 +1,17 @@
-use alloy_consensus::{
-    Extended, InMemorySize, Sealable, Sealed, SignableTransaction, Signed, TransactionEnvelope,
-    TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
-    error::ValueError,
-    transaction::{TransactionInfo, TxHashRef},
-};
-use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{B256, Bytes, Signature, TxHash};
+use alloy_eips::{eip2718::Encodable2718, eip7594::Encodable7594};
+use alloy_primitives::{B256, Bytes, Signature};
 
+use super::SignableTransaction;
 use crate::{
-    BasePooledTransaction, TxDeposit,
-    transaction::{BaseTransactionInfo, DepositInfo, Eip8130Signed, TxEip8130},
+    Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEip4844WithSidecar, TxEip7702, TxLegacy,
+    error::ValueError,
+    transaction::{
+        RlpEcdsaEncodableTx, TxHashRef,
+        eip4844::{TxEip4844, TxEip4844Variant},
+    },
 };
 
-/// The Ethereum [EIP-2718] Transaction Envelope, modified for Base.
+/// The Ethereum [EIP-2718] Transaction Envelope.
 ///
 /// # Note:
 ///
@@ -23,9 +22,470 @@ use crate::{
 /// flag.
 ///
 /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
-#[derive(Debug, Clone, TransactionEnvelope)]
-#[envelope(tx_type_name = OpTxType, typed = BaseTypedTransaction, serde_cfg(feature = "serde"), arbitrary_cfg(feature = "arbitrary"))]
-pub enum BaseTxEnvelope {
+pub type TxEnvelope = EthereumTxEnvelope<TxEip4844Variant>;
+
+impl<T: Encodable7594> EthereumTxEnvelope<TxEip4844Variant<T>> {
+    /// Attempts to convert the envelope into the pooled variant.
+    ///
+    /// Returns an error if the envelope's variant is incompatible with the pooled format:
+    /// [`crate::TxEip4844`] without the sidecar.
+    pub fn try_into_pooled(
+        self,
+    ) -> Result<EthereumTxEnvelope<TxEip4844WithSidecar<T>>, ValueError<Self>> {
+        match self {
+            Self::Legacy(tx) => Ok(tx.into()),
+            Self::Eip2930(tx) => Ok(tx.into()),
+            Self::Eip1559(tx) => Ok(tx.into()),
+            Self::Eip4844(tx) => EthereumTxEnvelope::try_from(tx).map_err(ValueError::convert),
+            Self::Eip7702(tx) => Ok(tx.into()),
+        }
+    }
+}
+
+impl EthereumTxEnvelope<TxEip4844> {
+    /// Attempts to convert the envelope into the pooled variant.
+    ///
+    /// Returns an error if the envelope's variant is incompatible with the pooled format:
+    /// [`crate::TxEip4844`] without the sidecar.
+    pub fn try_into_pooled<T>(
+        self,
+    ) -> Result<EthereumTxEnvelope<TxEip4844WithSidecar<T>>, ValueError<Self>> {
+        match self {
+            Self::Legacy(tx) => Ok(tx.into()),
+            Self::Eip2930(tx) => Ok(tx.into()),
+            Self::Eip1559(tx) => Ok(tx.into()),
+            Self::Eip4844(tx) => {
+                Err(ValueError::new(tx.into(), "pooled transaction requires 4844 sidecar"))
+            }
+            Self::Eip7702(tx) => Ok(tx.into()),
+        }
+    }
+
+    /// Converts from an EIP-4844 transaction to a [`EthereumTxEnvelope<TxEip4844WithSidecar<T>>`]
+    /// with the given sidecar.
+    ///
+    /// Returns an `Err` containing the original [`EthereumTxEnvelope`] if the transaction is not an
+    /// EIP-4844 variant.
+    pub fn try_into_pooled_eip4844<T>(
+        self,
+        sidecar: T,
+    ) -> Result<EthereumTxEnvelope<TxEip4844WithSidecar<T>>, ValueError<Self>> {
+        match self {
+            Self::Eip4844(tx) => {
+                Ok(EthereumTxEnvelope::Eip4844(tx.map(|tx| tx.with_sidecar(sidecar))))
+            }
+            this => Err(ValueError::new_static(this, "Expected 4844 transaction")),
+        }
+    }
+}
+
+impl<T> EthereumTxEnvelope<T> {
+    /// Creates a new signed transaction from the given transaction, signature and hash.
+    ///
+    /// Caution: This assumes the given hash is the correct transaction hash.
+    pub fn new_unchecked(
+        transaction: EthereumTypedTransaction<T>,
+        signature: Signature,
+        hash: B256,
+    ) -> Self
+    where
+        T: RlpEcdsaEncodableTx,
+    {
+        Signed::new_unchecked(transaction, signature, hash).into()
+    }
+
+    /// Creates a new signed transaction from the given typed transaction and signature without the
+    /// hash.
+    ///
+    /// Note: this only calculates the hash on the first [`EthereumTxEnvelope::hash`] call.
+    pub fn new_unhashed(transaction: EthereumTypedTransaction<T>, signature: Signature) -> Self
+    where
+        T: RlpEcdsaEncodableTx + SignableTransaction<Signature>,
+    {
+        transaction.into_signed(signature).into()
+    }
+
+    /// Consumes the type, removes the signature and returns the transaction.
+    #[inline]
+    pub fn into_typed_transaction(self) -> EthereumTypedTransaction<T>
+    where
+        T: RlpEcdsaEncodableTx,
+    {
+        match self {
+            Self::Legacy(tx) => EthereumTypedTransaction::Legacy(tx.into_parts().0),
+            Self::Eip2930(tx) => EthereumTypedTransaction::Eip2930(tx.into_parts().0),
+            Self::Eip1559(tx) => EthereumTypedTransaction::Eip1559(tx.into_parts().0),
+            Self::Eip4844(tx) => EthereumTypedTransaction::Eip4844(tx.into_parts().0),
+            Self::Eip7702(tx) => EthereumTypedTransaction::Eip7702(tx.into_parts().0),
+        }
+    }
+
+    /// Returns a mutable reference to the transaction's input.
+    #[doc(hidden)]
+    pub fn input_mut(&mut self) -> &mut Bytes
+    where
+        T: AsMut<TxEip4844>,
+    {
+        match self {
+            Self::Eip1559(tx) => &mut tx.tx_mut().input,
+            Self::Eip2930(tx) => &mut tx.tx_mut().input,
+            Self::Legacy(tx) => &mut tx.tx_mut().input,
+            Self::Eip7702(tx) => &mut tx.tx_mut().input,
+            Self::Eip4844(tx) => &mut tx.tx_mut().as_mut().input,
+        }
+    }
+}
+
+impl<T> EthereumTypedTransaction<TxEip4844Variant<T>> {
+    /// Strips the sidecar from EIP-4844 transactions and returns both the transaction and the
+    /// sidecar separately, keeping the same sidecar type parameter.
+    ///
+    /// This method consumes the typed transaction and returns:
+    /// - An [`EthereumTypedTransaction<TxEip4844Variant<T>>`] with the sidecar stripped from
+    ///   EIP-4844 transactions
+    /// - An [`Option<T>`] containing the sidecar if this was an EIP-4844 transaction with a sidecar
+    ///
+    /// For non-EIP-4844 transactions, this returns the transaction unchanged with `None` for the
+    /// sidecar.
+    ///
+    /// This is a convenience wrapper around
+    /// [`strip_eip4844_sidecar_into`](Self::strip_eip4844_sidecar_into) that keeps the same type
+    /// parameter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use base_common_consensus::{EthereumTypedTransaction, TxEip4844Variant};
+    /// # use alloy_eips::eip4844::BlobTransactionSidecar;
+    /// # fn example(tx: EthereumTypedTransaction<TxEip4844Variant<BlobTransactionSidecar>>) {
+    /// // Strip the sidecar from the transaction (type parameter stays the same)
+    /// let (tx_without_sidecar, maybe_sidecar) = tx.strip_eip4844_sidecar();
+    ///
+    /// if let Some(sidecar) = maybe_sidecar {
+    ///     // Process the blob sidecar separately
+    ///     println!("Transaction had {} blobs", sidecar.blobs.len());
+    /// }
+    /// # }
+    /// ```
+    pub fn strip_eip4844_sidecar(self) -> (Self, Option<T>) {
+        self.strip_eip4844_sidecar_into()
+    }
+
+    /// Strips the sidecar from EIP-4844 transactions and returns both the transaction and the
+    /// sidecar separately, converting to a different sidecar type parameter.
+    ///
+    /// This method consumes the typed transaction and returns:
+    /// - An [`EthereumTypedTransaction<TxEip4844Variant<U>>`] with the sidecar stripped from
+    ///   EIP-4844 transactions
+    /// - An [`Option<T>`] containing the sidecar if this was an EIP-4844 transaction with a sidecar
+    ///
+    /// For non-EIP-4844 transactions, this simply converts the type parameter and returns `None`
+    /// for the sidecar.
+    ///
+    /// This is useful when you need to:
+    /// - Extract blob data from pooled transactions for separate processing
+    /// - Convert between different sidecar type parameters
+    /// - Prepare transactions for storage (without sidecars)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use base_common_consensus::{EthereumTypedTransaction, TxEip4844Variant};
+    /// # use alloy_eips::eip4844::BlobTransactionSidecar;
+    /// # use alloy_eips::eip7594::BlobTransactionSidecarVariant;
+    /// # fn example(tx: EthereumTypedTransaction<TxEip4844Variant<BlobTransactionSidecar>>) {
+    /// // Strip the sidecar and convert to a different type parameter
+    /// let (tx_without_sidecar, maybe_sidecar): (
+    ///     EthereumTypedTransaction<TxEip4844Variant<BlobTransactionSidecarVariant>>,
+    ///     _,
+    /// ) = tx.strip_eip4844_sidecar_into();
+    ///
+    /// if let Some(sidecar) = maybe_sidecar {
+    ///     // Process the blob sidecar separately
+    ///     println!("Transaction had {} blobs", sidecar.blobs.len());
+    /// }
+    /// # }
+    /// ```
+    pub fn strip_eip4844_sidecar_into<U>(
+        self,
+    ) -> (EthereumTypedTransaction<TxEip4844Variant<U>>, Option<T>) {
+        match self {
+            Self::Legacy(tx) => (EthereumTypedTransaction::Legacy(tx), None),
+            Self::Eip2930(tx) => (EthereumTypedTransaction::Eip2930(tx), None),
+            Self::Eip1559(tx) => (EthereumTypedTransaction::Eip1559(tx), None),
+            Self::Eip4844(tx) => {
+                let (tx_variant, sidecar) = tx.strip_sidecar_into();
+                (EthereumTypedTransaction::Eip4844(tx_variant), sidecar)
+            }
+            Self::Eip7702(tx) => (EthereumTypedTransaction::Eip7702(tx), None),
+        }
+    }
+
+    /// Drops the sidecar from EIP-4844 transactions and returns only the transaction, keeping the
+    /// same sidecar type parameter.
+    ///
+    /// This is a convenience method that discards the sidecar from EIP-4844 transactions,
+    /// returning only the transaction without a sidecar.
+    ///
+    /// This is equivalent to calling [`strip_eip4844_sidecar`](Self::strip_eip4844_sidecar) and
+    /// taking only the first element of the tuple.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use base_common_consensus::{EthereumTypedTransaction, TxEip4844Variant};
+    /// # use alloy_eips::eip4844::BlobTransactionSidecar;
+    /// # fn example(tx: EthereumTypedTransaction<TxEip4844Variant<BlobTransactionSidecar>>) {
+    /// // Drop the sidecar, keeping only the transaction
+    /// let tx_without_sidecar = tx.drop_eip4844_sidecar();
+    /// # }
+    /// ```
+    pub fn drop_eip4844_sidecar(self) -> Self {
+        self.strip_eip4844_sidecar().0
+    }
+
+    /// Drops the sidecar from EIP-4844 transactions and returns only the transaction, converting
+    /// to a different sidecar type parameter.
+    ///
+    /// This is a convenience method that discards the sidecar from EIP-4844 transactions,
+    /// returning only the transaction without a sidecar.
+    ///
+    /// This is equivalent to calling
+    /// [`strip_eip4844_sidecar_into`](Self::strip_eip4844_sidecar_into) and taking only the first
+    /// element of the tuple.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use base_common_consensus::{EthereumTypedTransaction, TxEip4844Variant};
+    /// # use alloy_eips::eip4844::BlobTransactionSidecar;
+    /// # use alloy_eips::eip7594::BlobTransactionSidecarVariant;
+    /// # fn example(tx: EthereumTypedTransaction<TxEip4844Variant<BlobTransactionSidecar>>) {
+    /// // Drop the sidecar and convert to a different type parameter
+    /// let tx_without_sidecar: EthereumTypedTransaction<
+    ///     TxEip4844Variant<BlobTransactionSidecarVariant>,
+    /// > = tx.drop_eip4844_sidecar_into();
+    /// # }
+    /// ```
+    pub fn drop_eip4844_sidecar_into<U>(self) -> EthereumTypedTransaction<TxEip4844Variant<U>> {
+        self.strip_eip4844_sidecar_into().0
+    }
+}
+
+#[cfg(feature = "kzg")]
+impl EthereumTxEnvelope<TxEip4844WithSidecar<alloy_eips::eip4844::BlobTransactionSidecar>> {
+    /// Converts the envelope to EIP-7594 format using default KZG settings.
+    ///
+    /// For EIP-4844 transactions, this computes cell KZG proofs and converts the sidecar to
+    /// EIP-7594 format. Non-EIP-4844 transactions are converted to the appropriate envelope type
+    /// without modification.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(EthereumTxEnvelope<TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarEip7594>>)` - The
+    ///   envelope with EIP-7594 sidecars
+    /// - `Err(c_kzg::Error)` - If KZG proof computation fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use base_common_consensus::EthereumTxEnvelope;
+    /// # use base_common_consensus::TxEip4844WithSidecar;
+    /// # use alloy_eips::eip4844::BlobTransactionSidecar;
+    /// # fn example(envelope: EthereumTxEnvelope<TxEip4844WithSidecar<BlobTransactionSidecar>>) -> Result<(), c_kzg::Error> {
+    /// // Convert to EIP-7594 format
+    /// let eip7594_envelope = envelope.try_into_7594()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_into_7594(
+        self,
+    ) -> Result<
+        EthereumTxEnvelope<
+            TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarEip7594>,
+        >,
+        c_kzg::Error,
+    > {
+        self.try_into_7594_with_settings(
+            alloy_eips::eip4844::env_settings::EnvKzgSettings::Default.get(),
+        )
+    }
+
+    /// Converts the envelope to EIP-7594 format using custom KZG settings.
+    ///
+    /// For EIP-4844 transactions, this computes cell KZG proofs and converts the sidecar to
+    /// EIP-7594 format using the provided KZG settings. Non-EIP-4844 transactions are converted
+    /// to the appropriate envelope type without modification.
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` - The KZG settings to use for computing cell proofs
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(EthereumTxEnvelope<TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarEip7594>>)` - The
+    ///   envelope with EIP-7594 sidecars
+    /// - `Err(c_kzg::Error)` - If KZG proof computation fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use base_common_consensus::EthereumTxEnvelope;
+    /// # use base_common_consensus::TxEip4844WithSidecar;
+    /// # use alloy_eips::eip4844::BlobTransactionSidecar;
+    /// # use alloy_eips::eip4844::env_settings::EnvKzgSettings;
+    /// # fn example(envelope: EthereumTxEnvelope<TxEip4844WithSidecar<BlobTransactionSidecar>>) -> Result<(), c_kzg::Error> {
+    /// // Load custom KZG settings
+    /// let kzg_settings = EnvKzgSettings::Default.get();
+    ///
+    /// // Convert using custom settings
+    /// let eip7594_envelope = envelope.try_into_7594_with_settings(kzg_settings)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_into_7594_with_settings(
+        self,
+        settings: &c_kzg::KzgSettings,
+    ) -> Result<
+        EthereumTxEnvelope<
+            TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarEip7594>,
+        >,
+        c_kzg::Error,
+    > {
+        self.try_map_eip4844(|tx| tx.try_into_7594_with_settings(settings))
+    }
+}
+
+#[cfg(feature = "kzg")]
+impl EthereumTxEnvelope<TxEip4844Variant<alloy_eips::eip4844::BlobTransactionSidecar>> {
+    /// Converts the envelope to EIP-7594 format using default KZG settings.
+    ///
+    /// For EIP-4844 transactions with sidecars, this computes cell KZG proofs and converts the
+    /// sidecar to EIP-7594 format. Transactions without sidecars and non-EIP-4844 transactions
+    /// are converted to the appropriate envelope type without modification.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(EthereumTxEnvelope<TxEip4844Variant<alloy_eips::eip7594::BlobTransactionSidecarEip7594>>)` - The envelope
+    ///   with EIP-7594 sidecars
+    /// - `Err(c_kzg::Error)` - If KZG proof computation fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use base_common_consensus::EthereumTxEnvelope;
+    /// # use base_common_consensus::TxEip4844Variant;
+    /// # use alloy_eips::eip4844::BlobTransactionSidecar;
+    /// # fn example(envelope: EthereumTxEnvelope<TxEip4844Variant<BlobTransactionSidecar>>) -> Result<(), c_kzg::Error> {
+    /// // Convert to EIP-7594 format
+    /// let eip7594_envelope = envelope.try_into_7594()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_into_7594(
+        self,
+    ) -> Result<
+        EthereumTxEnvelope<TxEip4844Variant<alloy_eips::eip7594::BlobTransactionSidecarEip7594>>,
+        c_kzg::Error,
+    > {
+        self.try_into_7594_with_settings(
+            alloy_eips::eip4844::env_settings::EnvKzgSettings::Default.get(),
+        )
+    }
+
+    /// Converts the envelope to EIP-7594 format using custom KZG settings.
+    ///
+    /// For EIP-4844 transactions with sidecars, this computes cell KZG proofs and converts the
+    /// sidecar to EIP-7594 format using the provided KZG settings. Transactions without sidecars
+    /// and non-EIP-4844 transactions are converted to the appropriate envelope type without
+    /// modification.
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` - The KZG settings to use for computing cell proofs
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(EthereumTxEnvelope<TxEip4844Variant<alloy_eips::eip7594::BlobTransactionSidecarEip7594>>)` - The envelope
+    ///   with EIP-7594 sidecars
+    /// - `Err(c_kzg::Error)` - If KZG proof computation fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use base_common_consensus::EthereumTxEnvelope;
+    /// # use base_common_consensus::TxEip4844Variant;
+    /// # use alloy_eips::eip4844::BlobTransactionSidecar;
+    /// # use alloy_eips::eip4844::env_settings::EnvKzgSettings;
+    /// # fn example(envelope: EthereumTxEnvelope<TxEip4844Variant<BlobTransactionSidecar>>) -> Result<(), c_kzg::Error> {
+    /// // Load custom KZG settings
+    /// let kzg_settings = EnvKzgSettings::Default.get();
+    ///
+    /// // Convert using custom settings
+    /// let eip7594_envelope = envelope.try_into_7594_with_settings(kzg_settings)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn try_into_7594_with_settings(
+        self,
+        settings: &c_kzg::KzgSettings,
+    ) -> Result<
+        EthereumTxEnvelope<TxEip4844Variant<alloy_eips::eip7594::BlobTransactionSidecarEip7594>>,
+        c_kzg::Error,
+    > {
+        self.try_map_eip4844(|tx| tx.try_into_7594_with_settings(settings))
+    }
+}
+
+#[cfg(feature = "kzg")]
+impl TryFrom<EthereumTxEnvelope<TxEip4844WithSidecar<alloy_eips::eip4844::BlobTransactionSidecar>>>
+    for EthereumTxEnvelope<TxEip4844WithSidecar<alloy_eips::eip7594::BlobTransactionSidecarEip7594>>
+{
+    type Error = c_kzg::Error;
+
+    fn try_from(
+        value: EthereumTxEnvelope<
+            TxEip4844WithSidecar<alloy_eips::eip4844::BlobTransactionSidecar>,
+        >,
+    ) -> Result<Self, Self::Error> {
+        value.try_into_7594()
+    }
+}
+
+#[cfg(feature = "kzg")]
+impl TryFrom<EthereumTxEnvelope<TxEip4844Variant<alloy_eips::eip4844::BlobTransactionSidecar>>>
+    for EthereumTxEnvelope<TxEip4844Variant<alloy_eips::eip7594::BlobTransactionSidecarEip7594>>
+{
+    type Error = c_kzg::Error;
+
+    fn try_from(
+        value: EthereumTxEnvelope<TxEip4844Variant<alloy_eips::eip4844::BlobTransactionSidecar>>,
+    ) -> Result<Self, Self::Error> {
+        value.try_into_7594()
+    }
+}
+
+/// The Ethereum [EIP-2718] Transaction Envelope.
+///
+/// # Note:
+///
+/// This enum distinguishes between tagged and untagged legacy transactions, as
+/// the in-protocol merkle tree may commit to EITHER 0-prefixed or raw.
+/// Therefore we must ensure that encoding returns the precise byte-array that
+/// was decoded, preserving the presence or absence of the `TransactionType`
+/// flag.
+///
+/// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
+#[derive(Clone, Debug, TransactionEnvelope)]
+#[envelope(
+    alloy_consensus = crate,
+    tx_type_name = TxType,
+    typed = EthereumTypedTransaction,
+    serde_cfg(feature = "serde"),
+    arbitrary_cfg(feature = "arbitrary")
+)]
+#[doc(alias = "TransactionEnvelope")]
+pub enum EthereumTxEnvelope<Eip4844> {
     /// An untagged [`TxLegacy`].
     #[envelope(ty = 0)]
     Legacy(Signed<TxLegacy>),
@@ -35,201 +495,148 @@ pub enum BaseTxEnvelope {
     /// A [`TxEip1559`] tagged with type 2.
     #[envelope(ty = 2)]
     Eip1559(Signed<TxEip1559>),
+    /// A TxEip4844 tagged with type 3.
+    /// An EIP-4844 transaction has two network representations:
+    /// 1 - The transaction itself, which is a regular RLP-encoded transaction and used to retrieve
+    /// historical transactions..
+    ///
+    /// 2 - The transaction with a sidecar, which is the form used to
+    /// send transactions to the network.
+    #[envelope(ty = 3)]
+    Eip4844(Signed<Eip4844>),
     /// A [`TxEip7702`] tagged with type 4.
     #[envelope(ty = 4)]
     Eip7702(Signed<TxEip7702>),
-    /// A [`TxDeposit`] tagged with type 0x7E.
-    #[envelope(ty = 126)]
-    #[serde(serialize_with = "crate::serde_deposit_tx_rpc")]
-    Deposit(Sealed<TxDeposit>),
-    /// An [EIP-8130] Account Abstraction transaction tagged with type 0x79.
-    ///
-    /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
-    #[envelope(ty = 121, typed = TxEip8130)]
-    Eip8130(Eip8130Signed),
 }
 
-/// Represents a transaction envelope for Base chains.
-///
-/// Compared to Ethereum it can tell whether the transaction is a deposit.
-pub trait BaseTransaction {
-    /// Returns `true` if the transaction is a deposit.
-    fn is_deposit(&self) -> bool;
-
-    /// Returns `Some` if the transaction is a deposit.
-    fn as_deposit(&self) -> Option<&Sealed<TxDeposit>>;
-
-    /// Returns `Some` if the transaction is an EIP-8130 transaction.
-    fn as_eip8130(&self) -> Option<&Eip8130Signed>;
-}
-
-impl BaseTransaction for BaseTxEnvelope {
-    fn is_deposit(&self) -> bool {
-        self.is_deposit()
-    }
-
-    fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
-        self.as_deposit()
-    }
-
-    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
-        self.as_eip8130()
-    }
-}
-
-impl<B, T> BaseTransaction for Extended<B, T>
+impl<T, Eip4844> From<Signed<T>> for EthereumTxEnvelope<Eip4844>
 where
-    B: BaseTransaction,
-    T: BaseTransaction,
+    EthereumTypedTransaction<Eip4844>: From<T>,
+    T: RlpEcdsaEncodableTx,
 {
-    fn is_deposit(&self) -> bool {
-        match self {
-            Self::BuiltIn(b) => b.is_deposit(),
-            Self::Other(t) => t.is_deposit(),
-        }
-    }
-
-    fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
-        match self {
-            Self::BuiltIn(b) => b.as_deposit(),
-            Self::Other(t) => t.as_deposit(),
-        }
-    }
-
-    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
-        match self {
-            Self::BuiltIn(b) => b.as_eip8130(),
-            Self::Other(t) => t.as_eip8130(),
-        }
-    }
-}
-
-impl AsRef<Self> for BaseTxEnvelope {
-    fn as_ref(&self) -> &Self {
-        self
-    }
-}
-
-impl From<Signed<TxLegacy>> for BaseTxEnvelope {
-    fn from(v: Signed<TxLegacy>) -> Self {
-        Self::Legacy(v)
-    }
-}
-
-impl From<Signed<TxEip2930>> for BaseTxEnvelope {
-    fn from(v: Signed<TxEip2930>) -> Self {
-        Self::Eip2930(v)
-    }
-}
-
-impl From<Signed<TxEip1559>> for BaseTxEnvelope {
-    fn from(v: Signed<TxEip1559>) -> Self {
-        Self::Eip1559(v)
-    }
-}
-
-impl From<Signed<TxEip7702>> for BaseTxEnvelope {
-    fn from(v: Signed<TxEip7702>) -> Self {
-        Self::Eip7702(v)
-    }
-}
-
-impl From<TxDeposit> for BaseTxEnvelope {
-    fn from(v: TxDeposit) -> Self {
-        v.seal_slow().into()
-    }
-}
-
-impl From<Signed<BaseTypedTransaction>> for BaseTxEnvelope {
-    fn from(value: Signed<BaseTypedTransaction>) -> Self {
-        let (tx, sig, hash) = value.into_parts();
-        match tx {
-            BaseTypedTransaction::Legacy(tx_legacy) => {
+    fn from(v: Signed<T>) -> Self {
+        let (tx, sig, hash) = v.into_parts();
+        let typed = EthereumTypedTransaction::from(tx);
+        match typed {
+            EthereumTypedTransaction::Legacy(tx_legacy) => {
                 let tx = Signed::new_unchecked(tx_legacy, sig, hash);
                 Self::Legacy(tx)
             }
-            BaseTypedTransaction::Eip2930(tx_eip2930) => {
+            EthereumTypedTransaction::Eip2930(tx_eip2930) => {
                 let tx = Signed::new_unchecked(tx_eip2930, sig, hash);
                 Self::Eip2930(tx)
             }
-            BaseTypedTransaction::Eip1559(tx_eip1559) => {
+            EthereumTypedTransaction::Eip1559(tx_eip1559) => {
                 let tx = Signed::new_unchecked(tx_eip1559, sig, hash);
                 Self::Eip1559(tx)
             }
-            BaseTypedTransaction::Eip7702(tx_eip7702) => {
+            EthereumTypedTransaction::Eip4844(tx_eip4844_variant) => {
+                let tx = Signed::new_unchecked(tx_eip4844_variant, sig, hash);
+                Self::Eip4844(tx)
+            }
+            EthereumTypedTransaction::Eip7702(tx_eip7702) => {
                 let tx = Signed::new_unchecked(tx_eip7702, sig, hash);
                 Self::Eip7702(tx)
             }
-            BaseTypedTransaction::Eip8130(tx) => {
-                assert!(
-                    tx.sender.is_none(),
-                    "configured-actor EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; route them via BaseTxEnvelope::Eip8130 directly with the appropriate sender_auth",
-                );
-                assert!(
-                    tx.payer.is_none(),
-                    "sponsored EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; the payer_auth would be silently dropped",
-                );
-                Self::Eip8130(Eip8130Signed::new(tx, sig.as_bytes().into(), Bytes::new()))
-            }
-            BaseTypedTransaction::Deposit(tx) => Self::Deposit(Sealed::new_unchecked(tx, hash)),
         }
     }
 }
 
-impl From<(BaseTypedTransaction, Signature)> for BaseTxEnvelope {
-    fn from(value: (BaseTypedTransaction, Signature)) -> Self {
-        Self::new_unhashed(value.0, value.1)
+impl<Eip4844: RlpEcdsaEncodableTx> From<EthereumTxEnvelope<Eip4844>>
+    for Signed<EthereumTypedTransaction<Eip4844>>
+where
+    EthereumTypedTransaction<Eip4844>: From<Eip4844>,
+{
+    fn from(value: EthereumTxEnvelope<Eip4844>) -> Self {
+        value.into_signed()
     }
 }
 
-impl From<Sealed<TxDeposit>> for BaseTxEnvelope {
-    fn from(v: Sealed<TxDeposit>) -> Self {
-        Self::Deposit(v)
+impl<Eip4844> From<(EthereumTypedTransaction<Eip4844>, Signature)> for EthereumTxEnvelope<Eip4844>
+where
+    Eip4844: RlpEcdsaEncodableTx + SignableTransaction<Signature>,
+{
+    fn from(value: (EthereumTypedTransaction<Eip4844>, Signature)) -> Self {
+        value.0.into_signed(value.1).into()
     }
 }
 
-impl<Tx> From<BaseTxEnvelope> for Extended<BaseTxEnvelope, Tx> {
-    fn from(value: BaseTxEnvelope) -> Self {
-        Self::BuiltIn(value)
+impl<T> From<EthereumTxEnvelope<TxEip4844WithSidecar<T>>> for EthereumTxEnvelope<TxEip4844> {
+    fn from(value: EthereumTxEnvelope<TxEip4844WithSidecar<T>>) -> Self {
+        value.map_eip4844(|eip4844| eip4844.into())
     }
 }
 
-impl TryFrom<TxEnvelope> for BaseTxEnvelope {
-    type Error = TxEnvelope;
-
-    fn try_from(value: TxEnvelope) -> Result<Self, Self::Error> {
-        Self::try_from_eth_envelope(value)
+impl<T> From<EthereumTxEnvelope<TxEip4844Variant<T>>> for EthereumTxEnvelope<TxEip4844> {
+    fn from(value: EthereumTxEnvelope<TxEip4844Variant<T>>) -> Self {
+        value.map_eip4844(|eip4844| eip4844.into())
     }
 }
 
-impl TryFrom<BaseTxEnvelope> for TxEnvelope {
-    type Error = ValueError<BaseTxEnvelope>;
-
-    fn try_from(value: BaseTxEnvelope) -> Result<Self, Self::Error> {
-        value.try_into_eth_envelope()
+impl<T> From<EthereumTxEnvelope<TxEip4844>> for EthereumTxEnvelope<TxEip4844Variant<T>> {
+    fn from(value: EthereumTxEnvelope<TxEip4844>) -> Self {
+        value.map_eip4844(|eip4844| eip4844.into())
     }
 }
 
-impl BaseTxEnvelope {
-    /// Creates a new enveloped transaction from the given transaction, signature and hash.
+impl<Eip4844> EthereumTxEnvelope<Eip4844> {
+    /// Converts the EIP-4844 variant of this transaction with the given closure.
     ///
-    /// Caution: This assumes the given hash is the correct transaction hash.
-    pub fn new_unchecked(
-        transaction: BaseTypedTransaction,
-        signature: Signature,
-        hash: B256,
-    ) -> Self {
-        Signed::new_unchecked(transaction, signature, hash).into()
+    /// This is intended to convert between the EIP-4844 variants, specifically for stripping away
+    /// non consensus data (blob sidecar data).
+    pub fn map_eip4844<U>(self, f: impl FnMut(Eip4844) -> U) -> EthereumTxEnvelope<U> {
+        match self {
+            Self::Legacy(tx) => EthereumTxEnvelope::Legacy(tx),
+            Self::Eip2930(tx) => EthereumTxEnvelope::Eip2930(tx),
+            Self::Eip1559(tx) => EthereumTxEnvelope::Eip1559(tx),
+            Self::Eip4844(tx) => EthereumTxEnvelope::Eip4844(tx.map(f)),
+            Self::Eip7702(tx) => EthereumTxEnvelope::Eip7702(tx),
+        }
     }
 
-    /// Creates a new signed transaction from the given typed transaction and signature without the
-    /// hash.
-    ///
-    /// Note: this only calculates the hash on the first [`BaseTxEnvelope::hash`] call.
-    pub fn new_unhashed(transaction: BaseTypedTransaction, signature: Signature) -> Self {
-        transaction.into_signed(signature).into()
+    /// Converts the EIP-4844 variant of this transaction with the given closure, returning an error
+    /// if the mapping fails.
+    pub fn try_map_eip4844<U, E>(
+        self,
+        f: impl FnOnce(Eip4844) -> Result<U, E>,
+    ) -> Result<EthereumTxEnvelope<U>, E> {
+        match self {
+            Self::Legacy(tx) => Ok(EthereumTxEnvelope::Legacy(tx)),
+            Self::Eip2930(tx) => Ok(EthereumTxEnvelope::Eip2930(tx)),
+            Self::Eip1559(tx) => Ok(EthereumTxEnvelope::Eip1559(tx)),
+            Self::Eip4844(tx) => tx.try_map(f).map(EthereumTxEnvelope::Eip4844),
+            Self::Eip7702(tx) => Ok(EthereumTxEnvelope::Eip7702(tx)),
+        }
     }
 
+    /// Return the [`TxType`] of the inner txn.
+    #[doc(alias = "transaction_type")]
+    pub const fn tx_type(&self) -> TxType {
+        match self {
+            Self::Legacy(_) => TxType::Legacy,
+            Self::Eip2930(_) => TxType::Eip2930,
+            Self::Eip1559(_) => TxType::Eip1559,
+            Self::Eip4844(_) => TxType::Eip4844,
+            Self::Eip7702(_) => TxType::Eip7702,
+        }
+    }
+
+    /// Consumes the type into a [`Signed`]
+    pub fn into_signed(self) -> Signed<EthereumTypedTransaction<Eip4844>>
+    where
+        EthereumTypedTransaction<Eip4844>: From<Eip4844>,
+    {
+        match self {
+            Self::Legacy(tx) => tx.convert(),
+            Self::Eip2930(tx) => tx.convert(),
+            Self::Eip1559(tx) => tx.convert(),
+            Self::Eip4844(tx) => tx.convert(),
+            Self::Eip7702(tx) => tx.convert(),
+        }
+    }
+}
+
+impl<Eip4844: RlpEcdsaEncodableTx> EthereumTxEnvelope<Eip4844> {
     /// Returns true if the transaction is a legacy transaction.
     #[inline]
     pub const fn is_legacy(&self) -> bool {
@@ -248,132 +655,32 @@ impl BaseTxEnvelope {
         matches!(self, Self::Eip1559(_))
     }
 
-    /// Returns true if the transaction is a system transaction.
+    /// Returns true if the transaction is an EIP-4844 transaction.
     #[inline]
-    pub const fn is_system_transaction(&self) -> bool {
-        match self {
-            Self::Deposit(tx) => tx.inner().is_system_transaction,
-            _ => false,
-        }
+    pub const fn is_eip4844(&self) -> bool {
+        matches!(self, Self::Eip4844(_))
     }
 
-    /// Attempts to convert the envelope into the pooled variant.
-    ///
-    /// Returns an error if the envelope's variant is incompatible with the pooled format:
-    /// [`TxDeposit`].
-    pub fn try_into_pooled(self) -> Result<BasePooledTransaction, ValueError<Self>> {
-        match self {
-            Self::Legacy(tx) => Ok(tx.into()),
-            Self::Eip2930(tx) => Ok(tx.into()),
-            Self::Eip1559(tx) => Ok(tx.into()),
-            Self::Eip7702(tx) => Ok(tx.into()),
-            Self::Eip8130(tx) => Ok(tx.into()),
-            Self::Deposit(tx) => {
-                Err(ValueError::new(tx.into(), "Deposit transactions cannot be pooled"))
-            }
-        }
-    }
-
-    /// Attempts to convert the envelope into the ethereum pooled variant.
-    ///
-    /// Returns an error if the envelope's variant is incompatible with the ethereum pooled
-    /// format: [`TxDeposit`] (not pooled at all) or [`Eip8130Signed`] (pooled, but has no
-    /// ethereum-format representation since the alloy `PooledTransaction` enum has no
-    /// EIP-8130 variant). Rejecting [`Eip8130Signed`] here prevents
-    /// `From<BasePooledTransaction> for alloy_consensus::PooledTransaction` from panicking.
-    pub fn try_into_eth_pooled(
-        self,
-    ) -> Result<alloy_consensus::transaction::PooledTransaction, ValueError<Self>> {
-        match self {
-            tx @ Self::Eip8130(_) => Err(ValueError::new(
-                tx,
-                "EIP-8130 transactions cannot be converted to ethereum PooledTransaction",
-            )),
-            other => other.try_into_pooled().map(Into::into),
-        }
-    }
-
-    /// Attempts to convert the L2 variant into an ethereum [`TxEnvelope`].
-    ///
-    /// Returns the envelope as error if it is a variant unsupported on ethereum: [`TxDeposit`]
-    pub fn try_into_eth_envelope(self) -> Result<TxEnvelope, ValueError<Self>> {
-        match self {
-            Self::Legacy(tx) => Ok(tx.into()),
-            Self::Eip2930(tx) => Ok(tx.into()),
-            Self::Eip1559(tx) => Ok(tx.into()),
-            Self::Eip7702(tx) => Ok(tx.into()),
-            tx @ Self::Eip8130(_) => Err(ValueError::new(
-                tx,
-                "EIP-8130 transactions cannot be converted to ethereum transaction",
-            )),
-            tx @ Self::Deposit(_) => Err(ValueError::new(
-                tx,
-                "Deposit transactions cannot be converted to ethereum transaction",
-            )),
-        }
-    }
-
-    /// Helper that creates [`BaseTransactionInfo`] by adding [`DepositInfo`] obtained from the
-    /// given closure if this transaction is a deposit and return the [`BaseTransactionInfo`].
-    pub fn try_to_tx_info<F, E>(
-        &self,
-        tx_info: TransactionInfo,
-        f: F,
-    ) -> Result<BaseTransactionInfo, E>
-    where
-        F: FnOnce(TxHash) -> Result<Option<DepositInfo>, E>,
-    {
-        let deposit_meta =
-            if self.is_deposit() { f(self.tx_hash())? } else { None }.unwrap_or_default();
-
-        Ok(BaseTransactionInfo::new(tx_info, deposit_meta))
-    }
-
-    /// Attempts to convert an ethereum [`TxEnvelope`] into the L2 variant.
-    ///
-    /// Returns the given envelope as error if [`BaseTxEnvelope`] doesn't support the variant
-    /// (EIP-4844)
-    #[allow(clippy::result_large_err)]
-    pub fn try_from_eth_envelope(tx: TxEnvelope) -> Result<Self, TxEnvelope> {
-        match tx {
-            TxEnvelope::Legacy(tx) => Ok(tx.into()),
-            TxEnvelope::Eip2930(tx) => Ok(tx.into()),
-            TxEnvelope::Eip1559(tx) => Ok(tx.into()),
-            tx @ TxEnvelope::Eip4844(_) => Err(tx),
-            TxEnvelope::Eip7702(tx) => Ok(tx.into()),
-        }
-    }
-
-    /// Returns mutable access to the input bytes.
-    ///
-    /// Caution: modifying this will cause side-effects on the hash.
-    ///
-    /// Panics for [`Self::Eip8130`] since EIP-8130 transactions have no single
-    /// input field; their payload is a list of calls.
-    #[doc(hidden)]
-    pub fn input_mut(&mut self) -> &mut Bytes {
-        match self {
-            Self::Eip1559(tx) => &mut tx.tx_mut().input,
-            Self::Eip2930(tx) => &mut tx.tx_mut().input,
-            Self::Legacy(tx) => &mut tx.tx_mut().input,
-            Self::Eip7702(tx) => &mut tx.tx_mut().input,
-            Self::Eip8130(_) => {
-                unimplemented!("EIP-8130 transactions have no single input field")
-            }
-            Self::Deposit(tx) => &mut tx.inner_mut().input,
-        }
-    }
-
-    /// Returns true if the transaction is a deposit transaction.
+    /// Returns true if the transaction is an EIP-7702 transaction.
     #[inline]
-    pub const fn is_deposit(&self) -> bool {
-        matches!(self, Self::Deposit(_))
+    pub const fn is_eip7702(&self) -> bool {
+        matches!(self, Self::Eip7702(_))
     }
 
-    /// Returns true if the transaction is an EIP-8130 AA transaction.
+    /// Returns true if the transaction is replay protected.
+    ///
+    /// All non-legacy transactions are replay protected, as the chain id is
+    /// included in the transaction body. Legacy transactions are considered
+    /// replay protected if the `v` value is not 27 or 28, according to the
+    /// rules of [EIP-155].
+    ///
+    /// [EIP-155]: https://eips.ethereum.org/EIPS/eip-155
     #[inline]
-    pub const fn is_eip8130(&self) -> bool {
-        matches!(self, Self::Eip8130(_))
+    pub const fn is_replay_protected(&self) -> bool {
+        match self {
+            Self::Legacy(tx) => tx.tx().chain_id.is_some(),
+            _ => true,
+        }
     }
 
     /// Returns the [`TxLegacy`] variant if the transaction is a legacy transaction.
@@ -400,62 +707,113 @@ impl BaseTxEnvelope {
         }
     }
 
-    /// Returns the [`TxDeposit`] variant if the transaction is a deposit transaction.
-    pub const fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
+    /// Returns the [`TxEip4844Variant`] variant if the transaction is an EIP-4844 transaction.
+    pub const fn as_eip4844(&self) -> Option<&Signed<Eip4844>> {
         match self {
-            Self::Deposit(tx) => Some(tx),
+            Self::Eip4844(tx) => Some(tx),
             _ => None,
         }
     }
 
-    /// Returns the [`Eip8130Signed`] variant if the transaction is an EIP-8130 AA transaction.
-    pub const fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+    /// Returns the [`TxEip7702`] variant if the transaction is an EIP-7702 transaction.
+    pub const fn as_eip7702(&self) -> Option<&Signed<TxEip7702>> {
         match self {
-            Self::Eip8130(tx) => Some(tx),
+            Self::Eip7702(tx) => Some(tx),
             _ => None,
+        }
+    }
+
+    /// Consumes the type and returns the [`TxLegacy`] variant if the transaction is a legacy
+    /// transaction. Returns an error otherwise.
+    pub fn try_into_legacy(self) -> Result<Signed<TxLegacy>, ValueError<Self>> {
+        match self {
+            Self::Legacy(tx) => Ok(tx),
+            _ => Err(ValueError::new_static(self, "Expected legacy transaction")),
+        }
+    }
+
+    /// Consumes the type and returns the [`TxEip2930`] variant if the transaction is an EIP-2930
+    /// transaction. Returns an error otherwise.
+    pub fn try_into_eip2930(self) -> Result<Signed<TxEip2930>, ValueError<Self>> {
+        match self {
+            Self::Eip2930(tx) => Ok(tx),
+            _ => Err(ValueError::new_static(self, "Expected EIP-2930 transaction")),
+        }
+    }
+
+    /// Consumes the type and returns the [`TxEip1559`] variant if the transaction is an EIP-1559
+    /// transaction. Returns an error otherwise.    
+    pub fn try_into_eip1559(self) -> Result<Signed<TxEip1559>, ValueError<Self>> {
+        match self {
+            Self::Eip1559(tx) => Ok(tx),
+            _ => Err(ValueError::new_static(self, "Expected EIP-1559 transaction")),
+        }
+    }
+
+    /// Consumes the type and returns the [`TxEip4844`] variant if the transaction is an EIP-4844
+    /// transaction. Returns an error otherwise.
+    pub fn try_into_eip4844(self) -> Result<Signed<Eip4844>, ValueError<Self>> {
+        match self {
+            Self::Eip4844(tx) => Ok(tx),
+            _ => Err(ValueError::new_static(self, "Expected EIP-4844 transaction")),
+        }
+    }
+
+    /// Consumes the type and returns the [`TxEip7702`] variant if the transaction is an EIP-7702
+    /// transaction. Returns an error otherwise.
+    pub fn try_into_eip7702(self) -> Result<Signed<TxEip7702>, ValueError<Self>> {
+        match self {
+            Self::Eip7702(tx) => Ok(tx),
+            _ => Err(ValueError::new_static(self, "Expected EIP-7702 transaction")),
+        }
+    }
+
+    /// Calculate the signing hash for the transaction.
+    pub fn signature_hash(&self) -> B256
+    where
+        Eip4844: SignableTransaction<Signature>,
+    {
+        match self {
+            Self::Legacy(tx) => tx.signature_hash(),
+            Self::Eip2930(tx) => tx.signature_hash(),
+            Self::Eip1559(tx) => tx.signature_hash(),
+            Self::Eip4844(tx) => tx.signature_hash(),
+            Self::Eip7702(tx) => tx.signature_hash(),
         }
     }
 
     /// Return the reference to signature.
-    ///
-    /// Returns `None` if this is a deposit or EIP-8130 variant.
-    pub const fn signature(&self) -> Option<&Signature> {
+    pub const fn signature(&self) -> &Signature {
         match self {
-            Self::Legacy(tx) => Some(tx.signature()),
-            Self::Eip2930(tx) => Some(tx.signature()),
-            Self::Eip1559(tx) => Some(tx.signature()),
-            Self::Eip7702(tx) => Some(tx.signature()),
-            Self::Eip8130(_) | Self::Deposit(_) => None,
+            Self::Legacy(tx) => tx.signature(),
+            Self::Eip2930(tx) => tx.signature(),
+            Self::Eip1559(tx) => tx.signature(),
+            Self::Eip4844(tx) => tx.signature(),
+            Self::Eip7702(tx) => tx.signature(),
         }
     }
 
-    /// Return the [`OpTxType`] of the inner txn.
-    pub const fn tx_type(&self) -> OpTxType {
+    /// Return the hash of the inner Signed.
+    #[doc(alias = "transaction_hash")]
+    pub fn tx_hash(&self) -> &B256 {
         match self {
-            Self::Legacy(_) => OpTxType::Legacy,
-            Self::Eip2930(_) => OpTxType::Eip2930,
-            Self::Eip1559(_) => OpTxType::Eip1559,
-            Self::Eip7702(_) => OpTxType::Eip7702,
-            Self::Eip8130(_) => OpTxType::Eip8130,
-            Self::Deposit(_) => OpTxType::Deposit,
+            Self::Legacy(tx) => tx.hash(),
+            Self::Eip2930(tx) => tx.hash(),
+            Self::Eip1559(tx) => tx.hash(),
+            Self::Eip4844(tx) => tx.hash(),
+            Self::Eip7702(tx) => tx.hash(),
         }
     }
 
-    /// Returns the inner transaction hash.
+    /// Reference to transaction hash. Used to identify transaction.
     pub fn hash(&self) -> &B256 {
         match self {
             Self::Legacy(tx) => tx.hash(),
-            Self::Eip1559(tx) => tx.hash(),
             Self::Eip2930(tx) => tx.hash(),
+            Self::Eip1559(tx) => tx.hash(),
             Self::Eip7702(tx) => tx.hash(),
-            Self::Eip8130(tx) => tx.hash(),
-            Self::Deposit(tx) => tx.hash_ref(),
+            Self::Eip4844(tx) => tx.hash(),
         }
-    }
-
-    /// Returns the inner transaction hash.
-    pub fn tx_hash(&self) -> B256 {
-        *self.hash()
     }
 
     /// Return the length of the inner txn, including type byte length
@@ -464,401 +822,457 @@ impl BaseTxEnvelope {
             Self::Legacy(t) => t.eip2718_encoded_length(),
             Self::Eip2930(t) => t.eip2718_encoded_length(),
             Self::Eip1559(t) => t.eip2718_encoded_length(),
+            Self::Eip4844(t) => t.eip2718_encoded_length(),
             Self::Eip7702(t) => t.eip2718_encoded_length(),
-            Self::Eip8130(t) => t.encode_2718_len(),
-            Self::Deposit(t) => t.eip2718_encoded_length(),
         }
     }
 }
 
-impl TxHashRef for BaseTxEnvelope {
+impl<Eip4844: RlpEcdsaEncodableTx> TxHashRef for EthereumTxEnvelope<Eip4844> {
     fn tx_hash(&self) -> &B256 {
-        Self::hash(self)
+        Self::tx_hash(self)
     }
 }
 
-#[cfg(feature = "k256")]
-impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
-    fn recover_signer(
-        &self,
-    ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
-        let signature_hash = match self {
-            Self::Legacy(tx) => tx.signature_hash(),
-            Self::Eip2930(tx) => tx.signature_hash(),
-            Self::Eip1559(tx) => tx.signature_hash(),
-            Self::Eip7702(tx) => tx.signature_hash(),
-            Self::Eip8130(tx) => return tx.recover_sender(),
-            // The Deposit transaction does not have a signature. Directly return the
-            // `from` address.
-            Self::Deposit(tx) => return Ok(tx.from),
-        };
-        let signature = match self {
-            Self::Legacy(tx) => tx.signature(),
-            Self::Eip2930(tx) => tx.signature(),
-            Self::Eip1559(tx) => tx.signature(),
-            Self::Eip7702(tx) => tx.signature(),
-            Self::Eip8130(_) | Self::Deposit(_) => {
-                unreachable!("non-ECDSA variants short-circuit above")
-            }
-        };
-        alloy_consensus::crypto::secp256k1::recover_signer(signature, signature_hash)
+#[cfg(any(feature = "secp256k1", feature = "k256"))]
+impl<Eip4844> crate::transaction::SignerRecoverable for EthereumTxEnvelope<Eip4844>
+where
+    Eip4844: RlpEcdsaEncodableTx + SignableTransaction<Signature>,
+{
+    fn recover_signer(&self) -> Result<alloy_primitives::Address, crate::crypto::RecoveryError> {
+        match self {
+            Self::Legacy(tx) => crate::transaction::SignerRecoverable::recover_signer(tx),
+            Self::Eip2930(tx) => crate::transaction::SignerRecoverable::recover_signer(tx),
+            Self::Eip1559(tx) => crate::transaction::SignerRecoverable::recover_signer(tx),
+            Self::Eip4844(tx) => crate::transaction::SignerRecoverable::recover_signer(tx),
+            Self::Eip7702(tx) => crate::transaction::SignerRecoverable::recover_signer(tx),
+        }
     }
 
     fn recover_signer_unchecked(
         &self,
-    ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
-        let signature_hash = match self {
-            Self::Legacy(tx) => tx.signature_hash(),
-            Self::Eip2930(tx) => tx.signature_hash(),
-            Self::Eip1559(tx) => tx.signature_hash(),
-            Self::Eip7702(tx) => tx.signature_hash(),
-            Self::Eip8130(tx) => return tx.recover_sender_unchecked(),
-            // The Deposit transaction does not have a signature. Directly return the
-            // `from` address.
-            Self::Deposit(tx) => return Ok(tx.from),
-        };
-        let signature = match self {
-            Self::Legacy(tx) => tx.signature(),
-            Self::Eip2930(tx) => tx.signature(),
-            Self::Eip1559(tx) => tx.signature(),
-            Self::Eip7702(tx) => tx.signature(),
-            Self::Eip8130(_) | Self::Deposit(_) => {
-                unreachable!("non-ECDSA variants short-circuit above")
+    ) -> Result<alloy_primitives::Address, crate::crypto::RecoveryError> {
+        match self {
+            Self::Legacy(tx) => crate::transaction::SignerRecoverable::recover_signer_unchecked(tx),
+            Self::Eip2930(tx) => {
+                crate::transaction::SignerRecoverable::recover_signer_unchecked(tx)
             }
-        };
-        alloy_consensus::crypto::secp256k1::recover_signer_unchecked(signature, signature_hash)
+            Self::Eip1559(tx) => {
+                crate::transaction::SignerRecoverable::recover_signer_unchecked(tx)
+            }
+            Self::Eip4844(tx) => {
+                crate::transaction::SignerRecoverable::recover_signer_unchecked(tx)
+            }
+            Self::Eip7702(tx) => {
+                crate::transaction::SignerRecoverable::recover_signer_unchecked(tx)
+            }
+        }
+    }
+
+    fn recover_with_buf(
+        &self,
+        buf: &mut alloc::vec::Vec<u8>,
+    ) -> Result<alloy_primitives::Address, crate::crypto::RecoveryError> {
+        match self {
+            Self::Legacy(tx) => crate::transaction::SignerRecoverable::recover_with_buf(tx, buf),
+            Self::Eip2930(tx) => crate::transaction::SignerRecoverable::recover_with_buf(tx, buf),
+            Self::Eip1559(tx) => crate::transaction::SignerRecoverable::recover_with_buf(tx, buf),
+            Self::Eip4844(tx) => crate::transaction::SignerRecoverable::recover_with_buf(tx, buf),
+            Self::Eip7702(tx) => crate::transaction::SignerRecoverable::recover_with_buf(tx, buf),
+        }
     }
 
     fn recover_unchecked_with_buf(
         &self,
         buf: &mut alloc::vec::Vec<u8>,
-    ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
+    ) -> Result<alloy_primitives::Address, crate::crypto::RecoveryError> {
         match self {
             Self::Legacy(tx) => {
-                alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
+                crate::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
             Self::Eip2930(tx) => {
-                alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
+                crate::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
             Self::Eip1559(tx) => {
-                alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
+                crate::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
+            }
+            Self::Eip4844(tx) => {
+                crate::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
             Self::Eip7702(tx) => {
-                alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
+                crate::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
-            Self::Eip8130(tx) => tx.recover_sender_unchecked(),
-            Self::Deposit(tx) => Ok(tx.from),
         }
     }
 }
 
-/// Bincode-compatible serde implementation for [`BaseTxEnvelope`].
+/// Bincode-compatible [`EthereumTxEnvelope`] serde implementation.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub(super) mod serde_bincode_compat {
-    use alloy_consensus::{
-        Sealed, Signed,
-        transaction::serde_bincode_compat::{TxEip1559, TxEip2930, TxEip7702, TxLegacy},
-    };
-    use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-    use alloy_primitives::{B256, Signature};
+pub mod serde_bincode_compat {
+    use alloc::borrow::Cow;
+
+    use alloy_primitives::Signature;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
-    use crate::{serde_bincode_compat::TxDeposit, transaction::Eip8130Signed};
+    use crate::{EthereumTypedTransaction, Signed};
 
-    /// Bincode-safe projection of an [`Eip8130Signed`].
+    /// Bincode-compatible [`super::EthereumTxEnvelope`] serde implementation.
     ///
-    /// The transaction's `account_changes` payload contains
-    /// [`AccountChange`](crate::AccountChange), an internally-tagged `serde`
-    /// enum (`#[serde(tag = "type")]`). `serde` deserializes that shape via
-    /// `deserialize_any`, which non-self-describing formats such as bincode do
-    /// not support (they surface `AnyNotSupported`). Projecting the transaction
-    /// to its self-contained EIP-2718 byte stream sidesteps that path entirely
-    /// while leaving the human-readable JSON/RPC representation untouched.
-    #[derive(Debug)]
-    pub struct Eip8130Bincode(pub Eip8130Signed);
-
-    impl Serialize for Eip8130Bincode {
-        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            self.0.encoded_2718().serialize(serializer)
-        }
-    }
-
-    impl<'de> Deserialize<'de> for Eip8130Bincode {
-        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            let bytes = <Vec<u8>>::deserialize(deserializer)?;
-            let signed = Eip8130Signed::decode_2718(&mut bytes.as_slice())
-                .map_err(serde::de::Error::custom)?;
-            Ok(Self(signed))
-        }
-    }
-
-    /// Bincode-compatible representation of an [`BaseTxEnvelope`].
+    /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
+    /// ```rust
+    /// use base_common_consensus::{serde_bincode_compat, EthereumTxEnvelope};
+    /// use serde::{de::DeserializeOwned, Deserialize, Serialize};
+    /// use serde_with::serde_as;
+    ///
+    /// #[serde_as]
+    /// #[derive(Serialize, Deserialize)]
+    /// struct Data<T: Serialize + DeserializeOwned + Clone + 'static> {
+    ///     #[serde_as(as = "serde_bincode_compat::EthereumTxEnvelope<'_, T>")]
+    ///     receipt: EthereumTxEnvelope<T>,
+    /// }
+    /// ```
     #[derive(Debug, Serialize, Deserialize)]
-    pub enum BaseTxEnvelope<'a> {
-        /// Legacy variant.
-        Legacy {
-            /// Transaction signature.
-            signature: Signature,
-            /// Borrowed legacy transaction data.
-            transaction: TxLegacy<'a>,
-        },
-        /// EIP-2930 variant.
-        Eip2930 {
-            /// Transaction signature.
-            signature: Signature,
-            /// Borrowed EIP-2930 transaction data.
-            transaction: TxEip2930<'a>,
-        },
-        /// EIP-1559 variant.
-        Eip1559 {
-            /// Transaction signature.
-            signature: Signature,
-            /// Borrowed EIP-1559 transaction data.
-            transaction: TxEip1559<'a>,
-        },
-        /// EIP-7702 variant.
-        Eip7702 {
-            /// Transaction signature.
-            signature: Signature,
-            /// Borrowed EIP-7702 transaction data.
-            transaction: TxEip7702<'a>,
-        },
-        /// Deposit variant.
-        Deposit {
-            /// Precomputed hash.
-            hash: B256,
-            /// Borrowed deposit transaction data.
-            transaction: TxDeposit<'a>,
-        },
-        /// EIP-8130 Account Abstraction variant.
-        Eip8130 {
-            /// [`Eip8130Signed`] envelope, projected to its EIP-2718 byte
-            /// stream so the internally-tagged `account_changes` payload stays
-            /// bincode-safe (see [`Eip8130Bincode`]).
-            transaction: Eip8130Bincode,
-        },
+    pub struct EthereumTxEnvelope<'a, Eip4844: Clone = crate::transaction::TxEip4844> {
+        /// Transaction signature
+        signature: Signature,
+        /// bincode compatible transaction
+        transaction:
+            crate::serde_bincode_compat::transaction::EthereumTypedTransaction<'a, Eip4844>,
     }
 
-    impl<'a> From<&'a super::BaseTxEnvelope> for BaseTxEnvelope<'a> {
-        fn from(value: &'a super::BaseTxEnvelope) -> Self {
+    impl<'a, T: Clone> From<&'a super::EthereumTxEnvelope<T>> for EthereumTxEnvelope<'a, T> {
+        fn from(value: &'a super::EthereumTxEnvelope<T>) -> Self {
             match value {
-                super::BaseTxEnvelope::Legacy(signed_legacy) => Self::Legacy {
-                    signature: *signed_legacy.signature(),
-                    transaction: signed_legacy.tx().into(),
+                super::EthereumTxEnvelope::Legacy(tx) => Self {
+                    signature: *tx.signature(),
+                    transaction:
+                        crate::serde_bincode_compat::transaction::EthereumTypedTransaction::Legacy(
+                            tx.tx().into(),
+                        ),
                 },
-                super::BaseTxEnvelope::Eip2930(signed_2930) => Self::Eip2930 {
-                    signature: *signed_2930.signature(),
-                    transaction: signed_2930.tx().into(),
+                super::EthereumTxEnvelope::Eip2930(tx) => Self {
+                    signature: *tx.signature(),
+                    transaction:
+                        crate::serde_bincode_compat::transaction::EthereumTypedTransaction::Eip2930(
+                            tx.tx().into(),
+                        ),
                 },
-                super::BaseTxEnvelope::Eip1559(signed_1559) => Self::Eip1559 {
-                    signature: *signed_1559.signature(),
-                    transaction: signed_1559.tx().into(),
+                super::EthereumTxEnvelope::Eip1559(tx) => Self {
+                    signature: *tx.signature(),
+                    transaction:
+                        crate::serde_bincode_compat::transaction::EthereumTypedTransaction::Eip1559(
+                            tx.tx().into(),
+                        ),
                 },
-                super::BaseTxEnvelope::Eip7702(signed_7702) => Self::Eip7702 {
-                    signature: *signed_7702.signature(),
-                    transaction: signed_7702.tx().into(),
+                super::EthereumTxEnvelope::Eip4844(tx) => Self {
+                    signature: *tx.signature(),
+                    transaction:
+                        crate::serde_bincode_compat::transaction::EthereumTypedTransaction::Eip4844(
+                            Cow::Borrowed(tx.tx()),
+                        ),
                 },
-                super::BaseTxEnvelope::Eip8130(eip8130_signed) => {
-                    Self::Eip8130 { transaction: Eip8130Bincode(eip8130_signed.clone()) }
-                }
-                super::BaseTxEnvelope::Deposit(sealed_deposit) => Self::Deposit {
-                    hash: sealed_deposit.seal(),
-                    transaction: sealed_deposit.inner().into(),
+                super::EthereumTxEnvelope::Eip7702(tx) => Self {
+                    signature: *tx.signature(),
+                    transaction:
+                        crate::serde_bincode_compat::transaction::EthereumTypedTransaction::Eip7702(
+                            tx.tx().into(),
+                        ),
                 },
             }
         }
     }
 
-    impl<'a> From<BaseTxEnvelope<'a>> for super::BaseTxEnvelope {
-        fn from(value: BaseTxEnvelope<'a>) -> Self {
-            match value {
-                BaseTxEnvelope::Legacy { signature, transaction } => {
-                    Self::Legacy(Signed::new_unhashed(transaction.into(), signature))
+    impl<'a, T: Clone> From<EthereumTxEnvelope<'a, T>> for super::EthereumTxEnvelope<T> {
+        fn from(value: EthereumTxEnvelope<'a, T>) -> Self {
+            let EthereumTxEnvelope { signature, transaction } = value;
+            let transaction: crate::transaction::typed::EthereumTypedTransaction<T> =
+                transaction.into();
+            match transaction {
+                EthereumTypedTransaction::Legacy(tx) => Signed::new_unhashed(tx, signature).into(),
+                EthereumTypedTransaction::Eip2930(tx) => Signed::new_unhashed(tx, signature).into(),
+                EthereumTypedTransaction::Eip1559(tx) => Signed::new_unhashed(tx, signature).into(),
+                EthereumTypedTransaction::Eip4844(tx) => {
+                    Self::Eip4844(Signed::new_unhashed(tx, signature))
                 }
-                BaseTxEnvelope::Eip2930 { signature, transaction } => {
-                    Self::Eip2930(Signed::new_unhashed(transaction.into(), signature))
-                }
-                BaseTxEnvelope::Eip1559 { signature, transaction } => {
-                    Self::Eip1559(Signed::new_unhashed(transaction.into(), signature))
-                }
-                BaseTxEnvelope::Eip7702 { signature, transaction } => {
-                    Self::Eip7702(Signed::new_unhashed(transaction.into(), signature))
-                }
-                BaseTxEnvelope::Eip8130 { transaction } => Self::Eip8130(transaction.0),
-                BaseTxEnvelope::Deposit { hash, transaction } => {
-                    Self::Deposit(Sealed::new_unchecked(transaction.into(), hash))
-                }
+                EthereumTypedTransaction::Eip7702(tx) => Signed::new_unhashed(tx, signature).into(),
             }
         }
     }
 
-    impl SerializeAs<super::BaseTxEnvelope> for BaseTxEnvelope<'_> {
-        fn serialize_as<S>(source: &super::BaseTxEnvelope, serializer: S) -> Result<S::Ok, S::Error>
+    impl<T: Serialize + Clone> SerializeAs<super::EthereumTxEnvelope<T>> for EthereumTxEnvelope<'_, T> {
+        fn serialize_as<S>(
+            source: &super::EthereumTxEnvelope<T>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            let borrowed = BaseTxEnvelope::from(source);
-            borrowed.serialize(serializer)
+            EthereumTxEnvelope::<'_, T>::from(source).serialize(serializer)
         }
     }
 
-    impl<'de> DeserializeAs<'de, super::BaseTxEnvelope> for BaseTxEnvelope<'de> {
-        fn deserialize_as<D>(deserializer: D) -> Result<super::BaseTxEnvelope, D::Error>
+    impl<'de, T: Deserialize<'de> + Clone> DeserializeAs<'de, super::EthereumTxEnvelope<T>>
+        for EthereumTxEnvelope<'de, T>
+    {
+        fn deserialize_as<D>(deserializer: D) -> Result<super::EthereumTxEnvelope<T>, D::Error>
         where
             D: Deserializer<'de>,
         {
-            let borrowed = BaseTxEnvelope::deserialize(deserializer)?;
-            Ok(borrowed.into())
+            EthereumTxEnvelope::<'_, T>::deserialize(deserializer).map(Into::into)
         }
     }
 
     #[cfg(test)]
     mod tests {
         use arbitrary::Arbitrary;
-        use rand::Rng;
+        use bincode::config;
+        use rand_08::Rng;
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
 
-        use super::*;
+        use super::super::{EthereumTxEnvelope, serde_bincode_compat};
+        use crate::TxEip4844;
 
-        /// Tests a bincode round-trip for [`BaseTxEnvelope`] using an arbitrary instance.
         #[test]
-        fn test_base_tx_envelope_bincode_roundtrip_arbitrary() {
+        fn test_typed_tx_envelope_bincode_roundtrip() {
             #[serde_as]
             #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
             struct Data {
-                // Use the bincode-compatible representation defined in this module.
-                #[serde_as(as = "BaseTxEnvelope<'_>")]
-                envelope: super::super::BaseTxEnvelope,
+                #[serde_as(as = "serde_bincode_compat::EthereumTxEnvelope<'_>")]
+                transaction: EthereumTxEnvelope<TxEip4844>,
             }
 
             let mut bytes = [0u8; 1024];
-            rand::rng().fill(bytes.as_mut_slice());
+            rand_08::thread_rng().fill(bytes.as_mut_slice());
             let data = Data {
-                envelope: super::super::BaseTxEnvelope::arbitrary(
-                    &mut arbitrary::Unstructured::new(&bytes),
-                )
+                transaction: EthereumTxEnvelope::arbitrary(&mut arbitrary::Unstructured::new(
+                    &bytes,
+                ))
                 .unwrap(),
             };
 
-            let encoded = bincode::serde::encode_to_vec(&data, bincode::config::legacy()).unwrap();
+            let encoded = bincode::serde::encode_to_vec(&data, config::legacy()).unwrap();
             let (decoded, _) =
-                bincode::serde::decode_from_slice::<Data, _>(&encoded, bincode::config::legacy())
-                    .unwrap();
+                bincode::serde::decode_from_slice::<Data, _>(&encoded, config::legacy()).unwrap();
             assert_eq!(decoded, data);
-        }
-    }
-}
-
-impl InMemorySize for BaseTxEnvelope {
-    fn size(&self) -> usize {
-        match self {
-            Self::Legacy(tx) => tx.size(),
-            Self::Eip2930(tx) => tx.size(),
-            Self::Eip1559(tx) => tx.size(),
-            Self::Eip7702(tx) => tx.size(),
-            Self::Eip8130(tx) => tx.size(),
-            Self::Deposit(tx) => tx.size(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
+    use alloc::vec::Vec;
+    use std::{fs, path::PathBuf, str::FromStr, vec};
 
-    use alloy_consensus::{SignableTransaction, Transaction};
-    use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, hex};
-    #[cfg(feature = "reth")]
-    use reth_codecs::Compact;
+    use alloy_eips::{
+        eip2930::{AccessList, AccessListItem},
+        eip4844::BlobTransactionSidecar,
+        eip7594::BlobTransactionSidecarVariant,
+        eip7702::Authorization,
+    };
+    use alloy_primitives::{Address, Signature, U256, hex};
+    #[allow(unused_imports)]
+    use alloy_primitives::{Bytes, TxKind, b256};
+    use alloy_rlp::Decodable;
 
     use super::*;
+    use crate::{
+        Transaction, TxEip4844, TxEip4844WithSidecar,
+        transaction::{Recovered, SignableTransaction, SignerRecoverable},
+    };
 
     #[test]
-    fn test_tx_gas_limit() {
-        let tx = TxDeposit { gas_limit: 1, ..Default::default() };
-        let tx_envelope = BaseTxEnvelope::Deposit(tx.seal_slow());
-        assert_eq!(tx_envelope.gas_limit(), 1);
+    fn assert_encodable() {
+        fn assert_encodable<T: Encodable2718>() {}
+
+        assert_encodable::<EthereumTxEnvelope<TxEip4844>>();
+        assert_encodable::<Recovered<EthereumTxEnvelope<TxEip4844>>>();
+        assert_encodable::<Recovered<EthereumTxEnvelope<TxEip4844Variant>>>();
     }
 
     #[test]
-    fn test_deposit() {
-        let tx = TxDeposit { is_system_transaction: true, ..Default::default() };
-        let tx_envelope = BaseTxEnvelope::Deposit(tx.seal_slow());
-        assert!(tx_envelope.is_deposit());
+    #[cfg(feature = "k256")]
+    // Test vector from https://etherscan.io/tx/0xce4dc6d7a7549a98ee3b071b67e970879ff51b5b95d1c340bacd80fa1e1aab31
+    fn test_decode_live_1559_tx() {
+        use alloy_primitives::address;
 
-        let tx = TxEip1559::default();
+        let raw_tx = alloy_primitives::hex::decode("02f86f0102843b9aca0085029e7822d68298f094d9e1459a7a482635700cbc20bbaf52d495ab9c9680841b55ba3ac080a0c199674fcb29f353693dd779c017823b954b3c69dffa3cd6b2a6ff7888798039a028ca912de909e7e6cdef9cdcaf24c54dd8c1032946dfa1d85c206b32a9064fe8").unwrap();
+        let res = TxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
+
+        assert_eq!(res.tx_type(), TxType::Eip1559);
+
+        let tx = match res {
+            TxEnvelope::Eip1559(tx) => tx,
+            _ => unreachable!(),
+        };
+
+        assert_eq!(tx.tx().to, TxKind::Call(address!("D9e1459A7A482635700cBc20BBAF52D495Ab9C96")));
+        let from = tx.recover_signer().unwrap();
+        assert_eq!(from, address!("001e2b7dE757bA469a57bF6b23d982458a07eFcE"));
+    }
+
+    #[test]
+    fn test_is_replay_protected_v() {
         let sig = Signature::test_signature();
-        let tx_envelope = BaseTxEnvelope::Eip1559(tx.into_signed(sig));
-        assert!(!tx_envelope.is_system_transaction());
+        assert!(
+            !&TxEnvelope::Legacy(Signed::new_unchecked(
+                TxLegacy::default(),
+                sig,
+                Default::default(),
+            ))
+            .is_replay_protected()
+        );
+        let r = b256!("840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565");
+        let s = b256!("25e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1");
+        let v = false;
+        let valid_sig = Signature::from_scalars_and_parity(r, s, v);
+        assert!(
+            !&TxEnvelope::Legacy(Signed::new_unchecked(
+                TxLegacy::default(),
+                valid_sig,
+                Default::default(),
+            ))
+            .is_replay_protected()
+        );
+        assert!(
+            &TxEnvelope::Eip2930(Signed::new_unchecked(
+                TxEip2930::default(),
+                sig,
+                Default::default(),
+            ))
+            .is_replay_protected()
+        );
+        assert!(
+            &TxEnvelope::Eip1559(Signed::new_unchecked(
+                TxEip1559::default(),
+                sig,
+                Default::default(),
+            ))
+            .is_replay_protected()
+        );
+        assert!(
+            &TxEnvelope::Eip4844(Signed::new_unchecked(
+                TxEip4844Variant::TxEip4844(TxEip4844::default()),
+                sig,
+                Default::default(),
+            ))
+            .is_replay_protected()
+        );
+        assert!(
+            &TxEnvelope::Eip7702(Signed::new_unchecked(
+                TxEip7702::default(),
+                sig,
+                Default::default(),
+            ))
+            .is_replay_protected()
+        );
     }
 
     #[test]
-    fn test_system_transaction() {
-        let mut tx = TxDeposit { is_system_transaction: true, ..Default::default() };
-        let tx_envelope = BaseTxEnvelope::Deposit(tx.clone().seal_slow());
-        assert!(tx_envelope.is_system_transaction());
+    #[cfg(feature = "k256")]
+    // Test vector from https://etherscan.io/tx/0x280cde7cdefe4b188750e76c888f13bd05ce9a4d7767730feefe8a0e50ca6fc4
+    fn test_decode_live_legacy_tx() {
+        use alloy_primitives::address;
 
-        tx.is_system_transaction = false;
-        let tx_envelope = BaseTxEnvelope::Deposit(tx.seal_slow());
-        assert!(!tx_envelope.is_system_transaction());
-    }
+        let raw_tx = alloy_primitives::bytes!(
+            "f9015482078b8505d21dba0083022ef1947a250d5630b4cf539739df2c5dacb4c659f2488d880c46549a521b13d8b8e47ff36ab50000000000000000000000000000000000000000000066ab5a608bd00a23f2fe000000000000000000000000000000000000000000000000000000000000008000000000000000000000000048c04ed5691981c42154c6167398f95e8f38a7ff00000000000000000000000000000000000000000000000000000000632ceac70000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000006c6ee5e31d828de241282b9606c8e98ea48526e225a0c9077369501641a92ef7399ff81c21639ed4fd8fc69cb793cfa1dbfab342e10aa0615facb2f1bcf3274a354cfe384a38d0cc008a11c2dd23a69111bc6930ba27a8"
+        );
+        let res = TxEnvelope::decode_2718(&mut raw_tx.as_ref()).unwrap();
+        assert_eq!(res.tx_type(), TxType::Legacy);
 
-    #[test]
-    fn test_encode_decode_deposit() {
-        let tx = TxDeposit {
-            source_hash: B256::left_padding_from(&[0xde, 0xad]),
-            from: Address::left_padding_from(&[0xbe, 0xef]),
-            mint: 1,
-            gas_limit: 2,
-            to: TxKind::Call(Address::left_padding_from(&[3])),
-            value: U256::from(4_u64),
-            input: Bytes::from(vec![5]),
-            is_system_transaction: false,
+        let tx = match res {
+            TxEnvelope::Legacy(tx) => tx,
+            _ => unreachable!(),
         };
-        let tx_envelope = BaseTxEnvelope::Deposit(tx.seal_slow());
-        let encoded = tx_envelope.encoded_2718();
-        let decoded = BaseTxEnvelope::decode_2718(&mut encoded.as_ref()).unwrap();
-        assert_eq!(encoded.len(), tx_envelope.encode_2718_len());
-        assert_eq!(decoded, tx_envelope);
+
+        assert_eq!(tx.tx().chain_id(), Some(1));
+
+        assert_eq!(tx.tx().to, TxKind::Call(address!("7a250d5630B4cF539739dF2C5dAcb4c659F2488D")));
+        assert_eq!(
+            tx.hash().to_string(),
+            "0x280cde7cdefe4b188750e76c888f13bd05ce9a4d7767730feefe8a0e50ca6fc4"
+        );
+        let from = tx.recover_signer().unwrap();
+        assert_eq!(from, address!("a12e1462d0ceD572f396F58B6E2D03894cD7C8a4"));
     }
 
     #[test]
-    #[cfg(feature = "serde")]
-    fn test_serde_roundtrip_deposit() {
-        let tx = TxDeposit {
-            gas_limit: u64::MAX,
-            to: TxKind::Call(Address::random()),
-            value: U256::MAX,
-            input: Bytes::new(),
-            source_hash: U256::MAX.into(),
-            from: Address::random(),
-            mint: u128::MAX,
-            is_system_transaction: false,
+    #[cfg(feature = "k256")]
+    // Test vector from https://sepolia.etherscan.io/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
+    // Blobscan: https://sepolia.blobscan.com/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
+    fn test_decode_live_4844_tx() {
+        use alloy_primitives::{address, b256};
+
+        use crate::Transaction;
+
+        // https://sepolia.etherscan.io/getRawTx?tx=0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
+        let raw_tx = alloy_primitives::hex::decode("0x03f9011d83aa36a7820fa28477359400852e90edd0008252089411e9ca82a3a762b4b5bd264d4173a242e7a770648080c08504a817c800f8a5a0012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921aa00152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4a0013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7a001148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1a0011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e654901a0c8de4cced43169f9aa3d36506363b2d2c44f6c49fc1fd91ea114c86f3757077ea01e11fdd0d1934eda0492606ee0bb80a7bf8f35cc5f86ec60fe5031ba48bfd544").unwrap();
+
+        let res = TxEnvelope::decode_2718(&mut raw_tx.as_slice()).unwrap();
+        assert_eq!(res.tx_type(), TxType::Eip4844);
+
+        let tx = match res {
+            TxEnvelope::Eip4844(tx) => tx,
+            _ => unreachable!(),
         };
-        let tx_envelope = BaseTxEnvelope::Deposit(tx.seal_slow());
 
-        let serialized = serde_json::to_string(&tx_envelope).unwrap();
-        let deserialized: BaseTxEnvelope = serde_json::from_str(&serialized).unwrap();
-
-        assert_eq!(tx_envelope, deserialized);
-    }
-
-    #[test]
-    fn eip2718_deposit_decode() {
-        // <https://basescan.org/tx/0xc468b38a20375922828c8126912740105125143b9856936085474b2590bbca91>
-        let b = hex!(
-            "7ef8f8a0417d134467f4737fcdf2475f0ecdd2a0ed6d87ecffc888ba9f60ee7e3b8ac26a94deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000008dd00101c1200000000000000040000000066c352bb000000000139c4f500000000000000000000000000000000000000000000000000000000c0cff1460000000000000000000000000000000000000000000000000000000000000001d4c88f4065ac9671e8b1329b90773e89b5ddff9cf8675b2b5e9c1b28320609930000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9"
+        assert_eq!(
+            tx.tx().kind(),
+            TxKind::Call(address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064"))
         );
 
-        let tx = BaseTxEnvelope::decode_2718(&mut b[..].as_ref()).unwrap();
-        let deposit = tx.as_deposit().unwrap();
-        assert_eq!(deposit.mint, 0);
+        // Assert this is the correct variant of the EIP-4844 enum, which only contains the tx.
+        assert!(matches!(tx.tx(), TxEip4844Variant::TxEip4844(_)));
+
+        assert_eq!(
+            tx.tx().tx().blob_versioned_hashes,
+            vec![
+                b256!("012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921a"),
+                b256!("0152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4"),
+                b256!("013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7"),
+                b256!("01148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1"),
+                b256!("011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e6549")
+            ]
+        );
+
+        let from = tx.recover_signer().unwrap();
+        assert_eq!(from, address!("0xA83C816D4f9b2783761a22BA6FADB0eB0606D7B2"));
+    }
+
+    fn test_encode_decode_roundtrip<T: SignableTransaction<Signature>>(
+        tx: T,
+        signature: Option<Signature>,
+    ) where
+        Signed<T>: Into<TxEnvelope>,
+    {
+        let signature = signature.unwrap_or_else(Signature::test_signature);
+        let tx_signed = tx.into_signed(signature);
+        let tx_envelope: TxEnvelope = tx_signed.into();
+        let encoded = tx_envelope.encoded_2718();
+        let mut slice = encoded.as_slice();
+        let decoded = TxEnvelope::decode_2718(&mut slice).unwrap();
+        assert_eq!(encoded.len(), tx_envelope.encode_2718_len());
+        assert_eq!(decoded, tx_envelope);
+        assert_eq!(slice.len(), 0);
     }
 
     #[test]
-    fn eip1559_decode() {
+    fn test_encode_decode_legacy() {
+        let tx = TxLegacy {
+            chain_id: None,
+            nonce: 2,
+            gas_limit: 1000000,
+            gas_price: 10000000000,
+            to: Address::left_padding_from(&[6]).into(),
+            value: U256::from(7_u64),
+            ..Default::default()
+        };
+        test_encode_decode_roundtrip(tx, Some(Signature::test_signature().with_parity(true)));
+    }
+
+    #[test]
+    fn test_encode_decode_eip1559() {
         let tx = TxEip1559 {
             chain_id: 1u64,
             nonce: 2,
@@ -870,148 +1284,971 @@ mod tests {
             input: vec![8].into(),
             access_list: Default::default(),
         };
-        let sig = Signature::test_signature();
-        let tx_signed = tx.into_signed(sig);
-        let envelope: BaseTxEnvelope = tx_signed.into();
-        let encoded = envelope.encoded_2718();
-        let mut slice = encoded.as_slice();
-        let decoded = BaseTxEnvelope::decode_2718(&mut slice).unwrap();
-        assert!(matches!(decoded, BaseTxEnvelope::Eip1559(_)));
+        test_encode_decode_roundtrip(tx, None);
     }
 
-    #[cfg(feature = "k256")]
     #[test]
-    fn eip8130_envelope_recovery_honors_checked_vs_unchecked_contract() {
-        use alloy_consensus::transaction::SignerRecoverable;
-        use alloy_signer::SignerSync;
-        use base_common_network::PrivateKeySigner;
+    fn test_encode_decode_eip1559_parity_eip155() {
+        let tx = TxEip1559 {
+            chain_id: 1u64,
+            nonce: 2,
+            max_fee_per_gas: 3,
+            max_priority_fee_per_gas: 4,
+            gas_limit: 5,
+            to: Address::left_padding_from(&[6]).into(),
+            value: U256::from(7_u64),
+            input: vec![8].into(),
+            access_list: Default::default(),
+        };
+        let signature = Signature::test_signature().with_parity(true);
 
-        use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
-
-        // secp256k1 curve order N — used to flip a canonical signature into
-        // the upper half via (r, s, v) -> (r, N - s, !v).
-        const SECP256K1_N: U256 = U256::from_be_slice(&[
-            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c,
-            0xd0, 0x36, 0x41, 0x41,
-        ]);
-
-        let signer = PrivateKeySigner::random();
-        let expected = signer.address();
-
-        let tx = TxEip8130 { sender: None, ..Default::default() };
-        let hash = tx.sender_signature_hash();
-        let canonical = signer.sign_hash_sync(&hash).unwrap();
-        let high_s = Signature::new(canonical.r(), SECP256K1_N - canonical.s(), !canonical.v());
-
-        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
-            tx,
-            Bytes::from(high_s.as_bytes().to_vec()),
-            Bytes::new(),
-        ));
-
-        // Checked path enforces EIP-2 low-s and must reject; the unchecked
-        // path is contractually required to accept and recover the address.
-        assert!(envelope.recover_signer().is_err());
-        assert_eq!(envelope.recover_signer_unchecked().unwrap(), expected);
-
-        let mut buf = alloc::vec::Vec::new();
-        assert_eq!(envelope.recover_unchecked_with_buf(&mut buf).unwrap(), expected);
+        test_encode_decode_roundtrip(tx, Some(signature));
     }
 
-    #[cfg(feature = "k256")]
     #[test]
-    fn eip8130_envelope_recovery_short_circuits_configured_actor() {
-        use alloy_consensus::transaction::SignerRecoverable;
-
-        use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
-
-        let explicit = Address::repeat_byte(0xab);
-        let tx = TxEip8130 { sender: Some(explicit), ..Default::default() };
-        // sender_auth is irrelevant on the configured-actor path; supply 65
-        // zero bytes so the structural shape stays well-formed.
-        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
-            tx,
-            Bytes::from(vec![0u8; 65]),
-            Bytes::new(),
-        ));
-
-        assert_eq!(envelope.recover_signer().unwrap(), explicit);
-        assert_eq!(envelope.recover_signer_unchecked().unwrap(), explicit);
-        let mut buf = alloc::vec::Vec::new();
-        assert_eq!(envelope.recover_unchecked_with_buf(&mut buf).unwrap(), explicit);
+    fn test_encode_decode_eip2930_parity_eip155() {
+        let tx = TxEip2930 {
+            chain_id: 1u64,
+            nonce: 2,
+            gas_price: 3,
+            gas_limit: 4,
+            to: Address::left_padding_from(&[5]).into(),
+            value: U256::from(6_u64),
+            input: vec![7].into(),
+            access_list: Default::default(),
+        };
+        let signature = Signature::test_signature().with_parity(true);
+        test_encode_decode_roundtrip(tx, Some(signature));
     }
 
-    #[cfg(feature = "reth")]
     #[test]
-    fn eip8130_compact_roundtrip() {
-        use alloy_consensus::Typed2718;
+    fn test_encode_decode_eip4844_parity_eip155() {
+        let tx = TxEip4844 {
+            chain_id: 1,
+            nonce: 100,
+            max_fee_per_gas: 50_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000_000,
+            gas_limit: 1_000_000,
+            to: Address::random(),
+            value: U256::from(10e18),
+            input: Bytes::new(),
+            access_list: AccessList(vec![AccessListItem {
+                address: Address::random(),
+                storage_keys: vec![B256::random()],
+            }]),
+            blob_versioned_hashes: vec![B256::random()],
+            max_fee_per_blob_gas: 0,
+        };
+        let signature = Signature::test_signature().with_parity(true);
+        test_encode_decode_roundtrip(tx, Some(signature));
+    }
 
-        use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
+    #[test]
+    fn test_encode_decode_eip4844_sidecar_parity_eip155() {
+        let tx = TxEip4844 {
+            chain_id: 1,
+            nonce: 100,
+            max_fee_per_gas: 50_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000_000,
+            gas_limit: 1_000_000,
+            to: Address::random(),
+            value: U256::from(10e18),
+            input: Bytes::new(),
+            access_list: AccessList(vec![AccessListItem {
+                address: Address::random(),
+                storage_keys: vec![B256::random()],
+            }]),
+            blob_versioned_hashes: vec![B256::random()],
+            max_fee_per_blob_gas: 0,
+        };
+        let sidecar = BlobTransactionSidecar {
+            blobs: vec![[2; 131072].into()],
+            commitments: vec![[3; 48].into()],
+            proofs: vec![[4; 48].into()],
+        };
+        let tx = TxEip4844WithSidecar { tx, sidecar };
+        let signature = Signature::test_signature().with_parity(true);
 
-        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
-            TxEip8130 {
-                chain_id: 8453,
-                sender: Some(Address::with_last_byte(0x11)),
-                nonce_key: U256::from(7u64),
-                nonce_sequence: 3,
-                valid_after: 0,
-                valid_before: 123,
-                max_priority_fee_per_gas: 1_000,
-                max_fee_per_gas: 5_000,
-                gas_limit: 42_000,
-                account_changes: Vec::new(),
-                calls: Vec::new(),
-                metadata: Bytes::from_static(&[0x01, 0x02, 0x03]),
-                payer: Some(Address::with_last_byte(0x22)),
+        let tx_signed = tx.into_signed(signature);
+        let tx_envelope: TxEnvelope = tx_signed.into();
+
+        let mut out = Vec::new();
+        tx_envelope.network_encode(&mut out);
+        let mut slice = out.as_slice();
+        let decoded = TxEnvelope::network_decode(&mut slice).unwrap();
+        assert_eq!(slice.len(), 0);
+        assert_eq!(out.len(), tx_envelope.network_len());
+        assert_eq!(decoded, tx_envelope);
+    }
+
+    #[test]
+    fn test_encode_decode_eip4844_variant_parity_eip155() {
+        let tx = TxEip4844 {
+            chain_id: 1,
+            nonce: 100,
+            max_fee_per_gas: 50_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000_000,
+            gas_limit: 1_000_000,
+            to: Address::random(),
+            value: U256::from(10e18),
+            input: Bytes::new(),
+            access_list: AccessList(vec![AccessListItem {
+                address: Address::random(),
+                storage_keys: vec![B256::random()],
+            }]),
+            blob_versioned_hashes: vec![B256::random()],
+            max_fee_per_blob_gas: 0,
+        };
+        let tx: TxEip4844Variant = tx.into();
+        let signature = Signature::test_signature().with_parity(true);
+        test_encode_decode_roundtrip(tx, Some(signature));
+    }
+
+    #[test]
+    fn test_encode_decode_eip2930() {
+        let tx = TxEip2930 {
+            chain_id: 1u64,
+            nonce: 2,
+            gas_price: 3,
+            gas_limit: 4,
+            to: Address::left_padding_from(&[5]).into(),
+            value: U256::from(6_u64),
+            input: vec![7].into(),
+            access_list: AccessList(vec![AccessListItem {
+                address: Address::left_padding_from(&[8]),
+                storage_keys: vec![B256::left_padding_from(&[9])],
+            }]),
+        };
+        test_encode_decode_roundtrip(tx, None);
+    }
+
+    #[test]
+    fn test_encode_decode_eip7702() {
+        let tx = TxEip7702 {
+            chain_id: 1u64,
+            nonce: 2,
+            gas_limit: 3,
+            max_fee_per_gas: 4,
+            max_priority_fee_per_gas: 5,
+            to: Address::left_padding_from(&[5]),
+            value: U256::from(6_u64),
+            input: vec![7].into(),
+            access_list: AccessList(vec![AccessListItem {
+                address: Address::left_padding_from(&[8]),
+                storage_keys: vec![B256::left_padding_from(&[9])],
+            }]),
+            authorization_list: vec![(Authorization {
+                chain_id: U256::from(1),
+                address: Address::left_padding_from(&[10]),
+                nonce: 1u64,
+            })
+            .into_signed(Signature::from_str("48b55bfa915ac795c431978d8a6a992b628d557da5ff759b307d495a36649353efffd310ac743f371de3b9f7f9cb56c0b28ad43601b4ab949f53faa07bd2c8041b").unwrap())],
+        };
+        test_encode_decode_roundtrip(tx, None);
+    }
+
+    #[test]
+    fn test_encode_decode_transaction_list() {
+        let signature = Signature::test_signature();
+        let tx = TxEnvelope::Eip1559(
+            TxEip1559 {
+                chain_id: 1u64,
+                nonce: 2,
+                max_fee_per_gas: 3,
+                max_priority_fee_per_gas: 4,
+                gas_limit: 5,
+                to: Address::left_padding_from(&[6]).into(),
+                value: U256::from(7_u64),
+                input: vec![8].into(),
+                access_list: Default::default(),
+            }
+            .into_signed(signature),
+        );
+        let transactions = vec![tx.clone(), tx];
+        let encoded = alloy_rlp::encode(&transactions);
+        let decoded = Vec::<TxEnvelope>::decode(&mut &encoded[..]).unwrap();
+        assert_eq!(transactions, decoded);
+    }
+
+    #[test]
+    fn decode_encode_known_rpc_transaction() {
+        // test data pulled from hive test that sends blob transactions
+        let network_data_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/rpc_blob_transaction.rlp");
+        let data = fs::read_to_string(network_data_path).expect("Unable to read file");
+        let hex_data = hex::decode(data.trim()).unwrap();
+
+        let tx: TxEnvelope = TxEnvelope::decode_2718(&mut hex_data.as_slice()).unwrap();
+        let encoded = tx.encoded_2718();
+        assert_eq!(encoded, hex_data);
+        assert_eq!(tx.encode_2718_len(), hex_data.len());
+    }
+
+    #[test]
+    fn decode_2718_exact_rejects_fallback_suffix_reproducer() {
+        let raw = hex!("c23b2d0c818686d22d04457979803200c0018686c2790500ff05");
+
+        assert!(TxEnvelope::decode_2718_exact(&raw).is_err());
+
+        let mut buf = raw.as_slice();
+        assert!(TxEnvelope::decode_2718(&mut buf).is_err());
+        assert_eq!(buf, raw.as_slice());
+    }
+
+    #[test]
+    fn untagged_fallback_decode_only_accepts_legacy() {
+        // Per EIP-2718, a byte string with no type-byte prefix (first byte >= 0xc0, i.e. it
+        // is an RLP list) can only ever represent a legacy transaction; if it fails the legacy
+        // schema, decoding must fail outright -- it must never be reinterpreted as some other
+        // (typed) transaction kind.
+        //
+        // This 107-byte RLP list is invalid as a legacy tx: list-index 3 (the would-be `to`)
+        // is a 3-byte string, not a 20-byte address or an empty string, and list-index 8 (the
+        // would-be `s`) is RLP-typed as an empty list, not an integer. But the very same bytes
+        // happen to be a byte-for-byte-valid 12-field `TxEip1559` list (chain_id, nonce,
+        // max_priority_fee_per_gas, max_fee_per_gas, gas_limit, to, value, input, access_list,
+        // y_parity, r, s). Before the fix, `EthereumTxEnvelope`'s generated `fallback_decode`
+        // tried every declared variant in enum-declaration order and accepted this input as
+        // `Eip1559`, since that's the first (and only) variant whose raw-field RLP schema
+        // happens to fully consume the buffer.
+        let untagged_invalid_as_legacy_valid_as_eip1559 = hex!(
+            "f8690180830f4240830f424083ffff0c94e1000000000000000000000000000000c0de0000"
+            "8020c080a079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+            "a05168112c1d71e40b6b60530adbd2c4aaf9e4f94b6cca0f5717fac601350af7d3"
+        );
+        assert!(
+            TxEnvelope::decode_2718_exact(&untagged_invalid_as_legacy_valid_as_eip1559).is_err(),
+            "untagged input that is not a valid legacy tx must be rejected, not reinterpreted \
+             as another transaction type"
+        );
+
+        // Guard against over-correction (1): a genuine untagged legacy tx must still decode as
+        // `Legacy`.
+        let legacy = TxLegacy {
+            chain_id: None,
+            nonce: 2,
+            gas_limit: 1_000_000,
+            gas_price: 10_000_000_000,
+            to: Address::left_padding_from(&[6]).into(),
+            value: U256::from(7_u64),
+            ..Default::default()
+        }
+        .into_signed(Signature::test_signature().with_parity(true));
+        let legacy_envelope: TxEnvelope = legacy.into();
+        let legacy_encoded = legacy_envelope.encoded_2718();
+        assert_eq!(
+            TxEnvelope::decode_2718_exact(&legacy_encoded).unwrap(),
+            legacy_envelope,
+            "a genuine legacy transaction must still decode correctly"
+        );
+
+        // Guard against over-correction (2): a genuine, correctly type-tagged (0x02-prefixed)
+        // EIP-1559 tx must still decode as `Eip1559` via `typed_decode` (not `fallback_decode`).
+        let eip1559 = TxEip1559 {
+            chain_id: 1,
+            nonce: 2,
+            max_fee_per_gas: 3,
+            max_priority_fee_per_gas: 4,
+            gas_limit: 5,
+            to: Address::left_padding_from(&[6]).into(),
+            value: U256::from(7_u64),
+            input: vec![8].into(),
+            access_list: Default::default(),
+        }
+        .into_signed(Signature::test_signature());
+        let eip1559_envelope: TxEnvelope = eip1559.into();
+        let eip1559_encoded = eip1559_envelope.encoded_2718();
+        assert_eq!(eip1559_encoded[0], 0x02, "sanity: must be type-tagged, not untagged");
+        assert_eq!(
+            TxEnvelope::decode_2718_exact(&eip1559_encoded).unwrap(),
+            eip1559_envelope,
+            "a genuine type-tagged EIP-1559 transaction must still decode correctly"
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    fn test_serde_roundtrip<T: SignableTransaction<Signature>>(tx: T)
+    where
+        Signed<T>: Into<TxEnvelope>,
+    {
+        let signature = Signature::test_signature();
+        let tx_envelope: TxEnvelope = tx.into_signed(signature).into();
+
+        let serialized = serde_json::to_string(&tx_envelope).unwrap();
+
+        let deserialized: TxEnvelope = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(tx_envelope, deserialized);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_serde_roundtrip_legacy() {
+        let tx = TxLegacy {
+            chain_id: Some(1),
+            nonce: 100,
+            gas_price: 3_000_000_000,
+            gas_limit: 50_000,
+            to: Address::default().into(),
+            value: U256::from(10e18),
+            input: Bytes::new(),
+        };
+        test_serde_roundtrip(tx);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_serde_roundtrip_eip1559() {
+        let tx = TxEip1559 {
+            chain_id: 1,
+            nonce: 100,
+            max_fee_per_gas: 50_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000_000,
+            gas_limit: 1_000_000,
+            to: TxKind::Create,
+            value: U256::from(10e18),
+            input: Bytes::new(),
+            access_list: AccessList(vec![AccessListItem {
+                address: Address::random(),
+                storage_keys: vec![B256::random()],
+            }]),
+        };
+        test_serde_roundtrip(tx);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_serde_roundtrip_eip2930() {
+        let tx = TxEip2930 {
+            chain_id: u64::MAX,
+            nonce: u64::MAX,
+            gas_price: u128::MAX,
+            gas_limit: u64::MAX,
+            to: Address::random().into(),
+            value: U256::MAX,
+            input: Bytes::new(),
+            access_list: Default::default(),
+        };
+        test_serde_roundtrip(tx);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_serde_roundtrip_eip4844() {
+        let tx: TxEip4844Variant = TxEip4844 {
+            chain_id: 1,
+            nonce: 100,
+            max_fee_per_gas: 50_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000_000,
+            gas_limit: 1_000_000,
+            to: Address::random(),
+            value: U256::from(10e18),
+            input: Bytes::new(),
+            access_list: AccessList(vec![AccessListItem {
+                address: Address::random(),
+                storage_keys: vec![B256::random()],
+            }]),
+            blob_versioned_hashes: vec![B256::random()],
+            max_fee_per_blob_gas: 0,
+        }
+        .into();
+        test_serde_roundtrip(tx);
+
+        let tx = TxEip4844Variant::<BlobTransactionSidecarVariant>::TxEip4844WithSidecar(
+            TxEip4844WithSidecar {
+                tx: TxEip4844 {
+                    chain_id: 1,
+                    nonce: 100,
+                    max_fee_per_gas: 50_000_000_000,
+                    max_priority_fee_per_gas: 1_000_000_000_000,
+                    gas_limit: 1_000_000,
+                    to: Address::random(),
+                    value: U256::from(10e18),
+                    input: Bytes::new(),
+                    access_list: AccessList(vec![AccessListItem {
+                        address: Address::random(),
+                        storage_keys: vec![B256::random()],
+                    }]),
+                    blob_versioned_hashes: vec![B256::random()],
+                    max_fee_per_blob_gas: 0,
+                },
+                sidecar: Default::default(),
             },
-            Bytes::from_static(&[0xAB; 65]),
-            Bytes::from_static(&[0xCD; 24]),
-        ));
-
-        let mut buf = Vec::new();
-        let len = envelope.to_compact(&mut buf);
-        let (decoded, remaining) = BaseTxEnvelope::from_compact(&buf, len);
-
-        assert_eq!(decoded, envelope);
-        assert!(remaining.is_empty());
-        assert_eq!(decoded.tx_type(), OpTxType::Eip8130);
-        assert_eq!(decoded.ty(), crate::EIP8130_TX_TYPE_ID);
+        );
+        test_serde_roundtrip(tx);
     }
 
-    #[cfg(feature = "reth")]
     #[test]
-    fn eip8130_compact_decode_preserves_trailing_bytes() {
-        use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
+    #[cfg(feature = "serde")]
+    fn test_serde_roundtrip_eip7702() {
+        let tx = TxEip7702 {
+            chain_id: u64::MAX,
+            nonce: u64::MAX,
+            gas_limit: u64::MAX,
+            max_fee_per_gas: u128::MAX,
+            max_priority_fee_per_gas: u128::MAX,
+            to: Address::random(),
+            value: U256::MAX,
+            input: Bytes::new(),
+            access_list: AccessList(vec![AccessListItem {
+                address: Address::random(),
+                storage_keys: vec![B256::random()],
+            }]),
+            authorization_list: vec![(Authorization {
+                chain_id: U256::from(1),
+                address: Address::left_padding_from(&[1]),
+                nonce: 1u64,
+            })
+            .into_signed(Signature::from_str("48b55bfa915ac795c431978d8a6a992b628d557da5ff759b307d495a36649353efffd310ac743f371de3b9f7f9cb56c0b28ad43601b4ab949f53faa07bd2c8041b").unwrap())],
+        };
+        test_serde_roundtrip(tx);
+    }
 
-        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
-            TxEip8130 {
-                chain_id: 8453,
-                sender: Some(Address::with_last_byte(0x11)),
-                nonce_key: U256::from(7u64),
-                nonce_sequence: 3,
-                valid_after: 0,
-                valid_before: 123,
-                max_priority_fee_per_gas: 1_000,
-                max_fee_per_gas: 5_000,
-                gas_limit: 42_000,
-                account_changes: Vec::new(),
-                calls: Vec::new(),
-                metadata: Bytes::from_static(&[0x01, 0x02, 0x03]),
-                payer: Some(Address::with_last_byte(0x22)),
-            },
-            Bytes::from_static(&[0xAB; 65]),
-            Bytes::from_static(&[0xCD; 24]),
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_tx_from_contract_call() {
+        let rpc_tx = r#"{"hash":"0x018b2331d461a4aeedf6a1f9cc37463377578244e6a35216057a8370714e798f","nonce":"0x1","blockHash":"0x3ca295f1dcaf8ac073c543dc0eccf18859f411206df181731e374e9917252931","blockNumber":"0x2","transactionIndex":"0x0","from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x5fbdb2315678afecb367f032d93f642f64180aa3","value":"0x0","gasPrice":"0x3a29f0f8","gas":"0x1c9c380","maxFeePerGas":"0xba43b7400","maxPriorityFeePerGas":"0x5f5e100","input":"0xd09de08a","r":"0xd309309a59a49021281cb6bb41d164c96eab4e50f0c1bd24c03ca336e7bc2bb7","s":"0x28a7f089143d0a1355ebeb2a1b9f0e5ad9eca4303021c1400d61bc23c9ac5319","v":"0x0","yParity":"0x0","chainId":"0x7a69","accessList":[],"type":"0x2"}"#;
+
+        let te = serde_json::from_str::<TxEnvelope>(rpc_tx).unwrap();
+
+        assert_eq!(
+            *te.tx_hash(),
+            alloy_primitives::b256!(
+                "018b2331d461a4aeedf6a1f9cc37463377578244e6a35216057a8370714e798f"
+            )
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "k256")]
+    fn test_arbitrary_envelope() {
+        use arbitrary::Arbitrary;
+
+        use crate::transaction::SignerRecoverable;
+        let mut unstructured = arbitrary::Unstructured::new(b"arbitrary tx envelope");
+        let tx = TxEnvelope::arbitrary(&mut unstructured).unwrap();
+
+        assert!(tx.recover_signer().is_ok());
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_serde_untagged_legacy() {
+        let data = r#"{
+            "hash": "0x97efb58d2b42df8d68ab5899ff42b16c7e0af35ed86ae4adb8acaad7e444220c",
+            "input": "0x",
+            "r": "0x5d71a4a548503f2916d10c6b1a1557a0e7352eb041acb2bac99d1ad6bb49fd45",
+            "s": "0x2627bf6d35be48b0e56c61733f63944c0ebcaa85cb4ed6bc7cba3161ba85e0e8",
+            "v": "0x1c",
+            "gas": "0x15f90",
+            "from": "0x2a65aca4d5fc5b5c859090a6c34d164135398226",
+            "to": "0x8fbeb4488a08d60979b5aa9e13dd00b2726320b2",
+            "value": "0xf606682badd7800",
+            "nonce": "0x11f398",
+            "gasPrice": "0x4a817c800"
+        }"#;
+
+        let tx: TxEnvelope = serde_json::from_str(data).unwrap();
+
+        assert!(matches!(tx, TxEnvelope::Legacy(_)));
+
+        let data_with_wrong_type = r#"{
+            "hash": "0x97efb58d2b42df8d68ab5899ff42b16c7e0af35ed86ae4adb8acaad7e444220c",
+            "input": "0x",
+            "r": "0x5d71a4a548503f2916d10c6b1a1557a0e7352eb041acb2bac99d1ad6bb49fd45",
+            "s": "0x2627bf6d35be48b0e56c61733f63944c0ebcaa85cb4ed6bc7cba3161ba85e0e8",
+            "v": "0x1c",
+            "gas": "0x15f90",
+            "from": "0x2a65aca4d5fc5b5c859090a6c34d164135398226",
+            "to": "0x8fbeb4488a08d60979b5aa9e13dd00b2726320b2",
+            "value": "0xf606682badd7800",
+            "nonce": "0x11f398",
+            "gasPrice": "0x4a817c800",
+            "type": "0x12"
+        }"#;
+
+        assert!(serde_json::from_str::<TxEnvelope>(data_with_wrong_type).is_err());
+    }
+
+    #[test]
+    fn test_tx_type_try_from_u8() {
+        assert_eq!(TxType::try_from(0u8).unwrap(), TxType::Legacy);
+        assert_eq!(TxType::try_from(1u8).unwrap(), TxType::Eip2930);
+        assert_eq!(TxType::try_from(2u8).unwrap(), TxType::Eip1559);
+        assert_eq!(TxType::try_from(3u8).unwrap(), TxType::Eip4844);
+        assert_eq!(TxType::try_from(4u8).unwrap(), TxType::Eip7702);
+        assert!(TxType::try_from(5u8).is_err()); // Invalid case
+    }
+
+    #[test]
+    fn test_tx_type_try_from_u64() {
+        assert_eq!(TxType::try_from(0u64).unwrap(), TxType::Legacy);
+        assert_eq!(TxType::try_from(1u64).unwrap(), TxType::Eip2930);
+        assert_eq!(TxType::try_from(2u64).unwrap(), TxType::Eip1559);
+        assert_eq!(TxType::try_from(3u64).unwrap(), TxType::Eip4844);
+        assert_eq!(TxType::try_from(4u64).unwrap(), TxType::Eip7702);
+        assert!(TxType::try_from(10u64).is_err()); // Invalid case
+    }
+
+    #[test]
+    fn test_tx_type_from_conversions() {
+        let legacy_tx = Signed::new_unchecked(
+            TxLegacy::default(),
+            Signature::test_signature(),
+            Default::default(),
+        );
+        let eip2930_tx = Signed::new_unchecked(
+            TxEip2930::default(),
+            Signature::test_signature(),
+            Default::default(),
+        );
+        let eip1559_tx = Signed::new_unchecked(
+            TxEip1559::default(),
+            Signature::test_signature(),
+            Default::default(),
+        );
+        let eip4844_variant = Signed::new_unchecked(
+            TxEip4844Variant::<BlobTransactionSidecarVariant>::TxEip4844(TxEip4844::default()),
+            Signature::test_signature(),
+            Default::default(),
+        );
+        let eip7702_tx = Signed::new_unchecked(
+            TxEip7702::default(),
+            Signature::test_signature(),
+            Default::default(),
+        );
+
+        assert!(matches!(TxEnvelope::from(legacy_tx), TxEnvelope::Legacy(_)));
+        assert!(matches!(TxEnvelope::from(eip2930_tx), TxEnvelope::Eip2930(_)));
+        assert!(matches!(TxEnvelope::from(eip1559_tx), TxEnvelope::Eip1559(_)));
+        assert!(matches!(TxEnvelope::from(eip4844_variant), TxEnvelope::Eip4844(_)));
+        assert!(matches!(TxEnvelope::from(eip7702_tx), TxEnvelope::Eip7702(_)));
+    }
+
+    #[test]
+    fn test_tx_type_is_methods() {
+        let legacy_tx = TxEnvelope::Legacy(Signed::new_unchecked(
+            TxLegacy::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+        let eip2930_tx = TxEnvelope::Eip2930(Signed::new_unchecked(
+            TxEip2930::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+        let eip1559_tx = TxEnvelope::Eip1559(Signed::new_unchecked(
+            TxEip1559::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+        let eip4844_tx = TxEnvelope::Eip4844(Signed::new_unchecked(
+            TxEip4844Variant::TxEip4844(TxEip4844::default()),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+        let eip7702_tx = TxEnvelope::Eip7702(Signed::new_unchecked(
+            TxEip7702::default(),
+            Signature::test_signature(),
+            Default::default(),
         ));
 
-        let trailing = [0xDE, 0xAD, 0xBE, 0xEF];
-        let mut buf = Vec::new();
-        let _ = envelope.to_compact(&mut buf);
-        buf.extend_from_slice(&trailing);
+        assert!(legacy_tx.is_legacy());
+        assert!(!legacy_tx.is_eip2930());
+        assert!(!legacy_tx.is_eip1559());
+        assert!(!legacy_tx.is_eip4844());
+        assert!(!legacy_tx.is_eip7702());
 
-        let (decoded, remaining) = BaseTxEnvelope::from_compact(&buf, buf.len());
+        assert!(eip2930_tx.is_eip2930());
+        assert!(!eip2930_tx.is_legacy());
+        assert!(!eip2930_tx.is_eip1559());
+        assert!(!eip2930_tx.is_eip4844());
+        assert!(!eip2930_tx.is_eip7702());
 
-        assert_eq!(decoded, envelope);
-        assert_eq!(remaining, trailing);
+        assert!(eip1559_tx.is_eip1559());
+        assert!(!eip1559_tx.is_legacy());
+        assert!(!eip1559_tx.is_eip2930());
+        assert!(!eip1559_tx.is_eip4844());
+        assert!(!eip1559_tx.is_eip7702());
+
+        assert!(eip4844_tx.is_eip4844());
+        assert!(!eip4844_tx.is_legacy());
+        assert!(!eip4844_tx.is_eip2930());
+        assert!(!eip4844_tx.is_eip1559());
+        assert!(!eip4844_tx.is_eip7702());
+
+        assert!(eip7702_tx.is_eip7702());
+        assert!(!eip7702_tx.is_legacy());
+        assert!(!eip7702_tx.is_eip2930());
+        assert!(!eip7702_tx.is_eip1559());
+        assert!(!eip7702_tx.is_eip4844());
+    }
+
+    #[test]
+    fn test_tx_type() {
+        let legacy_tx = TxEnvelope::Legacy(Signed::new_unchecked(
+            TxLegacy::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+        let eip2930_tx = TxEnvelope::Eip2930(Signed::new_unchecked(
+            TxEip2930::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+        let eip1559_tx = TxEnvelope::Eip1559(Signed::new_unchecked(
+            TxEip1559::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+        let eip4844_tx = TxEnvelope::Eip4844(Signed::new_unchecked(
+            TxEip4844Variant::TxEip4844(TxEip4844::default()),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+        let eip7702_tx = TxEnvelope::Eip7702(Signed::new_unchecked(
+            TxEip7702::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+
+        assert_eq!(legacy_tx.tx_type(), TxType::Legacy);
+        assert_eq!(eip2930_tx.tx_type(), TxType::Eip2930);
+        assert_eq!(eip1559_tx.tx_type(), TxType::Eip1559);
+        assert_eq!(eip4844_tx.tx_type(), TxType::Eip4844);
+        assert_eq!(eip7702_tx.tx_type(), TxType::Eip7702);
+    }
+
+    #[test]
+    fn test_try_into_legacy_success() {
+        let legacy_tx = TxEnvelope::Legacy(Signed::new_unchecked(
+            TxLegacy::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+
+        let result = legacy_tx.try_into_legacy();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_try_into_legacy_failure() {
+        let eip1559_tx = TxEnvelope::Eip1559(Signed::new_unchecked(
+            TxEip1559::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+
+        let result = eip1559_tx.try_into_legacy();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Expected legacy transaction"));
+        // Test that we can recover the original envelope
+        let recovered_envelope = error.into_value();
+        assert!(recovered_envelope.is_eip1559());
+    }
+
+    #[test]
+    fn test_try_into_eip2930_success() {
+        let eip2930_tx = TxEnvelope::Eip2930(Signed::new_unchecked(
+            TxEip2930::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+
+        let result = eip2930_tx.try_into_eip2930();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_try_into_eip2930_failure() {
+        let legacy_tx = TxEnvelope::Legacy(Signed::new_unchecked(
+            TxLegacy::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+
+        let result = legacy_tx.try_into_eip2930();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Expected EIP-2930 transaction"));
+        let recovered_envelope = error.into_value();
+        assert!(recovered_envelope.is_legacy());
+    }
+
+    #[test]
+    fn test_try_into_eip1559_success() {
+        let eip1559_tx = TxEnvelope::Eip1559(Signed::new_unchecked(
+            TxEip1559::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+
+        let result = eip1559_tx.try_into_eip1559();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_try_into_eip1559_failure() {
+        let eip2930_tx = TxEnvelope::Eip2930(Signed::new_unchecked(
+            TxEip2930::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+
+        let result = eip2930_tx.try_into_eip1559();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Expected EIP-1559 transaction"));
+        let recovered_envelope = error.into_value();
+        assert!(recovered_envelope.is_eip2930());
+    }
+
+    #[test]
+    fn test_try_into_eip4844_success() {
+        let eip4844_tx = TxEnvelope::Eip4844(Signed::new_unchecked(
+            TxEip4844Variant::TxEip4844(TxEip4844::default()),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+
+        let result = eip4844_tx.try_into_eip4844();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_try_into_eip4844_failure() {
+        let eip1559_tx = TxEnvelope::Eip1559(Signed::new_unchecked(
+            TxEip1559::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+
+        let result = eip1559_tx.try_into_eip4844();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Expected EIP-4844 transaction"));
+        let recovered_envelope = error.into_value();
+        assert!(recovered_envelope.is_eip1559());
+    }
+
+    #[test]
+    fn test_try_into_eip7702_success() {
+        let eip7702_tx = TxEnvelope::Eip7702(Signed::new_unchecked(
+            TxEip7702::default(),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+
+        let result = eip7702_tx.try_into_eip7702();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_try_into_eip7702_failure() {
+        let eip4844_tx = TxEnvelope::Eip4844(Signed::new_unchecked(
+            TxEip4844Variant::TxEip4844(TxEip4844::default()),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+
+        let result = eip4844_tx.try_into_eip7702();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Expected EIP-7702 transaction"));
+        let recovered_envelope = error.into_value();
+        assert!(recovered_envelope.is_eip4844());
+    }
+
+    // <https://sepolia.etherscan.io/getRawTx?tx=0xe5b458ba9de30b47cb7c0ea836bec7b072053123a7416c5082c97f959a4eebd6>
+    #[test]
+    fn decode_raw_legacy() {
+        let raw = hex!(
+            "f8aa0285018ef61d0a832dc6c094cb33aa5b38d79e3d9fa8b10aff38aa201399a7e380b844af7b421018842e4628f3d9ee0e2c7679e29ed5dbaa75be75efecd392943503c9c68adce800000000000000000000000000000000000000000000000000000000000000641ca05e28679806caa50d25e9cb16aef8c0c08b235241b8f6e9d86faadf70421ba664a02353bba82ef2c7ce4dd6695942399163160000272b14f9aa6cbadf011b76efa4"
+        );
+        let tx = TxEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
+        assert!(tx.chain_id().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn can_deserialize_system_transaction_with_zero_signature_envelope() {
+        let raw_tx = r#"{
+            "blockHash": "0x5307b5c812a067f8bc1ed1cc89d319ae6f9a0c9693848bd25c36b5191de60b85",
+            "blockNumber": "0x45a59bb",
+            "from": "0x0000000000000000000000000000000000000000",
+            "gas": "0x1e8480",
+            "gasPrice": "0x0",
+            "hash": "0x16ef68aa8f35add3a03167a12b5d1268e344f6605a64ecc3f1c3aa68e98e4e06",
+            "input": "0xcbd4ece900000000000000000000000032155c9d39084f040ba17890fe8134dbe2a0453f0000000000000000000000004a0126ee88018393b1ad2455060bc350ead9908a000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000469f700000000000000000000000000000000000000000000000000000000000000644ff746f60000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002043e908a4e862aebb10e7e27db0b892b58a7e32af11d64387a414dabc327b00e200000000000000000000000000000000000000000000000000000000",
+            "nonce": "0x469f7",
+            "to": "0x4200000000000000000000000000000000000007",
+            "transactionIndex": "0x0",
+            "value": "0x0",
+            "v": "0x0",
+            "r": "0x0",
+            "s": "0x0",
+            "queueOrigin": "l1",
+            "l1TxOrigin": "0x36bde71c97b33cc4729cf772ae268934f7ab70b2",
+            "l1BlockNumber": "0xfd1a6c",
+            "l1Timestamp": "0x63e434ff",
+            "index": "0x45a59ba",
+            "queueIndex": "0x469f7",
+            "rawTransaction": "0xcbd4ece900000000000000000000000032155c9d39084f040ba17890fe8134dbe2a0453f0000000000000000000000004a0126ee88018393b1ad2455060bc350ead9908a000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000469f700000000000000000000000000000000000000000000000000000000000000644ff746f60000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002043e908a4e862aebb10e7e27db0b892b58a7e32af11d64387a414dabc327b00e200000000000000000000000000000000000000000000000000000000"
+        }"#;
+
+        let tx = serde_json::from_str::<TxEnvelope>(raw_tx).unwrap();
+
+        assert_eq!(tx.signature().r(), U256::ZERO);
+        assert_eq!(tx.signature().s(), U256::ZERO);
+        assert!(!tx.signature().v());
+
+        assert_eq!(
+            tx.hash(),
+            &b256!("0x16ef68aa8f35add3a03167a12b5d1268e344f6605a64ecc3f1c3aa68e98e4e06"),
+            "hash should match the transaction hash"
+        );
+    }
+
+    // <https://github.com/succinctlabs/kona/issues/31>
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_block_tx() {
+        let rpc_tx = r#"{
+      "blockHash": "0xc0c3190292a82c2ee148774e37e5665f6a205f5ef0cd0885e84701d90ebd442e",
+      "blockNumber": "0x6edcde",
+      "transactionIndex": "0x7",
+      "hash": "0x2cb125e083d6d2631e3752bd2b3d757bf31bf02bfe21de0ffa46fbb118d28b19",
+      "from": "0x03e5badf3bb1ade1a8f33f94536c827b6531948d",
+      "to": "0x3267e72dc8780a1512fa69da7759ec66f30350e3",
+      "input": "0x62e4c545000000000000000000000000464c8ec100f2f42fb4e42e07e203da2324f9fc6700000000000000000000000003e5badf3bb1ade1a8f33f94536c827b6531948d000000000000000000000000a064bfb5c7e81426647dc20a0d854da1538559dc00000000000000000000000000000000000000000000000000c6f3b40b6c0000",
+      "nonce": "0x2a8",
+      "value": "0x0",
+      "gas": "0x28afd",
+      "gasPrice": "0x23ec5dbc2",
+      "accessList": [],
+      "chainId": "0xaa36a7",
+      "type": "0x0",
+      "v": "0x1546d71",
+      "r": "0x809b9f0a1777e376cd1ee5d2f551035643755edf26ea65b7a00c822a24504962",
+      "s": "0x6a57bb8e21fe85c7e092868ee976fef71edca974d8c452fcf303f9180c764f64"
+    }"#;
+
+        let _ = serde_json::from_str::<TxEnvelope>(rpc_tx).unwrap();
+    }
+
+    // <https://github.com/succinctlabs/kona/issues/31>
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_block_tx_legacy_chain_id() {
+        let rpc_tx = r#"{
+      "blockHash": "0xc0c3190292a82c2ee148774e37e5665f6a205f5ef0cd0885e84701d90ebd442e",
+      "blockNumber": "0x6edcde",
+      "transactionIndex": "0x8",
+      "hash": "0xe5b458ba9de30b47cb7c0ea836bec7b072053123a7416c5082c97f959a4eebd6",
+      "from": "0x8b87f0a788cc14b4f0f374da59920f5017ff05de",
+      "to": "0xcb33aa5b38d79e3d9fa8b10aff38aa201399a7e3",
+      "input": "0xaf7b421018842e4628f3d9ee0e2c7679e29ed5dbaa75be75efecd392943503c9c68adce80000000000000000000000000000000000000000000000000000000000000064",
+      "nonce": "0x2",
+      "value": "0x0",
+      "gas": "0x2dc6c0",
+      "gasPrice": "0x18ef61d0a",
+      "accessList": [],
+      "chainId": "0xaa36a7",
+      "type": "0x0",
+      "v": "0x1c",
+      "r": "0x5e28679806caa50d25e9cb16aef8c0c08b235241b8f6e9d86faadf70421ba664",
+      "s": "0x2353bba82ef2c7ce4dd6695942399163160000272b14f9aa6cbadf011b76efa4"
+    }"#;
+
+        let _ = serde_json::from_str::<TxEnvelope>(rpc_tx).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "k256")]
+    fn test_recover_with_buf_eip1559() {
+        use alloy_primitives::address;
+
+        // Test vector from https://etherscan.io/tx/0xce4dc6d7a7549a98ee3b071b67e970879ff51b5b95d1c340bacd80fa1e1aab31
+        let raw_tx = alloy_primitives::hex::decode("02f86f0102843b9aca0085029e7822d68298f094d9e1459a7a482635700cbc20bbaf52d495ab9c9680841b55ba3ac080a0c199674fcb29f353693dd779c017823b954b3c69dffa3cd6b2a6ff7888798039a028ca912de909e7e6cdef9cdcaf24c54dd8c1032946dfa1d85c206b32a9064fe8").unwrap();
+        let tx = TxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
+
+        // Recover using the standard method
+        let from_standard = tx.recover_signer().unwrap();
+        assert_eq!(from_standard, address!("001e2b7dE757bA469a57bF6b23d982458a07eFcE"));
+
+        // Recover using the buffer method
+        let mut buf = alloc::vec::Vec::new();
+        let from_with_buf = tx.recover_with_buf(&mut buf).unwrap();
+        assert_eq!(from_with_buf, from_standard);
+
+        // Verify buffer was used (should contain encoded data after recovery)
+        assert!(!buf.is_empty());
+
+        // Test that reusing the buffer works correctly
+        buf.clear();
+        buf.extend_from_slice(b"some garbage data that should be cleared");
+        let from_with_buf_reuse = tx.recover_with_buf(&mut buf).unwrap();
+        assert_eq!(from_with_buf_reuse, from_standard);
+    }
+
+    #[test]
+    #[cfg(feature = "k256")]
+    fn test_recover_unchecked_with_buf_legacy() {
+        use alloy_primitives::address;
+
+        // Test vector from https://etherscan.io/tx/0x280cde7cdefe4b188750e76c888f13bd05ce9a4d7767730feefe8a0e50ca6fc4
+        let raw_tx = alloy_primitives::bytes!(
+            "f9015482078b8505d21dba0083022ef1947a250d5630b4cf539739df2c5dacb4c659f2488d880c46549a521b13d8b8e47ff36ab50000000000000000000000000000000000000000000066ab5a608bd00a23f2fe000000000000000000000000000000000000000000000000000000000000008000000000000000000000000048c04ed5691981c42154c6167398f95e8f38a7ff00000000000000000000000000000000000000000000000000000000632ceac70000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000006c6ee5e31d828de241282b9606c8e98ea48526e225a0c9077369501641a92ef7399ff81c21639ed4fd8fc69cb793cfa1dbfab342e10aa0615facb2f1bcf3274a354cfe384a38d0cc008a11c2dd23a69111bc6930ba27a8"
+        );
+        let tx = TxEnvelope::decode_2718(&mut raw_tx.as_ref()).unwrap();
+
+        // Recover using the standard unchecked method
+        let from_standard = tx.recover_signer_unchecked().unwrap();
+        assert_eq!(from_standard, address!("a12e1462d0ceD572f396F58B6E2D03894cD7C8a4"));
+
+        // Recover using the buffer unchecked method
+        let mut buf = alloc::vec::Vec::new();
+        let from_with_buf = tx.recover_unchecked_with_buf(&mut buf).unwrap();
+        assert_eq!(from_with_buf, from_standard);
+
+        // Verify buffer was used
+        assert!(!buf.is_empty());
+
+        // Test that buffer is properly cleared and reused
+        let original_len = buf.len();
+        buf.extend_from_slice(&[0xFF; 100]); // Add garbage
+        let from_with_buf_reuse = tx.recover_unchecked_with_buf(&mut buf).unwrap();
+        assert_eq!(from_with_buf_reuse, from_standard);
+        // Buffer should be cleared and refilled with encoded data
+        assert_eq!(buf.len(), original_len);
+    }
+
+    #[test]
+    #[cfg(feature = "k256")]
+    fn test_recover_with_buf_multiple_tx_types() {
+        use alloy_primitives::address;
+
+        // Legacy tx
+        let raw_legacy = alloy_primitives::bytes!(
+            "f9015482078b8505d21dba0083022ef1947a250d5630b4cf539739df2c5dacb4c659f2488d880c46549a521b13d8b8e47ff36ab50000000000000000000000000000000000000000000066ab5a608bd00a23f2fe000000000000000000000000000000000000000000000000000000000000008000000000000000000000000048c04ed5691981c42154c6167398f95e8f38a7ff00000000000000000000000000000000000000000000000000000000632ceac70000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000006c6ee5e31d828de241282b9606c8e98ea48526e225a0c9077369501641a92ef7399ff81c21639ed4fd8fc69cb793cfa1dbfab342e10aa0615facb2f1bcf3274a354cfe384a38d0cc008a11c2dd23a69111bc6930ba27a8"
+        );
+        let tx_legacy = TxEnvelope::decode_2718(&mut raw_legacy.as_ref()).unwrap();
+
+        // EIP-1559 tx
+        let raw_eip1559 = alloy_primitives::hex::decode("02f86f0102843b9aca0085029e7822d68298f094d9e1459a7a482635700cbc20bbaf52d495ab9c9680841b55ba3ac080a0c199674fcb29f353693dd779c017823b954b3c69dffa3cd6b2a6ff7888798039a028ca912de909e7e6cdef9cdcaf24c54dd8c1032946dfa1d85c206b32a9064fe8").unwrap();
+        let tx_eip1559 = TxEnvelope::decode(&mut raw_eip1559.as_slice()).unwrap();
+
+        // Use a single buffer for both recoveries
+        let mut buf = alloc::vec::Vec::new();
+
+        let from_legacy = tx_legacy.recover_with_buf(&mut buf).unwrap();
+        assert_eq!(from_legacy, address!("a12e1462d0ceD572f396F58B6E2D03894cD7C8a4"));
+
+        let from_eip1559 = tx_eip1559.recover_with_buf(&mut buf).unwrap();
+        assert_eq!(from_eip1559, address!("001e2b7dE757bA469a57bF6b23d982458a07eFcE"));
+
+        // Verify that the buffer was properly reused (no allocation needed between calls)
+        assert!(!buf.is_empty());
     }
 }

@@ -2,11 +2,11 @@
 
 use alloc::string::ToString;
 
-use alloy_consensus::Header;
 use alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS;
 use alloy_primitives::{B256, U256, b256, keccak256};
 use alloy_rlp::Decodable;
 use alloy_trie::{Nibbles, TrieAccount};
+use base_common_consensus::Header;
 use base_proof_mpt::{TrieHinter, TrieNode, TrieNodeError, TrieProvider};
 use base_proof_preimage::errors::PreimageOracleError;
 

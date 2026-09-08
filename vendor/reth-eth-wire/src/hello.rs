@@ -1,5 +1,5 @@
 use alloy_rlp::{RlpDecodable, RlpEncodable};
-use reth_codecs::add_arbitrary_tests;
+use base_common_consensus::add_arbitrary_tests;
 use reth_network_peers::PeerId;
 use reth_primitives_traits::constants::RETH_CLIENT_VERSION;
 

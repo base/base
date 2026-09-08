@@ -6,9 +6,8 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BlockHeader};
 use base_execution_evm::BaseEvmConfig;
 use futures::{Stream, StreamExt};
 use reth_exex_types::ExExHead;
@@ -554,9 +553,8 @@ where
 mod tests {
     use std::collections::BTreeMap;
 
-    use alloy_consensus::Header;
     use alloy_eips::BlockNumHash;
-    use base_common_consensus::BaseBlock;
+    use base_common_consensus::{BaseBlock, Header};
     use eyre::OptionExt;
     use futures::StreamExt;
     use reth_db_common::init::init_genesis;

@@ -2,8 +2,8 @@ use alloc::{boxed::Box, string::String};
 
 use alloy_eips::{BlockHashOrNumber, HashOrNumber};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxNumber};
+use base_common_consensus::DecompressError;
 use derive_more::Display;
-use reth_codecs::DecompressError;
 use reth_primitives_traits::{GotExpected, transaction::signed::RecoveryError};
 use reth_prune_types::PruneSegmentError;
 use reth_static_file_types::StaticFileSegment;

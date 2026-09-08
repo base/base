@@ -1,10 +1,9 @@
 use std::{future::Future, sync::Arc};
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockId;
 use alloy_primitives::{U64, U256, map::AddressMap};
 use async_trait::async_trait;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BlockHeader};
 use base_execution_evm::{BaseEvmConfig, Executor};
 use futures::{Stream, StreamExt};
 use jsonrpsee::{PendingSubscriptionSink, SubscriptionMessage, SubscriptionSink, core::RpcResult};

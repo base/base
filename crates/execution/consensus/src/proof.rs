@@ -2,12 +2,11 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use alloy_trie::root::ordered_trie_root_with_encoder;
 use base_common_chains::Upgrades;
-use base_common_consensus::BaseReceipt;
+use base_common_consensus::{BaseReceipt, ReceiptWithBloom, TxReceipt};
 
 /// Calculates the receipt root for a header.
 pub fn calculate_receipt_root(
@@ -79,9 +78,10 @@ pub fn calculate_receipt_root_no_memo(
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
     use alloy_primitives::{Address, Bytes, Log, LogData, b256, bloom, hex};
-    use base_common_consensus::{BaseReceipt, DepositReceipt};
+    use base_common_consensus::{
+        BaseReceipt, DepositReceipt, Receipt, ReceiptWithBloom, TxReceipt,
+    };
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
 

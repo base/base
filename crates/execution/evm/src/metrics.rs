@@ -1,5 +1,5 @@
 //! Executor metrics.
-use alloy_consensus::BlockHeader;
+use base_common_consensus::BlockHeader;
 use metrics::{Counter, Gauge, Histogram};
 use reth_metrics::Metrics;
 use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock};
@@ -72,9 +72,8 @@ impl ExecutorMetrics {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Header;
     use alloy_primitives::B256;
-    use base_common_consensus::BaseBlock as Block;
+    use base_common_consensus::{BaseBlock as Block, Header};
     use reth_primitives_traits::Block as BlockTrait;
 
     use super::*;

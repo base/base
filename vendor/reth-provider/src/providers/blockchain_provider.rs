@@ -4,11 +4,12 @@ use std::{
     time::Instant,
 };
 
-use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, Bytes, TxHash, TxNumber};
 use alloy_rpc_types_engine::ForkchoiceState;
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo};
+use base_common_consensus::{
+    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
+};
 use base_execution_chainspec::BaseChainSpec;
 use reth_chain_state::{
     BlockState, CanonicalInMemoryState, ForkChoiceNotifications, ForkChoiceSubscriptions,
@@ -438,21 +439,24 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> RocksDBProviderFa
 impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
     for BlockchainProvider<DB>
 {
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
+    fn header(
+        &self,
+        block_hash: BlockHash,
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
         self.consistent_provider()?.header(block_hash)
     }
 
     fn header_by_number(
         &self,
         num: BlockNumber,
-    ) -> ProviderResult<Option<alloy_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
         self.consistent_provider()?.header_by_number(num)
     }
 
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
         self.consistent_provider()?.headers_range(range)
     }
 
@@ -891,7 +895,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StateProviderFact
 impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> CanonChainTracker
     for BlockchainProvider<DB>
 {
-    type Header = alloy_consensus::Header;
+    type Header = base_common_consensus::Header;
 
     fn on_forkchoice_update_received(&self, _update: &ForkchoiceState) {
         // update timestamp
@@ -927,7 +931,7 @@ where
     fn header_by_number_or_tag(
         &self,
         id: BlockNumberOrTag,
-    ) -> ProviderResult<Option<alloy_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
         self.consistent_provider()?.header_by_number_or_tag(id)
     }
 
@@ -942,7 +946,7 @@ where
         self.consistent_provider()?.sealed_header_by_id(id)
     }
 
-    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<alloy_consensus::Header>> {
+    fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<base_common_consensus::Header>> {
         self.consistent_provider()?.header_by_id(id)
     }
 }
@@ -1056,10 +1060,9 @@ mod tests {
         sync::Arc,
     };
 
-    use alloy_consensus::constants::EMPTY_ROOT_HASH;
     use alloy_eips::{BlockHashOrNumber, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, BlockNumber, TxNumber, U256, keccak256};
-    use base_common_consensus::BaseReceipt;
+    use base_common_consensus::{BaseReceipt, constants::EMPTY_ROOT_HASH};
     use base_execution_chainspec::BaseChainSpec;
     use itertools::Itertools;
     use rand::Rng;

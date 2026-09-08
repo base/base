@@ -1,6 +1,6 @@
-use alloy_consensus::BlockHeader;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::Address;
+use base_common_consensus::BlockHeader;
 use reth_db::{
     BlockNumberList,
     models::{ShardedKey, storage_sharded_key::StorageShardedKey},

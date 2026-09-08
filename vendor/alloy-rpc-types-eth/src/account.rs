@@ -1,11 +1,11 @@
 use alloc::{string::String, vec::Vec};
 
-// re-export account type for `eth_getAccount`
-pub use alloy_consensus::TrieAccount as Account;
 use alloy_primitives::{
     Address, B256, B512, Bytes, KECCAK256_EMPTY, StorageKey, StorageValue, U256,
     map::AddressHashMap,
 };
+// re-export account type for `eth_getAccount`
+pub use base_common_consensus::TrieAccount as Account;
 
 /// Account information.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -97,12 +97,12 @@ pub struct EIP1186AccountProofResponse {
 #[cfg(feature = "serde")]
 impl EIP1186AccountProofResponse {
     /// After `SpuriousDragon` empty account is defined as account with nonce == 0 && balance == 0
-    /// && bytecode = None (or hash is [`KECCAK_EMPTY`](alloy_consensus::constants::KECCAK_EMPTY)).
+    /// && bytecode = None (or hash is [`KECCAK_EMPTY`](base_common_consensus::constants::KECCAK_EMPTY)).
     pub fn is_empty(&self) -> bool {
         self.nonce == 0
             && self.balance.is_zero()
-            && self.storage_hash == alloy_consensus::constants::EMPTY_ROOT_HASH
-            && self.code_hash == alloy_consensus::constants::KECCAK_EMPTY
+            && self.storage_hash == base_common_consensus::constants::EMPTY_ROOT_HASH
+            && self.code_hash == base_common_consensus::constants::KECCAK_EMPTY
     }
 }
 

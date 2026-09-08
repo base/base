@@ -4,8 +4,8 @@ use std::{
     sync::Arc,
 };
 
-use alloy_consensus::Transaction;
 use alloy_primitives::map::AddressSet;
+use base_common_consensus::Transaction;
 use imbl::OrdMap;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use rustc_hash::FxHashSet;

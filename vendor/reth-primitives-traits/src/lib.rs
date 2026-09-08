@@ -132,7 +132,7 @@ pub mod receipt;
 pub use receipt::Receipt;
 
 pub mod transaction;
-pub use alloy_consensus::{
+pub use base_common_consensus::{
     ReceiptWithBloom,
     transaction::{Recovered, TransactionMeta},
 };
@@ -171,7 +171,7 @@ pub mod sync;
 /// Common header types
 pub mod header;
 /// Heuristic size trait
-pub use alloy_consensus::InMemorySize;
+pub use base_common_consensus::InMemorySize;
 pub use header::{Header, SealedHeader};
 
 /// Rayon utilities

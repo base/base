@@ -7,11 +7,10 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::{BaseBlock, BaseReceipt, BlockHeader};
 use futures::{Stream, StreamExt, stream::FuturesOrdered};
 use reth_chain_state::CanonStateNotification;
 use reth_execution_types::Chain;
@@ -239,7 +238,10 @@ impl EthStateCache {
     /// Requests the header for the given hash.
     ///
     /// Returns an error if the header is not found.
-    pub async fn get_header(&self, block_hash: B256) -> ProviderResult<alloy_consensus::Header> {
+    pub async fn get_header(
+        &self,
+        block_hash: B256,
+    ) -> ProviderResult<base_common_consensus::Header> {
         let (response_tx, rx) = oneshot::channel();
         let _ = self.to_service.send(CacheAction::GetHeader { block_hash, response_tx });
         rx.await.map_err(|_| CacheServiceUnavailable)?
@@ -334,7 +336,7 @@ pub(crate) struct EthStateCacheService<
     Provider: BlockReader + BalProvider,
     LimitBlocks: Limiter<B256, Arc<RecoveredBlock>>,
     LimitReceipts: Limiter<B256, Arc<Vec<Provider::Receipt>>>,
-    LimitHeaders: Limiter<B256, alloy_consensus::Header>,
+    LimitHeaders: Limiter<B256, base_common_consensus::Header>,
     LimitBals: Limiter<B256, CachedRevmBal>,
 {
     /// The type used to lookup data from disk
@@ -347,7 +349,7 @@ pub(crate) struct EthStateCacheService<
     ///
     /// Headers are cached because they are required to populate the environment for execution
     /// (evm).
-    headers_cache: HeaderLruCache<alloy_consensus::Header, LimitHeaders>,
+    headers_cache: HeaderLruCache<base_common_consensus::Header, LimitHeaders>,
     /// The LRU cache for revm BALs grouped by the block hash.
     bal_cache: BalLruCache<LimitBals>,
     /// Sender half of the action channel.
@@ -453,7 +455,11 @@ where
         }
     }
 
-    fn on_reorg_header(&mut self, block_hash: B256, res: ProviderResult<alloy_consensus::Header>) {
+    fn on_reorg_header(
+        &mut self,
+        block_hash: B256,
+        res: ProviderResult<base_common_consensus::Header>,
+    ) {
         if let Some(queued) = self.headers_cache.remove(&block_hash) {
             // send the response to queued senders
             for tx in queued {
@@ -739,7 +745,7 @@ enum CacheAction<R> {
     },
     GetHeader {
         block_hash: B256,
-        response_tx: HeaderResponseSender<alloy_consensus::Header>,
+        response_tx: HeaderResponseSender<base_common_consensus::Header>,
     },
     GetReceipts {
         block_hash: B256,
@@ -767,7 +773,7 @@ enum CacheAction<R> {
     },
     HeaderResult {
         block_hash: B256,
-        res: Box<ProviderResult<alloy_consensus::Header>>,
+        res: Box<ProviderResult<base_common_consensus::Header>>,
     },
     BalResult {
         block_hash: B256,
@@ -859,7 +865,7 @@ impl<R: Send + Sync> ActionSender<R> {
         }
     }
 
-    fn send_header(&mut self, header: Result<alloy_consensus::Header, ProviderError>) {
+    fn send_header(&mut self, header: Result<base_common_consensus::Header, ProviderError>) {
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(CacheAction::HeaderResult {
                 block_hash: self.blockhash,
@@ -1003,13 +1009,13 @@ mod tests {
     use core::ops::{RangeBounds, RangeInclusive};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use alloy_consensus::{Header, transaction::TransactionMeta};
     use alloy_eip7928::BlockAccessIndex;
     use alloy_eips::{BlockHashOrNumber, NumHash};
     use alloy_primitives::{Address, BlockHash, BlockNumber, Bytes, Signature, TxHash, TxNumber};
     use base_common_consensus::{
         BaseBlock as Block, BaseBlockBody as BlockBody, BaseReceipt as Receipt,
-        BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction,
+        BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction, Header,
+        transaction::TransactionMeta,
     };
     use reth_db_models::StoredBlockBodyIndices;
     use reth_primitives_traits::{RecoveredBlock, SealedHeader};
@@ -1286,18 +1292,21 @@ mod tests {
         fn header(
             &self,
             _block_hash: BlockHash,
-        ) -> ProviderResult<Option<alloy_consensus::Header>> {
+        ) -> ProviderResult<Option<base_common_consensus::Header>> {
             Ok(None)
         }
 
-        fn header_by_number(&self, _num: u64) -> ProviderResult<Option<alloy_consensus::Header>> {
+        fn header_by_number(
+            &self,
+            _num: u64,
+        ) -> ProviderResult<Option<base_common_consensus::Header>> {
             Ok(None)
         }
 
         fn headers_range(
             &self,
             _range: impl RangeBounds<BlockNumber>,
-        ) -> ProviderResult<Vec<alloy_consensus::Header>> {
+        ) -> ProviderResult<Vec<base_common_consensus::Header>> {
             Ok(Vec::new())
         }
 

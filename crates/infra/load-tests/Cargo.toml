@@ -34,11 +34,11 @@ rand = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 indicatif = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true, features = ["default"] }
 alloy-rpc-types = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json"] }
 tokio = { workspace = true, features = ["default", "signal"] }
+base-common-consensus = { workspace = true, features = ["std"] }
 base-common-network = { workspace = true, features = ["mnemonic"] }
 base-common-rpc-types = { workspace = true, features = ["network"]}
 base-execution-txpool = { workspace = true, features = ["default"] }

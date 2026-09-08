@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{B256, BlockNumber};
+use base_common_consensus::{BlockHeader, Typed2718};
 use reth_primitives_traits::RecoveredBlock;
 
 /// The type that is used to track canonical blob transactions.
@@ -83,8 +83,8 @@ pub enum BlobStoreUpdates {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Header, Signed};
     use alloy_primitives::Signature;
+    use base_common_consensus::{Header, Signed};
     use reth_primitives_traits::RecoveredBlock;
 
     use super::*;
@@ -114,7 +114,7 @@ mod tests {
         let block1 = RecoveredBlock::new_unhashed(
             base_common_consensus::BaseBlock {
                 header: Header { number: 10, ..Default::default() },
-                body: alloy_consensus::BlockBody {
+                body: base_common_consensus::BlockBody {
                     transactions: vec![base_common_consensus::BaseTxEnvelope::Eip7702(
                         Signed::new_unhashed(Default::default(), Signature::test_signature()),
                     )],

@@ -1,8 +1,10 @@
 //! Parsed bundle type with decoded transactions.
 
-use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_provider::network::eip2718::Decodable2718;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{
+    BaseTxEnvelope,
+    transaction::{Recovered, SignerRecoverable},
+};
 
 use crate::Bundle;
 

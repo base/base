@@ -1,12 +1,11 @@
 //! Contains the `L1BlockInfoTx` enum, containing different variants of the L1 block info
 //! transaction.
 
-use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, eip7840::BlobParams};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
 use base_common_consensus::{
-    DepositSourceDomain, L1InfoDepositSource, Predeploys, SystemAddresses, TxDeposit,
+    DepositSourceDomain, Header, L1InfoDepositSource, Predeploys, SystemAddresses, TxDeposit,
 };
 use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 

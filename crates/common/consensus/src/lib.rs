@@ -9,6 +9,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
+extern crate self as base_common_consensus;
 
 #[cfg(feature = "reth")]
 mod reth_compat;
@@ -21,10 +22,10 @@ pub use receipts::{
     Eip8130Receipt,
 };
 
-mod transaction;
+mod base_transaction;
 #[cfg(feature = "serde")]
-pub use transaction::serde_deposit_tx_rpc;
-pub use transaction::{
+pub use base_transaction::serde_deposit_tx_rpc;
+pub use base_transaction::{
     AccountChange, AccountChangeChannel, BasePooledTransaction, BaseTransaction,
     BaseTransactionInfo, BaseTxEnvelope, BaseTypedTransaction, Call, ChangeType, CoinbaseTip,
     CreateEntry, DEPOSIT_TX_TYPE_ID, Delegation, DepositInfo, DepositTransaction,
@@ -45,8 +46,8 @@ pub use source::{
 mod predeploys;
 pub use predeploys::{Deployers, Predeploys, SystemAddresses};
 
-mod block;
-pub use block::{BaseBlock, BaseBlockBody};
+mod base_block;
+pub use base_block::{BaseBlock, BaseBlockBody};
 
 /// Signed transaction type alias for [`BaseTxEnvelope`].
 pub type BaseTransactionSigned = BaseTxEnvelope;
@@ -61,15 +62,121 @@ pub type BaseTransactionSigned = BaseTxEnvelope;
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub mod serde_bincode_compat {
     pub use super::{
+        base_transaction::serde_bincode_compat::TxDeposit,
         receipts::serde_bincode_compat::{BaseReceipt, DepositReceipt},
-        transaction::serde_bincode_compat::TxDeposit,
+    };
+    pub use crate::{
+        block::serde_bincode_compat::*, receipt::serde_bincode_compat::*,
+        transaction::serde_bincode_compat::*,
     };
 
     /// Bincode-compatible serde implementations for transaction types.
     pub mod transaction {
-        pub use crate::transaction::serde_bincode_compat::*;
+        pub use crate::{
+            base_transaction::serde_bincode_compat::*, transaction::serde_bincode_compat::*,
+        };
     }
 }
 
 mod chain_info;
+pub use alloy_trie::TrieAccount;
 pub use chain_info::ChainInfo;
+use once_cell as _;
+#[cfg(feature = "arbitrary")]
+use rand_08 as _;
+
+/// Represents an TrieAccount in the account trie
+#[deprecated(since = "0.7.3", note = "use TrieAccount instead")]
+pub type Account = TrieAccount;
+
+mod block;
+pub use block::{
+    Block, BlockBody, BlockHeader, EthBlock, GasLimitMismatch, Header, HeaderInfo, HeaderRoots,
+};
+
+mod indexed;
+pub use indexed::Indexed;
+
+pub mod constants;
+pub use constants::{EMPTY_OMMER_ROOT_HASH, EMPTY_ROOT_HASH};
+
+mod receipt;
+pub use receipt::{
+    Eip658Value, Eip2718DecodableReceipt, Eip2718EncodableReceipt, EthereumReceipt, Receipt,
+    ReceiptEnvelope, ReceiptWithBloom, Receipts, RlpDecodableReceipt, RlpEncodableReceipt,
+    TxReceipt, TxTy,
+};
+
+pub mod size;
+pub use size::InMemorySize;
+
+pub mod conditional;
+pub mod proofs;
+
+pub mod transaction;
+#[cfg(feature = "kzg")]
+pub use alloy_eips::eip4844::env_settings::EnvKzgSettings;
+pub use alloy_eips::{
+    Typed2718,
+    eip4844::{
+        Blob, BlobTransactionSidecar, Bytes48,
+        builder::{SidecarBuilder, SidecarCoder, SimpleCoder},
+        utils,
+    },
+    eip7594::{BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant},
+};
+pub use alloy_primitives::{Sealable, Sealed};
+#[cfg(feature = "kzg")]
+pub use transaction::BlobTransactionValidationError;
+pub use transaction::{
+    EthereumTxEnvelope, EthereumTypedTransaction, SignableTransaction, Transaction,
+    TransactionEnvelope, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar,
+    TxEip7702, TxEnvelope, TxLegacy, TxType, TypedTransaction,
+};
+
+mod signed;
+pub use alloy_tx_macros::TransactionEnvelope;
+pub use signed::Signed;
+
+pub mod crypto;
+pub mod error;
+
+pub mod extended;
+pub use extended::Extended;
+
+#[doc(hidden)]
+pub mod private {
+    pub use alloy_eips;
+    pub use alloy_primitives;
+    pub use alloy_rlp;
+    #[cfg(feature = "serde")]
+    pub use alloy_serde;
+    pub use alloy_trie;
+    #[cfg(feature = "arbitrary")]
+    pub use arbitrary;
+    #[cfg(feature = "serde")]
+    pub use serde;
+    #[cfg(feature = "serde")]
+    pub use serde_json;
+}
+
+mod compact;
+pub use compact::{Compact, CompactPlaceholder};
+pub use reth_codecs_derive::*;
+
+#[cfg(feature = "alloy")]
+pub mod alloy;
+#[cfg(feature = "alloy")]
+pub use alloy::ReceiptFlags;
+
+pub mod compress;
+pub use compress::{Compress, Decompress, DecompressError};
+
+pub mod txtype;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
+#[doc(hidden)]
+#[path = "compact_private.rs"]
+pub mod __private;

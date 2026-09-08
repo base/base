@@ -10,9 +10,9 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_primitives::B256;
 use async_trait::async_trait;
+use base_common_consensus::{Header, Receipt, TxEnvelope};
 use base_consensus_derive::ChainProvider;
 use base_protocol::BlockInfo;
 

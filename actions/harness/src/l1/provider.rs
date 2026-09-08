@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use alloy_consensus::{Header, Receipt};
 use alloy_primitives::B256;
 use async_trait::async_trait;
+use base_common_consensus::{Header, Receipt};
 use base_consensus_derive::{ChainProvider, PipelineError, PipelineErrorKind};
 use base_consensus_node::{L1OriginSelectorError, L1OriginSelectorProvider, PreparedL1Origin};
 use base_protocol::BlockInfo;
@@ -154,7 +154,7 @@ impl ChainProvider for ActionL1ChainProvider {
     async fn block_info_and_transactions_by_hash(
         &mut self,
         hash: B256,
-    ) -> Result<(BlockInfo, Vec<alloy_consensus::TxEnvelope>), Self::Error> {
+    ) -> Result<(BlockInfo, Vec<base_common_consensus::TxEnvelope>), Self::Error> {
         self.chain.with(|blocks| {
             blocks
                 .iter()

@@ -751,10 +751,12 @@ impl SpanBatch {
 mod tests {
     use alloc::{string::ToString, vec};
 
-    use alloy_consensus::{Header, SignableTransaction, TxLegacy, constants::EIP1559_TX_TYPE_ID};
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, Bytes, Signature, b256};
-    use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+    use base_common_consensus::{
+        BaseBlock, BaseTxEnvelope, Header, SignableTransaction, TxLegacy,
+        constants::EIP1559_TX_TYPE_ID,
+    };
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
     use tracing::Level;
 
@@ -1197,7 +1199,7 @@ mod tests {
         let mut fetcher: TestBatchValidator = TestBatchValidator {
             base_blocks: vec![BaseBlock {
                 header: Header { number: 9, ..Default::default() },
-                body: alloy_consensus::BlockBody {
+                body: base_common_consensus::BlockBody {
                     transactions: Vec::new(),
                     ommers: Vec::new(),
                     withdrawals: None,
@@ -1265,10 +1267,10 @@ mod tests {
         let mut fetcher: TestBatchValidator = TestBatchValidator {
             base_blocks: vec![BaseBlock {
                 header: Header { number: 9, ..Default::default() },
-                body: alloy_consensus::BlockBody {
+                body: base_common_consensus::BlockBody {
                     transactions: vec![base_common_consensus::BaseTxEnvelope::Eip1559(
-                        alloy_consensus::Signed::new_unchecked(
-                            alloy_consensus::TxEip1559 {
+                        base_common_consensus::Signed::new_unchecked(
+                            base_common_consensus::TxEip1559 {
                                 chain_id: 0,
                                 nonce: 0,
                                 gas_limit: 2,
@@ -2147,7 +2149,9 @@ mod tests {
         let second = SpanBatchElement {
             epoch_num: 10,
             timestamp: 20,
-            transactions: vec![Bytes::copy_from_slice(&[alloy_consensus::TxType::Eip7702 as u8])],
+            transactions: vec![Bytes::copy_from_slice(&[
+                base_common_consensus::TxType::Eip7702 as u8
+            ])],
         };
         let third =
             SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![filler_bytes] };
@@ -2402,7 +2406,7 @@ mod tests {
         };
         let block = BaseBlock {
             header: Header { number: 41, ..Default::default() },
-            body: alloy_consensus::BlockBody {
+            body: base_common_consensus::BlockBody {
                 transactions: Vec::new(),
                 ommers: Vec::new(),
                 withdrawals: None,
@@ -2475,7 +2479,7 @@ mod tests {
         };
         let block = BaseBlock {
             header: Header { number: 41, ..Default::default() },
-            body: alloy_consensus::BlockBody {
+            body: base_common_consensus::BlockBody {
                 transactions: Vec::new(),
                 ommers: Vec::new(),
                 withdrawals: None,
@@ -2541,7 +2545,7 @@ mod tests {
         };
         let block = BaseBlock {
             header: Header { number: 41, ..Default::default() },
-            body: alloy_consensus::BlockBody {
+            body: base_common_consensus::BlockBody {
                 transactions: Vec::new(),
                 ommers: Vec::new(),
                 withdrawals: None,
@@ -2616,7 +2620,7 @@ mod tests {
         };
         let block = BaseBlock {
             header: Header { number: 41, ..Default::default() },
-            body: alloy_consensus::BlockBody {
+            body: base_common_consensus::BlockBody {
                 transactions: Vec::new(),
                 ommers: Vec::new(),
                 withdrawals: None,

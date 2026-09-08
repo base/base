@@ -31,7 +31,7 @@ pub struct ShadowBlockRepo {
 }
 
 /// Concrete block header type stored in the shadow payload.
-type BlockHeader = alloy_consensus::Header;
+type BlockHeader = base_common_consensus::Header;
 
 /// Summary projection for a reorged-out shadow block.
 ///

@@ -10,19 +10,6 @@ use std::{
     time::{Instant, SystemTime},
 };
 
-#[cfg(test)]
-use alloy_consensus::EthereumTxEnvelope;
-#[cfg(test)]
-use alloy_consensus::TxEip4844;
-#[cfg(test)]
-use alloy_consensus::TxEip4844WithSidecar;
-use alloy_consensus::{
-    BlockHeader,
-    constants::{
-        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
-        KECCAK_EMPTY, LEGACY_TX_TYPE_ID,
-    },
-};
 use alloy_eips::{
     BlockId, eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M, eip4844::env_settings::EnvKzgSettings,
     eip7840::BlobParams,
@@ -30,7 +17,19 @@ use alloy_eips::{
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, U256};
 use alloy_rlp::Encodable;
-use base_common_consensus::BaseBlock;
+#[cfg(test)]
+use base_common_consensus::EthereumTxEnvelope;
+#[cfg(test)]
+use base_common_consensus::TxEip4844;
+#[cfg(test)]
+use base_common_consensus::TxEip4844WithSidecar;
+use base_common_consensus::{
+    BaseBlock, BlockHeader,
+    constants::{
+        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
+        KECCAK_EMPTY, LEGACY_TX_TYPE_ID,
+    },
+};
 use base_evm_context::Cfg;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_evm::BaseEvmConfig;
@@ -905,7 +904,7 @@ where
             .collect()
     }
 
-    fn on_new_head_block(&self, new_tip_block: &alloy_consensus::Header) {
+    fn on_new_head_block(&self, new_tip_block: &base_common_consensus::Header) {
         // update all forks
         if self.chain_spec().is_shanghai_active_at_timestamp(new_tip_block.timestamp()) {
             self.fork_tracker.shanghai.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1548,12 +1547,12 @@ pub fn ensure_intrinsic_gas<T: EthPoolTransaction>(
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Transaction;
     use alloy_eips::{
         eip2718::{Decodable2718, Encodable2718},
         eip2930::{AccessList, AccessListItem},
     };
     use alloy_primitives::{Address, B256, Bytes, U256, hex};
+    use base_common_consensus::Transaction;
     use reth_primitives_traits::SignedTransaction;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use revm::primitives::eip3860::MAX_INITCODE_SIZE;
@@ -1589,7 +1588,7 @@ mod tests {
         value: u64,
         gas_limit: u64,
     ) -> EthPooledTransaction {
-        let tx = alloy_consensus::TxEip1559 {
+        let tx = base_common_consensus::TxEip1559 {
             chain_id: 1,
             nonce: 0,
             gas_limit,
@@ -1604,7 +1603,7 @@ mod tests {
             alloy_primitives::Signature::test_signature(),
         );
         EthPooledTransaction::new(
-            alloy_consensus::transaction::Recovered::new_unchecked(signed, sender),
+            base_common_consensus::transaction::Recovered::new_unchecked(signed, sender),
             200,
         )
     }

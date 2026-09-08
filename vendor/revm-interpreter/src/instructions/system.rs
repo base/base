@@ -30,7 +30,7 @@ pub fn keccak256<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result 
             from,
             len,
         )?;
-        revm_primitives::keccak256(context.interpreter.memory.slice_len(from, len).as_ref())
+        revm_primitives::keccak256(&*context.interpreter.memory.slice_len(from, len))
     };
     *top = hash.into();
     Ok(())

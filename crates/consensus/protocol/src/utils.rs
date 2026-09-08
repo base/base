@@ -2,11 +2,10 @@
 
 use alloc::{string::ToString, vec::Vec};
 
-use alloy_consensus::{Transaction, Typed2718};
 use alloy_primitives::{B256, Bytes, U256};
 use alloy_rlp::{Buf, Header};
 use base_common_consensus::{
-    BaseBlock, BaseTxEnvelope, HoloceneExtraData, JovianExtraData, OpTxType,
+    BaseBlock, BaseTxEnvelope, HoloceneExtraData, JovianExtraData, OpTxType, Transaction, Typed2718,
 };
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BaseExecutionPayload;
@@ -286,7 +285,7 @@ mod tests {
     #[test]
     fn test_to_system_config_empty_txs() {
         let block = BaseBlock {
-            header: alloy_consensus::Header { number: 1, ..Default::default() },
+            header: base_common_consensus::Header { number: 1, ..Default::default() },
             ..Default::default()
         };
         let block_hash = block.header.hash_slow();
@@ -308,11 +307,11 @@ mod tests {
     #[test]
     fn test_to_system_config_non_deposit() {
         let block = BaseBlock {
-            header: alloy_consensus::Header { number: 1, ..Default::default() },
-            body: alloy_consensus::BlockBody {
+            header: base_common_consensus::Header { number: 1, ..Default::default() },
+            body: base_common_consensus::BlockBody {
                 transactions: vec![base_common_consensus::BaseTxEnvelope::Legacy(
-                    alloy_consensus::Signed::new_unchecked(
-                        alloy_consensus::TxLegacy {
+                    base_common_consensus::Signed::new_unchecked(
+                        base_common_consensus::TxLegacy {
                             chain_id: Some(1),
                             nonce: 1,
                             gas_price: 1,
@@ -347,7 +346,7 @@ mod tests {
     #[test]
     fn test_to_system_config_malformed_payload_transaction() {
         let block = BaseBlock {
-            header: alloy_consensus::Header { number: 1, ..Default::default() },
+            header: base_common_consensus::Header { number: 1, ..Default::default() },
             ..Default::default()
         };
         let (mut payload, _) = BaseExecutionPayload::from_block_slow(&block);
@@ -363,8 +362,8 @@ mod tests {
     #[test]
     fn test_constructs_bedrock_system_config() {
         let block = BaseBlock {
-            header: alloy_consensus::Header { number: 1, ..Default::default() },
-            body: alloy_consensus::BlockBody {
+            header: base_common_consensus::Header { number: 1, ..Default::default() },
+            body: base_common_consensus::BlockBody {
                 transactions: vec![base_common_consensus::BaseTxEnvelope::Deposit(
                     alloy_primitives::Sealed::new(base_common_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
@@ -407,13 +406,13 @@ mod tests {
     #[test]
     fn test_constructs_ecotone_system_config() {
         let block = BaseBlock {
-            header: alloy_consensus::Header {
+            header: base_common_consensus::Header {
                 number: 1,
                 // Holocene EIP1559 parameters stored in the extra data.
                 extra_data: bytes!("000000beef0000babe"),
                 ..Default::default()
             },
-            body: alloy_consensus::BlockBody {
+            body: base_common_consensus::BlockBody {
                 transactions: vec![base_common_consensus::BaseTxEnvelope::Deposit(
                     alloy_primitives::Sealed::new(base_common_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_ECOTONE_INFO_TX),
@@ -459,13 +458,13 @@ mod tests {
     #[test]
     fn test_constructs_isthmus_system_config() {
         let block = BaseBlock {
-            header: alloy_consensus::Header {
+            header: base_common_consensus::Header {
                 number: 1,
                 // Holocene EIP1559 parameters stored in the extra data.
                 extra_data: bytes!("000000beef0000babe"),
                 ..Default::default()
             },
-            body: alloy_consensus::BlockBody {
+            body: base_common_consensus::BlockBody {
                 transactions: vec![base_common_consensus::BaseTxEnvelope::Deposit(
                     alloy_primitives::Sealed::new(base_common_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_ISTHMUS_INFO_TX),
@@ -515,12 +514,12 @@ mod tests {
     #[test]
     fn test_constructs_jovian_system_config_from_payload() {
         let block = BaseBlock {
-            header: alloy_consensus::Header {
+            header: base_common_consensus::Header {
                 number: 1,
                 extra_data: bytes!("010000beef0000babe0000000000000123"),
                 ..Default::default()
             },
-            body: alloy_consensus::BlockBody {
+            body: base_common_consensus::BlockBody {
                 transactions: vec![BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
                     base_common_consensus::TxDeposit {
                         input: L1BlockInfoJovian::new(

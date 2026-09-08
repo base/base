@@ -1,7 +1,7 @@
 //! Streams subscriptions providers for `eth_subscribe`.
 
-use alloy_consensus::{BlockHeader, TxReceipt, transaction::TxHashRef};
 use alloy_rpc_types_eth::{Filter, pubsub::TransactionReceiptsParams};
+use base_common_consensus::{BlockHeader, TxReceipt, transaction::TxHashRef};
 use base_common_rpc_types::{BaseLogResponse, BaseTransactionReceipt};
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;

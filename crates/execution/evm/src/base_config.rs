@@ -1,13 +1,12 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
-use alloy_consensus::{BlockHeader, Header};
 #[cfg(feature = "std")]
 use alloy_eips::Decodable2718;
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseTxEnvelope, EIP1559ParamError};
+use base_common_consensus::{BaseTxEnvelope, BlockHeader, EIP1559ParamError, Header};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId,
 };
@@ -212,7 +211,7 @@ impl BaseEvmConfig {
     pub fn evm_for_block<DB: Database>(
         &self,
         db: DB,
-        header: &alloy_consensus::Header,
+        header: &base_common_consensus::Header,
     ) -> Result<EvmFor<DB>, EIP1559ParamError> {
         let evm_env = self.evm_env(header)?;
         Ok(self.evm_with_env(db, evm_env))
@@ -387,14 +386,13 @@ mod tests {
     use alloc::collections::BTreeMap;
     use std::sync::Arc;
 
-    use alloy_consensus::{Header, Receipt};
     use alloy_eips::eip7685::Requests;
     use alloy_genesis::Genesis;
     use alloy_primitives::{
         Address, B256, LogData, U256, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_common_consensus::{BaseBlock, BaseReceipt};
+    use base_common_consensus::{BaseBlock, BaseReceipt, Header, Receipt};
     use base_common_evm::BaseSpecId;
     use base_common_genesis::BaseUpgrade;
     use base_evm_context::{BlockEnv, CfgEnv};

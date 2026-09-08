@@ -478,9 +478,10 @@ mod tests {
             task::{Context, Poll},
         };
 
-        use alloy_consensus::{BlockHeader, Header};
         use alloy_primitives::{B256, BlockNumber, TxNumber, map::B256Map};
-        use base_common_consensus::{BaseBlock as Block, BaseBlockBody as BlockBody};
+        use base_common_consensus::{
+            BaseBlock as Block, BaseBlockBody as BlockBody, BlockHeader, Header,
+        };
         use futures_util::Stream;
         use reth_db::{static_file::HeaderWithHashMask, tables};
         use reth_db_api::{

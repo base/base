@@ -12,9 +12,9 @@ use alloy_primitives::{
     hex,
 };
 use alloy_rlp::{Decodable, EMPTY_LIST_CODE, Encodable, Error as RlpError};
+use base_common_consensus::add_arbitrary_tests;
 use futures::{Sink, SinkExt, StreamExt};
 use pin_project::pin_project;
-use reth_codecs::add_arbitrary_tests;
 use reth_metrics::metrics::counter;
 use reth_primitives_traits::GotExpected;
 #[cfg(feature = "serde")]

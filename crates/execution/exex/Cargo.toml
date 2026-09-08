@@ -17,8 +17,8 @@ reth-exex = { workspace = true }
 reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 reth-provider = { workspace = true }
-alloy-consensus = { workspace = true }
 base-node-context = { workspace = true }
+base-common-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
@@ -29,10 +29,9 @@ reth-exex-test-utils = { workspace = true }
 reth-primitives-traits = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
-base-common-consensus = { workspace = true, features = ["reth"] }
-alloy-consensus = {workspace = true, features = ["serde", "std"]}
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth", "serde", "std"] }
 [package.metadata.cargo-udeps.ignore]
 development = [
     "reth-node-builder",

@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 tracing = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
 base-shadow-indexer-db = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

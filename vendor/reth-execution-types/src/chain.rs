@@ -3,10 +3,11 @@
 use alloc::{borrow::Cow, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{fmt, ops::RangeInclusive};
 
-use alloy_consensus::{BlockHeader, TxReceipt, transaction::Recovered};
 use alloy_eips::{BlockNumHash, eip1898::ForkBlock};
 use alloy_primitives::{Address, BlockHash, BlockNumber, Log, TxHash, map::HashSet};
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{
+    BaseReceipt, BaseTxEnvelope, BlockHeader, TxReceipt, transaction::Recovered,
+};
 use reth_primitives_traits::{
     BlockBody, IndexedTx, RecoveredBlock, SealedHeader, transaction::signed::SignedTransaction,
 };
@@ -487,7 +488,7 @@ impl IntoIterator for ChainBlocks<'_> {
 
 /// Used to hold receipts and their attachment.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct BlockReceipts<T = alloy_consensus::EthereumReceipt> {
+pub struct BlockReceipts<T = base_common_consensus::EthereumReceipt> {
     /// Block identifier
     pub block: BlockNumHash,
     /// Transaction identifier and receipt.
@@ -799,14 +800,14 @@ mod tests {
         block2.set_hash(block2_hash);
 
         // Create a random receipt object, receipt1
-        let receipt1 = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let receipt1 = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),
         });
 
         // Create another random receipt object, receipt2
-        let receipt2 = BaseReceipt::Legacy(alloy_consensus::Receipt {
+        let receipt2 = BaseReceipt::Legacy(base_common_consensus::Receipt {
             cumulative_gas_used: 1325345,
             logs: vec![],
             status: true.into(),

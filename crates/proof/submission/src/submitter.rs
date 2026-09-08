@@ -79,9 +79,9 @@ impl<'a, T: TxManager> AggregateProofSubmitter<'a, T> {
 mod tests {
     use std::sync::Mutex;
 
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
     use alloy_rpc_types_eth::TransactionReceipt;
+    use base_common_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
 
     use super::AggregateProofSubmitter;

@@ -23,7 +23,6 @@ alloy-genesis = { workspace = true }
 alloy-transport = { workspace = true }
 base-common-genesis = { workspace = true }
 base-consensus-derive = { workspace = true }
-base-common-consensus = { workspace = true }
 alloy-rpc-types-beacon = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
@@ -32,11 +31,11 @@ url = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
 alloy-serde = { workspace = true, features = ["std"] }
 reqwest = { workspace = true, features = ["default"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map"] }
 alloy-eips = { workspace = true, features = ["kzg", "std"] }
 tokio = { workspace = true, features = ["default", "time"] }
 http-body-util = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["std"]}
 alloy-rpc-client = { workspace = true, features = ["default"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-common-rpc-types = { workspace = true, features = ["network"]}

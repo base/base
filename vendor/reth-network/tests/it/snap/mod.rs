@@ -6,17 +6,16 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_consensus::{
-    Header,
-    constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY},
-};
 use alloy_eip7928::{
     AccountChanges, BalanceChange, BlockAccessIndex, compute_block_access_list_hash,
 };
 use alloy_eips::NumHash;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_trie::{Nibbles, nodes::RlpNode, proof::verify_proof};
-use base_common_consensus::{BaseBlock, BaseReceipt};
+use base_common_consensus::{
+    BaseBlock, BaseReceipt, Header,
+    constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY},
+};
 use reth_eth_wire::{
     BlockAccessLists, EthVersion,
     protocol::Protocol,

@@ -6,13 +6,12 @@
 
 use std::time::Duration;
 
-use alloy_consensus::{SignableTransaction, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
-use base_common_consensus::{Call, Eip8130Signed, TxEip8130};
+use base_common_consensus::{Call, Eip8130Signed, SignableTransaction, TxEip8130, TxReceipt};
 use base_common_network::{PrivateKeySigner, TransactionBuilder};
 use base_common_rpc_types::{Base, BaseTransactionRequest};
 use base_execution_txpool::{

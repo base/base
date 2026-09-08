@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
@@ -8,7 +7,10 @@ use alloy_rpc_types_eth::error::EthRpcErrorCode;
 use audit_archiver_lib::BundleEvent;
 use base_bundles::{AcceptedBundle, Bundle, BundleExtensions, MeterBundleResponse, ParsedBundle};
 use base_common_chains::ChainConfig;
-use base_common_consensus::{BaseTxEnvelope, EIP8130_REJECTION_MSG};
+use base_common_consensus::{
+    BaseTxEnvelope, EIP8130_REJECTION_MSG,
+    transaction::{Recovered, SignerRecoverable},
+};
 use base_common_rpc_types::Base;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,

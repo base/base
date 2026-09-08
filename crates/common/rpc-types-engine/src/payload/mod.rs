@@ -17,13 +17,13 @@ pub use v4::{BoundedTransactions, BoundedWithdrawals};
 mod v5;
 use alloc::vec::Vec;
 
-use alloy_consensus::{Block, BlockHeader, HeaderInfo, Transaction};
 use alloy_eips::{Decodable2718, Encodable2718, Typed2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Address, B256, Bytes, Sealable, U256};
 use alloy_rpc_types_engine::{
     ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
     ExecutionPayloadV3, PayloadError,
 };
+use base_common_consensus::{Block, BlockHeader, HeaderInfo, Transaction};
 pub use v5::BaseExecutionPayloadEnvelopeV5;
 
 use crate::BaseExecutionPayloadSidecar;
@@ -300,7 +300,7 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
 }
 
 impl BaseExecutionPayload {
-    /// Conversion from [`alloy_consensus::Block`]. Also returns the
+    /// Conversion from [`base_common_consensus::Block`]. Also returns the
     /// [`BaseExecutionPayloadSidecar`] extracted from the block.
     ///
     /// See also [`from_block_unchecked`](BaseExecutionPayload::from_block_unchecked).
@@ -314,7 +314,7 @@ impl BaseExecutionPayload {
         Self::from_block_unchecked(block.hash_slow(), block)
     }
 
-    /// Conversion from [`alloy_consensus::Block`]. Also returns the
+    /// Conversion from [`base_common_consensus::Block`]. Also returns the
     /// [`BaseExecutionPayloadSidecar`] extracted from the block.
     ///
     /// See also [`ExecutionPayload::from_block_unchecked`].
@@ -725,15 +725,15 @@ impl BaseExecutionPayload {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            alloy_consensus::transaction::Recovered<T>,
-            alloy_consensus::crypto::RecoveryError,
+            base_common_consensus::transaction::Recovered<T>,
+            base_common_consensus::crypto::RecoveryError,
         >,
     > + '_
     where
-        T: Decodable2718 + alloy_consensus::transaction::SignerRecoverable,
+        T: Decodable2718 + base_common_consensus::transaction::SignerRecoverable,
     {
         self.decoded_transactions::<T>().map(|res| {
-            res.map_err(alloy_consensus::crypto::RecoveryError::from_source)
+            res.map_err(base_common_consensus::crypto::RecoveryError::from_source)
                 .and_then(|tx| tx.try_into_recovered())
         })
     }
@@ -747,16 +747,16 @@ impl BaseExecutionPayload {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            alloy_eips::eip2718::WithEncoded<alloy_consensus::transaction::Recovered<T>>,
-            alloy_consensus::crypto::RecoveryError,
+            alloy_eips::eip2718::WithEncoded<base_common_consensus::transaction::Recovered<T>>,
+            base_common_consensus::crypto::RecoveryError,
         >,
     > + '_
     where
-        T: Decodable2718 + alloy_consensus::transaction::SignerRecoverable,
+        T: Decodable2718 + base_common_consensus::transaction::SignerRecoverable,
     {
         self.transactions().iter().map(|tx_bytes| {
             T::decode_2718_exact(tx_bytes.as_ref())
-                .map_err(alloy_consensus::crypto::RecoveryError::from_source)
+                .map_err(base_common_consensus::crypto::RecoveryError::from_source)
                 .and_then(|tx| {
                     tx.try_into_recovered().map(|recovered| {
                         alloy_eips::eip2718::WithEncoded::new(tx_bytes.clone(), recovered)

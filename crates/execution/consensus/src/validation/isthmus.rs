@@ -1,9 +1,8 @@
 //! Block verification w.r.t. consensus rules new in Isthmus upgrade.
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_common_consensus::Predeploys;
+use base_common_consensus::{BlockHeader, Predeploys};
 use reth_storage_api::{StorageRootProvider, errors::ProviderResult};
 use reth_trie_common::HashedStorage;
 use revm::database::BundleState;
@@ -130,8 +129,8 @@ mod tests {
     use core::str::FromStr;
 
     use alloy_chains::Chain;
-    use alloy_consensus::Header;
     use alloy_primitives::{B256, U256, keccak256};
+    use base_common_consensus::Header;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_db_common::init::init_genesis;
     use reth_provider::{

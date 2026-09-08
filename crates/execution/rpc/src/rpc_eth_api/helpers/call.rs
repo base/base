@@ -3,7 +3,6 @@
 
 use std::collections::BTreeMap;
 
-use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_eips::eip2930::AccessListResult;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bytes, U256};
@@ -12,6 +11,7 @@ use alloy_rpc_types_eth::{
     simulate::{SimBlock, SimulatePayload, SimulatedBlock},
     state::{EvmOverrides, StateOverride},
 };
+use base_common_consensus::{BlockHeader, transaction::TxHashRef};
 use base_common_network::TransactionBuilder;
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
 use base_evm_context::{Block, Cfg, ResultAndState, Transaction};

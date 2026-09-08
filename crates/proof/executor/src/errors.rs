@@ -176,7 +176,7 @@ pub enum ExecutorError {
     /// - Unsupported signature algorithms
     /// - Chain ID mismatches
     #[error("sender recovery error: {0}")]
-    Recovery(#[from] alloy_consensus::crypto::RecoveryError),
+    Recovery(#[from] base_common_consensus::crypto::RecoveryError),
     /// RLP encoding or decoding error.
     ///
     /// This error occurs when RLP (Recursive Length Prefix) serialization

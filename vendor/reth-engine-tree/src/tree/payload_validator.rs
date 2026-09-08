@@ -103,17 +103,17 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::{
-    constants::KECCAK_EMPTY,
-    transaction::{Either, TxHashRef},
-};
 use alloy_eip7928::{BlockAccessList, bal::DecodedBal, compute_block_access_list_hash};
 use alloy_eips::{NumHash, eip1898::BlockWithParent, eip4895::Withdrawal};
 use alloy_primitives::{
     Address, B256,
     map::{AddressMap, B256Set},
 };
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, EIP1559ParamError};
+use base_common_consensus::{
+    BaseBlock, BaseReceipt, BaseTxEnvelope, EIP1559ParamError,
+    constants::KECCAK_EMPTY,
+    transaction::{Either, TxHashRef},
+};
 use base_evm_handler::{BlockExecutionError, Evm};
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, ReceiptRootBloom};
 use base_execution_evm::{
@@ -1376,7 +1376,7 @@ where
     fn payload_state_root_handle_for(
         &self,
         parent_hash: B256,
-        parent_header: &alloy_consensus::Header,
+        parent_header: &base_common_consensus::Header,
         timestamp: u64,
         state: &mut EngineApiTreeState,
     ) -> Option<PayloadStateRootHandle> {
@@ -1655,7 +1655,7 @@ pub trait EngineValidator: Send + Sync + 'static {
     fn validate_payload_attributes_against_header(
         &self,
         attr: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        header: &alloy_consensus::Header,
+        header: &base_common_consensus::Header,
     ) -> Result<(), InvalidPayloadAttributesError>;
 
     /// Ensures that the given payload does not violate any consensus rules that concern the block's
@@ -1701,7 +1701,7 @@ pub trait EngineValidator: Send + Sync + 'static {
     fn payload_builder_resources(
         &self,
         parent_hash: B256,
-        parent_header: &alloy_consensus::Header,
+        parent_header: &base_common_consensus::Header,
         timestamp: u64,
         state: &mut EngineApiTreeState,
     ) -> PayloadBuilderResources;
@@ -1732,7 +1732,7 @@ where
     fn validate_payload_attributes_against_header(
         &self,
         attr: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        header: &alloy_consensus::Header,
+        header: &base_common_consensus::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         self.validator.validate_payload_attributes_against_header(attr, header)
     }
@@ -1827,7 +1827,7 @@ where
     fn payload_builder_resources(
         &self,
         parent_hash: B256,
-        parent_header: &alloy_consensus::Header,
+        parent_header: &base_common_consensus::Header,
         timestamp: u64,
         state: &mut EngineApiTreeState,
     ) -> PayloadBuilderResources {

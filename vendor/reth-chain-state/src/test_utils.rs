@@ -3,14 +3,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_consensus::{EMPTY_ROOT_HASH, Header, SignableTransaction, TxEip1559, TxReceipt};
 use alloy_eips::eip1559::{ETHEREUM_BLOCK_GAS_LIMIT_30M, INITIAL_BASE_FEE};
 use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, B256, BlockNumber, U256, map::B256HashMap};
 use alloy_signer::SignerSync;
 use base_common_consensus::{
     BaseBlockBody as BlockBody, BaseReceipt as Receipt, BaseTxEnvelope as TransactionSigned,
-    BaseTypedTransaction as Transaction,
+    BaseTypedTransaction as Transaction, EMPTY_ROOT_HASH, Header, SignableTransaction, TxEip1559,
+    TxReceipt,
 };
 use base_common_network::PrivateKeySigner;
 use base_execution_chainspec::BaseChainSpec;
@@ -141,7 +141,7 @@ impl TestBlockBuilder {
             .iter()
             .enumerate()
             .map(|(idx, _tx)| {
-                Receipt::Eip1559(alloy_consensus::Receipt::<alloy_primitives::Log> {
+                Receipt::Eip1559(base_common_consensus::Receipt::<alloy_primitives::Log> {
                     status: true.into(),
                     cumulative_gas_used: (idx as u64 + 1) * 21_000u64,
                     ..Default::default()
@@ -295,7 +295,7 @@ impl TestBlockBuilder {
                 .iter()
                 .enumerate()
                 .map(|(idx, _tx)| {
-                    Receipt::Eip1559(alloy_consensus::Receipt::<alloy_primitives::Log> {
+                    Receipt::Eip1559(base_common_consensus::Receipt::<alloy_primitives::Log> {
                         status: true.into(),
                         cumulative_gas_used: (idx as u64 + 1) * 21_000u64,
                         ..Default::default()
@@ -383,7 +383,7 @@ impl TestBlockBuilder {
             .iter()
             .enumerate()
             .map(|(idx, _tx)| {
-                Receipt::Eip1559(alloy_consensus::Receipt::<alloy_primitives::Log> {
+                Receipt::Eip1559(base_common_consensus::Receipt::<alloy_primitives::Log> {
                     status: true.into(),
                     cumulative_gas_used: (idx as u64 + 1) * 21_000u64,
                     ..Default::default()

@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::BlockHeader;
 use alloy_genesis::Genesis;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::BlockNumberOrTag;
+use base_common_consensus::BlockHeader;
 use base_execution_chainspec::BaseChainSpecBuilder;
 use base_node_core::{BaseNode, EngineNodeLauncher, NodeBuilder, NodeConfig};
 use reth_db::test_utils::create_test_rw_db_with_path;

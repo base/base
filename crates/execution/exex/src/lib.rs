@@ -10,8 +10,8 @@
 mod sync_target;
 use std::{sync::Arc, time::Duration};
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::eip1898::BlockWithParent;
+use base_common_consensus::BlockHeader;
 #[cfg(feature = "metrics")]
 use base_execution_trie::BaseProofsStore;
 use base_execution_trie::{
@@ -699,8 +699,8 @@ where
 mod tests {
     use std::{collections::BTreeMap, default::Default, sync::Arc, time::Duration};
 
-    use alloy_consensus::private::alloy_primitives::B256;
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
+    use base_common_consensus::private::alloy_primitives::B256;
     use base_execution_trie::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };

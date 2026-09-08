@@ -328,10 +328,9 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Transaction as _;
     use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
     use alloy_primitives::{Address, B256, U256};
-    use base_common_consensus::BaseTxEnvelope;
+    use base_common_consensus::{BaseTxEnvelope, Transaction as _};
     use base_common_genesis::{RollupConfig, SystemConfig};
     use base_consensus_derive::AttributesBuilder;
     use base_protocol::{

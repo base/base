@@ -20,7 +20,6 @@ thiserror = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 base-evm-handler = {workspace = true}
-alloy-consensus = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-chain-state = { workspace = true }
@@ -52,7 +51,7 @@ std = [
     "reth-trie-common/std",
     "reth-storage-api/std",
     "alloy-primitives/std",
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "alloy-rpc-types-engine/std",
     "alloy-eips/std",
     "futures/std",

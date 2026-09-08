@@ -1,7 +1,8 @@
 use alloc::boxed::Box;
 
-use alloy_consensus::{Eip658Value, Receipt};
-use base_common_consensus::{BaseReceipt, BaseTransactionSigned, Eip8130Receipt, OpTxType};
+use base_common_consensus::{
+    BaseReceipt, BaseTransactionSigned, Eip658Value, Eip8130Receipt, OpTxType, Receipt,
+};
 use base_common_evm::{BaseReceiptBuilder, Eip8130PhaseStatuses};
 use base_evm_handler::ReceiptBuilderCtx;
 

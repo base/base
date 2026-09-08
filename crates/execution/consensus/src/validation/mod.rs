@@ -5,12 +5,13 @@ pub mod isthmus;
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{
+    BaseReceipt, BaseTxEnvelope, BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt,
+};
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
@@ -241,12 +242,14 @@ fn compare_receipts_root_and_logs_bloom(
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{Header, Receipt, Sealable, TxReceipt};
     use alloy_eips::{eip1559::BaseFeeParams, eip2718::Encodable2718, eip7685::Requests};
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Bloom, Bytes, b256, hex};
     use alloy_trie::root::ordered_trie_root_with_encoder;
-    use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, TxDeposit};
+    use base_common_consensus::{
+        BaseReceipt, BaseTxEnvelope, DepositReceipt, Header, Receipt, Sealable, TxDeposit,
+        TxReceipt,
+    };
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
     use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
@@ -597,7 +600,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let mut body = alloy_consensus::BlockBody::<BaseTxEnvelope> {
+        let mut body = base_common_consensus::BlockBody::<BaseTxEnvelope> {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(Default::default()),

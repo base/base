@@ -25,13 +25,11 @@ reth-exex = { workspace = true }
 page_size = { workspace = true }
 reth-prune = { workspace = true }
 reth-tasks = { workspace = true }
-reth-codecs = { workspace = true }
 reth-config = { workspace = true }
 reth-db-api = { workspace = true }
 futures-util = { workspace = true }
 reth-provider = { workspace = true }
 alloy-hardforks = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-storage-api = { workspace = true }
@@ -92,7 +90,7 @@ test-utils = [
     "reth-downloaders/test-utils",
     "reth-primitives-traits/test-utils",
     "base-execution-evm/test-utils",
-    "reth-codecs/test-utils",
+    "base-common-consensus/test-utils",
     "reth-db-api/test-utils",
     "reth-trie/test-utils",
     "reth-trie/test-utils",

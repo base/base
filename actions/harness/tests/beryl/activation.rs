@@ -1,8 +1,8 @@
 //! Activation registry precompile action tests across the Base Beryl boundary.
 
-use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent};
+use base_common_consensus::TxReceipt;
 use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 
 use crate::env::BerylTestEnv;

@@ -256,10 +256,10 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_consensus::Header;
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, Bloom, U256};
     use alloy_rpc_types_eth::{Block, Header as RpcHeader, Log};
+    use base_common_consensus::Header;
     use tokio::{sync::oneshot, time::Instant};
 
     use super::*;

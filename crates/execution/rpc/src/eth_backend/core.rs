@@ -3,10 +3,10 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
+use base_common_consensus::BlockHeader;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
@@ -376,13 +376,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Block, BlockBody, Header};
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, Signature, U64};
     use alloy_rpc_types::FeeHistory;
     use alloy_rpc_types_eth::{Bundle, TransactionRequest};
     use base_common_consensus::{
-        BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTxEnvelope as TransactionSigned,
+        BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTxEnvelope as TransactionSigned, Block,
+        BlockBody, Header,
     };
     use base_execution_chainspec::ChainSpecProvider;
     use base_execution_evm::BaseEvmConfig;
@@ -468,7 +468,7 @@ mod tests {
                 if let Some(base_fee_per_gas) = header.base_fee_per_gas {
                     let transaction = TransactionSigned::new_unhashed(
                         base_common_consensus::BaseTypedTransaction::Eip1559(
-                            alloy_consensus::TxEip1559 {
+                            base_common_consensus::TxEip1559 {
                                 max_priority_fee_per_gas: random_fee,
                                 max_fee_per_gas: random_fee + base_fee_per_gas as u128,
                                 ..Default::default()

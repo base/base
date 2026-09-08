@@ -19,9 +19,9 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-sol-types = { workspace = true }
-alloy-consensus = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
+base-common-consensus = { workspace = true }
 serde = { workspace = true, optional = true }
 spin = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
@@ -33,36 +33,37 @@ arbitrary = { workspace = true, features = ["derive"] }
 toml = { workspace = true, features = ["parse", "serde"] }
 rand = { workspace = true, features = ["default", "thread_rng"] }
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
+
 [features]
 default = []
 test-utils = []
 std = [
-	"alloy-chains/std",
-	"alloy-consensus/std",
-	"alloy-eips/std",
-	"alloy-primitives/std",
-	"alloy-sol-types/std",
-	"derive_more/std",
-	"serde?/std",
-	"spin/std",
-	"thiserror/std",
-	"tracing/std",
+    "alloy-chains/std",
+    "base-common-consensus/std",
+    "alloy-eips/std",
+    "alloy-primitives/std",
+    "alloy-sol-types/std",
+    "derive_more/std",
+    "serde?/std",
+    "spin/std",
+    "thiserror/std",
+    "tracing/std",
 ]
 arbitrary = [
-	"alloy-chains/arbitrary",
-	"alloy-consensus/arbitrary",
-	"alloy-eips/arbitrary",
-	"alloy-primitives/arbitrary",
-	"alloy-primitives/rand",
-	"alloy-sol-types/arbitrary",
-	"dep:arbitrary",
-	"std",
+    "alloy-chains/arbitrary",
+    "base-common-consensus/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "alloy-primitives/rand",
+    "alloy-sol-types/arbitrary",
+    "dep:arbitrary",
+    "std",
 ]
 serde = [
-	"alloy-chains/serde",
-	"alloy-consensus/serde",
-	"alloy-eips/serde",
-	"alloy-hardforks/serde",
-	"alloy-primitives/serde",
-	"dep:serde",
+    "alloy-chains/serde",
+    "base-common-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-hardforks/serde",
+    "alloy-primitives/serde",
+    "dep:serde",
 ]

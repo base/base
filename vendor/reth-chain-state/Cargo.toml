@@ -22,7 +22,6 @@ reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 pin-project = { workspace = true }
 reth-metrics = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
@@ -51,7 +50,7 @@ reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 [features]
 serde = [
     "dep:serde",
-    "alloy-consensus/serde",
+    "base-common-consensus/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "parking_lot/serde",

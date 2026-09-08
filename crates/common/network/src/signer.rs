@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
-use alloy_consensus::{SignableTransaction, TxEnvelope};
 use alloy_eips::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind};
 use alloy_rpc_types_eth::TransactionRequest;
 use async_trait::async_trait;
+use base_common_consensus::{SignableTransaction, TxEnvelope};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tracing::debug;
 use url::Url;
@@ -176,10 +176,10 @@ impl TxSigner<Signature> for RemoteSigner {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{TxEip1559, TxLegacy};
     use alloy_node_bindings::Anvil;
     use alloy_primitives::U256;
     use alloy_signer::SignerSync;
+    use base_common_consensus::{TxEip1559, TxLegacy};
 
     use super::*;
     use crate::{EthereumWallet, PrivateKeySigner};

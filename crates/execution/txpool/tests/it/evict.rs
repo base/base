@@ -1,8 +1,8 @@
 //! Transaction pool eviction tests.
 
-use alloy_consensus::Transaction;
 use alloy_eips::eip1559::{ETHEREUM_BLOCK_GAS_LIMIT_30M, MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::{Address, B256};
+use base_common_consensus::Transaction;
 use base_execution_txpool::{
     AddedTransactionOutcome, BlockInfo, PoolConfig, PoolErrorKind, SubPoolLimit, TransactionOrigin,
     TransactionPool, TransactionPoolExt,

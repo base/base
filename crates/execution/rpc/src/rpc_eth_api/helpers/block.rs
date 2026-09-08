@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{TxReceipt, transaction::TxHashRef};
 use alloy_eips::BlockId;
 use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::{Block, BlockTransactions, Index};
+use base_common_consensus::{TxReceipt, transaction::TxHashRef};
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionReceipt};
 use base_execution_txpool::{PoolTransaction, TransactionPool};
 use futures::Future;
@@ -183,7 +183,9 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
                 .nth(index.into())
                 .map(|header| {
                     let block =
-                        alloy_consensus::Block::<alloy_consensus::TxEnvelope, _>::uncle(header);
+                        base_common_consensus::Block::<base_common_consensus::TxEnvelope, _>::uncle(
+                            header,
+                        );
                     let size = block.length();
                     let header = self
                         .converter()

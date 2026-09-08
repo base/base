@@ -10,7 +10,7 @@ Transaction type inference is driven by populated fields, while event filters re
 canonical event signature:
 
 ```rust
-use alloy_consensus::TxType;
+use base_common_consensus::TxType;
 use alloy_rpc_types_eth::{Filter, TransactionRequest};
 
 let request = TransactionRequest::default();

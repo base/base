@@ -192,9 +192,8 @@ impl<P: TransactionPool, E> fmt::Debug for DestinationReader<P, E> {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use alloy_consensus::transaction::Recovered;
     use alloy_primitives::{Address, B256, TxKind, U256};
-    use base_common_consensus::{BaseTransactionSigned, TxDeposit};
+    use base_common_consensus::{BaseTransactionSigned, TxDeposit, transaction::Recovered};
     use base_execution_txpool::{
         BasePooledTransaction, NoopTransactionPool, TransactionId, TransactionOrigin,
     };

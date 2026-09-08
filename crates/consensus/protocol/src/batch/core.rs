@@ -82,8 +82,8 @@ impl Batch {
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use alloy_consensus::{Signed, TxEip2930, TxEnvelope};
     use alloy_primitives::{Bytes, Signature, TxKind, address, hex};
+    use base_common_consensus::{Signed, TxEip2930, TxEnvelope};
 
     use super::*;
     use crate::{SpanBatchElement, SpanBatchError, SpanBatchTransactions};

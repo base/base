@@ -2,11 +2,11 @@
 
 use alloc::{collections::BTreeMap, vec::Vec};
 
-use alloy_consensus::{Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope, TxType};
 use alloy_primitives::{B256, Bytes, Log, keccak256};
 use alloy_provider::{Provider, ProviderBuilder, network::eip2718::Encodable2718};
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, BlockTransactions};
+use base_common_consensus::{Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope, TxType};
 use reqwest::Url;
 
 use crate::{TrieNode, TrieProvider, ordered_trie_with_encoder};

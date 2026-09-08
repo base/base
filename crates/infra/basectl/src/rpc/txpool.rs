@@ -2,7 +2,6 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use alloy_consensus::Transaction as ConsensusTransaction;
 use alloy_primitives::{Address, TxHash};
 use alloy_provider::{
     Network, Provider, ProviderBuilder, ext::TxPoolApi, network::TransactionResponse,
@@ -11,6 +10,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_txpool::{TxpoolContent, TxpoolContentFrom};
 use alloy_transport::TransportError;
 use alloy_transport_http::Http;
+use base_common_consensus::Transaction as ConsensusTransaction;
 use base_common_rpc_types::Base;
 use jsonrpsee::{
     core::client::{ClientT, Error as JsonRpcClientError},

@@ -22,7 +22,6 @@ alloy-eips = { workspace = true }
 reth-prune = { workspace = true }
 aquamarine = { workspace = true }
 reth-db-api = { workspace = true }
-reth-codecs = { workspace = true }
 futures-util = { workspace = true }
 reth-metrics = { workspace = true }
 reth-provider = { workspace = true }
@@ -31,6 +30,7 @@ reth-tokio-util = { workspace = true }
 reth-static-file = { workspace = true }
 reth-stages-types = { workspace = true }
 reth-storage-errors = {workspace = true}
+base-common-consensus = { workspace = true }
 reth-primitives-traits = { workspace = true }
 reth-static-file-types = { workspace = true }
 base-execution-consensus = { workspace = true }
@@ -59,5 +59,5 @@ test-utils = [
     "reth-provider/test-utils",
     "reth-stages-types/test-utils",
     "reth-tasks/test-utils",
-    "reth-codecs/test-utils",
+    "base-common-consensus/test-utils",
 ]

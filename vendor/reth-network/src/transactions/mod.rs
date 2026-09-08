@@ -1,7 +1,6 @@
 //! Transactions management for the p2p network.
 
-use alloy_consensus::transaction::TxHashRef;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, transaction::TxHashRef};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use smallvec::SmallVec;
 
@@ -24,7 +23,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::TxType;
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{
     B256, TxHash,
@@ -32,6 +30,7 @@ use alloy_primitives::{
     map::{B256Map, B256Set, FbBuildHasher, HashMap, HashSet, hash_map::Entry},
 };
 use alloy_rlp::Encodable;
+use base_common_consensus::TxType;
 use base_execution_evm::SenderRecoveryCache;
 use base_execution_txpool::{
     AddedTransactionOutcome, GetPooledTransactionLimit, PoolError, PoolResult, PoolTransaction,
@@ -2345,13 +2344,12 @@ mod tests {
         time::Instant,
     };
 
-    use alloy_consensus::{TxEip1559, TxLegacy};
     use alloy_eips::{eip2718::Encodable2718, eip4844::BlobTransactionValidationError};
     use alloy_primitives::{B256, Signature, TxKind, U256, hex};
     use alloy_rlp::Decodable;
     use base_common_consensus::{
         BasePooledTransaction as PooledTransactionVariant, BaseTxEnvelope as TransactionSigned,
-        BaseTypedTransaction as Transaction,
+        BaseTypedTransaction as Transaction, TxEip1559, TxLegacy,
     };
     use base_execution_txpool::{
         CoinbaseTipOrdering, Eip4844PoolTransactionError, EthPooledTransaction, InMemoryBlobStore,

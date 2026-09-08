@@ -5,9 +5,9 @@ mod tests {
     use alloy_eips::eip4895::Withdrawal;
     use alloy_primitives::Address;
     use alloy_rlp::{RlpDecodable, RlpEncodable};
+    use base_common_consensus::{Compact, add_arbitrary_tests};
     use proptest::proptest;
     use proptest_arbitrary_interop::arb;
-    use reth_codecs::{Compact, add_arbitrary_tests};
     use serde::{Deserialize, Serialize};
 
     /// This type is kept for compatibility tests after the codec support was added to alloy-eips

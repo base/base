@@ -196,8 +196,8 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
         .unwrap();
 
     // Insert a transaction into the pool
-    let signed = alloy_consensus::Signed::new_unhashed(
-        alloy_consensus::TxEip1559 {
+    let signed = base_common_consensus::Signed::new_unhashed(
+        base_common_consensus::TxEip1559 {
             gas_limit: 21_000,
             max_fee_per_gas: 1_000_000_000,
             max_priority_fee_per_gas: 1_000_000_000,
@@ -207,7 +207,7 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
     );
     let tx =
         <base_execution_rpc::test_utils::TestPool as TransactionPool>::Transaction::from_pooled(
-            alloy_consensus::transaction::Recovered::new_unchecked(
+            base_common_consensus::transaction::Recovered::new_unchecked(
                 base_common_consensus::BasePooledTransaction::from(signed),
                 alloy_primitives::Address::ZERO,
             ),

@@ -2,7 +2,6 @@
 
 use alloc::{borrow::Cow, collections::VecDeque, vec::Vec};
 
-use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
     map::{B256Map, B256Set, hash_map},
@@ -13,6 +12,7 @@ use alloy_trie::{
     nodes::TrieNode,
     proof::{DecodedProofNodes, ProofNodes, ProofVerificationError, verify_proof},
 };
+use base_common_consensus::constants::KECCAK_EMPTY;
 use derive_more::{Deref, DerefMut, IntoIterator};
 use itertools::Itertools;
 use reth_primitives_traits::Account;

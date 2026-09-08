@@ -22,12 +22,12 @@ bytes = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["std", "derive"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 base-metrics = { workspace = true, features = ["metrics"] }
 moka = { workspace = true, features = ["default", "sync"] }
 tokio = { workspace = true, features = ["default", "full"] }
 anyhow = { workspace = true, features = ["default", "std"] }
 chrono = { workspace = true, features = ["default", "serde"] }
+base-common-consensus = { workspace = true, features = ["std"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
 uuid = { workspace = true, features = ["default", "v5", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
@@ -40,6 +40,7 @@ testcontainers = { workspace = true, features = ["blocking"] }
 base-bundles = { workspace = true, features = ["test-utils"] }
 testcontainers-modules = { workspace = true, features = ["postgres", "minio"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+
 [features]
 default = [ "metrics" ]
 metrics = [

@@ -1,7 +1,7 @@
-use alloy_consensus::{BlockHeader, Transaction};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, B256, BlockHash, TxHash};
 use alloy_serde::WithOtherFields;
+use base_common_consensus::{BlockHeader, Transaction};
 
 use crate::{BlockTransactions, InclusionInfo};
 

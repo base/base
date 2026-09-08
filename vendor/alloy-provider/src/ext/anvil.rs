@@ -1,9 +1,9 @@
 //! This module extends the Ethereum JSON-RPC provider with the Anvil namespace's RPC methods.
 
-use alloy_consensus::Blob;
 use alloy_primitives::{Address, B256, Bytes, TxHash, U64, U128, U256};
 use alloy_rpc_types_anvil::{Forking, Metadata, MineOptions, NodeInfo, ReorgOptions};
 use alloy_transport::{TransportError, TransportResult};
+use base_common_consensus::Blob;
 use base_common_network::{Network, TransactionBuilder};
 use futures::try_join;
 
@@ -527,13 +527,13 @@ impl ImpersonateConfig {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{BlockHeader, SidecarBuilder, SimpleCoder};
     use alloy_eips::BlockNumberOrTag;
     use alloy_network_primitives::BlockResponse as _;
     use alloy_primitives::{B256, address};
     use alloy_rpc_types_eth::TransactionRequest;
     use alloy_sol_types::{SolCall, sol};
     use alloy_transport::mock::Asserter;
+    use base_common_consensus::{BlockHeader, SidecarBuilder, SimpleCoder};
     use base_common_network::{AnyNetwork, TransactionBuilder, TransactionBuilder4844};
 
     use super::*;

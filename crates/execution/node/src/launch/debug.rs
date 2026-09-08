@@ -4,9 +4,8 @@ use std::{
     sync::Arc,
 };
 
-use alloy_consensus::transaction::Either;
 use alloy_provider::network::AnyNetwork;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, transaction::Either};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadAttributesBuilder,
@@ -34,7 +33,7 @@ pub struct DebugNodeConfig<R> {
     ) -> Box<
         dyn PayloadAttributesBuilder<
                 BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                alloy_consensus::Header,
+                base_common_consensus::Header,
             >,
     >,
 }
@@ -99,7 +98,7 @@ where
         Box<
             dyn PayloadAttributesBuilder<
                     BasePayloadBuilderAttributes<BaseTxEnvelope>,
-                    alloy_consensus::Header,
+                    base_common_consensus::Header,
                 >,
         >,
     >,
@@ -129,7 +128,7 @@ where
         self,
         builder: impl PayloadAttributesBuilder<
             BasePayloadBuilderAttributes<BaseTxEnvelope>,
-            alloy_consensus::Header,
+            base_common_consensus::Header,
         >,
     ) -> Self {
         Self {

@@ -1,7 +1,6 @@
-use alloy_consensus::Sealed;
 use alloy_eips::Typed2718;
 use alloy_rpc_types_eth::ConversionError;
-use base_common_consensus::{BaseTxEnvelope, OpTxType, TxDeposit};
+use base_common_consensus::{BaseTxEnvelope, OpTxType, Sealed, TxDeposit};
 
 use crate::{AnyRpcTransaction, AnyTxEnvelope, UnknownTxEnvelope, UnknownTypedTransaction};
 

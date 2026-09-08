@@ -25,17 +25,16 @@ base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-base-common-consensus = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["std"], optional = true }
 tokio = { workspace = true, features = ["default", "sync", "macros", "rt"] }
 derive_more = { workspace = true, features = ["debug", "display", "from_str"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"], optional = true }
+base-common-consensus = { workspace = true, features = ["std"], optional = false}
 [dev-dependencies]
 async-trait = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default", "macros", "rt", "time"] }
 [[test]]
 name = "reorg"
@@ -60,9 +59,8 @@ required-features = ["test-utils"]
 [features]
 metrics = [ "base-batcher-encoder/metrics", "base-tx-manager/metrics" ]
 test-utils = [
-	"base-protocol/test-utils",
-	"base-runtime/test-utils",
-	"dep:alloy-consensus",
-	"dep:alloy-rpc-types-eth",
-	"dep:async-trait",
+    "base-protocol/test-utils",
+    "base-runtime/test-utils",
+    "dep:alloy-rpc-types-eth",
+    "dep:async-trait",
 ]

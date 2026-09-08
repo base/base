@@ -1,13 +1,14 @@
 //! Dummy blocks and data for tests
 use std::{str::FromStr, sync::LazyLock};
 
-use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, Header, TxLegacy};
 use alloy_eips::eip4895::{Withdrawal, Withdrawals};
 use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, Log, Signature, TxKind, U256, b256, hex_literal::hex,
     map::HashMap,
 };
-use base_common_consensus::{BaseBlockBody, BaseTxEnvelope, BaseTypedTransaction};
+use base_common_consensus::{
+    BaseBlockBody, BaseTxEnvelope, BaseTypedTransaction, EMPTY_OMMER_ROOT_HASH, Header, TxLegacy,
+};
 use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables};
 use reth_primitives_traits::{Account, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_trie::root::{state_root_unhashed, storage_root_unhashed};
@@ -198,7 +199,7 @@ fn block1(number: BlockNumber) -> (RecoveredBlock, ExecutionOutcome) {
             .revert_account_info(number, account2, Some(None))
             .state_storage(account1, HashMap::from_iter([(slot, (U256::ZERO, U256::from(10)))]))
             .build(),
-        vec![vec![base_common_consensus::BaseReceipt::Eip2930(alloy_consensus::Receipt {
+        vec![vec![base_common_consensus::BaseReceipt::Eip2930(base_common_consensus::Receipt {
             status: (true).into(),
             cumulative_gas_used: 300,
             logs: vec![Log::new_unchecked(
@@ -251,7 +252,7 @@ fn block2(
             )
             .revert_storage(number, account, Vec::from([(slot, U256::from(10))]))
             .build(),
-        vec![vec![base_common_consensus::BaseReceipt::Eip1559(alloy_consensus::Receipt {
+        vec![vec![base_common_consensus::BaseReceipt::Eip1559(base_common_consensus::Receipt {
             status: (false).into(),
             cumulative_gas_used: 400,
             logs: vec![Log::new_unchecked(
@@ -313,7 +314,7 @@ fn block3(
     }
     let execution_outcome = ExecutionOutcome::new(
         bundle_state_builder.build(),
-        vec![vec![base_common_consensus::BaseReceipt::Eip1559(alloy_consensus::Receipt {
+        vec![vec![base_common_consensus::BaseReceipt::Eip1559(base_common_consensus::Receipt {
             status: (true).into(),
             cumulative_gas_used: 400,
             logs: vec![Log::new_unchecked(
@@ -395,7 +396,7 @@ fn block4(
     }
     let execution_outcome = ExecutionOutcome::new(
         bundle_state_builder.build(),
-        vec![vec![base_common_consensus::BaseReceipt::Eip1559(alloy_consensus::Receipt {
+        vec![vec![base_common_consensus::BaseReceipt::Eip1559(base_common_consensus::Receipt {
             status: (true).into(),
             cumulative_gas_used: 400,
             logs: vec![Log::new_unchecked(
@@ -474,7 +475,7 @@ fn block5(
     }
     let execution_outcome = ExecutionOutcome::new(
         bundle_state_builder.build(),
-        vec![vec![base_common_consensus::BaseReceipt::Eip1559(alloy_consensus::Receipt {
+        vec![vec![base_common_consensus::BaseReceipt::Eip1559(base_common_consensus::Receipt {
             status: (true).into(),
             cumulative_gas_used: 400,
             logs: vec![Log::new_unchecked(

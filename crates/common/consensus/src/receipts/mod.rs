@@ -1,6 +1,6 @@
 //! Receipt types for Base chains.
 
-use alloy_consensus::TxReceipt;
+use base_common_consensus::TxReceipt;
 
 mod envelope;
 pub use envelope::BaseReceiptEnvelope;

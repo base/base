@@ -10,10 +10,9 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, BlockTimestamp};
 use alloy_rpc_types::engine::PayloadId;
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, BlockHeader};
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadAttributes, PayloadBuilderError,
     PayloadEvents, PayloadKind,

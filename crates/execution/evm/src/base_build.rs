@@ -1,13 +1,12 @@
 use alloc::sync::Arc;
 
-use alloy_consensus::{
-    Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt, constants::EMPTY_WITHDRAWALS,
-    proofs,
-};
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{
+    BaseReceipt, BaseTxEnvelope, Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt,
+    constants::EMPTY_WITHDRAWALS, proofs,
+};
 use base_common_evm::BaseBlockExecutionCtx;
 use base_evm_context::Block as _;
 use base_evm_handler::{BlockExecutionError, BlockExecutorFactory};

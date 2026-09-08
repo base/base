@@ -13,7 +13,7 @@ use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 extern crate alloc;
 
-use alloy_consensus::BlockHeader;
+use base_common_consensus::BlockHeader;
 // Re-export [`ExecutionPayload`] moved to `base_execution_payload_types`
 #[cfg(feature = "std")]
 pub use base_execution_evm::ConvertTx;
@@ -186,7 +186,7 @@ pub trait PayloadValidator: Send + Sync + Unpin + 'static {
     fn validate_payload_attributes_against_header(
         &self,
         attr: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        header: &alloy_consensus::Header,
+        header: &base_common_consensus::Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         if attr.timestamp() <= header.timestamp() {
             return Err(InvalidPayloadAttributesError::InvalidTimestamp);

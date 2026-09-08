@@ -2,9 +2,8 @@
 
 #![allow(dead_code)]
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::map::B256Map;
-use base_common_consensus::BaseBlockBody as BlockBody;
+use base_common_consensus::{BaseBlockBody as BlockBody, BlockHeader};
 use reth_network_p2p::bodies::response::BlockResponse;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 use reth_provider::{

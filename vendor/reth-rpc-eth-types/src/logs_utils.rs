@@ -4,10 +4,11 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{BlockHeader, TxReceipt, transaction::TxHashRef};
 use alloy_primitives::TxHash;
 use alloy_rpc_types_eth::{Filter, Log};
-use base_common_consensus::{BaseReceipt, ChainInfo};
+use base_common_consensus::{
+    BaseReceipt, BlockHeader, ChainInfo, TxReceipt, transaction::TxHashRef,
+};
 use base_common_rpc_types::BaseLogResponse;
 use jsonrpsee_types::ErrorObject;
 use reth_primitives_traits::{RecoveredBlock, SignedTransaction};

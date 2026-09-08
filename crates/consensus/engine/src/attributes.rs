@@ -70,7 +70,7 @@ impl AttributesMatch {
             }
             if !config.is_isthmus_active(block.header.timestamp) {
                 // In canyon, the withdrawals root should be set to the empty value
-                let empty_hash = alloy_consensus::EMPTY_ROOT_HASH;
+                let empty_hash = base_common_consensus::EMPTY_ROOT_HASH;
                 if block.header.inner.withdrawals_root != Some(empty_hash) {
                     return Self::Mismatch(AttributesMismatch::CanyonNotEmptyHash);
                 }
@@ -418,13 +418,12 @@ impl From<AttributesMismatch> for AttributesMatch {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::EMPTY_ROOT_HASH;
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
     use alloy_rpc_types_eth::BlockTransactions;
     use arbitrary::{Arbitrary, Unstructured};
     use base_common_chains::{ChainConfig, rollup_config};
-    use base_common_consensus::{HoloceneExtraData, JovianExtraData};
+    use base_common_consensus::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
@@ -776,7 +775,7 @@ mod tests {
         let block = Block {
             withdrawals: Some(Withdrawals(vec![])),
             header: alloy_rpc_types_eth::Header {
-                inner: alloy_consensus::Header {
+                inner: base_common_consensus::Header {
                     withdrawals_root: Some(EMPTY_ROOT_HASH),
                     ..Default::default()
                 },

@@ -36,7 +36,7 @@ impl MerkleCheckpoint {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-impl reth_codecs::Compact for MerkleCheckpoint {
+impl base_common_consensus::Compact for MerkleCheckpoint {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -150,7 +150,7 @@ impl StorageRootMerkleCheckpoint {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-impl reth_codecs::Compact for StorageRootMerkleCheckpoint {
+impl base_common_consensus::Compact for StorageRootMerkleCheckpoint {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -223,8 +223,8 @@ impl reth_codecs::Compact for StorageRootMerkleCheckpoint {
 /// Saves the progress of `AccountHashing` stage.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AccountHashingCheckpoint {
     /// The next account to start hashing from.
@@ -238,8 +238,8 @@ pub struct AccountHashingCheckpoint {
 /// Saves the progress of `StorageHashing` stage.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StorageHashingCheckpoint {
     /// The next account to start hashing from.
@@ -255,8 +255,8 @@ pub struct StorageHashingCheckpoint {
 /// Saves the progress of Execution stage.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExecutionCheckpoint {
     /// Block range which this checkpoint is valid for.
@@ -268,8 +268,8 @@ pub struct ExecutionCheckpoint {
 /// Saves the progress of Headers stage.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HeadersCheckpoint {
     /// Block range which this checkpoint is valid for.
@@ -281,8 +281,8 @@ pub struct HeadersCheckpoint {
 /// Saves the progress of Index History stages.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct IndexHistoryCheckpoint {
     /// Block range which this checkpoint is valid for.
@@ -297,8 +297,8 @@ pub struct IndexHistoryCheckpoint {
 /// The `MerkleChangeSets` stage has been removed.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MerkleChangeSetsCheckpoint {
     /// Block range which this checkpoint is valid for.
@@ -308,8 +308,8 @@ pub struct MerkleChangeSetsCheckpoint {
 /// Saves the progress of abstract stage iterating over or downloading entities.
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EntitiesCheckpoint {
     /// Number of entities already processed.
@@ -346,8 +346,8 @@ impl EntitiesCheckpoint {
 /// multiple executions.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CheckpointBlockRange {
     /// The first block of the range, inclusive.
@@ -371,8 +371,8 @@ impl From<&RangeInclusive<BlockNumber>> for CheckpointBlockRange {
 /// Saves the progress of a stage.
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StageCheckpoint {
     /// The maximum block processed by the stage.
@@ -439,18 +439,18 @@ impl StageCheckpoint {
 }
 
 #[cfg(any(test, feature = "reth-codec"))]
-reth_codecs::impl_compression_for_compact!(StageCheckpoint);
+base_common_consensus::impl_compression_for_compact!(StageCheckpoint);
 
 /// Saves the progress of the Finish stage.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(
     all(any(test, feature = "reth-codec"), feature = "partial-persistence"),
-    derive(reth_codecs::Compact)
+    derive(base_common_consensus::Compact)
 )]
 #[cfg_attr(
     all(any(test, feature = "reth-codec"), feature = "partial-persistence"),
-    reth_codecs::add_arbitrary_tests(compact)
+    base_common_consensus::add_arbitrary_tests(compact)
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FinishCheckpoint {
@@ -473,7 +473,7 @@ impl FinishCheckpoint {
 }
 
 #[cfg(all(any(test, feature = "reth-codec"), not(feature = "partial-persistence")))]
-impl reth_codecs::Compact for FinishCheckpoint {
+impl base_common_consensus::Compact for FinishCheckpoint {
     fn to_compact<B>(&self, _buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
@@ -491,8 +491,8 @@ impl reth_codecs::Compact for FinishCheckpoint {
 /// Stage-specific checkpoint metrics.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), derive(reth_codecs::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_consensus::Compact))]
+#[cfg_attr(any(test, feature = "reth-codec"), base_common_consensus::add_arbitrary_tests(compact))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum StageUnitCheckpoint {
     /// Saves the progress of `AccountHashing` stage.
@@ -641,8 +641,8 @@ stage_unit_checkpoints!(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::b256;
+    use base_common_consensus::Compact;
     use rand::Rng;
-    use reth_codecs::Compact;
 
     use super::*;
 

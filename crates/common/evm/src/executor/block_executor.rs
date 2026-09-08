@@ -2,10 +2,11 @@
 
 use alloc::{boxed::Box, vec::Vec};
 
-use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::{Encodable2718, Typed2718};
 use base_common_chains::Upgrades;
-use base_common_consensus::{DepositReceipt, Predeploys};
+use base_common_consensus::{
+    DepositReceipt, Eip658Value, Header, Predeploys, Transaction, TransactionEnvelope, TxReceipt,
+};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::{
@@ -295,7 +296,7 @@ where
             }) {
                 Ok(receipt) => receipt,
                 Err(ctx) => {
-                    let receipt = alloy_consensus::Receipt {
+                    let receipt = base_common_consensus::Receipt {
                         status: Eip658Value::Eip658(ctx.result.is_success()),
                         cumulative_gas_used: ctx.cumulative_gas_used,
                         logs: ctx.result.into_logs(),
@@ -361,13 +362,13 @@ where
 mod tests {
     use alloc::{string::ToString, vec};
 
-    use alloy_consensus::{SignableTransaction, TxLegacy, transaction::Recovered};
     use alloy_eips::eip2718::WithEncoded;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Bytes, Signature, U256, uint};
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_consensus::{
-        BaseTxEnvelope, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
+        BaseTxEnvelope, Eip8130Constants, Eip8130Signed, Predeploys, SignableTransaction,
+        TxEip8130, TxLegacy, transaction::Recovered,
     };
     use base_common_genesis::BaseUpgrade;
     use base_evm_context::BlockEnv;

@@ -4,8 +4,8 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use alloy_consensus::Header;
 use alloy_eips::BlockHashOrNumber;
+use base_common_consensus::Header;
 use futures::{Future, FutureExt};
 pub use reth_eth_wire_types::{BlockHeaders, HeadersDirection};
 
@@ -60,7 +60,7 @@ pub trait HeadersClient: DownloadClient {
     /// The header type this client fetches.
 
     /// The headers future type
-    type Output: Future<Output = PeerRequestResult<Vec<alloy_consensus::Header>>>
+    type Output: Future<Output = PeerRequestResult<Vec<base_common_consensus::Header>>>
         + Sync
         + Send
         + Unpin;

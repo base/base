@@ -112,7 +112,7 @@ impl<N: Network> NewBlocks<N> {
     async fn into_subscription_stream(
         self,
     ) -> Option<impl Stream<Item = N::BlockResponse> + 'static> {
-        use alloy_consensus::BlockHeader;
+        use base_common_consensus::BlockHeader;
 
         let Some(client) = self.client.upgrade() else {
             debug!("client dropped");

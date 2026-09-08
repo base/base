@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use alloy_consensus::Transaction;
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder, layers::CallBatchLayer};
 use alloy_rpc_client::RpcClient;
@@ -8,6 +7,7 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_sol_types::sol;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result};
+use base_common_consensus::Transaction;
 use base_common_genesis::SystemConfig;
 use futures::StreamExt;
 use tokio::sync::mpsc;

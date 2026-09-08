@@ -17,7 +17,6 @@ thiserror = { workspace = true }
 base-proof = { workspace = true }
 base-protocol = { workspace = true }
 base-common-evm = { workspace = true }
-alloy-consensus = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
 base-evm-handler = { workspace = true }
@@ -34,7 +33,7 @@ tokio = { workspace = true, features = ["default", "full"] }
 
 [features]
 std = [
-    "alloy-consensus/std",
+    "base-common-consensus/std",
     "base-evm-handler/std",
     "alloy-primitives/std",
     "base-common-consensus/std",

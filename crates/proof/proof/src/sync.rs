@@ -3,8 +3,8 @@
 use alloc::sync::Arc;
 use core::fmt::Debug;
 
-use alloy_consensus::{Header, Sealed};
 use alloy_primitives::B256;
+use base_common_consensus::{Header, Sealed};
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
 use base_proof_driver::{PipelineCursor, TipCursor};

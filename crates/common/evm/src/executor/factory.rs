@@ -1,8 +1,8 @@
 //! Contains the factory.
 
-use alloy_consensus::{Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::Encodable2718;
 use base_common_chains::{ChainUpgrades, Upgrades};
+use base_common_consensus::{Transaction, TransactionEnvelope, TxReceipt};
 use base_evm_handler::{
     BlockExecutorFactory, EvmFactory, FromRecoveredTx, FromTxWithEncoded, StateDB,
 };

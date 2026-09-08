@@ -26,7 +26,6 @@ url = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }
 uuid = { workspace = true, features = ["default", "v5"] }
 serde = { workspace = true, features = ["derive", "std"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 base-metrics = { workspace = true, features = ["metrics"] }
 anyhow = { workspace = true, features = ["default", "std"] }
 tokio = { workspace = true, features = ["default", "full"] }

@@ -3,10 +3,10 @@
 
 use std::fmt::{self, Debug, Formatter};
 
-use alloy_consensus::{BlockHeader, Transaction, TxReceipt, constants::GWEI_TO_WEI};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_eth::BlockId;
+use base_common_consensus::{BlockHeader, Transaction, TxReceipt, constants::GWEI_TO_WEI};
 use derive_more::{Deref, DerefMut, From, Into};
 use itertools::Itertools;
 use reth_rpc_server_types::{

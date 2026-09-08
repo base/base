@@ -1,7 +1,7 @@
 //! Invalid block hook helpers for the node builder.
 
-use alloy_consensus::TxEnvelope;
 use alloy_rpc_types::{Block, Header, Receipt, Transaction, TransactionRequest};
+use base_common_consensus::TxEnvelope;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_rpc::EthApiClient;
 use eyre::OptionExt;

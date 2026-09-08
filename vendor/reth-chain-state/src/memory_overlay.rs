@@ -1,9 +1,9 @@
 use std::{borrow::Cow, sync::OnceLock};
 
-use alloy_consensus::BlockHeader;
 use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, StorageKey, StorageValue, U256, keccak256,
 };
+use base_common_consensus::BlockHeader;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,

@@ -328,7 +328,7 @@ pub enum EthMessage {
     /// Represents a `GetBlockHeaders` request-response pair.
     GetBlockHeaders(RequestPair<GetBlockHeaders>),
     /// Represents a `BlockHeaders` request-response pair.
-    BlockHeaders(RequestPair<BlockHeaders<alloy_consensus::Header>>),
+    BlockHeaders(RequestPair<BlockHeaders<base_common_consensus::Header>>),
     /// Represents a `GetBlockBodies` request-response pair.
     GetBlockBodies(RequestPair<GetBlockBodies>),
     /// Represents a `BlockBodies` request-response pair.

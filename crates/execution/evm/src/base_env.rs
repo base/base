@@ -1,6 +1,6 @@
-use alloy_consensus::Header;
 use alloy_primitives::U256;
 use base_common_chains::Upgrades;
+use base_common_consensus::Header;
 use base_common_evm::BaseSpecId;
 #[cfg(feature = "std")]
 use base_common_rpc_types_engine::ExecutionData;

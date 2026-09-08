@@ -1,10 +1,10 @@
 use alloc::vec::Vec;
 
-use alloy_consensus::conditional::BlockConditionalAttributes;
 use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, U256,
     map::{AddressHashMap, HashMap},
 };
+use base_common_consensus::conditional::BlockConditionalAttributes;
 
 use crate::{Log, TransactionReceipt};
 

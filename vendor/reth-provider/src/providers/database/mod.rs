@@ -10,10 +10,11 @@ use std::{
     },
 };
 
-use alloy_consensus::transaction::TransactionMeta;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo};
+use base_common_consensus::{
+    BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
+};
 use base_execution_chainspec::BaseChainSpec;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
@@ -647,7 +648,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> StaticFileProvide
 impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderSyncGapProvider
     for ProviderFactory<DB>
 {
-    type Header = alloy_consensus::Header;
+    type Header = base_common_consensus::Header;
     fn local_tip_header(
         &self,
         highest_uninterrupted_block: BlockNumber,
@@ -659,21 +660,24 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderSyncGapProv
 impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> HeaderProvider
     for ProviderFactory<DB>
 {
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<alloy_consensus::Header>> {
+    fn header(
+        &self,
+        block_hash: BlockHash,
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
         self.provider()?.header(block_hash)
     }
 
     fn header_by_number(
         &self,
         num: BlockNumber,
-    ) -> ProviderResult<Option<alloy_consensus::Header>> {
+    ) -> ProviderResult<Option<base_common_consensus::Header>> {
         self.caught_up_static_file_provider()?.header_by_number(num)
     }
 
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<alloy_consensus::Header>> {
+    ) -> ProviderResult<Vec<base_common_consensus::Header>> {
         self.caught_up_static_file_provider()?.headers_range(range)
     }
 

@@ -1,9 +1,9 @@
 use std::fmt;
 
-use alloy_consensus::SignableTransaction;
 use alloy_primitives::{Address, B256, ChainId, Signature};
 use alloy_signer::{Result, Signer, SignerSync, sign_transaction_with_chain_id};
 use async_trait::async_trait;
+use base_common_consensus::SignableTransaction;
 use k256::ecdsa::SigningKey;
 
 use crate::{TxSigner, TxSignerSync, impl_into_wallet};
@@ -145,8 +145,8 @@ impl_into_wallet!(PrivateKeySigner);
 
 #[cfg(test)]
 mod test {
-    use alloy_consensus::TxLegacy;
     use alloy_primitives::{U256, address};
+    use base_common_consensus::TxLegacy;
 
     use super::*;
 

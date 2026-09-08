@@ -1,5 +1,4 @@
-use alloy_consensus::TxReceipt;
-use base_common_consensus::BaseReceipt;
+use base_common_consensus::{BaseReceipt, TxReceipt};
 use reth_db_api::{tables, transaction::DbTxMut};
 use reth_provider::{BlockReader, DBProvider, PruneCheckpointWriter, TransactionsProvider};
 use reth_prune_types::{

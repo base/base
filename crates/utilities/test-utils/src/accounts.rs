@@ -1,9 +1,9 @@
 //! Test accounts with pre-funded balances for integration testing.
 
-use alloy_consensus::{SignableTransaction, Transaction};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, TxHash, address, hex};
 use alloy_signer::SignerSync;
+use base_common_consensus::{SignableTransaction, Transaction};
 use base_common_network::PrivateKeySigner;
 use base_common_rpc_types::BaseTransactionRequest;
 use eyre::{Result, eyre};

@@ -31,7 +31,6 @@ thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 opentelemetry = { workspace = true, features = ["default"] }
 http-body-util = { workspace = true, features = ["default"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }

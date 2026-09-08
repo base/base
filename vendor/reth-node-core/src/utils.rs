@@ -3,9 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockHashOrNumber;
 use alloy_rpc_types_engine::{JwtError, JwtSecret};
+use base_common_consensus::BlockHeader;
 use base_execution_consensus::BaseBeaconConsensus;
 use eyre::Result;
 use reth_network_p2p::{

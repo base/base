@@ -2,7 +2,7 @@
 
 use std::{future::Future, pin::Pin};
 
-use alloy_consensus::BlockHeader;
+use base_common_consensus::BlockHeader;
 use base_execution_payload_types::BuiltPayload;
 use base_node_context::{AddOnsContext, BaseNodeContext, FullNodeComponents};
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};

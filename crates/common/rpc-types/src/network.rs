@@ -1,8 +1,7 @@
-use alloy_consensus::ReceiptWithBloom;
 use alloy_provider::fillers::{
     ChainIdFiller, GasFiller, JoinFill, NonceFiller, RecommendedFillers,
 };
-use base_common_consensus::{BaseReceipt, OpTxType};
+use base_common_consensus::{BaseReceipt, OpTxType, ReceiptWithBloom};
 use base_common_network::Network;
 
 /// Types for a Base chain network.
@@ -20,7 +19,7 @@ impl Network for Base {
 
     type ReceiptEnvelope = ReceiptWithBloom<BaseReceipt>;
 
-    type Header = alloy_consensus::Header;
+    type Header = base_common_consensus::Header;
 
     type TransactionRequest = crate::BaseTransactionRequest;
 

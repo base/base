@@ -19,7 +19,6 @@ workspace = true
 thiserror = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eip2124 = { workspace = true }
-alloy-consensus = { workspace = true }
 reth-tokio-util = { workspace = true }
 reth-network-peers = { workspace = true }
 reth-network-types = { workspace = true }
@@ -42,5 +41,5 @@ serde = [
     "reth-network-types/serde",
     "alloy-primitives/serde",
     "enr/serde",
-    "alloy-consensus/serde",
+    "base-common-consensus/serde",
 ]

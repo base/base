@@ -1,10 +1,10 @@
 use core::mem;
 
-pub use alloy_consensus::Header;
-use alloy_consensus::{BlockHeader, Sealed};
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{BlockHash, keccak256};
 use alloy_rlp::{Decodable, Encodable};
+pub use base_common_consensus::Header;
+use base_common_consensus::{BlockHeader, Sealed};
 use bytes::BufMut;
 use derive_more::{AsRef, Deref};
 
@@ -21,7 +21,7 @@ use crate::{InMemorySize, sync::OnceLock};
 /// [`SealedHeader::hash`] computes the hash if it has not been computed yet.
 #[derive(Debug, Clone, AsRef, Deref)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "reth-codec", reth_codecs::add_arbitrary_tests(rlp))]
+#[cfg_attr(feature = "reth-codec", base_common_consensus::add_arbitrary_tests(rlp))]
 pub struct SealedHeader {
     /// Block hash
     #[cfg_attr(feature = "serde", serde(skip))]

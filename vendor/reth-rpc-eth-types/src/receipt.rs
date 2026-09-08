@@ -1,10 +1,9 @@
 //! RPC receipt response builder, extends a layer one receipt with layer two data.
 
-use alloy_consensus::Transaction;
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, TxKind};
 use alloy_rpc_types_eth::TransactionReceipt;
-use base_common_consensus::BaseReceipt;
+use base_common_consensus::{BaseReceipt, Transaction};
 use reth_primitives_traits::TransactionMeta;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 

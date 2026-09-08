@@ -2,11 +2,11 @@
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
-use alloy_consensus::{Header, Receipt, ReceiptEnvelope, TxEnvelope};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::B256;
 use alloy_rlp::Decodable;
 use async_trait::async_trait;
+use base_common_consensus::{Header, Receipt, ReceiptEnvelope, TxEnvelope};
 use base_consensus_derive::ChainProvider;
 use base_proof_mpt::{OrderedListWalker, TrieNode, TrieProvider};
 use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};

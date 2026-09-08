@@ -4,7 +4,6 @@
 
 use std::borrow::Cow;
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::{eip2718::Encodable2718, eip7928::BlockAccessList};
 use alloy_json_rpc::{RpcError, RpcRecv, RpcSend};
 use alloy_network_primitives::{BlockResponse, ReceiptResponse};
@@ -23,6 +22,7 @@ use alloy_rpc_types_eth::{
     simulate::{SimulatePayload, SimulatedBlock},
 };
 use alloy_transport::TransportResult;
+use base_common_consensus::BlockHeader;
 use base_common_network::{Ethereum, Network};
 use serde_json::value::RawValue;
 
@@ -349,9 +349,12 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
         self.client().request("eth_getAccountInfo", address).into()
     }
 
-    /// Retrieves account information ([`TrieAccount`](alloy_consensus::TrieAccount)) for the given
+    /// Retrieves account information ([`TrieAccount`](base_common_consensus::TrieAccount)) for the given
     /// [`Address`] at the particular [`BlockId`].
-    fn get_account(&self, address: Address) -> RpcWithBlock<Address, alloy_consensus::TrieAccount> {
+    fn get_account(
+        &self,
+        address: Address,
+    ) -> RpcWithBlock<Address, base_common_consensus::TrieAccount> {
         self.client().request("eth_getAccount", address).into()
     }
 
@@ -1159,9 +1162,9 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     ///
     /// If the transaction is an [EIP-4844] transaction that is still in the pool (pending) it will
     /// include the sidecar, otherwise it will the consensus variant without the sidecar:
-    /// [`TxEip4844`](alloy_consensus::transaction::eip4844::TxEip4844).
+    /// [`TxEip4844`](base_common_consensus::transaction::eip4844::TxEip4844).
     ///
-    /// This can be decoded into [`TxEnvelope`](alloy_consensus::transaction::TxEnvelope).
+    /// This can be decoded into [`TxEnvelope`](base_common_consensus::transaction::TxEnvelope).
     ///
     /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
     /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
@@ -1879,9 +1882,6 @@ impl<N: Network> Provider<N> for RootProvider<N> {
 mod tests {
     use std::{io::Read, str::FromStr, time::Duration};
 
-    // For layer transport tests
-    use alloy_consensus::transaction::SignerRecoverable;
-    use alloy_consensus::{Transaction, TxEnvelope};
     use alloy_node_bindings::{Anvil, Reth, utils::run_with_tempdir};
     use alloy_primitives::{address, b256, bytes, keccak256};
     use alloy_rlp::Decodable;
@@ -1897,6 +1897,9 @@ mod tests {
             rt::TokioExecutor,
         },
     };
+    // For layer transport tests
+    use base_common_consensus::transaction::SignerRecoverable;
+    use base_common_consensus::{Transaction, TxEnvelope};
     use base_common_network::{
         AnyNetwork, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder,
     };

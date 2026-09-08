@@ -21,8 +21,7 @@
 //! ```
 
 pub(crate) mod sealed;
-use alloy_consensus::Header;
-use base_common_consensus::{BaseBlock, BaseBlockBody, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseBlockBody, BaseTxEnvelope, Header};
 pub use sealed::{SealedBlock, SealedBlockWith};
 
 pub(crate) mod sealed_or_recovered;
@@ -194,19 +193,19 @@ pub trait Block:
     ///
     /// - Header
     ///
-    /// And the ethereum block body [`alloy_consensus::BlockBody`], see also
+    /// And the ethereum block body [`base_common_consensus::BlockBody`], see also
     /// [`BlockBody::into_ethereum_body`].
     /// - Transactions
     /// - Withdrawals
     /// - Ommers
     ///
     /// Note: This conversion can be incomplete. It is not expected that this `Block` is the same as
-    /// [`alloy_consensus::Block`] only that it can be converted into it which is useful for
+    /// [`base_common_consensus::Block`] only that it can be converted into it which is useful for
     /// the `eth_` RPC namespace (e.g. RPC block).
     #[inline]
-    fn into_ethereum_block(self) -> alloy_consensus::Block<BaseTxEnvelope, Header> {
+    fn into_ethereum_block(self) -> base_common_consensus::Block<BaseTxEnvelope, Header> {
         let (header, body) = self.split();
-        alloy_consensus::Block::new(header, body.into_ethereum_body())
+        base_common_consensus::Block::new(header, body.into_ethereum_body())
     }
 }
 

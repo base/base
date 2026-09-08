@@ -9,9 +9,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::{BlockHeader, TxReceipt};
 use alloy_primitives::{Address, B256, U256};
 use base_cli_utils::ChainSpecParser;
+use base_common_consensus::{BlockHeader, TxReceipt};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::Executor;
 use clap::Parser;

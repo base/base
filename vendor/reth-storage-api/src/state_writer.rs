@@ -1,8 +1,7 @@
 use alloc::vec::Vec;
 
-use alloy_consensus::transaction::Either;
 use alloy_primitives::BlockNumber;
-use base_common_consensus::BaseReceipt;
+use base_common_consensus::{BaseReceipt, transaction::Either};
 use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};
 use reth_storage_errors::provider::ProviderResult;
 use reth_trie_common::HashedPostStateSorted;

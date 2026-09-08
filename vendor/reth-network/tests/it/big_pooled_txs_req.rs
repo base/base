@@ -1,5 +1,5 @@
-use alloy_consensus::{EthereumTxEnvelope, TxEip4844};
 use alloy_primitives::{B256, Signature};
+use base_common_consensus::{EthereumTxEnvelope, TxEip4844};
 use base_execution_txpool::{TransactionPool, test_utils::MockTransaction};
 use reth_eth_wire::{GetPooledTransactions, PooledTransactions};
 use reth_network::{

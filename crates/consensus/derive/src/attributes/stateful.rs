@@ -2,14 +2,13 @@
 
 use alloc::{boxed::Box, fmt::Debug, string::ToString, sync::Arc, vec, vec::Vec};
 
-use alloy_consensus::{Eip658Value, Receipt};
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
-use base_common_consensus::Predeploys;
+use base_common_consensus::{Eip658Value, Predeploys, Receipt};
 use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_upgrades::{Upgrade, Upgrades};
@@ -314,11 +313,10 @@ async fn derive_deposits(
 mod tests {
     use alloc::vec;
 
-    use alloy_consensus::Header;
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address, hex};
     use base_common_chains::Sepolia;
-    use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
+    use base_common_consensus::{BaseTxEnvelope, Header, SystemAddresses};
     use base_common_genesis::{
         BaseUpgradeConfig, ChainGenesis, SystemConfig, SystemConfigUpdate, SystemConfigUpdateKind,
         UpgradeConfig,
