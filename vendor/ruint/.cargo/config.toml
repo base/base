@@ -1,3 +1,0 @@
-# This enables KaTex in docs, but requires running `cargo doc --no-deps`.
-[build]
-rustdocflags = "--html-in-header .cargo/katex-header.html"

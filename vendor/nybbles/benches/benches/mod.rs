@@ -1,11 +1,13 @@
-mod clone;
-mod cmp;
-mod convert;
-mod iter;
-mod ops;
-mod slice;
+//! Benchmark groups and shared test data.
 
-pub(crate) mod prelude;
+pub mod clone;
+pub mod cmp;
+pub mod convert;
+pub mod iter;
+pub mod ops;
+pub mod slice;
+
+pub mod prelude;
 
 pub fn group(c: &mut codspeed_criterion_compat::Criterion) {
     convert::group(c);
