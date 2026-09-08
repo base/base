@@ -9,7 +9,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
-use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_evm::{BaseEvmConfig, ExecutionWitnessRecord, Executor, StateProviderDatabase};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes,
     builder::{BasePayloadBuilderCtx, Builder},
@@ -26,12 +26,12 @@ use reth_provider::{
     BlockReaderIdExt, ChainSpecProvider, HeaderProvider, ProviderError, ProviderResult,
     StateProviderFactory,
 };
-use reth_revm::{State, database::StateProviderDatabase, witness::ExecutionWitnessRecord};
 use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_tasks::Runtime;
 use reth_trie_common::ExecutionWitnessMode;
+use revm::database::State;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
 

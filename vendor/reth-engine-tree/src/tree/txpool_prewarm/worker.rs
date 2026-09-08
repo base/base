@@ -5,13 +5,13 @@ use std::{
 
 use alloy_evm::Evm;
 use alloy_primitives::B256;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm::{BaseEvmConfig, CachedReads};
 use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
 use reth_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use reth_revm::{cached::CachedReads, db::State};
+use revm::database::State;
 use tracing::{debug, trace};
 
 use super::{

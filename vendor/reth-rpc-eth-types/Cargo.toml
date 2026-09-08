@@ -20,7 +20,6 @@ lru = { workspace = true }
 revm = { workspace = true }
 tokio = { workspace = true }
 metrics = { workspace = true }
-reth-revm = { workspace = true }
 thiserror = { workspace = true }
 itertools = { workspace = true }
 reth-trie = { workspace = true }

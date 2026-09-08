@@ -13,7 +13,6 @@ use alloy_transport::{RpcError, TransportErrorKind};
 pub use api::{AsEthApiError, FromEthApiError, FromEvmError, IntoEthApiError};
 use reth_errors::{BlockExecutionError, BlockValidationError, RethError};
 use reth_primitives_traits::transaction::{error::InvalidTransactionError, signed::RecoveryError};
-use reth_revm::db::bal::EvmDatabaseError;
 use reth_rpc_convert::{CallFeesError, EthTxEnvError, TransactionConversionError};
 use reth_rpc_server_types::result::{
     block_id_to_str, internal_rpc_err, invalid_params_rpc_err, rpc_err, rpc_error_with_code,
@@ -26,6 +25,7 @@ use revm::{
     context_interface::result::{
         EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError,
     },
+    database::bal::EvmDatabaseError,
     state::bal::BalError,
 };
 use revm_inspectors::tracing::{DebugInspectorError, MuxError};

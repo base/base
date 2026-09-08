@@ -21,17 +21,16 @@ reth-trie = { workspace = true }
 jsonrpsee = { workspace = true }
 reth-provider = { workspace = true }
 alloy-consensus = { workspace = true }
-base-execution-evm = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
-reth-revm = { workspace = true, features = ["serde"] }
 futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 reth-rpc-api = { workspace = true, features = ["client"] }
 reth-tracing = { workspace = true, features = ["default"] }
+base-execution-evm = { workspace = true, features = ["serde"]}
 pretty_assertions = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
@@ -40,6 +39,5 @@ alloy-eips = { workspace = true }
 reth-testing-utils = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
-reth-revm = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }

@@ -9,10 +9,6 @@ use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
     ProviderResult, StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
 };
-use reth_revm::{
-    db::BundleState,
-    primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
-};
 use reth_trie::{
     StateRoot, StorageRoot,
     hashed_cursor::HashedCursor,
@@ -23,6 +19,10 @@ use reth_trie_common::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher,
     MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
+};
+use revm::{
+    database::BundleState,
+    primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
 };
 
 use crate::{

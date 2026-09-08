@@ -62,3 +62,16 @@ pub use alloy_evm::{
 
 mod next_block;
 pub use next_block::NextBlockEnvAttributes;
+
+mod cached;
+pub use cached::{CachedAccount, CachedReads, CachedReadsDBRef, CachedReadsDbMut};
+mod cancelled;
+pub use cancelled::{CancelOnDrop, ManualCancel};
+mod database;
+pub use database::{DatabaseStateProvider, StateProviderDatabase};
+#[cfg(feature = "witness")]
+mod witness;
+#[cfg(feature = "witness")]
+pub use witness::ExecutionWitnessRecord;
+#[cfg(any(test, feature = "test-utils"))]
+mod state_provider_test;

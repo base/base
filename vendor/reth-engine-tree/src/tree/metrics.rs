@@ -637,7 +637,7 @@ mod tests {
     use base_common_consensus::BaseReceipt;
     use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
     use reth_execution_types::BlockExecutionResult;
-    use reth_revm::db::BundleState;
+    use revm::database::BundleState;
 
     use super::*;
 

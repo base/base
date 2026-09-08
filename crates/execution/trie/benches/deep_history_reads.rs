@@ -17,6 +17,7 @@ use std::{hint::black_box, sync::Arc};
 
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{Address, B256, U256, keccak256};
+use base_execution_evm::StateProviderDatabase;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, BlockStateDiff,
     RocksdbProofsStorage, provider::BaseProofsStateProviderRef,
@@ -25,8 +26,8 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
 use reth_primitives_traits::Account;
 use reth_provider::{AccountReader, noop::NoopProvider};
-use reth_revm::{Database, State, database::StateProviderDatabase};
 use reth_trie_common::{HashedPostState, updates::TrieUpdates};
+use revm::{Database, database::State};
 use tempfile::TempDir;
 
 const BASE_ACCOUNTS: usize = 1_000;

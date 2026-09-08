@@ -18,17 +18,13 @@ use alloy_rpc_types_eth::{
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionRequest};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{
-    BlockBuilder, Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor, TransactionEnvMut, TxEnvFor,
-    block::BlockExecutor, env::BlockEnvironment,
+    BlockBuilder, CancelOnDrop, Evm, EvmEnvFor, EvmFor, HaltReasonFor, InspectorFor,
+    StateProviderDatabase, TransactionEnvMut, TxEnvFor, block::BlockExecutor,
+    env::BlockEnvironment,
 };
 use futures::Future;
 use reth_errors::{ProviderError, RethError};
 use reth_primitives_traits::Recovered;
-use reth_revm::{
-    cancelled::CancelOnDrop,
-    database::StateProviderDatabase,
-    db::{State, bal::EvmDatabaseError},
-};
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, StateCacheDb,
     cache::db::StateProviderTraitObjWrapper,
@@ -40,6 +36,7 @@ use revm::{
     Database, DatabaseCommit,
     context::Block,
     context_interface::{Cfg, Transaction, result::ResultAndState},
+    database::{State, bal::EvmDatabaseError},
 };
 use revm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};
 use tracing::{trace, warn};

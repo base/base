@@ -12,6 +12,7 @@ description = "Ethereum RPC implementation for Base."
 workspace = true
 
 [dependencies]
+revm = {workspace = true}
 serde = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
@@ -52,7 +53,6 @@ eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["rayon"] }
-reth-revm = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["constructor"] }

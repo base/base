@@ -18,14 +18,13 @@ use alloy_rpc_types_trace::geth::{
 use async_trait::async_trait;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::ChainSpecProvider;
-use base_execution_evm::{EvmEnvFor, Executor, block::BlockExecutor};
+use base_execution_evm::{EvmEnvFor, ExecutionWitnessRecord, Executor, block::BlockExecutor};
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_errors::RethError;
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
-use reth_revm::{db::State, witness::ExecutionWitnessRecord};
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_eth_api::{
     FromEthApiError, FromEvmError, RpcNodeCore,
@@ -44,7 +43,10 @@ use reth_trie_common::{
     ExecutionWitnessMode, HashedPostState, HashedStorage, root::storage_root_unsorted,
     updates::TrieUpdates,
 };
-use revm::{Database, DatabaseCommit, database::states::bundle_state::BundleRetention};
+use revm::{
+    Database, DatabaseCommit,
+    database::{State, states::bundle_state::BundleRetention},
+};
 use revm_inspectors::tracing::{DebugInspector, TransactionContext};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};

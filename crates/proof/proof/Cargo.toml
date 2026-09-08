@@ -11,6 +11,7 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
+revm = {workspace = true}
 serde = { workspace = true }
 ark-ff = { workspace = true }
 tracing = { workspace = true }
@@ -47,36 +48,37 @@ rand = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"] }
 rstest = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
+
 [features]
 std = [
-	"alloy-consensus/std",
-	"alloy-eips/kzg",
-	"alloy-eips/std",
-	"alloy-evm/std",
-	"alloy-genesis/std",
-	"alloy-primitives/std",
-	"alloy-rlp/std",
-	"alloy-trie/std",
-	"ark-bls12-381/std",
-	"ark-ff/std",
-	"base-common-chains/std",
-	"base-common-consensus/std",
-	"base-common-evm/std",
-	"base-common-genesis/std",
-	"base-common-rpc-types-engine/std",
-	"base-proof-driver/std",
-	"base-proof-executor/std",
-	"base-proof-mpt/std",
-	"base-proof-preimage/std",
-	"base-protocol/std",
-	"c-kzg?/std",
-	"dep:c-kzg",
-	"dep:tokio",
-	"serde/std",
-	"serde_json/std",
-	"spin/std",
-	"thiserror/std",
-	"tracing/std",
+    "alloy-consensus/std",
+    "alloy-eips/kzg",
+    "alloy-eips/std",
+    "alloy-evm/std",
+    "alloy-genesis/std",
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "alloy-trie/std",
+    "ark-bls12-381/std",
+    "ark-ff/std",
+    "base-common-chains/std",
+    "base-common-consensus/std",
+    "base-common-evm/std",
+    "base-common-genesis/std",
+    "base-common-rpc-types-engine/std",
+    "base-proof-driver/std",
+    "base-proof-executor/std",
+    "base-proof-mpt/std",
+    "base-proof-preimage/std",
+    "base-protocol/std",
+    "c-kzg?/std",
+    "dep:c-kzg",
+    "dep:tokio",
+    "serde/std",
+    "serde_json/std",
+    "spin/std",
+    "thiserror/std",
+    "tracing/std",
 ]
 # EIP-8130 execution in the EVM without Tokio (`std` pulls Tokio).
 # Bare-metal FPVM builds (`check-no-std-proof`) leave this off.

@@ -20,7 +20,7 @@ use alloy_rpc_types_engine::{
 use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::ChainSpecProvider;
-use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_evm::{BaseEvmConfig, CachedReads, Executor, StateProviderDatabase};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
 use reth_consensus::{Consensus, FullConsensus};
@@ -34,7 +34,6 @@ use reth_metrics::{
 };
 use reth_node_api::NewPayloadError;
 use reth_primitives_traits::{BlockBody, GotExpected, RecoveredBlock, SealedBlock};
-use reth_revm::{cached::CachedReads, database::StateProviderDatabase};
 use reth_rpc_api::BlockSubmissionValidationApiServer;
 use reth_rpc_server_types::result::{internal_rpc_err, invalid_params_rpc_err};
 use reth_storage_api::{BlockReaderIdExt, HashedPostStateProvider, StateProviderFactory};

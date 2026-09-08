@@ -24,7 +24,6 @@ use reth_provider::{
     BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader,
     StageCheckpointReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use reth_revm::db::BundleState;
 use reth_tasks::Runtime;
 pub use reth_trie_parallel::{
     error::StateRootTaskError,
@@ -34,6 +33,7 @@ pub use reth_trie_parallel::{
         StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
     },
 };
+use revm::database::BundleState;
 use tracing::{Span, debug, instrument, trace, warn};
 
 use super::precompile_cache::PrecompileCacheMap;
@@ -626,8 +626,7 @@ mod tests {
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use reth_execution_cache::CachedStatus;
-    use reth_revm::db::BundleState;
-    use revm::state::AccountInfo;
+    use revm::{database::BundleState, state::AccountInfo};
 
     use crate::tree::{
         ExecutionCache, PayloadExecutionCache, SavedCache, TreeConfig,

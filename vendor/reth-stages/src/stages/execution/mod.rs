@@ -12,7 +12,7 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::BlockNumber;
 use base_common_consensus::{BaseBlock, BaseReceipt};
 use base_execution_chainspec::ChainSpecProvider;
-use base_execution_evm::{BaseEvmConfig, Executor, ExecutorMetrics};
+use base_execution_evm::{BaseEvmConfig, Executor, ExecutorMetrics, StateProviderDatabase};
 use num_traits::Zero;
 use reth_config::config::ExecutionConfig;
 use reth_consensus::FullConsensus;
@@ -27,7 +27,6 @@ use reth_provider::{
     StoragePath, StorageSettingsCache, TransactionVariant,
     providers::{StaticFileProvider, StaticFileWriter},
 };
-use reth_revm::database::StateProviderDatabase;
 use reth_stages_api::{
     BlockErrorKind, CheckpointBlockRange, EntitiesCheckpoint, ExecInput, ExecOutput,
     ExecutionCheckpoint, ExecutionStageThresholds, Stage, StageCheckpoint, StageError, StageId,
@@ -749,9 +748,9 @@ mod tests {
     };
     use reth_prune::PruneModes;
     use reth_prune_types::{PruneMode, ReceiptsLogPruneConfig};
-    use reth_revm::revm::database::{AccountStatus, BundleAccount};
     use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators;
+    use revm::database::{AccountStatus, BundleAccount};
 
     use super::*;
     use crate::stages::MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD;

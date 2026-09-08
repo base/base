@@ -19,7 +19,8 @@ use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{
     BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome,
-    BlockExecutionError, BlockExecutor, BlockExecutorForEvm, BlockValidationError, Database,
+    BlockExecutionError, BlockExecutor, BlockExecutorForEvm, BlockValidationError, CancelOnDrop,
+    Database, ExecutionWitnessRecord, StateProviderDatabase,
 };
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
@@ -38,15 +39,14 @@ use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadAttributes};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
-use reth_revm::{
-    cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
-    witness::ExecutionWitnessRecord,
-};
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
-use revm::context::{Block, BlockEnv};
+use revm::{
+    context::{Block, BlockEnv},
+    database::State,
+};
 use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
@@ -1268,16 +1268,15 @@ mod tests {
     use base_common_consensus::{BaseTxEnvelope, Predeploys};
     use base_common_evm::BaseTime;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use base_execution_evm::BaseEvmConfig;
+    use base_execution_evm::{
+        BaseEvmConfig, CancelOnDrop, StateProviderDatabase, test_utils::StateProviderTest,
+    };
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction};
     use reth_provider::noop::NoopProvider;
-    use reth_revm::{
-        cancelled::CancelOnDrop, database::StateProviderDatabase, test_utils::StateProviderTest,
-    };
     use reth_transaction_pool::PoolTransaction;
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
     use reth_trie_parallel::{

@@ -23,11 +23,11 @@ use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateProvider, StateRootProvider, StorageRootProvider,
 };
-use reth_revm::db::BundleState;
 use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,
 };
+use revm::database::BundleState;
 use tracing::{debug_span, instrument, trace, warn};
 
 use crate::TxPoolPrewarmCacheSnapshot;
@@ -1051,7 +1051,7 @@ impl<S: BlockHashReader> BlockHashReader for CachedStateProvider<S> {
 impl<S: HashedPostStateProvider> HashedPostStateProvider for CachedStateProvider<S> {
     fn hashed_post_state(
         &self,
-        bundle_state: &reth_revm::db::BundleState,
+        bundle_state: &revm::database::BundleState,
     ) -> ProviderResult<HashedPostState> {
         self.state_provider.hashed_post_state(bundle_state)
     }
@@ -1399,8 +1399,10 @@ impl SavedCache {
 mod tests {
     use alloy_primitives::{U256, map::HashMap};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_revm::db::{AccountStatus, BundleAccount};
-    use revm::state::AccountInfo;
+    use revm::{
+        database::{AccountStatus, BundleAccount},
+        state::AccountInfo,
+    };
 
     use super::*;
 

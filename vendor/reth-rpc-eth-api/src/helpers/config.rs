@@ -16,9 +16,9 @@ use base_execution_evm::{BaseEvmConfig, Evm, precompiles::PrecompilesMap};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_errors::{ProviderError, RethError};
 use reth_primitives_traits::header::HeaderMut;
-use reth_revm::db::EmptyDB;
 use reth_rpc_eth_types::EthApiError;
 use reth_storage_api::BlockReaderIdExt;
+use revm::database::EmptyDB;
 
 /// RPC endpoint support for [EIP-7910](https://eips.ethereum.org/EIPS/eip-7910)
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]

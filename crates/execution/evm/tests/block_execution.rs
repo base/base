@@ -11,10 +11,12 @@ use base_common_consensus::{
 };
 use base_common_evm::BaseTime;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_execution_evm::{BaseEvmConfig, BasicBlockExecutor, Executor};
+use base_execution_evm::{
+    BaseEvmConfig, BasicBlockExecutor, Executor, StateProviderDatabase,
+    test_utils::StateProviderTest,
+};
 use base_protocol::BaseTimeUpdateTx;
 use reth_primitives_traits::{Account, RecoveredBlock};
-use reth_revm::{database::StateProviderDatabase, test_utils::StateProviderTest};
 
 const BASE_TIME_READER: Address = address!("0x1000000000000000000000000000000000000000");
 const USER: Address = address!("0x1000000000000000000000000000000000000001");

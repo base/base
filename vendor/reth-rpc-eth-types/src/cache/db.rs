@@ -3,8 +3,8 @@
 //! `reth_rpc_eth_api::helpers::Call`.
 
 use alloy_primitives::{Address, B256, U256};
+use base_execution_evm::StateProviderDatabase;
 use reth_errors::ProviderResult;
-use reth_revm::database::StateProviderDatabase;
 use reth_storage_api::{BytecodeReader, HashedPostStateProvider, StateProvider, StateProviderBox};
 use reth_trie::{HashedStorage, MultiProofTargets};
 use revm::database::{BundleState, State};

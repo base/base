@@ -133,8 +133,10 @@ impl<DB: Database> Database for PredicateReadRecorder<'_, DB> {
 mod tests {
     use alloy_primitives::{Address, U256};
     use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
-    use reth_revm::State;
-    use revm::{database::InMemoryDB, state::AccountInfo};
+    use revm::{
+        database::{InMemoryDB, State},
+        state::AccountInfo,
+    };
 
     use super::{PredicateLoadTracker, PredicateReadRecorder};
     use crate::ValidityPredicateKey;

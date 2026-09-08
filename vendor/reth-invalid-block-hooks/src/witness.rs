@@ -4,22 +4,18 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_consensus::BaseReceipt;
-use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_evm::{BaseEvmConfig, Executor, StateProviderDatabase};
 use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use reth_provider::{BlockExecutionOutput, StateProvider, StateProviderBox, StateProviderFactory};
-use reth_revm::{
-    database::StateProviderDatabase,
-    db::{BundleState, State},
-};
 use reth_rpc_api::DebugApiClient;
 use reth_tracing::tracing::warn;
 use reth_trie::{HashedStorage, updates::TrieUpdates};
 use revm::{
     bytecode::Bytecode,
     database::{
-        AccountStatus, RevertToSlot,
+        AccountStatus, BundleState, RevertToSlot, State,
         states::{StorageSlot, reverts::AccountInfoRevert},
     },
     state::AccountInfo,
@@ -415,13 +411,13 @@ where
 mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Address, B256, Bytes, U256, map::HashMap};
+    use base_execution_evm::test_utils::StateProviderTest;
     use reth_provider::test_utils::MockEthProvider;
-    use reth_revm::{
-        db::{BundleAccount, BundleState},
-        test_utils::StateProviderTest,
-    };
     use reth_testing_utils::generators::{self, BlockParams, random_eoa_accounts};
-    use revm::{bytecode::Bytecode, database::states::reverts::AccountRevert};
+    use revm::{
+        bytecode::Bytecode,
+        database::{BundleAccount, BundleState, states::reverts::AccountRevert},
+    };
     use tempfile::TempDir;
 
     use super::*;

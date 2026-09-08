@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 tokio = { workspace = true }
 metrics = { workspace = true }
-reth-revm = { workspace = true }
 thiserror = { workspace = true }
 rmp-serde = { workspace = true }
 alloy-eips = { workspace = true }
@@ -65,7 +64,7 @@ reth-trie-common = { workspace = true, features = ["serde-bincode-compat"] }
 [features]
 serde = [
     "reth-exex-types/serde",
-    "reth-revm/serde",
+    "base-execution-evm/serde",
     "alloy-consensus/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",

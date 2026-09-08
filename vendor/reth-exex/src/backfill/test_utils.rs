@@ -6,11 +6,10 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, TxKind, U256, b256};
 use base_common_consensus::{BaseBlock, BaseBlockBody, BaseReceipt, BaseTypedTransaction};
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_execution_evm::{BaseEvmConfig, BlockExecutionOutput, Executor};
+use base_execution_evm::{BaseEvmConfig, BlockExecutionOutput, Executor, StateProviderDatabase};
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory};
-use reth_revm::database::StateProviderDatabase;
 use reth_trie_common::KeccakKeyHasher;
 use secp256k1::Keypair;
 

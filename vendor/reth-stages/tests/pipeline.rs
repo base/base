@@ -10,7 +10,7 @@ use base_common_consensus::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseTypedTransaction as Transaction,
 };
 use base_execution_chainspec::{BaseChainSpecBuilder, ChainSpecProvider};
-use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_evm::{BaseEvmConfig, Executor, StateProviderDatabase};
 use reth_config::config::StageConfig;
 use reth_consensus::noop::NoopConsensus;
 use reth_db_common::init::init_genesis;
@@ -33,7 +33,6 @@ use reth_provider::{
     test_utils::create_test_provider_factory_with_chain_spec,
 };
 use reth_prune_types::PruneModes;
-use reth_revm::database::StateProviderDatabase;
 use reth_stages::sets::DefaultStages;
 use reth_stages_api::{Pipeline, StageId};
 use reth_static_file::StaticFileProducer;

@@ -15,9 +15,9 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+revm = {workspace = true}
 tokio = { workspace = true }
 serde = { workspace = true }
-reth-revm = { workspace = true }
 itertools = { workspace = true }
 reth-errors = { workspace = true }
 pin-project = { workspace = true }

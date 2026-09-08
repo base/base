@@ -347,7 +347,6 @@ reth-cli = { path = "vendor/reth-cli", default-features = false }
 reth-ipc = { path = "vendor/reth-ipc", default-features = false }
 reth-rpc = { path = "vendor/reth-rpc", default-features = false }
 reth-etl = { path = "vendor/reth-etl", default-features = false }
-reth-revm = { path = "vendor/reth-revm", default-features = false }
 reth-trie = { path = "vendor/reth-trie", default-features = false }
 reth-exex = { path = "vendor/reth-exex", default-features = false }
 reth-tasks = { path = "vendor/reth-tasks", default-features = false }

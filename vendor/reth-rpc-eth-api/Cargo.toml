@@ -17,7 +17,6 @@ workspace = true
 
 [dependencies]
 tokio = { workspace = true }
-reth-revm = { workspace = true }
 auto_impl = { workspace = true }
 dyn-clone = { workspace = true }
 alloy-eips = { workspace = true }

@@ -4,8 +4,10 @@
 use alloy_primitives::Bytes;
 use base_execution_evm::{EvmErrorFor, HaltReasonFor};
 use reth_errors::ProviderError;
-use reth_revm::db::bal::EvmDatabaseError;
-use revm::{context::result::ExecutionResult, context_interface::result::HaltReason};
+use revm::{
+    context::result::ExecutionResult, context_interface::result::HaltReason,
+    database::bal::EvmDatabaseError,
+};
 
 use super::RpcInvalidTransactionError;
 use crate::{EthApiError, RevertError, simulate::EthSimulateError};

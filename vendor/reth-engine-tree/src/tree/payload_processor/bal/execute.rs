@@ -312,10 +312,9 @@ mod tests {
     use base_common_evm::L1BlockInfo;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_primitives_traits::{Block as _, Recovered, SealedBlock};
-    use reth_revm::db::BundleState;
     use reth_tasks::Runtime;
     use revm::{
-        database::{CacheDB, EmptyDB},
+        database::{BundleState, CacheDB, EmptyDB},
         state::{AccountInfo, Bytecode},
     };
 

@@ -6,14 +6,11 @@ use alloy_primitives::{TxKind, U256};
 use alloy_rpc_types_eth::{BlockId, state::EvmOverrides};
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_evm::{
-    Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor, env::BlockEnvironment,
+    Database, Evm, EvmEnvFor, EvmFor, StateProviderDatabase, TransactionEnvMut, TxEnvFor,
+    env::BlockEnvironment,
 };
 use futures::Future;
 use reth_errors::ProviderError;
-use reth_revm::{
-    database::{EvmStateProvider, StateProviderDatabase},
-    db::{State, bal::EvmDatabaseError},
-};
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, RpcInvalidTransactionError,
     error::{
@@ -22,9 +19,11 @@ use reth_rpc_eth_types::{
     },
 };
 use reth_rpc_server_types::constants::gas_oracle::{CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO};
+use reth_storage_api::StateProvider;
 use revm::{
     context::Block,
     context_interface::{Cfg, Transaction, result::ExecutionResult},
+    database::{State, bal::EvmDatabaseError},
     primitives::KECCAK_EMPTY,
 };
 use tracing::trace;
@@ -54,7 +53,7 @@ pub trait EstimateCall: Call {
         overrides: EvmOverrides,
     ) -> Result<U256, BaseEthApiError>
     where
-        S: EvmStateProvider,
+        S: StateProvider,
     {
         // Disabled because eth_estimateGas is sometimes used with eoa senders
         // See <https://github.com/paradigmxyz/reth/issues/1959>

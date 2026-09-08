@@ -6,11 +6,13 @@ use alloy_consensus::{BlockHeader, transaction::SignerRecoverable};
 use alloy_primitives::B256;
 use base_common_consensus::BaseBlock;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder};
+use base_execution_evm::{
+    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, StateProviderDatabase,
+};
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProviderFactory};
-use reth_revm::{database::StateProviderDatabase, db::State};
+use revm::database::State;
 
 use crate::types::{MeterBlockResponse, MeterBlockTransactions};
 

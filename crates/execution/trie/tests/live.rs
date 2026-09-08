@@ -11,7 +11,7 @@ use base_common_consensus::{
     BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction,
 };
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_execution_evm::{BaseEvmConfig, Executor};
+use base_execution_evm::{BaseEvmConfig, Executor, StateProviderDatabase};
 use base_execution_trie::{
     BaseProofsStorage, BaseProofsStorageError, RocksdbProofsStorage, initialize::InitializationJob,
     live::LiveTrieCollector,
@@ -26,7 +26,6 @@ use reth_provider::{
     ProviderFactory, StateRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_chain_spec,
 };
-use reth_revm::database::StateProviderDatabase;
 use secp256k1::{Keypair, Secp256k1};
 use tempfile::TempDir;
 

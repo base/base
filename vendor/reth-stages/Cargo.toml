@@ -16,10 +16,10 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+revm = {workspace = true}
 rayon = { workspace = true }
 reth-db = { workspace = true }
 reth-etl = { workspace = true }
-reth-revm = { workspace = true }
 thiserror = { workspace = true }
 reth-exex = { workspace = true }
 page_size = { workspace = true }
@@ -94,7 +94,7 @@ test-utils = [
     "base-execution-evm/test-utils",
     "reth-downloaders/test-utils",
     "reth-primitives-traits/test-utils",
-    "reth-revm/test-utils",
+    "base-execution-evm/test-utils",
     "reth-codecs/test-utils",
     "reth-db-api/test-utils",
     "reth-trie-db/test-utils",

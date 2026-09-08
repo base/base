@@ -12,8 +12,8 @@ use reth_libmdbx::{
     DatabaseFlags, Environment, EnvironmentFlags, Geometry, Mode, RO, SyncMode, WriteFlags,
 };
 use reth_provider::{DBProvider, ExecutionOutcome};
-use reth_revm::revm::database::states::RevertToSlot;
 use reth_stages_api::StageError;
+use revm::database::states::RevertToSlot;
 use tracing::trace;
 
 /// Separate MDBX environment for storing `keccak256(slot) → slot` preimage mappings.
@@ -203,7 +203,7 @@ pub(super) fn inject_plain_wipe_slots<P: DBProvider, R>(
 /// into the account revert if not already present.
 fn inject_preimage_entry(
     reader: &SlotPreimagesReader,
-    revert: &mut reth_revm::revm::database::AccountRevert,
+    revert: &mut revm::database::AccountRevert,
     address: alloy_primitives::Address,
     hashed_slot: B256,
     value: alloy_primitives::U256,

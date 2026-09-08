@@ -20,6 +20,7 @@ use std::{
 
 use alloy_eips::merge::SLOT_DURATION;
 use alloy_primitives::{B256, U256};
+use base_execution_evm::{CachedReads, CancelOnDrop};
 use futures_core::ready;
 use futures_util::FutureExt;
 use reth_chain_state::CanonStateNotification;
@@ -31,7 +32,6 @@ use reth_payload_builder::{
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuiltPayload, PayloadAttributes, PayloadKind};
 use reth_primitives_traits::SealedHeader;
-use reth_revm::{cached::CachedReads, cancelled::CancelOnDrop};
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 use reth_tasks::Runtime;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;

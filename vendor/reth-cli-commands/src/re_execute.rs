@@ -12,7 +12,7 @@ use std::{
 use alloy_consensus::{BlockHeader, TxReceipt};
 use alloy_primitives::{Address, B256, U256};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::Executor;
+use base_execution_evm::{Executor, StateProviderDatabase};
 use clap::Parser;
 use eyre::WrapErr;
 use reth_cli::chainspec::ChainSpecParser;
@@ -23,15 +23,12 @@ use reth_provider::{
     BlockNumReader, BlockReader, ChainSpecProvider, DatabaseProviderFactory, ReceiptProvider,
     StaticFileProviderFactory, TransactionVariant,
 };
-use reth_revm::{
-    database::StateProviderDatabase,
-    db::{
-        BundleState,
-        states::reverts::{AccountInfoRevert, RevertToSlot},
-    },
-};
 use reth_stages::stages::calculate_gas_used_from_headers;
 use reth_storage_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
+use revm::database::{
+    BundleState,
+    states::reverts::{AccountInfoRevert, RevertToSlot},
+};
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::*;
 

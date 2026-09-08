@@ -28,26 +28,30 @@ reth-payload-primitives = { workspace = true }
 base-execution-chainspec = { workspace = true }
 base-execution-consensus = { workspace = true }
 metrics = { workspace = true, optional = true }
+reth-trie = { workspace = true, optional = true }
 reth-metrics = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
+alloy-rpc-types-debug = { workspace = true, optional = true }
 base-common-chains = { workspace = true, features = ["default"] }
 base-common-evm = { workspace = true, features = ["std", "reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 reth-execution-errors = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth", "evm"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
+alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 
 [dev-dependencies]
+reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
+alloy-consensus = { workspace = true }
 base-common-genesis = { workspace = true }
 reth-ethereum-primitives = { workspace = true }
 base-common-consensus = { workspace = true, features = ["arbitrary"] }
-reth-revm = { workspace = true, features = ["default", "test-utils"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 
 [features]
@@ -63,7 +67,6 @@ std = [
     "base-execution-chainspec/std",
     "reth-execution-errors/std",
     "reth-primitives-traits/std",
-    "reth-revm/std",
     "thiserror/std",
     "base-execution-consensus/std",
     "reth-payload-primitives/std",
@@ -78,7 +81,37 @@ std = [
     "reth-trie-common/std",
     "alloy-eip7928/std",
     "fixed-cache/std",
+    "alloy-rlp?/std",
 ]
-portable = ["base-common-evm/portable", "reth-revm/portable"]
+portable = ["base-common-evm/portable", "revm/portable"]
 rpc = ["alloy-evm/rpc"]
-test-utils = ["std", "reth-primitives-traits/test-utils", "reth-trie-common/test-utils"]
+test-utils = [
+    "std",
+    "reth-primitives-traits/test-utils",
+    "reth-trie-common/test-utils",
+    "dep:reth-trie",
+    "reth-trie?/test-utils",
+]
+witness = ["dep:reth-trie", "dep:alloy-rlp", "dep:alloy-rpc-types-debug"]
+serde = [
+    "revm/serde",
+    "alloy-primitives/serde",
+    "alloy-consensus/serde",
+    "reth-trie?/serde",
+    "reth-primitives-traits/serde",
+    "reth-storage-api/serde",
+]
+gmp = ["revm/gmp"]
+optional-balance-check = ["revm/optional_balance_check"]
+optional-block-gas-limit = ["revm/optional_block_gas_limit"]
+optional-eip3541 = ["revm/optional_eip3541"]
+optional-eip3607 = ["revm/optional_eip3607"]
+optional-no-base-fee = ["revm/optional_no_base_fee"]
+optional-checks = [
+    "optional-balance-check",
+    "optional-block-gas-limit",
+    "optional-eip3541",
+    "optional-eip3607",
+    "optional-no-base-fee",
+]
+memory_limit = ["revm/memory_limit"]

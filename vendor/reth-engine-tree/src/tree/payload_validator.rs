@@ -141,13 +141,13 @@ use reth_provider::{
     StateProvider, StateProviderBox, StateProviderFactory, StateReader, StorageChangeSetReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use reth_revm::db::{BundleAccount, State, states::bundle_state::BundleRetention};
 use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
 use reth_tasks::LazyHandle;
 use reth_trie::{
     HashedPostState, KeccakKeyHasher, LazyTrieData, hashed_cursor::HashedCursorFactory,
     trie_cursor::TrieCursorFactory, updates::TrieUpdates,
 };
+use revm::database::{BundleAccount, State, states::bundle_state::BundleRetention};
 use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
 
 pub use crate::tree::types::ValidationOutcome;

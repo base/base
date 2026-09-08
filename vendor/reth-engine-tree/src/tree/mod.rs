@@ -15,7 +15,7 @@ use alloy_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm::{BaseEvmConfig, StateProviderDatabase};
 use crossbeam_channel::{Receiver, Sender};
 use error::{InsertBlockError, InsertBlockFatalError, InsertBlockValidationError};
 use reth_chain_state::{
@@ -38,7 +38,6 @@ use reth_provider::{
     StateProviderFactory, StateReader, StorageChangeSetReader, StorageSettingsCache,
     TransactionVariant, TryIntoHistoricalStateProvider,
 };
-use reth_revm::database::StateProviderDatabase;
 use reth_stages_api::ControlFlow;
 use reth_storage_overlay::OverlayManager;
 use reth_tasks::{spawn_os_thread, utils::increase_thread_priority};

@@ -7,14 +7,15 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_primitives::BlockNumber;
 use base_common_consensus::{BaseBlock, BaseReceipt};
-use base_execution_evm::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor};
+use base_execution_evm::{
+    BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor, StateProviderDatabase,
+};
 use reth_primitives_traits::{Block as _, BlockBody as _, RecoveredBlock, format_gas_throughput};
 use reth_provider::{
     BlockReader, Chain, ExecutionOutcome, HeaderProvider, ProviderError, StateProviderFactory,
     TransactionVariant,
 };
 use reth_prune_types::PruneModes;
-use reth_revm::database::StateProviderDatabase;
 use reth_stages_api::ExecutionStageThresholds;
 use reth_tracing::tracing::{debug, trace};
 

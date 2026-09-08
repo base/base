@@ -14,13 +14,12 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{
     BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, Evm,
-    EvmEnvFor, block::TxResult,
+    EvmEnvFor, StateProviderDatabase, block::TxResult,
 };
 use futures::Future;
 use reth_chain_state::{BlockState, ExecutedBlock};
 use reth_errors::{BlockExecutionError, BlockValidationError, ProviderError, RethError};
 use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
-use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin,
     block::BlockAndReceipts, builder::config::PendingBlockKind,
@@ -34,7 +33,10 @@ use reth_transaction_pool::{
     error::InvalidPoolTransactionError,
 };
 use reth_trie_common::ComputedTrieData;
-use revm::context_interface::{Block, Cfg as _};
+use revm::{
+    context_interface::{Block, Cfg as _},
+    database::State,
+};
 use tokio::sync::Mutex;
 use tracing::debug;
 

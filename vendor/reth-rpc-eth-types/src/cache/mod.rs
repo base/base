@@ -17,7 +17,9 @@ use reth_chain_state::CanonStateNotification;
 use reth_errors::{ProviderError, ProviderResult};
 use reth_execution_types::Chain;
 use reth_primitives_traits::{InMemorySize, RecoveredBlock};
-use reth_revm::{
+use reth_storage_api::{BalProvider, BlockReader, TransactionVariant};
+use reth_tasks::Runtime;
+use revm::{
     bytecode::Bytecode,
     primitives::{StorageKey, StorageValue},
     state::bal::{
@@ -25,8 +27,6 @@ use reth_revm::{
         BalWrites as RevmBalWrites, StorageBal as RevmStorageBal,
     },
 };
-use reth_storage_api::{BalProvider, BlockReader, TransactionVariant};
-use reth_tasks::Runtime;
 use schnellru::{ByLength, Limiter, LruMap};
 use tokio::sync::{
     Semaphore,

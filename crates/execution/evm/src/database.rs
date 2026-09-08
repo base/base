@@ -2,66 +2,11 @@ use core::ops::{Deref, DerefMut};
 
 use alloy_primitives::{Address, B256, U256};
 use reth_primitives_traits::Account;
-use reth_storage_api::{AccountReader, BlockHashReader, BytecodeReader, StateProvider};
+use reth_storage_api::{AccountReader, BytecodeReader, StateProvider};
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
 use revm::{Database, DatabaseRef, bytecode::Bytecode, state::AccountInfo};
 
-use crate::primitives::alloy_primitives::{BlockNumber, StorageKey, StorageValue};
-
-/// A helper trait responsible for providing state necessary for EVM execution.
-///
-/// This serves as the data layer for [`Database`].
-pub trait EvmStateProvider {
-    /// Get basic account information.
-    ///
-    /// Returns [`None`] if the account doesn't exist.
-    fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>>;
-
-    /// Get the hash of the block with the given number. Returns [`None`] if no block with this
-    /// number exists.
-    fn block_hash(&self, number: BlockNumber) -> ProviderResult<Option<B256>>;
-
-    /// Get account code by hash.
-    fn bytecode_by_hash(
-        &self,
-        code_hash: &B256,
-    ) -> ProviderResult<Option<reth_primitives_traits::Bytecode>>;
-
-    /// Get storage of the given account.
-    fn storage(
-        &self,
-        account: Address,
-        storage_key: StorageKey,
-    ) -> ProviderResult<Option<StorageValue>>;
-}
-
-// Blanket implementation of EvmStateProvider for any type that implements StateProvider.
-impl<T: StateProvider> EvmStateProvider for T {
-    fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
-        <T as AccountReader>::basic_account(self, address)
-    }
-
-    fn block_hash(&self, number: BlockNumber) -> ProviderResult<Option<B256>> {
-        <T as BlockHashReader>::block_hash(self, number)
-    }
-
-    fn bytecode_by_hash(
-        &self,
-        code_hash: &B256,
-    ) -> ProviderResult<Option<reth_primitives_traits::Bytecode>> {
-        <T as BytecodeReader>::bytecode_by_hash(self, code_hash)
-    }
-
-    fn storage(
-        &self,
-        account: Address,
-        storage_key: StorageKey,
-    ) -> ProviderResult<Option<StorageValue>> {
-        <T as StateProvider>::storage(self, account, storage_key)
-    }
-}
-
-/// A [Database] and [`DatabaseRef`] implementation that uses [`EvmStateProvider`] as the underlying
+/// A [Database] and [`DatabaseRef`] implementation that uses [`StateProvider`] as the underlying
 /// data source.
 #[derive(Clone)]
 pub struct StateProviderDatabase<DB>(pub DB);
@@ -104,7 +49,7 @@ impl<DB> DerefMut for StateProviderDatabase<DB> {
     }
 }
 
-impl<DB: EvmStateProvider> Database for StateProviderDatabase<DB> {
+impl<DB: StateProvider> Database for StateProviderDatabase<DB> {
     type Error = ProviderError;
 
     /// Retrieves basic account information for a given address.
@@ -138,7 +83,7 @@ impl<DB: EvmStateProvider> Database for StateProviderDatabase<DB> {
     }
 }
 
-impl<DB: EvmStateProvider> DatabaseRef for StateProviderDatabase<DB> {
+impl<DB: StateProvider> DatabaseRef for StateProviderDatabase<DB> {
     type Error = <Self as Database>::Error;
 
     /// Retrieves basic account information for a given address.

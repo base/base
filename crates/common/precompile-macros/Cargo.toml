@@ -16,6 +16,7 @@ proc-macro = true
 workspace = true
 
 [dependencies]
+revm = {workspace = true}
 alloy-primitives = { workspace = true }
 quote = { workspace = true, features = ["default"] }
 proc-macro2 = { workspace = true, features = ["default"] }

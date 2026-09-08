@@ -34,7 +34,7 @@ use base_consensus_node::{
     EngineClientError as NodeEngineClientError, ResetReason, SequencerEngineClient,
 };
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::BaseEvmConfig;
+use base_execution_evm::{BaseEvmConfig, CachedReads, CancelOnDrop};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, NoopPayloadTransactions,
 };
@@ -54,7 +54,6 @@ use reth_provider::{
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_chain_spec,
 };
-use reth_revm::{cached::CachedReads, cancelled::CancelOnDrop};
 use reth_transaction_pool::noop::NoopTransactionPool;
 use reth_trie_common::HashedStorage;
 

@@ -21,3 +21,5 @@ impl<DB> BasicBlockExecutor<DB> {
         f(&mut self.db)
     }
 }
+
+pub use crate::state_provider_test::StateProviderTest;

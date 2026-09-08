@@ -36,29 +36,30 @@ alloy-chains = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-genesis = { workspace = true }
-reth-revm = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-evm = { workspace = true, features = ["default"] }
+
 [features]
 default = [ "std" ]
 std = [
-	"alloy-chains/std",
-	"alloy-consensus/std",
-	"alloy-eips/std",
-	"alloy-primitives/std",
-	"alloy-trie/std",
-	"base-common-chains/std",
-	"base-common-consensus/std",
-	"base-execution-chainspec/std",
-	"base-protocol/std",
-	"reth-consensus-common/std",
-	"reth-consensus/std",
-	"reth-execution-types/std",
-	"reth-primitives-traits/std",
-	"reth-revm/std",
-	"reth-storage-api/std",
-	"reth-storage-errors/std",
-	"reth-trie-common/std",
-	"revm/std",
-	"thiserror/std",
-	"tracing/std",
+    "alloy-chains/std",
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "alloy-primitives/std",
+    "alloy-trie/std",
+    "base-common-chains/std",
+    "base-common-consensus/std",
+    "base-execution-chainspec/std",
+    "base-protocol/std",
+    "reth-consensus-common/std",
+    "reth-consensus/std",
+    "reth-execution-types/std",
+    "reth-primitives-traits/std",
+    "base-execution-evm/std",
+    "reth-storage-api/std",
+    "reth-storage-errors/std",
+    "reth-trie-common/std",
+    "revm/std",
+    "thiserror/std",
+    "tracing/std",
 ]

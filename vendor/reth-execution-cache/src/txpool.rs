@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, StorageKey, StorageValue, U256};
+use base_execution_evm::CachedReads;
 use reth_primitives_traits::{Account, Bytecode};
-use reth_revm::cached::CachedReads;
 
 /// A deep, immutable txpool-prewarm cache snapshot for one parent state.
 ///
@@ -59,10 +59,8 @@ impl TxPoolPrewarmCacheSnapshot {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::map::U256Map;
-    use reth_revm::{
-        cached::CachedAccount,
-        revm::{bytecode::Bytecode as RevmBytecode, state::AccountInfo},
-    };
+    use base_execution_evm::CachedAccount;
+    use revm::{bytecode::Bytecode as RevmBytecode, state::AccountInfo};
 
     use super::*;
 
