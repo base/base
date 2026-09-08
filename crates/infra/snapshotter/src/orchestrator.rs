@@ -177,16 +177,15 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         // upload-existing recovery, but the streaming sink never materializes this run directory.
         let output_dir_for_gen = self.config.output_dir.join(format!("run-{run_timestamp}"));
         let chain_id = self.config.chain_id;
-        let block = Some(self.config.block.unwrap_or(latest_block));
+        let block = self.config.block.unwrap_or(latest_block);
         let blocks_per_file = self.config.blocks_per_file;
         let remote_for_gen = remote_static_files.clone();
         let previous_manifest_for_gen = remote_manifest.clone();
         let upload_proofs = self.config.upload_proofs;
-        let effective_block = block.expect("snapshot block is always set above");
+        let effective_block = block;
         let effective_blocks_per_file = blocks_per_file.unwrap_or(500_000);
         let latest_chunk_start = effective_block
-            .checked_sub(1)
-            .unwrap_or(0)
+            .saturating_sub(1)
             .checked_div(effective_blocks_per_file)
             .and_then(|index| index.checked_mul(effective_blocks_per_file))
             .context("latest static-file chunk range overflow")?;
@@ -212,7 +211,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 output_dir: &output_dir_for_gen,
                 chain_id,
                 base_url: None,
-                block,
+                block: Some(block),
                 blocks_per_file,
                 remote_static_files: &remote_for_gen,
                 previous_manifest: previous_manifest_for_gen.as_ref(),
