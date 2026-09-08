@@ -899,10 +899,11 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-type-parser"
-version = "0.0.0"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da4c7130f0f01f4719678bda3db3bc7267fc2f7f9d0565e3bd964cd2bb45050d"
 dependencies = [
  "serde",
- "serde_json",
  "winnow 1.0.4",
 ]
 

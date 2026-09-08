@@ -326,7 +326,7 @@ alloy-rpc-types-admin = { path = "vendor/alloy-rpc-types-admin", default-feature
 alloy-rpc-types-anvil = { path = "vendor/alloy-rpc-types-anvil", default-features = false }
 alloy-rpc-types-trace = { path = "vendor/alloy-rpc-types-trace", default-features = false }
 alloy-sol-macro-input = { path = "vendor/alloy-sol-macro-input", default-features = false }
-alloy-sol-type-parser = { path = "vendor/alloy-sol-type-parser", default-features = false }
+alloy-sol-type-parser = { version = "=1.6.1", default-features = false }
 alloy-rpc-types-beacon = { path = "vendor/alloy-rpc-types-beacon", default-features = false }
 alloy-rpc-types-txpool = { path = "vendor/alloy-rpc-types-txpool", default-features = false }
 alloy-rpc-types-engine = { path = "vendor/alloy-rpc-types-engine", default-features = false }
