@@ -245,7 +245,7 @@ impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<
     }
 }
 
-impl<'a, Storage> StateProvider for BaseProofsStateProviderRef<'a, Storage>
+impl<'a, Storage> reth_storage_api::StateReadProvider for BaseProofsStateProviderRef<'a, Storage>
 where
     Storage: BaseProofsStore + Clone,
 {

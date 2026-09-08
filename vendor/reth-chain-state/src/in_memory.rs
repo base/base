@@ -981,7 +981,7 @@ mod tests {
     use reth_primitives_traits::{Account, Bytecode};
     use reth_storage_api::{
         AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider,
-        StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
+        StateProofProvider, StateRootProvider, StorageRootProvider,
     };
     use reth_storage_errors::provider::ProviderResult;
     use reth_trie::{
@@ -1025,7 +1025,7 @@ mod tests {
 
     struct MockStateProvider;
 
-    impl StateProvider for MockStateProvider {
+    impl reth_storage_api::StateReadProvider for MockStateProvider {
         fn storage(
             &self,
             _address: Address,

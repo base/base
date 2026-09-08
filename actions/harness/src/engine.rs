@@ -48,7 +48,7 @@ use reth_db_common::init::init_genesis;
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
-    BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory, StateProvider,
+    BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory,
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_chain_spec,
 };

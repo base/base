@@ -51,9 +51,9 @@ use crate::{
     AccountReader, BalProvider, BalStoreHandle, BlockHashReader, BlockIdReader, BlockNumReader,
     BlockReader, BlockReaderIdExt, ChainSpecProvider, ChangeSetReader, HeaderProvider,
     PruneCheckpointReader, RangeEnd, RangeResponse, RangeResult, ReceiptProviderIdExt,
-    StateProvider, StateProviderBox, StateProviderFactory, StateRangeProvider,
-    StateRangeProviderFactory, StateRangeView, StateReader, StateRootProvider, StorageRangeResult,
-    TransactionVariant, TransactionsProvider,
+    StateProviderBox, StateProviderFactory, StateRangeProvider, StateRangeProviderFactory,
+    StateRangeView, StateReader, StateRootProvider, StorageRangeResult, TransactionVariant,
+    TransactionsProvider,
     traits::{BlockSource, ReceiptProvider},
 };
 
@@ -1040,7 +1040,7 @@ impl HashedPostStateProvider for MockEthProvider {
     }
 }
 
-impl StateProvider for MockEthProvider {
+impl reth_storage_api::StateReadProvider for MockEthProvider {
     fn storage(
         &self,
         account: Address,

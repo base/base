@@ -30,7 +30,7 @@ use reth_trie_db::{DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, Datab
 
 use crate::{
     AccountReader, BlockHashReader, ChangeSetReader, EitherReader, HashedPostStateProvider,
-    ProviderError, RocksDBProviderFactory, StateProvider, StateRootProvider,
+    ProviderError, RocksDBProviderFactory, StateRootProvider,
 };
 
 type DbStateRoot<'a, TX, A> = StateRoot<
@@ -631,7 +631,7 @@ where
     }
 }
 
-impl<Provider> StateProvider for HistoricalStateProviderRef<'_, Provider>
+impl<Provider> reth_storage_api::StateReadProvider for HistoricalStateProviderRef<'_, Provider>
 where
     Provider: DBProvider
         + BlockNumReader
@@ -856,7 +856,8 @@ mod tests {
     use reth_primitives_traits::{Account, StorageEntry};
     use reth_storage_api::{
         BlockHashReader, BlockNumReader, ChangeSetReader, DBProvider, DatabaseProviderFactory,
-        PruneCheckpointReader, StageCheckpointReader, StorageChangeSetReader, StorageSettingsCache,
+        PruneCheckpointReader, StageCheckpointReader, StateReadProvider, StorageChangeSetReader,
+        StorageSettingsCache,
     };
     use reth_storage_errors::provider::ProviderError;
     use reth_storage_overlay::OverlayManager;
@@ -864,7 +865,7 @@ mod tests {
     use super::needs_prev_shard_check;
     use crate::{
         AccountReader, HistoricalStateProvider, HistoricalStateProviderRef, RocksDBProviderFactory,
-        StateProvider, StaticFileProviderFactory,
+        StaticFileProviderFactory,
         providers::state::historical::{HistoryInfo, LowestAvailableBlocks},
         test_utils::create_test_provider_factory,
     };
@@ -874,7 +875,7 @@ mod tests {
     const STORAGE: B256 =
         b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
 
-    const fn assert_state_provider<T: StateProvider>() {}
+    const fn assert_state_provider<T: reth_storage_api::StateProvider>() {}
     #[expect(dead_code)]
     const fn assert_historical_state_provider<
         T: DBProvider

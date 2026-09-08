@@ -4,7 +4,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use base_execution_evm::StateProviderDatabase;
-use reth_storage_api::{BytecodeReader, HashedPostStateProvider, StateProvider, StateProviderBox};
+use reth_storage_api::{BytecodeReader, HashedPostStateProvider, StateProviderBox};
 use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{HashedStorage, MultiProofTargets};
 use revm::database::{BundleState, State};
@@ -152,7 +152,7 @@ impl HashedPostStateProvider for StateProviderTraitObjWrapper {
     }
 }
 
-impl StateProvider for StateProviderTraitObjWrapper {
+impl reth_storage_api::StateReadProvider for StateProviderTraitObjWrapper {
     fn storage(
         &self,
         account: Address,

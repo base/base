@@ -17,9 +17,7 @@ use reth_rpc_eth_types::{
     error::IntoEthApiError,
 };
 use reth_rpc_server_types::constants::DEFAULT_MAX_STORAGE_VALUES_SLOTS;
-use reth_storage_api::{
-    BlockIdReader, BlockReaderIdExt, StateProvider, StateProviderBox, StateProviderFactory,
-};
+use reth_storage_api::{BlockIdReader, BlockReaderIdExt, StateProviderBox, StateProviderFactory};
 use reth_transaction_pool::TransactionPool;
 use reth_trie_common::MultiProofTargets;
 

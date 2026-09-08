@@ -18,7 +18,7 @@ use base_execution_trie::{
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
 use reth_primitives_traits::Account;
-use reth_provider::{AccountReader, StateProvider, noop::NoopProvider};
+use reth_provider::{AccountReader, StateReadProvider, noop::NoopProvider};
 use reth_trie_common::ExecutionWitnessMode;
 use revm::{Database, database::State};
 use tempfile::TempDir;

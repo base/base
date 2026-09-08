@@ -34,9 +34,9 @@ use crate::{
     BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt, BlockSource, BytecodeReader,
     ChangeSetReader, HashedPostStateProvider, HeaderProvider, PruneCheckpointReader,
     ReceiptProvider, ReceiptProviderIdExt, StageCheckpointReader, StateProofProvider,
-    StateProvider, StateProviderBox, StateProviderFactory, StateRangeProviderFactory,
-    StateRangeView, StateReader, StateRootProvider, StorageRootProvider, TransactionVariant,
-    TransactionsProvider, TryIntoHistoricalStateProvider,
+    StateProviderBox, StateProviderFactory, StateRangeProviderFactory, StateRangeView, StateReader,
+    StateRootProvider, StorageRootProvider, TransactionVariant, TransactionsProvider,
+    TryIntoHistoricalStateProvider,
 };
 #[cfg(feature = "db-api")]
 use crate::{
@@ -538,7 +538,7 @@ impl StateReader for NoopProvider {
     }
 }
 
-impl StateProvider for NoopProvider {
+impl crate::StateReadProvider for NoopProvider {
     fn storage(
         &self,
         _account: Address,

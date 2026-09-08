@@ -9,7 +9,7 @@ use std::{
 use alloy_primitives::{Address, StorageKey};
 use reth_execution_cache::{CachedStateProvider, ExecutionCache, TxPoolPrewarmCacheSnapshot};
 use reth_provider::{
-    AccountReader, BytecodeReader, ProviderResult, StateProvider, StateProviderBox,
+    AccountReader, BytecodeReader, ProviderResult, StateProviderBox, StateReadProvider,
 };
 use tokio::sync::oneshot;
 use tracing::trace;

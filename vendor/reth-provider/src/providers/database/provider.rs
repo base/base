@@ -3515,7 +3515,7 @@ mod tests {
     use reth_db_api::models::StorageSettings;
     use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_primitives_traits::SealedBlock;
-    use reth_storage_api::{MetadataProvider, MetadataWriter};
+    use reth_storage_api::{MetadataProvider, MetadataWriter, StateReadProvider};
     use reth_testing_utils::generators::{self, BlockParams};
     use reth_trie::{
         HashedPostState, KeccakKeyHasher, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey,
@@ -4447,7 +4447,6 @@ mod tests {
 
     #[test]
     fn test_write_state_and_historical_read_hashed() {
-        use reth_storage_api::StateProvider;
         use reth_trie::{HashedPostState, KeccakKeyHasher};
         use revm::{database::BundleState, state::AccountInfo};
 

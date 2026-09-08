@@ -11,7 +11,7 @@ use reth_db_api::{
 };
 use reth_db_common::DbTool;
 use reth_provider::StaticFileProviderFactory;
-use reth_storage_api::{BlockNumReader, StateProvider};
+use reth_storage_api::BlockNumReader;
 use tracing::info;
 
 /// Log progress every 30 seconds

@@ -43,6 +43,7 @@ base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 
 [dev-dependencies]
+mockall = { workspace = true }
 reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 base-protocol = { workspace = true }

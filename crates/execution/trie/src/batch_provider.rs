@@ -289,7 +289,9 @@ impl<S: BaseProofsBatchSession> AccountReader for BaseProofsBatchStateProviderRe
     }
 }
 
-impl<S: BaseProofsBatchSession> StateProvider for BaseProofsBatchStateProviderRef<'_, S> {
+impl<S: BaseProofsBatchSession> reth_storage_api::StateReadProvider
+    for BaseProofsBatchStateProviderRef<'_, S>
+{
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
         let hashed_key = keccak256(storage_key);
         Ok(self

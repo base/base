@@ -9,10 +9,10 @@ macro_rules! delegate_impls_to_as_ref {
     (for $target:ty => $($trait:ident $(where [$($generics:tt)*])? {  $(fn $func:ident$(<$($generic_arg:ident: $generic_arg_ty:path),*>)?(&self, $($arg:ident: $argty:ty),*) -> $ret:path;)* })* ) => {
 
         $(
-          impl<'a, $($($generics)*)?> $trait for $target {
+          impl<'a, $($($generics)*)?> $crate::$trait for $target {
               $(
                   fn $func$(<$($generic_arg: $generic_arg_ty),*>)?(&self, $($arg: $argty),*) -> $ret {
-                    self.as_ref().$func($($arg),*)
+                    $crate::$trait::$func(&self.as_ref(), $($arg),*)
                   }
               )*
           }
@@ -39,7 +39,7 @@ macro_rules! delegate_provider_impls {
                 fn block_hash(&self, number: u64) -> reth_storage_api::errors::provider::ProviderResult<Option<alloy_primitives::B256>>;
                 fn canonical_hashes_range(&self, start: alloy_primitives::BlockNumber, end: alloy_primitives::BlockNumber) -> reth_storage_api::errors::provider::ProviderResult<Vec<alloy_primitives::B256>>;
             }
-            StateProvider $(where [$($generics)*])? {
+            StateReadProvider $(where [$($generics)*])? {
                 fn storage(&self, account: alloy_primitives::Address, storage_key: alloy_primitives::StorageKey) -> reth_storage_api::errors::provider::ProviderResult<Option<alloy_primitives::StorageValue>>;
             }
             BytecodeReader $(where [$($generics)*])? {

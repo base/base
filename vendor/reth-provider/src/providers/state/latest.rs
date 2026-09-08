@@ -17,9 +17,7 @@ use reth_trie::{
 };
 use reth_trie_db::{DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot};
 
-use crate::{
-    AccountReader, BlockHashReader, HashedPostStateProvider, StateProvider, StateRootProvider,
-};
+use crate::{AccountReader, BlockHashReader, HashedPostStateProvider, StateRootProvider};
 
 type DbStateRoot<'a, TX, A> = StateRoot<
     reth_trie_db::DatabaseTrieCursorFactory<&'a TX, A>,
@@ -262,8 +260,8 @@ impl<Provider: DBProvider> HashedPostStateProvider for LatestStateProviderRef<'_
     }
 }
 
-impl<Provider: DBProvider + BlockHashReader + StorageSettingsCache> StateProvider
-    for LatestStateProviderRef<'_, Provider>
+impl<Provider: DBProvider + BlockHashReader + StorageSettingsCache>
+    reth_storage_api::StateReadProvider for LatestStateProviderRef<'_, Provider>
 {
     /// Get storage by plain (unhashed) storage key slot.
     fn storage(
@@ -316,12 +314,12 @@ mod tests {
         transaction::{DbTx, DbTxMut},
     };
     use reth_primitives_traits::StorageEntry;
-    use reth_storage_api::StorageSettingsCache;
+    use reth_storage_api::{StateReadProvider, StorageSettingsCache};
 
     use super::*;
     use crate::test_utils::create_test_provider_factory;
 
-    const fn assert_state_provider<T: StateProvider>() {}
+    const fn assert_state_provider<T: reth_storage_api::StateProvider>() {}
     #[expect(dead_code)]
     const fn assert_latest_state_provider<
         T: DBProvider + BlockHashReader + StorageSettingsCache,

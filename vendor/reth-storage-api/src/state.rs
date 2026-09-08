@@ -31,17 +31,31 @@ pub trait StateReader: Send {
 /// Type alias of boxed [`StateProvider`].
 pub type StateProviderBox = Box<dyn StateProvider + Send + 'static>;
 
-/// An abstraction for a type that provides state data.
-#[auto_impl(&, Arc, Box)]
+/// State reads together with root and proof calculation capabilities.
+///
+/// Execution only requires [`StateReadProvider`]. This combined interface is for callers
+/// that also calculate roots, proofs, or hashed post-state.
 pub trait StateProvider:
-    BlockHashReader
-    + AccountReader
-    + BytecodeReader
+    StateReadProvider
     + StateRootProvider
     + StorageRootProvider
     + StateProofProvider
     + HashedPostStateProvider
 {
+}
+
+impl<T: ?Sized> StateProvider for T where
+    T: StateReadProvider
+        + StateRootProvider
+        + StorageRootProvider
+        + StateProofProvider
+        + HashedPostStateProvider
+{
+}
+
+/// Account, bytecode, storage, and block-hash reads without proof machinery.
+#[auto_impl(&, Arc, Box)]
+pub trait StateReadProvider: BlockHashReader + AccountReader + BytecodeReader {
     /// Get storage of given account.
     fn storage(
         &self,

@@ -7,7 +7,6 @@ use base_common_consensus::Eip8130Constants;
 use base_common_precompiles::NonceManagerStorage;
 use base_common_rpc_types::Eip8130Nonce;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_provider::StateProvider;
 use reth_rpc_eth_api::helpers::{EthState, FullEthApi};
 use reth_rpc_eth_types::EthApiError;
 

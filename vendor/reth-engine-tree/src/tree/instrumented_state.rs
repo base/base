@@ -168,7 +168,9 @@ impl<S: AccountReader> AccountReader for InstrumentedStateProvider<S> {
     }
 }
 
-impl<S: StateProvider> StateProvider for InstrumentedStateProvider<S> {
+impl<S: reth_storage_api::StateReadProvider> reth_storage_api::StateReadProvider
+    for InstrumentedStateProvider<S>
+{
     fn storage(
         &self,
         account: Address,

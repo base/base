@@ -7,7 +7,7 @@ use alloy_primitives::{
 use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
-    StateProvider, StateRootProvider, StorageRootProvider,
+    StateRootProvider, StorageRootProvider,
 };
 use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{
@@ -160,7 +160,7 @@ impl HashedPostStateProvider for StateProviderTest {
     }
 }
 
-impl StateProvider for StateProviderTest {
+impl reth_storage_api::StateReadProvider for StateProviderTest {
     fn storage(
         &self,
         account: Address,

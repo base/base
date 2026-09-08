@@ -20,7 +20,7 @@ use reth_metrics::Metrics;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
-    StateProvider, StateRootProvider, StorageRootProvider,
+    StateRootProvider, StorageRootProvider,
 };
 use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{
@@ -884,7 +884,9 @@ fn nonzero_storage_value(value: StorageValue) -> Option<StorageValue> {
     if value.is_zero() { None } else { Some(value) }
 }
 
-impl<S: StateProvider> StateProvider for CachedStateProvider<S> {
+impl<S: reth_storage_api::StateReadProvider> reth_storage_api::StateReadProvider
+    for CachedStateProvider<S>
+{
     fn storage(
         &self,
         account: Address,
@@ -1399,6 +1401,7 @@ impl SavedCache {
 mod tests {
     use alloy_primitives::{U256, map::HashMap};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use reth_storage_api::StateReadProvider;
     use revm::{
         database::{AccountStatus, BundleAccount},
         state::AccountInfo,
