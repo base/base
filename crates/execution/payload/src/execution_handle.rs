@@ -1,6 +1,8 @@
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId};
 use base_common_consensus::BaseTxEnvelope;
-use base_execution_payload_types::{EngineObjectValidationError, PayloadBuilderError, PayloadKind};
+use base_execution_payload_types::{
+    InvalidPayloadAttributesError, PayloadBuilderError, PayloadKind,
+};
 use reth_engine_primitives::{BeaconForkChoiceUpdateError, ConsensusEngineHandle};
 
 use crate::{
@@ -26,7 +28,7 @@ pub enum ExecutionCommandError {
     Forkchoice(#[from] BeaconForkChoiceUpdateError),
     /// Build attributes violate the chain rules.
     #[error(transparent)]
-    InvalidAttributes(#[from] EngineObjectValidationError),
+    InvalidAttributes(#[from] InvalidPayloadAttributesError),
     /// The requested build does not exist or its service stopped.
     #[error("unknown payload build {0}")]
     UnknownBuild(PayloadId),

@@ -56,7 +56,7 @@ mod execution_handle;
 pub use execution_handle::{BaseExecutionHandle, ExecutionCommandError};
 
 mod engine;
-pub use engine::{BaseEngineValidator, validate_withdrawals_presence};
+pub use engine::BaseEngineValidator;
 
 mod service;
 pub use service::{

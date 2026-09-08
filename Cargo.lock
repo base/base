@@ -3865,7 +3865,6 @@ name = "base-execution-payload-types"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
- "alloy-hardforks",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-engine",

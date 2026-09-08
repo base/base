@@ -20,8 +20,7 @@ pub use base_execution_evm::ConvertTx;
 pub use base_execution_evm::{ExecutableTxIterator, ExecutableTxTuple};
 pub use base_execution_payload_types::ExecutionPayload;
 use base_execution_payload_types::{
-    EngineApiMessageVersion, EngineObjectValidationError, InvalidPayloadAttributesError,
-    NewPayloadError, PayloadAttributes, PayloadOrAttributes,
+    InvalidPayloadAttributesError, NewPayloadError, PayloadAttributes,
 };
 use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_storage_api::{StateProviderBox, errors::ProviderResult};
@@ -46,40 +45,6 @@ pub use invalid_block_hook::{InvalidBlockHook, InvalidBlockHooks, NoopInvalidBlo
 
 pub mod config;
 pub use config::*;
-
-/// Validates engine API requests at the RPC layer, before payloads and attributes
-/// are forwarded to the engine for processing.
-///
-/// - [`validate_version_specific_fields`](Self::validate_version_specific_fields): Enforced in each
-///   `engine_newPayloadVN` RPC handler to verify the payload contains the correct fields for the
-///   engine API version (e.g., blob fields in V3+, requests in V4+).
-///
-/// - [`ensure_well_formed_attributes`](Self::ensure_well_formed_attributes): Enforced in
-///   `engine_forkchoiceUpdatedVN` RPC handlers to validate payload attributes are well-formed for
-///   the given version before forwarding to the engine.
-///
-/// After this validation passes, the engine performs the full consensus validation
-/// pipeline (header, pre-execution, execution, post-execution).
-pub trait EngineApiValidator: Send + Sync + Unpin + 'static {
-    /// Validates the presence or exclusion of fork-specific fields based on the payload attributes
-    /// and the message version.
-    fn validate_version_specific_fields(
-        &self,
-        version: EngineApiMessageVersion,
-        payload_or_attrs: PayloadOrAttributes<
-            '_,
-            base_common_rpc_types_engine::ExecutionData,
-            BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        >,
-    ) -> Result<(), EngineObjectValidationError>;
-
-    /// Ensures that the payload attributes are valid for the given [`EngineApiMessageVersion`].
-    fn ensure_well_formed_attributes(
-        &self,
-        version: EngineApiMessageVersion,
-        attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
-    ) -> Result<(), EngineObjectValidationError>;
-}
 
 /// Type that validates an [`ExecutionPayload`].
 ///

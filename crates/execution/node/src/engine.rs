@@ -1,3 +1,3 @@
 //! Base engine validation.
 
-pub use base_execution_payload_builder::{BaseEngineValidator, validate_withdrawals_presence};
+pub use base_execution_payload_builder::BaseEngineValidator;

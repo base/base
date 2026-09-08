@@ -9,7 +9,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_common_consensus::BaseTxEnvelope;
-use base_common_rpc_types::{Base, GenesisInfo};
+use base_common_rpc_types::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;

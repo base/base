@@ -19,10 +19,7 @@ pub use base::{
 mod base_compat;
 
 mod error;
-pub use error::{
-    EngineObjectValidationError, InvalidPayloadAttributesError, NewPayloadError,
-    PayloadBuilderError, VersionSpecificValidationError,
-};
+pub use error::{InvalidPayloadAttributesError, NewPayloadError, PayloadBuilderError};
 
 mod traits;
 pub use traits::{
@@ -31,15 +28,10 @@ pub use traits::{
 };
 
 mod payload;
-pub use payload::{ExecutionPayload, PayloadOrAttributes};
+pub use payload::ExecutionPayload;
 
-mod validation;
-pub use validation::{
-    EngineApiMessageVersion, MessageValidationKind, PayloadKind,
-    validate_block_access_list_presence, validate_execution_requests,
-    validate_parent_beacon_block_root_presence, validate_payload_timestamp,
-    validate_slot_number_presence, validate_version_specific_fields, validate_withdrawals_presence,
-};
+mod kind;
+pub use kind::PayloadKind;
 
 #[cfg(feature = "std")]
 mod events;

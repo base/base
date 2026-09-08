@@ -29,7 +29,7 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::PayloadServiceCommand;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use reth_chain_state::{BlockState, test_utils::TestBlockBuilder};
-use reth_engine_primitives::{EngineApiValidator, ForkchoiceStatus, NoopInvalidBlockHook};
+use reth_engine_primitives::{ForkchoiceStatus, NoopInvalidBlockHook};
 use reth_primitives_traits::Block as _;
 use reth_provider::{BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider};
 use reth_storage_overlay::OverlayManager;
@@ -63,30 +63,6 @@ impl reth_engine_primitives::PayloadValidator for MockEngineValidator {
             base_execution_payload_types::NewPayloadError::Other(format!("{e:?}").into())
         })?;
         Ok(block.seal_slow())
-    }
-}
-
-impl EngineApiValidator for MockEngineValidator {
-    fn validate_version_specific_fields(
-        &self,
-        _version: base_execution_payload_types::EngineApiMessageVersion,
-        _payload_or_attrs: base_execution_payload_types::PayloadOrAttributes<
-            '_,
-            ExecutionData,
-            BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        >,
-    ) -> Result<(), base_execution_payload_types::EngineObjectValidationError> {
-        // Mock implementation - always valid
-        Ok(())
-    }
-
-    fn ensure_well_formed_attributes(
-        &self,
-        _version: base_execution_payload_types::EngineApiMessageVersion,
-        _attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
-    ) -> Result<(), base_execution_payload_types::EngineObjectValidationError> {
-        // Mock implementation - always valid
-        Ok(())
     }
 }
 

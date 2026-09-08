@@ -482,7 +482,6 @@ mod tests {
     use base_common_consensus::BaseTransactionSigned;
 
     use super::*;
-    use crate::EngineApiMessageVersion;
     #[test]
     fn test_payload_id_parity_op_geth() {
         // INFO rollup_boost::server:received fork_choice_updated_v3 from builder and l2_client
@@ -511,7 +510,7 @@ mod tests {
             expected,
             attrs.payload_id(
                 &b256!("0x3533bf30edaf9505d0810bf475cbe4e5f4b9889904b9845e83efdeab4e92eb1e"),
-                EngineApiMessageVersion::V3 as u8
+                3
             )
         );
     }
@@ -543,7 +542,7 @@ mod tests {
             expected,
             attrs.payload_id(
                 &b256!("0x3533bf30edaf9505d0810bf475cbe4e5f4b9889904b9845e83efdeab4e92eb1e"),
-                EngineApiMessageVersion::V4 as u8
+                4
             )
         );
     }
@@ -572,7 +571,7 @@ mod tests {
         let error = BasePayloadBuilderAttributes::<BaseTransactionSigned>::try_new(
             B256::ZERO,
             attributes,
-            EngineApiMessageVersion::V3 as u8,
+            3,
         )
         .expect_err("targetGasLimit must be rejected");
 

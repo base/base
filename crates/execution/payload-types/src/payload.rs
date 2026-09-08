@@ -3,12 +3,10 @@
 use alloc::vec::Vec;
 use core::fmt::Debug;
 
-use alloy_eips::{BlockNumHash, eip1898::BlockWithParent, eip4895::Withdrawal, eip7685::Requests};
+use alloy_eips::{BlockNumHash, eip1898::BlockWithParent, eip4895::Withdrawal};
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::ExecutionData;
 use serde::{Serialize, de::DeserializeOwned};
-
-use crate::{MessageValidationKind, PayloadAttributes};
 
 /// Represents the core data structure of an execution payload.
 ///
@@ -112,128 +110,5 @@ impl ExecutionPayload for ExecutionData {
 
     fn slot_number(&self) -> Option<u64> {
         self.payload.slot_number()
-    }
-}
-
-/// A unified type for handling both execution payloads and payload attributes.
-///
-/// Enables generic validation and processing logic for both complete payloads
-/// and payload attributes, useful for version-specific validation.
-#[derive(Debug)]
-pub enum PayloadOrAttributes<'a, Payload, Attributes> {
-    /// A complete execution payload containing block data
-    ExecutionPayload(&'a Payload),
-    /// Attributes specifying how to build a new payload
-    PayloadAttributes(&'a Attributes),
-}
-
-impl<'a, Payload, Attributes> PayloadOrAttributes<'a, Payload, Attributes> {
-    /// Creates a `PayloadOrAttributes` from an execution payload reference
-    pub const fn from_execution_payload(payload: &'a Payload) -> Self {
-        Self::ExecutionPayload(payload)
-    }
-
-    /// Creates a `PayloadOrAttributes` from a payload attributes reference
-    pub const fn from_attributes(attributes: &'a Attributes) -> Self {
-        Self::PayloadAttributes(attributes)
-    }
-}
-
-impl<Payload, Attributes> PayloadOrAttributes<'_, Payload, Attributes>
-where
-    Payload: ExecutionPayload,
-    Attributes: PayloadAttributes,
-{
-    /// Returns withdrawals from either the payload or attributes.
-    pub fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
-        match self {
-            Self::ExecutionPayload(payload) => payload.withdrawals(),
-            Self::PayloadAttributes(attributes) => attributes.withdrawals(),
-        }
-    }
-
-    /// Returns the timestamp from either the payload or attributes.
-    pub fn timestamp(&self) -> u64 {
-        match self {
-            Self::ExecutionPayload(payload) => payload.timestamp(),
-            Self::PayloadAttributes(attributes) => attributes.timestamp(),
-        }
-    }
-
-    /// Returns the parent beacon block root from either the payload or attributes.
-    pub fn parent_beacon_block_root(&self) -> Option<B256> {
-        match self {
-            Self::ExecutionPayload(payload) => payload.parent_beacon_block_root(),
-            Self::PayloadAttributes(attributes) => attributes.parent_beacon_block_root(),
-        }
-    }
-
-    /// Determines the validation context based on the contained type.
-    pub const fn message_validation_kind(&self) -> MessageValidationKind {
-        match self {
-            Self::ExecutionPayload { .. } => MessageValidationKind::Payload,
-            Self::PayloadAttributes(_) => MessageValidationKind::PayloadAttributes,
-        }
-    }
-
-    /// Returns `block_access_list` from  payload.
-    pub fn block_access_list(&self) -> Option<&Bytes> {
-        match self {
-            Self::ExecutionPayload(payload) => payload.block_access_list(),
-            Self::PayloadAttributes(_attributes) => None,
-        }
-    }
-
-    /// Returns `slot_number` from  payload or attributes.
-    pub fn slot_number(&self) -> Option<u64> {
-        match self {
-            Self::ExecutionPayload(payload) => payload.slot_number(),
-            Self::PayloadAttributes(attributes) => attributes.slot_number(),
-        }
-    }
-
-    /// Returns `target_gas_limit` from payload attributes.
-    pub fn target_gas_limit(&self) -> Option<u64> {
-        match self {
-            Self::ExecutionPayload(_) => None,
-            Self::PayloadAttributes(attributes) => attributes.target_gas_limit(),
-        }
-    }
-}
-
-impl<'a, Payload, AttributesType> From<&'a AttributesType>
-    for PayloadOrAttributes<'a, Payload, AttributesType>
-where
-    AttributesType: PayloadAttributes,
-{
-    fn from(attributes: &'a AttributesType) -> Self {
-        Self::PayloadAttributes(attributes)
-    }
-}
-/// Extended functionality for Ethereum execution payloads
-impl<Attributes> PayloadOrAttributes<'_, ExecutionData, Attributes>
-where
-    Attributes: PayloadAttributes,
-{
-    /// Extracts execution layer requests from the payload.
-    ///
-    /// Returns `Some(requests)` if this is an execution payload with request data,
-    /// `None` otherwise.
-    pub fn execution_requests(&self) -> Option<&Requests> {
-        if let Self::ExecutionPayload(payload) = self { payload.sidecar.requests() } else { None }
-    }
-}
-
-/// Extended functionality for Base execution payloads.
-impl<Attributes: PayloadAttributes>
-    PayloadOrAttributes<'_, base_common_rpc_types_engine::ExecutionData, Attributes>
-{
-    /// Returns execution requests included in the payload sidecar.
-    pub fn execution_requests(&self) -> Option<&Requests> {
-        if let Self::ExecutionPayload(payload) = self {
-            payload.sidecar.isthmus().and_then(|fields| fields.requests.requests())
-        } else {
-            None
-        }
     }
 }

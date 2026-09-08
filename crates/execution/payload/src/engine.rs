@@ -8,20 +8,17 @@ use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::{BaseConsensusError, ConsensusError, isthmus};
 use base_execution_payload_types::{
-    BasePayloadBuilderAttributes, EngineApiMessageVersion, EngineObjectValidationError,
-    InvalidPayloadAttributesError, MessageValidationKind, NewPayloadError, PayloadAttributes,
-    PayloadOrAttributes, VersionSpecificValidationError,
-    validate_parent_beacon_block_root_presence, validate_version_specific_fields,
+    BasePayloadBuilderAttributes, InvalidPayloadAttributesError, NewPayloadError, PayloadAttributes,
 };
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
-use reth_engine_primitives::{EngineApiValidator, InsertBlockErrorKind, PayloadValidator};
+use reth_engine_primitives::{InsertBlockErrorKind, PayloadValidator};
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 use reth_storage_api::{StateProvider, StateProviderBox, errors::ProviderResult};
 use reth_trie_common::{HashedPostState, KeyHasher};
 
 use crate::BaseExecutionPayloadValidator;
 
-/// Validator for Base engine API.
+/// Validates Base execution inputs.
 #[derive(Debug)]
 pub struct BaseEngineValidator {
     inner: BaseExecutionPayloadValidator,
@@ -59,31 +56,31 @@ impl BaseEngineValidator {
     pub fn validate_attributes(
         &self,
         attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
-    ) -> Result<(), EngineObjectValidationError> {
+    ) -> Result<(), InvalidPayloadAttributesError> {
         let timestamp = attributes.payload_attributes.timestamp;
         let fields = &attributes.payload_attributes;
         if fields.has_withdrawals != self.chain_spec().is_canyon_active_at_timestamp(timestamp) {
-            return Err(EngineObjectValidationError::InvalidParams(
+            return Err(InvalidPayloadAttributesError::InvalidParams(
                 "withdrawals presence does not match Canyon activation".into(),
             ));
         }
         if fields.parent_beacon_block_root.is_some()
             != self.chain_spec().is_ecotone_active_at_timestamp(timestamp)
         {
-            return Err(EngineObjectValidationError::InvalidParams(
+            return Err(InvalidPayloadAttributesError::InvalidParams(
                 "parent beacon block root presence does not match Ecotone activation".into(),
             ));
         }
         self.validate_base_attributes(attributes)
     }
 
-    /// Checks Base gas and fee parameters shared by native and RPC callers.
+    /// Checks Base gas and fee parameters for native builds.
     pub fn validate_base_attributes(
         &self,
         attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
-    ) -> Result<(), EngineObjectValidationError> {
+    ) -> Result<(), InvalidPayloadAttributesError> {
         if attributes.gas_limit.is_none() {
-            return Err(EngineObjectValidationError::InvalidParams(
+            return Err(InvalidPayloadAttributesError::InvalidParams(
                 "MissingGasLimitInPayloadAttributes".to_string().into(),
             ));
         }
@@ -94,17 +91,17 @@ impl BaseEngineValidator {
         {
             let (elasticity, denominator) =
                 attributes.decode_eip_1559_params().ok_or_else(|| {
-                    EngineObjectValidationError::InvalidParams(
+                    InvalidPayloadAttributesError::InvalidParams(
                         "MissingEip1559ParamsInPayloadAttributes".to_string().into(),
                     )
                 })?;
 
             if elasticity != 0 && denominator == 0 {
-                return Err(EngineObjectValidationError::InvalidParams(
+                return Err(InvalidPayloadAttributesError::InvalidParams(
                     "Eip1559ParamsDenominatorZero".to_string().into(),
                 ));
             } else if denominator != 0 && elasticity == 0 {
-                return Err(EngineObjectValidationError::InvalidParams(
+                return Err(InvalidPayloadAttributesError::InvalidParams(
                     "Eip1559ParamsElasticityZero".to_string().into(),
                 ));
             }
@@ -113,12 +110,12 @@ impl BaseEngineValidator {
         if self.chain_spec().is_jovian_active_at_timestamp(attributes.payload_attributes.timestamp)
         {
             if attributes.min_base_fee.is_none() {
-                return Err(EngineObjectValidationError::InvalidParams(
+                return Err(InvalidPayloadAttributesError::InvalidParams(
                     "MissingMinBaseFeeInPayloadAttributes".to_string().into(),
                 ));
             }
         } else if attributes.min_base_fee.is_some() {
-            return Err(EngineObjectValidationError::InvalidParams(
+            return Err(InvalidPayloadAttributesError::InvalidParams(
                 "MinBaseFeeNotAllowedBeforeJovian".to_string().into(),
             ));
         }
@@ -252,98 +249,6 @@ impl PayloadValidator for BaseEngineValidator {
     }
 }
 
-impl EngineApiValidator for BaseEngineValidator {
-    fn validate_version_specific_fields(
-        &self,
-        version: EngineApiMessageVersion,
-        payload_or_attrs: PayloadOrAttributes<
-            '_,
-            base_common_rpc_types_engine::ExecutionData,
-            BasePayloadBuilderAttributes<BaseTxEnvelope>,
-        >,
-    ) -> Result<(), EngineObjectValidationError> {
-        validate_withdrawals_presence(
-            self.chain_spec(),
-            version,
-            payload_or_attrs.message_validation_kind(),
-            payload_or_attrs.timestamp(),
-            payload_or_attrs.withdrawals().is_some(),
-        )?;
-        validate_parent_beacon_block_root_presence(
-            self.chain_spec(),
-            version,
-            payload_or_attrs.message_validation_kind(),
-            payload_or_attrs.timestamp(),
-            payload_or_attrs.parent_beacon_block_root().is_some(),
-        )
-    }
-
-    fn ensure_well_formed_attributes(
-        &self,
-        version: EngineApiMessageVersion,
-        attributes: &BasePayloadBuilderAttributes<BaseTxEnvelope>,
-    ) -> Result<(), EngineObjectValidationError> {
-        validate_version_specific_fields(
-            self.chain_spec(),
-            version,
-            PayloadOrAttributes::<
-                ExecutionData,
-                BasePayloadBuilderAttributes<
-                    BaseTxEnvelope,
-                >,
-            >::PayloadAttributes(attributes),
-        )?;
-
-        self.validate_base_attributes(attributes)
-    }
-}
-
-/// Validates the presence of the `withdrawals` field according to the payload timestamp.
-///
-/// After Canyon, withdrawals field must be [Some].
-/// Before Canyon, withdrawals field must be [None];
-///
-/// Canyon activates the Shanghai EIPs, see the Canyon specs for more details:
-/// <https://github.com/ethereum-optimism/optimism/blob/ab926c5fd1e55b5c864341c44842d6d1ca679d99/specs/superchain-upgrades.md#canyon>
-pub fn validate_withdrawals_presence(
-    chain_spec: impl Upgrades,
-    version: EngineApiMessageVersion,
-    message_validation_kind: MessageValidationKind,
-    timestamp: u64,
-    has_withdrawals: bool,
-) -> Result<(), EngineObjectValidationError> {
-    let is_shanghai = chain_spec.is_canyon_active_at_timestamp(timestamp);
-
-    match version {
-        EngineApiMessageVersion::V1 => {
-            if has_withdrawals {
-                return Err(message_validation_kind
-                    .to_error(VersionSpecificValidationError::WithdrawalsNotSupportedInV1));
-            }
-            if is_shanghai {
-                return Err(message_validation_kind
-                    .to_error(VersionSpecificValidationError::NoWithdrawalsPostShanghai));
-            }
-        }
-        EngineApiMessageVersion::V2
-        | EngineApiMessageVersion::V3
-        | EngineApiMessageVersion::V4
-        | EngineApiMessageVersion::V5
-        | EngineApiMessageVersion::V6 => {
-            if is_shanghai && !has_withdrawals {
-                return Err(message_validation_kind
-                    .to_error(VersionSpecificValidationError::NoWithdrawalsPostShanghai));
-            }
-            if !is_shanghai && has_withdrawals {
-                return Err(message_validation_kind
-                    .to_error(VersionSpecificValidationError::HasWithdrawalsPreShanghai));
-            }
-        }
-    };
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_hardforks::ForkCondition;
@@ -388,7 +293,7 @@ mod tests {
         ($result:expr, $msg:expr) => {{
             let err = $result.expect_err("expected InvalidParams error");
             match err {
-                EngineObjectValidationError::InvalidParams(inner) => {
+                InvalidPayloadAttributesError::InvalidParams(inner) => {
                     assert_eq!(inner.to_string(), $msg);
                 }
                 other => panic!("expected InvalidParams, got {other:?}"),
@@ -468,11 +373,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(None, None, 1732633199);
 
-        let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
-            &validator,
-            EngineApiMessageVersion::V3,
-            &attributes,
-        );
+        let result = validator.validate_attributes(&attributes);
         assert!(result.is_ok());
     }
 
@@ -481,11 +382,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(None, None, 1732633200);
 
-        let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
-            &validator,
-            EngineApiMessageVersion::V3,
-            &attributes,
-        );
+        let result = validator.validate_attributes(&attributes);
         assert_invalid_params_error!(result, "MissingEip1559ParamsInPayloadAttributes");
     }
 
@@ -494,11 +391,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000008")), None, 1732633200);
 
-        let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
-            &validator,
-            EngineApiMessageVersion::V3,
-            &attributes,
-        );
+        let result = validator.validate_attributes(&attributes);
         assert_invalid_params_error!(result, "Eip1559ParamsDenominatorZero");
     }
 
@@ -507,11 +400,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000000")), None, 1732633200);
 
-        let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
-            &validator,
-            EngineApiMessageVersion::V3,
-            &attributes,
-        );
+        let result = validator.validate_attributes(&attributes);
         assert_invalid_params_error!(result, "Eip1559ParamsElasticityZero");
     }
 
@@ -520,11 +409,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000008")), None, 1732633200);
 
-        let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
-            &validator,
-            EngineApiMessageVersion::V3,
-            &attributes,
-        );
+        let result = validator.validate_attributes(&attributes);
         assert!(result.is_ok());
     }
 
@@ -533,11 +418,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), None, 1732633200);
 
-        let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
-            &validator,
-            EngineApiMessageVersion::V3,
-            &attributes,
-        );
+        let result = validator.validate_attributes(&attributes);
         assert!(result.is_ok());
     }
 
@@ -552,11 +433,7 @@ mod tests {
                 .unwrap_or_default(),
         );
 
-        let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
-            &validator,
-            EngineApiMessageVersion::V3,
-            &attributes,
-        );
+        let result = validator.validate_attributes(&attributes);
         assert!(result.is_ok());
     }
 
@@ -572,11 +449,7 @@ mod tests {
                 .unwrap_or_default(),
         );
 
-        let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
-            &validator,
-            EngineApiMessageVersion::V3,
-            &attributes,
-        );
+        let result = validator.validate_attributes(&attributes);
         assert_invalid_params_error!(result, "MissingEip1559ParamsInPayloadAttributes");
     }
 
@@ -586,11 +459,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), Some(1), 1732633200);
 
-        let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
-            &validator,
-            EngineApiMessageVersion::V3,
-            &attributes,
-        );
+        let result = validator.validate_attributes(&attributes);
         assert_invalid_params_error!(result, "MinBaseFeeNotAllowedBeforeJovian");
     }
 
@@ -606,11 +475,7 @@ mod tests {
                 .unwrap_or_default(),
         );
 
-        let result = <BaseEngineValidator as EngineApiValidator>::ensure_well_formed_attributes(
-            &validator,
-            EngineApiMessageVersion::V3,
-            &attributes,
-        );
+        let result = validator.validate_attributes(&attributes);
         assert_invalid_params_error!(result, "MissingMinBaseFeeInPayloadAttributes");
     }
 
