@@ -24,7 +24,7 @@ const PRE_REGOLITH_SIGNATURE_BYTES: u64 = 68;
 /// Carries the values needed to price the L1 data fee and the Isthmus operator
 /// fee. The math ([`L1FeeParams::calculate_tx_l1_cost`],
 /// [`L1FeeParams::operator_fee_charge`]) is a faithful, engine-independent port
-/// of the OP-stack schedule and is shared by the revm and EVM2 integrations.
+/// of the OP-stack schedule used by Base execution.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct L1FeeParams {
     /// The base fee of the L1 origin block.

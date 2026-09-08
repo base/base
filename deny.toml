@@ -291,8 +291,7 @@ skip = [
     "sha1",
     "sha3",
 
-    # RustCrypto elliptic-curve stack — evm2 pulls newer versions than base's
-    # pinned crypto deps; version alignment tracks the eventual alloy/evm2 bump.
+    # Multiple cryptographic dependency versions used by the remaining crates.
     "base16ct",
     "crypto-bigint",
     "der",
@@ -301,8 +300,6 @@ skip = [
     "ff",
     "group",
     "k256",
-    "p256",
-    "primeorder",
     "rfc6979",
     "sec1",
     "signature",
@@ -319,5 +316,4 @@ allow-git = [
     "https://github.com/base/reth",
     "https://github.com/op-rs/op-reth",
     "https://github.com/ethereum-optimism/optimism",
-    "https://github.com/alloy-rs/evm2",
 ]

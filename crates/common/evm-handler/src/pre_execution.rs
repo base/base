@@ -372,7 +372,7 @@ pub fn apply_auth_list_eip2780<
         }
 
         // Refund-relevant facts for this accepted authorization (mirrors
-        // execution-specs `set_delegation` / evm2 `apply_one_auth`).
+        // execution-specs `set_delegation`).
         //   existed             — the authority account already existed in state.
         //   delegated_now       — its current code is a delegation (non-empty code
         //                          is necessarily EIP-7702 here, having passed the

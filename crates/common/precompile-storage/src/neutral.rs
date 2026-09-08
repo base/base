@@ -5,11 +5,8 @@
 //! `AccountInfo`/`Bytecode` state types read and written by native precompiles.
 //!
 //! The enshrined precompile logic (b20, policy, nonce, tx-context) is written
-//! against these types instead of naming `revm` directly, so the same logic can
-//! be reused across execution engines. This module is the single place that
-//! knows how to convert a base type into a concrete engine type: today only the
-//! `revm` conversions exist; an EVM2 backend adds the parallel conversions here
-//! without touching any enshrined logic.
+//! against these boundary types. This module converts them into the `revm`
+//! types used during execution.
 //!
 //! The conversions are exact, field-for-field mirrors of the corresponding
 //! `revm` constructors so that neutralizing the shared logic is behavior
