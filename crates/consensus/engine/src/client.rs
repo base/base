@@ -3,14 +3,14 @@
 use std::{future::Future, io, sync::Arc, time::Duration};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
-use alloy_primitives::{Address, B256, BlockHash, Bytes, StorageKey};
-use alloy_provider::{EthGetBlock, IpcConnect, Provider, RootProvider, RpcWithBlock};
+use alloy_primitives::{Address, B256, BlockHash, Bytes};
+use alloy_provider::{EthGetBlock, IpcConnect, Provider, RootProvider};
 use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
     ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, JwtSecret, PayloadId, PayloadStatus,
 };
-use alloy_rpc_types_eth::{EIP1186AccountProofResponse, SyncStatus as EthSyncStatus};
+use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
 use alloy_transport::{RpcError, TransportErrorKind, TransportResult};
 use alloy_transport_http::{
     AuthLayer, Http, HyperClient,
@@ -58,15 +58,13 @@ pub trait EngineClient: BaseEngineApi + Send + Sync {
     fn get_l1_block(&self, block: BlockId) -> EthGetBlock<<Ethereum as Network>::BlockResponse>;
 
     /// Fetches the L2 block with the provided `BlockId`.
-    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse>;
-
-    /// Get the account and storage values of the specified account including the merkle proofs.
-    /// This call can be used to verify that the data has not been tampered with.
-    fn get_proof(
+    async fn get_l2_block(
         &self,
-        address: Address,
-        keys: Vec<StorageKey>,
-    ) -> RpcWithBlock<(Address, Vec<StorageKey>), EIP1186AccountProofResponse>;
+        block: BlockId,
+    ) -> TransportResult<Option<<Base as Network>::BlockResponse>>;
+
+    /// Reads the account storage root at a specific L2 block.
+    async fn storage_root(&self, address: Address, block: BlockId) -> TransportResult<B256>;
 
     /// Fetches the L2 RPC block for the given [`BlockNumberOrTag`].
     async fn l2_block_by_label(
@@ -213,16 +211,15 @@ where
         self.l1_provider.get_block(block)
     }
 
-    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse> {
-        self.engine.get_block(block)
+    async fn get_l2_block(
+        &self,
+        block: BlockId,
+    ) -> TransportResult<Option<<Base as Network>::BlockResponse>> {
+        self.engine.get_block(block).full().await
     }
 
-    fn get_proof(
-        &self,
-        address: Address,
-        keys: Vec<StorageKey>,
-    ) -> RpcWithBlock<(Address, Vec<StorageKey>), EIP1186AccountProofResponse> {
-        self.engine.get_proof(address, keys)
+    async fn storage_root(&self, address: Address, block: BlockId) -> TransportResult<B256> {
+        Ok(self.engine.get_proof(address, Vec::new()).block_id(block).await?.storage_hash)
     }
 
     async fn l2_block_by_label(

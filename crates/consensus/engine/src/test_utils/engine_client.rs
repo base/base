@@ -4,8 +4,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_json_rpc::ErrorPayload;
-use alloy_primitives::{Address, B256, BlockHash, StorageKey};
-use alloy_provider::{EthGetBlock, ProviderCall, RpcWithBlock};
+use alloy_primitives::{Address, B256, BlockHash};
+use alloy_provider::{EthGetBlock, ProviderCall};
 use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
     ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
@@ -498,59 +498,36 @@ impl EngineClient for MockEngineClient {
         )
     }
 
-    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse> {
-        let storage = Arc::clone(&self.storage);
+    async fn get_l2_block(
+        &self,
+        block: BlockId,
+    ) -> TransportResult<Option<<Base as Network>::BlockResponse>> {
         let block_key = block_id_to_key(&block);
-
-        EthGetBlock::new_provider(
-            block,
-            Box::new(move |_kind| {
-                let storage = Arc::clone(&storage);
-                let block_key = block_key.clone();
-
-                ProviderCall::BoxedFuture(Box::pin(async move {
-                    let storage_guard = storage.read().await;
-                    if let Some(err) = storage_guard.l2_block_errors_by_id.get(&block_key).cloned()
-                    {
-                        return Err(match err {
-                            MockL2BlockError::ErrorResp(payload) => {
-                                TransportError::ErrorResp(payload)
-                            }
-                            MockL2BlockError::Custom(msg) => {
-                                TransportError::from(TransportErrorKind::custom_str(&msg))
-                            }
-                        });
-                    }
-                    Ok(storage_guard.l2_blocks_by_id.get(&block_key).cloned())
-                }))
-            }),
-        )
+        let storage = self.storage.read().await;
+        if let Some(error) = storage.l2_block_errors_by_id.get(&block_key).cloned() {
+            return Err(match error {
+                MockL2BlockError::ErrorResp(payload) => TransportError::ErrorResp(payload),
+                MockL2BlockError::Custom(message) => {
+                    TransportErrorKind::custom_str(&message).into()
+                }
+            });
+        }
+        Ok(storage.l2_blocks_by_id.get(&block_key).cloned())
     }
 
-    fn get_proof(
-        &self,
-        address: Address,
-        _keys: Vec<StorageKey>,
-    ) -> RpcWithBlock<(Address, Vec<StorageKey>), EIP1186AccountProofResponse> {
-        let storage = Arc::clone(&self.storage);
-
-        RpcWithBlock::new_provider(move |block_id| {
-            let storage = Arc::clone(&storage);
-            let block_key = block_id_to_key(&block_id);
-            let address = address;
-
-            ProviderCall::BoxedFuture(Box::pin(async move {
-                let storage_guard = storage.read().await;
-                storage_guard.proofs_by_address.get(&(address, block_key)).cloned().ok_or_else(
-                    || {
-                        TransportError::from(TransportErrorKind::custom_str(
-                            "No proof configured for this address and block. \
-                             Use with_proof() or set_proof() to set a response.",
-                        ))
-                    },
+    async fn storage_root(&self, address: Address, block: BlockId) -> TransportResult<B256> {
+        self.storage
+            .read()
+            .await
+            .proofs_by_address
+            .get(&(address, block_id_to_key(&block)))
+            .map(|proof| proof.storage_hash)
+            .ok_or_else(|| {
+                TransportErrorKind::custom_str(
+                    "No storage root configured for this account and block",
                 )
-            }))
-        })
+                .into()
+            })
     }
 
     async fn l2_block_by_label(

@@ -288,7 +288,6 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
         let mid = lo + (hi - lo) / 2;
         let block = engine_client
             .get_l2_block(mid.into())
-            .full()
             .await?
             .ok_or(SyncStartError::BlockNotFound(mid.into()))?;
         let consensus_block = block
@@ -325,7 +324,7 @@ async fn get_block_compat<EngineClient_: EngineClient>(
     engine_client: &EngineClient_,
     block_id: BlockId,
 ) -> TransportResult<Option<<Base as Network>::BlockResponse>> {
-    match engine_client.get_l2_block(block_id).full().await {
+    match engine_client.get_l2_block(block_id).await {
         Err(e) => {
             let err_str = e.to_string();
             // EIP-4444 error code for pruned state unavailable, or known string-based

@@ -10,13 +10,12 @@ use std::{
 };
 
 use alloy_eips::{BlockId, BlockNumberOrTag, eip1898::BlockNumberOrTag as Eip1898BlockNumberOrTag};
-use alloy_primitives::{Address, B256, BlockHash, StorageKey};
-use alloy_provider::{EthGetBlock, ProviderCall, RpcWithBlock};
+use alloy_primitives::{Address, B256, BlockHash};
+use alloy_provider::{EthGetBlock, ProviderCall};
 use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
     ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
-use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
@@ -223,44 +222,19 @@ impl EngineClient for FakeEngineClient {
         )
     }
 
-    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse> {
-        let numtag = match block {
-            BlockId::Number(numtag) => Some(numtag),
-            _ => None,
-        };
-        let state = Arc::clone(&self.state);
-        EthGetBlock::new_provider(
-            block,
-            Box::new(move |_| {
-                let state = Arc::clone(&state);
-                let numtag = numtag;
-                ProviderCall::BoxedFuture(Box::pin(async move {
-                    let mut state = state.lock().expect("FakeEngineClient state mutex poisoned");
-                    let block = numtag.map_or_else(
-                        || None,
-                        |numtag| {
-                            state.calls.push(EngineClientCall::L2BlockByLabel(numtag));
-                            state.l2_blocks_by_label.get(&numtag).cloned()
-                        },
-                    );
-                    Ok::<_, TransportError>(block)
-                }))
-            }),
-        )
+    async fn get_l2_block(
+        &self,
+        block: BlockId,
+    ) -> TransportResult<Option<<Base as Network>::BlockResponse>> {
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
+        let BlockId::Number(tag) = block else { return Ok(None) };
+        state.calls.push(EngineClientCall::L2BlockByLabel(tag));
+        Ok(state.l2_blocks_by_label.get(&tag).cloned())
     }
 
-    fn get_proof(
-        &self,
-        _address: Address,
-        _keys: Vec<StorageKey>,
-    ) -> RpcWithBlock<(Address, Vec<StorageKey>), EIP1186AccountProofResponse> {
-        RpcWithBlock::new_provider(|_| {
-            ProviderCall::BoxedFuture(Box::pin(async {
-                Err(TransportError::from(TransportErrorKind::custom_str(
-                    "proofs are not scripted for FakeEngineClient",
-                )))
-            }))
-        })
+    async fn storage_root(&self, _address: Address, _block: BlockId) -> TransportResult<B256> {
+        Err(TransportErrorKind::custom_str("storage roots are not scripted for FakeEngineClient")
+            .into())
     }
 
     async fn l2_block_by_label(

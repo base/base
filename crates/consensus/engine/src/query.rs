@@ -116,11 +116,10 @@ impl EngineQueries {
                         );
                         // Fetch the storage root for the L2 head block.
                         let l2_to_l1_message_passer = client
-                            .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Default::default())
-                            .block_id(block.into())
+                            .storage_root(Predeploys::L2_TO_L1_MESSAGE_PASSER, block.into())
                             .await?;
 
-                        l2_to_l1_message_passer.storage_hash
+                        l2_to_l1_message_passer
                     };
 
                 let output_response_v0 = OutputRoot::from_parts(

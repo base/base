@@ -54,7 +54,6 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
         let block = self
             .client
             .get_l2_block(self.block_number.into())
-            .full()
             .await
             .map_err(FinalizeTaskError::TransportError)?
             .ok_or(FinalizeTaskError::BlockNotFound(self.block_number))?

@@ -148,7 +148,6 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
             let l2_parent_hash = current_fc.un_safe.block_info.parent_hash.into();
             let l2_parent = engine_client
                 .get_l2_block(l2_parent_hash)
-                .full()
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(l2_parent_hash))?;
 
@@ -213,7 +212,6 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
             }
             let block = engine_client
                 .get_l2_block(safe_cursor.block_info.parent_hash.into())
-                .full()
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(safe_cursor.block_info.parent_hash.into()))?;
             safe_cursor = L2BlockInfo::from_block_and_genesis(
