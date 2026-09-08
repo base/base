@@ -5,12 +5,14 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
-use base_node_core::BaseNode;
 use eyre::Result;
-use reth_e2e_test_utils::testsuite::{
-    TestBuilder,
-    actions::AssertMineBlock,
-    setup::{NetworkSetup, Setup},
+use reth_e2e_test_utils::{
+    BaseNodeTestUtils,
+    testsuite::{
+        TestBuilder,
+        actions::AssertMineBlock,
+        setup::{NetworkSetup, Setup},
+    },
 };
 
 #[tokio::test]
@@ -21,7 +23,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
                 .chain(BaseChainSpec::mainnet().chain())
-                .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
+                .genesis(BaseNodeTestUtils::genesis())
                 .build(),
         ))
         .with_network(NetworkSetup::single_node());
@@ -57,7 +59,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
         .expect("valid test payload attributes"),
     ));
 
-    test.run(BaseNode::test_setup).await?;
+    test.run(BaseNodeTestUtils::test_setup).await?;
 
     Ok(())
 }
@@ -70,7 +72,7 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
                 .chain(BaseChainSpec::mainnet().chain())
-                .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
+                .genesis(BaseNodeTestUtils::genesis())
                 .isthmus_activated()
                 .build(),
         ))
@@ -107,7 +109,7 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
         .expect("valid test payload attributes"),
     ));
 
-    test.run(BaseNode::test_setup).await?;
+    test.run(BaseNodeTestUtils::test_setup).await?;
 
     Ok(())
 }

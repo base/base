@@ -14,7 +14,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
 };
-use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
+use base_node_core::{BasePoolBuilder, NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_txpool_rpc::SendRawTransactionValidityExtension;
 use eyre::{Result, WrapErr, eyre};
@@ -22,7 +22,6 @@ use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
 };
-use reth_node_builder::{NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
     args::{DatadirArgs, MetricArgs, NetworkArgs, RpcServerArgs},
     dirs::{DataDirPath, MaybePlatformPath},

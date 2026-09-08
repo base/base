@@ -39,7 +39,7 @@ use reth_tracing::tracing::{debug, info};
 use reth_trie_common::KeccakKeyHasher;
 use tokio::sync::oneshot;
 
-use crate::{BaseEngineApiBuilder, InvalidBlockHookBuilder, txpool_prewarm};
+use crate::{BaseEngineApiBuilder, InvalidBlockHookBuilder, TxpoolPrewarmSource};
 
 /// Contains the handles to the spawned RPC servers.
 ///
@@ -1001,13 +1001,10 @@ where
 /// Helper trait implemented for add-ons producing [`RpcHandle`]. Used by common node launcher
 /// implementations.
 pub trait RethRpcAddOns<N: FullNodeComponents>:
-    NodeAddOns<N, Handle = RpcHandle<N, Self::EthApi>>
+    NodeAddOns<N, Handle = RpcHandle<N, BaseNodeEthApi<N>>>
 {
-    /// eth API implementation.
-    type EthApi: EthApiTypes;
-
     /// Returns a mutable reference to RPC hooks.
-    fn hooks_mut(&mut self) -> &mut RpcHooks<N, Self::EthApi>;
+    fn hooks_mut(&mut self) -> &mut RpcHooks<N, BaseNodeEthApi<N>>;
 }
 
 impl<N: FullNodeComponents, RpcMiddleware, AuthHttpMiddleware> RethRpcAddOns<N>
@@ -1015,9 +1012,7 @@ impl<N: FullNodeComponents, RpcMiddleware, AuthHttpMiddleware> RethRpcAddOns<N>
 where
     Self: NodeAddOns<N, Handle = RpcHandle<N, BaseNodeEthApi<N>>>,
 {
-    type EthApi = BaseNodeEthApi<N>;
-
-    fn hooks_mut(&mut self) -> &mut RpcHooks<N, Self::EthApi> {
+    fn hooks_mut(&mut self) -> &mut RpcHooks<N, BaseNodeEthApi<N>> {
         &mut self.hooks
     }
 }
@@ -1057,8 +1052,8 @@ impl BasicEngineValidatorBuilder {
         );
 
         if txpool_prewarming {
-            validator = validator
-                .with_txpool_prewarming(txpool_prewarm::Source::new(ctx.node.pool().clone()));
+            validator =
+                validator.with_txpool_prewarming(TxpoolPrewarmSource::new(ctx.node.pool().clone()));
         }
 
         Ok(validator)

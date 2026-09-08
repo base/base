@@ -15,13 +15,12 @@ use async_trait::async_trait;
 use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{AllTransactionsEvents, BasePooledTransaction, TransactionPool};
-use base_node_core::args::RollupArgs;
+use base_node_core::{NodeBuilder, NodeConfig, RollupArgs};
 use base_node_runner::{
     BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks, test_utils::init_silenced_tracing,
 };
 use futures::FutureExt;
 use nanoid::nanoid;
-use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_node_core::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     exit::NodeExitFuture,

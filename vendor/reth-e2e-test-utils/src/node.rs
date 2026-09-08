@@ -9,10 +9,10 @@ use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use base_execution_rpc::BaseEthApi;
 use base_node_context::FullNodeComponents;
+use base_node_core::{FullNode, RethRpcAddOns};
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
-use reth_node_builder::{FullNode, rpc::RethRpcAddOns};
 use reth_primitives_traits::Block;
 use reth_provider::{
     BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions, HeaderProvider,
@@ -39,7 +39,7 @@ where
     /// Context for testing network functionalities.
     pub network: NetworkTestContext<reth_network::NetworkHandle>,
     /// Context for testing RPC features.
-    pub rpc: RpcTestContext<Node, AddOns::EthApi>,
+    pub rpc: RpcTestContext<Node, BaseEthApi<Node>>,
     /// Canonical state events.
     pub canonical_stream: CanonStateNotificationStream,
 }
@@ -86,7 +86,7 @@ where
         tx_generator: impl Fn(u64) -> Pin<Box<dyn Future<Output = Bytes>>>,
     ) -> eyre::Result<Vec<BaseBuiltPayload>>
     where
-        AddOns: RethRpcAddOns<Node, EthApi = BaseEthApi<Node>>,
+        AddOns: RethRpcAddOns<Node>,
     {
         let mut chain = Vec::with_capacity(length as usize);
         for i in 0..length {

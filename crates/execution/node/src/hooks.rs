@@ -2,7 +2,7 @@ use std::fmt;
 
 use base_node_context::{FullNodeComponents, NodeAddOns};
 
-use crate::node::FullNode;
+use crate::full_node::FullNode;
 
 /// Container for all the configurable hook functions.
 pub struct NodeHooks<Node: FullNodeComponents, AddOns: NodeAddOns<Node>> {

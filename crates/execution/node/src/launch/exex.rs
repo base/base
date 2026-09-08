@@ -14,7 +14,7 @@ use reth_provider::CanonStateSubscriptions;
 use reth_tracing::tracing::{debug, info};
 use tracing::Instrument;
 
-use crate::{common::WithConfigs, exex::BoxedLaunchExEx};
+use crate::{WithConfigs, exex::BoxedLaunchExEx};
 
 /// Can launch execution extensions.
 pub struct ExExLauncher<Node: FullNodeComponents> {

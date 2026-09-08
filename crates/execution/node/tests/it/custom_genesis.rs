@@ -8,12 +8,11 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_execution_chainspec::BaseChainSpecBuilder;
-use base_node_core::{BaseNode, utils::payload_attributes};
+use base_node_core::{BaseNode, EngineNodeLauncher, NodeBuilder, NodeConfig};
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
-    node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
+    BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
-use reth_node_builder::{EngineNodeLauncher, NodeBuilder, NodeConfig};
 use reth_node_core::args::DatadirArgs;
 use reth_provider::{BlockReaderIdExt, HeaderProvider, StageCheckpointReader};
 use reth_stages_types::StageId;
@@ -27,8 +26,7 @@ async fn test_base_node_custom_genesis_number() {
     let genesis_number = 1000;
 
     // Create genesis with custom block number (1000)
-    let mut genesis: Genesis =
-        serde_json::from_str(include_str!("../assets/genesis.json")).unwrap();
+    let mut genesis: Genesis = BaseNodeTestUtils::genesis();
     genesis.number = Some(genesis_number);
     genesis.parent_hash = Some(B256::random());
 
@@ -65,7 +63,9 @@ async fn test_base_node_custom_genesis_number() {
         .await
         .expect("Failed to launch node");
 
-    let mut node = NodeTestContext::new(node_handle.node, payload_attributes).await.unwrap();
+    let mut node = NodeTestContext::new(node_handle.node, BaseNodeTestUtils::payload_attributes)
+        .await
+        .unwrap();
 
     let genesis_hash = node
         .inner

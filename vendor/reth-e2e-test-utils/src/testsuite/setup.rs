@@ -8,9 +8,9 @@ use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
+use base_node_core::{ComponentBuilder, RethRpcAddOns};
 use eyre::{Result, eyre};
 use reth_engine_primitives::TreeConfig;
-use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 use reth_node_core::primitives::RecoveredBlock;
 use revm::state::EvmState;
 use tokio::{

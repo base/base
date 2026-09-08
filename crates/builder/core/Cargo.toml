@@ -91,7 +91,6 @@ jsonrpsee-core = { workspace = true, features = ["default"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
-reth-node-builder = { workspace = true, features = ["default"] }
 reth-tracing-otlp = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
@@ -137,8 +136,8 @@ http-body-util = { workspace = true, features = ["default"] }
 reth-trie-common = { workspace = true, features = ["default"] }
 criterion = { workspace = true, features = ["default", "html_reports"] }
 alloy-provider = { workspace = true, features = ["default", "txpool-api"] }
+base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }
-reth-node-builder = { workspace = true, features = ["default", "test-utils"] }
 
 [features]
 default = [ "jemalloc", "metrics" ]
@@ -180,7 +179,7 @@ test-utils = [
     "base-execution-evm/test-utils",
     "reth-execution-cache/test-utils",
     "reth-ipc",
-    "reth-node-builder/test-utils",
+    "base-node-core/test-utils",
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",

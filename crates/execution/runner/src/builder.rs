@@ -5,35 +5,21 @@
 
 use std::fmt;
 
-use base_node_context::BaseNodeContext;
+use base_node_core::{FullNode, NodeBuilderWithComponents, RpcContext, WithLaunchContext};
 use eyre::Result;
 use futures::future::BoxFuture;
 use reth_exex::ExExContext;
-use reth_node_builder::{
-    NodeBuilderWithComponents, WithLaunchContext,
-    node::FullNode,
-    rpc::{RethRpcAddOns, RpcContext},
-};
 
-use crate::types::{BaseNodeAddOns, BaseNodeTypes};
-
-/// Alias for the default Base components type.
-pub type BaseComponents = base_node_context::BaseNodeContext<BaseNodeTypes>;
-
-/// Convenience alias for the Base node adapter type used by the reth builder.
-///
-/// Because `Components` depends only on pool, network, executor, and consensus builders (not the
-/// payload service builder), this type is identical regardless of which payload service is used.
-pub type BaseNodeAdapter = BaseNodeContext<BaseNodeTypes>;
+use crate::types::{BaseNodeAddOns, BaseNodeComponents, BaseNodeTypes};
 
 /// Convenience alias for the Base Eth API type exposed by the reth RPC add-ons.
-type BaseEthApi = <BaseNodeAddOns as RethRpcAddOns<BaseNodeAdapter>>::EthApi;
+type BaseEthApi = base_execution_rpc::BaseEthApi<BaseNodeComponents>;
 
 /// Convenience alias for the full Base node handle produced after launch.
-type BaseFullNode = FullNode<BaseNodeAdapter, BaseNodeAddOns>;
+type BaseFullNode = FullNode<BaseNodeComponents, BaseNodeAddOns>;
 
 /// Alias for the RPC context used by Base extensions.
-pub type BaseRpcContext<'a> = RpcContext<'a, BaseNodeAdapter, BaseEthApi>;
+pub type BaseRpcContext<'a> = RpcContext<'a, BaseNodeComponents, BaseEthApi>;
 
 /// Hook type for extending RPC modules.
 type RpcModuleHook = Box<dyn FnOnce(&mut BaseRpcContext<'_>) -> Result<()> + Send + 'static>;
@@ -47,7 +33,7 @@ type NodeStartedHook = Box<dyn FnOnce(BaseFullNode) -> Result<()> + Send + 'stat
 /// Type-erased `ExEx` factory.
 type BoxExExFactory = Box<
     dyn FnOnce(
-            ExExContext<BaseNodeAdapter>,
+            ExExContext<BaseNodeComponents>,
         ) -> BoxFuture<'static, eyre::Result<BoxFuture<'static, eyre::Result<()>>>>
         + Send
         + 'static,
@@ -90,7 +76,7 @@ impl NodeHooks {
         // Install ExEx hooks
         for (id, factory) in exex_hooks {
             builder =
-                builder.install_exex(id, move |ctx: ExExContext<BaseNodeAdapter>| factory(ctx));
+                builder.install_exex(id, move |ctx: ExExContext<BaseNodeComponents>| factory(ctx));
         }
 
         for hook in add_ons_hooks {
@@ -150,7 +136,7 @@ impl NodeHooks {
     /// Installs an `ExEx` extension with the given name and closure.
     pub fn install_exex<F, R, E>(mut self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<BaseNodeAdapter>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<BaseNodeComponents>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send + 'static,
     {

@@ -31,7 +31,6 @@ alloy-primitives = { workspace = true, optional = true }
 base-common-network = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true}
 base-node-core = { workspace = true, features = ["default"] }
-reth-node-builder = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 url = { workspace = true, optional = true, features = ["default"] }
 base-common-rpc-types-engine = { workspace = true, optional = true }
@@ -87,7 +86,7 @@ test-utils = [
     "dep:tracing-subscriber",
     "dep:url",
     "reth-db/test-utils",
-    "reth-node-builder/test-utils",
+    "base-node-core/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
     "reth-tasks?/test-utils",

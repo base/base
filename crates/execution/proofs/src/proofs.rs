@@ -6,7 +6,7 @@ use base_execution_trie::{
     BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, RocksdbProofsStorage,
 };
 use base_node_context::FullNodeComponents;
-use base_node_core::args::{ProofsHistoryDbBackend, RollupArgs};
+use base_node_core::{ProofsHistoryDbBackend, RollupArgs};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_db::database_metrics::DatabaseMetrics;
 use reth_tasks::TaskExecutor;

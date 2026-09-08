@@ -12,17 +12,15 @@ use base_execution_payload_builder::{
 };
 use base_execution_txpool::{BasePooledTransaction, PoolTransaction};
 use base_node_core::{
-    BaseComponentsBuilder, BaseNode, BasePayloadServiceBuilder,
-    args::RollupArgs,
-    node::{BaseNetworkBuilder, BaseNodeComponentBuilder, BasePayloadBuilder, BasePoolBuilder},
-    utils::payload_attributes,
+    BaseComponentsBuilder, BaseNetworkBuilder, BaseNode, BasePayloadBuilder,
+    BasePayloadServiceBuilder, BasePoolBuilder, EngineNodeLauncher, NodeBuilder, NodeConfig,
+    RollupArgs,
 };
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_e2e_test_utils::{
-    node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
+    BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
-use reth_node_builder::{EngineNodeLauncher, NodeBuilder, NodeConfig};
 use reth_node_core::args::DatadirArgs;
 use reth_payload_util::{
     BestPayloadTransactions, PayloadTransactionsChain, PayloadTransactionsFixed,
@@ -81,7 +79,7 @@ where
 /// Builds the node with custom transaction priority service within default payload builder.
 fn build_components<DB>(
     chain_id: ChainId,
-) -> BaseNodeComponentBuilder<DB, BasePayloadBuilder<CustomTxPriority>>
+) -> BaseComponentsBuilder<DB, BasePayloadBuilder<CustomTxPriority>>
 where
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
 {
@@ -99,7 +97,7 @@ where
 async fn test_custom_block_priority_config() {
     reth_tracing::init_test_tracing();
 
-    let genesis: Genesis = serde_json::from_str(include_str!("../assets/genesis.json")).unwrap();
+    let genesis: Genesis = BaseNodeTestUtils::genesis();
     let chain_spec =
         Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build());
 
@@ -141,27 +139,28 @@ async fn test_custom_block_priority_config() {
         .expect("Failed to launch node");
 
     // Advance the chain with a single block.
-    let block_payloads = NodeTestContext::new(node_handle.node, payload_attributes)
-        .await
-        .unwrap()
-        .advance(1, |_| {
-            let wallet = Arc::clone(&wallet);
-            Box::pin(async move {
-                let mut wallet = wallet.lock().await;
-                let tx_fut = TransactionTestContext::optimism_l1_block_info_tx(
-                    wallet.chain_id,
-                    wallet.inner.clone(),
-                    // This doesn't matter in the current test (because it's only one block),
-                    // but make sure you're not reusing the nonce from end-of-block tx
-                    // if they have the same signer.
-                    wallet.inner_nonce * 2,
-                );
-                wallet.inner_nonce += 1;
-                tx_fut.await
+    let block_payloads =
+        NodeTestContext::new(node_handle.node, BaseNodeTestUtils::payload_attributes)
+            .await
+            .unwrap()
+            .advance(1, |_| {
+                let wallet = Arc::clone(&wallet);
+                Box::pin(async move {
+                    let mut wallet = wallet.lock().await;
+                    let tx_fut = TransactionTestContext::optimism_l1_block_info_tx(
+                        wallet.chain_id,
+                        wallet.inner.clone(),
+                        // This doesn't matter in the current test (because it's only one block),
+                        // but make sure you're not reusing the nonce from end-of-block tx
+                        // if they have the same signer.
+                        wallet.inner_nonce * 2,
+                    );
+                    wallet.inner_nonce += 1;
+                    tx_fut.await
+                })
             })
-        })
-        .await
-        .unwrap();
+            .await
+            .unwrap();
     assert_eq!(block_payloads.len(), 1);
     let block_payload = block_payloads.first().unwrap();
     let block = block_payload.block();

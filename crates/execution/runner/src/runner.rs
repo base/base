@@ -3,9 +3,8 @@
 use std::fmt;
 
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
-use base_node_core::{BasePayloadServiceBuilder, args::RollupArgs};
+use base_node_core::{BasePayloadServiceBuilder, NodeHandle, RollupArgs};
 use eyre::Result;
-use reth_node_builder::NodeHandle;
 use tracing::info;
 
 use crate::{

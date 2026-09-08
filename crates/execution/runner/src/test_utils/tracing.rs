@@ -5,7 +5,7 @@ use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 static INIT: Once = Once::new();
 
 /// Initializes tracing for integration tests while silencing the noisy executor warnings
-/// (`reth_tasks` and `reth_node_builder::launch::common`) that appear whenever multiple nodes
+/// (`reth_tasks` and `base_node_core::launch::common`) that appear whenever multiple nodes
 /// reuse the global rayon/Tokio pools in a single process.
 ///
 /// Tests call this helper before booting a harness; repeated calls are cheap and only the first one
@@ -15,7 +15,7 @@ pub fn init_silenced_tracing() {
         let mut filter =
             EnvFilter::builder().with_default_directive(LevelFilter::INFO.into()).from_env_lossy();
 
-        for directive in ["reth_tasks=off", "reth_node_builder::launch::common=off"] {
+        for directive in ["reth_tasks=off", "base_node_core::launch::common=off"] {
             if let Ok(directive) = directive.parse() {
                 filter = filter.add_directive(directive);
             }

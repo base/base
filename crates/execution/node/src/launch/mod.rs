@@ -1,16 +1,18 @@
 //! Abstraction for launching a node.
 
-pub mod common;
+mod common;
+pub use common::*;
 mod exex;
 mod invalid_block_hook;
 pub use invalid_block_hook::InvalidBlockHookBuilder;
 
-pub(crate) mod debug;
-pub(crate) mod engine;
-
+mod debug;
+pub use debug::*;
+mod engine;
 use std::future::IntoFuture;
 
 pub use common::LaunchContext;
+pub use engine::*;
 pub use exex::ExExLauncher;
 
 /// A general purpose trait that launches a new node of any kind.

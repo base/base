@@ -26,7 +26,7 @@ mod standard_node;
 use std::{ffi::OsString, fmt, marker::PhantomData};
 
 pub use app::CliApp;
-use base_node_core::args::RollupArgs;
+use base_node_core::{NodeBuilder, RollupArgs, WithLaunchContext};
 use chainspec::BaseChainSpecParser;
 use clap::Parser;
 use commands::Commands;
@@ -34,7 +34,6 @@ use futures::Future;
 use reth_cli_commands::launcher::FnLauncher;
 use reth_cli_runner::CliRunner;
 use reth_db::DatabaseEnv;
-use reth_node_builder::{NodeBuilder, WithLaunchContext};
 use reth_node_core::{
     args::{LogArgs, TraceArgs},
     version::version_metadata,
@@ -136,7 +135,7 @@ where
 #[cfg(test)]
 mod tests {
     use base_execution_chainspec::BaseChainSpec;
-    use base_node_core::args::RollupArgs;
+    use base_node_core::RollupArgs;
     use clap::Parser;
     use reth_cli_commands::{NodeCommand, node::NoArgs};
 

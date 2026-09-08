@@ -14,16 +14,16 @@ use reth_engine_tree::tree::{
 
 /// [`TransactionPool`]-backed [`PrewarmSource`].
 #[derive(Debug)]
-pub(crate) struct Source<P>(P);
+pub struct TxpoolPrewarmSource<P>(pub P);
 
-impl<P> Source<P> {
+impl<P> TxpoolPrewarmSource<P> {
     /// Creates a new txpool prewarm source.
-    pub(crate) const fn new(pool: P) -> Self {
+    pub const fn new(pool: P) -> Self {
         Self(pool)
     }
 }
 
-impl<P> PrewarmSource for Source<P>
+impl<P> PrewarmSource for TxpoolPrewarmSource<P>
 where
     P: TransactionPool<Transaction: PoolTransaction<Consensus = BaseTxEnvelope>>
         + Clone

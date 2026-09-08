@@ -7,7 +7,7 @@ use base_builder_core::{
         setup_test_instance_with_node_config,
     },
 };
-use reth_node_builder::NodeConfig;
+use base_node_core::NodeConfig;
 use reth_node_core::args::TxPoolArgs;
 
 #[tokio::test]

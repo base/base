@@ -31,10 +31,6 @@ use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
 use reth_network_peers::NodeRecord;
-use reth_node_builder::{
-    BuilderContext, DebugNodeConfig,
-    components::{PoolBuilderConfigOverrides, spawn_maintenance_tasks},
-};
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
@@ -43,7 +39,9 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
     BaseAddOns, BaseAddOnsBuilder, BaseComponentsBuilder, BasePayloadServiceBuilder,
+    BuilderContext, DebugNodeConfig, PoolBuilderConfigOverrides,
     args::{RollupArgs, TxpoolOrdering},
+    spawn_maintenance_tasks,
 };
 
 /// Discovery v5 protocol version for Base.
@@ -140,10 +138,6 @@ pub struct BaseNode {
     pub gas_limit_config: GasLimitConfig,
 }
 
-/// Base component construction with a configurable payload builder.
-pub type BaseNodeComponentBuilder<Node, Payload = BasePayloadBuilder> =
-    BaseComponentsBuilder<Node, Payload>;
-
 impl BaseNode {
     /// Creates a new instance of the Base node type.
     pub fn new(args: RollupArgs) -> Self {
@@ -167,7 +161,7 @@ impl BaseNode {
     }
 
     /// Returns the components for the given [`RollupArgs`].
-    pub fn components<DB>(&self) -> BaseNodeComponentBuilder<DB>
+    pub fn components<DB>(&self) -> BaseComponentsBuilder<DB>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     {
@@ -256,19 +250,6 @@ impl BaseNode {
 
 /// Concrete add-ons for the core Base node and its provider adapter.
 pub type BaseNodeAddOns<N> = BaseAddOns<BaseNodeContext<N>>;
-
-// Compatibility with Reth's generic node test harness.
-#[cfg(feature = "test-utils")]
-impl BaseNode {
-    /// Supplies Base components and add-ons for each node in an end-to-end test.
-    pub fn test_setup() -> (
-        reth_node_builder::ComponentBuilder<reth_e2e_test_utils::TmpNodeAdapter>,
-        crate::BaseNodeAddOns<reth_e2e_test_utils::TmpNodeAdapter>,
-    ) {
-        let node = Self::default();
-        (node.components().into_builder(), node.add_ons_builder().build())
-    }
-}
 
 impl BaseNode {
     /// Returns the concrete RPC conversion and local-mining configuration.
@@ -389,7 +370,7 @@ impl BasePoolBuilder {
             ..
         } = self;
 
-        let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
+        let blob_store = crate::create_blob_store(ctx)?;
         let validator =
             TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
                 .no_eip4844()

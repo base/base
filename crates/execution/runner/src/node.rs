@@ -3,9 +3,8 @@
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_txpool::GuardLimits;
 use base_node_core::{
-    BaseComponentsBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder, BasePayloadServiceBuilder,
-    args::RollupArgs,
-    node::{BasePayloadBuilder, BasePoolBuilder},
+    BaseComponentsBuilder, BaseNetworkBuilder, BasePayloadBuilder, BasePayloadServiceBuilder,
+    BasePoolBuilder, RollupArgs,
 };
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_provider::providers::ProviderFactoryBuilder;
@@ -70,7 +69,7 @@ impl BaseNode {
     }
 
     /// Returns the components for the given [`RollupArgs`].
-    pub fn components<DB>(&self) -> BaseNodeComponentBuilder<DB>
+    pub fn components<DB>(&self) -> BaseComponentsBuilder<DB>
     where
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     {

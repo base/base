@@ -7,11 +7,10 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_node_core::BaseNode;
 use eyre::Result;
 use fixtures::BaseTestPayload;
 use reth_e2e_test_utils::{
-    E2ETestSetupBuilder,
+    BaseNodeTestUtils, E2ETestSetupBuilder,
     testsuite::{
         TestBuilder,
         actions::{
@@ -32,7 +31,7 @@ async fn test_testsuite_produce_blocks() -> Result<()> {
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
                 .chain(BaseChainSpec::mainnet().chain())
-                .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
+                .genesis(BaseNodeTestUtils::genesis())
                 .ecotone_activated()
                 .build(),
         ))
@@ -43,7 +42,7 @@ async fn test_testsuite_produce_blocks() -> Result<()> {
         .with_action(ProduceBlocks::new(5))
         .with_action(MakeCanonical::new());
 
-    test.run(BaseNode::test_setup).await?;
+    test.run(BaseNodeTestUtils::test_setup).await?;
 
     Ok(())
 }
@@ -57,7 +56,7 @@ async fn test_testsuite_create_fork() -> Result<()> {
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
                 .chain(BaseChainSpec::mainnet().chain())
-                .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
+                .genesis(BaseNodeTestUtils::genesis())
                 .ecotone_activated()
                 .build(),
         ))
@@ -69,7 +68,7 @@ async fn test_testsuite_create_fork() -> Result<()> {
         .with_action(MakeCanonical::new())
         .with_action(CreateFork::new(1, 3));
 
-    test.run(BaseNode::test_setup).await?;
+    test.run(BaseNodeTestUtils::test_setup).await?;
 
     Ok(())
 }
@@ -83,7 +82,7 @@ async fn test_testsuite_reorg_with_tagging() -> Result<()> {
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
                 .chain(BaseChainSpec::mainnet().chain())
-                .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
+                .genesis(BaseNodeTestUtils::genesis())
                 .ecotone_activated()
                 .build(),
         ))
@@ -107,7 +106,7 @@ async fn test_testsuite_reorg_with_tagging() -> Result<()> {
         .with_action(CaptureBlock::new("fork_tip")) // tag fork tip
         .with_action(ReorgTo::new_from_tag("fork_tip")); // reorg to fork tip
 
-    test.run(BaseNode::test_setup).await?;
+    test.run(BaseNodeTestUtils::test_setup).await?;
 
     Ok(())
 }
@@ -121,7 +120,7 @@ async fn test_testsuite_deep_reorg() -> Result<()> {
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
                 .chain(BaseChainSpec::mainnet().chain())
-                .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
+                .genesis(BaseNodeTestUtils::genesis())
                 .ecotone_activated()
                 .build(),
         ))
@@ -145,7 +144,7 @@ async fn test_testsuite_deep_reorg() -> Result<()> {
         // receive forkchoiceUpdated with block hash B as head
         .with_action(ReorgTo::new_from_tag("blockB_height2"));
 
-    test.run(BaseNode::test_setup).await?;
+    test.run(BaseNodeTestUtils::test_setup).await?;
 
     Ok(())
 }
@@ -167,7 +166,7 @@ async fn test_testsuite_multinode_block_production() -> Result<()> {
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
                 .chain(BaseChainSpec::mainnet().chain())
-                .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
+                .genesis(BaseNodeTestUtils::genesis())
                 .ecotone_activated()
                 .build(),
         ))
@@ -192,7 +191,7 @@ async fn test_testsuite_multinode_block_production() -> Result<()> {
         // verify both nodes remain in sync
         .with_action(CompareNodeChainTips::expect_same(0, 1));
 
-    test.run(BaseNode::test_setup).await?;
+    test.run(BaseNodeTestUtils::test_setup).await?;
 
     Ok(())
 }
@@ -204,7 +203,7 @@ async fn test_setup_builder_with_custom_tree_config() -> Result<()> {
     let chain_spec = Arc::new(
         BaseChainSpecBuilder::default()
             .chain(BaseChainSpec::mainnet().chain())
-            .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
+            .genesis(BaseNodeTestUtils::genesis())
             .ecotone_activated()
             .build(),
     );
@@ -215,7 +214,7 @@ async fn test_setup_builder_with_custom_tree_config() -> Result<()> {
     .with_tree_config_modifier(|config| {
         config.with_persistence_threshold(0).with_memory_block_buffer_target(5)
     })
-    .build(BaseNode::test_setup)
+    .build(BaseNodeTestUtils::test_setup)
     .await?;
 
     assert_eq!(nodes.len(), 1);

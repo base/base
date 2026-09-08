@@ -7,10 +7,12 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::builder::BasePayloadTransactions;
 use base_node_context::BaseNodeContext;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
-use reth_node_builder::{BuilderContext, ComponentBuilder};
 use reth_provider::providers::BlockchainProvider;
 
-use crate::{BaseNetworkBuilder, BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder};
+use crate::{
+    BaseNetworkBuilder, BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder,
+    BuilderContext, ComponentBuilder,
+};
 
 /// Constructs Base components while allowing the payload service to vary.
 #[derive(Debug)]

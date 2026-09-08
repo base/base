@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use base_node_core::utils::{advance_chain, setup};
 use futures::StreamExt;
+use reth_e2e_test_utils::BaseNodeTestUtils;
 use tokio::sync::Mutex;
 
 // Ignored: reth's deferred_trie `wait_cloned` debug_assert fires when called from a Rayon
@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 async fn can_sync() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
-    let (mut nodes, wallet) = setup(3).await?;
+    let (mut nodes, wallet) = BaseNodeTestUtils::setup(3).await?;
     let wallet = Arc::new(Mutex::new(wallet));
 
     let third_node = nodes.pop().unwrap();
@@ -26,7 +26,8 @@ async fn can_sync() -> eyre::Result<()> {
     let reorg_depth = 2;
 
     // On first node, create a chain up to block number 90a
-    let canonical_payload_chain = advance_chain(tip, &mut first_node, Arc::clone(&wallet)).await?;
+    let canonical_payload_chain =
+        BaseNodeTestUtils::advance_chain(tip, &mut first_node, Arc::clone(&wallet)).await?;
     let canonical_chain =
         canonical_payload_chain.iter().map(|p| p.block().hash()).collect::<Vec<_>>();
 
@@ -60,7 +61,8 @@ async fn can_sync() -> eyre::Result<()> {
     wallet.lock().await.inner_nonce -= reorg_depth as u64;
     second_node.payload.timestamp = first_node.payload.timestamp - reorg_depth as u64; // TODO: probably want to make it node agnostic
     let side_payload_chain =
-        advance_chain(reorg_depth, &mut second_node, Arc::clone(&wallet)).await?;
+        BaseNodeTestUtils::advance_chain(reorg_depth, &mut second_node, Arc::clone(&wallet))
+            .await?;
     let side_chain = side_payload_chain.iter().map(|p| p.block().hash()).collect::<Vec<_>>();
 
     // Creates fork chain by submitting 89b payload.

@@ -5,13 +5,14 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{BasePooledTx, TransactionPool};
 use base_node_context::{FullNodeComponents, NodeAddOns};
-use reth_node_builder::rpc::{
-    Identity, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext,
-    RpcHandle,
-};
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
+
+use crate::{
+    Identity, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext,
+    RpcHandle,
+};
 
 /// Add-ons w.r.t. Base.
 ///
@@ -132,8 +133,7 @@ where
 
         rpc_add_ons
             .launch_add_ons_with(ctx, move |container| {
-                let reth_node_builder::rpc::RpcModuleContainer { modules, auth_module, registry } =
-                    container;
+                let crate::RpcModuleContainer { modules, auth_module, registry } = container;
 
                 modules.merge_if_module_configured(RethRpcModule::Eth, eth_config.into_rpc())?;
 
@@ -170,9 +170,7 @@ where
     <base_node_context::BaseNodePool<N::Provider> as TransactionPool>::Transaction: BasePooledTx,
     RpcMiddleware: RethRpcMiddleware,
 {
-    type EthApi = BaseNodeEthApi<N>;
-
-    fn hooks_mut(&mut self) -> &mut reth_node_builder::rpc::RpcHooks<N, Self::EthApi> {
+    fn hooks_mut(&mut self) -> &mut crate::RpcHooks<N, BaseNodeEthApi<N>> {
         self.rpc_add_ons.hooks_mut()
     }
 }

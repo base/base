@@ -6,9 +6,9 @@ use base_common_consensus::BaseTxEnvelope;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_node_context::BaseNodeContext;
+use base_node_core::{ComponentBuilder, RethRpcAddOns};
 use node::NodeTestContext;
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
-use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 use reth_provider::providers::BlockchainProvider;
 use wallet::Wallet;
 
@@ -132,3 +132,6 @@ pub type Adapter = BaseNodeContext<TmpNodeAdapter>;
 
 /// Context for a test node with explicit components and add-ons.
 pub type NodeHelperType<AO> = NodeTestContext<Adapter, AO>;
+
+mod base_node;
+pub use base_node::{BaseNodeTestUtils, BaseTestNode};

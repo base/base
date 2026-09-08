@@ -9,12 +9,12 @@ use alloy_rpc_types_engine::PayloadAttributes;
 use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_protocol::L1BlockInfoEcotone;
+use reth_e2e_test_utils::BaseNodeTestUtils;
 use reth_primitives_traits::WithEncoded;
 #[path = "../fixtures/mod.rs"]
 pub mod fixtures;
 use alloy_rpc_types_eth::{Transaction, TransactionInput, TransactionReceipt, TransactionRequest};
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_node_core::BaseNode;
 use eyre::Result;
 use fixtures::BaseTestPayload;
 use jsonrpsee::core::client::ClientT;
@@ -81,10 +81,7 @@ fn test_chain_spec() -> Arc<BaseChainSpec> {
     Arc::new(
         BaseChainSpecBuilder::default()
             .chain(BaseChainSpec::mainnet().chain())
-            .genesis(
-                serde_json::from_str(include_str!("../assets/genesis.json"))
-                    .expect("failed to parse genesis.json"),
-            )
+            .genesis(BaseNodeTestUtils::genesis())
             .ecotone_activated()
             .build(),
     )
@@ -121,7 +118,7 @@ async fn test_rocksdb_node_startup() -> Result<()> {
     let chain_spec = test_chain_spec();
 
     let (nodes, _wallet) = E2ETestSetupBuilder::new(1, chain_spec, test_attributes_generator)
-        .build(BaseNode::test_setup)
+        .build(BaseNodeTestUtils::test_setup)
         .await?;
 
     assert_eq!(nodes.len(), 1);
@@ -147,7 +144,7 @@ async fn test_rocksdb_block_mining() -> Result<()> {
     let chain_id = chain_spec.chain().id();
 
     let (mut nodes, _wallet) = E2ETestSetupBuilder::new(1, chain_spec, test_attributes_generator)
-        .build(BaseNode::test_setup)
+        .build(BaseNodeTestUtils::test_setup)
         .await?;
 
     assert_eq!(nodes.len(), 1);
@@ -202,7 +199,7 @@ async fn test_rocksdb_transaction_queries() -> Result<()> {
         .with_tree_config_modifier(|config| {
             config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
         })
-        .build(BaseNode::test_setup)
+        .build(BaseNodeTestUtils::test_setup)
         .await?;
 
     assert_eq!(nodes.len(), 1);
@@ -266,7 +263,7 @@ async fn test_rocksdb_multi_tx_same_block() -> Result<()> {
         .with_tree_config_modifier(|config| {
             config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
         })
-        .build(BaseNode::test_setup)
+        .build(BaseNodeTestUtils::test_setup)
         .await?;
 
     // Create 3 txs from the same wallet with sequential nonces
@@ -331,7 +328,7 @@ async fn test_rocksdb_txs_across_blocks() -> Result<()> {
         .with_tree_config_modifier(|config| {
             config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
         })
-        .build(BaseNode::test_setup)
+        .build(BaseNodeTestUtils::test_setup)
         .await?;
 
     let wallets = wallet::Wallet::new(1).with_chain_id(chain_id).wallet_gen();
@@ -413,7 +410,7 @@ async fn test_rocksdb_pending_tx_not_in_storage() -> Result<()> {
         .with_tree_config_modifier(|config| {
             config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
         })
-        .build(BaseNode::test_setup)
+        .build(BaseNodeTestUtils::test_setup)
         .await?;
 
     let wallets = wallet::Wallet::new(1).with_chain_id(chain_id).wallet_gen();
@@ -469,7 +466,7 @@ async fn test_rocksdb_reorg_unwind() -> Result<()> {
         .with_tree_config_modifier(|config| {
             config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
         })
-        .build(BaseNode::test_setup)
+        .build(BaseNodeTestUtils::test_setup)
         .await?;
 
     assert_eq!(nodes.len(), 1);
@@ -589,7 +586,7 @@ async fn test_rocksdb_historical_account_queries() -> Result<()> {
         .with_tree_config_modifier(|config| {
             config.with_persistence_threshold(0).with_memory_block_buffer_target(0)
         })
-        .build(BaseNode::test_setup)
+        .build(BaseNodeTestUtils::test_setup)
         .await?;
 
     assert_eq!(nodes.len(), 1);
@@ -739,7 +736,7 @@ async fn test_rocksdb_account_history_pruning() -> Result<()> {
             config.pruning.block_interval = Some(1);
             config
         })
-        .build(BaseNode::test_setup)
+        .build(BaseNodeTestUtils::test_setup)
         .await?;
 
     assert_eq!(nodes.len(), 1);
@@ -833,7 +830,7 @@ async fn test_rocksdb_storage_history_pruning() -> Result<()> {
             config.pruning.block_interval = Some(1);
             config
         })
-        .build(BaseNode::test_setup)
+        .build(BaseNodeTestUtils::test_setup)
         .await?;
 
     assert_eq!(nodes.len(), 1);

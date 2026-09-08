@@ -62,7 +62,6 @@ alloy-consensus = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 axum = { workspace = true, features = ["http1", "tokio"] }
 serde = { workspace = true, features = ["derive", "std"] }
-base-node-core = { workspace = true, features = ["default"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
@@ -83,9 +82,9 @@ testcontainers-modules = { workspace = true, features = ["postgres"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest"] }
+base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }
-reth-node-builder = { workspace = true, features = ["default", "test-utils"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "fmt"] }
 base-prover-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
@@ -107,6 +106,7 @@ tokio-tungstenite = { workspace = true, features = ["default"] }
 base-shadow-indexer = { workspace = true, features = ["default"] }
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
+
 [features]
 default = [ "upgrade-signal" ]
 # The upgrade-signal stack deploys a mock ProtocolVersions contract via base-test-utils, whose

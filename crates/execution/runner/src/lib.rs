@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod builder;
-pub use builder::{BaseComponents, BaseNodeAdapter, BaseRpcContext, NodeHooks, RethNodeBuilder};
+pub use builder::{BaseRpcContext, NodeHooks, RethNodeBuilder};
 
 mod extension;
 pub use extension::{BaseNodeExtension, FromExtensionConfig};

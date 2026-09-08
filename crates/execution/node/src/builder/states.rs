@@ -15,9 +15,9 @@ use reth_provider::providers::RocksDBProvider;
 
 use crate::{
     FullNode,
-    components::ComponentBuilder,
     hooks::NodeHooks,
     launch::LaunchNode,
+    launch_components::ComponentBuilder,
     rpc::{RethRpcAddOns, RethRpcServerHandles, RpcContext},
 };
 
@@ -170,7 +170,11 @@ where
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, BaseNodeContext<DB>, AO::EthApi>,
+                RpcContext<
+                    '_,
+                    BaseNodeContext<DB>,
+                    base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>,
+                >,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -185,7 +189,13 @@ where
     /// Sets the hook that is run to configure the rpc modules.
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
-        F: FnOnce(RpcContext<'_, BaseNodeContext<DB>, AO::EthApi>) -> eyre::Result<()>
+        F: FnOnce(
+                RpcContext<
+                    '_,
+                    BaseNodeContext<DB>,
+                    base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>,
+                >,
+            ) -> eyre::Result<()>
             + Send
             + 'static,
     {

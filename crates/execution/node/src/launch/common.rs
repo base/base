@@ -97,7 +97,8 @@ use tokio::sync::{
 };
 
 use crate::{
-    BuilderContext, ExExLauncher, components::ComponentBuilder, hooks::OnComponentInitializedHook,
+    BuilderContext, ExExLauncher, hooks::OnComponentInitializedHook,
+    launch_components::ComponentBuilder,
 };
 
 /// Reusable setup for launching a node.

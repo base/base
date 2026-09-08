@@ -3,7 +3,7 @@ use std::fmt;
 use base_node_context::FullNodeComponents;
 use reth_node_core::exit::NodeExitFuture;
 
-use crate::{node::FullNode, rpc::RethRpcAddOns};
+use crate::{full_node::FullNode, rpc::RethRpcAddOns};
 
 /// A Handle to the launched node.
 #[must_use = "Needs to await the node exit future"]

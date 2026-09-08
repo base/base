@@ -7,9 +7,9 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelopeV3;
 use base_execution_payload_builder::PayloadId;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
+use base_node_core::{ComponentBuilder, RethRpcAddOns};
 use eyre::Result;
 use jsonrpsee::http_client::HttpClient;
-use reth_node_builder::{ComponentBuilder, rpc::RethRpcAddOns};
 
 use crate::testsuite::actions::{Action, ActionBox};
 pub mod actions;

@@ -130,7 +130,7 @@ where
 /// ```
 /// use futures::FutureExt;
 /// use reth_db::test_utils::create_test_rw_db;
-/// use reth_node_builder::{NodeBuilder, NodeConfig};
+/// use base_node_core::{NodeBuilder, NodeConfig};
 /// use base_execution_chainspec::BaseChainSpec;
 /// use base_execution_exex::BaseProofsExEx;
 /// use base_node_core::{BaseNode, args::RollupArgs};

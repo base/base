@@ -3,9 +3,8 @@
 use std::sync::Arc;
 
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::BaseNode;
+use base_node_core::{BaseNode, NodeBuilder, NodeHandle};
 use reth_network::types::NatResolver;
-use reth_node_builder::{NodeBuilder, NodeHandle};
 use reth_node_core::{
     args::{NetworkArgs, RpcServerArgs},
     node_config::NodeConfig,

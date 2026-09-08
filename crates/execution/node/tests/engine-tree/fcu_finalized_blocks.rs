@@ -3,15 +3,17 @@
 use std::sync::Arc;
 
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_node_core::BaseNode;
 use eyre::Result;
-use reth_e2e_test_utils::testsuite::{
-    TestBuilder,
-    actions::{
-        AssertChainTip, BlockReference, CaptureBlock, CreateFork, FinalizeBlock, MakeCanonical,
-        ProduceBlocks, SendForkchoiceUpdate, UpdateBlockInfo,
+use reth_e2e_test_utils::{
+    BaseNodeTestUtils,
+    testsuite::{
+        TestBuilder,
+        actions::{
+            AssertChainTip, BlockReference, CaptureBlock, CreateFork, FinalizeBlock, MakeCanonical,
+            ProduceBlocks, SendForkchoiceUpdate, UpdateBlockInfo,
+        },
+        setup::{NetworkSetup, Setup},
     },
-    setup::{NetworkSetup, Setup},
 };
 use reth_engine_primitives::TreeConfig;
 
@@ -24,7 +26,7 @@ fn default_engine_tree_setup() -> Setup {
         .with_chain_spec(Arc::new(
             BaseChainSpecBuilder::default()
                 .chain(BaseChainSpec::mainnet().chain())
-                .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
+                .genesis(BaseNodeTestUtils::genesis())
                 .ecotone_activated()
                 .build(),
         ))
@@ -72,7 +74,7 @@ async fn test_fcu_to_canonical_ancestor_around_finalized() -> Result<()> {
         .with_action(MakeCanonical::new())
         .with_action(AssertChainTip::new(9));
 
-    test.run(BaseNode::test_setup).await?;
+    test.run(BaseNodeTestUtils::test_setup).await?;
 
     Ok(())
 }

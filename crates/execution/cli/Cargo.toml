@@ -55,7 +55,6 @@ tokio-stream = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 reth-db = { workspace = true, features = ["default", "mdbx"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-reth-node-builder = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default"] }
@@ -81,6 +80,7 @@ axum = { workspace = true, features = ["tokio", "http1"] }
 tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] }
 [build-dependencies]
 base-execution-chainspec = { workspace = true, features = ["default", "std"] }
+
 [features]
 default = []
 
@@ -109,11 +109,11 @@ dev = [
 ]
 
 serde = [
-	"alloy-eips/serde",
-	"base-common-chains/serde",
-	"base-common-consensus/serde",
-	"base-execution-chainspec/serde",
-	"reth-network/serde",
-	"secp256k1/serde",
-	"url/serde",
+    "alloy-eips/serde",
+    "base-common-chains/serde",
+    "base-common-consensus/serde",
+    "base-execution-chainspec/serde",
+    "reth-network/serde",
+    "secp256k1/serde",
+    "url/serde",
 ]

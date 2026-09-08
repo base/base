@@ -9,9 +9,8 @@ use base_execution_payload_builder::{
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
-use reth_node_builder::BuilderContext;
 
-use crate::BasePayloadBuilder;
+use crate::{BasePayloadBuilder, BuilderContext};
 
 /// Scheduling used for Base payload construction.
 #[derive(Debug, Clone, Copy)]

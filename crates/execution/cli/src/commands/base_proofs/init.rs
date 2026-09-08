@@ -8,7 +8,7 @@ use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,
     MdbxProofsStorage, RocksdbProofsStorage,
 };
-use base_node_core::args::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
+use base_node_core::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};

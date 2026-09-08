@@ -12,13 +12,12 @@ use eyre::ErrReport;
 use futures::FutureExt;
 use reth_db::DatabaseEnv;
 use reth_db_api::database_metrics::DatabaseMetrics;
-use reth_node_builder::{NodeBuilder, NodeBuilderWithComponents, WithLaunchContext};
 use reth_tasks::TaskExecutor;
 use tokio::time::sleep;
 use tracing::info;
 
 use crate::{
-    BaseNode, BaseNodeAddOns,
+    BaseNode, BaseNodeAddOns, NodeBuilder, NodeBuilderWithComponents, WithLaunchContext,
     args::{DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, RollupArgs},
 };
 

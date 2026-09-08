@@ -77,8 +77,8 @@ alloy-consensus = { workspace = true, features = ["serde"]}
 reth-net-nat = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-trie-db = { workspace = true, features = ["metrics"] }
+base-node-core = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
-reth-node-builder = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
 reth-static-file-types = { workspace = true, features = ["clap"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }

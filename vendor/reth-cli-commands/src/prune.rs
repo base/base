@@ -2,11 +2,11 @@
 use std::sync::Arc;
 
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
+use base_node_core::metrics_hooks;
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_runner::CliContext;
 use reth_cli_util::cancellation::CancellationToken;
-use reth_node_builder::common::metrics_hooks;
 use reth_node_core::{args::MetricArgs, version::version_metadata};
 use reth_node_metrics::{
     chain::ChainSpecInfo,

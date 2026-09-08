@@ -36,9 +36,9 @@ use tracing::{info, trace, warn};
 
 use crate::{
     BlockReaderFor, DebugNodeConfig, DebugNodeLauncher, EngineNodeLauncher, LaunchNode,
-    common::WithConfigs,
-    components::ComponentBuilder,
-    node::FullNode,
+    WithConfigs,
+    full_node::FullNode,
+    launch_components::ComponentBuilder,
     rpc::{RethRpcAddOns, RethRpcServerHandles, RpcContext},
 };
 
@@ -63,7 +63,7 @@ pub use states::*;
 ///  - The EVM and Executor configuration: [`BaseEvmConfig`](base_execution_evm::BaseEvmConfig)
 ///  - The transaction pool: the Base transaction pool builder
 ///  - The network: the Base network builder
-///  - The payload builder: [`PayloadBuilder`](crate::components::PayloadServiceBuilder)
+///  - The payload builder: [`PayloadBuilder`](crate::launch_components::PayloadServiceBuilder)
 ///
 /// Once all the components are configured, the node is ready to be launched.
 ///
@@ -449,7 +449,11 @@ where
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
         F: FnOnce(
-                RpcContext<'_, BaseNodeContext<DB>, AO::EthApi>,
+                RpcContext<
+                    '_,
+                    BaseNodeContext<DB>,
+                    base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>,
+                >,
                 RethRpcServerHandles,
             ) -> eyre::Result<()>
             + Send
@@ -496,7 +500,13 @@ where
     /// ```
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
-        F: FnOnce(RpcContext<'_, BaseNodeContext<DB>, AO::EthApi>) -> eyre::Result<()>
+        F: FnOnce(
+                RpcContext<
+                    '_,
+                    BaseNodeContext<DB>,
+                    base_execution_rpc::BaseEthApi<BaseNodeContext<DB>>,
+                >,
+            ) -> eyre::Result<()>
             + Send
             + 'static,
     {

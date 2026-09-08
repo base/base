@@ -4,7 +4,7 @@ use alloy_network::eip2718::Decodable2718;
 use alloy_primitives::{B256, Bytes};
 use base_execution_rpc::{BaseEthApi, BaseEthApiError, EthApiTypes};
 use base_node_context::FullNodeComponents;
-use reth_node_builder::rpc::RpcRegistry;
+use base_node_core::RpcRegistry;
 use reth_rpc_api::DebugApiServer;
 
 #[expect(missing_debug_implementations)]
