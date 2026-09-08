@@ -396,7 +396,7 @@ mod tests {
         Address, B256, LogData, U256, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_common_consensus::BaseReceipt;
+    use base_common_consensus::{BaseBlock, BaseReceipt};
     use base_common_evm::BaseSpecId;
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -605,23 +605,18 @@ mod tests {
 
     #[test]
     fn receipts_by_block_hash() {
-        // Create a default recovered block
-        let block: RecoveredBlock = Default::default();
-
-        // Define block hashes for block1 and block2
         let block1_hash = B256::new([0x01; 32]);
         let block2_hash = B256::new([0x02; 32]);
-
-        // Clone the default block into block1 and block2
-        let mut block1 = block.clone();
-        let mut block2 = block;
-
-        // Set the hashes of block1 and block2
-        block1.set_block_number(10);
-        block1.set_hash(block1_hash);
-
-        block2.set_block_number(11);
-        block2.set_hash(block2_hash);
+        let block1 = RecoveredBlock::new(
+            BaseBlock { header: Header { number: 10, ..Default::default() }, ..Default::default() },
+            vec![],
+            block1_hash,
+        );
+        let block2 = RecoveredBlock::new(
+            BaseBlock { header: Header { number: 11, ..Default::default() }, ..Default::default() },
+            vec![],
+            block2_hash,
+        );
 
         // Create a random receipt object, receipt1
         let receipt1 = BaseReceipt::Legacy(Receipt::<Log> {
