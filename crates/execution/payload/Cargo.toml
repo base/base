@@ -50,7 +50,6 @@ base-common-chains = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["std"] }
 reth-execution-types = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
-reth-payload-validator = { workspace = true, features = ["default"] }
 reth-payload-primitives = { workspace = true, features = ["default"] }
 base-execution-evm = { workspace = true, features = ["default", "witness"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
@@ -62,7 +61,7 @@ base-observability-events = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["default", "test-utils"] }
 
 [features]
-default = [ "metrics" ]
+default = ["metrics"]
 metrics = [
     "base-common-evm/metrics",
     "base-metrics/metrics",

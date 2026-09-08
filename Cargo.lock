@@ -4120,7 +4120,6 @@ dependencies = [
  "reth-payload-builder-primitives",
  "reth-payload-primitives",
  "reth-payload-util",
- "reth-payload-validator",
  "reth-primitives-traits",
  "reth-provider",
  "reth-storage-api",
@@ -16784,15 +16783,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "reth-transaction-pool",
-]
-
-[[package]]
-name = "reth-payload-validator"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-rpc-types-engine",
- "reth-primitives-traits",
 ]
 
 [[package]]

@@ -54,7 +54,7 @@ impl BaseEngineValidator {
     /// Returns the chain spec used by the validator.
     #[inline]
     pub fn chain_spec(&self) -> &BaseChainSpec {
-        self.inner.chain_spec()
+        &self.inner.chain_spec
     }
 
     /// Verifies the Isthmus L2-to-L1 message-passer storage root after block execution.
