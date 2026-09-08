@@ -43,6 +43,7 @@ revm-database = {workspace = true}
 alloy-hardforks = { workspace = true }
 alloy-primitives = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
+base-common-consensus = {workspace = true, features = []}
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-rpc-types-eth = { workspace = true, optional = true }
 [dev-dependencies]

@@ -21,7 +21,7 @@ use crate::{BaseTxEnvelope, transaction::Eip8130Signed};
 /// The difference between this and the [`BaseTxEnvelope`] is that this type does not have the deposit
 /// transaction variant, which is not expected to be pooled.
 #[derive(Clone, Debug, TransactionEnvelope)]
-#[envelope(tx_type_name = BasePooledTxType, serde_cfg(feature = "serde"))]
+#[envelope(tx_type_name = BasePooledTxType, serde_cfg(feature = "serde"), arbitrary_cfg(feature = "arbitrary"))]
 pub enum BasePooledTransaction {
     /// An untagged [`TxLegacy`].
     #[envelope(ty = 0)]

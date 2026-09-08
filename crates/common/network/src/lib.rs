@@ -57,3 +57,5 @@ mod network;
 pub use network::Network;
 
 mod wallet_macro;
+
+mod base_transactions;

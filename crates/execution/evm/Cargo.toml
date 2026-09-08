@@ -36,9 +36,9 @@ alloy-eip7928 = { workspace = true, features = ["rlp"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 base-common-chains = { workspace = true, features = ["default"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-evm = { workspace = true, features = ["std", "reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
-base-common-consensus = { workspace = true, features = ["reth", "evm"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 

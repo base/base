@@ -85,7 +85,7 @@ serde = [
 network = [
     "dep:base-common-network",
     "std",
-    "base-common-consensus/alloy-compat",
+    "base-common-consensus/serde",
     "dep:async-trait",
     "dep:alloy-provider",
     "dep:alloy-transport",

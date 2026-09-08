@@ -56,6 +56,7 @@ serde = { workspace = true, features = [
     "alloc",
     "derive",
 ], optional = true }
+base-common-consensus = {workspace = true, features = ["serde"]}
 [dev-dependencies]
 assert_matches_1_5 = { workspace = true }
 rand_08 = { workspace = true, features = ["default"] }
@@ -80,9 +81,46 @@ alloy-primitives = { workspace = true, features = [
 workspace = true
 
 [features]
-arbitrary = ["std", "dep:arbitrary", "alloy-consensus/arbitrary", "alloy-primitives/arbitrary", "alloy-serde?/arbitrary", "alloy-eips/arbitrary", "alloy-consensus-any/arbitrary", "alloy-sol-types/arbitrary"]
+arbitrary = [
+    "std",
+    "dep:arbitrary",
+    "alloy-consensus/arbitrary",
+    "alloy-primitives/arbitrary",
+    "alloy-serde?/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-consensus-any/arbitrary",
+    "alloy-sol-types/arbitrary",
+]
 default = ["std", "serde"]
 k256 = ["alloy-consensus/k256", "alloy-eips/k256", "alloy-primitives/k256"]
-serde = ["dep:serde", "dep:serde_json", "dep:alloy-serde", "alloy-primitives/serde", "alloy-consensus/serde", "alloy-eips/serde", "alloy-consensus-any/serde", "rand_08/serde", "alloy-network-primitives/serde"]
-serde-bincode-compat = ["serde", "dep:serde_with", "alloy-eips/serde-bincode-compat", "alloy-consensus/serde-bincode-compat"]
-std = ["alloy-primitives/std", "alloy-consensus/std", "alloy-eips/std", "alloy-consensus-any/std", "alloy-network-primitives/std", "alloy-serde?/std", "alloy-rlp/std", "alloy-sol-types/std", "serde?/std", "serde_json?/std", "serde_with?/std", "thiserror/std"]
+serde = [
+    "dep:serde",
+    "dep:serde_json",
+    "dep:alloy-serde",
+    "alloy-primitives/serde",
+    "alloy-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-consensus-any/serde",
+    "rand_08/serde",
+    "alloy-network-primitives/serde",
+]
+serde-bincode-compat = [
+    "serde",
+    "dep:serde_with",
+    "alloy-eips/serde-bincode-compat",
+    "alloy-consensus/serde-bincode-compat",
+]
+std = [
+    "alloy-primitives/std",
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "alloy-consensus-any/std",
+    "alloy-network-primitives/std",
+    "alloy-serde?/std",
+    "alloy-rlp/std",
+    "alloy-sol-types/std",
+    "serde?/std",
+    "serde_json?/std",
+    "serde_with?/std",
+    "thiserror/std",
+]

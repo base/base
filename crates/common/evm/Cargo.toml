@@ -28,9 +28,9 @@ serde = { workspace = true, optional = true }
 base-common-precompiles = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-metrics = { workspace = true, optional = true }
+base-common-consensus = { workspace = true, features = [] }
 base-execution-eip8130 = { workspace = true, optional = true }
 base-precompile-storage = { workspace = true, optional = true }
-base-common-consensus = { workspace = true, features = ["evm"] }
 base-common-chains = { workspace = true, features = ["default"] }
 [dev-dependencies]
 sha2 = { workspace = true }

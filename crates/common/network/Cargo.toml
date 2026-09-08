@@ -49,6 +49,7 @@ alloy-consensus-any = { workspace = true, features = [
     "std",
     "serde",
 ] }
+base-common-consensus = {workspace = true, features = ["serde"]}
 [dev-dependencies]
 alloy-node-bindings = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
