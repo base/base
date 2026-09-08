@@ -289,7 +289,7 @@ alloy-rlp = { version = "=0.3.16", default-features = false }
 alloy-trie = { path = "vendor/alloy-trie", default-features = false }
 alloy-eips = { path = "vendor/alloy-eips", default-features = false }
 alloy-serde = { version = "=2.4.1", default-features = false }
-alloy-signer = { path = "vendor/alloy-signer", default-features = false }
+alloy-signer = { version = "=2.4.1", default-features = false }
 alloy-pubsub = { path = "vendor/alloy-pubsub", default-features = false }
 alloy-chains = { path = "vendor/alloy-chains", default-features = false }
 alloy-network = { path = "vendor/alloy-network", default-features = false }

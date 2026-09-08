@@ -176,8 +176,8 @@ name = "alloy-contract"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
- "alloy-dyn-abi",
- "alloy-json-abi",
+ "alloy-dyn-abi 0.0.0",
+ "alloy-json-abi 0.0.0",
  "alloy-network",
  "alloy-network-primitives",
  "alloy-node-bindings",
@@ -186,7 +186,7 @@ dependencies = [
  "alloy-pubsub",
  "alloy-rpc-types-eth",
  "alloy-signer-local",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "alloy-transport",
  "futures",
  "futures-util",
@@ -202,10 +202,10 @@ dependencies = [
 name = "alloy-dyn-abi"
 version = "0.0.0"
 dependencies = [
- "alloy-json-abi",
+ "alloy-json-abi 0.0.0",
  "alloy-primitives",
  "alloy-sol-type-parser",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "arbitrary",
  "criterion 0.7.0",
  "derive_more",
@@ -213,6 +213,23 @@ dependencies = [
  "itoa",
  "proptest",
  "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "winnow 1.0.4",
+]
+
+[[package]]
+name = "alloy-dyn-abi"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a04eb4abc2b5074a18e687ee63918f407cc7990083cba9b999445f839796060"
+dependencies = [
+ "alloy-json-abi 1.6.1",
+ "alloy-primitives",
+ "alloy-sol-type-parser",
+ "alloy-sol-types 1.6.1",
+ "derive_more",
+ "itoa",
  "serde",
  "serde_json",
  "winnow 1.0.4",
@@ -358,11 +375,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-json-abi"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cee30dd4c2f4b23f434fdf675e7bf9681b86768141277266c6f548ef25cba0a"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-type-parser",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "alloy-json-rpc"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "http 1.4.2",
  "serde",
  "serde_json",
@@ -384,7 +413,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-serde",
  "alloy-signer",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "async-trait",
  "auto_impl",
  "derive_more",
@@ -487,7 +516,7 @@ dependencies = [
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "alloy-transport",
  "alloy-transport-http",
  "alloy-transport-ipc",
@@ -715,7 +744,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-serde",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "arbitrary",
  "assert_matches",
  "bincode 2.0.1",
@@ -783,20 +812,19 @@ dependencies = [
 
 [[package]]
 name = "alloy-signer"
-version = "0.0.0"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69e1f6fae3ade809daa4c32bee35a30a439bb307209d7b42f3995988b5cc74b8"
 dependencies = [
- "alloy-dyn-abi",
+ "alloy-dyn-abi 1.6.1",
  "alloy-primitives",
- "alloy-sol-types",
- "assert_matches",
+ "alloy-sol-types 1.6.1",
  "async-trait",
  "auto_impl",
  "either",
  "elliptic-curve 0.13.8",
  "k256 0.13.4",
- "serde",
  "thiserror 2.0.19",
- "tokio",
 ]
 
 [[package]]
@@ -804,11 +832,11 @@ name = "alloy-signer-local"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
- "alloy-dyn-abi",
+ "alloy-dyn-abi 0.0.0",
  "alloy-network",
  "alloy-primitives",
  "alloy-signer",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "async-trait",
  "coins-bip32",
  "coins-bip39",
@@ -829,8 +857,22 @@ dependencies = [
 name = "alloy-sol-macro"
 version = "0.0.0"
 dependencies = [
- "alloy-sol-macro-expander",
- "alloy-sol-macro-input",
+ "alloy-sol-macro-expander 0.0.0",
+ "alloy-sol-macro-input 0.0.0",
+ "proc-macro-error3",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "alloy-sol-macro"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5655c38d5f84955bf727b2eeb62fddd91ebb98fd1d7ae6eb77f73ea88f9b9cf"
+dependencies = [
+ "alloy-sol-macro-expander 1.6.1",
+ "alloy-sol-macro-input 1.6.1",
  "proc-macro-error3",
  "proc-macro2",
  "quote",
@@ -841,8 +883,26 @@ dependencies = [
 name = "alloy-sol-macro-expander"
 version = "0.0.0"
 dependencies = [
- "alloy-json-abi",
- "alloy-sol-macro-input",
+ "alloy-json-abi 0.0.0",
+ "alloy-sol-macro-input 0.0.0",
+ "const-hex",
+ "heck",
+ "indexmap 2.14.0",
+ "proc-macro-error3",
+ "proc-macro2",
+ "quote",
+ "sha3 0.11.0",
+ "syn 2.0.119",
+ "syn-solidity",
+]
+
+[[package]]
+name = "alloy-sol-macro-expander"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6277c780e07b76951e09a59788dde230d1582612324177d11a43a61e21a6bb83"
+dependencies = [
+ "alloy-sol-macro-input 1.6.1",
  "const-hex",
  "heck",
  "indexmap 2.14.0",
@@ -858,7 +918,7 @@ dependencies = [
 name = "alloy-sol-macro-input"
 version = "0.0.0"
 dependencies = [
- "alloy-json-abi",
+ "alloy-json-abi 0.0.0",
  "const-hex",
  "dunce",
  "heck",
@@ -866,6 +926,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde_json",
+ "syn 2.0.119",
+ "syn-solidity",
+]
+
+[[package]]
+name = "alloy-sol-macro-input"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9762b2ad3e5a0c09886de54fe549ab0056681df843cb082e2df7e1c0eb270d30"
+dependencies = [
+ "const-hex",
+ "dunce",
+ "heck",
+ "macro-string",
+ "proc-macro2",
+ "quote",
  "syn 2.0.119",
  "syn-solidity",
 ]
@@ -884,10 +960,10 @@ dependencies = [
 name = "alloy-sol-types"
 version = "0.0.0"
 dependencies = [
- "alloy-json-abi",
+ "alloy-json-abi 0.0.0",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-sol-macro",
+ "alloy-sol-macro 0.0.0",
  "derive_more",
  "paste",
  "pretty_assertions",
@@ -896,6 +972,18 @@ dependencies = [
  "serde",
  "serde_json",
  "trybuild",
+]
+
+[[package]]
+name = "alloy-sol-types"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d96e74d6213180f78dbdccddce8af02a639c160c94b0a543fa35c77c58b8a7fc"
+dependencies = [
+ "alloy-json-abi 1.6.1",
+ "alloy-primitives",
+ "alloy-sol-macro 1.6.1",
+ "serde",
 ]
 
 [[package]]
@@ -2531,7 +2619,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "alloy-transport",
  "async-trait",
  "base-batcher-core",
@@ -2770,7 +2858,7 @@ dependencies = [
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "alloy-transport",
  "alloy-transport-http",
  "async-trait",
@@ -3014,7 +3102,7 @@ dependencies = [
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "arbitrary",
  "base-evm-context",
  "base-evm-handler",
@@ -3040,7 +3128,7 @@ dependencies = [
  "alloy-eips",
  "alloy-hardforks",
  "alloy-primitives",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "auto_impl",
  "base-common-chains",
  "base-common-consensus",
@@ -3082,7 +3170,7 @@ dependencies = [
  "alloy-eips",
  "alloy-hardforks",
  "alloy-primitives",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "arbitrary",
  "derive_more",
  "rand 0.9.5",
@@ -3126,7 +3214,7 @@ name = "base-common-precompiles"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "base-common-chains",
  "base-common-genesis",
  "base-evm-context",
@@ -3799,7 +3887,7 @@ name = "base-execution-eip8130"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "base-common-consensus",
  "base-common-precompiles",
  "base-precompile-macros",
@@ -4019,7 +4107,7 @@ name = "base-execution-rpc"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
- "alloy-dyn-abi",
+ "alloy-dyn-abi 0.0.0",
  "alloy-eip2124",
  "alloy-eip7928",
  "alloy-eips",
@@ -4181,7 +4269,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "assert_matches",
  "async-trait",
  "auto_impl",
@@ -4324,7 +4412,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "async-trait",
  "base-cli-utils",
  "base-common-network",
@@ -4363,7 +4451,7 @@ dependencies = [
  "alloy-rpc-client",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "base-bundles",
  "base-common-consensus",
  "base-common-evm",
@@ -4616,7 +4704,7 @@ name = "base-precompile-storage"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "base-evm-context",
  "base-evm-handler",
  "base-precompile-macros",
@@ -4700,7 +4788,7 @@ dependencies = [
  "alloy-contract",
  "alloy-primitives",
  "alloy-provider",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "alloy-transport",
  "async-trait",
  "futures",
@@ -4973,7 +5061,7 @@ name = "base-proof-tee-nitro-verifier"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "ciborium",
  "hex",
  "p384",
@@ -4994,7 +5082,7 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-types-eth",
  "alloy-signer",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "async-trait",
  "aws-config",
  "aws-sdk-ec2",
@@ -5543,7 +5631,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "anyhow",
  "async-trait",
  "axum",
@@ -5675,8 +5763,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-sol-macro",
- "alloy-sol-types",
+ "alloy-sol-macro 0.0.0",
+ "alloy-sol-types 0.0.0",
  "base-common-consensus",
  "base-common-evm",
  "base-common-rpc-types",
@@ -5741,7 +5829,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "alloy-transport",
  "async-trait",
  "backon",
@@ -5828,7 +5916,7 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-client",
  "alloy-rpc-types-eth",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "alloy-transport",
  "backon",
  "base-common-genesis",
@@ -5957,7 +6045,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-rpc-types-txpool",
  "alloy-signer-local",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "alloy-transport",
  "alloy-transport-http",
  "anyhow",
@@ -16217,7 +16305,7 @@ dependencies = [
  "alloy-rpc-client",
  "alloy-rpc-types-eth",
  "alloy-serde",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "alloy-transport",
  "base-common-chains",
  "base-common-consensus",
@@ -16761,7 +16849,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth",
  "alloy-rpc-types-trace",
- "alloy-sol-types",
+ "alloy-sol-types 0.0.0",
  "anstyle",
  "base-evm-context",
  "base-evm-handler",
