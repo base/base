@@ -10,12 +10,12 @@ use std::{
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
 use alloy_json_rpc::RpcError;
-use alloy_network::{BlockResponse as _, Network};
 use alloy_network_primitives::{BlockTransactionsKind, HeaderResponse};
 use alloy_primitives::B256;
 use alloy_rpc_client::{RpcCall, RpcClientInner, WeakClient};
 use alloy_rpc_types_eth::{Filter, Log};
 use alloy_transport::{TransportError, TransportResult};
+use base_common_network::{BlockResponse as _, Network};
 use futures::{Stream, ready};
 use pin_project::pin_project;
 
@@ -538,8 +538,8 @@ fn normalize_range_logs_if_matches(
 
 #[cfg(test)]
 mod tests {
-    use alloy_network::Ethereum;
     use alloy_rpc_types_eth::Block;
+    use base_common_network::Ethereum;
     use futures::{Stream, StreamExt};
     use tokio::time::timeout;
 

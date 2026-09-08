@@ -1,5 +1,5 @@
 use alloy_signer::Signer;
-use base_common_signer::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
+use base_common_network::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
 
 /// One of the accounts of the genesis allocations.
 #[derive(Debug)]

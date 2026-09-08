@@ -25,7 +25,6 @@ alloy-genesis = {workspace = true}
 reth-network = { workspace = true }
 alloy-signer = { workspace = true }
 futures-util = { workspace = true }
-alloy-network = { workspace = true }
 reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
@@ -53,7 +52,7 @@ reth-tracing = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
-base-common-signer = { workspace = true, features = ["mnemonic"] }
+base-common-network = { workspace = true, features = ["mnemonic"] }
 alloy-consensus = { workspace = true, features = ["kzg", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde"] }

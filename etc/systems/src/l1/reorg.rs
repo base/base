@@ -3,13 +3,13 @@
 use std::time::Duration;
 
 use alloy_eips::eip1898::BlockNumberOrTag;
-use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::{
     ExecutionPayloadEnvelopeV5, ForkchoiceState, ForkchoiceUpdated, JwtSecret, PayloadAttributes,
     PayloadStatus, PayloadStatusEnum,
 };
+use base_common_network::Ethereum;
 use eyre::{OptionExt, Result, WrapErr, ensure};
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use reth_rpc_layer::AuthClientLayer;

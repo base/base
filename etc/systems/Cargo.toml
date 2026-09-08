@@ -24,7 +24,6 @@ async-trait = { workspace = true }
 base-runtime = { workspace = true }
 alloy-signer = { workspace = true }
 reth-provider = { workspace = true }
-alloy-network = { workspace = true }
 reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
 alloy-hardforks = { workspace = true }
@@ -73,7 +72,7 @@ base-txpool-tracing = { workspace = true, features = ["default"] }
 base-upgrade-signal = { workspace = true, features = ["default"] }
 base-prover-service = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
-base-common-signer = { workspace = true, features = ["mnemonic"] }
+base-common-network = { workspace = true, features = ["mnemonic"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }

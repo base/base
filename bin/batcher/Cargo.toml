@@ -21,7 +21,7 @@ base-protocol = { workspace = true }
 base-cli-utils = { workspace = true }
 base-tx-manager = { workspace = true }
 base-batcher-core = { workspace = true }
-base-common-signer = { workspace = true }
+base-common-network = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }

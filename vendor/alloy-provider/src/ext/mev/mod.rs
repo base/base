@@ -1,12 +1,12 @@
 mod with_auth;
 
-use alloy_network::Network;
 use alloy_primitives::{TxHash, hex};
 use alloy_rpc_types_mev::{
     EthBundleHash, EthCallBundle, EthCallBundleResponse, EthCancelBundle,
     EthCancelPrivateTransaction, EthSendBlobs, EthSendBundle, EthSendEndOfBlockBundle,
     EthSendPrivateTransaction, MevSendBundle, PrivateTransactionPreferences, SimBundleResponse,
 };
+use base_common_network::Network;
 
 pub use self::with_auth::{
     FlashbotsSignatureError, MevBuilder, sign_flashbots_payload, verify_flashbots_signature,

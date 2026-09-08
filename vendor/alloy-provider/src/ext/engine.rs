@@ -1,5 +1,4 @@
 use alloy_eips::eip7685::RequestsOrHash;
-use alloy_network::Network;
 use alloy_primitives::{B256, BlockHash, Bytes, U64};
 use alloy_rpc_types_engine::{
     BlobAndProofV1, BlobAndProofV2, ClientVersionV1, ExecutionPayloadBodiesV1,
@@ -9,6 +8,7 @@ use alloy_rpc_types_engine::{
     ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus,
 };
 use alloy_transport::TransportResult;
+use base_common_network::Network;
 
 use crate::Provider;
 

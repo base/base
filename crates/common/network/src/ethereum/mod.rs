@@ -1,3 +1,5 @@
+//! Ethereum L1 network and wallet integration.
+
 use crate::Network;
 
 mod builder;

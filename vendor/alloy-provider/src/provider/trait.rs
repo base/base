@@ -7,7 +7,6 @@ use std::borrow::Cow;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip2718::Encodable2718, eip7928::BlockAccessList};
 use alloy_json_rpc::{RpcError, RpcRecv, RpcSend};
-use alloy_network::{Ethereum, Network};
 use alloy_network_primitives::{BlockResponse, ReceiptResponse};
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, U64, U128,
@@ -24,6 +23,7 @@ use alloy_rpc_types_eth::{
     simulate::{SimulatePayload, SimulatedBlock},
 };
 use alloy_transport::TransportResult;
+use base_common_network::{Ethereum, Network};
 use serde_json::value::RawValue;
 
 #[cfg(feature = "pubsub")]
@@ -71,7 +71,7 @@ pub type FilterPollerBuilder<R> = PollerBuilder<(U256,), Vec<R>>;
 /// types. Networks that DO NOT support [EIP-1559] should create their own
 /// [`TransactionBuilder`] and Fillers to change this behavior.
 ///
-/// [`TransactionBuilder`]: alloy_network::TransactionBuilder
+/// [`TransactionBuilder`]: base_common_network::TransactionBuilder
 /// [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
@@ -1295,7 +1295,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// ```no_run
     /// # use alloy_json_rpc::RpcError;
     /// # use alloy_network_primitives::ReceiptResponse;
-    /// # async fn example<N: alloy_network::Network>(provider: impl alloy_provider::Provider<N>, encoded_tx: &[u8]) {
+    /// # async fn example<N: base_common_network::Network>(provider: impl alloy_provider::Provider<N>, encoded_tx: &[u8]) {
     /// match provider.send_raw_transaction_sync(encoded_tx).await {
     ///     Ok(receipt) => {
     ///         println!("Transaction successful: {}", receipt.transaction_hash());
@@ -1360,7 +1360,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// See [`PendingTransactionBuilder`] for more examples.
     ///
     /// ```no_run
-    /// # async fn example<N: alloy_network::Network>(provider: impl alloy_provider::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example<N: base_common_network::Network>(provider: impl alloy_provider::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
     /// let receipt = provider.send_transaction(tx)
     ///     .await?
     ///     .with_required_confirmations(2)
@@ -1404,7 +1404,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
 
         match tx {
             SendableTx::Builder(mut tx) => {
-                alloy_network::NetworkTransactionBuilder::prep_for_submission(&mut tx);
+                base_common_network::NetworkTransactionBuilder::prep_for_submission(&mut tx);
                 let tx_hash = self.client().request("eth_sendTransaction", (tx,)).await?;
                 Ok(PendingTransactionBuilder::new(self.root().clone(), tx_hash))
             }
@@ -1426,7 +1426,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Example
     /// ```no_run
     /// # use alloy_network_primitives::ReceiptResponse;
-    /// # async fn example<N: alloy_network::Network>(provider: impl alloy_provider::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example<N: base_common_network::Network>(provider: impl alloy_provider::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
     /// let receipt = provider.send_transaction_sync(tx).await?;
     /// println!("Transaction hash: {}", receipt.transaction_hash());
     /// # Ok(())
@@ -1441,7 +1441,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// ```no_run
     /// # use alloy_json_rpc::RpcError;
     /// # use alloy_network_primitives::ReceiptResponse;
-    /// # async fn example<N: alloy_network::Network>(provider: impl alloy_provider::Provider<N>, tx: N::TransactionRequest) {
+    /// # async fn example<N: base_common_network::Network>(provider: impl alloy_provider::Provider<N>, tx: N::TransactionRequest) {
     /// match provider.send_transaction_sync(tx).await {
     ///     Ok(receipt) => {
     ///         println!("Transaction successful: {}", receipt.transaction_hash());
@@ -1481,7 +1481,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
 
         match tx {
             SendableTx::Builder(mut tx) => {
-                alloy_network::NetworkTransactionBuilder::prep_for_submission(&mut tx);
+                base_common_network::NetworkTransactionBuilder::prep_for_submission(&mut tx);
                 let receipt = self.client().request("eth_sendTransactionSync", (tx,)).await?;
                 Ok(receipt)
             }
@@ -1825,7 +1825,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
         self.client().request(method, params).await
     }
 
-    /// Creates a new [`TransactionRequest`](alloy_network::Network).
+    /// Creates a new [`TransactionRequest`](base_common_network::Network).
     #[inline]
     fn transaction_request(&self) -> N::TransactionRequest {
         Default::default()
@@ -1882,9 +1882,6 @@ mod tests {
     // For layer transport tests
     use alloy_consensus::transaction::SignerRecoverable;
     use alloy_consensus::{Transaction, TxEnvelope};
-    use alloy_network::{
-        AnyNetwork, EthereumWallet, NetworkTransactionBuilder, TransactionBuilder,
-    };
     use alloy_node_bindings::{Anvil, Reth, utils::run_with_tempdir};
     use alloy_primitives::{address, b256, bytes, keccak256};
     use alloy_rlp::Decodable;
@@ -1900,7 +1897,9 @@ mod tests {
             rt::TokioExecutor,
         },
     };
-    use base_common_signer::PrivateKeySigner;
+    use base_common_network::{
+        AnyNetwork, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder,
+    };
     #[cfg(feature = "hyper")]
     use http_body_util::Full;
     #[cfg(feature = "hyper")]
@@ -2664,8 +2663,8 @@ mod tests {
     ))]
     #[ignore = "ignore until <https://github.com/paradigmxyz/reth/pull/14727> is in"]
     async fn call_mainnet() {
-        use alloy_network::TransactionBuilder;
         use alloy_sol_types::SolValue;
+        use base_common_network::TransactionBuilder;
 
         let url = "https://docs-demo.quiknode.pro/";
         let provider = ProviderBuilder::new().connect_http(url.parse().unwrap());
@@ -2892,8 +2891,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_sync() {
-        use alloy_network::TransactionBuilder;
         use alloy_primitives::{U256, address};
+        use base_common_network::TransactionBuilder;
 
         let anvil = Anvil::new().spawn();
         let provider = ProviderBuilder::new().connect_http(anvil.endpoint_url());
@@ -2915,8 +2914,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_sync_with_fillers() {
-        use alloy_network::TransactionBuilder;
         use alloy_primitives::{U256, address};
+        use base_common_network::TransactionBuilder;
 
         let provider = ProviderBuilder::new().connect_anvil_with_wallet();
 
@@ -2942,8 +2941,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fill_transaction() {
-        use alloy_network::TransactionBuilder;
         use alloy_primitives::{U256, address};
+        use base_common_network::TransactionBuilder;
 
         let provider = ProviderBuilder::new().connect_anvil_with_wallet();
 

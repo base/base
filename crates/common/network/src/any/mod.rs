@@ -1,8 +1,9 @@
+//! Unknown-network transaction and response compatibility.
+
 mod builder;
 mod either;
 
-pub mod error;
-
+mod error;
 use std::error::Error;
 
 use alloy_consensus::{
@@ -11,6 +12,7 @@ use alloy_consensus::{
 use alloy_eips::{Typed2718, eip7702::SignedAuthorization};
 use alloy_primitives::{B256, Bytes, ChainId, TxKind, U256};
 pub use either::{AnyTxEnvelope, AnyTypedTransaction};
+pub use error::AnyConversionError;
 
 mod unknowns;
 use std::ops::{Deref, DerefMut};
@@ -28,7 +30,7 @@ use derive_more::From;
 use serde::{Deserialize, Serialize};
 pub use unknowns::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
 
-use crate::{Network, any::error::AnyConversionError};
+use crate::Network;
 
 /// Types for a catch-all network.
 ///

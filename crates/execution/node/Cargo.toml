@@ -92,7 +92,6 @@ workspace = true
 
 [dev-dependencies]
 reth-trie = { workspace = true }
-alloy-network = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-genesis = { workspace = true  }
 base-common-evm = { workspace = true }
@@ -101,6 +100,7 @@ reth-stages-types = { workspace = true }
 reth-payload-util = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 base-execution-rpc = { workspace = true }
+base-common-network = { workspace = true }
 reth-e2e-test-utils = { workspace = true  }
 base-common-rpc-types = { workspace = true }
 rstest = { workspace = true, features = ["default"] }

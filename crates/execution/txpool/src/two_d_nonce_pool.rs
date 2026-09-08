@@ -656,7 +656,7 @@ mod tests {
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
     };
-    use base_common_signer::PrivateKeySigner;
+    use base_common_network::PrivateKeySigner;
     use base_execution_txpool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};
 
     use super::*;

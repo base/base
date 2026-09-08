@@ -2,13 +2,13 @@ use std::{fmt::Debug, marker::PhantomData, time::Duration};
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_json_rpc::RpcRecv;
-use alloy_network::BlockResponse;
 use alloy_network_primitives::{BlockTransactionsKind, HeaderResponse};
 use alloy_primitives::{Address, B64, B256, BlockHash};
 use alloy_rpc_client::{ClientRef, RpcCall};
 #[cfg(feature = "pubsub")]
 use alloy_rpc_types_eth::pubsub::SubscriptionKind;
 use alloy_transport::{TransportError, TransportResult};
+use base_common_network::BlockResponse;
 use either::Either;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
@@ -61,7 +61,7 @@ impl EthGetBlockParams {
 //#[derive(Clone, Debug)]
 pub struct EthGetBlock<BlockResp>
 where
-    BlockResp: alloy_network::BlockResponse + RpcRecv,
+    BlockResp: base_common_network::BlockResponse + RpcRecv,
 {
     inner: GetBlockInner<BlockResp>,
     block: BlockId,
@@ -71,7 +71,7 @@ where
 
 impl<BlockResp> EthGetBlock<BlockResp>
 where
-    BlockResp: alloy_network::BlockResponse + RpcRecv,
+    BlockResp: base_common_network::BlockResponse + RpcRecv,
 {
     /// Create a new [`EthGetBlock`] request to get the block by hash i.e call
     /// `"eth_getBlockByHash"`.
@@ -96,7 +96,7 @@ where
 
 impl<BlockResp> EthGetBlock<BlockResp>
 where
-    BlockResp: alloy_network::BlockResponse + RpcRecv,
+    BlockResp: base_common_network::BlockResponse + RpcRecv,
 {
     /// Create a new [`EthGetBlock`] request with the given [`RpcCall`].
     pub fn new_rpc(block: BlockId, inner: RpcCall<EthGetBlockParams, Option<BlockResp>>) -> Self {
@@ -149,7 +149,7 @@ where
 
 impl<BlockResp> std::future::IntoFuture for EthGetBlock<BlockResp>
 where
-    BlockResp: alloy_network::BlockResponse + RpcRecv,
+    BlockResp: base_common_network::BlockResponse + RpcRecv,
 {
     type Output = TransportResult<Option<BlockResp>>;
 
@@ -410,14 +410,14 @@ where
 #[derive(Debug)]
 #[must_use = "this does nothing unless you call `.into_stream`"]
 #[cfg(feature = "pubsub")]
-pub struct SubFullBlocks<N: alloy_network::Network> {
+pub struct SubFullBlocks<N: base_common_network::Network> {
     sub: super::GetSubscription<(SubscriptionKind,), N::HeaderResponse>,
     client: alloy_rpc_client::WeakClient,
     kind: BlockTransactionsKind,
 }
 
 #[cfg(feature = "pubsub")]
-impl<N: alloy_network::Network> SubFullBlocks<N> {
+impl<N: base_common_network::Network> SubFullBlocks<N> {
     /// Create a new [`SubFullBlocks`] subscription with the given [`super::GetSubscription`].
     ///
     /// By default, this subscribes to block with tx hashes only. Use [`SubFullBlocks::full`] to

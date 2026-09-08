@@ -1,5 +1,5 @@
-use alloy_network::Network;
 use alloy_transport::TransportResult;
+use base_common_network::Network;
 use futures::try_join;
 
 use crate::{

@@ -8,15 +8,14 @@ use std::{
 };
 use std::{num::NonZeroU64, path::PathBuf};
 
-use alloy_network::Ethereum;
 use alloy_primitives::B256;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
+use base_common_network::{Ethereum, PrivateKeySigner};
 use base_common_rpc_types::Base;
-use base_common_signer::PrivateKeySigner;
 use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 #[cfg(feature = "upgrade-signal")]

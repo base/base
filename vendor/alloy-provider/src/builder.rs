@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 
 use alloy_chains::NamedChain;
-use alloy_network::{Ethereum, IntoWallet, Network};
 use alloy_primitives::ChainId;
 use alloy_rpc_client::{ClientBuilder, ConnectionConfig, RpcClient};
 use alloy_transport::{TransportConnect, TransportError, TransportResult};
+use base_common_network::{Ethereum, IntoWallet, Network};
 
 use crate::{
     Provider, RootProvider,
@@ -637,7 +637,7 @@ impl<L, F, N> ProviderBuilder<L, F, N> {
 }
 
 #[cfg(any(test, feature = "anvil-node"))]
-type JoinedEthereumWalletFiller<F> = JoinFill<F, WalletFiller<alloy_network::EthereumWallet>>;
+type JoinedEthereumWalletFiller<F> = JoinFill<F, WalletFiller<base_common_network::EthereumWallet>>;
 
 #[cfg(any(test, feature = "anvil-node"))]
 type AnvilProviderResult<T> = Result<T, alloy_node_bindings::NodeError>;
@@ -678,7 +678,7 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
                 crate::layers::AnvilProvider<crate::provider::RootProvider<N>, N>,
                 N,
             >,
-        alloy_network::EthereumWallet: alloy_network::NetworkWallet<N>,
+        base_common_network::EthereumWallet: base_common_network::NetworkWallet<N>,
     {
         self.connect_anvil_with_wallet_and_config(std::convert::identity)
             .expect("failed to build provider")
@@ -753,7 +753,7 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
                 crate::layers::AnvilProvider<crate::provider::RootProvider<N>, N>,
                 N,
             >,
-        alloy_network::EthereumWallet: alloy_network::NetworkWallet<N>,
+        base_common_network::EthereumWallet: base_common_network::NetworkWallet<N>,
     {
         let anvil_layer = crate::layers::AnvilLayer::from(f(Default::default()));
         let url = anvil_layer.endpoint_url();
@@ -788,7 +788,7 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
                 crate::layers::AnvilProvider<crate::provider::RootProvider<N>, N>,
                 N,
             >,
-        alloy_network::EthereumWallet: alloy_network::NetworkWallet<N>,
+        base_common_network::EthereumWallet: base_common_network::NetworkWallet<N>,
     {
         let anvil_layer = crate::layers::AnvilLayer::from(f(Default::default()));
         let url = anvil_layer.endpoint_url();
@@ -806,7 +806,7 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_network::AnyNetwork;
+    use base_common_network::AnyNetwork;
 
     use super::*;
     use crate::Provider;

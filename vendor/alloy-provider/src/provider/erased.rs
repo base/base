@@ -1,7 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
 use alloy_json_rpc::RpcRecv;
-use alloy_network::{Ethereum, Network};
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, U64, U128, U256,
 };
@@ -16,6 +15,7 @@ use alloy_rpc_types_eth::{
     simulate::{SimulatePayload, SimulatedBlock},
 };
 use alloy_transport::TransportResult;
+use base_common_network::{Ethereum, Network};
 use serde_json::value::RawValue;
 
 use super::{

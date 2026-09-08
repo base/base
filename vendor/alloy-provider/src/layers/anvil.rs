@@ -3,8 +3,8 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use alloy_network::{Ethereum, Network};
 use alloy_node_bindings::{Anvil, AnvilInstance};
+use base_common_network::{Ethereum, Network};
 use reqwest::Url;
 
 use crate::{Provider, ProviderLayer, RootProvider};

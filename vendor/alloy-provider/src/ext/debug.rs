@@ -1,6 +1,5 @@
 //! This module extends the Ethereum JSON-RPC provider with the Debug namespace's RPC methods.
 use alloy_json_rpc::RpcRecv;
-use alloy_network::{Ethereum, Network};
 use alloy_primitives::{B256, Bytes, TxHash, hex};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_eth::{BadBlock, BlockId, BlockNumberOrTag, Bundle, StateContext};
@@ -9,6 +8,7 @@ use alloy_rpc_types_trace::geth::{
     PreStateFrame, TraceResult,
 };
 use alloy_transport::TransportResult;
+use base_common_network::{Ethereum, Network};
 
 use crate::Provider;
 
@@ -610,10 +610,10 @@ where
 
 #[cfg(test)]
 mod test {
-    use alloy_network::TransactionBuilder;
     use alloy_node_bindings::{Geth, Reth, utils::run_with_tempdir};
     use alloy_primitives::{U256, address};
     use alloy_rpc_types_eth::TransactionRequest;
+    use base_common_network::TransactionBuilder;
 
     use super::*;
     use crate::{ProviderBuilder, WalletProvider, ext::test::async_ci_only};

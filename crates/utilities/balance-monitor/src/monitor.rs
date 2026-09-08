@@ -17,9 +17,9 @@ use std::{
     time::Duration,
 };
 
-use alloy_network::Network;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderLayer};
+use base_common_network::Network;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};

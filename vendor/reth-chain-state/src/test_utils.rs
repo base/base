@@ -12,7 +12,7 @@ use base_common_consensus::{
     BaseBlockBody as BlockBody, BaseReceipt as Receipt, BaseTxEnvelope as TransactionSigned,
     BaseTypedTransaction as Transaction,
 };
-use base_common_signer::PrivateKeySigner;
+use base_common_network::PrivateKeySigner;
 use base_execution_chainspec::BaseChainSpec;
 use rand::Rng;
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};

@@ -305,7 +305,7 @@ mod tests {
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, Call,
         Eip8130Signed, IDefaultAccount, Predeploys, TxEip8130,
     };
-    use base_common_signer::PrivateKeySigner;
+    use base_common_network::PrivateKeySigner;
     use base_execution_txpool::{
         CoinbaseTipOrdering, PoolTransaction, TransactionOrdering, test_utils::TransactionBuilder,
     };

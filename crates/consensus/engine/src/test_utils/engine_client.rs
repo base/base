@@ -4,7 +4,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_json_rpc::ErrorPayload;
-use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, B256, BlockHash, StorageKey};
 use alloy_provider::{EthGetBlock, ProviderCall, RpcWithBlock};
 use alloy_rpc_types_engine::{
@@ -15,6 +14,7 @@ use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse, Transaction as Eth
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
+use base_common_network::{Ethereum, Network};
 use base_common_rpc_types::{Base, BaseEngineApi, Transaction as BaseTransaction};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,

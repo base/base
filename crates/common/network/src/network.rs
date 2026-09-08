@@ -1,40 +1,14 @@
-#![doc = include_str!("../README.md")]
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/alloy.jpg",
-    html_favicon_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/favicon.ico"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
 use core::fmt::{Debug, Display};
 
 use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
-use alloy_eips::eip2718::{Eip2718Envelope, Eip2718Error};
+use alloy_eips::{
+    Typed2718,
+    eip2718::{Eip2718Envelope, Eip2718Error},
+};
 use alloy_json_rpc::RpcObject;
 use alloy_network_primitives::HeaderResponse;
 
-mod transaction;
-pub use transaction::{
-    BuildResult, FullSigner, FullSignerSync, NetworkTransactionBuilder, NetworkWallet,
-    TransactionBuilder, TransactionBuilder4844, TransactionBuilder7702, TransactionBuilderError,
-    TxSigner, TxSignerSync, UnbuiltTransactionError,
-};
-
-mod ethereum;
-pub use ethereum::{Ethereum, EthereumWallet, IntoWallet};
-
-/// Types for handling unknown network types.
-pub mod any;
-use alloy_eips::Typed2718;
-pub use alloy_eips::eip2718;
-pub use alloy_network_primitives::{
-    self as primitives, BlockResponse, ReceiptResponse, TransactionResponse,
-};
-pub use any::{
-    AnyHeader, AnyNetwork, AnyReceiptEnvelope, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction,
-    AnyTransactionReceipt, AnyTxEnvelope, AnyTxType, AnyTypedTransaction, UnknownTxEnvelope,
-    UnknownTypedTransaction,
-};
+use crate::{BlockResponse, NetworkTransactionBuilder, ReceiptResponse, TransactionResponse};
 
 /// Captures type info for network-specific RPC requests/responses.
 ///
@@ -100,24 +74,4 @@ pub trait Network: Debug + Clone + Copy + Sized + Send + Sync + 'static {
     /// The JSON body of a block response.
     type BlockResponse: RpcObject
         + BlockResponse<Transaction = Self::TransactionResponse, Header = Self::HeaderResponse>;
-}
-
-/// Utility to implement IntoWallet for signer over the specified network.
-#[macro_export]
-macro_rules! impl_into_wallet {
-    ($(@[$($generics:tt)*])? $signer:ty) => {
-        impl $(<$($generics)*>)? $crate::IntoWallet for $signer {
-            type NetworkWallet = $crate::EthereumWallet;
-            fn into_wallet(self) -> Self::NetworkWallet {
-                $crate::EthereumWallet::from(self)
-            }
-        }
-
-        impl $(<$($generics)*>)? $crate::IntoWallet<$crate::AnyNetwork> for $signer {
-            type NetworkWallet = $crate::EthereumWallet;
-            fn into_wallet(self) -> Self::NetworkWallet {
-                $crate::EthereumWallet::from(self)
-            }
-        }
-    };
 }

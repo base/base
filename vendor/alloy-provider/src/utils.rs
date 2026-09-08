@@ -7,10 +7,10 @@ use std::{
 
 pub use alloy_eips::eip1559::Eip1559Estimation;
 use alloy_json_rpc::RpcRecv;
-use alloy_network::BlockResponse;
 use alloy_primitives::{B256, U64, U128};
 use alloy_rpc_client::WeakClient;
 use alloy_transport::{TransportError, TransportResult};
+use base_common_network::BlockResponse;
 
 use crate::{
     Identity,
@@ -134,7 +134,7 @@ pub(crate) fn convert_u64(r: U64) -> u64 {
     r.to::<u64>()
 }
 
-pub(crate) fn convert_to_hashes<BlockResp: alloy_network::BlockResponse>(
+pub(crate) fn convert_to_hashes<BlockResp: base_common_network::BlockResponse>(
     r: Option<BlockResp>,
 ) -> Option<BlockResp> {
     r.map(|mut block| {

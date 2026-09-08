@@ -2,13 +2,13 @@ use std::{future::IntoFuture, marker::PhantomData, time::Duration};
 
 use alloy_dyn_abi::{DynSolValue, FunctionExt};
 use alloy_json_abi::Function;
-use alloy_network::Network;
 use alloy_primitives::{Address, Bytes};
 use alloy_rpc_types_eth::{
     BlockId, BlockOverrides,
     state::{AccountOverride, StateOverride},
 };
 use alloy_sol_types::SolCall;
+use base_common_network::Network;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 use tokio::time::{Timeout, timeout as timeout_future};
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]

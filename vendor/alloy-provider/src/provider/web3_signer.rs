@@ -1,6 +1,6 @@
 use alloy_eips::Decodable2718;
-use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{Address, Bytes};
+use base_common_network::{Ethereum, Network, TransactionBuilder};
 
 use super::Provider;
 

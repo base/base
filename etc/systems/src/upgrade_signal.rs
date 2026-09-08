@@ -3,11 +3,10 @@
 //! Deploys the mock `ProtocolVersions` schedule contract to the L1 stack and builds the
 //! [`UpgradeSignalConfig`] consumed by the in-process consensus nodes.
 
-use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderBuilder};
 use base_common_genesis::{BaseUpgrade, RollupConfig};
-use base_common_signer::PrivateKeySigner;
+use base_common_network::{EthereumWallet, PrivateKeySigner};
 use base_execution_cli::ExecutionUpgradeSignalConfig;
 use base_test_utils::MockProtocolVersions;
 use base_upgrade_signal::{

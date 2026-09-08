@@ -14,8 +14,8 @@ workspace = true
 [dependencies]
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
-alloy-network = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
+base-common-network = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 alloy-provider = { workspace = true, features = ["default"] }

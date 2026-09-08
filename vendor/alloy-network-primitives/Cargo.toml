@@ -40,8 +40,6 @@ serde = { workspace = true, features = [
     "derive",
     "alloc",
 ], optional = true }
-[dev-dependencies]
-
 [lints]
 workspace = true
 

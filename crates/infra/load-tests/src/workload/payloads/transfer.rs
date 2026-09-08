@@ -1,7 +1,7 @@
-use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, U256};
 use alloy_rpc_types::TransactionRequest;
 use async_trait::async_trait;
+use base_common_network::TransactionBuilder;
 
 use super::Payload;
 use crate::workload::SeededRng;

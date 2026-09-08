@@ -47,7 +47,6 @@ mod join_fill;
 use std::marker::PhantomData;
 
 use alloy_json_rpc::RpcError;
-use alloy_network::{AnyNetwork, Ethereum, Network};
 use alloy_primitives::{Bytes, U64};
 use alloy_rpc_types_eth::{
     AccessListResult, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Filter,
@@ -57,6 +56,7 @@ use alloy_rpc_types_eth::{
 };
 use alloy_transport::{TransportError, TransportResult};
 use async_trait::async_trait;
+use base_common_network::{AnyNetwork, Ethereum, Network};
 use futures_utils_wasm::impl_future;
 pub use join_fill::JoinFill;
 use serde_json::value::RawValue;
@@ -375,7 +375,7 @@ where
     /// # use alloy_primitives::{Address, U256};
     /// # use alloy_provider::{Provider, ProviderBuilder};
     /// # use alloy_rpc_types_eth::TransactionRequest;
-    /// # use alloy_network::{NetworkTransactionBuilder, TransactionBuilder};
+    /// # use base_common_network::{NetworkTransactionBuilder, TransactionBuilder};
     ///
     /// # #[cfg(feature = "anvil-node")]
     /// async fn example() -> Result<(), Box<dyn std::error::Error>> {

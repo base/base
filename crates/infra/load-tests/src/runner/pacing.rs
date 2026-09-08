@@ -9,12 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_network::Ethereum;
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
+use base_common_network::{Ethereum, PrivateKeySigner};
 use base_common_rpc_types::Base;
-use base_common_signer::PrivateKeySigner;
 use base_tx_manager::NonceManager;
 use futures::{StreamExt, TryStreamExt, stream};
 use tokio::{

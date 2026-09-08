@@ -1,6 +1,6 @@
 use alloy_consensus::TxType;
-use alloy_network::{BuildResult, NetworkTransactionBuilder, TransactionBuilderError};
 use base_common_consensus::{BaseTypedTransaction, OpTxType};
+use base_common_network::{BuildResult, NetworkTransactionBuilder, TransactionBuilderError};
 
 use crate::{Base, BaseTransactionRequest};
 
@@ -58,18 +58,19 @@ impl NetworkTransactionBuilder<Base> for BaseTransactionRequest {
         Ok(self.build_typed_tx().expect("checked by missing_keys"))
     }
 
-    async fn build<W: alloy_network::NetworkWallet<Base>>(
+    async fn build<W: base_common_network::NetworkWallet<Base>>(
         self,
         wallet: &W,
-    ) -> Result<<Base as alloy_network::Network>::TxEnvelope, TransactionBuilderError<Base>> {
+    ) -> Result<<Base as base_common_network::Network>::TxEnvelope, TransactionBuilderError<Base>>
+    {
         Ok(wallet.sign_request(self).await?)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_network::TransactionBuilder;
     use alloy_primitives::{B256, TxKind};
+    use base_common_network::TransactionBuilder;
     use rstest::rstest;
 
     use super::*;

@@ -24,7 +24,7 @@ base-proof-rpc = { workspace = true }
 base-cli-utils = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-signer = { workspace = true }
+base-common-network = { workspace = true }
 base-balance-monitor = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-proof-primitives = { workspace = true }

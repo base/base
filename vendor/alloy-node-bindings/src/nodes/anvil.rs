@@ -11,10 +11,9 @@ use std::{
 };
 
 use alloy_hardforks_legacy::EthereumHardfork;
-use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, ChainId, hex};
 use alloy_signer::Signer;
-use base_common_signer::PrivateKeySigner;
+use base_common_network::{EthereumWallet, PrivateKeySigner};
 use k256::{SecretKey as K256SecretKey, ecdsa::SigningKey};
 use url::Url;
 

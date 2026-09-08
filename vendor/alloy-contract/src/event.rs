@@ -1,11 +1,11 @@
 use std::{fmt, marker::PhantomData};
 
-use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, LogData};
 use alloy_provider::{FilterPollerBuilder, Network, Provider};
 use alloy_rpc_types_eth::{BlockNumberOrTag, Filter, FilterBlockOption, Log, Topic, ValueOrArray};
 use alloy_sol_types::SolEvent;
 use alloy_transport::{BoxFuture, RpcError, TransportResult};
+use base_common_network::Ethereum;
 use futures::Stream;
 use futures_util::StreamExt;
 
@@ -495,10 +495,9 @@ pub(crate) mod subscription {
 
 #[cfg(test)]
 mod tests {
-    use alloy_network::EthereumWallet;
     use alloy_primitives::U256;
     use alloy_sol_types::sol;
-    use base_common_signer::PrivateKeySigner;
+    use base_common_network::{EthereumWallet, PrivateKeySigner};
 
     use super::*;
 

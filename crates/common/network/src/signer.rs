@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use alloy_consensus::{SignableTransaction, TxEnvelope};
 use alloy_eips::Decodable2718;
-use alloy_network::{TransactionBuilder, TxSigner};
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind};
 use alloy_rpc_types_eth::TransactionRequest;
 use async_trait::async_trait;
@@ -12,13 +11,13 @@ use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tracing::debug;
 use url::Url;
 
-use crate::{EthSignerApiClient, RemoteSignerError};
+use crate::{EthSignerApiClient, RemoteSignerError, TransactionBuilder, TxSigner};
 
 /// A remote transaction signer that delegates signing to an external signer sidecar
 /// via the `eth_signTransaction` JSON-RPC method.
 ///
 /// Implements alloy's [`TxSigner<Signature>`] trait, allowing it to be used with
-/// [`alloy_network::EthereumWallet`] for seamless integration with the standard
+/// [`crate::EthereumWallet`] for seamless integration with the standard
 /// signing pipeline:
 ///
 /// ```rust,ignore
@@ -178,13 +177,12 @@ impl TxSigner<Signature> for RemoteSigner {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{TxEip1559, TxLegacy};
-    use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
     use alloy_primitives::U256;
     use alloy_signer::SignerSync;
 
     use super::*;
-    use crate::PrivateKeySigner;
+    use crate::{EthereumWallet, PrivateKeySigner};
 
     #[test]
     fn address_returns_configured_address() {

@@ -1,3 +1,5 @@
+//! Transaction building and signing interfaces.
+
 mod builder;
 pub use builder::{
     BuildResult, NetworkTransactionBuilder, TransactionBuilder, TransactionBuilder4844,

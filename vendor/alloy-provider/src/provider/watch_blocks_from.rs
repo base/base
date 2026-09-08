@@ -9,11 +9,11 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_json_rpc::{RpcError, RpcRecv};
-use alloy_network::{BlockResponse, Network};
 use alloy_network_primitives::{BlockTransactionsKind, HeaderResponse};
 use alloy_primitives::U64;
 use alloy_rpc_client::{RpcCall, RpcClientInner, WeakClient};
 use alloy_transport::{TransportError, TransportResult};
+use base_common_network::{BlockResponse, Network};
 use futures::{Stream, ready};
 use pin_project::pin_project;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]

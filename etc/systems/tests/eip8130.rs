@@ -8,13 +8,12 @@ mod common;
 
 use alloy_consensus::Typed2718;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::ReceiptResponse;
 use alloy_primitives::{B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use base_common_consensus::{Eip8130Signed, TxEip8130};
+use base_common_network::{PrivateKeySigner, ReceiptResponse};
 use base_common_rpc_types::{Base, BaseTransactionReceipt};
-use base_common_signer::PrivateKeySigner;
 use base_system_tests::{ANVIL_ACCOUNT_1, SystemTestProviderExt};
 use eyre::{Result, WrapErr, ensure};
 

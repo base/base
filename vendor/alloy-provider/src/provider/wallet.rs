@@ -1,5 +1,5 @@
-use alloy_network::{Ethereum, Network, NetworkWallet};
 use alloy_primitives::Address;
+use base_common_network::{Ethereum, Network, NetworkWallet};
 
 use crate::{
     Provider,

@@ -71,7 +71,7 @@ impl BundleTxs for AcceptedBundle {
 mod tests {
     use alloy_primitives::{Keccak256, U256};
     use alloy_provider::network::eip2718::Encodable2718;
-    use base_common_signer::PrivateKeySigner;
+    use base_common_network::PrivateKeySigner;
 
     use super::*;
     use crate::{

@@ -1,9 +1,9 @@
 use alloy_consensus::ReceiptWithBloom;
-use alloy_network::Network;
 use alloy_provider::fillers::{
     ChainIdFiller, GasFiller, JoinFill, NonceFiller, RecommendedFillers,
 };
 use base_common_consensus::{BaseReceipt, OpTxType};
+use base_common_network::Network;
 
 /// Types for a Base chain network.
 #[derive(Clone, Copy, Debug)]

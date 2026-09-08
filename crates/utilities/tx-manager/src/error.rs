@@ -153,7 +153,7 @@ pub enum TxManagerError {
     /// Wallet construction failed.
     ///
     /// Returned when the [`SignerConfig`](crate::SignerConfig) cannot build
-    /// an [`EthereumWallet`](alloy_network::EthereumWallet) — e.g. an
+    /// an [`EthereumWallet`](base_common_network::EthereumWallet) — e.g. an
     /// invalid private key or unreachable remote signer endpoint.
     /// Non-retryable because the configuration is deterministically wrong.
     #[error("wallet construction failed: {0}")]

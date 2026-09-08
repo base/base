@@ -7,7 +7,7 @@ use base_action_harness::{
     BatcherConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_signer::PrivateKeySigner;
+use base_common_network::PrivateKeySigner;
 use base_consensus_derive::{DataAvailabilityProvider, EthereumDataSource};
 
 fn test_l1_signer() -> PrivateKeySigner {

@@ -9,7 +9,7 @@ use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
-use base_common_signer::PrivateKeySigner;
+use base_common_network::PrivateKeySigner;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio_util::sync::CancellationToken;

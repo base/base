@@ -1,4 +1,4 @@
-use alloy_network::Network;
+use base_common_network::Network;
 
 /// A transaction that can be sent. This is either a builder or an envelope.
 ///

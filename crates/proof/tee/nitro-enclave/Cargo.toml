@@ -20,7 +20,7 @@ alloy-chains = { workspace = true }
 alloy-signer = { workspace = true }
 base-common-evm = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-signer = { workspace = true }
+base-common-network = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 base-proof = { workspace = true, features = ["std"] }
 rand_08 = { workspace = true, features = ["default"] }

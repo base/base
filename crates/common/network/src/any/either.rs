@@ -34,7 +34,7 @@ fn panic_unknown_transaction_signing(ty: u8) -> ! {
 #[track_caller]
 fn panic_unknown_transaction_encoding(ty: u8) -> ! {
     panic!(
-        "Attempted to encode unknown transaction type 0x{ty:02x}. This is not a bug in alloy. To encode or decode unknown transaction types, use a custom Transaction type and a custom Network implementation. See https://docs.rs/alloy-network/latest/alloy_network/ for network documentation."
+        "Attempted to encode unknown transaction type 0x{ty:02x}. This is not a bug in alloy. To encode or decode unknown transaction types, use a custom Transaction type and a custom Network implementation. See https://docs.rs/base-common-network/latest/base_common_network/ for network documentation."
     )
 }
 
@@ -326,15 +326,15 @@ impl AnyTxEnvelope {
     /// # Examples
     ///
     /// ```no_run
-    /// # use alloy_network::any::AnyTxEnvelope;
+    /// # use crate::any::AnyTxEnvelope;
     /// # use alloy_consensus::transaction::Either;
     /// # // Assuming you have a custom type: struct CustomTx;
-    /// # // impl TryFrom<alloy_network::any::UnknownTxEnvelope> for CustomTx { ... }
+    /// # // impl TryFrom<crate::any::UnknownTxEnvelope> for CustomTx { ... }
     /// # fn example(envelope: AnyTxEnvelope) -> Result<(), Box<dyn std::error::Error>> {
     /// # struct CustomTx;
-    /// # impl TryFrom<alloy_network::any::UnknownTxEnvelope> for CustomTx {
+    /// # impl TryFrom<crate::any::UnknownTxEnvelope> for CustomTx {
     /// #     type Error = String;
-    /// #     fn try_from(_: alloy_network::any::UnknownTxEnvelope) -> Result<Self, Self::Error> {
+    /// #     fn try_from(_: crate::any::UnknownTxEnvelope) -> Result<Self, Self::Error> {
     /// #         Ok(CustomTx)
     /// #     }
     /// # }
@@ -364,7 +364,7 @@ impl AnyTxEnvelope {
     /// # Examples
     ///
     /// ```no_run
-    /// # use alloy_network::any::AnyTxEnvelope;
+    /// # use crate::any::AnyTxEnvelope;
     /// # use alloy_consensus::transaction::Either;
     /// # use alloy_primitives::B256;
     /// # fn example(envelope: AnyTxEnvelope) -> Result<(), Box<dyn std::error::Error>> {

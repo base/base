@@ -15,12 +15,12 @@ tower = { workspace = true }
 async-trait = { workspace = true }
 base-metrics = { workspace = true }
 alloy-pubsub = { workspace = true }
-alloy-network = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 opentelemetry-http = { workspace = true }
 base-common-genesis = { workspace = true }
+base-common-network = { workspace = true }
 base-consensus-providers = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }

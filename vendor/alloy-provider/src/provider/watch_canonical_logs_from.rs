@@ -8,9 +8,9 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
-use alloy_network::{BlockResponse as _, Network};
 use alloy_network_primitives::HeaderResponse;
 use alloy_transport::{TransportError, TransportResult};
+use base_common_network::{BlockResponse as _, Network};
 use futures::{Stream, StreamExt as _, stream::Buffered};
 use pin_project::pin_project;
 
@@ -309,13 +309,13 @@ mod tests {
     use crate::Provider;
 
     async fn next_event(
-        stream: &mut WatchCanonicalLogsFromStream<alloy_network::Ethereum>,
-    ) -> CanonicalEvent<BlockLogs<alloy_network::Ethereum>> {
+        stream: &mut WatchCanonicalLogsFromStream<base_common_network::Ethereum>,
+    ) -> CanonicalEvent<BlockLogs<base_common_network::Ethereum>> {
         timeout(Duration::from_secs(1), stream.next()).await.unwrap().unwrap().unwrap()
     }
 
     fn assert_added(
-        event: CanonicalEvent<BlockLogs<alloy_network::Ethereum>>,
+        event: CanonicalEvent<BlockLogs<base_common_network::Ethereum>>,
         number: u64,
         hash_last_byte: u8,
         log_count: usize,
@@ -329,7 +329,7 @@ mod tests {
     }
 
     fn assert_removed(
-        event: CanonicalEvent<BlockLogs<alloy_network::Ethereum>>,
+        event: CanonicalEvent<BlockLogs<base_common_network::Ethereum>>,
         number: u64,
         hash_last_byte: u8,
         log_count: usize,

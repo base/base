@@ -31,10 +31,10 @@ base-execution-txpool = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 [dev-dependencies]
 alloy-signer = { workspace = true }
-alloy-network = { workspace = true }
 alloy-consensus = { workspace = true }
 base-test-utils = { workspace = true }
 base-txpool-rpc = { workspace = true }
+base-common-network = { workspace = true }
 base-common-consensus = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 eyre = { workspace = true, features = ["default"] }

@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 
 use alloy_eips::BlockId;
-use alloy_network::Network;
 use alloy_rpc_types_eth::{
     BlockOverrides, Bundle, StateContext, TransactionIndex, state::StateOverride,
 };
+use base_common_network::Network;
 use serde::ser::SerializeSeq;
 
 /// The parameters for an `"eth_call"` RPC request.

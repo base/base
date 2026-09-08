@@ -1,11 +1,11 @@
 use std::{fmt, future::IntoFuture, marker::PhantomData, sync::Arc, time::Duration};
 
 use alloy_eips::BlockId;
-use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rpc_client::WeakClient;
 use alloy_sol_types::{SolCall, SolType, SolValue};
 use alloy_transport::{TransportErrorKind, TransportResult, utils::Spawnable};
+use base_common_network::{Ethereum, Network, TransactionBuilder};
 use tokio::sync::{mpsc, oneshot};
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 use tokio::time::sleep;
@@ -533,12 +533,12 @@ impl<N: Network> Caller<N, Bytes> for CallBatchCaller<N> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_network::{Ethereum, TransactionBuilder};
     use alloy_primitives::address;
     #[cfg(feature = "anvil-api")]
     use alloy_primitives::hex;
     use alloy_rpc_types_eth::{BlockOverrides, TransactionRequest};
     use alloy_transport::mock::Asserter;
+    use base_common_network::{Ethereum, TransactionBuilder};
 
     use super::*;
     use crate::ProviderBuilder;

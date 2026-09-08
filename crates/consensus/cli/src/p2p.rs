@@ -13,7 +13,7 @@ use alloy_primitives::{B256, b256};
 use alloy_provider::Provider;
 use backon::Retryable;
 use base_common_genesis::RollupConfig;
-use base_common_signer::PrivateKeySigner;
+use base_common_network::PrivateKeySigner;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
 use base_consensus_gossip::{

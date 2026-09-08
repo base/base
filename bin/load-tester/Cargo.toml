@@ -17,11 +17,10 @@ workspace = true
 
 [dependencies]
 tracing = { workspace = true }
-alloy-network = { workspace = true }
 base-cli-utils = { workspace = true }
 base-load-tests = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-signer = { workspace = true }
+base-common-network = { workspace = true }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }

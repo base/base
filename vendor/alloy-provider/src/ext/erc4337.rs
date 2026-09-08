@@ -1,9 +1,9 @@
-use alloy_network::Network;
 use alloy_primitives::{Address, Bytes};
 use alloy_rpc_types_eth::erc4337::{
     SendUserOperation, SendUserOperationResponse, UserOperationGasEstimation, UserOperationReceipt,
 };
 use alloy_transport::TransportResult;
+use base_common_network::Network;
 
 use crate::Provider;
 

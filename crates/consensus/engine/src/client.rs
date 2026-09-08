@@ -3,7 +3,6 @@
 use std::{future::Future, io, sync::Arc, time::Duration};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
-use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, B256, BlockHash, Bytes, StorageKey};
 use alloy_provider::{EthGetBlock, IpcConnect, Provider, RootProvider, RpcWithBlock};
 use alloy_rpc_client::{ClientBuilder, RpcClient};
@@ -19,6 +18,7 @@ use alloy_transport_http::{
 };
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
+use base_common_network::{Ethereum, Network};
 use base_common_rpc_types::{Base, BaseEngineApi};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,

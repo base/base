@@ -9,7 +9,7 @@ use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Bytes, TxKind, U256};
 use alloy_provider::RootProvider;
-use base_common_signer::PrivateKeySigner;
+use base_common_network::PrivateKeySigner;
 use base_tx_manager::{
     FeeCalculator, FeeOverride, NoopTxMetrics, PreparedTx, SignerConfig, SimpleTxManager,
     TxCandidate, TxManager, TxManagerConfig, TxManagerError,

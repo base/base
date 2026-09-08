@@ -18,12 +18,12 @@ alloy-serde = { workspace = true }
 alloy-network-primitives = { workspace = true }
 async-trait = { workspace = true, optional = true}
 alloy-consensus = { workspace = true, features = []}
-alloy-network = { workspace = true, optional = true }
 alloy-transport = { workspace = true, optional = true}
 alloy-eips = { workspace = true, features = ["serde"] }
 serde_json = { workspace = true, features = ["alloc"] }
 base-common-evm = { workspace = true, optional = true }
 base-evm-handler = { workspace = true, optional = true }
+base-common-network = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "alloc"] }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 base-common-consensus = { workspace = true, features = ["serde"] }
@@ -83,7 +83,7 @@ serde = [
     "base-common-rpc-types-engine?/serde",
 ]
 network = [
-    "dep:alloy-network",
+    "dep:base-common-network",
     "std",
     "base-common-consensus/alloy-compat",
     "dep:async-trait",

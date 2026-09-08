@@ -3,10 +3,10 @@
 use std::future::Future;
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_network::Network;
 use alloy_primitives::{Bytes, U64};
 use alloy_provider::Provider;
 use alloy_transport::TransportResult;
+use base_common_network::Network;
 use serde_json::Value;
 
 use crate::{OutputAtBlock, SyncStatus};

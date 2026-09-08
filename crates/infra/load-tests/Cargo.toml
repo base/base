@@ -22,7 +22,6 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
-alloy-network = { workspace = true }
 base-cli-utils = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-tx-manager = { workspace = true }
@@ -40,7 +39,7 @@ parking_lot = { workspace = true, features = ["default"] }
 alloy-rpc-types = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json"] }
 tokio = { workspace = true, features = ["default", "signal"] }
-base-common-signer = { workspace = true, features = ["mnemonic"] }
+base-common-network = { workspace = true, features = ["mnemonic"] }
 base-common-rpc-types = { workspace = true, features = ["network"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default", "pubsub", "ws"] }

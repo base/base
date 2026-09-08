@@ -10,7 +10,7 @@ use std::{
 use alloy_primitives::{U256, utils::format_ether};
 use alloy_provider::Provider;
 use base_cli_utils::RuntimeManager;
-use base_common_signer::PrivateKeySigner;
+use base_common_network::PrivateKeySigner;
 use indicatif::MultiProgress;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;

@@ -2,12 +2,11 @@
 
 use std::{num::NonZeroU64, path::PathBuf, time::Duration};
 
-use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U256, utils::format_ether};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use base_cli_utils::RuntimeManager;
-use base_common_signer::PrivateKeySigner;
+use base_common_network::{EthereumWallet, PrivateKeySigner, TransactionBuilder};
 use base_load_tests::{
     AccountPool, BaselineError, DEFAULT_MAX_GAS_PRICE, FundedAccount, LoadRunner, LoadTestDisplay,
     LoadTestDisplayConfig, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, QueryProvider,

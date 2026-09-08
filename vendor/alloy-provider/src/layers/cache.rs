@@ -2,7 +2,6 @@ use std::{io::BufReader, marker::PhantomData, num::NonZero, path::PathBuf, sync:
 
 use alloy_eips::BlockId;
 use alloy_json_rpc::{RpcError, RpcSend};
-use alloy_network::Network;
 use alloy_network_primitives::TransactionResponse;
 use alloy_primitives::{
     Address, B256, Bytes, StorageKey, StorageValue, TxHash, U64, U256, keccak256,
@@ -12,6 +11,7 @@ use alloy_rpc_types_eth::{
     StorageValuesResponse,
 };
 use alloy_transport::{TransportErrorKind, TransportResult};
+use base_common_network::Network;
 use lru_0_18_2::LruCache;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -598,11 +598,11 @@ impl SharedCache {
 
 #[cfg(test)]
 mod tests {
-    use alloy_network::TransactionBuilder;
     use alloy_node_bindings::{Anvil, utils::run_with_tempdir};
     use alloy_primitives::{Bytes, FixedBytes, b256, bytes, hex, utils::Unit};
     use alloy_rpc_types_eth::{BlockId, Transaction, TransactionReceipt, TransactionRequest};
     use alloy_transport::mock::Asserter;
+    use base_common_network::TransactionBuilder;
 
     use super::*;
     use crate::ProviderBuilder;

@@ -4,11 +4,11 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use alloy_network::{Ethereum, Network};
 #[cfg(feature = "pubsub")]
 use alloy_pubsub::{PubSubFrontend, Subscription};
 use alloy_rpc_client::{BuiltInConnectionString, ClientBuilder, ClientRef, RpcClient, WeakClient};
 use alloy_transport::{TransportConnect, TransportError};
+use base_common_network::{Ethereum, Network};
 
 use crate::{
     Identity, ProviderBuilder,

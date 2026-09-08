@@ -3,9 +3,9 @@
 //! This follows the `testing_buildBlockV1` specification.
 
 use alloy_json_rpc::RpcRecv;
-use alloy_network::Network;
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV5, TestingBuildBlockRequestV1};
 use alloy_transport::TransportResult;
+use base_common_network::Network;
 
 use crate::Provider;
 

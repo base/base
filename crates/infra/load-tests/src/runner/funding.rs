@@ -6,12 +6,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256, utils::format_ether};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
-use base_common_signer::PrivateKeySigner;
+use base_common_network::{Ethereum, EthereumWallet, PrivateKeySigner, TransactionBuilder};
 use base_tx_manager::NonceManager;
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};

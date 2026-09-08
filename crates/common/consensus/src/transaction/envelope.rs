@@ -5,13 +5,13 @@ use alloy_consensus::{
     transaction::{TransactionInfo, TxHashRef},
 };
 use alloy_eips::eip2718::Encodable2718;
-#[cfg(feature = "alloy-compat")]
-use alloy_network::{AnyRpcTransaction, AnyTxEnvelope};
 use alloy_primitives::{B256, Bytes, Signature, TxHash};
 #[cfg(feature = "alloy-compat")]
 use alloy_rpc_types_eth::{ConversionError, Transaction as AlloyRpcTransaction};
 #[cfg(feature = "alloy-compat")]
 use alloy_serde::WithOtherFields;
+#[cfg(feature = "alloy-compat")]
+use base_common_network::{AnyRpcTransaction, AnyTxEnvelope};
 #[cfg(feature = "evm")]
 use base_evm_context::TxEnv;
 #[cfg(feature = "evm")]
@@ -458,16 +458,15 @@ impl BaseTxEnvelope {
     #[cfg(feature = "alloy-compat")]
     #[allow(clippy::result_large_err)]
     pub fn try_from_any_envelope(
-        tx: alloy_network::AnyTxEnvelope,
-    ) -> Result<Self, alloy_network::AnyTxEnvelope> {
+        tx: base_common_network::AnyTxEnvelope,
+    ) -> Result<Self, base_common_network::AnyTxEnvelope> {
         match tx.try_into_envelope() {
-            Ok(eth) => {
-                Self::try_from_eth_envelope(eth).map_err(alloy_network::AnyTxEnvelope::Ethereum)
-            }
+            Ok(eth) => Self::try_from_eth_envelope(eth)
+                .map_err(base_common_network::AnyTxEnvelope::Ethereum),
             Err(err) => match err.into_value() {
-                alloy_network::AnyTxEnvelope::Unknown(unknown) => {
+                base_common_network::AnyTxEnvelope::Unknown(unknown) => {
                     let Ok(deposit) = unknown.inner.clone().try_into() else {
-                        return Err(alloy_network::AnyTxEnvelope::Unknown(unknown));
+                        return Err(base_common_network::AnyTxEnvelope::Unknown(unknown));
                     };
                     Ok(Self::Deposit(Sealed::new_unchecked(deposit, unknown.hash)))
                 }
@@ -970,7 +969,7 @@ mod tests {
     }
 
     #[cfg(feature = "alloy-compat")]
-    use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, UnknownTxEnvelope};
+    use base_common_network::{AnyRpcTransaction, AnyTxEnvelope, UnknownTxEnvelope};
 
     #[cfg(feature = "alloy-compat")]
     #[test]
@@ -1059,7 +1058,7 @@ mod tests {
     fn eip8130_envelope_recovery_honors_checked_vs_unchecked_contract() {
         use alloy_consensus::transaction::SignerRecoverable;
         use alloy_signer::SignerSync;
-        use base_common_signer::PrivateKeySigner;
+        use base_common_network::PrivateKeySigner;
 
         use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
 

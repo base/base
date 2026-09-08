@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::Address;
 use alloy_transport::TransportResult;
 use async_trait::async_trait;
+use base_common_network::{Network, TransactionBuilder};
 use dashmap::DashMap;
 use futures::lock::Mutex;
 
@@ -107,10 +107,10 @@ impl NonceManager for CachedNonceManager {
 /// # Example
 ///
 /// ```
-/// # use alloy_network::{Ethereum};
+/// # use base_common_network::{Ethereum};
 /// # use alloy_rpc_types_eth::TransactionRequest;
 /// # use alloy_provider::{ProviderBuilder, RootProvider, Provider};
-/// # use base_common_signer::PrivateKeySigner;
+/// # use base_common_network::PrivateKeySigner;
 /// # async fn test(url: url::Url) -> Result<(), Box<dyn std::error::Error>> {
 /// let pk: PrivateKeySigner = "0x...".parse()?;
 /// let provider = ProviderBuilder::<_, _, Ethereum>::default()

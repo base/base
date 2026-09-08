@@ -2169,7 +2169,7 @@ mod tests {
         CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
         SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
     };
-    use base_common_signer::PrivateKeySigner;
+    use base_common_network::PrivateKeySigner;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;

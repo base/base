@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
-use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, SolValue};
+use base_common_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use base_common_precompiles::{B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory};
 use futures::{StreamExt, stream};
 use tracing::{info, trace, warn};

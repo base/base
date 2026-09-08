@@ -7,11 +7,11 @@ use std::{
     },
 };
 
-use alloy_network::{Ethereum, Network};
 use alloy_primitives::{BlockNumber, U64};
 use alloy_rpc_client::{NoParams, PollerBuilder, WeakClient};
 use alloy_transport::RpcError;
 use async_stream::stream;
+use base_common_network::{Ethereum, Network};
 #[cfg(feature = "pubsub")]
 use futures::{FutureExt, future::Either};
 use futures::{Stream, StreamExt};

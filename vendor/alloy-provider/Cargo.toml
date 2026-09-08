@@ -42,7 +42,6 @@ pin-project = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-signer = { workspace = true }
 async-stream = { workspace = true }
-alloy-network = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-sol-types = { workspace = true }
@@ -75,6 +74,7 @@ serde = { workspace = true, features = [
     "derive",
     "alloc",
 ] }
+base-common-network = { workspace = true }
 alloy-rpc-types-engine = { workspace = true, features = ["serde"], optional = true }
 [dev-dependencies]
 reqwest = { workspace = true }
@@ -101,7 +101,7 @@ alloy-transport-http = { workspace = true, features = [
     "reqwest",
     "jwt-auth",
 ] }
-base-common-signer = { workspace = true }
+base-common-network = { workspace = true }
 tower-http = { workspace = true, features = ["default", "set-header", "sensitive-headers"] }
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 wasmtimer = { workspace = true, features = ["default"] }

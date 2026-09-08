@@ -3,13 +3,13 @@
 #![allow(missing_docs)]
 
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
     BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH},
 };
+use base_common_network::TransactionResponse;
 use base_execution_txpool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };

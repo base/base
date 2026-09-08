@@ -8,7 +8,6 @@ use std::{
 
 use alloy_eips::BlockId;
 use alloy_json_rpc::RpcRecv;
-use alloy_network::Network;
 use alloy_primitives::{Address, Bytes};
 use alloy_rpc_types_eth::{
     BlockOverrides,
@@ -16,6 +15,7 @@ use alloy_rpc_types_eth::{
 };
 use alloy_sol_types::SolCall;
 use alloy_transport::TransportResult;
+use base_common_network::Network;
 use futures::FutureExt;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 use tokio::time::{Timeout, timeout as timeout_future};
@@ -427,9 +427,9 @@ where
 #[cfg(test)]
 mod test {
     use alloy_eips::BlockNumberOrTag;
-    use alloy_network::{Ethereum, TransactionBuilder};
     use alloy_primitives::{U256, address};
     use alloy_rpc_types_eth::{TransactionRequest, state::StateOverride};
+    use base_common_network::{Ethereum, TransactionBuilder};
 
     use super::*;
 

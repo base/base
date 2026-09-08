@@ -5,11 +5,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, Signed, U160, U256, Uint, utils::format_ether};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
+use base_common_network::{EthereumWallet, TransactionBuilder};
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{info, instrument, trace};

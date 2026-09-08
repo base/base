@@ -1789,7 +1789,7 @@ mod tests {
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope,
         Eip8130Constants, Eip8130Signed, TxEip8130,
     };
-    use base_common_signer::PrivateKeySigner;
+    use base_common_network::PrivateKeySigner;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{

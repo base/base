@@ -13,7 +13,7 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_genesis::SystemConfigUpdate;
-use base_common_signer::PrivateKeySigner;
+use base_common_network::PrivateKeySigner;
 use base_consensus_derive::{
     EthereumDataSource, PipelineBuilder, PipelineEncodingError, PipelineError, PipelineErrorKind,
     StatefulAttributesBuilder, StepResult,

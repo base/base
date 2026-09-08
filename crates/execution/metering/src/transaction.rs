@@ -57,10 +57,10 @@ mod tests {
     use alloy_consensus::{
         SignableTransaction, Transaction, TxEip1559, transaction::SignerRecoverable,
     };
-    use alloy_network::TxSignerSync;
     use alloy_primitives::{Address, U256, bytes};
     use base_common_consensus::BaseTxEnvelope;
     use base_common_evm::BaseUpgrade;
+    use base_common_network::TxSignerSync;
     use base_test_utils::Account as BaseAccount;
 
     use super::*;

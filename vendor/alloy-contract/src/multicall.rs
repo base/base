@@ -3,10 +3,10 @@
 //! alloy_contract.
 //!
 //! This module is not public API.
-use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{MulticallItem, Provider};
 use alloy_sol_types::SolCall;
+use base_common_network::{Network, TransactionBuilder};
 
 use super::SolCallBuilder;
 

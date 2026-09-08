@@ -14,10 +14,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_network::ReceiptResponse;
 use alloy_primitives::TxHash;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use base_common_network::ReceiptResponse;
 use base_common_rpc_types::Base;
 use futures::{StreamExt, stream};
 use tokio::sync::{Semaphore, mpsc};

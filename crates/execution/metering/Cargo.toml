@@ -37,9 +37,9 @@ base-execution-chainspec = { workspace = true, features = ["default"] }
 revm = { workspace = true }
 serde_json = { workspace = true }
 revm-bytecode = { workspace = true }
-alloy-network = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-common-network = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 url = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }

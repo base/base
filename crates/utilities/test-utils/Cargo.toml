@@ -15,7 +15,7 @@ workspace = true
 alloy-eips = { workspace = true }
 alloy-signer = { workspace = true }
 base-common-evm = { workspace = true }
-base-common-signer = { workspace = true }
+base-common-network = { workspace = true }
 base-common-consensus = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }

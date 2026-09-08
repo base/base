@@ -33,7 +33,6 @@ path = "src/lib.rs"
 
 [dependencies]
 thiserror = { workspace = true }
-alloy-network = { workspace = true }
 alloy-json-abi = { workspace = true }
 alloy-provider = { workspace = true }
 alloy-consensus = { workspace = true }
@@ -51,8 +50,9 @@ serde_json = { workspace = true, features = [
     "alloc",
     "raw_value",
 ] }
+base-common-network = { workspace = true }
 [dev-dependencies]
-base-common-signer = { workspace = true }
+base-common-network = { workspace = true }
 alloy-node-bindings = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-provider = { workspace = true, features = ["anvil-node"] }

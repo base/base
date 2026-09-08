@@ -2,7 +2,7 @@ use alloy_consensus::SignableTransaction;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_signer::SignerSync;
 use base_common_consensus::BaseTxEnvelope;
-use base_common_signer::PrivateKeySigner;
+use base_common_network::PrivateKeySigner;
 
 /// Hardcoded private key for the test account used across all action tests.
 ///

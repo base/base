@@ -10,12 +10,12 @@ use std::{
 
 use alloy_consensus::BlockHeader;
 use alloy_json_rpc::RpcError;
-use alloy_network::{BlockResponse, Network};
 use alloy_primitives::{
     B256, TxHash,
     map::{B256HashMap, B256HashSet},
 };
 use alloy_transport::{TransportError, utils::Spawnable};
+use base_common_network::{BlockResponse, Network};
 use futures::{FutureExt, Stream, future::pending, stream::StreamExt};
 use tokio::{
     select,
@@ -61,7 +61,7 @@ pub enum PendingTransactionError {
 /// Send and wait for a transaction to be confirmed 2 times, with a timeout of 60 seconds:
 ///
 /// ```no_run
-/// # async fn example<N: alloy_network::Network>(provider: impl alloy_provider::Provider, tx: alloy_rpc_types_eth::transaction::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn example<N: base_common_network::Network>(provider: impl alloy_provider::Provider, tx: alloy_rpc_types_eth::transaction::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
 /// // Send a transaction, and configure the pending transaction.
 /// let builder = provider.send_transaction(tx)
 ///     .await?
@@ -77,7 +77,7 @@ pub enum PendingTransactionError {
 ///
 /// This can also be more concisely written using `watch`:
 /// ```no_run
-/// # async fn example<N: alloy_network::Network>(provider: impl alloy_provider::Provider, tx: alloy_rpc_types_eth::transaction::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn example<N: base_common_network::Network>(provider: impl alloy_provider::Provider, tx: alloy_rpc_types_eth::transaction::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
 /// let tx_hash = provider.send_transaction(tx)
 ///     .await?
 ///     .with_required_confirmations(2)

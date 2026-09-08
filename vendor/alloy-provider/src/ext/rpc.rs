@@ -1,7 +1,7 @@
 //! This module extends the Ethereum JSON-RPC provider with the Rpc namespace's RPC methods.
-use alloy_network::Network;
 use alloy_rpc_types::RpcModules;
 use alloy_transport::TransportResult;
+use base_common_network::Network;
 
 use crate::Provider;
 

@@ -1,13 +1,13 @@
 //! Contains a utility method to check if attributes match a block.
 
 use alloy_eips::{Decodable2718, eip1559::BaseFeeParams};
-use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rpc_types_eth::{Block, BlockTransactions, Withdrawals};
 use base_common_consensus::{
     BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
 };
 use base_common_genesis::RollupConfig;
+use base_common_network::TransactionResponse;
 use base_common_rpc_types::Transaction;
 use base_protocol::AttributesWithParent;
 

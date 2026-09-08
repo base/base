@@ -251,7 +251,7 @@ macro_rules! define_tx_manager_cli {
 /// # Required downstream dependencies
 ///
 /// The macro expands to code that references `::clap::Parser`, `::url::Url`,
-/// `::alloy_primitives::Address`, and `::base_common_signer::PrivateKeySigner`
+/// `::alloy_primitives::Address`, and `::base_common_network::PrivateKeySigner`
 /// via absolute paths. Consumer crates that invoke `define_signer_cli!` must
 /// add these dependencies to their own `Cargo.toml`:
 ///
@@ -260,7 +260,7 @@ macro_rules! define_tx_manager_cli {
 /// clap = { version = "...", features = ["derive", "env"] }
 /// url = "..."
 /// alloy-primitives = "..."
-/// base-common-signer = "..."
+/// base-common-network = "..."
 /// ```
 #[rustfmt::skip]
 #[macro_export]
@@ -325,7 +325,7 @@ macro_rules! define_signer_cli {
                 match (cli.private_key, cli.signer_endpoint, cli.signer_address) {
                     (Some(pk), None, None) => {
                         let signer = pk
-                            .parse::<::base_common_signer::PrivateKeySigner>()
+                            .parse::<::base_common_network::PrivateKeySigner>()
                             .map_err(|e| $crate::ConfigError::InvalidValue {
                                 field: "private-key",
                                 reason: e.to_string(),

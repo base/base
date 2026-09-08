@@ -20,14 +20,13 @@ serde_json = { workspace = true }
 async-trait = { workspace = true }
 base-runtime = { workspace = true }
 alloy-signer = { workspace = true }
-alloy-network = { workspace = true }
 base-state-api = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-transport = { workspace = true }
 base-test-utils = { workspace = true }
 base-tx-manager = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-signer = { workspace = true }
+base-common-network = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 base-consensus-node = { workspace = true }
 base-batcher-source = { workspace = true }

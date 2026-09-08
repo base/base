@@ -2,12 +2,11 @@
 
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
-use alloy_network::TxSigner;
 use alloy_primitives::{Address, B256, Signature, eip191_hash_message, map::AddressMap};
 use alloy_signer::SignerSync;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_network::{MnemonicBuilder, PrivateKeySigner, TxSigner, coins_bip39::English};
 use base_common_rpc_types::BaseTransactionRequest;
-use base_common_signer::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
 use reth_rpc_eth_types::SignError;
 
 use crate::{EthSigner, Result};

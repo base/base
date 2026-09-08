@@ -72,7 +72,7 @@ alloy-signer = { workspace = true }
 assert_matches = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-test-utils = { workspace = true }
-base-common-signer = { workspace = true }
+base-common-network = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }

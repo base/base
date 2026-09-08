@@ -22,12 +22,12 @@ async-trait = { workspace = true }
 base-metrics = { workspace = true }
 base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
-alloy-network = { workspace = true }
 base-proof-mpt = { workspace = true }
 base-common-evm = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 base-optimism-rpc = { workspace = true }
+base-common-network = { workspace = true }
 base-common-consensus = { workspace = true }
 alloy-rpc-types-beacon = { workspace = true }
 base-consensus-providers = { workspace = true }

@@ -3,10 +3,10 @@
 use std::time::{Duration, Instant};
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
+use base_common_network::Network;
 use base_common_rpc_types::{Base, BaseTransactionReceipt};
 use base_consensus_rpc::SyncStatusApiClient;
 use base_protocol::SyncStatus;

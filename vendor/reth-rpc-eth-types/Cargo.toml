@@ -28,7 +28,6 @@ alloy-serde = { workspace = true }
 alloy-chains = { workspace = true }
 reth-metrics = { workspace = true }
 base-protocol = { workspace = true }
-alloy-network = { workspace = true }
 alloy-json-rpc = { workspace = true }
 base-common-flz = { workspace = true }
 base-common-evm = { workspace = true }
@@ -42,6 +41,7 @@ reth-storage-errors = {workspace = true}
 base-common-chains = { workspace = true }
 base-execution-evm = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
+base-common-network = { workspace = true }
 reth-execution-types = { workspace = true }
 reth-rpc-server-types = { workspace = true }
 base-execution-txpool = { workspace = true }

@@ -28,7 +28,6 @@ reth-metrics = { workspace = true }
 reth-network = { workspace = true }
 reth-provider = { workspace = true }
 alloy-genesis = { workspace = true }
-alloy-network = { workspace = true }
 alloy-eip2124 = { workspace = true }
 alloy-json-rpc = { workspace = true }
 base-state-api = { workspace = true }
@@ -85,7 +84,7 @@ base-common-chains = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 reth-execution-types = { workspace = true, features = ["serde"] }
 alloy-rpc-types-beacon = { workspace = true, features = ["ssz"] }
-base-common-signer = { workspace = true, features = ["mnemonic"] }
+base-common-network = { workspace = true, features = ["mnemonic"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }

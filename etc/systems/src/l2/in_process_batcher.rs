@@ -7,7 +7,7 @@
 use alloy_primitives::B256;
 use base_batcher_encoder::DaType;
 use base_batcher_service::{BatcherConfig, BatcherService};
-use base_common_signer::PrivateKeySigner;
+use base_common_network::PrivateKeySigner;
 use base_runtime::TokioRuntime;
 use base_tx_manager::SignerConfig;
 use eyre::Result;

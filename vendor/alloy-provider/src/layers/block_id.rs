@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
 use alloy_eips::BlockId;
-use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, StorageKey, StorageValue, U64, U256};
 use alloy_rpc_types_eth::{
     AccessListResult, EIP1186AccountProofResponse, StorageValuesRequest, StorageValuesResponse,
     simulate::{SimulatePayload, SimulatedBlock},
 };
+use base_common_network::Network;
 
 use crate::{EthCall, Provider, ProviderLayer, RootProvider, RpcWithBlock};
 
@@ -56,7 +56,7 @@ where
 
 /// A provider that uses a configured default [`BlockId`].
 #[derive(Clone, Debug)]
-pub struct BlockIdProvider<P, N = alloy_network::Ethereum> {
+pub struct BlockIdProvider<P, N = base_common_network::Ethereum> {
     inner: P,
     block_id: BlockId,
     _marker: PhantomData<N>,

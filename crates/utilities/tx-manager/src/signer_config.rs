@@ -2,9 +2,8 @@
 
 use std::fmt;
 
-use alloy_network::EthereumWallet;
 use alloy_primitives::Address;
-use base_common_signer::{PrivateKeySigner, RemoteSigner};
+use base_common_network::{EthereumWallet, PrivateKeySigner, RemoteSigner};
 use url::Url;
 
 use crate::TxManagerError;

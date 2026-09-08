@@ -27,7 +27,7 @@
 //! [`suggest_gas_price_caps`]: SimpleTxManager::suggest_gas_price_caps
 //! [`FeeCalculator::check_limits`]: crate::FeeCalculator::check_limits
 //! [`NonceManager`]: crate::NonceManager
-//! [`NetworkWallet`]: alloy_network::NetworkWallet
+//! [`NetworkWallet`]: base_common_network::NetworkWallet
 //! [`prepare`]: SimpleTxManager::prepare
 //! [`craft_tx`]: SimpleTxManager::craft_tx
 //! [`send_tx`]: SimpleTxManager::send_tx
@@ -46,15 +46,15 @@ use alloy_consensus::TxEnvelope;
 use alloy_eips::{
     BlockNumberOrTag, Decodable2718, Encodable2718, eip7594::BlobTransactionSidecarEip7594,
 };
-use alloy_network::{
-    Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
-    TransactionBuilder, TransactionBuilderError,
-};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_transport::TransportError;
 use backon::{ConstantBuilder, Retryable};
+use base_common_network::{
+    Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
+    TransactionBuilder, TransactionBuilderError,
+};
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
@@ -1833,12 +1833,11 @@ mod tests {
     };
 
     use alloy_consensus::TxEip1559;
-    use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
     use alloy_provider::{ProviderBuilder, RootProvider};
     use alloy_transport::mock::Asserter;
-    use base_common_signer::PrivateKeySigner;
+    use base_common_network::{EthereumWallet, PrivateKeySigner};
     use base_runtime::{
         Clock,
         deterministic::{Config, Runner},

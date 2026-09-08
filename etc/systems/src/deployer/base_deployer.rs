@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use alloy_primitives::{Address, B256};
-use base_common_signer::PrivateKeySigner;
+use base_common_network::PrivateKeySigner;
 use eyre::{Result, WrapErr, eyre};
 use testcontainers::{
     GenericImage, ImageExt,

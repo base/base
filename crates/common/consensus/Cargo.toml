@@ -21,12 +21,12 @@ alloy-consensus = { workspace = true }
 alloy-sol-types = { workspace = true }
 revm = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
-alloy-network = { workspace = true, optional = true }
 base-evm-context = { workspace = true, optional = true}
 modular-bitfield = { workspace = true, optional = true }
 base-evm-handler = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["rlp"] }
 alloy-rpc-types-eth = { workspace = true, optional = true }
+base-common-network = { workspace = true, optional = true }
 reth-zstd-compressors = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 bytes = { workspace = true, optional = true, features = ["default"] }
@@ -36,7 +36,7 @@ serde_with = { workspace = true, optional = true, features = ["default"] }
 [dev-dependencies]
 serde_json = { workspace = true }
 alloy-signer = { workspace = true }
-base-common-signer = { workspace = true }
+base-common-network = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
@@ -60,7 +60,7 @@ std = [
     "serde?/std",
     "thiserror/std",
 ]
-alloy-compat = ["dep:alloy-network", "dep:alloy-rpc-types-eth", "serde"]
+alloy-compat = ["dep:base-common-network", "dep:alloy-rpc-types-eth", "serde"]
 k256 = ["alloy-consensus/k256", "alloy-primitives/k256"]
 kzg = ["alloy-consensus/kzg", "alloy-eips/kzg", "std"]
 arbitrary = [

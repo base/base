@@ -32,8 +32,6 @@ pub use provider::*;
 
 pub mod utils;
 
-#[doc(no_inline)]
-pub use alloy_network::{self as network, Network};
 pub use alloy_rpc_client::ConnectionConfig;
 #[cfg(feature = "ipc")]
 pub use alloy_rpc_client::IpcConnect;
@@ -44,3 +42,5 @@ pub use alloy_rpc_client::WsConnect;
 pub use alloy_transport as transport;
 #[doc(no_inline)]
 pub use alloy_transport::mock;
+#[doc(no_inline)]
+pub use base_common_network::{self as network, Network};

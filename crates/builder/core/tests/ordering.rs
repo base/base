@@ -2,7 +2,6 @@
 
 use alloy_consensus::Transaction;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
@@ -10,6 +9,7 @@ use base_builder_core::{
     MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityConfig,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
+use base_common_network::TransactionResponse;
 use base_execution_txpool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };

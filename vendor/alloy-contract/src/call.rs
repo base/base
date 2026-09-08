@@ -9,11 +9,6 @@ use std::{
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_network::{
-    Ethereum, IntoWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
-    TransactionBuilder4844, TransactionBuilder7702, TransactionBuilderError, TxSigner,
-    eip2718::Encodable2718,
-};
 use alloy_network_primitives::ReceiptResponse;
 use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider};
@@ -23,6 +18,11 @@ use alloy_rpc_types_eth::{
 };
 use alloy_sol_types::SolCall;
 use alloy_transport::{BoxFuture, TransportResult};
+use base_common_network::{
+    Ethereum, IntoWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
+    TransactionBuilder4844, TransactionBuilder7702, TransactionBuilderError, TxSigner,
+    eip2718::Encodable2718,
+};
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 use tokio::time::{Timeout, timeout as timeout_future};
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
@@ -287,7 +287,7 @@ impl<P, D, N: Network> CallBuilder<P, D, N> {
     /// ```no_run
     /// # use alloy_primitives::Address;
     /// # use alloy_provider::{Provider, ProviderBuilder};
-    /// # use base_common_signer::PrivateKeySigner;
+    /// # use base_common_network::PrivateKeySigner;
     /// # use alloy_sol_types::sol;
     ///
     /// sol! {
@@ -779,13 +779,12 @@ impl<P, D: CallDecoder, N: Network> std::fmt::Debug for CallBuilder<P, D, N> {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Transaction;
-    use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{B256, address, b256, bytes, hex, utils::parse_units};
     use alloy_provider::{Provider, ProviderBuilder, WalletProvider};
     use alloy_rpc_types_eth::{AccessListItem, Authorization};
     use alloy_sol_types::sol;
-    use base_common_signer::PrivateKeySigner;
+    use base_common_network::{EthereumWallet, PrivateKeySigner};
     use futures::Future;
 
     use super::*;

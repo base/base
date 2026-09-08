@@ -3,11 +3,11 @@ use alloy_primitives::{B256, Signature, U256};
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_signer::SignerSync;
 use base_common_consensus::BaseBlock;
+use base_common_network::PrivateKeySigner;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
     NetworkPayloadEnvelope, PayloadHash,
 };
-use base_common_signer::PrivateKeySigner;
 
 use super::L2SequencerError;
 

@@ -12,8 +12,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-alloy-network = { workspace = true }
 alloy-primitives = { workspace = true }
+base-common-network = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
 alloy-provider = { workspace = true, features = ["default"] }
