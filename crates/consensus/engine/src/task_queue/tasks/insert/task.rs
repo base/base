@@ -3,9 +3,7 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_rpc_types_engine::{
-    CancunPayloadFields, ExecutionPayloadInputV2, PayloadStatusEnum, PraguePayloadFields,
-};
+use alloy_rpc_types_engine::{CancunPayloadFields, PayloadStatusEnum, PraguePayloadFields};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
@@ -256,26 +254,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
 
         // Insert the new payload.
         let insert_time_start = Instant::now();
-        let response = match execution_payload {
-            BaseExecutionPayload::V1(payload) => {
-                let payload_input =
-                    ExecutionPayloadInputV2 { execution_payload: payload, withdrawals: None };
-                self.client.new_payload_v2(payload_input).await
-            }
-            BaseExecutionPayload::V2(payload) => {
-                let payload_input = ExecutionPayloadInputV2 {
-                    execution_payload: payload.payload_inner,
-                    withdrawals: Some(payload.withdrawals),
-                };
-                self.client.new_payload_v2(payload_input).await
-            }
-            BaseExecutionPayload::V3(payload) => {
-                self.client.new_payload_v3(payload, parent_beacon_block_root).await
-            }
-            BaseExecutionPayload::V4(payload) => {
-                self.client.new_payload_v4(payload, parent_beacon_block_root).await
-            }
-        };
+        let response = self.client.submit_payload(self.envelope.clone()).await;
 
         // Check the `engine_newPayload` response.
         let response = match response {

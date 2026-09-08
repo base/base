@@ -181,7 +181,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         // NOTE: it doesn't matter which version we use here, because we're not sending any
         // payload attributes. The forkchoice updated call is version agnostic if no payload
         // attributes are provided.
-        let response = self.client.fork_choice_updated_v3(forkchoice, None).await;
+        let response = self.client.update_forkchoice(forkchoice, None).await;
 
         let valid_response = response.map_err(|e| {
             // Fatal forkchoice update error.

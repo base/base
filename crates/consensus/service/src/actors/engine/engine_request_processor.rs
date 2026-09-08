@@ -2045,7 +2045,10 @@ mod tests {
             payload_id: None,
         };
         let client = Arc::new(
-            test_engine_client_builder().with_fork_choice_updated_v3_response(invalid_fcu).build(),
+            test_engine_client_builder()
+                .with_config(cfg.clone())
+                .with_fork_choice_updated_v3_response(invalid_fcu)
+                .build(),
         );
 
         let (signal_tx, mut signal_rx) = mpsc::channel(4);

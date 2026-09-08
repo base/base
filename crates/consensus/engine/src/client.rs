@@ -21,8 +21,9 @@ use base_common_genesis::RollupConfig;
 use base_common_network::{Ethereum, Network};
 use base_common_rpc_types::{Base, BaseEngineApi};
 use base_common_rpc_types_engine::{
-    BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4, BasePayloadAttributes,
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadEnvelopeV3,
+    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
+    BasePayloadAttributes,
 };
 use base_consensus_providers::L1RpcProvider;
 use base_protocol::{FromBlockError, L2BlockInfo};
@@ -51,6 +52,91 @@ pub enum EngineClientError {
 /// The main reason this exists is for mocking/unit testing.
 #[async_trait]
 pub trait EngineClient: BaseEngineApi + Send + Sync {
+    /// Submits a payload independently of the Engine wire protocol version.
+    async fn submit_payload(
+        &self,
+        envelope: base_common_rpc_types_engine::BaseExecutionPayloadEnvelope,
+    ) -> TransportResult<PayloadStatus> {
+        let root = envelope.parent_beacon_block_root.unwrap_or_default();
+        match envelope.execution_payload {
+            base_common_rpc_types_engine::BaseExecutionPayload::V1(payload) => {
+                self.new_payload_v2(ExecutionPayloadInputV2 {
+                    execution_payload: payload,
+                    withdrawals: None,
+                })
+                .await
+            }
+            base_common_rpc_types_engine::BaseExecutionPayload::V2(payload) => {
+                self.new_payload_v2(ExecutionPayloadInputV2 {
+                    execution_payload: payload.payload_inner,
+                    withdrawals: Some(payload.withdrawals),
+                })
+                .await
+            }
+            base_common_rpc_types_engine::BaseExecutionPayload::V3(payload) => {
+                self.new_payload_v3(payload, root).await
+            }
+            base_common_rpc_types_engine::BaseExecutionPayload::V4(payload) => {
+                self.new_payload_v4(payload, root).await
+            }
+        }
+    }
+
+    /// Applies forkchoice and optionally requests a payload build.
+    async fn update_forkchoice(
+        &self,
+        state: ForkchoiceState,
+        attributes: Option<BasePayloadAttributes>,
+    ) -> TransportResult<ForkchoiceUpdated> {
+        if attributes
+            .as_ref()
+            .is_some_and(|attrs| !self.cfg().is_ecotone_active(attrs.payload_attributes.timestamp))
+        {
+            self.fork_choice_updated_v2(state, attributes).await
+        } else {
+            self.fork_choice_updated_v3(state, attributes).await
+        }
+    }
+
+    /// Resolves a built payload for consensus and gossip.
+    async fn resolve_payload(
+        &self,
+        id: PayloadId,
+        attributes: &BasePayloadAttributes,
+    ) -> TransportResult<base_common_rpc_types_engine::BaseExecutionPayloadEnvelope> {
+        let timestamp = attributes.payload_attributes.timestamp;
+        let parent_beacon_block_root = attributes.payload_attributes.parent_beacon_block_root;
+        let execution_payload =
+            match crate::EngineGetPayloadVersion::from_cfg(self.cfg(), timestamp) {
+                crate::EngineGetPayloadVersion::V5 => {
+                    BaseExecutionPayload::V4(self.get_payload_v5(id).await?.execution_payload)
+                }
+                crate::EngineGetPayloadVersion::V4 => {
+                    BaseExecutionPayload::V4(self.get_payload_v4(id).await?.execution_payload)
+                }
+                crate::EngineGetPayloadVersion::V3 => {
+                    BaseExecutionPayload::V3(self.get_payload_v3(id).await?.execution_payload)
+                }
+                crate::EngineGetPayloadVersion::V2 => {
+                    match self.get_payload_v2(id).await?.execution_payload.into_payload() {
+                        alloy_rpc_types_engine::ExecutionPayload::V1(payload) => {
+                            BaseExecutionPayload::V1(payload)
+                        }
+                        alloy_rpc_types_engine::ExecutionPayload::V2(payload) => {
+                            BaseExecutionPayload::V2(payload)
+                        }
+                        _ => {
+                            return Err(TransportErrorKind::custom_str(
+                                "unexpected legacy payload version",
+                            )
+                            .into());
+                        }
+                    }
+                }
+            };
+        Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload })
+    }
+
     /// Returns a reference to the inner [`RollupConfig`].
     fn cfg(&self) -> &RollupConfig;
 

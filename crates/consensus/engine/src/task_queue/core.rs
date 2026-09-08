@@ -2,22 +2,19 @@
 
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Instant};
 
-use alloy_rpc_types_engine::{
-    ExecutionPayload, INVALID_FORK_CHOICE_STATE_ERROR, PayloadId, PayloadStatusEnum,
-};
+use alloy_rpc_types_engine::{INVALID_FORK_CHOICE_STATE_ERROR, PayloadId, PayloadStatusEnum};
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo};
 use thiserror::Error;
 use tokio::sync::watch::Sender;
 
 use super::EngineTaskExt;
 use crate::{
-    BuildTaskError, EngineBuildError, EngineClient, EngineForkchoiceVersion,
-    EngineGetPayloadVersion, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-    EngineTaskErrorSeverity, ForkchoiceCheckpointReader, InsertTask, InsertTaskError, Metrics,
-    NoopForkchoiceCheckpointReader, SealTaskError, SyncStartError, SynchronizeTask,
-    SynchronizeTaskError, find_starting_forkchoice_with_checkpoint_reader,
+    BuildTaskError, EngineBuildError, EngineClient, EngineState, EngineSyncStateUpdate, EngineTask,
+    EngineTaskError, EngineTaskErrorSeverity, ForkchoiceCheckpointReader, InsertTask,
+    InsertTaskError, Metrics, NoopForkchoiceCheckpointReader, SealTaskError, SyncStartError,
+    SynchronizeTask, SynchronizeTaskError, find_starting_forkchoice_with_checkpoint_reader,
     task_queue::EngineTaskErrors,
 };
 
@@ -250,7 +247,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     pub async fn start_build(
         state: &EngineState,
         engine_client: &EngineClient_,
-        cfg: &RollupConfig,
+        _cfg: &RollupConfig,
         attributes_envelope: AttributesWithParent,
     ) -> Result<PayloadId, BuildTaskError> {
         if state.sync_state.unsafe_head().block_info.number
@@ -272,31 +269,21 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             })
             .create_forkchoice_state();
 
-        let forkchoice_version = EngineForkchoiceVersion::from_cfg(
-            cfg,
-            attributes_envelope.attributes.payload_attributes.timestamp,
-        );
-        let attrs = attributes_envelope.attributes;
-        let update = match forkchoice_version {
-            EngineForkchoiceVersion::V3 => {
-                engine_client.fork_choice_updated_v3(new_forkchoice, Some(attrs)).await
-            }
-            EngineForkchoiceVersion::V2 => {
-                engine_client.fork_choice_updated_v2(new_forkchoice, Some(attrs)).await
-            }
-        }
-        .map_err(|e| {
-            error!(target: "engine_builder", error = %e, "Forkchoice update failed");
-            let error = e
-                .as_error_resp()
-                .and_then(|e| {
-                    (e.code == INVALID_FORK_CHOICE_STATE_ERROR as i64)
-                        .then_some(EngineBuildError::ForkchoiceStateInvalid)
-                })
-                .unwrap_or_else(|| EngineBuildError::AttributesInsertionFailed(e));
+        let update = engine_client
+            .update_forkchoice(new_forkchoice, Some(attributes_envelope.attributes))
+            .await
+            .map_err(|e| {
+                error!(target: "engine_builder", error = %e, "Forkchoice update failed");
+                let error = e
+                    .as_error_resp()
+                    .and_then(|e| {
+                        (e.code == INVALID_FORK_CHOICE_STATE_ERROR as i64)
+                            .then_some(EngineBuildError::ForkchoiceStateInvalid)
+                    })
+                    .unwrap_or_else(|| EngineBuildError::AttributesInsertionFailed(e));
 
-            BuildTaskError::EngineBuildError(error)
-        })?;
+                BuildTaskError::EngineBuildError(error)
+            })?;
 
         Self::validate_forkchoice_status(update.payload_status.status)?;
 
@@ -315,80 +302,15 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
 
     /// Fetches the payload from the execution layer using the payload timestamp for versioning.
     pub async fn fetch_payload(
-        cfg: &RollupConfig,
+        _cfg: &RollupConfig,
         engine: &EngineClient_,
         payload_id: PayloadId,
         payload_attrs: &AttributesWithParent,
     ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
-        let payload_timestamp = payload_attrs.attributes().payload_attributes.timestamp;
-
-        debug!(
-            target: "engine",
-            payload_id = payload_id.to_string(),
-            l2_time = payload_timestamp,
-            "Fetching payload"
-        );
-
-        let get_payload_version = EngineGetPayloadVersion::from_cfg(cfg, payload_timestamp);
-        let payload_envelope = match get_payload_version {
-            EngineGetPayloadVersion::V5 => {
-                let payload = engine.get_payload_v5(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: payload_attrs
-                        .attributes()
-                        .payload_attributes
-                        .parent_beacon_block_root,
-                    execution_payload: BaseExecutionPayload::V4(payload.execution_payload),
-                }
-            }
-            EngineGetPayloadVersion::V4 => {
-                let payload = engine.get_payload_v4(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: Some(payload.parent_beacon_block_root),
-                    execution_payload: BaseExecutionPayload::V4(payload.execution_payload),
-                }
-            }
-            EngineGetPayloadVersion::V3 => {
-                let payload = engine.get_payload_v3(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: Some(payload.parent_beacon_block_root),
-                    execution_payload: BaseExecutionPayload::V3(payload.execution_payload),
-                }
-            }
-            EngineGetPayloadVersion::V2 => {
-                let payload = engine.get_payload_v2(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: None,
-                    execution_payload: match payload.execution_payload.into_payload() {
-                        ExecutionPayload::V1(payload) => BaseExecutionPayload::V1(payload),
-                        ExecutionPayload::V2(payload) => BaseExecutionPayload::V2(payload),
-                        other => {
-                            return Err(SealTaskError::UnexpectedPayloadVersion(format!(
-                                "{other:?}"
-                            )));
-                        }
-                    },
-                }
-            }
-        };
-
-        Ok(payload_envelope)
+        engine.resolve_payload(payload_id, payload_attrs.attributes()).await.map_err(|error| {
+            error!(target: "engine", error = %error, "Payload fetch failed");
+            SealTaskError::GetPayloadFailed(error)
+        })
     }
 
     /// Enqueues a new [`EngineTask`] for execution.
@@ -901,6 +823,7 @@ mod tests {
 
         let client = Arc::new(
             test_engine_client_builder()
+                .with_config(Arc::new(cfg.clone()))
                 .with_fork_choice_updated_v3_response(invalid_fcu())
                 .build(),
         );
