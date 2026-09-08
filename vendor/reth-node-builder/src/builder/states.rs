@@ -93,7 +93,7 @@ impl<DB: Database + DatabaseMetrics + Clone + Unpin + 'static> FullNodeComponent
         &self.components.network
     }
 
-    fn payload_builder_handle(&self) -> &reth_payload_builder::PayloadBuilderHandle {
+    fn payload_builder_handle(&self) -> &base_execution_payload_builder::PayloadBuilderHandle {
         &self.components.payload_builder_handle
     }
 

@@ -70,6 +70,6 @@ reqwest = { workspace = true, features = ["rustls", "stream"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
-reth-payload-builder = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
+base-execution-payload-builder = { workspace = true, features = ["test-utils"] }

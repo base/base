@@ -54,3 +54,22 @@ pub use validator::BaseExecutionPayloadValidator;
 
 mod engine;
 pub use engine::{BaseEngineValidator, validate_withdrawals_presence};
+
+mod service;
+pub use service::{
+    BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease, PayloadBuilderResources,
+    PayloadBuilderService, PayloadFuture, PayloadServiceCommand, PayloadStore,
+};
+mod job;
+pub use job::{KeepPayloadJobAlive, PayloadJob, PayloadJobGenerator};
+mod noop;
+pub use noop::NoopPayloadBuilderService;
+mod service_metrics;
+pub use service_metrics::PayloadBuilderServiceMetrics;
+mod job_metrics;
+pub use job_metrics::PayloadBuilderMetrics;
+mod basic;
+pub use alloy_rpc_types::engine::PayloadId;
+pub use basic::*;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;

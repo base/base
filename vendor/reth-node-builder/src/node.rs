@@ -6,13 +6,13 @@ use std::{
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
+use base_execution_payload_builder::PayloadBuilderHandle;
 use reth_node_api::FullNodeComponents;
 // re-export the node api types
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     node_config::NodeConfig,
 };
-use reth_payload_builder::PayloadBuilderHandle;
 use reth_provider::ChainSpecProvider;
 use reth_rpc_api::EngineApiClient;
 use reth_rpc_builder::{RpcServerHandle, auth::AuthServerHandle};

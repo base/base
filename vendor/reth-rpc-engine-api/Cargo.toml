@@ -28,13 +28,13 @@ alloy-hardforks = { workspace = true }
 jsonrpsee-types = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-network-api = { workspace = true }
-reth-payload-builder = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 base-execution-chainspec = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
+base-execution-payload-builder = { workspace = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
@@ -49,5 +49,5 @@ alloy-rlp = { workspace = true, features = ["core-net"] }
 alloy-consensus = { workspace = true, features = ["serde"]}
 reth-tasks = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-payload-builder = { workspace = true, features = ["test-utils"] }
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
+base-execution-payload-builder = { workspace = true, features = ["test-utils"] }

@@ -3,8 +3,10 @@
 use std::future::Future;
 
 use alloy_rpc_types::engine::PayloadId;
+use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_types::{
-    BuiltPayload, PayloadAttributes, PayloadBuilderError, PayloadKind,
+    BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadAttributes, PayloadBuilderError,
+    PayloadKind,
 };
 use reth_chain_state::CanonStateNotification;
 
@@ -22,22 +24,20 @@ use crate::service::BuildNewPayload;
 ///
 /// Note: A `PayloadJob` need to be cancel safe because it might be dropped after the CL has requested the payload via `engine_getPayloadV1` (see also [engine API docs](https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/paris.md#engine_getpayloadv1))
 pub trait PayloadJob: Future<Output = Result<(), PayloadBuilderError>> {
-    /// Represents the payload attributes type that is used to spawn this payload job.
-    type PayloadAttributes: PayloadAttributes + std::fmt::Debug;
     /// Represents the future that resolves the block that's returned to the CL.
-    type ResolvePayloadFuture: Future<Output = Result<Self::BuiltPayload, PayloadBuilderError>>
+    type ResolvePayloadFuture: Future<Output = Result<BaseBuiltPayload, PayloadBuilderError>>
         + Send
         + 'static;
-    /// Represents the built payload type that is returned to the CL.
-    type BuiltPayload: BuiltPayload + Clone + std::fmt::Debug;
 
     /// Returns the best payload that has been built so far.
     ///
     /// Note: This is never called by the CL.
-    fn best_payload(&self) -> Result<Self::BuiltPayload, PayloadBuilderError>;
+    fn best_payload(&self) -> Result<BaseBuiltPayload, PayloadBuilderError>;
 
     /// Returns the payload attributes for the payload being built.
-    fn payload_attributes(&self) -> Result<Self::PayloadAttributes, PayloadBuilderError>;
+    fn payload_attributes(
+        &self,
+    ) -> Result<BasePayloadBuilderAttributes<BaseTxEnvelope>, PayloadBuilderError>;
 
     /// Returns the payload timestamp for the payload being built.
     /// The default implementation allocates full attributes only to
@@ -119,7 +119,7 @@ pub trait PayloadJobGenerator {
     /// returned directly.
     fn new_payload_job(
         &self,
-        input: BuildNewPayload<<Self::Job as PayloadJob>::PayloadAttributes>,
+        input: BuildNewPayload,
         id: PayloadId,
     ) -> Result<Self::Job, PayloadBuilderError>;
 

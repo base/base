@@ -11,14 +11,13 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_evm::{BaseEvmConfig, ExecutionWitnessRecord, Executor, StateProviderDatabase};
 use base_execution_payload_builder::{
-    BasePayloadBuilderAttributes,
+    BasePayloadBuilderAttributes, PayloadConfig,
     builder::{BasePayloadBuilderCtx, Builder},
 };
 use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
 use base_execution_txpool::BasePooledTransaction;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
-use reth_basic_payload_builder::PayloadConfig;
 use reth_node_api::PayloadBuilderError;
 use reth_payload_util::NoopPayloadTransactions;
 use reth_primitives_traits::SealedHeader;

@@ -46,7 +46,6 @@ alloy-rpc-types-engine = { workspace = true }
 base-execution-chainspec = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-observability-events = { workspace = true }
-reth-basic-payload-builder = { workspace = true }
 http = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 base-execution-payload-types = { workspace = true }

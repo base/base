@@ -18,8 +18,8 @@ use reth_chain_state::CanonStateNotification;
 use reth_primitives_traits::Block as _;
 
 use crate::{
-    PayloadBuilderHandle, PayloadBuilderService, PayloadJob, PayloadJobGenerator,
-    service::BuildNewPayload, traits::KeepPayloadJobAlive,
+    KeepPayloadJobAlive, PayloadBuilderHandle, PayloadBuilderService, PayloadJob,
+    PayloadJobGenerator, service::BuildNewPayload,
 };
 
 /// Creates a new [`PayloadBuilderService`] for testing purposes.
@@ -50,7 +50,7 @@ impl PayloadJobGenerator for TestPayloadJobGenerator {
 
     fn new_payload_job(
         &self,
-        input: BuildNewPayload<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+        input: BuildNewPayload,
         _id: PayloadId,
     ) -> Result<Self::Job, PayloadBuilderError> {
         Ok(TestPayloadJob { attr: input.attributes })
@@ -72,10 +72,8 @@ impl Future for TestPayloadJob {
 }
 
 impl PayloadJob for TestPayloadJob {
-    type PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>;
     type ResolvePayloadFuture =
         futures_util::future::Ready<Result<BaseBuiltPayload, PayloadBuilderError>>;
-    type BuiltPayload = BaseBuiltPayload;
 
     fn best_payload(&self) -> Result<BaseBuiltPayload, PayloadBuilderError> {
         Ok(BaseBuiltPayload::new(

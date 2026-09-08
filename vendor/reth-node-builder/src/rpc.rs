@@ -8,7 +8,7 @@ use std::{
 };
 
 use base_execution_chainspec::ChainSpecProvider;
-use base_execution_payload_builder::BaseEngineValidator;
+use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
 use base_execution_rpc::eth::{BaseEthApiBuilder, BaseNodeEthApi, EthApiCtx};
 pub use jsonrpsee::{
     core::middleware::layer::Either,
@@ -19,7 +19,6 @@ use reth_chain_state::CanonStateSubscriptions;
 pub use reth_engine_tree::tree::{BasicEngineValidator, EngineValidator};
 use reth_node_api::{AddOnsContext, FullNodeComponents, NodeAddOns, TreeConfig};
 use reth_node_core::{cli::config::RethTransactionPoolConfig, node_config::NodeConfig};
-use reth_payload_builder::PayloadBuilderHandle;
 use reth_rpc::{
     AdminApi,
     eth::{DevSigner, EthApiTypes, FullEthApiServer},

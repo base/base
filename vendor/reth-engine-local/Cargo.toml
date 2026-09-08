@@ -16,11 +16,11 @@ tokio = { workspace = true }
 futures-util = { workspace = true }
 alloy-consensus = { workspace = true }
 reth-storage-api = { workspace = true }
-reth-payload-builder = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+base-execution-payload-builder = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["reth"] }

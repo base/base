@@ -415,7 +415,6 @@ reth-e2e-test-utils = { path = "vendor/reth-e2e-test-utils", default-features = 
 reth-rpc-engine-api = { path = "vendor/reth-rpc-engine-api", default-features = false }
 reth-eth-wire-types = { path = "vendor/reth-eth-wire-types", default-features = false }
 reth-storage-errors = { path = "vendor/reth-storage-errors", default-features = false }
-reth-payload-builder = { path = "vendor/reth-payload-builder", default-features = false }
 reth-exex-test-utils = { path = "vendor/reth-exex-test-utils", default-features = false }
 reth-execution-types = { path = "vendor/reth-execution-types", default-features = false }
 reth-execution-cache = { path = "vendor/reth-execution-cache", default-features = false }
@@ -428,7 +427,6 @@ reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-featu
 reth-engine-primitives = { path = "vendor/reth-engine-primitives", default-features = false }
 reth-static-file-types = { path = "vendor/reth-static-file-types", default-features = false }
 reth-invalid-block-hooks = { path = "vendor/reth-invalid-block-hooks", default-features = false }
-reth-basic-payload-builder = { path = "vendor/reth-basic-payload-builder", default-features = false }
 reth-consensus-debug-client = { path = "vendor/reth-consensus-debug-client", default-features = false }
 
 # tokio

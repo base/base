@@ -34,10 +34,10 @@ reth-storage-errors = {workspace = true}
 reth-execution-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-execution-cache = { workspace = true }
-reth-payload-builder = { workspace = true }
 alloy-rpc-types-engine = { workspace = true }
 base-execution-consensus = { workspace = true }
 reth-stages = { workspace = true, optional = true }
+base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 indexmap = { workspace = true, features = ["default"] }
@@ -100,7 +100,7 @@ test-utils = [
     "reth-db/test-utils",
     "base-execution-evm/test-utils",
     "reth-network-p2p/test-utils",
-    "reth-payload-builder/test-utils",
+    "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
     "reth-prune-types",

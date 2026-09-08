@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
+use base_execution_payload_builder::PayloadBuilderHandle;
 use base_execution_txpool::BaseTransactionPool;
 use reth_db_api::{Database, database_metrics::DatabaseMetrics};
 use reth_network::NetworkHandle;
-use reth_payload_builder::PayloadBuilderHandle;
 use reth_provider::providers::BlockchainProvider;
 use reth_transaction_pool::blobstore::DiskFileBlobStore;
 

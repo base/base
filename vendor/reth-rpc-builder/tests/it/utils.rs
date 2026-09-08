@@ -3,9 +3,9 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use alloy_rpc_types_engine::{ClientCode, ClientVersionV1};
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseEvmConfig;
+use base_execution_payload_builder::test_utils::spawn_test_payload_service;
 use reth_engine_primitives::{ConsensusEngineHandle, test_utils::TestEngineValidator};
 use reth_network_api::noop::NoopNetwork;
-use reth_payload_builder::test_utils::spawn_test_payload_service;
 use reth_provider::test_utils::NoopProvider;
 use reth_rpc_builder::{
     RpcModuleBuilder, RpcServerConfig, RpcServerHandle, TransportRpcModuleConfig,

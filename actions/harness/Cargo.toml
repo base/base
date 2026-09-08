@@ -37,7 +37,6 @@ base-consensus-engine = { workspace = true }
 reth-transaction-pool = { workspace = true }
 base-consensus-safedb = { workspace = true }
 reth-primitives-traits = { workspace = true }
-reth-basic-payload-builder = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }

@@ -32,10 +32,6 @@ use base_execution_txpool::{
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
 };
-use reth_basic_payload_builder::{
-    BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
-    PayloadConfig, is_better_payload,
-};
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
@@ -51,10 +47,11 @@ use revm::{
 use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
-    BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability, InclusionTracker,
-    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
-    PredicateLoadTracker, PredicateReadRecorder, StateChangeEffects, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
+    BasePayloadBuilderAttributes, BuildArguments, BuildOutcome, BuildOutcomeKind, BuilderMetrics,
+    CoinbaseTipAffordability, InclusionTracker, ParkableBestPayloadTransactions,
+    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadConfig, PredicateLoadTracker,
+    PredicateReadRecorder, StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, is_better_payload,
     payload::BaseBuiltPayload,
 };
 
@@ -176,9 +173,9 @@ where
     )]
     fn build_payload<'a, Txs>(
         &self,
-        args: BuildArguments<BasePayloadBuilderAttributes<BaseTxEnvelope>, BaseBuiltPayload>,
+        args: BuildArguments,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
-    ) -> Result<BuildOutcome<BaseBuiltPayload>, PayloadBuilderError>
+    ) -> Result<BuildOutcome, PayloadBuilderError>
     where
         Txs: ParkablePayloadTransactions<
             Transaction: PoolTransaction<Consensus = BaseTxEnvelope> + BasePooledTx,
@@ -258,39 +255,23 @@ where
     }
 }
 
-/// Implementation of the [`PayloadBuilder`] trait for [`BasePayloadBuilder`].
-impl<Pool, Client, Txs> PayloadBuilder for BasePayloadBuilder<Pool, Client, Txs>
+/// Base payload construction entry points.
+impl<Pool, Client, Txs> BasePayloadBuilder<Pool, Client, Txs>
 where
     Client: StateProviderFactory + ChainSpecProvider + BlockReader + Clone,
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>>,
     Txs: BasePayloadTransactions<Pool>,
 {
-    type Attributes = BasePayloadBuilderAttributes<BaseTxEnvelope>;
-    type BuiltPayload = BaseBuiltPayload;
-
-    fn try_build(
-        &self,
-        args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-    ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
+    pub fn try_build(&self, args: BuildArguments) -> Result<BuildOutcome, PayloadBuilderError> {
         let pool = self.pool.clone();
         self.build_payload(args, |attrs| self.best_transactions.best_transactions(pool, attrs))
     }
 
-    fn on_missing_payload(
+    /// Builds a payload with the sequencer transactions and no pool transactions.
+    pub fn build_empty_payload(
         &self,
-        _args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-    ) -> MissingPayloadBehaviour<Self::BuiltPayload> {
-        // we want to await the job that's already in progress because that should be returned as
-        // is, there's no benefit in racing another job
-        MissingPayloadBehaviour::AwaitInProgress
-    }
-
-    // NOTE: this should only be used for testing purposes because this doesn't have access to L1
-    // system txs, hence on_missing_payload we return [MissingPayloadBehaviour::AwaitInProgress].
-    fn build_empty_payload(
-        &self,
-        config: PayloadConfig<Self::Attributes>,
-    ) -> Result<Self::BuiltPayload, PayloadBuilderError> {
+        config: PayloadConfig,
+    ) -> Result<BaseBuiltPayload, PayloadBuilderError> {
         let args = BuildArguments {
             config,
             cached_reads: Default::default(),
@@ -342,7 +323,7 @@ impl<Txs> Builder<'_, Txs> {
         state_provider: &dyn StateProvider,
         mut state_root_handle: Option<PayloadStateRootHandle>,
         ctx: BasePayloadBuilderCtx,
-    ) -> Result<BuildOutcomeKind<BaseBuiltPayload>, PayloadBuilderError>
+    ) -> Result<BuildOutcomeKind, PayloadBuilderError>
     where
         Txs: ParkablePayloadTransactions<
             Transaction: PoolTransaction<Consensus = BaseTxEnvelope> + BasePooledTx,
@@ -637,7 +618,7 @@ pub struct BasePayloadBuilderCtx {
     /// The chainspec
     pub chain_spec: Arc<BaseChainSpec>,
     /// How to build the payload.
-    pub config: PayloadConfig<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+    pub config: PayloadConfig,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancelOnDrop,
     /// The currently best payload.
@@ -1274,7 +1255,6 @@ mod tests {
     };
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
-    use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction};
     use reth_provider::noop::NoopProvider;
@@ -1290,8 +1270,9 @@ mod tests {
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{
-        BasePayloadBuilderAttributes, NonParkablePayloadTransactions, ParkablePayloadTransactions,
-        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        BasePayloadBuilderAttributes, BuildOutcomeKind, NonParkablePayloadTransactions,
+        ParkablePayloadTransactions, PayloadConfig, config::BaseBuilderConfig,
+        payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -1413,10 +1394,7 @@ mod tests {
         }
     }
 
-    fn build_pool_payload<Txs>(
-        ctx: BasePayloadBuilderCtx,
-        transactions: Txs,
-    ) -> BuildOutcomeKind<crate::BaseBuiltPayload>
+    fn build_pool_payload<Txs>(ctx: BasePayloadBuilderCtx, transactions: Txs) -> BuildOutcomeKind
     where
         Txs: PayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
     {
@@ -1432,7 +1410,7 @@ mod tests {
         ctx: BasePayloadBuilderCtx,
         transactions: Txs,
         funded_senders: &[Address],
-    ) -> BuildOutcomeKind<crate::BaseBuiltPayload>
+    ) -> BuildOutcomeKind
     where
         Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
     {

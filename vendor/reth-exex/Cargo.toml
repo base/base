@@ -34,9 +34,9 @@ reth-stages-api = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-chain-state = { workspace = true }
 base-execution-evm = { workspace = true }
-reth-payload-builder = { workspace = true }
 reth-primitives-traits = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 itertools = { workspace = true, features = ["use_std"] }
 tracing = { workspace = true, features = ["attributes"] }

@@ -52,7 +52,6 @@ reth-rpc-eth-types = { workspace = true }
 reth-node-ethstats = { workspace = true }
 base-execution-evm = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
-reth-payload-builder = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-engine-primitives = { workspace = true }
@@ -88,8 +87,8 @@ tempfile = { workspace = true, features = ["default"] }
 alloy-consensus = {workspace = true, features = ["serde"]}
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-execution-evm = { workspace = true, features = ["test-utils"] }
-reth-payload-builder = { workspace = true, features = ["test-utils"] }
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
+base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = []
@@ -103,7 +102,7 @@ test-utils = [
     "reth-downloaders/test-utils",
     "reth-network/test-utils",
     "reth-network-p2p/test-utils",
-    "reth-payload-builder/test-utils",
+    "base-execution-payload-builder/test-utils",
     "reth-stages/test-utils",
     "reth-db-api/test-utils",
     "reth-provider/test-utils",

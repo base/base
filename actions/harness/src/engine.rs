@@ -36,15 +36,13 @@ use base_consensus_node::{
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, CachedReads, CancelOnDrop};
 use base_execution_payload_builder::{
-    BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, NoopPayloadTransactions,
+    BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, BuildArguments,
+    NoopPayloadTransactions, PayloadConfig,
 };
 use base_execution_payload_types::{BuiltPayload, PayloadAttributes};
 use base_execution_txpool::BasePooledTransaction;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use base_test_utils::build_test_genesis;
-use reth_basic_payload_builder::{
-    BuildArguments, PayloadBuilder as RethPayloadBuilder, PayloadConfig,
-};
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_db_common::init::init_genesis;
 use reth_execution_types::ExecutionOutcome;
@@ -416,7 +414,7 @@ impl ActionEngineClient {
         .with_transactions(|_pool: TestPool, _attrs| {
             NoopPayloadTransactions::<BasePooledTransaction>::default()
         });
-        let outcome = RethPayloadBuilder::try_build(&payload_builder, args).map_err(|e| {
+        let outcome = payload_builder.try_build(args).map_err(|e| {
             TransportError::from(TransportErrorKind::custom_str(&format!(
                 "payload builder failed: {e}"
             )))

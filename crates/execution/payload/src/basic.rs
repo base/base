@@ -1,15 +1,4 @@
-//! A basic payload generator for reth.
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
 use std::{
-    fmt,
     future::Future,
     ops::Deref,
     pin::Pin,
@@ -20,21 +9,22 @@ use std::{
 
 use alloy_eips::merge::SLOT_DURATION;
 use alloy_primitives::{B256, U256};
+use base_common_consensus::BaseTxEnvelope;
+use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{CachedReads, CancelOnDrop};
 use base_execution_payload_types::{
-    BuiltPayload, PayloadAttributes, PayloadBuilderError, PayloadKind,
+    BaseBuiltPayload, BasePayloadBuilderAttributes, BuiltPayload, PayloadAttributes,
+    PayloadBuilderError, PayloadKind,
 };
+use base_execution_txpool::BasePooledTx;
 use futures_core::ready;
 use futures_util::FutureExt;
 use reth_chain_state::CanonStateNotification;
 use reth_execution_cache::SavedCache;
-use reth_payload_builder::{
-    BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderLease, PayloadId, PayloadJob,
-    PayloadJobGenerator,
-};
 use reth_primitives_traits::SealedHeader;
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 use reth_tasks::Runtime;
+use reth_transaction_pool::TransactionPool;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use tokio::{
     sync::{Semaphore, oneshot},
@@ -42,13 +32,11 @@ use tokio::{
 };
 use tracing::{debug, trace, warn};
 
-use crate::metrics::PayloadBuilderMetrics;
-
-mod better_payload_emitter;
-mod metrics;
-mod stack;
-pub use better_payload_emitter::BetterPayloadEmitter;
-pub use stack::{Either, PayloadBuilderStack};
+use crate::{
+    BasePayloadBuilder, BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderLease, PayloadId,
+    PayloadJob, PayloadJobGenerator, builder::BasePayloadTransactions,
+    job_metrics::PayloadBuilderMetrics,
+};
 
 const PAYLOAD_BUILDER_THREAD_NAME: &str = "payload-builder";
 
@@ -57,7 +45,7 @@ pub type HeaderForPayload = alloy_consensus::Header;
 
 /// The [`PayloadJobGenerator`] that creates [`BasicPayloadJob`]s.
 #[derive(Debug)]
-pub struct BasicPayloadJobGenerator<Client, Builder> {
+pub struct BasicPayloadJobGenerator<Client, Pool, Txs> {
     /// The client that can interact with the chain.
     client: Client,
     /// The task executor to spawn payload building tasks on.
@@ -68,8 +56,8 @@ pub struct BasicPayloadJobGenerator<Client, Builder> {
     payload_task_guard: PayloadTaskGuard,
     /// The type responsible for building payloads.
     ///
-    /// See [`PayloadBuilder`]
-    builder: Builder,
+    /// See [`BasePayloadBuilder`]
+    builder: BasePayloadBuilder<Pool, Client, Txs>,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
     /// Stored parent block information for new payload jobs.
@@ -78,14 +66,14 @@ pub struct BasicPayloadJobGenerator<Client, Builder> {
 
 // === impl BasicPayloadJobGenerator ===
 
-impl<Client, Builder> BasicPayloadJobGenerator<Client, Builder> {
+impl<Client, Pool, Txs> BasicPayloadJobGenerator<Client, Pool, Txs> {
     /// Creates a new [`BasicPayloadJobGenerator`] with the given config and custom
-    /// [`PayloadBuilder`]
+    /// [`BasePayloadBuilder`]
     pub fn with_builder(
         client: Client,
         executor: Runtime,
         config: BasicPayloadJobGeneratorConfig,
-        builder: Builder,
+        builder: BasePayloadBuilder<Pool, Client, Txs>,
     ) -> Self {
         Self {
             client,
@@ -149,18 +137,17 @@ impl<Client, Builder> BasicPayloadJobGenerator<Client, Builder> {
 
 // === impl BasicPayloadJobGenerator ===
 
-impl<Client, Builder> PayloadJobGenerator for BasicPayloadJobGenerator<Client, Builder>
+impl<Client, Pool, Txs> PayloadJobGenerator for BasicPayloadJobGenerator<Client, Pool, Txs>
 where
-    Client: StateProviderFactory + BlockReaderIdExt + Clone + Unpin + 'static,
-    Builder: PayloadBuilder + Unpin + 'static,
-    Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
+    Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + Unpin + 'static,
+    Txs: BasePayloadTransactions<Pool>,
 {
-    type Job = BasicPayloadJob<Builder>;
+    type Job = BasicPayloadJob<Pool, Client, Txs>;
 
     fn new_payload_job(
         &self,
-        input: BuildNewPayload<Builder::Attributes>,
+        input: BuildNewPayload,
         id: PayloadId,
     ) -> Result<Self::Job, PayloadBuilderError> {
         let BuildNewPayload { attributes, parent_hash, mut resources } = input;
@@ -363,12 +350,9 @@ impl Default for BasicPayloadJobGeneratorConfig {
 /// built and this future will wait to be resolved: [`PayloadJob::resolve`] or terminated if the
 /// deadline is reached.
 #[derive(Debug)]
-pub struct BasicPayloadJob<Builder>
-where
-    Builder: PayloadBuilder,
-{
+pub struct BasicPayloadJob<Pool, Client, Txs> {
     /// The configuration for how the payload will be created.
-    config: PayloadConfig<Builder::Attributes>,
+    config: PayloadConfig,
     /// How to spawn building tasks
     executor: Runtime,
     /// The deadline when this job should resolve.
@@ -376,9 +360,9 @@ where
     /// The interval at which the job should build a new payload after the last.
     interval: Interval,
     /// The best payload so far and its state.
-    best_payload: PayloadState<Builder::BuiltPayload>,
+    best_payload: PayloadState,
     /// Receiver for the block that is currently being built.
-    pending_block: Option<PendingPayload<Builder::BuiltPayload>>,
+    pending_block: Option<PendingPayload>,
     /// Restricts how many generator tasks can be executed at once.
     payload_task_guard: PayloadTaskGuard,
     /// Caches all disk reads for the state the new payloads builds on
@@ -399,15 +383,15 @@ where
     metrics: PayloadBuilderMetrics,
     /// The type responsible for building payloads.
     ///
-    /// See [`PayloadBuilder`]
-    builder: Builder,
+    /// See [`BasePayloadBuilder`]
+    builder: BasePayloadBuilder<Pool, Client, Txs>,
 }
 
-impl<Builder> BasicPayloadJob<Builder>
+impl<Pool, Client, Txs> BasicPayloadJob<Pool, Client, Txs>
 where
-    Builder: PayloadBuilder + Unpin + 'static,
-    Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
+    Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + Unpin + 'static,
+    Txs: BasePayloadTransactions<Pool>,
 {
     /// Spawns a new payload build task.
     fn spawn_build_job(&mut self) {
@@ -448,11 +432,11 @@ where
     }
 }
 
-impl<Builder> Future for BasicPayloadJob<Builder>
+impl<Pool, Client, Txs> Future for BasicPayloadJob<Pool, Client, Txs>
 where
-    Builder: PayloadBuilder + Unpin + 'static,
-    Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
+    Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + Unpin + 'static,
+    Txs: BasePayloadTransactions<Pool>,
 {
     type Output = Result<(), PayloadBuilderError>;
 
@@ -518,17 +502,15 @@ where
     }
 }
 
-impl<Builder> PayloadJob for BasicPayloadJob<Builder>
+impl<Pool, Client, Txs> PayloadJob for BasicPayloadJob<Pool, Client, Txs>
 where
-    Builder: PayloadBuilder + Unpin + 'static,
-    Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
+    Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = BaseTxEnvelope>> + Unpin + 'static,
+    Txs: BasePayloadTransactions<Pool>,
 {
-    type PayloadAttributes = Builder::Attributes;
-    type ResolvePayloadFuture = ResolveBestPayload<Self::BuiltPayload>;
-    type BuiltPayload = Builder::BuiltPayload;
+    type ResolvePayloadFuture = ResolveBestPayload;
 
-    fn best_payload(&self) -> Result<Self::BuiltPayload, PayloadBuilderError> {
+    fn best_payload(&self) -> Result<BaseBuiltPayload, PayloadBuilderError> {
         if let Some(payload) = self.best_payload.payload() {
             Ok(payload.clone())
         } else {
@@ -543,7 +525,9 @@ where
         }
     }
 
-    fn payload_attributes(&self) -> Result<Self::PayloadAttributes, PayloadBuilderError> {
+    fn payload_attributes(
+        &self,
+    ) -> Result<BasePayloadBuilderAttributes<BaseTxEnvelope>, PayloadBuilderError> {
         Ok(self.config.attributes.clone())
     }
 
@@ -553,7 +537,7 @@ where
 
     fn resolve_kind(
         &mut self,
-        kind: PayloadKind,
+        _kind: PayloadKind,
     ) -> (Self::ResolvePayloadFuture, KeepPayloadJobAlive) {
         let best_payload = self.best_payload.payload().cloned();
         if best_payload.is_none() && self.pending_block.is_none() {
@@ -562,67 +546,13 @@ where
         }
 
         let maybe_better = self.pending_block.take();
-        let mut empty_payload = None;
-
         if best_payload.is_none() {
             if let Some(pending) = maybe_better.as_ref() {
                 pending.cancel.request_finalization();
             }
-
-            debug!(target: "payload_builder", id=%self.config.payload_id(), "no best payload yet to resolve, building empty payload");
-
-            let args = BuildArguments {
-                cached_reads: self.cached_reads.take().unwrap_or_default(),
-                execution_cache: self.execution_cache.clone(),
-                state_root_handle: None,
-                config: self.config.clone(),
-                cancel: CancelOnDrop::default(),
-                best_payload: None,
-            };
-
-            match self.builder.on_missing_payload(args) {
-                MissingPayloadBehaviour::AwaitInProgress => {
-                    debug!(target: "payload_builder", id=%self.config.payload_id(), "awaiting in progress payload build job");
-                }
-                MissingPayloadBehaviour::RaceEmptyPayload => {
-                    debug!(target: "payload_builder", id=%self.config.payload_id(), "racing empty payload");
-
-                    // if no payload has been built yet
-                    self.metrics.inc_requested_empty_payload();
-                    // no payload built yet, so we need to return an empty payload
-                    let (tx, rx) = oneshot::channel();
-                    let config = self.config.clone();
-                    let builder = self.builder.clone();
-                    self.executor.spawn_blocking_named_or_tokio(
-                        PAYLOAD_BUILDER_THREAD_NAME,
-                        move || {
-                            let res = builder.build_empty_payload(config);
-                            let _ = tx.send(res);
-                        },
-                    );
-
-                    empty_payload = Some(rx);
-                }
-                MissingPayloadBehaviour::RacePayload(job) => {
-                    debug!(target: "payload_builder", id=%self.config.payload_id(), "racing fallback payload");
-                    // race the in progress job with this job
-                    let (tx, rx) = oneshot::channel();
-                    self.executor.spawn_blocking_named_or_tokio(
-                        PAYLOAD_BUILDER_THREAD_NAME,
-                        move || {
-                            let _ = tx.send(job());
-                        },
-                    );
-                    empty_payload = Some(rx);
-                }
-            };
+            debug!(target: "payload_builder", id=%self.config.payload_id(), "awaiting in progress Base payload build job");
         }
-
-        let fut = ResolveBestPayload {
-            best_payload,
-            maybe_better,
-            empty_payload: empty_payload.filter(|_| kind != PayloadKind::WaitForPending),
-        };
+        let fut = ResolveBestPayload { best_payload, maybe_better };
 
         (fut, KeepPayloadJobAlive::No)
     }
@@ -630,25 +560,25 @@ where
 
 /// Represents the current state of a payload being built.
 #[derive(Debug, Clone)]
-pub enum PayloadState<P> {
+pub enum PayloadState {
     /// No payload has been built yet.
     Missing,
     /// The best payload built so far, which may still be improved upon.
-    Best(P),
+    Best(BaseBuiltPayload),
     /// The payload is frozen and no further building should occur.
     ///
-    /// Contains the final payload `P` that should be used.
-    Frozen(P),
+    /// Contains the final payload `BaseBuiltPayload` that should be used.
+    Frozen(BaseBuiltPayload),
 }
 
-impl<P> PayloadState<P> {
+impl PayloadState {
     /// Checks if the payload is frozen.
     pub const fn is_frozen(&self) -> bool {
         matches!(self, Self::Frozen(_))
     }
 
     /// Returns the payload if it exists (either Best or Frozen).
-    pub const fn payload(&self) -> Option<&P> {
+    pub const fn payload(&self) -> Option<&BaseBuiltPayload> {
         match self {
             Self::Missing => None,
             Self::Best(p) | Self::Frozen(p) => Some(p),
@@ -666,26 +596,21 @@ impl<P> PayloadState<P> {
 /// If no payload has been built so far, it will either return an empty payload or the result of the
 /// in progress build job, whatever finishes first.
 #[derive(Debug)]
-pub struct ResolveBestPayload<Payload> {
+pub struct ResolveBestPayload {
     /// Best payload so far.
-    pub best_payload: Option<Payload>,
+    pub best_payload: Option<BaseBuiltPayload>,
     /// Regular payload job that's currently running that might produce a better payload.
-    pub maybe_better: Option<PendingPayload<Payload>>,
-    /// The empty payload building job in progress, if any.
-    pub empty_payload: Option<oneshot::Receiver<Result<Payload, PayloadBuilderError>>>,
+    pub maybe_better: Option<PendingPayload>,
 }
 
-impl<Payload> ResolveBestPayload<Payload> {
+impl ResolveBestPayload {
     const fn is_empty(&self) -> bool {
-        self.best_payload.is_none() && self.maybe_better.is_none() && self.empty_payload.is_none()
+        self.best_payload.is_none() && self.maybe_better.is_none()
     }
 }
 
-impl<Payload> Future for ResolveBestPayload<Payload>
-where
-    Payload: Unpin,
-{
-    type Output = Result<Payload, PayloadBuilderError>;
+impl Future for ResolveBestPayload {
+    type Output = Result<BaseBuiltPayload, PayloadBuilderError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -708,23 +633,6 @@ where
             return Poll::Ready(Ok(best));
         }
 
-        if let Some(fut) = Pin::new(&mut this.empty_payload).as_pin_mut()
-            && let Poll::Ready(res) = fut.poll(cx)
-        {
-            this.empty_payload = None;
-            return match res {
-                Ok(res) => {
-                    if let Err(err) = &res {
-                        warn!(target: "payload_builder", %err, "failed to resolve empty payload");
-                    } else {
-                        debug!(target: "payload_builder", "resolving empty payload");
-                    }
-                    Poll::Ready(res)
-                }
-                Err(err) => Poll::Ready(Err(err.into())),
-            };
-        }
-
         if this.is_empty() {
             return Poll::Ready(Err(PayloadBuilderError::MissingPayload));
         }
@@ -735,25 +643,25 @@ where
 
 /// A future that resolves to the result of the block building job.
 #[derive(Debug)]
-pub struct PendingPayload<P> {
+pub struct PendingPayload {
     /// Cancels the job on drop and carries cooperative control signals.
     cancel: CancelOnDrop,
     /// The channel to send the result to.
-    payload: oneshot::Receiver<Result<BuildOutcome<P>, PayloadBuilderError>>,
+    payload: oneshot::Receiver<Result<BuildOutcome, PayloadBuilderError>>,
 }
 
-impl<P> PendingPayload<P> {
+impl PendingPayload {
     /// Constructs a `PendingPayload` future.
     pub const fn new(
         cancel: CancelOnDrop,
-        payload: oneshot::Receiver<Result<BuildOutcome<P>, PayloadBuilderError>>,
+        payload: oneshot::Receiver<Result<BuildOutcome, PayloadBuilderError>>,
     ) -> Self {
         Self { cancel, payload }
     }
 }
 
-impl<P> Future for PendingPayload<P> {
-    type Output = Result<BuildOutcome<P>, PayloadBuilderError>;
+impl Future for PendingPayload {
+    type Output = Result<BuildOutcome, PayloadBuilderError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let res = ready!(self.payload.poll_unpin(cx));
@@ -763,13 +671,13 @@ impl<P> Future for PendingPayload<P> {
 
 /// Static config for how to build a payload.
 #[derive(Clone, Debug)]
-pub struct PayloadConfig<Attributes> {
+pub struct PayloadConfig {
     /// The parent header.
     pub parent_header: Arc<SealedHeader>,
     /// Additional parent block information, if available.
     pub parent_block_info: Option<PayloadParentBlockInfo>,
     /// Requested attributes for the payload.
-    pub attributes: Attributes,
+    pub attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
     /// The payload id.
     pub payload_id: PayloadId,
 }
@@ -781,14 +689,11 @@ pub struct PayloadParentBlockInfo {
     pub transaction_count: usize,
 }
 
-impl<Attributes> PayloadConfig<Attributes>
-where
-    Attributes: PayloadAttributes,
-{
+impl PayloadConfig {
     /// Create new payload config.
     pub const fn new(
         parent_header: Arc<SealedHeader>,
-        attributes: Attributes,
+        attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
         payload_id: PayloadId,
     ) -> Self {
         Self { parent_header, parent_block_info: None, attributes, payload_id }
@@ -811,11 +716,11 @@ where
 
 /// The possible outcomes of a payload building attempt.
 #[derive(Debug)]
-pub enum BuildOutcome<Payload> {
+pub enum BuildOutcome {
     /// Successfully built a better block.
     Better {
         /// The new payload that was built.
-        payload: Payload,
+        payload: BaseBuiltPayload,
         /// The cached reads that were used to build the payload.
         cached_reads: CachedReads,
     },
@@ -830,12 +735,12 @@ pub enum BuildOutcome<Payload> {
     Cancelled,
 
     /// The payload is final and no further building should occur
-    Freeze(Payload),
+    Freeze(BaseBuiltPayload),
 }
 
-impl<Payload> BuildOutcome<Payload> {
+impl BuildOutcome {
     /// Consumes the type and returns the payload if the outcome is `Better` or `Freeze`.
-    pub fn into_payload(self) -> Option<Payload> {
+    pub fn into_payload(self) -> Option<BaseBuiltPayload> {
         match self {
             Self::Better { payload, .. } | Self::Freeze(payload) => Some(payload),
             _ => None,
@@ -843,7 +748,7 @@ impl<Payload> BuildOutcome<Payload> {
     }
 
     /// Consumes the type and returns the payload if the outcome is `Better` or `Freeze`.
-    pub const fn payload(&self) -> Option<&Payload> {
+    pub const fn payload(&self) -> Option<&BaseBuiltPayload> {
         match self {
             Self::Better { payload, .. } | Self::Freeze(payload) => Some(payload),
             _ => None,
@@ -869,30 +774,15 @@ impl<Payload> BuildOutcome<Payload> {
     pub const fn is_cancelled(&self) -> bool {
         matches!(self, Self::Cancelled)
     }
-
-    /// Applies a fn on the current payload.
-    pub fn map_payload<F, P>(self, f: F) -> BuildOutcome<P>
-    where
-        F: FnOnce(Payload) -> P,
-    {
-        match self {
-            Self::Better { payload, cached_reads } => {
-                BuildOutcome::Better { payload: f(payload), cached_reads }
-            }
-            Self::Aborted { fees, cached_reads } => BuildOutcome::Aborted { fees, cached_reads },
-            Self::Cancelled => BuildOutcome::Cancelled,
-            Self::Freeze(payload) => BuildOutcome::Freeze(f(payload)),
-        }
-    }
 }
 
 /// The possible outcomes of a payload building attempt without reused [`CachedReads`]
 #[derive(Debug)]
-pub enum BuildOutcomeKind<Payload> {
+pub enum BuildOutcomeKind {
     /// Successfully built a better block.
     Better {
         /// The new payload that was built.
-        payload: Payload,
+        payload: BaseBuiltPayload,
     },
     /// Aborted payload building because resulted in worse block wrt. fees.
     Aborted {
@@ -902,12 +792,12 @@ pub enum BuildOutcomeKind<Payload> {
     /// Build job was cancelled
     Cancelled,
     /// The payload is final and no further building should occur
-    Freeze(Payload),
+    Freeze(BaseBuiltPayload),
 }
 
-impl<Payload> BuildOutcomeKind<Payload> {
+impl BuildOutcomeKind {
     /// Attaches the [`CachedReads`] to the outcome.
-    pub fn with_cached_reads(self, cached_reads: CachedReads) -> BuildOutcome<Payload> {
+    pub fn with_cached_reads(self, cached_reads: CachedReads) -> BuildOutcome {
         match self {
             Self::Better { payload } => BuildOutcome::Better { payload, cached_reads },
             Self::Aborted { fees } => BuildOutcome::Aborted { fees, cached_reads },
@@ -923,7 +813,7 @@ impl<Payload> BuildOutcomeKind<Payload> {
 /// building process. It holds references to the Ethereum client, transaction pool, cached reads,
 /// payload configuration, cancellation status, and the best payload achieved so far.
 #[derive(Debug)]
-pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
+pub struct BuildArguments {
     /// Previously cached disk reads
     pub cached_reads: CachedReads,
     /// Optional execution cache shared with the engine.
@@ -936,98 +826,24 @@ pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     /// invalidated and cleared.
     pub state_root_handle: Option<PayloadStateRootHandle>,
     /// How to configure the payload.
-    pub config: PayloadConfig<Attributes>,
+    pub config: PayloadConfig,
     /// A marker that can be used to cancel the job.
     pub cancel: CancelOnDrop,
     /// The best payload achieved so far.
-    pub best_payload: Option<Payload>,
+    pub best_payload: Option<BaseBuiltPayload>,
 }
 
-impl<Attributes, Payload: BuiltPayload> BuildArguments<Attributes, Payload> {
+impl BuildArguments {
     /// Create new build arguments.
     pub const fn new(
         cached_reads: CachedReads,
         execution_cache: Option<SavedCache>,
         state_root_handle: Option<PayloadStateRootHandle>,
-        config: PayloadConfig<Attributes>,
+        config: PayloadConfig,
         cancel: CancelOnDrop,
-        best_payload: Option<Payload>,
+        best_payload: Option<BaseBuiltPayload>,
     ) -> Self {
         Self { cached_reads, execution_cache, state_root_handle, config, cancel, best_payload }
-    }
-}
-
-/// A trait for building payloads that encapsulate Ethereum transactions.
-///
-/// This trait provides the `try_build` method to construct a transaction payload
-/// using `BuildArguments`. It returns a `Result` indicating success or a
-/// `PayloadBuilderError` if building fails.
-///
-/// Generic parameters `Pool` and `Client` represent the transaction pool and
-/// Ethereum client types.
-pub trait PayloadBuilder: Send + Sync + Clone {
-    /// The payload attributes type to accept for building.
-    type Attributes: PayloadAttributes;
-    /// The type of the built payload.
-    type BuiltPayload: BuiltPayload;
-
-    /// Tries to build a transaction payload using provided arguments.
-    ///
-    /// Constructs a transaction payload based on the given arguments,
-    /// returning a `Result` indicating success or an error if building fails.
-    ///
-    /// # Arguments
-    ///
-    /// - `args`: Build arguments containing necessary components.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` indicating the build outcome or an error.
-    fn try_build(
-        &self,
-        args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-    ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError>;
-
-    /// Invoked when the payload job is being resolved and there is no payload yet.
-    ///
-    /// This can happen if the CL requests a payload before the first payload has been built.
-    fn on_missing_payload(
-        &self,
-        _args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-    ) -> MissingPayloadBehaviour<Self::BuiltPayload> {
-        MissingPayloadBehaviour::RaceEmptyPayload
-    }
-
-    /// Builds an empty payload without any transaction.
-    fn build_empty_payload(
-        &self,
-        config: PayloadConfig<Self::Attributes>,
-    ) -> Result<Self::BuiltPayload, PayloadBuilderError>;
-}
-
-/// Tells the payload builder how to react to payload request if there's no payload available yet.
-///
-/// This situation can occur if the CL requests a payload before the first payload has been built.
-#[derive(Default)]
-pub enum MissingPayloadBehaviour<Payload> {
-    /// Await the regular scheduled payload process.
-    AwaitInProgress,
-    /// Race the in progress payload process with an empty payload.
-    #[default]
-    RaceEmptyPayload,
-    /// Race the in progress payload process with this job.
-    RacePayload(Box<dyn FnOnce() -> Result<Payload, PayloadBuilderError> + Send>),
-}
-
-impl<Payload> fmt::Debug for MissingPayloadBehaviour<Payload> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AwaitInProgress => write!(f, "AwaitInProgress"),
-            Self::RaceEmptyPayload => {
-                write!(f, "RaceEmptyPayload")
-            }
-            Self::RacePayload(_) => write!(f, "RacePayload"),
-        }
     }
 }
 
@@ -1046,4 +862,60 @@ fn duration_until(unix_timestamp_secs: u64) -> Duration {
     let unix_now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let timestamp = Duration::from_secs(unix_timestamp_secs);
     timestamp.saturating_sub(unix_now)
+}
+
+#[cfg(test)]
+mod tests {
+    use base_common_consensus::BaseBlock;
+    use reth_primitives_traits::Block as _;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn resolve_waits_for_pending_base_payload() {
+        let (sender, receiver) = oneshot::channel();
+        let mut resolving = Box::pin(ResolveBestPayload {
+            best_payload: None,
+            maybe_better: Some(PendingPayload::new(CancelOnDrop::default(), receiver)),
+        });
+        assert!(resolving.as_mut().now_or_never().is_none());
+
+        let id = PayloadId::new([7; 8]);
+        let payload = BaseBuiltPayload::new(
+            id,
+            Arc::new(BaseBlock::default().seal_slow()),
+            U256::ZERO,
+            None,
+            None,
+        );
+        sender.send(Ok(BuildOutcome::Freeze(payload))).unwrap();
+        assert_eq!(resolving.await.unwrap().id(), id);
+    }
+
+    #[tokio::test]
+    async fn resolve_retains_best_when_pending_build_does_not_improve() {
+        let id = PayloadId::new([9; 8]);
+        let payload = BaseBuiltPayload::new(
+            id,
+            Arc::new(BaseBlock::default().seal_slow()),
+            U256::from(100),
+            None,
+            None,
+        );
+        let (sender, receiver) = oneshot::channel();
+        sender
+            .send(Ok(BuildOutcome::Aborted {
+                fees: U256::from(50),
+                cached_reads: CachedReads::default(),
+            }))
+            .unwrap();
+        let resolved = ResolveBestPayload {
+            best_payload: Some(payload),
+            maybe_better: Some(PendingPayload::new(CancelOnDrop::default(), receiver)),
+        }
+        .await
+        .unwrap();
+        assert_eq!(resolved.id(), id);
+        assert_eq!(resolved.fees(), U256::from(100));
+    }
 }

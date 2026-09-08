@@ -47,7 +47,6 @@ reth-rpc-eth-types = { workspace = true }
 alloy-signer-local = { workspace = true }
 reth-rpc-engine-api = { workspace = true }
 base-common-network = { workspace = true }
-reth-payload-builder = { workspace = true }
 reth-execution-cache = { workspace = true }
 reth-transaction-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -184,7 +183,7 @@ test-utils = [
     "reth-execution-cache/test-utils",
     "reth-ipc",
     "reth-node-builder/test-utils",
-    "reth-payload-builder/test-utils",
+    "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
     "base-execution-evm/test-utils",

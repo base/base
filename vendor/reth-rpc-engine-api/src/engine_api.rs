@@ -24,6 +24,7 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, BaseExecutionPayloadV4, ExecutionData,
 };
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_builder::PayloadStore;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, EngineApiMessageVersion, MessageValidationKind,
     PayloadOrAttributes, validate_payload_timestamp,
@@ -31,7 +32,6 @@ use base_execution_payload_types::{
 use jsonrpsee_core::{RpcResult, server::RpcModule};
 use reth_engine_primitives::{ConsensusEngineHandle, EngineApiValidator};
 use reth_network_api::{CellCustody, NetworkInfo};
-use reth_payload_builder::PayloadStore;
 use reth_primitives_traits::{Block, BlockBody};
 use reth_rpc_api::{EngineApiServer, IntoEngineApiRpcModule};
 use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
@@ -1580,13 +1580,13 @@ mod tests {
     use assert_matches::assert_matches;
     use base_common_consensus::BaseBlock as Block;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_execution_payload_builder::test_utils::spawn_test_payload_service;
     use reth_engine_primitives::{
         BeaconEngineMessage, OnForkChoiceUpdated, test_utils::TestEngineValidator,
     };
     use reth_network_api::{
         EthProtocolInfo, NetworkError, NetworkInfo, NetworkStatus, noop::NoopNetwork,
     };
-    use reth_payload_builder::test_utils::spawn_test_payload_service;
     use reth_provider::{BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider};
     use reth_tasks::Runtime;
     use reth_transaction_pool::noop::NoopTransactionPool;

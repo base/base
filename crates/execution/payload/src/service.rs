@@ -15,8 +15,8 @@ use alloy_primitives::{B256, BlockTimestamp};
 use alloy_rpc_types::engine::PayloadId;
 use base_common_consensus::BaseTxEnvelope;
 use base_execution_payload_types::{
-    BaseBuiltPayload, BasePayloadBuilderAttributes, BuiltPayload, Events, PayloadAttributes,
-    PayloadBuilderError, PayloadEvents, PayloadKind,
+    BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadAttributes, PayloadBuilderError,
+    PayloadEvents, PayloadKind,
 };
 use futures_util::{Stream, StreamExt, future::FutureExt};
 use reth_chain_state::CanonStateNotification;
@@ -31,13 +31,11 @@ use tokio::sync::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{Span, debug, debug_span, info, trace, warn};
 
-use crate::{
-    KeepPayloadJobAlive, PayloadJob, metrics::PayloadBuilderServiceMetrics,
-    traits::PayloadJobGenerator,
-};
+use crate::{KeepPayloadJobAlive, PayloadBuilderServiceMetrics, PayloadJob, PayloadJobGenerator};
 
-type PayloadFuture<P> = Pin<Box<dyn Future<Output = Result<P, PayloadBuilderError>> + Send>>;
-type ResolvePayloadResult<P, Job> = (Option<PayloadFuture<P>>, Option<PayloadJobEntry<Job>>);
+pub type PayloadFuture =
+    Pin<Box<dyn Future<Output = Result<BaseBuiltPayload, PayloadBuilderError>> + Send>>;
+type ResolvePayloadResult<Job> = (Option<PayloadFuture>, Option<PayloadJobEntry<Job>>);
 
 /// A communication channel to the [`PayloadBuilderService`] that can retrieve payloads.
 ///
@@ -124,7 +122,7 @@ impl PayloadBuilderHandle {
     /// Returns a receiver that will receive the payload id.
     pub fn send_new_payload(
         &self,
-        input: BuildNewPayload<BasePayloadBuilderAttributes<BaseTxEnvelope>>,
+        input: BuildNewPayload,
     ) -> Receiver<Result<PayloadId, PayloadBuilderError>> {
         let (tx, rx) = oneshot::channel();
         let span = debug_span!(parent: Span::current(), "payload_job");
@@ -210,7 +208,6 @@ impl Clone for PayloadBuilderHandle {
 pub struct PayloadBuilderService<Gen, St>
 where
     Gen: PayloadJobGenerator,
-    Gen::Job: PayloadJob<PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>>,
 {
     /// The type that knows how to create new payloads.
     generator: Gen,
@@ -242,8 +239,6 @@ const PAYLOAD_EVENTS_BUFFER_SIZE: usize = 20;
 impl<Gen, St> PayloadBuilderService<Gen, St>
 where
     Gen: PayloadJobGenerator,
-    Gen::Job: PayloadJob<PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>>,
-    <Gen::Job as PayloadJob>::BuiltPayload: Into<BaseBuiltPayload>,
 {
     /// Creates a new payload builder service and returns the [`PayloadBuilderHandle`] to interact
     /// with it.
@@ -295,7 +290,7 @@ where
             .payload_jobs
             .iter()
             .find(|entry| entry.id == id)
-            .map(|entry| entry.job.best_payload().map(|payload| payload.into()));
+            .map(|entry| entry.job.best_payload());
         if let Some(Ok(ref best)) = res {
             self.metrics.set_best_revenue(best.block().number(), f64::from(best.fees()));
         }
@@ -307,11 +302,7 @@ where
     ///
     /// If the job should be terminated, this removes it from active polling and returns it so the
     /// caller can drop it after the response is sent.
-    fn resolve(
-        &mut self,
-        id: PayloadId,
-        kind: PayloadKind,
-    ) -> ResolvePayloadResult<BaseBuiltPayload, Gen::Job> {
+    fn resolve(&mut self, id: PayloadId, kind: PayloadKind) -> ResolvePayloadResult<Gen::Job> {
         let start = Instant::now();
         debug!(target: "payload_builder", %id, "resolving payload job");
 
@@ -347,17 +338,17 @@ where
             resolved_metrics.resolve_duration_seconds.record(start.elapsed());
             if let Ok(payload) = &res {
                 if payload_events.receiver_count() > 0 {
-                    payload_events.send(Events::BuiltPayload(payload.clone().into())).ok();
+                    payload_events.send(Events::BuiltPayload(payload.clone())).ok();
                 }
 
                 if let Ok(timestamp) = payload_timestamp {
-                    let _ = cached_payload_tx.send(Some((id, timestamp, payload.clone().into())));
+                    let _ = cached_payload_tx.send(Some((id, timestamp, payload.clone())));
                 }
 
                 resolved_metrics
                     .set_resolved_revenue(payload.block().number(), f64::from(payload.fees()));
             }
-            res.map(|p| p.into())
+            res
         };
 
         (Some(Box::pin(fut)), resolved_job)
@@ -390,8 +381,6 @@ where
     Gen: PayloadJobGenerator + Unpin + 'static,
     <Gen as PayloadJobGenerator>::Job: Unpin + 'static,
     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
-    Gen::Job: PayloadJob<PayloadAttributes = BasePayloadBuilderAttributes<BaseTxEnvelope>>,
-    <Gen::Job as PayloadJob>::BuiltPayload: Into<BaseBuiltPayload>,
 {
     type Output = ();
 
@@ -531,7 +520,7 @@ pub enum PayloadServiceCommand {
     /// Carries the caller's [`Span`] so the service can parent payload-building work under the
     /// originating Engine API trace.
     BuildNewPayload(
-        Box<BuildNewPayload<BasePayloadBuilderAttributes<BaseTxEnvelope>>>,
+        Box<BuildNewPayload>,
         Span,
         oneshot::Sender<Result<PayloadId, PayloadBuilderError>>,
     ),
@@ -543,7 +532,7 @@ pub enum PayloadServiceCommand {
     Resolve(
         PayloadId,
         /* kind: */ PayloadKind,
-        #[debug(skip)] oneshot::Sender<Option<PayloadFuture<BaseBuiltPayload>>>,
+        #[debug(skip)] oneshot::Sender<Option<PayloadFuture>>,
     ),
     /// Payload service events
     Subscribe(oneshot::Sender<broadcast::Receiver<Events>>),
@@ -551,16 +540,16 @@ pub enum PayloadServiceCommand {
 
 /// A request to build a new payload.
 #[derive(Debug)]
-pub struct BuildNewPayload<T> {
+pub struct BuildNewPayload {
     /// The attributes for the new payload
-    pub attributes: T,
+    pub attributes: BasePayloadBuilderAttributes<BaseTxEnvelope>,
     /// The parent hash of the new payload
     pub parent_hash: B256,
     /// Resources loaned to the payload builder for this job.
     pub resources: PayloadBuilderResources,
 }
 
-impl<T: PayloadAttributes> BuildNewPayload<T> {
+impl BuildNewPayload {
     /// Returns the payload id for the new payload.
     pub fn payload_id(&self) -> PayloadId {
         self.attributes.payload_id(&self.parent_hash)
